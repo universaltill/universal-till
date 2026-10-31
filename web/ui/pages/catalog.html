@@ -82,6 +82,10 @@
       <span class="btn-ico" aria-hidden="true">{{ icon "download" }}</span>
     </button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
+    {{/* ut-docs#4128: ?missing=<mask> (the link the AI assistant's answers
+         carry) narrows the list to items with a gap; say so and offer the
+         way back. */}}
+    {{ if .MissingFilterKey }}<p class="catalog-missing-filter" role="status" data-testid="catalog-missing-filter">{{ T .MissingFilterKey }} <a href="/catalog">{{ T "catalog.missing.clear" }}</a></p>{{ end }}
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
          hx-get/hx-target/open pattern as #modifier-modal (buttons.html)
          and #table-modal (table_picker.html). ut-docs#2097: opened with

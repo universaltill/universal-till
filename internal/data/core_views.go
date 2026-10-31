@@ -233,6 +233,13 @@ var (
 	argCatalogLimit = CoreViewArg{Name: "limit", Min: 1, Max: 500, Default: 500}
 )
 
+// catalog.gaps.v1 (ut-docs#4128): which gaps to look for (a bitmask, see
+// GapBarcode…) and a capped page of the result.
+var (
+	argGapMissing = CoreViewArg{Name: "missing", Min: 1, Max: GapAll, Default: GapAll}
+	argGapLimit   = CoreViewArg{Name: "limit", Min: 1, Max: 100, Default: 50}
+)
+
 // sales.receipts.v1 reads one business date — today or up to a month back
 // — a page at a time: a receipt with its lines and payments is ~1–3 KiB, so
 // 100 stay under CoreViewMaxResult unless a receipt has many long lines;
@@ -338,6 +345,16 @@ var coreViews = map[string]CoreView{
 		Name: "catalog.photos.v1", Permission: "view:inventory", DataClass: DataClassCatalog, Args: []CoreViewArg{argOffset, argCatalogLimit},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			return NewCatalogRepo(db).ListCatalogPhotoViewRows(ctx, args["offset"], args["limit"])
+		},
+	},
+	// ut-docs#4128: active items missing a barcode, own photo, price or
+	// category (missing = bitmask 1 barcode, 2 image, 4 price, 8 category),
+	// so the AI assistant answers "which items have no barcode?" without
+	// paging the whole catalog.
+	"catalog.gaps.v1": {
+		Name: "catalog.gaps.v1", Permission: "view:inventory", DataClass: DataClassCatalog, Args: []CoreViewArg{argGapMissing, argOffset, argGapLimit},
+		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
+			return NewCatalogRepo(db).ListCatalogGapRows(ctx, args["missing"], args["offset"], args["limit"])
 		},
 	},
 	// ADR-0149 §6 (ut-docs#3976): the staff list — id, display name,

@@ -384,5 +384,16 @@
   "plugins.install.error.till_replaced": {"description": "Error shown when another till in the shop replaced this one so it can no longer download plugins: tells the owner to install plugins on the till that replaced it.", "review": "standard"},
   "plugins.install.error.till_moved": {"description": "Error shown when this till was moved to another shop so its old shop connection can no longer download plugins: tells the owner to connect it to its new shop under Settings > Till registration.", "review": "standard"},
   "plugins.install.error.register_new": {"description": "Error shown when the cloud rejects this till's credential and its store has no owner yet: tells the owner to register the till as a new store under Settings > Till registration.", "review": "standard"},
-  "plugins.install.error.service_unavailable": {"description": "Error shown when the marketplace refuses plugin downloads for this shop because its country is not served.", "review": "standard"}
+  "plugins.install.error.service_unavailable": {"description": "Error shown when the marketplace refuses plugin downloads for this shop because its country is not served.", "review": "standard"},
+  "agent.action.catalog_item_update": {"description": "Title of the confirm card when the AI assistant proposes changing existing items' name, price, category or barcode.", "review": "standard"},
+  "agent.field.name": {"description": "Row label on the AI confirm card for an item's name change.", "review": "standard"},
+  "agent.field.category": {"description": "Row label on the AI confirm card for an item's category change.", "review": "standard"},
+  "agent.items.no_photo": {"description": "Screen-reader label for the empty thumbnail of an item that has no photo in the AI assistant's item list.", "review": "standard"},
+  "agent.items.open_catalog": {"description": "Button under the AI assistant's item list that opens the catalog showing the same items.", "review": "standard"},
+  "catalog.missing.barcode": {"description": "Banner on the catalog when it is filtered to items without a barcode (opened from an AI assistant answer).", "review": "standard"},
+  "catalog.missing.image": {"description": "Banner on the catalog when it is filtered to items without a photo.", "review": "standard"},
+  "catalog.missing.price": {"description": "Banner on the catalog when it is filtered to items with no price (zero).", "review": "standard"},
+  "catalog.missing.category": {"description": "Banner on the catalog when it is filtered to items without a category.", "review": "standard"},
+  "catalog.missing.several": {"description": "Banner on the catalog when it is filtered to items missing any of barcode, photo, price or category.", "review": "standard"},
+  "catalog.missing.clear": {"description": "Link in the filter banner that returns to the full catalog list.", "review": "standard"}
 }

@@ -2,8 +2,10 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/itemimages"
 )
@@ -116,4 +118,112 @@ func (r *CatalogRepo) ListCatalogPhotoViewRows(ctx context.Context, offset, limi
 	}
 	end := min(offset+limit, len(all))
 	return all[offset:end], nil
+}
+
+// The gaps catalog.gaps.v1 and the catalog page's ?missing= filter look
+// for (ut-docs#4128). A mask selects any of them: an item matching ANY
+// selected gap is listed.
+const (
+	GapBarcode  = 1 // no whole-item barcode
+	GapImage    = 2 // no photo of its own (a placeholder icon is not one)
+	GapPrice    = 4 // base price 0
+	GapCategory = 8 // no category
+	GapAll      = GapBarcode | GapImage | GapPrice | GapCategory
+)
+
+// CatalogGapRow is one row of the catalog.gaps.v1 core read view
+// (ut-docs#4128): an active item with at least one selected gap, and which
+// of its basics it has. Its JSON shape is a published contract
+// (TestCoreViewRowShapesArePinned).
+type CatalogGapRow struct {
+	ItemID     string `json:"item_id"`
+	SKU        string `json:"sku"`
+	Name       string `json:"name"`
+	Category   string `json:"category"`
+	PriceMinor int64  `json:"price_minor"`
+	HasBarcode bool   `json:"has_barcode"`
+	HasImage   bool   `json:"has_image"`
+}
+
+// ownPhotoPrefix is where an operator-uploaded item photo lives
+// (SetItemThumbnail callers); an imported placeholder icon is elsewhere.
+const ownPhotoPrefix = "/public/assets/items/"
+
+func gapWhere(mask int) string {
+	var conds []string
+	if mask&GapBarcode != 0 {
+		conds = append(conds, `NOT EXISTS (SELECT 1 FROM item_barcodes b WHERE b.item_id = i.id)`)
+	}
+	if mask&GapImage != 0 {
+		conds = append(conds, `NOT EXISTS (SELECT 1 FROM item_images m WHERE m.item_id = i.id AND m.role = 'thumbnail' AND m.path LIKE '`+ownPhotoPrefix+`%')`)
+	}
+	if mask&GapPrice != 0 {
+		conds = append(conds, `i.base_price = 0`)
+	}
+	if mask&GapCategory != 0 {
+		conds = append(conds, `COALESCE(i.category_id, '') = ''`)
+	}
+	return `i.is_active = 1 AND (` + strings.Join(conds, ` OR `) + `)`
+}
+
+// ListCatalogGapRows returns one page of the active items with a selected
+// gap, ordered by name (NOCASE) then id. mask must be within 1..GapAll.
+func (r *CatalogRepo) ListCatalogGapRows(ctx context.Context, mask, offset, limit int) ([]CatalogGapRow, error) {
+	if mask < 1 || mask > GapAll {
+		return nil, fmt.Errorf("list catalog gaps: bad mask %d", mask)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT i.id, COALESCE(i.sku, ''), i.name, COALESCE(c.name, ''), i.base_price,
+		       EXISTS (SELECT 1 FROM item_barcodes b WHERE b.item_id = i.id),
+		       EXISTS (SELECT 1 FROM item_images m WHERE m.item_id = i.id AND m.role = 'thumbnail' AND m.path LIKE '`+ownPhotoPrefix+`%')
+		FROM items i LEFT JOIN categories c ON c.id = i.category_id
+		WHERE `+gapWhere(mask)+`
+		ORDER BY i.name COLLATE NOCASE, i.id
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list catalog gaps: %w", err)
+	}
+	defer rows.Close()
+	out := []CatalogGapRow{}
+	for rows.Next() {
+		var g CatalogGapRow
+		if err := rows.Scan(&g.ItemID, &g.SKU, &g.Name, &g.Category, &g.PriceMinor, &g.HasBarcode, &g.HasImage); err != nil {
+			return nil, fmt.Errorf("scan catalog gap: %w", err)
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// CatalogGapIDs is the set of active item ids with a selected gap (the
+// catalog page's ?missing= filter).
+func (r *CatalogRepo) CatalogGapIDs(ctx context.Context, mask int) (map[string]bool, error) {
+	if mask < 1 || mask > GapAll {
+		return nil, fmt.Errorf("catalog gap ids: bad mask %d", mask)
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT i.id FROM items i WHERE `+gapWhere(mask))
+	if err != nil {
+		return nil, fmt.Errorf("catalog gap ids: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// ItemBarcodeCountTx is how many whole-item barcodes an item has, read
+// through the caller's transaction (the AI update action's stale guard,
+// ut-docs#4128).
+func (r *CatalogRepo) ItemBarcodeCountTx(ctx context.Context, tx *sql.Tx, itemID string) (int, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_barcodes WHERE item_id = ?`, itemID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count item barcodes: %w", err)
+	}
+	return n, nil
 }

@@ -767,6 +767,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#4128: ?missing=<mask> narrows the list to items with a gap.
+		missingKey := ""
+		if mask := missingMask(r.URL.Query().Get("missing")); mask != 0 {
+			gaps, err := repo.CatalogGapIDs(r.Context(), mask)
+			if err != nil {
+				httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+				return
+			}
+			kept := items[:0:0]
+			for _, it := range items {
+				if gaps[it.ID] {
+					kept = append(kept, it)
+				}
+			}
+			items, missingKey = kept, missingFilterKey(mask)
+		}
 		cats, brands, err := listLookups(r.Context(), repo)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
@@ -862,6 +878,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
+			"MissingFilterKey":      missingKey,
 			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
@@ -3221,4 +3238,30 @@ func itemRoutingData(ctx context.Context, repo *data.CatalogRepo, posRepo *data.
 		}
 	}
 	return checks, strings.Join(categoryNames, ", "), len(itemRoutes) > 0
+}
+
+// missingMask reads the catalog page's ?missing= gap mask (data.GapBarcode…);
+// anything outside 1..GapAll is "no filter".
+func missingMask(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 1 || n > data.GapAll {
+		return 0
+	}
+	return n
+}
+
+// missingFilterKey is the banner's locale key for a mask: one key per
+// single gap, one shared key for a combination.
+func missingFilterKey(mask int) string {
+	switch mask {
+	case data.GapBarcode:
+		return "catalog.missing.barcode"
+	case data.GapImage:
+		return "catalog.missing.image"
+	case data.GapPrice:
+		return "catalog.missing.price"
+	case data.GapCategory:
+		return "catalog.missing.category"
+	}
+	return "catalog.missing.several"
 }
