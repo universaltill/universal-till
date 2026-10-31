@@ -15,6 +15,8 @@
 Your language, your shop. Anyone can help translate the till in a browser, with no code and no Git:
 **[translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/)** — sign in, pick a language, fix or add wording. Native speakers are very welcome, especially for French, Chinese, Malay, Spanish, Portuguese, Turkish, Arabic and Persian. Suggestions are reviewed before they reach tills.
 
+<a href="https://translate.universaltill.com/engage/universal-till/"><img src="https://translate.universaltill.com/widget/universal-till/svg-badge.svg" alt="Translation status"></a>
+
 Pick your language and help finish it:
 
 | Language | Status |

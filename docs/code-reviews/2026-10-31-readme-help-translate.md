@@ -34,3 +34,7 @@ The single German badge became a table with a status badge per language
 Weblate engage page. All 18 badge and engage URLs were checked (200 after
 redirect). Note: a language listed here is a Weblate language, not yet a
 published bundle (only German is published today).
+
+## Addendum: all-languages widget
+Owner asked for the overall (all languages) badge too, as the headline of the
+section above the per-language table. Same URL as the badge at the top of the README.
