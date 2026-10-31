@@ -43,12 +43,12 @@ Your language is not listed? Say so on the [translation page](https://translate.
 
 - ✅ **100% Free Core** - No monthly fees, ever
 - ✅ **Offline-First** - Works without internet, syncs when available
-- ✅ **Run Anywhere** - Raspberry Pi, Android tablets, old hardware, or dedicated POS terminals
+- ✅ **Run Anywhere** - Raspberry Pi, Android tablets, iPhone and iPad (in testing), old hardware, or dedicated POS terminals
 - ✅ **Plugin Ecosystem** - Extend functionality with free or paid plugins
 - ✅ **No Lock-In** - Export your data anytime, switch systems freely
 - ✅ **Open Source** - MIT licensed, fork and modify as you wish
 - ✅ **Fast & Lightweight** - Written in Go for blazing performance on cheap hardware
-- ✅ **Multi-Platform** - Phone app, web interface, or dedicated terminal
+- ✅ **Multi-Platform** - Android and iOS phone/tablet apps (iOS in internal testing), web interface, or dedicated terminal
 
 ---
 
@@ -120,18 +120,18 @@ Owners manage the shop from any browser at
 - Any standard keyboard/mouse/touchscreen
 
 ### Optional Cloud Services
-*(paid plans — see [Pricing](#-pricing); the core till never needs them)*
-- Multi-till synchronization
-- Encrypted off-site backup and restore, hosted in the EU
-- Managed fiscal device where a market requires one (e.g. German TSE)
-- Remote support sessions — a technician sees your screen, with your
+*(paid plans — see [Pricing](#-pricing) for which plan each starts from; the core till never needs them. Tills in one shop sync over the shop's own network on every plan.)*
+- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up)
+- Manage from a browser (my.) and a cloud-held catalogue every till follows (basic on Local Plus, full from Shop)
+- Mobile tills syncing over the internet (Pro and up)
+- Managed fiscal device where a market requires one (e.g. German TSE; Shop and up)
+- Remote support sessions (Shop and up) — a technician sees your screen, with your
   permission, and fixes it with you
 - Diagnostic mode — with a one-time code from support, the till streams
   structured technical events (never receipts, prices, names or notes)
   until you turn it off in Settings; a rail indicator stays visible the
   whole time
-- Advanced analytics and accountant exports
-- Multi-location management
+- Multi-location management and consolidated reporting (Multi-location plan)
 
 ### Plugin Marketplace
 Available now: Stripe / QR Pay / demo card payments, themes, a "No Sale" register-drawer plugin, an AI
@@ -660,6 +660,7 @@ We'll even link to notable forks in this README! 🎉
 - **macOS** (Intel, Apple Silicon) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
 - **Android** (tablets, POS terminals) ✅
+- **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 
 ### Tested Hardware
@@ -733,7 +734,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### In progress / partially built
 - [ ] **ERP integration plugins** — the webhook connector (above) is a working *template*; real per-system connectors (`core-universaltill`/Universal Core, SAP, Dynamics/LS Central) aren't built yet (ADR-0014)
 - [ ] **Payment orchestration / least-cost routing** — target markets decided (UK, UAE, Qatar, +), but which providers to route between and build-vs-buy for the multi-acquirer connections are still open (ADR-0016)
-- [ ] **iOS app** — the iPhone/iPad shell builds and starts the till on simulators in CI (`ios/`, [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046)); signing/TestFlight and a real-device check are still to do (ADR-0023)
+- [ ] **iOS app** — the iPhone/iPad shell builds and starts the till on simulators in CI (`ios/`, [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046)); it is signed and distributed to internal testers through TestFlight; the App Store release and the Android-parity bridges are still to do (ADR-0023)
 - [ ] **Delivery-platform integrations** (Deliveroo, Uber Eats, Just Eat) — the plugin taxonomy already has a `delivery` type and kitchen ticket printing already understands an order-type/table concept, but no actual provider plugin exists yet
 - [ ] Advanced inventory management
 - [ ] Multi-location support
@@ -753,7 +754,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
 - [x] Kitchen display system — HDMI-local slice ([ut-docs#544](https://github.com/universaltill/ut-docs/issues/544)): a kitchen station can be a printer, a display, or both; a display-capable station gets a live per-station order screen at `/kitchen-display/{station_id}` (the `/orders` board scoped by the same item-over-category routing that decides tickets, same one-tap status endpoint, same 15s poll + SSE refresh) meant for a second monitor on the machine already running the till. Still to come: the LAN-paired standalone KDS device (its own pairing/auth/liveness), the cross-till proxy so a replica's screen reads the primary's board, and per-line status (today status is per order, so a split order shows on both screens and clears from both)
-- [ ] Further mobile platform work (iOS signing/TestFlight, device checks and Android-parity bridges — [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046))
+- [ ] Further mobile platform work (iOS App Store release, device checks and Android-parity bridges — [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046))
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing
 
@@ -789,30 +790,35 @@ time (remote support, migration).
 
 ### What's in each plan
 
-Local Plus (£10 / €10 a month) sits between Local and Shop; the matrix below
-shows the other four plans.
+Five plans, one matrix. The full definition, with every feature row, is
+[subscription-plans.md](https://github.com/universaltill/ut-docs/blob/main/reference/subscription-plans.md);
+this is its summary.
 
-| | **Local** | **Shop** | **Pro** | **Multi-location** |
-|---|---|---|---|---|
-| **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
-| **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
-| **Locations** | 1 | 1 | 1 | 3 (+£33 / €33 each, to 10) |
-| Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
-| All free plugins | ✅ | ✅ | ✅ | ✅ |
-| Local backup / restore | ✅ | ✅ | ✅ | ✅ |
-| Encrypted off-site cloud backup | ❌ | ✅ | ✅ | ✅ |
-| Multi-till sync | ❌ | ✅ | ✅ | ✅ |
-| Manage prices & catalog from a browser | ❌ | ✅ | ✅ | ✅ |
-| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) |
-| **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ |
-| Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ |
-| Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ |
-| Cloud archive retention | local only | 2 years | 10 years | 10 years |
-| Proactive health check | ❌ | ❌ | quarterly | quarterly |
-| Migration from your old system | guides | guides | ✅ done for you | ✅ done for you |
-| Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ✅ |
-| **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
-| Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
+| | **Local** | **Local Plus** | **Shop** | **Pro** | **Multi-location** |
+|---|---|---|---|---|---|
+| **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
+| **Locations** | 1 | 1 | 1 | 1 | 3 (+£33 / €33 each, to 10) |
+| Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ | ✅ |
+| All free plugins | ✅ | ✅ | ✅ | ✅ | ✅ |
+| AI assistant (your own key or your own server) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tills in one shop sync over the shop's network | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Local backup / restore | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Encrypted off-site cloud backup | ❌ | ✅ | ✅ | ✅ | ✅ |
+| Manage from a browser (my.) | ❌ | 1 site, basic | ✅ | ✅ | ✅ |
+| Cloud holds your catalogue, every till follows it | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Mobile tills sync with the main till over the internet | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | bring your own | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) |
+| **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cloud archive of receipts and reports | local only | 1 year | 2 years | legal retention: UK 7, Germany 10, elsewhere 10 years | legal retention: UK 7, Germany 10, elsewhere 10 years |
+| Team members on my., besides the owner | owner only | owner only | 2 | 5 | 50 |
+| Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Proactive health check | ❌ | ❌ | ❌ | quarterly | quarterly + annual review |
+| Migration from your old system | guides | guides | guides | ✅ done for you | ✅ done for you |
+| Support | Community, support messages | Community, support messages | + live chat | + phone, business hours | + phone, weekends |
+| **Remote support session** | ❌ | ❌ | next business day | same business day | on demand |
 
 Extra location **£33 / €33 a month** (published up to 10) · **software carries no
 per-till charge, ever** (a mandated device's real per-till cost, where one
@@ -856,7 +862,7 @@ So:
 - On **Shop and up**, the managed TSE costs **€12 a month for each registered
   main till**, as its own line on the invoice, never hidden in the plan price —
   we provision it, monitor it and renew it, and you never see TSE paperwork.
-- On the **free plan**, you bring your own — a dongle you buy, or your own
+- On **Local and Local Plus**, you bring your own — a dongle you buy, or your own
   cloud TSE account. Both are fully supported, first-class paths.
 
 We would rather say this plainly than let "free forever" imply a total cost
@@ -881,8 +887,8 @@ obligations remain yours.*
 > component before a shop can operate an electronic till as its system of
 > record — e.g. Germany's TSE (Technische Sicherheitseinrichtung) under
 > KassenSichV. That component is not Universal Till software, is not
-> included in the free tier, and its cost is unaffected by anything above:
-> bring your own on Free, or the managed one at €12 a month per registered
+> included in the free tier or Local Plus, and its cost is unaffected by anything above:
+> bring your own on Local and Local Plus, or the managed one at €12 a month per registered
 > main till on Shop and up. See
 > [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
 > The till enforces this on a per-market basis: a shop switched to
