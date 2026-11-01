@@ -2577,7 +2577,7 @@
   var current = null;
 
   // showSection: hide every card but the target, mark its nav entry, and
-  // (phone width only, via CSS) swap the visible pane. At tablet+ width the
+  // (below 900px wide, via CSS) swap the visible pane. At 900px and wider the
   // .has-selection class has no effect — both panes are always side by side.
   function showSection(id, opts) {
     opts = opts || {};
@@ -2674,7 +2674,7 @@
     return navItems.length ? navItems[0].id : cards[0].id;
   }
 
-  // Open a category (or Advanced) on its list: at phone width a section
+  // Open a category (or Advanced) on its list: at narrow width (under 900px) a section
   // left open earlier (has-selection) must not carry over (review of
   // ut-docs#3090). After a tile tap, focus moves to the category's title so
   // keyboard and screen-reader users land where the content now is.
@@ -2732,7 +2732,7 @@
     }
     if (hasCategories) setMode(catForSection(r.id));
     var id = r.id || cards[0].id;
-    // Phone width, list-first (CSS keys off .has-selection below 40rem): with
+    // Narrow width (phone or portrait tablet), list-first (CSS keys off .has-selection below 56.25rem / 900px): with
     // no real deep link, arrive on the section list and wait for a tap. With
     // a hash the operator explicitly navigated somewhere — show it directly.
     showSection(id, { select: r.hadHash || fromEvent, focusPanel: !!fromEvent });
@@ -2798,7 +2798,7 @@
 
   if (back) {
     back.addEventListener('click', function () {
-      // Phone-width list-first return; a no-op at tablet+ width where the
+      // Narrow-width list-first return; a no-op at 900px and wider where the
       // CSS ignores .has-selection.
       shell.classList.remove('has-selection');
       if (search) search.focus();
