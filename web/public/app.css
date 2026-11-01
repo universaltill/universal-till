@@ -2063,7 +2063,9 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    field and nothing else. Capped at 887px: from 888px the tender column
    (>=310px) holds the one-line action row, and three rows there would add
    height, so 888-900px keeps the old two rows and widens the column
-   instead (ut-docs#5227, block below).
+   instead (ut-docs#5227, block below) - except with a visible identify
+   button, which gets these three rows too (ut-docs#5235; the 888-900px
+   block copies these rules: keep the two in sync).
    ut-docs#5227: Pay is not forced onto a line of its own (it was
    flex: 1 0 100%). At UI scale >= 1 its 7rem basis never fits beside the
    3-5 icons of row 2,
@@ -2092,12 +2094,25 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    here it takes that floor too and its ~72px go to the products/tender
    column: the field is 127-139px with the OSK toggle, and the tender keeps
    its two rows (126.92px at 900x414). With a plugin identify button as well
-   it is 73-85px, still short of the ~88px placeholder; a third row would fix
-   that at the cost of height (ut-docs#5235). No divider track exists in
-   this tier, so a saved --basket-col-width is ignored here, as it already
-   is wherever the basket sits at its floor. */
+   it is 73-85px, still short of the ~88px placeholder, so then (ut-docs#5235)
+   the tender switches to the three-row layout of the 768-887px block above:
+   the field is 234px at 888x414 and 246px at 900x414, the tender 180.47px
+   (126.92px with two rows, no identify) and the products panel 176px, the
+   first tile row 104 of 141px visible, as at 768-887px. The tender rules
+   below copy the 768-887px block: keep the two in sync. No divider track
+   exists in this tier, so a saved --basket-col-width is ignored here, as it
+   already is wherever the basket sits at its floor. */
 @media (min-width: 888px) and (max-width: 900px) and (max-height: 540px) {
   .pos-container { grid-template-columns: var(--pos-basket-min-w) minmax(var(--pos-products-min-w), 1fr); }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) { flex-flow: row wrap; align-content: start; column-gap: .4rem; row-gap: .425rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row,
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .tender-default-footer { display: contents; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row input[name="code"] { flex: 1 1 calc(100% - 3.4rem - 2.75rem - .8rem); }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row input[name="qty"] { flex: 0 0 3.4rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row button[type="submit"] { flex: 0 0 2.75rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row .tender-icon-btn:not([type="submit"]),
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .tender-default-footer > .tender-icon-btn { flex: 1 1 0; min-inline-size: 2.59rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .tender-default-footer > .payment-trigger { flex: 999 1 7rem; order: 1; }
 }
 @media (min-width: 481px) and (max-width: 767px) and (max-height: 700px) {
   .pos-container { grid-template-rows: max-content max-content max-content; overflow-y: auto; }
