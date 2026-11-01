@@ -273,6 +273,67 @@ test.describe('landscape phone sale screen (ut-docs#2918)', () => {
     });
   }
 
+  // 888-900px x <=540px with identify, the OSK toggle and the camera as well:
+  // the field was 73-85px on the two-row layout, short of its placeholder.
+  // The tender takes the three-row layout of 768-887px instead (ut-docs#5235).
+  for (const vp of [{ width: 888, height: 414 }, { width: 900, height: 414 }, { width: 900, height: 540 }]) {
+    test(`${vp.width}x${vp.height}: with identify, OSK and camera the tender takes three rows; field fits, a tile row and Pay unscrolled (ut-docs#5235)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await addItems(page);
+      await showIcons(page, true);
+      const g = await iconBoxes(page);
+      expect(g.icons.length, '+, OSK, camera, identify, Hold, New sale, Open orders').toBe(7);
+      for (const b of g.icons) {
+        expect(b.w, 'icon width >= 44px').toBeGreaterThanOrEqual(43.9);
+        expect(b.h, 'icon height >= 44px').toBeGreaterThanOrEqual(43.9);
+      }
+      const m = await fieldFit(page);
+      expect(m.width, 'barcode field fits its placeholder').toBeGreaterThanOrEqual(m.need);
+      const rows = new Set([...g.icons.map((b) => b.top), g.pay.top]);
+      expect(rows.size, 'three rows, no fourth').toBe(3);
+      expect(g.pay.clipped, 'Pay label is not ellipsised').toBe(false);
+      expect(await tenderHeight(page), 'tender no taller than the three-row layout').toBeLessThanOrEqual(180.5);
+      const pay = await wholeAndHit(payButton(page));
+      expect(pay.inView && pay.hit, 'Pay whole and hit-testable').toBe(true);
+      const tile = await wholeAndHit(page.locator('.pos-container > .products :is(.category-tile, .tile, .btn-tile)').first());
+      expect(tile.inView && tile.hit, 'a tile row still shows unscrolled').toBe(true);
+      // The products panel clips the tile, so the viewport check alone would
+      // pass with a far shorter panel. At least half the first tile shows
+      // inside the panel (104 of 141px at 414px tall, as at 768-887px).
+      const shown = await page.evaluate(() => {
+        const t = document.querySelector('.pos-container > .products :is(.category-tile, .tile, .btn-tile)')!.getBoundingClientRect();
+        const p = document.querySelector('.pos-container > .products')!.getBoundingClientRect();
+        return (Math.min(t.bottom, p.bottom) - Math.max(t.top, p.top)) / t.height;
+      });
+      expect(shown, 'at least half the first tile shows inside the products panel').toBeGreaterThanOrEqual(0.5);
+      const totals = await wholeAndHit(page.locator('.basket .totals'));
+      expect(totals.inView && totals.hit, 'totals whole in the narrower basket').toBe(true);
+      const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+      expect(overflowX, 'no horizontal page overflow').toBeLessThanOrEqual(0);
+      assertClean();
+    });
+  }
+
+  // ut-docs#5235 negative control: a till whose identify button is still
+  // hidden (before app.js unhides it, or when its bind fails) keeps the
+  // two-row layout at 888-900px; only a visible one switches to three rows.
+  test('900x414: a hidden identify button keeps the two-row tender (ut-docs#5235)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 900, height: 414 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await addItems(page);
+    await showIcons(page, true);
+    await page.evaluate(() => { (document.querySelector('#plugin-identify-open') as HTMLElement).hidden = true; });
+    expect(await tenderHeight(page), 'tender keeps its two rows').toBeLessThanOrEqual(127.5);
+    const g = await iconBoxes(page);
+    expect(g.pay.top, 'Pay shares the action row').toBe(g.hold.top);
+    assertClean();
+  });
+
   // 768-887px x <=540px with identify, the OSK toggle and the camera: six
   // icons on row 2 (298px against 251px) wrapped one to a fourth row. The
   // sixth now joins Pay's row; the tender keeps three rows (180.47px).
