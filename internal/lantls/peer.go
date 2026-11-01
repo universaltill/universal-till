@@ -137,9 +137,57 @@ var (
 	bearerRotateLast  atomic.Int64
 )
 
+// bearerRotateRuns counts rotation goroutines started and not yet finished,
+// so restoring the hook can wait for them (ut-docs#5236). A queued forced
+// run is counted before the run that queued it finishes, so the count never
+// touches zero between the two.
+var (
+	bearerRotateRunsMu   sync.Mutex
+	bearerRotateRunsIdle = sync.NewCond(&bearerRotateRunsMu)
+	bearerRotateRuns     int
+)
+
+// bearerRotateRunStart re-reads the hook and counts a run of it under the
+// lock waitBearerRotateIdle holds, so a restore (which swaps the hook before
+// waiting) either waits for this run or makes it see the restored hook.
+// nil: no hook, nothing counted.
+func bearerRotateRunStart() *BearerRotate {
+	bearerRotateRunsMu.Lock()
+	defer bearerRotateRunsMu.Unlock()
+	hook := bearerRotate.Load()
+	if hook != nil {
+		bearerRotateRuns++
+	}
+	return hook
+}
+
+func bearerRotateRunDone() {
+	bearerRotateRunsMu.Lock()
+	bearerRotateRuns--
+	if bearerRotateRuns == 0 {
+		bearerRotateRunsIdle.Broadcast()
+	}
+	bearerRotateRunsMu.Unlock()
+}
+
+// waitBearerRotateIdle blocks until no rotation goroutine is running. Each
+// run is bounded by bearerRotateTimeout.
+func waitBearerRotateIdle() {
+	bearerRotateRunsMu.Lock()
+	for bearerRotateRuns > 0 {
+		bearerRotateRunsIdle.Wait()
+	}
+	bearerRotateRunsMu.Unlock()
+}
+
 // SetBearerRotate installs the process-wide rotation hook; nil means a
 // rotation request from the main till is ignored. It returns a func that
-// restores the previous hook.
+// restores the previous hook and then waits for any rotation already running
+// to finish, so the hook never writes (the bearer file, the settings
+// database) after its owner has torn those down (ut-docs#5236). That wait
+// is bounded by bearerRotateTimeout, so shutdown can take up to that much
+// longer while the main till is unreachable. Never call restore from inside
+// the hook: its own run is counted, so it would wait on itself.
 func SetBearerRotate(fn BearerRotate) (restore func()) {
 	var p *BearerRotate
 	if fn != nil {
@@ -147,7 +195,10 @@ func SetBearerRotate(fn BearerRotate) (restore func()) {
 	}
 	prev := bearerRotate.Swap(p)
 	bearerRotateLast.Store(0)
-	return func() { bearerRotate.Store(prev) }
+	return func() {
+		bearerRotate.Store(prev)
+		waitBearerRotateIdle()
+	}
 }
 
 // fireBearerRotate runs the hook in the background: off the request that
@@ -162,6 +213,7 @@ func fireBearerRotate() { fireBearerRotateOpt(false) }
 // bearer just adopted is the older one a restored main till knows, and it
 // should be swapped for a fresh one at once (ut-docs#5203).
 func fireBearerRotateOpt(force bool) {
+	// Fast path only: the hook that runs is re-read in bearerRotateRunStart.
 	hook := bearerRotate.Load()
 	if hook == nil {
 		return
@@ -181,7 +233,12 @@ func fireBearerRotateOpt(force bool) {
 		return
 	}
 	bearerRotateLast.Store(now)
+	if hook = bearerRotateRunStart(); hook == nil {
+		bearerRotateBusy.Store(false)
+		return
+	}
 	go func() {
+		defer bearerRotateRunDone()
 		defer logging.RecoverAndLog("lantls.bearer_rotate")
 		func() {
 			defer bearerRotateBusy.Store(false)
