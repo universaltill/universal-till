@@ -14,7 +14,7 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 
 ## How to use it
 
-1. Manage accounts under Users; managers can access settings and reports, cashiers can sell.
+1. Manage accounts under Users; managers can access settings and reports, cashiers can sell. You also reach Users (where PINs are set) and Permissions from Settings → Staff & security, each shown only to someone allowed to open that page.
 2. Each person signs in with their PIN on the till.
 3. Open and close shifts to track drawer counts per person.
 4. The first-boot setup wizard's shop name step needs a real name: you can't continue with it empty, and a default like "My Store" is refused, because the name is printed on every receipt and names your shop online. The same step also asks what to call this till, and that is required too: there is no default name, so type one (for example "Front counter") before you can continue — helpful once you have more than one till, and changeable later from Settings.

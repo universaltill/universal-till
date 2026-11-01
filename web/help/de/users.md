@@ -14,7 +14,7 @@ Getrennte Kassierer- und Managerkonten mit PIN-Anmeldung sowie Schichtverfolgung
 
 ## Verwendung
 
-1. Verwalten Sie Konten unter Benutzer; Manager können auf Einstellungen und Berichte zugreifen, Kassierer können verkaufen.
+1. Verwalten Sie Konten unter Benutzer; Manager können auf Einstellungen und Berichte zugreifen, Kassierer können verkaufen. Benutzer (dort werden PINs vergeben) und Berechtigungen erreichen Sie auch über Einstellungen → Personal & Sicherheit; jeder Link erscheint nur für Personen, die die jeweilige Seite öffnen dürfen.
 2. Jede Person meldet sich mit ihrer eigenen PIN an der Kasse an.
 3. Eröffnen und schließen Sie Schichten, um Schubladenzählungen pro Person zu verfolgen.
 4. Der Schritt „Geschäftsname“ des Erstinbetriebnahme-Assistenten braucht einen echten Namen: Leer geht es nicht weiter, und ein Standardname wie „My Store“ wird abgelehnt, denn der Name steht auf jedem Beleg und benennt Ihr Geschäft online. Derselbe Schritt fragt auch, wie diese Kasse heißen soll, und auch das ist Pflicht: Es gibt keinen Standardnamen, geben Sie also einen ein (zum Beispiel „Vordere Theke“), bevor es weitergeht — hilfreich, sobald Sie mehr als eine Kasse haben, und später in den Einstellungen änderbar.
