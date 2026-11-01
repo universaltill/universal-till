@@ -2,6 +2,7 @@ package lantls
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,9 +24,22 @@ func installRotateHook(t *testing.T) *rotateHook {
 		h.calls <- struct{}{}
 		<-h.release
 	}))
+	// Registered after SetBearerRotate, so it runs first: the restore waits
+	// for a running hook (ut-docs#5236), so a test that never released a
+	// parked call must not leave it parked.
+	t.Cleanup(h.releaseAll)
 	prev := bearerRotateRetryEvery
 	t.Cleanup(func() { bearerRotateRetryEvery = prev })
 	return h
+}
+
+// releaseAll lets every parked and future call through; idempotent.
+func (h *rotateHook) releaseAll() {
+	select {
+	case <-h.release:
+	default:
+		close(h.release)
+	}
 }
 
 func (h *rotateHook) waitCall(t *testing.T) {
@@ -82,7 +96,7 @@ func TestPeerTransport_RotateHeaderFiresHookAsyncOnce(t *testing.T) {
 			h.expectNoCall(t, "a rotation is already in flight")
 
 			// Once it finishes, the retry interval still holds the next one off.
-			close(h.release)
+			h.releaseAll()
 			time.Sleep(50 * time.Millisecond)
 			if _, err := peerGet(t, main.base+"/c"); err != nil {
 				t.Fatal(err)
@@ -122,4 +136,59 @@ func TestPeerTransport_RotateHeaderIgnoredForOtherHostsAndTheRotatePath(t *testi
 		t.Fatal(err)
 	}
 	h.expectNoCall(t, "the answer carried no header")
+}
+
+// Restoring the hook waits for a rotation already running, so whoever
+// restores it (a test's cleanup, app shutdown before the database closes)
+// never has the hook write after it returns (ut-docs#5236).
+func TestSetBearerRotate_RestoreWaitsForRunningHook(t *testing.T) {
+	prevEvery := bearerRotateRetryEvery
+	t.Cleanup(func() { bearerRotateRetryEvery = prevEvery })
+	bearerRotateRetryEvery = time.Hour
+
+	calls := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var finished atomic.Int32
+	restore := SetBearerRotate(func(context.Context) {
+		calls <- struct{}{}
+		<-release
+		finished.Add(1)
+	})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	fireBearerRotateOpt(false)
+	select {
+	case <-calls:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the rotation hook was not called")
+	}
+	fireBearerRotateOpt(true) // queued: runs once more when the first is done
+
+	restored := make(chan struct{})
+	go func() { restore(); close(restored) }()
+	select {
+	case <-restored:
+		t.Fatal("restore returned while the hook was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-restored:
+	case <-time.After(3 * time.Second):
+		t.Fatal("restore did not return after the hook finished")
+	}
+	// The queued forced run started from the restored (nil) hook, so it
+	// never called the old one; nothing is left running.
+	if got := finished.Load(); got != 1 {
+		t.Fatalf("hook finished %d times by the time restore returned, want 1", got)
+	}
+	if bearerRotateBusy.Load() {
+		t.Fatal("a rotation is still marked busy after restore returned")
+	}
 }

@@ -132,7 +132,7 @@ func TestBearerFallback_AdoptRequestsImmediateRotation(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	rot.waitCall(t)
-	close(rot.release)
+	rot.releaseAll()
 }
 
 func TestBearerFallback_RetryAlso401NoAdopt(t *testing.T) {
@@ -283,7 +283,7 @@ func TestFireBearerRotate_ForcedWhileBusyRunsAgainOnce(t *testing.T) {
 	fireBearerRotateOpt(true)
 	fireBearerRotateOpt(true) // two forced requests while busy fold into one extra run
 	fireBearerRotateOpt(false)
-	close(rot.release)
+	rot.releaseAll()
 	rot.waitCall(t)
 	rot.expectNoCall(t, "only one extra run per busy period")
 	waitUntil(t, func() bool { return !bearerRotateBusy.Load() })
