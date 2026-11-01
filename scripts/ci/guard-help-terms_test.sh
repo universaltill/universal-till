@@ -54,6 +54,26 @@ if [ "${RC}" -eq 0 ]; then pass "match in a non-listed locale passes"; else
   fail "non-listed locale: rc=${RC} out=${OUT}"
 fi
 
+# A broken regex or an unknown locale must fail, never check nothing.
+TERMS="scripts/ci/help-terms.txt"
+cp "${TERMS}" "${TERMS}.orig"
+printf 'de|führungskr(aft|Manager\n' >>"${TERMS}"
+run
+if [ "${RC}" -ne 0 ] && has "${OUT}" "grep rejected the regex"; then
+  pass "bad regex fails"
+else
+  fail "bad regex: rc=${RC} out=${OUT}"
+fi
+cp "${TERMS}.orig" "${TERMS}"
+printf 'DE|führungskraft|Manager\n' >>"${TERMS}"
+run
+if [ "${RC}" -ne 0 ] && has "${OUT}" "no help folder web/help/DE"; then
+  pass "unknown locale fails"
+else
+  fail "unknown locale: rc=${RC} out=${OUT}"
+fi
+cp "${TERMS}.orig" "${TERMS}"
+
 if [ "${fails}" -ne 0 ]; then
   echo "${fails} check(s) failed" >&2
   exit 1
