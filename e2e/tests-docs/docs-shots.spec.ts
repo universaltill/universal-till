@@ -180,7 +180,8 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // rather than the seeded till itself, so leaving them unmasked would make
   // otherwise-identical captures differ between machines/runs.
   //  - .sb-update: the update-available chip, only appears when the
-  //    background update check actually reaches the marketplace.
+  //    background update check actually reaches the marketplace (run-till.sh
+  //    now sets UT_UPDATE_CHECK=0, ut-docs#5237; the mask stays as a backstop).
   //  - .sb-conn: online/offline, driven client-side by navigator.onLine —
   //    genuinely differs on a network-isolated capture box.
   // maskColor = the statusbar's own background (web/public app.css
