@@ -43,6 +43,7 @@ already running could still write after that point.
 | 1 | minor | Shutdown can be delayed by up to `bearerRotateTimeout` (20 s) if a rotation is in flight to an unreachable main till | Accepted: the bounded wait is what keeps the write off a closed database. Documented in the `SetBearerRotate` comment and in ut-docs `architecture/lan-sync.md`. |
 | 2 | nit | Calling restore from inside the hook would self-deadlock | Fixed: doc warning added. No caller does this. |
 | 3 | nit | The first `bearerRotate.Load()` in `fireBearerRotateOpt` is now only a fast path | Fixed: comment added. |
+| 4 | blocker (CI) | `logging.TestNoUnrecoveredGoroutines` failed on the PR: the goroutine's first statement was `defer bearerRotateRunDone()`, not `defer logging.RecoverAndLog(...)` | Fixed: recover deferred first, run-done second (it runs first on unwind, so a panic still decrements the count). Test reproduced red on the old head, green after. |
 
 The reviewer checked the following:
 - no run can start after restore returns;

@@ -238,8 +238,9 @@ func fireBearerRotateOpt(force bool) {
 		return
 	}
 	go func() {
-		defer bearerRotateRunDone()
 		defer logging.RecoverAndLog("lantls.bearer_rotate")
+		// Deferred after the recover, so it runs first, panic or not.
+		defer bearerRotateRunDone()
 		func() {
 			defer bearerRotateBusy.Store(false)
 			ctx, cancel := context.WithTimeout(context.Background(), bearerRotateTimeout)
