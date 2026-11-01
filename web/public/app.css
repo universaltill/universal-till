@@ -5894,7 +5894,7 @@ body.login-screen {
    isn't a smoothly animatable shorthand, so it disappears outright). */
 .settings-hit-target { outline: 3px solid var(--accent); outline-offset: 3px;
                        border-radius: .3rem; }
-/* Below 56.25rem (900px; a media-query rem is 16px whatever the UI scale), so
+/* At 56.25rem (900px) or narrower (a media-query rem is 16px whatever the UI scale), so
    phones AND a 10" tablet in portrait (ut-docs#4628: beside the nav the panel
    was ~355px and the fee rows scrolled sideways): list-first. Without a
    selection only the section list shows; a tap (or a real deep link, which

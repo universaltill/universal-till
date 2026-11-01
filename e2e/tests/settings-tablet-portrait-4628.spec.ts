@@ -10,7 +10,10 @@ import { watchConsole } from './helpers';
 // the panes stay side by side.
 //
 // German is a language-pack plugin: without UT_TEST_I18N_OVERLAY_DIR, ?lang=de
-// renders English (see portrait-no-clip-sweep-3060.spec.ts). fa is core.
+// renders English (see portrait-no-clip-sweep-3060.spec.ts), so the de cases
+// prove real German layout only where the overlay is set; fa (RTL) is core and
+// always real. The 600x960 cases already passed before #4628 (old 40rem
+// breakpoint) and guard against regressions; 800x1280 is the one that failed.
 
 const VIEWPORTS = [
   { width: 800, height: 1280 },
