@@ -18,7 +18,7 @@ Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen),
 
 ## Eine Sicherung wiederherstellen
 
-Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung ersetzt — bestätigen Sie mit der PIN einer Führungskraft, da dies über die Einstellungsseite selbst nicht rückgängig gemacht werden kann (die ersetzten Daten werden als eigene Sicherung aufbewahrt, falls Sie sie wiederhaben möchten). Klicken Sie nach der Wiederherstellung auf **Jetzt neu starten**, und die Kasse startet sich selbst neu — kein Griff zu Tastatur oder Steckdose nötig. Unter Windows kann sich die Kasse noch nicht selbst neu starten — schließen Sie stattdessen das Fenster und öffnen Sie Universal Till erneut.
+Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung ersetzt — bestätigen Sie mit der Manager-PIN, da dies über die Einstellungsseite selbst nicht rückgängig gemacht werden kann (die ersetzten Daten werden als eigene Sicherung aufbewahrt, falls Sie sie wiederhaben möchten). Klicken Sie nach der Wiederherstellung auf **Jetzt neu starten**, und die Kasse startet sich selbst neu — kein Griff zu Tastatur oder Steckdose nötig. Unter Windows kann sich die Kasse noch nicht selbst neu starten — schließen Sie stattdessen das Fenster und öffnen Sie Universal Till erneut.
 
 Eine Wiederherstellung behält die eigene Verbindung dieser Kasse mit dem Cloud-Konto Ihres Geschäfts, auch wenn die Sicherung auf einer anderen Kasse erstellt wurde. Ist die Datei keine Sicherung, die diese Kasse verwenden kann, behält sie Ihre aktuellen Daten, und unter Einstellungen → Backups steht, dass die Wiederherstellung nicht angewendet wurde.
 
@@ -28,7 +28,7 @@ Nutzen Sie dies auf einer neuen Kasse oder auf einer, die eine defekte Kasse ers
 
 1. Einstellungen → Backups → **Aus Datei wiederherstellen**: Wählen Sie die Datei (sie heißt `unitill-pos-….db`) und tippen Sie auf **Datei prüfen**.
 2. Die Kasse prüft, ob die Datei eine Universal-Till-Sicherung dieses Geschäfts ist, erstellt mit dieser oder einer älteren Version, und zeigt den Namen des Geschäfts, wie viele Verkäufe sie enthält und den neuesten Verkauf. Verkäufe danach sind nicht in der Sicherung.
-3. Tippen Sie auf **Diese Sicherung wiederherstellen** und bestätigen Sie mit der PIN einer Führungskraft. Die Kasse sichert zuerst ihre aktuellen Daten; starten Sie sie dann wie oben beschrieben neu.
+3. Tippen Sie auf **Diese Sicherung wiederherstellen** und bestätigen Sie mit der Manager-PIN. Die Kasse sichert zuerst ihre aktuellen Daten; starten Sie sie dann wie oben beschrieben neu.
 
 Verwenden Sie eine Datei aus dem Ordner `backups` der alten Kasse oder eine mit **In Downloads speichern** gesicherte. Kopieren Sie stattdessen die laufende Datenbankdatei `unitill-pos.db` von der Festplatte einer defekten Kasse, kopieren Sie die Dateien `unitill-pos.db-wal` und `unitill-pos.db-shm` daneben mit, sonst fehlen die letzten Verkäufe.
 
@@ -38,7 +38,7 @@ Eine wiederhergestellte Sicherung bringt Produkte, Verkäufe, Belege, Mitarbeite
 
 ## Eine Kasse ersetzen
 
-Nur mit einer Sicherung kommen Verkäufe, Belege, Kunden und die PINs der Mitarbeitenden auf eine neue Kasse zurück: Die Cloud speichert sie in keinem Tarif. Bewahren Sie eine aktuelle Kopie außerhalb der Kasse auf. Führungskräfte sehen in der Statusleiste **Seit 7 Tagen keine Sicherung von dieser Kasse kopiert**, bis eine Sicherung von ihr gespeichert wurde.
+Nur mit einer Sicherung kommen Verkäufe, Belege, Kunden und die PINs der Mitarbeitenden auf eine neue Kasse zurück: Die Cloud speichert sie in keinem Tarif. Bewahren Sie eine aktuelle Kopie außerhalb der Kasse auf. Manager sehen in der Statusleiste **Seit 7 Tagen keine Sicherung von dieser Kasse kopiert**, bis eine Sicherung von ihr gespeichert wurde.
 
 Wo die Kasse ihre Sicherungen ablegt (die neuesten 14):
 
@@ -64,7 +64,7 @@ Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der S
 - Heruntergeladene Updates: nach 7 Tagen gelöscht.
 - Hochgeladene Dateien, die liegen geblieben sind, weil die Kasse mitten in einem Upload oder Import ausgeschaltet wurde oder abgestürzt ist: nach 24 Stunden gelöscht.
 
-Wird der Speicher fast voll — weniger als 500 MB frei oder weniger als ein Zehntel des Speichers (höchstens 5 GB), je nachdem, was größer ist —, räumt die Kasse sofort auf, statt bis zum nächsten Tag zu warten, und behält nur das Nötigste: die neuesten 3 Datensicherungen, die neueste beim Wiederherstellen beiseitegelegte Kopie sowie Problemberichte und heruntergeladene Updates vom letzten Tag. Führungskräfte sehen dann in der Statusleiste **Speicher fast voll**, bis wieder Platz ist. Der Verkauf läuft weiter; um mehr Platz zu schaffen, löschen Sie nicht benötigte Dateien vom Gerät oder fragen Sie die Person, die es eingerichtet hat.
+Wird der Speicher fast voll — weniger als 500 MB frei oder weniger als ein Zehntel des Speichers (höchstens 5 GB), je nachdem, was größer ist —, räumt die Kasse sofort auf, statt bis zum nächsten Tag zu warten, und behält nur das Nötigste: die neuesten 3 Datensicherungen, die neueste beim Wiederherstellen beiseitegelegte Kopie sowie Problemberichte und heruntergeladene Updates vom letzten Tag. Manager sehen dann in der Statusleiste **Speicher fast voll**, bis wieder Platz ist. Der Verkauf läuft weiter; um mehr Platz zu schaffen, löschen Sie nicht benötigte Dateien vom Gerät oder fragen Sie die Person, die es eingerichtet hat.
 
 Verkäufe, Belege, das Prüfprotokoll, Z-Berichte und alle anderen Aufzeichnungen, die Sie gesetzlich aufbewahren müssen, werden dabei nie gelöscht. Jede Kasse räumt nur ihren eigenen Speicher auf.
 

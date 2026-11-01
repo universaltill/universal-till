@@ -314,6 +314,10 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: bash scripts/ci/guard-help-breadcrumbs_test.sh
+      - name: Help-topic terminology guard
+        run: bash scripts/ci/guard-help-terms.sh
+      - name: Help-topic terminology guard regression test
+        run: bash scripts/ci/guard-help-terms_test.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Linux desktop webkit2gtk version guard regression test
