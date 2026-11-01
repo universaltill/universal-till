@@ -1067,6 +1067,40 @@ document.addEventListener('htmx:oobAfterSwap', function (evt) {
   t.scrollIntoView({ block: 'nearest' });
 });
 
+// ut-docs#4379: a chat question re-renders the whole chat component into its
+// target (the thinking bubble, then the answer), which drops focus from the
+// question box, so a follow-up meant tapping it again. A question the
+// operator sent marks the target; when the swap that ends the thinking
+// lands (no thinking bubble left), focus goes back to the question box --
+// unless the operator has moved on to another control meanwhile. A first
+// load, or a swap nobody asked a question for, never takes focus.
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  if (!d.elt || !d.target || !d.elt.classList || !d.elt.classList.contains('plugin-chat-ask')) return;
+  d.target.setAttribute('data-ut-chat-refocus', '');
+});
+// A failed question (#3879: HX-Reswap none, the alert scrolled into view)
+// clears the mark and leaves focus alone, so the alert stays on screen;
+// so does any request into the target that never swapped (network drop,
+// plain-text 5xx) -- afterRequest fires after afterSwap in htmx 1.9.
+function chatRefocusFailed(evt) {
+  var d = evt.detail || {};
+  if (d.target && d.target.removeAttribute && !d.successful) d.target.removeAttribute('data-ut-chat-refocus');
+}
+document.addEventListener('htmx:afterRequest', chatRefocusFailed);
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var d = evt.detail || {};
+  var t = d.target;
+  if (!t || !t.hasAttribute || !t.hasAttribute('data-ut-chat-refocus')) return;
+  if (d.xhr && d.xhr.status >= 400) { t.removeAttribute('data-ut-chat-refocus'); return; }
+  if (t.querySelector('.plugin-chat-thinking')) return; // still thinking: keep the mark
+  t.removeAttribute('data-ut-chat-refocus');
+  var a = document.activeElement;
+  if (a && a !== document.body && !t.contains(a)) return; // operator moved on
+  var q = t.querySelector('.plugin-chat-ask input[name="question"]');
+  if (q) q.focus({ preventScroll: true });
+});
+
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
 // on a full-page response — an in-panel swap (/items, /admin,
 // /help/{topic}) never touches document.title at all, so the browser tab
