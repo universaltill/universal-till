@@ -28,6 +28,10 @@ export UT_UPDATE_RELEASES_URL="http://127.0.0.1:${FAKE_PORT}/latest"
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
 # ut-docs#3814: no LAN discovery (mDNS) from a throwaway till. Overridable.
 : "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
+# ut-docs#5237: unlike the other launchers this till needs checks ON (against
+# the loopback fake UT_UPDATE_RELEASES_URL above) — forced, so a developer's
+# exported UT_UPDATE_CHECK=0 can't silently empty its "update available" state.
+export UT_UPDATE_CHECK=1
 
 cd "$ROOT"
 TAG="$(find web/release-notes/en -name 'v*.md' -exec basename {} .md \; | sort -V | tail -n 1)"

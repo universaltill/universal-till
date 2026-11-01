@@ -437,6 +437,10 @@ printers. The e2e and docs-shots harness sets it to `0` so throwaway tills
 neither show up on a real till's LAN nor display one in manual screenshots
 (ut-docs#3814).
 
+The same harness also sets `UT_UPDATE_CHECK=0` (except the incoming-release-notes
+till, which polls a local fake releases API), so a new GitHub release never shows
+"Update now" mid-run or in screenshots (ut-docs#5237).
+
 ### Who can open the till UI (ADR-0157)
 
 The till listens on every interface (`UT_LISTEN_ADDR`, default `:8080`),

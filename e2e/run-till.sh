@@ -14,6 +14,9 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8091
 # A real till on the developer's LAN otherwise showed up in the "Found a main
 # till on this network" banner of regenerated manual screenshots. Overridable.
 : "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
+# ut-docs#5237: never poll the real GitHub releases from a throwaway till —
+# a new release would show "Update now" and change regenerated screenshots. Overridable.
+: "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
 
 cd "$ROOT"
 # Installs the real FAQ plugin (page entry + content bundles) so faq.spec.ts
