@@ -599,6 +599,26 @@ func (m *SessionBasketManager) SetConfig(cfg Config) {
 	}
 }
 
+// SetItemImage points every live session's lines of itemID at imageURL
+// (Service.SetItemImage) so a photo changed in the item editor mid-order
+// shows on each table guest's cart (ut-docs#4959). Same snapshot-then-call
+// shape as SetConfig: Service.SetItemImage can recompute totals (a plugin
+// ask), so mu is released before any Service call.
+func (m *SessionBasketManager) SetItemImage(itemID, imageURL string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	svcs := make([]*Service, 0, len(m.sessions))
+	for _, sb := range m.sessions {
+		svcs = append(svcs, sb.svc)
+	}
+	m.mu.Unlock()
+	for _, svc := range svcs {
+		svc.SetItemImage(itemID, imageURL)
+	}
+}
+
 // HasItems reports whether any live session's basket holds at least one
 // item — the sessions' twin of the `d.KioskEngine.HasItemsOrByHand()` check
 // (ut-docs#3596) the unattended-update scheduler uses to avoid restarting
