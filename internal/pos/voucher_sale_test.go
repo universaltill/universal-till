@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Voucher liability tests (ut-docs#1008). Unlike this package's older
@@ -23,7 +23,7 @@ import (
 // requirement).
 func setupVoucherDB(t *testing.T) *sql.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "voucher.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "voucher.db"))
 	if err != nil {
 		t.Fatalf("open migrated db: %v", err)
 	}

@@ -3,12 +3,12 @@ package pos
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#1900: a variant the option-set generator created is an ordinary
@@ -21,7 +21,7 @@ import (
 // as a variant barcode scan produces).
 func TestCompleteSale_GeneratedVariantSellsAndMovesStock(t *testing.T) {
 	ctx := context.Background()
-	d, err := db.Open(filepath.Join(t.TempDir(), "optset-sale.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "optset-sale.db"))
 	if err != nil {
 		t.Fatalf("open migrated db: %v", err)
 	}
