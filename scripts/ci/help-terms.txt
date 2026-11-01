@@ -11,3 +11,6 @@
 
 # The till's German UI says "Manager" / "Manager-PIN", never "Führungskraft".
 de|führungskr(aft|äfte)|Manager
+
+# The till's German UI says "Kassierer" (users.role.cashier, shifts.cashier), never "Kassenkraft".
+de|kassenkr(aft|äfte)|Kassierer
