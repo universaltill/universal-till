@@ -136,7 +136,7 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 // The telemetry tick logs failures instead of crashing the scheduler — proven
 // with a real TelemetryClient over a closed DB.
 func TestBackgroundJobsStart_TelemetryFailureIsLoggedNotFatal(t *testing.T) {
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "telemetry.db"))
+	d, err := appdb.Open(testsupport.MigratedDBFile(t, "telemetry.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 	log.SetOutput(logBuf)
 	t.Cleanup(func() { log.SetOutput(oldOut) })
 
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -417,7 +417,7 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 // The daily backup snapshots when no fresh backup exists, then skips while one
 // is newer than 24h — and never duplicates.
 func TestRunDailyBackup_SnapshotsOnceThenSkipsFresh(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
@@ -483,7 +483,7 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 	oldSeam := snapshotWithAssets
 	t.Cleanup(func() { snapshotWithAssets = oldSeam })
 
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
@@ -558,7 +558,7 @@ func TestRunDailyBackup_SnapshotFailureLogged(t *testing.T) {
 	log.SetOutput(logBuf)
 	t.Cleanup(func() { log.SetOutput(oldOut) })
 
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
@@ -586,7 +586,7 @@ func TestRunDailyBackup_FreshNoPhotosReRaisedAfterRestart(t *testing.T) {
 	oldSeam := snapshotWithAssets
 	t.Cleanup(func() { snapshotWithAssets = oldSeam })
 
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	if err := os.MkdirAll(filepath.Join(assetsRoot, "items"), 0o755); err != nil {
 		t.Fatal(err)
@@ -664,7 +664,7 @@ func TestRunDailyBackup_FreshNoPhotosReRaisedAfterRestart(t *testing.T) {
 func TestRunDailyBackup_FreshNoPhotosShopWithoutPhotos(t *testing.T) {
 	logging.ResetRecent()
 	t.Cleanup(logging.ResetRecent)
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
@@ -688,7 +688,7 @@ func TestRunDailyBackup_TotalFailureRaisesThenResolves(t *testing.T) {
 	oldSeam := snapshotWithAssets
 	t.Cleanup(func() { snapshotWithAssets = oldSeam })
 
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
@@ -1232,7 +1232,7 @@ func TestRunHousekeeping_UnknownFreeSpaceChangesNothing(t *testing.T) {
 // ut-docs#5070: a backup file a manager uploaded (another till's data) is
 // not a snapshot of THIS till: it must not stop today's daily backup.
 func TestRunDailyBackup_UploadedFileIsNotAFreshBackup(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "till.db")
+	dbPath := testsupport.MigratedDBFile(t, "till.db")
 	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
