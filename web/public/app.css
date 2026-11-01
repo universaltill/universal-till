@@ -7194,6 +7194,11 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-chat { display: flex; flex-direction: column; gap: .75rem; min-inline-size: 0; }
 .plugin-chat-scroll { display: flex; flex-direction: column-reverse; overflow-y: auto;
   max-block-size: min(60vh, 32rem); overscroll-behavior: contain; }
+/* ut-docs#4379: on a phone a long transcript at 60vh pushed Send below the
+   fold; a shorter cap keeps the question row on screen. */
+@media (max-width: 480px) {
+  .plugin-chat-scroll { max-block-size: min(40vh, 18rem); }
+}
 .plugin-chat-log { display: flex; flex-direction: column; gap: .6rem; padding-block: .25rem; }
 .plugin-chat-turn { max-inline-size: min(85%, 40rem); padding-block: .55rem; padding-inline: .8rem;
   border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg); color: var(--text);
