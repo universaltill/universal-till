@@ -434,7 +434,7 @@ func disableDemoRowButtonsScript(rowClass string) string {
 // never happen for a cashier session with nothing pending. Keeps whatever
 // ORDER settingsnav.Resolve produced (a `layout` plugin's reorder still
 // applies) — this only removes rows, never reorders the survivors.
-func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard bool) []settingsnav.Row {
+func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard, showStaffLinks bool) []settingsnav.Row {
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
 		"subscription":         !isManager,      // ut-docs#2569, ADR-0060 §6
@@ -443,6 +443,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
+		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
 	for _, row := range rows {
@@ -806,9 +807,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// whole point: the heading text must not appear in the body at
 		// all, not merely be visually hidden).
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0
+		// ut-docs#3208: same gates as GET /users and GET /users/permissions.
+		canManageUsers := canPerform(d, r, "user_management")
+		canEditPermissions := canPerform(d, r, lockoutAction)
 		settingsNav := filterSettingsNavForRender(
 			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
+			canManageUsers || canEditPermissions,
 		)
 		// ut-docs#3946: each settings.sections plugin entry is a section of
 		// its own, under a Plugins group, instead of a panel drawn under
@@ -824,9 +829,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":         effectsLevelViewFrom(all),
-			"isManager":      isManager,
-			"canReportIssue": canReportIssue,
+			"fxView":             effectsLevelViewFrom(all),
+			"isManager":          isManager,
+			"canReportIssue":     canReportIssue,
+			"canManageUsers":     canManageUsers,
+			"canEditPermissions": canEditPermissions,
 			// ADR-0148 §5: the registration card says plainly that cloud
 			// sync is off (and offers "Check for a paid plan") while the
 			// cached entitlement doesn't allow the periodic check-in.

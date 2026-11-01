@@ -57,6 +57,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-printer", Label: "Receipt printer", Group: receipts, Cat: "receipts"},
 		{Key: "settings-invoice", Label: "🧾 Invoices", Group: receipts, Cat: "receipts"},
 		{Key: "settings-idle-lock", Label: "Auto-lock", Group: staff, Cat: "staff"},
+		{Key: "settings-staff-links", Label: "Users and permissions", Group: staff, Cat: "staff"},
 		{Key: "registration", Label: "Till registration", Group: devices, Cat: "devices"},
 		{Key: "subscription", Label: "Subscription", Group: devices, Cat: "devices"},
 		{Key: "settings-tills", Label: "🔗 Tills", Group: devices, Cat: "devices"},

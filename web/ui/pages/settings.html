@@ -2160,6 +2160,17 @@
   </form>
   </fieldset>
 </div>
+{{/* ut-docs#3208: Users (PINs) and Permissions live on their own pages; this card links them from Staff & security. Each link follows its page's own gate; the card renders only when at least one does (filterSettingsNavForRender drops the sidebar row the same way). */}}
+{{ if or .canManageUsers .canEditPermissions }}
+<div class="card" id="settings-staff-links">
+  <h2>{{ T "settings.staff_links.title" }} {{ helpLink "users" }}</h2>
+  <p class="muted">{{ T "settings.staff_links.help" }}</p>
+  <div class="set-row set-gap-s">
+    {{ if .canManageUsers }}<a class="btn secondary" href="/users">{{ T "users.title" }}</a>{{ end }}
+    {{ if .canEditPermissions }}<a class="btn secondary" href="/users/permissions">{{ T "permissions.title" }}</a>{{ end }}
+  </div>
+</div>
+{{ end }}
 <div class="card" id="settings-kiosk-idle-reset">
   <h2>{{ T "settings.kiosk_idle_reset.title" }}</h2>
   <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
