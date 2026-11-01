@@ -2803,9 +2803,11 @@ func itemThumbFile(itemID string) string {
 // none) onto the open sale's basket rows, so a photo added, replaced or
 // removed mid-sale shows on the next render instead of only on a fresh sale
 // (ut-docs#4838). Best-effort: the write already succeeded, so a read error
-// logs. The cashier engine only — never the self-order kiosk's.
+// logs. Reaches the cashier engine, the self-order kiosk's basket and every
+// table session's basket (ut-docs#4959: the self-order cart shows the photo
+// too). Only the image is pushed; no basket is read across engines.
 func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogRepo, itemID string) {
-	if d == nil || d.Engine == nil {
+	if d == nil || (d.Engine == nil && d.KioskEngine == nil && d.SelfOrderSessions == nil) {
 		return
 	}
 	path, err := repo.ItemThumbnailFor(ctx, itemID)
@@ -2821,7 +2823,14 @@ func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogR
 		log.Printf("[catalog] refresh basket icon %s: %v", itemID, err)
 		icon = ""
 	}
-	d.Engine.SetItemImage(itemID, ui.ItemThumb(path, icon))
+	img := ui.ItemThumb(path, icon)
+	if d.Engine != nil {
+		d.Engine.SetItemImage(itemID, img)
+	}
+	if d.KioskEngine != nil {
+		d.KioskEngine.SetItemImage(itemID, img)
+	}
+	d.SelfOrderSessions.SetItemImage(itemID, img) // nil-receiver-safe
 }
 
 // ErrItemThumbRow marks a StoreItemPhoto whose file was written but whose
