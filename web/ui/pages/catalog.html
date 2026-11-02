@@ -927,22 +927,23 @@
   // Only for those mutation requests (target is the list itself) — the
   // tab-select/open load targets #item-modifiers-host and never moves focus.
   // The heading is not an input, so no on-screen keyboard appears.
-  var modifiersMutating = false;
+  // Keyed on the mutation's own xhr: the status-bar polls and the tab load
+  // settle on this page too and must neither clear nor trigger it. Only
+  // when focus is really lost — a user who moved on (Close, Save) keeps it.
+  var modifiersMutationXhr = null;
   document.addEventListener('htmx:beforeRequest', function (ev) {
     var t = ev.detail && ev.detail.target;
-    if (t && t.id === 'item-modifiers-list') modifiersMutating = true;
+    if (t && t.id === 'item-modifiers-list') modifiersMutationXhr = ev.detail.xhr || null;
   });
   document.addEventListener('htmx:afterRequest', function (ev) {
-    if (modifiersMutating && ev.detail && !ev.detail.successful) modifiersMutating = false;
+    if (ev.detail && ev.detail.xhr === modifiersMutationXhr && !ev.detail.successful) modifiersMutationXhr = null;
   });
-  document.addEventListener('htmx:afterSettle', function () {
-    if (!modifiersMutating) return;
-    modifiersMutating = false;
-    var panel = document.getElementById('item-form-panel-modifiers');
+  document.addEventListener('htmx:afterSettle', function (ev) {
+    if (!modifiersMutationXhr || !ev.detail || ev.detail.xhr !== modifiersMutationXhr) return;
+    modifiersMutationXhr = null;
     var heading = document.getElementById('item-modifiers-heading');
     var a = document.activeElement;
-    if (!panel || !heading) return;
-    if (!a || a === document.body || !a.isConnected || !panel.contains(a)) heading.focus();
+    if (heading && (!a || a === document.body || !a.isConnected)) heading.focus();
   });
   // ut-docs#1901 UX fix: any field the operator touches after a save
   // invalidates that save's pending auto-close (search "auto-close"

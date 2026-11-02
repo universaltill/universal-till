@@ -149,4 +149,44 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
     if (process.env.UT_2727_SHOT_DIR) await page.screenshot({ path: `${process.env.UT_2727_SHOT_DIR}/2727-after-detach-360.png` });
     assertClean();
   });
+  // Review findings: an unrelated htmx request settling while the detach is
+  // in flight (status-bar polls run on this page) must not swallow the
+  // fallback, and a user who moved focus elsewhere mid-flight keeps it.
+  test('slow detach: an unrelated htmx settle mid-flight does not drop focus; moved focus is kept', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 600 });
+    const { gA, gB } = await setup(page);
+    page.on('dialog', (d) => d.accept());
+    await page.route('**/api/catalog/modifier-group/detach', async (route) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      await route.continue();
+    });
+    await page.locator('#item-form-tab-modifiers').focus();
+    await page.keyboard.press('Enter');
+    for (const g of [gA, gB]) {
+      await page.locator(`${PANEL} input[name="groupId"][value="${g}"]`).check();
+    }
+    await page.locator('#modifier-attach-submit').click();
+    await expect(page.locator(`#modifier-detach-${gB}`)).toBeVisible();
+
+    // 1) Unrelated request settles during the slow detach.
+    await page.locator(`#modifier-detach-${gA}`).focus();
+    await page.keyboard.press('Enter');
+    await page.evaluate(() => {
+      const d = document.createElement('div');
+      d.id = 'probe-2727';
+      d.hidden = true;
+      document.body.appendChild(d);
+      return (window as any).htmx.ajax('GET', '/ui/main-till-status', { target: '#probe-2727', swap: 'innerHTML' });
+    });
+    await expect(page.locator(`#modifier-detach-${gA}`)).toHaveCount(0);
+    await expect.poll(() => activeId(page)).toBe('item-modifiers-heading');
+
+    // 2) Focus moved to Close while the detach is in flight: it stays there.
+    await page.locator(`#modifier-detach-${gB}`).focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#item-form-close-btn').focus();
+    await expect(page.locator(`#modifier-detach-${gB}`)).toHaveCount(0);
+    await page.waitForTimeout(300);
+    expect(await activeId(page)).toBe('item-form-close-btn');
+  });
 });
