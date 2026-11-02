@@ -397,5 +397,10 @@
   "catalog.missing.price": {"description": "Banner on the catalog when it is filtered to items with no price (zero).", "review": "standard"},
   "catalog.missing.category": {"description": "Banner on the catalog when it is filtered to items without a category.", "review": "standard"},
   "catalog.missing.several": {"description": "Banner on the catalog when it is filtered to items missing any of barcode, photo, price or category.", "review": "standard"},
-  "catalog.missing.clear": {"description": "Link in the filter banner that returns to the full catalog list.", "review": "standard"}
+  "catalog.missing.clear": {"description": "Link in the filter banner that returns to the full catalog list.", "review": "standard"},
+  "settings.update.fleet_follow_label": {"description": "Label of the dropdown in Settings → Software update (main till only) that chooses when additional tills install the main till's version.", "review": "standard"},
+  "settings.update.fleet_follow_next_idle": {"description": "Option in the 'When additional tills update' dropdown (the default): an additional till installs the main till's version as soon as it has no open sale.", "review": "standard"},
+  "settings.update.fleet_follow_nightly": {"description": "Option in the 'When additional tills update' dropdown: an additional till installs the main till's version only at the main till's nightly update time.", "review": "standard"},
+  "settings.update.fleet_follow_hint": {"description": "Muted line under the 'When additional tills update' dropdown: additional tills always install this (main) till's version and never run ahead of it.", "review": "standard"},
+  "settings.update.follows_main_nightly": {"description": "Second muted line on an additional till's Settings → Software update, shown only when the shop updates additional tills at the nightly time; follows the line saying this till follows the main till's version. Placeholder: the main till's nightly update time as HH:MM.", "review": "standard", "placeholders": ["the main till's nightly update time, HH:MM, e.g. 03:00"]}
 }

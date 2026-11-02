@@ -424,6 +424,10 @@
   {{ if .autoUpdateFollowsMain }}
   {{/* ut-docs#4031, #4053: followLine says why it doesn't follow, when it doesn't. */}}
   <p class="muted" data-testid="update-follows-main" data-follow-line="{{ .autoUpdateFollowLine }}">{{ if eq .autoUpdateFollowLine "main_off" }}{{ T "settings.update.follows_main_off" }}{{ else if eq .autoUpdateFollowLine "checks_off" }}{{ T "settings.update.follows_main_checks_off" }}{{ else if eq .autoUpdateFollowLine "manual" }}{{ printf (T "settings.update.follows_main_manual") .autoUpdateMainVersion }}{{ else if eq .autoUpdateFollowLine "failed" }}{{ printf (T "settings.update.follows_main_failed") .autoUpdateMainVersion }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
+  {{/* ut-docs#2739: read-only here; the main till sets update.fleet_follow. */}}
+  {{ if and (eq .autoUpdateFleetFollow "nightly") (eq .autoUpdateFollowLine "follows") }}
+  <p class="muted" data-testid="update-follow-policy">{{ printf (T "settings.update.follows_main_nightly") .autoUpdateTime }}</p>
+  {{ end }}
   {{ else }}
   <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-update-schedule" }}{{ template "set-lock-note" }}{{ end }}
@@ -432,6 +436,13 @@
       <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
     </label>
     <input type="time" name="time" value="{{ .autoUpdateTime }}">
+    {{/* ut-docs#2739 (ADR-0114 §5): when additional tills install this till's version. */}}
+    <label class="set-row" for="update-fleet-follow">{{ T "settings.update.fleet_follow_label" }}</label>
+    <select name="fleet_follow" id="update-fleet-follow">
+      <option value="next_idle"{{ if ne .autoUpdateFleetFollow "nightly" }} selected{{ end }}>{{ T "settings.update.fleet_follow_next_idle" }}</option>
+      <option value="nightly"{{ if eq .autoUpdateFleetFollow "nightly" }} selected{{ end }}>{{ T "settings.update.fleet_follow_nightly" }}</option>
+    </select>
+    <p class="muted">{{ T "settings.update.fleet_follow_hint" }}</p>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
   </fieldset>

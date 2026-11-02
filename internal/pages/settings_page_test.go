@@ -3712,3 +3712,90 @@ func TestMainTillHostPort(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2739 (ADR-0114 §5): the main till chooses when additional tills
+// update; next_idle is the default and is what renders until "nightly" is saved.
+func TestSettingsPage_MainTillShowsFleetFollowSelect(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	selectRe := regexp.MustCompile(`(?s)<select name="fleet_follow"[^>]*>(.*?)</select>`)
+	opt := func(inner, value string) string {
+		m := regexp.MustCompile(`<option value="` + value + `"([^>]*)>`).FindStringSubmatch(inner)
+		if m == nil {
+			t.Fatalf("no <option value=%q> in %s", value, inner)
+		}
+		return m[1]
+	}
+
+	body := getSettingsAsManager(t, mux)
+	m := selectRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("main till: no fleet_follow select inside the update form")
+	}
+	if !strings.Contains(opt(m[1], "next_idle"), "selected") || strings.Contains(opt(m[1], "nightly"), "selected") {
+		t.Fatalf("untouched till: next_idle must be the selected option, got %s", m[1])
+	}
+	for _, key := range []string{"settings.update.fleet_follow_label", "settings.update.fleet_follow_next_idle",
+		"settings.update.fleet_follow_nightly", "settings.update.fleet_follow_hint"} {
+		if !strings.Contains(body, html.EscapeString(httpx.T("en", key))) {
+			t.Errorf("main till: %s not rendered", key)
+		}
+	}
+	// It lives in the locked fieldset, like the rest of the form.
+	if !regexp.MustCompile(`(?s)<fieldset class="set-lock" data-lock-region="settings-update-schedule".*?<select name="fleet_follow".*?</fieldset>`).MatchString(body) {
+		t.Fatal("the fleet_follow select must sit inside the settings-update-schedule fieldset")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	m = selectRe.FindStringSubmatch(getSettingsAsManager(t, mux))
+	if m == nil || !strings.Contains(opt(m[1], "nightly"), "selected") || strings.Contains(opt(m[1], "next_idle"), "selected") {
+		t.Fatalf("nightly saved: nightly must be the selected option, got %v", m)
+	}
+	// Hand-edited garbage reads as the default.
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "weekly"); err != nil {
+		t.Fatal(err)
+	}
+	m = selectRe.FindStringSubmatch(getSettingsAsManager(t, mux))
+	if m == nil || !strings.Contains(opt(m[1], "next_idle"), "selected") {
+		t.Fatalf("unknown value: next_idle must be selected, got %v", m)
+	}
+}
+
+// The replica sees the policy read-only: a second line only for nightly,
+// naming the main till's update time.
+func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	line := `data-testid="update-follow-policy"`
+
+	body := getSettingsAsManager(t, mux)
+	if strings.Contains(body, line) || strings.Contains(body, `name="fleet_follow"`) {
+		t.Fatal("next_idle replica: no policy line and no select")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "02:15"); err != nil {
+		t.Fatal(err)
+	}
+	body = getSettingsAsManager(t, mux)
+	if !strings.Contains(body, line) {
+		t.Fatal("nightly replica: no policy line")
+	}
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly"), "02:15")); !strings.Contains(body, want) {
+		t.Fatalf("nightly replica: expected %q", want)
+	}
+	if strings.Contains(body, `name="fleet_follow"`) {
+		t.Fatal("a replica must not render the select")
+	}
+
+	// update.auto_time unset: the default time.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly"), autoUpdateDefaultTime)); !strings.Contains(getSettingsAsManager(t, mux), want) {
+		t.Fatalf("nightly replica, time unset: expected %q", want)
+	}
+}
