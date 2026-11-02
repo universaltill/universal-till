@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2458,6 +2459,10 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	// ut-docs#3557: enrol-pair answers its read-only refusals (no code, no
 	// cloud address) before the gate, so the row below needs both to reach it.
 	d.Cfg.Marketplace.EndpointURL = "http://127.0.0.1:1/api"
+	// The manager/admin rows really run enroll.Pair, which resets the
+	// package-level enrolment identity; restore it so later tests in this
+	// package don't inherit a cleared till (review M1).
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
 	// ut-docs#868: dismiss-pending-base-plugin now validates canonical_type/
 	// locale against the pending list before checkOrElevate, so this row's
 	// {"canonical_type": {"x"}} (locale unset -> "") must actually be

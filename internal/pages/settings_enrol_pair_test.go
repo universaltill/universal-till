@@ -645,7 +645,7 @@ func TestEnrolPair_RegisteredTillAsksToConfirmFirst(t *testing.T) {
 		}
 	}
 	// Bidi isolates around both placeholders (typo check in RTL sentences).
-	if !strings.Contains(body, "\u2068Corner Shop\u2069") || !strings.Contains(body, "\u2068"+pairPageCode+"\u2069") {
+	if !strings.Contains(body, "\u2068Corner Shop\u2069") || !strings.Contains(body, "\u2068"+unbreakableCode(pairPageCode)+"\u2069") {
 		t.Fatalf("shop and code are not bidi-isolated: %s", body)
 	}
 	if n := calls.Load(); n != 0 {
@@ -849,5 +849,20 @@ func TestEnrolPair_ConfirmEscapesCode(t *testing.T) {
 	body := assertConfirmPrompt(t, postForm(mux, "/api/enrol/pair", url.Values{"code": {"<b>x"}}, &mgrUser))
 	if !strings.Contains(body, "&lt;b&gt;x") || strings.Contains(body, "<b>x") {
 		t.Fatalf("code not escaped in the confirm body: %s", body)
+	}
+}
+
+// The dialog's shop name and code are display-only: a stray isolate/override
+// control can't break out of the FSI..PDI wrap, and the code can't wrap at a
+// hyphen (ut-docs#3557 review + test F1).
+func TestPairConfirmDisplayHelpers(t *testing.T) {
+	if got := stripBidiControls("Shop\u2069\u202Eevil\u2066"); got != "Shopevil" {
+		t.Fatalf("stripBidiControls = %q, want %q", got, "Shopevil")
+	}
+	if got := unbreakableCode("AB12-CD34"); got != "AB12-\u2060CD34" {
+		t.Fatalf("unbreakableCode = %q", got)
+	}
+	if got := unbreakableCode("K7QXM2RP"); got != "K7QXM2RP" {
+		t.Fatalf("unbreakableCode changed a code without hyphens: %q", got)
 	}
 }

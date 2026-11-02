@@ -1424,7 +1424,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				HxTarget: "#pair-msg",
 				Title:    httpx.T(locale, "settings.enrol.pair_replace_title"),
 				Body: fmt.Sprintf(httpx.T(locale, "settings.enrol.pair_replace_body"),
-					"\u2068"+shop+"\u2069", "\u2068"+code+"\u2069"),
+					bidiIsolate(stripBidiControls(shop)), bidiIsolate(unbreakableCode(stripBidiControls(code)))),
 				Confirm:   httpx.T(locale, "settings.enrol.pair_replace_confirm"),
 				HelpTopic: "claim",
 				Danger:    true,
