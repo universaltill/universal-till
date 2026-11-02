@@ -161,7 +161,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     builds and vets the macOS shell (cgo/Objective-C) on `macos-15`, which
     otherwise compiled only at release time (ut-docs#5021); also `go test`s
     every package with darwin-only files (paths `internal/selfupdate/**`,
-    `internal/lantls/**`, `**/*_darwin{,_test}.go`; ut-docs#5279).
+    `internal/lantls/**`, `internal/diskspace/**`, `**/*_darwin{,_test}.go`;
+    of `internal/db` only `lock_unix.go` triggers it; ut-docs#5279).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
     real on PRs; exceptions in `e2e/tests-i18n-audit/allowlist.json`;

@@ -23,6 +23,10 @@ on:
       - "internal/lantls/**"
       - "**/*_darwin.go"
       - "**/*_darwin_test.go"
+      # darwin-compiled files not named *_darwin.go (internal/db is tested
+      # but not listed: it changes on most PRs and macOS minutes are dear).
+      - "internal/db/lock_unix.go"
+      - "internal/diskspace/**"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/desktop-darwin.yml"
@@ -49,8 +53,10 @@ jobs:
       # without touching this workflow. git ls-files keeps untracked files and
       # .claude/worktrees/ out. A darwin-specific file is one named
       # *_darwin.go / *_darwin_test.go or with a //go:build line naming darwin
-      # un-negated (!darwin only marks the fallback twin). cmd/unitill-desktop
-      # is skipped: it needs the desktop tag + cgo and is built and vetted above.
+      # not directly after "!" (approximate: !(darwin && …) also matches; a
+      # spare package costs only test time). cmd/unitill-desktop is skipped: it
+      # needs the desktop tag + cgo and is built and vetted above; it has no
+      # darwin-only tests today — a new one needs its own step here.
       - name: Test packages with darwin-only files
         shell: bash
         run: |
