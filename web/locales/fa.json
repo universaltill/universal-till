@@ -189,6 +189,7 @@
   "bluetoothdevices.title": "دستگاه‌های بلوتوث",
   "buttons.edit_mode.title": "ویرایش دکمه‌های فروش سریع — برای تغییر ترتیب، دکمه را بکشید",
   "buttons.edit_mode.title_all_grid": "ویرایش کالاها — یک دسته را انتخاب کنید تا کالاهایش را به ترتیب دلخواه بکشید؛ مداد یک کالا را ویرایش می‌کند",
+  "buttons.edit_mode.title_all_grid_compact": "ویرایش کالاها — برای مرتب‌سازی دسته‌ای را انتخاب کنید",
   "catalog.active": "فعال",
   "catalog.add_item_btn": "افزودن کالا",
   "catalog.attach_barcode": "افزودن بارکد",

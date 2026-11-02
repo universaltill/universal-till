@@ -2913,6 +2913,8 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 }
 .jiggle-bar[hidden] { display: none; }
 .jiggle-bar-title { font-size: .85rem; font-weight: 600; color: var(--muted); min-inline-size: 0; }
+/* ut-docs#3109: the all-items bar's short phone title; only the phone tier shows it. */
+.jiggle-bar-title-compact { display: none; }
 /* ---------- Hidden tiles, edit-mode search add (ut-docs#2698) ----------
    A HIDDEN quick button (buttons.html's product-tile, .tile--hidden) stays
    in the rendered grid in its own spot, so edit mode can show it greyed
@@ -6971,6 +6973,20 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     position: sticky; top: -.7rem; z-index: 2; gap: .5rem;
     margin: 0 -.8rem .75rem; padding: .1rem .8rem .6rem;
     background: var(--surface); border-block-end: 1px solid var(--border);
+  }
+  /* ut-docs#3109: in edit mode the Done bar and the chip row both stick; the bar has a fixed height
+     (2-line compact title, 40px Done) so the chips can stick right under it instead of beneath it. */
+  .pos-container .products { --jiggle-chips-bar-bs: 3.5rem; }
+  .pos-container .products .jiggle-bar--chips {
+    inset-block-start: -.7rem; block-size: var(--jiggle-chips-bar-bs);
+  }
+  .pos-container .products .jiggle-bar--chips .jiggle-bar-title { line-height: 1.25; }
+  .pos-container .products .jiggle-bar--chips .jiggle-bar-title-full { display: none; }
+  .pos-container .products .jiggle-bar--chips .jiggle-bar-title-compact { display: inline; }
+  .pos-container .products #buttons-grid.jiggle-mode > .filter-chips {
+    inset-block-start: calc(-.7rem + var(--jiggle-chips-bar-bs));
+    /* the tile badges (z-index 2, later in the DOM) peek 8px above a tile and would paint over the row */
+    z-index: 3;
   }
   .pos-container .products .filter-chips::-webkit-scrollbar { display: none; }
   .pos-container .products .filter-chips .chip {

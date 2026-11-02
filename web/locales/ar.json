@@ -189,6 +189,7 @@
   "bluetoothdevices.title": "أجهزة البلوتوث",
   "buttons.edit_mode.title": "تحرير أزرار البيع السريع — اسحب زرًا لإعادة الترتيب",
   "buttons.edit_mode.title_all_grid": "تحرير الأصناف — اختر فئة لسحب أصنافها إلى الترتيب الذي تريده؛ القلم يحرّر الصنف",
+  "buttons.edit_mode.title_all_grid_compact": "تحرير الأصناف — اختر فئة لإعادة الترتيب",
   "catalog.active": "نشط",
   "catalog.add_item_btn": "إضافة صنف",
   "catalog.attach_barcode": "إرفاق باركود",

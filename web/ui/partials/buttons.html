@@ -853,11 +853,14 @@
            key (settings/plugins modals use it too), not a new one.
            ut-docs#2698: it sits above #search-results, since the search
            stays usable in edit mode -- Done stays at the top either way. */}}
-      <div class="jiggle-bar" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
+      <div class="jiggle-bar{{ if eq $mode "all_filter_chips" }} jiggle-bar--chips{{ end }}" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
         {{/* ut-docs#2534: the all_filter_chips All grid lists every item,
              not quick buttons, and moves only under a category chip (plain
-             All is pencil-only), so its bar says that instead. */}}
-        <span class="jiggle-bar-title">{{ if eq $mode "all_filter_chips" }}{{ T "buttons.edit_mode.title_all_grid" }}{{ else }}{{ T "buttons.edit_mode.title" }}{{ end }}</span>
+             All is pencil-only), so its bar says that instead.
+             ut-docs#3109: on a phone that text is too long for the fixed-height
+             bar, so a short twin is swapped in by CSS (display:none keeps the
+             hidden one out of the status announcement). */}}
+        <span class="jiggle-bar-title">{{ if eq $mode "all_filter_chips" }}<span class="jiggle-bar-title-full">{{ T "buttons.edit_mode.title_all_grid" }}</span><span class="jiggle-bar-title-compact">{{ T "buttons.edit_mode.title_all_grid_compact" }}</span>{{ else }}{{ T "buttons.edit_mode.title" }}{{ end }}</span>
         <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
       </div>
       {{/* ut-docs#4418: on an additional till edit mode doesn't open while

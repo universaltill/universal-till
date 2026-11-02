@@ -397,5 +397,6 @@
   "catalog.missing.price": {"description": "Banner on the catalog when it is filtered to items with no price (zero).", "review": "standard"},
   "catalog.missing.category": {"description": "Banner on the catalog when it is filtered to items without a category.", "review": "standard"},
   "catalog.missing.several": {"description": "Banner on the catalog when it is filtered to items missing any of barcode, photo, price or category.", "review": "standard"},
-  "catalog.missing.clear": {"description": "Link in the filter banner that returns to the full catalog list.", "review": "standard"}
+  "catalog.missing.clear": {"description": "Link in the filter banner that returns to the full catalog list.", "review": "standard"},
+  "buttons.edit_mode.title_all_grid_compact": {"description": "Phone-width (up to 480px) title of the edit-mode Done bar in the All-items-with-category-filters layout; short form of buttons.edit_mode.title_all_grid. Must fit two lines beside the Done button at 360px.", "review": "standard", "max_length": 55}
 }
