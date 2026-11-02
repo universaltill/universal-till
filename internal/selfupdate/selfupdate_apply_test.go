@@ -23,7 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 )
 
-// These tests mutate package-level seams (osExecutable, reexecFn, releasesLatest,
+// These tests mutate package-level seams (osExecutable, reexecFn, releaseSource,
 // buildinfo.Version) — none of them may use t.Parallel. Everything is hermetic:
 // all HTTP goes to local httptest servers, the "running binary" is a fake file
 // in a t.TempDir, and re-exec is stubbed (a real one would replace the test
@@ -79,11 +79,13 @@ func sha256hex(b []byte) string {
 
 // releaseServer serves a fake GitHub "latest release" plus its assets.
 type releaseServer struct {
-	srv    *httptest.Server
-	tag    string
-	assets map[string][]byte // asset name -> content, served at /asset/<name>; a nil body is listed in /latest but 404s on download
-	mu     sync.Mutex
-	paths  []string // release-metadata paths asked for (/latest, /tags/<tag>), in order
+	srv       *httptest.Server
+	tag       string
+	urls      map[string]string // optional per-asset listed URL, overriding srv.URL/asset/<name> (trust-refusal tests)
+	assets    map[string][]byte // asset name -> content, served at /asset/<name>; a nil body is listed in /latest but 404s on download
+	mu        sync.Mutex
+	assetHits int      // requests to /asset/ (must stay 0 when a release is refused before download)
+	paths     []string // release-metadata paths asked for (/latest, /tags/<tag>), in order
 }
 
 // requested returns the release-metadata paths asked for so far.
@@ -114,7 +116,11 @@ func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) *relea
 				sb.WriteString(",")
 			}
 			first = false
-			sb.WriteString(fmt.Sprintf(`{"name":%q,"browser_download_url":%q}`, name, rs.srv.URL+"/asset/"+name))
+			u := rs.srv.URL + "/asset/" + name
+			if o, ok := rs.urls[name]; ok {
+				u = o
+			}
+			sb.WriteString(fmt.Sprintf(`{"name":%q,"browser_download_url":%q}`, name, u))
 		}
 		sb.WriteString("]}")
 		w.Write([]byte(sb.String()))
@@ -122,6 +128,9 @@ func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) *relea
 	mux.HandleFunc("/latest", release)
 	mux.HandleFunc("/tags/", release)
 	mux.HandleFunc("/asset/", func(w http.ResponseWriter, r *http.Request) {
+		rs.mu.Lock()
+		rs.assetHits++
+		rs.mu.Unlock()
 		name := strings.TrimPrefix(r.URL.Path, "/asset/")
 		body, ok := rs.assets[name]
 		if !ok || body == nil {
@@ -130,11 +139,9 @@ func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) *relea
 		}
 		w.Write(body)
 	})
-	rs.srv = httptest.NewServer(mux)
+	rs.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(rs.srv.Close)
-	old := releasesLatest
-	releasesLatest = rs.srv.URL + "/latest"
-	t.Cleanup(func() { releasesLatest = old })
+	useReleaseSource(t, rs.srv, rs.srv.URL)
 	return rs
 }
 
@@ -477,13 +484,11 @@ func TestApplyReadOnlyDirIsUnsupportedAndLeavesBinary(t *testing.T) {
 // fetchRelease error branches -----------------------------------------------
 
 func TestFetchLatestHTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	t.Cleanup(srv.Close)
-	old := releasesLatest
-	releasesLatest = srv.URL
-	t.Cleanup(func() { releasesLatest = old })
+	useReleaseSource(t, srv, srv.URL)
 	_, err := fetchRelease(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "HTTP 502") {
 		t.Fatalf("err = %v, want HTTP 502", err)
@@ -491,13 +496,11 @@ func TestFetchLatestHTTPError(t *testing.T) {
 }
 
 func TestFetchLatestBadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("{nope"))
 	}))
 	t.Cleanup(srv.Close)
-	old := releasesLatest
-	releasesLatest = srv.URL
-	t.Cleanup(func() { releasesLatest = old })
+	useReleaseSource(t, srv, srv.URL)
 	if _, err := fetchRelease(context.Background(), ""); err == nil {
 		t.Fatal("want decode error, got nil")
 	}

@@ -365,12 +365,16 @@ UT_SAMPLES_DIR=/path/to/images        # Sample product images
 
 # Update check
 UT_UPDATE_CHECK=1                     # 0 = never ask GitHub for new versions (air-gapped tills)
-UT_UPDATE_RELEASES_URL=               # Empty = the public GitHub Releases API. Set to a
+UT_UPDATE_RELEASES_URL=               # Empty = the build's buildinfo.ReleasesBaseURL
+                                       # (the public GitHub Releases API in an
+                                       # unstamped build). Set to a
                                        # mirror of releases/latest (air-gapped shops,
                                        # e2e) — its host may also serve the release's
                                        # release-notes.json (ut-docs#3940). Only where the
                                        # till learns about a release; the update download
-                                       # itself is unaffected.
+                                       # always comes from the build's
+                                       # buildinfo.ReleasesBaseURL (default: our GitHub),
+                                       # which this variable never changes.
 
 # Logging (ut-docs#2720)
 UT_LOG_LEVEL=info                     # debug | info | warn | error

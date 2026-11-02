@@ -104,6 +104,9 @@ func applyWindowsInstaller(ctx context.Context, exe, version string, idle func()
 	if checksumsURL == "" {
 		return fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version)
 	}
+	if err := rel.requireTrusted(setupURL, checksumsURL); err != nil {
+		return err
+	}
 
 	root := windowsUpdateDir()
 	if err := os.MkdirAll(root, 0o700); err != nil {

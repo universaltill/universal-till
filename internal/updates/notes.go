@@ -7,12 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/releasenotes"
+	"github.com/universaltill/universal-till/internal/releasesource"
 )
 
 // Incoming release notes (ut-docs#3940): before a manager installs an
@@ -27,10 +26,6 @@ import (
 
 // NotesAssetName is the release asset that carries every release note.
 const NotesAssetName = "release-notes.json"
-
-// githubDownloadPrefix is the only place a notes asset may come from on a
-// till using the public releases API.
-const githubDownloadPrefix = "https://github.com/universaltill/universal-till/releases/download/"
 
 // maxNotesBytes caps the download; the real bundle is a few hundred KB.
 const maxNotesBytes = 4 << 20
@@ -61,24 +56,22 @@ var notesCache struct {
 	entry notesEntry
 }
 
-// notesURLAllowed reports whether a notes asset URL may be fetched: this
-// repo's GitHub release downloads, or — when an operator pointed the check at
+// notesURLAllowed reports whether a notes asset URL may be fetched: an asset
+// on this build's trusted release host (releasesource: for our own build, this
+// repo's GitHub release downloads), or — when an operator pointed the check at
 // their own releases URL (UT_UPDATE_RELEASES_URL) — that same scheme and host.
+// Notes are display-only, so unlike the self-updater's download this honours
+// the env override.
 func notesURLAllowed(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
+	u, ok := releasesource.CleanURL(raw)
+	if !ok {
 		return false
 	}
-	// No dot segments, however encoded: the cleaned path must be the path.
-	if strings.Contains(u.Path, "..") || path.Clean(u.Path) != u.Path {
-		return false
-	}
-	if u.Scheme == "https" && u.Host == "github.com" && strings.HasPrefix(raw, githubDownloadPrefix) &&
-		strings.HasPrefix(u.Path, "/universaltill/universal-till/releases/download/") {
+	if buildSourceErr == nil && buildSource.AssetTrusted(raw) {
 		return true
 	}
-	if releasesURL == defaultReleasesURL {
-		return false
+	if releasesURL == "" || releasesURL == buildCheckURL() {
+		return false // no env override
 	}
 	base, err := url.Parse(releasesURL)
 	return err == nil && u.Scheme == base.Scheme && u.Host == base.Host

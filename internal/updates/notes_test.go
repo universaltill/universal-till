@@ -78,7 +78,7 @@ func TestNotesURLAllowed(t *testing.T) {
 	old := releasesURL
 	t.Cleanup(func() { releasesURL = old })
 
-	releasesURL = defaultReleasesURL
+	releasesURL = buildCheckURL()
 	for u, want := range map[string]bool{
 		gh: true,
 		"http://github.com/universaltill/universal-till/releases/download/v1.2.0/release-notes.json":            false,
@@ -112,7 +112,7 @@ func TestNotesURLAllowed(t *testing.T) {
 
 func TestReleasesURLFromEnv(t *testing.T) {
 	t.Setenv("UT_UPDATE_RELEASES_URL", "")
-	if got := releasesURLFromEnv(); got != defaultReleasesURL {
+	if got := releasesURLFromEnv(); got != buildCheckURL() {
 		t.Fatalf("unset: %q", got)
 	}
 	t.Setenv("UT_UPDATE_RELEASES_URL", " http://127.0.0.1:9000/latest ")
@@ -121,7 +121,7 @@ func TestReleasesURLFromEnv(t *testing.T) {
 	}
 	for _, bad := range []string{"ftp://x/latest", "not a url", "/latest", "javascript:alert(1)"} {
 		t.Setenv("UT_UPDATE_RELEASES_URL", bad)
-		if got := releasesURLFromEnv(); got != defaultReleasesURL {
+		if got := releasesURLFromEnv(); got != buildCheckURL() {
 			t.Errorf("invalid override %q must fall back to the default, got %q", bad, got)
 		}
 	}
