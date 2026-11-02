@@ -33,7 +33,7 @@ func TestSupportedFalseOnIntelMacAppBundle(t *testing.T) {
 	}
 	goarch = "amd64"
 	t.Cleanup(func() { osExecutable, goarch = oldExec, oldArch })
-	if !Supported() { // DELIBERATE BREAK (ut-docs#5279 AC), reverted next commit
+	if Supported() {
 		t.Error("Supported() = true for an Intel Mac .app bundle, want false — no Intel .dmg is ever published")
 	}
 }
