@@ -206,6 +206,24 @@ const maxReplaceTargetLen = 200
 // isolates, so it keeps its own direction inside an RTL sentence (ar, fa).
 func bidiIsolate(s string) string { return "\u2068" + s + "\u2069" }
 
+// stripBidiControls drops embedding/override/isolate controls (U+202A–U+202E,
+// U+2066–U+2069) from a value about to be wrapped by bidiIsolate, so a stray
+// PDI in a shop name or typed code can't close the isolate early and reorder
+// the sentence around it (ut-docs#3557 review).
+func stripBidiControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= '\u202A' && r <= '\u202E') || (r >= '\u2066' && r <= '\u2069') {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// unbreakableCode puts a WORD JOINER after each hyphen so a pairing code such
+// as "AB12-CD34-EF56" never wraps mid-code in a confirm dialog — the dialog
+// exists so the operator can read the code back (ut-docs#3557 test F1).
+func unbreakableCode(s string) string { return strings.ReplaceAll(s, "-", "-\u2060") }
+
 // cloudTillName is a till's fleet-row name, or the "unnamed" word.
 func cloudTillName(locale, name string) string {
 	if strings.TrimSpace(name) == "" {

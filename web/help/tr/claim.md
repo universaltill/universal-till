@@ -74,9 +74,9 @@ Kart sorunu tek satırda söyler; satış hiçbir zaman etkilenmez:
 Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gerekiyorsa ya da bir kasa mağazanın bulut hesabından kaldırıldıysa veya yeniden eşleştirilmesi gerektiğini söylüyorsa bunu kullanın.
 
 1. Mağazanın bulut hesabında «Kasa ekle veya yeniden eşleştir»i seçerek bir eşleştirme kodu alın (8 karakter, 15 dakika geçerli, tek kullanımlık).
-2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar.
+2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar. Bu kasa zaten bir mağazaya bağlıysa önce bu bağlantıyı değiştirmek isteyip istemediğinizi sorar ve kontrol edebilmeniz için girdiğiniz kodu gösterir; İptal hiçbir şeyi değiştirmez.
 3. Kasa yalnızca kendi bulut bağlantısını değiştirir: yeni bir cihaz kimliği ve kendine ait bir kimlik bilgisi alır. Satışlar, ürünler ve ayarlar kasada kalır; satış bu süre boyunca çevrimdışı çalışmaya devam eder.
-4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır.
+4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır. Bir mağazaya bağlı kasada da yanlış bir kod, kasayı yeni bir kodla eşleştirene kadar bağlantısız bırakır (kasa bu yüzden önce sorar); katılmış bir kasa ise ana kasası üzerinden yeniden kaydedilir.
 
 ## Mağazanın para birimi
 

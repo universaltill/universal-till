@@ -18,7 +18,8 @@
      Data: Action / HxTarget / Hidden as elevation_prompt.html (the dialog's
      form IS the confirmed retry, Hidden carrying the original fields plus
      the caller's confirming one), Title / Body / Confirm (pre-translated
-     text), HelpTopic (a manual topic for the title's "?", or empty).
+     text), HelpTopic (a manual topic for the title's "?", or empty),
+     Danger (red confirm button; Cancel gets the autofocus instead).
 
      data-after-request="elevation-done" is reused as-is: a re-prompt (an
      elevation prompt or another confirm) replaced this dialog by OOB swap
@@ -35,8 +36,8 @@
     <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
     {{ end }}
     <div class="modifier-actions">
-      <button type="button" class="btn secondary" data-action="close-closest">{{ T "common.cancel" }}</button>
-      <button type="submit" class="btn primary" autofocus>{{ .Confirm }}</button>
+      <button type="button" class="btn secondary" data-action="close-closest"{{ if .Danger }} autofocus{{ end }}>{{ T "common.cancel" }}</button>
+      <button type="submit" class="btn {{ if .Danger }}danger{{ else }}primary{{ end }}"{{ if not .Danger }} autofocus{{ end }}>{{ .Confirm }}</button>
     </div>
   </form>
   <script>
