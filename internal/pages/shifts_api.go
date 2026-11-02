@@ -154,6 +154,10 @@ type ShiftCloseResponse struct {
 // CloseShift handles POST /api/shifts/close
 func CloseShift(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// An unattended update must not restart the till mid-close
+		// (autoUpdateBusy, ut-docs#2739).
+		shiftCloseInFlight.Add(1)
+		defer shiftCloseInFlight.Add(-1)
 		ctx := r.Context()
 		repo := data.NewPOSRepo(dp.Db)
 

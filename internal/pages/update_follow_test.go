@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,7 +23,7 @@ import (
 // mid-sale — instead of the nightly "latest" path main and standalone tills use.
 
 func TestFollowDecision(t *testing.T) {
-	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true}
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true, JitterDue: true}
 	with := func(f func(*followInputs)) followInputs { in := base; f(&in); return in }
 	for _, c := range []struct {
 		name string
@@ -49,6 +50,22 @@ func TestFollowDecision(t *testing.T) {
 		{"interrupted last run: retried at the next start", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", followApplying }), true, "follow"},
 		{"applied last run but still behind: never loops", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "" }), false, "no_effect"},
 		{"applied an older target last run: the new one is tried", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.3.5", "" }), true, "follow"},
+		// ADR-0114 §5 / ut-docs#2739: update.fleet_follow decides WHEN.
+		{"next_idle: waits out the random jitter first", with(func(in *followInputs) { in.JitterDue = false }), false, "jitter_wait"},
+		{"next_idle explicit: jitter due, follows", with(func(in *followInputs) { in.Policy = "next_idle" }), true, "follow"},
+		{"next_idle explicit: jitter pending", with(func(in *followInputs) { in.Policy, in.JitterDue = "next_idle", false }), false, "jitter_wait"},
+		{"unknown policy reads as next_idle (due)", with(func(in *followInputs) { in.Policy = "weekly" }), true, "follow"},
+		{"unknown policy reads as next_idle (pending)", with(func(in *followInputs) { in.Policy, in.JitterDue = "weekly", false }), false, "jitter_wait"},
+		{"nightly outside the slot waits", with(func(in *followInputs) { in.Policy = "nightly" }), false, "nightly_wait"},
+		{"nightly in the slot follows (jitter ignored)", with(func(in *followInputs) { in.Policy, in.InNightlySlot, in.JitterDue = "nightly", true, false }), true, "follow"},
+		{"nightly: the next-idle jitter does not apply", with(func(in *followInputs) { in.Policy, in.JitterDue = "nightly", false }), false, "nightly_wait"},
+		{"nightly in the slot but a sale is open", with(func(in *followInputs) { in.Policy, in.InNightlySlot, in.Busy = "nightly", true, true }), false, "busy"},
+		{"nightly outside the slot, a sale open: the wait comes first", with(func(in *followInputs) { in.Policy, in.Busy = "nightly", true }), false, "nightly_wait"},
+		{"Update now overrides the nightly wait", with(func(in *followInputs) { in.Policy, in.Forced = "nightly", true }), true, "update_now"},
+		{"Update now overrides the jitter wait", with(func(in *followInputs) { in.JitterDue, in.Forced = false, true }), true, "update_now"},
+		{"Update now never overrides a sale (nightly wait)", with(func(in *followInputs) { in.Policy, in.Forced, in.Busy = "nightly", true, true }), false, "busy"},
+		{"Update now never overrides a downgrade (nightly)", with(func(in *followInputs) { in.Policy, in.Forced, in.Target = "nightly", true, "1.2.0" }), false, "not_newer"},
+		{"nightly: a no-effect target is still no_effect", with(func(in *followInputs) { in.Policy, in.LastAttempted, in.LastError = "nightly", "1.4.0", "" }), false, "no_effect"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			act, why := followDecision(c.in)
@@ -94,6 +111,7 @@ func stubFollowSeams(t *testing.T, this string, supported bool, applyErr error) 
 		followRun.reset()
 	})
 	followRun.reset()
+	pinFollowJitter(t, 0) // ADR-0114 §5's random wait is 0 s unless a test says otherwise
 	var applied []string
 	autoUpdateBuildVersion = func() string { return this }
 	autoUpdateSupported = func() bool { return supported }
@@ -411,4 +429,249 @@ func TestFollowInputsOf_ProbesSupportedOnlyWhenBehind(t *testing.T) {
 	if in := followInputsOf(t.Context(), behind); !in.Supported || probes != 1 {
 		t.Fatalf("behind replica: Supported=%v after %d probes, want true after 1", in.Supported, probes)
 	}
+}
+
+// The waits are not an ADR-0114 §2 state: they report idle.
+func TestFollowReportState_WaitsReportIdle(t *testing.T) {
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true}
+	for name, in := range map[string]followInputs{
+		"jitter wait":  base,
+		"nightly wait": func() followInputs { i := base; i.Policy = "nightly"; return i }(),
+		"nightly wait, sale open": func() followInputs {
+			i := base
+			i.Policy, i.Busy = "nightly", true
+			return i
+		}(),
+	} {
+		if got := followReportState(in); got != "idle" {
+			t.Errorf("%s: followReportState = %q, want idle", name, got)
+		}
+	}
+}
+
+func TestFollowPolicyOf(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "next_idle", "next_idle": "next_idle", "nightly": "nightly", " nightly ": "nightly",
+		"NIGHTLY": "next_idle", "weekly": "next_idle", "false": "next_idle",
+	} {
+		if got := followPolicyOf(in); got != want {
+			t.Errorf("followPolicyOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// pinFollowJitter pins the next-idle random wait and forgets any armed one.
+func pinFollowJitter(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := followJitterDelay
+	followJitterDelay = func() time.Duration { return d }
+	followJitterWait.reset()
+	t.Cleanup(func() { followJitterDelay = orig; followJitterWait.reset() })
+}
+
+func TestFollowJitterDelay_IsWithinTwoMinutes(t *testing.T) {
+	for range 500 {
+		if d := followJitterDelay(); d < 0 || d > 120*time.Second {
+			t.Fatalf("followJitterDelay = %v, want 0..120s", d)
+		}
+	}
+}
+
+// With a 0 s jitter the tick arms the wait, re-evaluates and acts in the same
+// tick; with a longer one it does nothing until that time has passed.
+func TestFollowTick_NextIdleJitter(t *testing.T) {
+	t.Run("zero jitter acts in the same tick", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, 0)
+		autoUpdateTick(t.Context(), dp, tickNow)
+		if len(*applied) != 1 {
+			t.Fatalf("applied %v, want one attempt in the first tick", *applied)
+		}
+	})
+	t.Run("jitter holds the install until it has passed", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, 90*time.Second)
+		autoUpdateTick(t.Context(), dp, tickNow)
+		autoUpdateTick(t.Context(), dp, tickNow.Add(60*time.Second))
+		if len(*applied) != 0 {
+			t.Fatalf("applied %v inside the jitter", *applied)
+		}
+		// The deadline is kept, not re-drawn: a later tick does not push it out.
+		pinned := followJitterDelay
+		followJitterDelay = func() time.Duration { t.Error("jitter re-armed for the same target"); return pinned() }
+		autoUpdateTick(t.Context(), dp, tickNow.Add(90*time.Second))
+		if len(*applied) != 1 || (*applied)[0] != "1.4.0" {
+			t.Fatalf("applied %v once the jitter passed, want one ApplyVersion(1.4.0)", *applied)
+		}
+	})
+	t.Run("a new target draws a new jitter", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, 90*time.Second)
+		autoUpdateTick(t.Context(), dp, tickNow)
+		_ = dp.Settings.Set(t.Context(), keyMainVersion, "1.5.0")
+		autoUpdateTick(t.Context(), dp, tickNow.Add(100*time.Second)) // 1.4.0's wait is over, but the target moved
+		if len(*applied) != 0 {
+			t.Fatalf("applied %v for a target whose jitter had not started", *applied)
+		}
+		autoUpdateTick(t.Context(), dp, tickNow.Add(100*time.Second+90*time.Second))
+		if len(*applied) != 1 || (*applied)[0] != "1.5.0" {
+			t.Fatalf("applied %v, want ApplyVersion(1.5.0) after its own jitter", *applied)
+		}
+	})
+	t.Run("Update now skips the wait", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, time.Hour)
+		drainFollowKick(t)
+		onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+		autoUpdateTick(t.Context(), dp, tickNow)
+		if len(*applied) != 1 {
+			t.Fatalf("applied %v, want the pressed update to run at once", *applied)
+		}
+	})
+}
+
+// Rendering the Settings page (followInputsOf) must not start the clock.
+func TestFollowInputsOf_DoesNotArmTheJitter(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	pinFollowJitter(t, 0)
+	if in := followInputsOf(t.Context(), dp); in.JitterDue {
+		t.Fatal("JitterDue before any tick armed it")
+	}
+	if _, armed := followJitterWait.deadline("1.4.0"); armed {
+		t.Fatal("followInputsOf armed the jitter")
+	}
+}
+
+// nightly: only inside the main till's update.auto_time window plus THIS
+// till's own offset.
+func TestFollowTick_NightlyOnlyInTheSlot(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	applied := stubFollowSeams(t, "1.3.0", true, nil)
+	pinFollowJitter(t, 0) // would act at once under next_idle
+	ctx := t.Context()
+	_ = dp.Settings.Set(ctx, keyFleetFollow, "nightly")
+	_ = dp.Settings.Set(ctx, keyAutoUpdateTime, "03:00") // replicated from the main till
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+
+	day := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name string
+		at   time.Duration
+	}{
+		{"mid-morning", 10 * time.Hour},
+		{"03:00, before this till's 03:07 slot", 3 * time.Hour},
+		{"03:37, the window has closed", 3*time.Hour + 37*time.Minute},
+	} {
+		autoUpdateTick(ctx, dp, day.Add(c.at))
+		if len(*applied) != 0 {
+			t.Fatalf("%s: applied %v outside the slot", c.name, *applied)
+		}
+	}
+	autoUpdateTick(ctx, dp, day.Add(3*time.Hour+7*time.Minute))
+	if len(*applied) != 1 || (*applied)[0] != "1.4.0" {
+		t.Fatalf("applied %v in the slot, want one ApplyVersion(1.4.0)", *applied)
+	}
+}
+
+func TestFollowTick_NightlyDefaultsTheTimeAndUpdateNowOverrides(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	applied := stubFollowSeams(t, "1.3.0", true, nil)
+	pinFollowJitter(t, 0)
+	ctx := t.Context()
+	_ = dp.Settings.Set(ctx, keyFleetFollow, "nightly") // update.auto_time unset: 03:00
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 0 }
+
+	day := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	autoUpdateTick(ctx, dp, day.Add(14*time.Hour))
+	if len(*applied) != 0 {
+		t.Fatalf("applied %v at 14:00 under nightly", *applied)
+	}
+	drainFollowKick(t)
+	onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+	autoUpdateTick(ctx, dp, day.Add(14*time.Hour))
+	if len(*applied) != 1 {
+		t.Fatalf("applied %v, want Update now to override the nightly wait", *applied)
+	}
+}
+
+func TestFollowInputsOf_ReadsThePolicy(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	if got := followInputsOf(t.Context(), dp).Policy; got != "next_idle" {
+		t.Fatalf("unset policy = %q, want next_idle", got)
+	}
+	_ = dp.Settings.Set(t.Context(), keyFleetFollow, "nightly")
+	if got := followInputsOf(t.Context(), dp).Policy; got != "nightly" {
+		t.Fatalf("policy = %q, want nightly", got)
+	}
+	_ = dp.Settings.Set(t.Context(), keyFleetFollow, "garbage")
+	if got := followInputsOf(t.Context(), dp).Policy; got != "next_idle" {
+		t.Fatalf("garbage policy = %q, want next_idle", got)
+	}
+}
+
+// A shift close in flight (cash count, Z-style totals) must not be cut by a
+// restart: busy for the nightly main-till path, the follow and the restart gate.
+func TestAutoUpdateBusy_ShiftCloseInFlight(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	if autoUpdateBusy(dp) {
+		t.Fatal("busy with nothing open")
+	}
+	shiftCloseInFlight.Add(1)
+	t.Cleanup(func() { shiftCloseInFlight.Store(0) })
+	if !autoUpdateBusy(dp) {
+		t.Fatal("not busy while a shift close is in flight")
+	}
+	if autoUpdateIdle(dp)() {
+		t.Fatal("restart gate idle during a shift close")
+	}
+	if !followInputsOf(t.Context(), dp).Busy {
+		t.Fatal("followInputsOf not busy during a shift close")
+	}
+	shiftCloseInFlight.Add(-1)
+	if autoUpdateBusy(dp) {
+		t.Fatal("still busy after the shift close finished")
+	}
+}
+
+// probeReader reports the in-flight counter at the moment the handler reads
+// its body, i.e. while CloseShift is running.
+type probeReader struct{ seen *int32 }
+
+func (p probeReader) Read([]byte) (int, error) {
+	*p.seen = shiftCloseInFlight.Load()
+	return 0, io.EOF
+}
+
+// The CloseShift handler itself holds the counter for its whole body.
+func TestCloseShift_HoldsTheBusyCounter(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	var during int32 = -1
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", probeReader{&during}) // no shift_id: 400
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	CloseShift(dp).ServeHTTP(rec, req)
+	if during != 1 {
+		t.Fatalf("counter while the handler runs = %d, want 1", during)
+	}
+	if got := shiftCloseInFlight.Load(); got != 0 {
+		t.Fatalf("counter after the handler = %d, want 0", got)
+	}
+}
+
+// reset clears the armed jitter wait between tests (test-only: production
+// never clears it; a new target replaces it).
+func (w *followWait) reset() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.target, w.notBefore = "", time.Time{}
 }

@@ -583,6 +583,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// that can't replace itself, a failed attempt) the line says that
 		// instead of claiming it follows (followLine).
 		autoUpdateFollowLine := ""
+		// ut-docs#2739: when additional tills update (update.fleet_follow).
+		fleetFollowStored, _, _ := d.Settings.Get(r.Context(), keyFleetFollow)
+		autoUpdateFleetFollow := followPolicyOf(fleetFollowStored)
 		if autoUpdateFollowsMain {
 			in := followInputsOf(r.Context(), d)
 			autoUpdateFollowLine = followLine(in)
@@ -894,6 +897,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"autoUpdateMainVersion": autoUpdateMainVersion,
 			"autoUpdateEnabled":     autoUpdateEnabled,
 			"autoUpdateTime":        autoUpdateTime,
+			"autoUpdateFleetFollow": autoUpdateFleetFollow,
 			"about":                 aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
 			"TillName":              deviceNameOrDefault(r.Context(), d, locale),
 			"TillRegisterID":        tillRegisterID,

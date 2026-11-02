@@ -203,7 +203,7 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	// A replica follows its main till's exact version instead (ut-docs#2738):
 	// the nightly "latest" could run it ahead of its main till.
 	if get("sync.primary_url") != "" {
-		followTick(ctx, d)
+		followTick(ctx, d, now)
 		return
 	}
 	enabled, hhmm := autoUpdateSchedule(get)
@@ -748,8 +748,23 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		if !enabled {
 			val = "false"
 		}
+		kv := map[string]string{keyAutoUpdateEnabled: val, keyAutoUpdateTime: hhmm}
+		// update.fleet_follow (ADR-0114 §5, ut-docs#2739): absent leaves the
+		// key alone; next_idle is the default and stays unset; anything but
+		// the two known values is refused before anything is written.
+		if _, sent := r.Form["fleet_follow"]; sent {
+			switch strings.TrimSpace(r.Form.Get("fleet_follow")) {
+			case "", followPolicyNextIdle:
+				kv[keyFleetFollow] = ""
+			case followPolicyNightly:
+				kv[keyFleetFollow] = followPolicyNightly
+			default:
+				http.Error(w, "fleet_follow must be next_idle or nightly", http.StatusBadRequest)
+				return
+			}
+		}
 		if err := saveShopSettings(r.Context(), d, elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)},
-			map[string]string{keyAutoUpdateEnabled: val, keyAutoUpdateTime: hhmm}); err != nil {
+			kv); err != nil {
 			if respondSettingsSyncError(w, r, err) {
 				return
 			}

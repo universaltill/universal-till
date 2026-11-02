@@ -162,6 +162,27 @@ func TestSettingsWriteThrough_UpdateScheduleOnMain(t *testing.T) {
 	}
 }
 
+// update.fleet_follow is shop-wide: a replica sends it to the main till in the
+// same batch as the schedule, and mirrors the answer.
+func TestSettingsWriteThrough_FleetFollowOnMain(t *testing.T) {
+	main := newSettingsSyncMain(t)
+	mux, dp := newEODUpdateWriteThroughReplica(t, main.srv.URL)
+
+	rec := postForm(mux, "/api/settings/update-schedule", url.Values{"enabled": {"on"}, "time": {"02:30"}, "fleet_follow": {"nightly"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("replica update-schedule = %d %q", rec.Code, rec.Body.String())
+	}
+	if main.calls.Load() != 1 {
+		t.Fatalf("main till calls = %d, want 1 (one batch)", main.calls.Load())
+	}
+	if got := mustSetting(t, main.dp, keyFleetFollow); got != "nightly" {
+		t.Fatalf("main till %s = %q, want nightly", keyFleetFollow, got)
+	}
+	if got := mustSetting(t, dp, keyFleetFollow); got != "nightly" {
+		t.Fatalf("replica %s = %q, want the mirrored nightly", keyFleetFollow, got)
+	}
+}
+
 func TestSettingsWriteThrough_UpdateScheduleUnreachableWritesNothing(t *testing.T) {
 	mux, dp := newEODUpdateWriteThroughReplica(t, deadPrimaryURL())
 
