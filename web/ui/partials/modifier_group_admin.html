@@ -29,7 +29,9 @@
      till (catalogsync.Routes) — disabled while it can't be reached. */}}
 <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
 <div class="catalog-detail-modifiers">
-  <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
+  {{/* ut-docs#2727: fallback focus target when the control a keyboard user
+       just activated is gone after the swap (catalog.html's script). */}}
+  <div class="muted catalog-detail-label" id="item-modifiers-heading" tabindex="-1">{{ T "catalog.modifiers.title" }}</div>
   {{/* ut-docs#2330, independent-review finding: catalog.modifiers.summary_none
        ("No Modifiers yet.") is the same neutral wording catalog_variants.html's
        own summary block already uses for this same empty state — "add a
@@ -53,7 +55,8 @@
       {{/* Detach from THIS item only — never deletes the group, and since
            ADR-0101 is allowed even for the group's last item (the group
            becomes unassigned, still listed on /modifiers). */}}
-      <button type="button" class="btn secondary"
+      {{/* ut-docs#2727: stable id so htmx restores focus after the swap. */}}
+      <button type="button" class="btn secondary" id="modifier-detach-{{ .ID }}"
               hx-post="/api/catalog/modifier-group/detach"
               hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
               hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
@@ -90,7 +93,7 @@
       <label class="modifier-attach-option"><input type="checkbox" name="groupId" value="{{ .ID }}"> {{ .Name }}</label>
       {{ end }}
     </fieldset>
-    <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
+    <button class="btn secondary" type="submit" id="modifier-attach-submit">{{ T "catalog.modifiers.attach" }}</button>
   </form>
   {{ end }}
 </div>
@@ -132,13 +135,14 @@
       <div class="modifier-admin-group-row">
         <span class="modifier-inherited-name">{{ .Name }}{{ if .OptedOut }} <span class="muted">({{ T "catalog.modifiers.opted_out" }})</span>{{ end }}</span>
         <span class="muted modifier-inherited-options">{{ range $i, $o := .Options }}{{ if $i }}, {{ end }}{{ $o.Name }}{{ end }}</span>
+        {{/* ut-docs#2727: ONE id for both states so Skip -> Use again keeps focus. */}}
         {{ if .OptedOut }}
-        <button type="button" class="btn secondary"
+        <button type="button" class="btn secondary" id="modifier-inherited-toggle-{{ .ID }}"
                 hx-post="/api/catalog/modifier-group/opt-in"
                 hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
                 hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.opt_in" }}</button>
         {{ else }}
-        <button type="button" class="btn secondary"
+        <button type="button" class="btn secondary" id="modifier-inherited-toggle-{{ .ID }}"
                 hx-post="/api/catalog/modifier-group/opt-out"
                 hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
                 hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.opt_out" }}</button>
