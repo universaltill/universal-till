@@ -54,7 +54,8 @@
   //    every id and, once the server accepts, fires list-reorder:saved:
   //    the rest of the replica that mirrors category order (strip tabs,
   //    the "..." sheet, category sections) is permuted to match below. A
-  //    refusal puts the rows back (list-reorder:reverted) and says why.
+  //    refusal puts the rows back (list-reorder:reverted) and says why,
+  //    on the moved row's own message line (ut-docs#3104).
   //
   // 2. Focus. A form submit's re-render replaces the control the operator
   //    just activated, which would drop keyboard focus to <body> after
