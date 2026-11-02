@@ -74,9 +74,9 @@ The card says what went wrong in one line; selling is never affected:
 Use this when the shop already exists in the Universal Till cloud and this till should join it, or when a till was removed from the shop's cloud account or says it needs pairing again.
 
 1. In the shop's cloud account, choose "Add or re-pair a till" to get a pairing code (8 characters, valid 15 minutes, single use).
-2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. A manager or admin approves it.
+2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. If this till is already connected to a shop, it first asks you to confirm that you want to replace that connection and shows the code you typed, so you can check it; Cancel changes nothing. A manager or admin approves it afterwards.
 3. The till replaces only its own cloud connection: it takes a new device ID and a credential of its own. Sales, products and settings stay on the till, and selling keeps working offline the whole time.
-4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code.
+4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code. On a till that is connected to a shop, a code that is wrong for the shop also leaves it disconnected until you pair it with a fresh code (this is why the till asks first); a joined till is registered again through its main till.
 
 ## The shop's currency
 

@@ -2455,6 +2455,9 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 	if _, err := d.Db.Exec(`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`); err != nil {
 		t.Fatal(err)
 	}
+	// ut-docs#3557: enrol-pair answers its read-only refusals (no code, no
+	// cloud address) before the gate, so the row below needs both to reach it.
+	d.Cfg.Marketplace.EndpointURL = "http://127.0.0.1:1/api"
 	// ut-docs#868: dismiss-pending-base-plugin now validates canonical_type/
 	// locale against the pending list before checkOrElevate, so this row's
 	// {"canonical_type": {"x"}} (locale unset -> "") must actually be
@@ -2482,7 +2485,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
 		{"enrol-now", http.MethodPost, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, gateElevation},
-		{"enrol-pair", http.MethodPost, "/api/enrol/pair", nil, gateElevation},
+		{"enrol-pair", http.MethodPost, "/api/enrol/pair", url.Values{"code": {"K7QX-M2RP"}}, gateElevation},
 		{"enrol-check-plan", http.MethodPost, "/api/enrol/check-plan", nil, gateElevation},
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
 		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, gateElevation},

@@ -1398,41 +1398,58 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
 		code := strings.TrimSpace(r.Form.Get("code"))
+		// Refusals Pair makes before touching the identity come first, so
+		// neither the confirmation nor a manager PIN is spent on a request
+		// that will be refused (ut-docs#3557).
+		if err := enroll.PairPrecheck(r.Context(), d.Cfg, d.Settings, code); err != nil {
+			writePairError(w, locale, err)
+			return
+		}
+		confirmed := r.Form.Get("confirm_replace") == "1"
+		// ut-docs#3557: Pair clears this till's identity before the cloud
+		// judges the code, so on a till with a working connection a wrong
+		// code leaves it disconnected. Ask first (confirm, then elevate:
+		// like POST /api/settings/display-mode). The gate is re-read on
+		// every POST; confirm_replace never skips elevation.
+		if !confirmed && pairReplacesWorkingConnection(r, d) {
+			shop := kioskShopName(r.Context(), d)
+			if shop == "" || config.IsPlaceholderStoreName(shop) {
+				shop = enroll.CurrentStatus().StoreID
+			}
+			// FSI..PDI keep the shop name and the code in their own
+			// direction inside an RTL (or LTR) sentence, so the typo check
+			// the dialog exists for reads true.
+			renderConfirmPrompt(w, r, confirmPrompt{
+				Action:   "/api/enrol/pair",
+				HxTarget: "#pair-msg",
+				Title:    httpx.T(locale, "settings.enrol.pair_replace_title"),
+				Body: fmt.Sprintf(httpx.T(locale, "settings.enrol.pair_replace_body"),
+					"\u2068"+shop+"\u2069", "\u2068"+code+"\u2069"),
+				Confirm:   httpx.T(locale, "settings.enrol.pair_replace_confirm"),
+				HelpTopic: "claim",
+				Danger:    true,
+				Hidden: []elevationHiddenField{
+					{Name: "code", Value: code},
+					{Name: "confirm_replace", Value: "1"},
+				},
+			})
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			// The dialog's form is the retry, so it carries the code.
+			// The dialog's form is the retry, so it carries the code (and
+			// the confirmation, when it was given).
+			hidden := []elevationHiddenField{{Name: "code", Value: code}}
+			if confirmed {
+				hidden = append(hidden, elevationHiddenField{Name: "confirm_replace", Value: "1"})
+			}
 			renderElevationPrompt(w, r, "/api/enrol/pair", "#pair-msg",
-				httpx.T(locale, "elevation.summary.enrol_pair"),
-				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
+				httpx.T(locale, "elevation.summary.enrol_pair"), hidden, elev)
 			return
 		}
 		status, err := enroll.Pair(r.Context(), d.Cfg, d.Settings, code)
-		// The refusals an operator can act on get their own translated
-		// message; everything else is the generic failure (the raw reason is only logged).
-		switch {
-		case errors.Is(err, enroll.ErrPairStoreMismatch):
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_store_mismatch")))
-			return
-		case errors.Is(err, enroll.ErrPairIdentityPinned):
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_identity_pinned")))
-			return
-		case errors.Is(err, enroll.ErrPairReplicaNoStore):
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
-			return
-		}
 		if err != nil {
-			// The raw reason is logged, never rendered: it is English-only
-			// and can carry the cloud's body or the endpoint (ut-docs#4058;
-			// the error never contains the pairing code or token).
-			logging.L().Warnf("enrol pair failed: %v", err)
-			msg := httpx.T(locale, "settings.enrol.pair_failed")
-			if key := enrolFailureKey(err); key != "" {
-				msg = httpx.T(locale, key)
-			}
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(msg))
+			writePairError(w, locale, err)
 			return
 		}
 		if !status.Registered {
@@ -3894,6 +3911,55 @@ func resolveFiscalPostureKey(d *common.Deps, key string) (logical, storage strin
 		}
 	}
 	return key, key
+}
+
+// writePairError renders a refused or failed Pair as the card's error span.
+// The refusals an operator can act on get their own translated message;
+// everything else is the generic failure (the raw reason is only logged).
+func writePairError(w http.ResponseWriter, locale string, err error) {
+	switch {
+	case errors.Is(err, enroll.ErrPairStoreMismatch):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_store_mismatch")))
+		return
+	case errors.Is(err, enroll.ErrPairIdentityPinned):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_identity_pinned")))
+		return
+	case errors.Is(err, enroll.ErrPairReplicaNoStore):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
+		return
+	}
+	// The raw reason is logged, never rendered: it is English-only
+	// and can carry the cloud's body or the endpoint (ut-docs#4058;
+	// the error never contains the pairing code or token).
+	logging.L().Warnf("enrol pair failed: %v", err)
+	msg := httpx.T(locale, "settings.enrol.pair_failed")
+	if key := enrolFailureKey(err); key != "" {
+		msg = httpx.T(locale, key)
+	}
+	fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(msg))
+}
+
+// pairReplacesWorkingConnection (ut-docs#3557): this till has a working
+// cloud connection of its own, so a wrong pairing code would cost the shop
+// an owner-minted code to recover. A joined till with no credential of its
+// own (ViaMainTill) re-registers through its main till, and a till the
+// cloud has locked out (revoked, retired, unauthorized, replaced) has
+// nothing working to lose. A lock-out counter that is still zero after a
+// reboot only means one extra confirmation, never a lock-out.
+func pairReplacesWorkingConnection(r *http.Request, d *common.Deps) bool {
+	if !enroll.CurrentStatus().Registered {
+		return false
+	}
+	if cloudAuthChipStatus().Show {
+		return false
+	}
+	if _, replaced := tillReplaced(r, d); replaced {
+		return false
+	}
+	return true
 }
 
 // enrolFailureKey names the message for a "Register now", "Claim this

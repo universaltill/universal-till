@@ -654,3 +654,72 @@ func TestPairedAtKeyMatchesDiscovery(t *testing.T) {
 		t.Fatalf("store/token keys drifted from the literals in internal/discovery/join_watch.go")
 	}
 }
+
+// ut-docs#3557: PairPrecheck answers the refusals Pair makes before it
+// touches the identity, so the Settings card can raise them before it asks
+// the operator to confirm replacing a working connection.
+func TestPairPrecheckMatchesPairRefusals(t *testing.T) {
+	cases := map[string]struct {
+		code    string
+		replica bool
+		store   string
+		noEndpt bool
+		pinned  bool
+		want    error // nil = valid; errAny = any non-nil error
+	}{
+		"valid":              {code: pairCode, store: pairOldStore},
+		"empty":              {code: "  ", store: pairOldStore, want: errAny},
+		"over 128":           {code: strings.Repeat("A", 129), store: pairOldStore, want: errAny},
+		"no endpoint":        {code: pairCode, store: pairOldStore, noEndpt: true, want: ErrNotConfigured},
+		"env pinned":         {code: pairCode, store: pairOldStore, pinned: true, want: ErrPairIdentityPinned},
+		"replica no store":   {code: pairCode, replica: true, want: ErrPairReplicaNoStore},
+		"replica with store": {code: pairCode, replica: true, store: pairOldStore},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cloud := newFakePairCloud(t)
+			if tc.pinned {
+				t.Setenv("UT_MARKETPLACE_STORE_ID", pairOldStore)
+			}
+			kv, cfg := bootForPair(t, cloud.srv.URL, tc.replica, tc.store)
+			if tc.noEndpt {
+				cfg.Marketplace.EndpointURL = ""
+			}
+			err := PairPrecheck(context.Background(), cfg, kv, tc.code)
+			switch {
+			case tc.want == nil && err != nil:
+				t.Fatalf("PairPrecheck = %v, want nil", err)
+			case tc.want == errAny && err == nil:
+				t.Fatal("PairPrecheck accepted an invalid code")
+			case tc.want != nil && tc.want != errAny && !errors.Is(err, tc.want):
+				t.Fatalf("PairPrecheck = %v, want %v", err, tc.want)
+			}
+			// Pair itself agrees on every refusal.
+			if tc.want != nil {
+				if _, perr := Pair(context.Background(), cfg, kv, tc.code); perr == nil {
+					t.Fatal("Pair accepted what PairPrecheck refused")
+				}
+			}
+		})
+	}
+}
+
+var errAny = errors.New("any error")
+
+func TestPairPrecheckDoesNotTouchIdentity(t *testing.T) {
+	cloud := newFakePairCloud(t)
+	kv, cfg := bootForPair(t, cloud.srv.URL, false, pairOldStore)
+	before := len(kv.writes)
+	if err := PairPrecheck(context.Background(), cfg, kv, pairCode); err != nil {
+		t.Fatal(err)
+	}
+	if len(kv.writes) != before {
+		t.Fatalf("PairPrecheck wrote settings: %q", kv.writes[before:])
+	}
+	if kv.get(keyToken) != pairOldToken || kv.get(keyDeviceID) != pairOldDev || kv.get(keyStoreID) != pairOldStore {
+		t.Fatal("PairPrecheck changed the identity")
+	}
+	if n := cloud.calls.Load(); n != 0 {
+		t.Fatalf("pair calls = %d, want 0", n)
+	}
+}
