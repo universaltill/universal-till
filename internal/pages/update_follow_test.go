@@ -667,3 +667,11 @@ func TestCloseShift_HoldsTheBusyCounter(t *testing.T) {
 		t.Fatalf("counter after the handler = %d, want 0", got)
 	}
 }
+
+// reset clears the armed jitter wait between tests (test-only: production
+// never clears it; a new target replaces it).
+func (w *followWait) reset() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.target, w.notBefore = "", time.Time{}
+}

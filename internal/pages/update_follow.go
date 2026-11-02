@@ -131,12 +131,6 @@ func (w *followWait) armIfNone(target string, notBefore time.Time) {
 	w.target, w.notBefore = target, notBefore
 }
 
-func (w *followWait) reset() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.target, w.notBefore = "", time.Time{}
-}
-
 // shiftCloseInFlight counts CloseShift requests being handled right now
 // (cash count, totals, the next float). An unattended restart in the middle
 // would drop the close, so autoUpdateBusy reads it.
