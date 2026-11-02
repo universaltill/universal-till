@@ -27,7 +27,7 @@ async function mkGroup(page: Page, ownerId: string, name: string): Promise<strin
   expect(r.ok(), `create group ${name}`).toBe(true);
   // The id is only visible on the owner's own panel.
   const html = await (await page.request.get(`/api/catalog/modifier-groups-panel?item_id=${ownerId}`)).text();
-  const m = html.match(new RegExp(`data-group-id="([^"]+)"[\\s\\S]*?modifier-admin-group-name">${name}<`));
+  const m = html.match(new RegExp(`data-group-id="([^"]+)"(?:(?!data-group-id)[\\s\\S])*?modifier-admin-group-name">${name}<`));
   expect(m, `group id for ${name}`).toBeTruthy();
   return m![1];
 }
