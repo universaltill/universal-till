@@ -919,6 +919,31 @@
   formRoot.addEventListener('item-form-tab', function (ev) {
     if (ev.detail && ev.detail.tab === 'modifiers') loadItemModifiers();
   });
+  // ut-docs#2727: detach / attach / skip / use-again outerHTML-swap
+  // #item-modifiers-list. htmx restores focus only to a same-id element
+  // (the stable ids in modifier_group_admin.html); when the activated
+  // control is gone (a removed row, an emptied attach list) a keyboard or
+  // switch user would land on <body>, so park focus on the panel heading.
+  // Only for those mutation requests (target is the list itself) — the
+  // tab-select/open load targets #item-modifiers-host and never moves focus.
+  // The heading is not an input, so no on-screen keyboard appears.
+  var modifiersMutating = false;
+  document.addEventListener('htmx:beforeRequest', function (ev) {
+    var t = ev.detail && ev.detail.target;
+    if (t && t.id === 'item-modifiers-list') modifiersMutating = true;
+  });
+  document.addEventListener('htmx:afterRequest', function (ev) {
+    if (modifiersMutating && ev.detail && !ev.detail.successful) modifiersMutating = false;
+  });
+  document.addEventListener('htmx:afterSettle', function () {
+    if (!modifiersMutating) return;
+    modifiersMutating = false;
+    var panel = document.getElementById('item-form-panel-modifiers');
+    var heading = document.getElementById('item-modifiers-heading');
+    var a = document.activeElement;
+    if (!panel || !heading) return;
+    if (!a || a === document.body || !a.isConnected || !panel.contains(a)) heading.focus();
+  });
   // ut-docs#1901 UX fix: any field the operator touches after a save
   // invalidates that save's pending auto-close (search "auto-close"
   // below) — covers typing straight into the same still-open, auto-
