@@ -50,6 +50,45 @@ func TestConfirmPrompt_DialogOptsIntoFocusTrap(t *testing.T) {
 	requireFocusTrap(t, rec.Body.String(), "confirm-modal")
 }
 
+// ut-docs#5275: Escape closes the prompt as Cancel (data-ut-escape-close,
+// base.html's handler), and data-ut-prompt hands the dialog to
+// inline-actions.js's focus-return / stale-hint cleanup. Still .show().
+func requireEscapeClose(t *testing.T, body, id string, wantPrompt bool) {
+	t.Helper()
+	requireFocusTrap(t, body, id)
+	for _, m := range focusTrapDialogOpen.FindAllStringSubmatch(body, -1) {
+		if m[1] != id {
+			continue
+		}
+		if !strings.Contains(m[0], "data-ut-escape-close") {
+			t.Fatalf("#%s must close on Escape (data-ut-escape-close), got: %s", id, m[0])
+		}
+		if wantPrompt && !strings.Contains(m[0], "data-ut-prompt") {
+			t.Fatalf("#%s must carry data-ut-prompt, got: %s", id, m[0])
+		}
+	}
+	// base.html's placeholders only mention showModal in comments.
+	if wantPrompt && strings.Contains(body, "showModal") {
+		t.Fatalf("#%s must open with .show(), never showModal()", id)
+	}
+}
+
+func TestElevationPrompt_DialogEscapeClosesAndIsPrompt(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	r := elevationRequest(auth.User{ID: "cash-session", Role: "cashier"})
+	check := checkOrElevate(dp, r, "sync_management", "")
+	rec := httptest.NewRecorder()
+	renderElevationPrompt(rec, r, "/api/sync/promote", "#promote-msg", "Promote this till.", nil, check)
+	requireEscapeClose(t, rec.Body.String(), "elevation-modal", true)
+}
+
+func TestConfirmPrompt_DialogEscapeClosesAndIsPrompt(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/x", nil)
+	rec := httptest.NewRecorder()
+	renderConfirmPrompt(rec, r, confirmPrompt{Action: "/api/x", HxTarget: "#x-msg", Title: "Sure?", Body: "Really.", Confirm: "Yes"})
+	requireEscapeClose(t, rec.Body.String(), "confirm-modal", true)
+}
+
 func TestBaseLayout_DialogPlaceholdersOptIntoFocusTrap(t *testing.T) {
 	b, err := os.ReadFile("web/ui/layouts/base.html") // TestMain chdirs to the repo root
 	if err != nil {
@@ -57,4 +96,6 @@ func TestBaseLayout_DialogPlaceholdersOptIntoFocusTrap(t *testing.T) {
 	}
 	requireFocusTrap(t, string(b), "elevation-modal")
 	requireFocusTrap(t, string(b), "confirm-modal")
+	requireEscapeClose(t, string(b), "elevation-modal", false)
+	requireEscapeClose(t, string(b), "confirm-modal", false)
 }

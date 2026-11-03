@@ -83,7 +83,9 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // own fake catalog on the same port (it never registers; downloads are intercepted).
 // Its name sorts it before the specs that register this till, so the cloud-terms
 // box it asserts is still shown.
-const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477|catalog-store-detail-actions-4228)\.spec\.ts$/;
+// ut-docs#5275: the pair-with-a-shop confirm's Escape/Cancel spec registers this
+// till against its own in-process fake cloud (see the spec's header).
+const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477|catalog-store-detail-actions-4228|pair-confirm-escape-5275)\.spec\.ts$/;
 
 // ut-docs#3091: the release-notes spec needs a till stamped with a released
 // version and seeded as "just updated" (run-till-release-notes.sh), so the

@@ -26,7 +26,9 @@ PIN prompt right there.
    or switches accounts.
 4. A wrong PIN, too many attempts, or a PIN that belongs to someone who
    still isn't allowed to do that particular action all show a clear reason
-   in the same dialog, so you know what to try next.
+   in the same dialog, so you know what to try next. To back out instead,
+   tap Cancel or press Esc: nothing is done, and you're back on the field
+   or button you started from.
 
 ## What gets recorded
 
