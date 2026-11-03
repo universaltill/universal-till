@@ -57,6 +57,11 @@ func exempt(path string) bool {
 		// ut-docs#3562: the replica push tick's no-sale journal, syncTill-
 		// authed in the handler like /api/sync/sales.
 		"/api/sync/no-sales",
+		// ut-docs#5198: a replica swapping its LAN sync bearer, syncTill-
+		// authed in the handler. Omitting it here would 401 every rotation
+		// -- the /api/sync/stock failure class again -- and the old bearer
+		// would die at the end of its grace.
+		"/api/sync/bearer/rotate",
 		// ut-docs#4711: the same tick's cleared-basket journal, syncTill-authed.
 		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join withdraws its own enrolment with the
@@ -381,6 +386,7 @@ func exempt(path string) bool {
 // hx-triggers and fails on an unclassified one, or on a stale entry here.
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
+	"/ui/join-sync":           true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
 	"/ui/main-till-status":    true,
 	"/ui/net-status":          true, // status-bar light, fetch every 10 s (ut-docs#3095)
 	"/ui/subscription-chip":   true, // status-bar subscription chip, every 60 s (ut-docs#2569)

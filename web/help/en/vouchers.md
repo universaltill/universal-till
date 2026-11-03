@@ -84,7 +84,7 @@ Good to know:
 
 - The page shows the newest 200 vouchers. When there are more it says so — search or filter to find older ones.
 - With no vouchers yet, the page tells you how to start: sell one with a Gift voucher item, or import balances from your previous system.
-- On an additional till, the list shows only the vouchers this till has seen — sold, imported or redeemed here. The full list is on the main till.
+- On an additional till, the list shows only the vouchers this till has seen — sold, imported or redeemed here. The full list is on the main till. To open a voucher sold elsewhere, search for its full card number: the till asks the main till for it.
 
 ## Correcting a balance
 
@@ -124,8 +124,9 @@ What can go wrong:
 - A voucher can be topped up once per sale, and it can't pay for its own top-up.
 - A top-up needs an active gift voucher item in the catalogue — if there is none, the page says so.
 - Voiding the sale is refused once part of the topped-up amount has been spent.
-- On an additional till, the page asks you to top up on the main till instead.
+- On an additional till, the main till must be reachable (and up to date) when you add the top-up; if it isn't, the page says so and nothing is added to the sale.
+- On an additional till, a sale that sold or topped up a voucher can't be voided: the till says so and nothing changes, and the voucher keeps its value.
 
 ## Day-end reports and other tills
 
-The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).
+The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused, and not on an additional till, which refuses that void) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).

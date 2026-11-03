@@ -39,6 +39,7 @@ const (
 	linkLinked      linkState = "linked"      // live link: changes arrive within a second
 	linkPolling     linkState = "polling"     // no link (older main till, or still connecting): the 30 s pull
 	linkUnreachable linkState = "unreachable" // the main till is gone: selling offline
+	linkRejoin      linkState = "rejoin"      // no bearer or till id (a restored copy): join the main till again, ut-docs#5162
 )
 
 // Update notes shown next to a linked or polling chip, from the main till's
@@ -54,7 +55,10 @@ const (
 // linkInputs is everything the chip is derived from — gathered by
 // linkInputsOf, kept separate so the rules are testable without a link.
 type linkInputs struct {
-	Replica          bool // this till has a main till (sync.primary_url)
+	Replica bool // this till has a main till (sync.primary_url)
+	// Unpaired: a replica without its bearer or till id. A restore drops
+	// them (ut-docs#5162); it cannot sync until it joins again.
+	Unpaired         bool
 	HasClient        bool
 	Client           fleetlink.ClientStatus
 	WatchUnreachable bool   // PrimaryWatch: repeated failed contacts
@@ -82,6 +86,8 @@ type linkView struct {
 
 // deriveLinkView applies the rules, in order:
 //  1. no main till → no chip;
+//     an unpaired replica (restored copy, ut-docs#5162) → rejoin: no link
+//     rule below can hold without a bearer;
 //  2. PrimaryWatch counts the main till unreachable → unreachable;
 //  3. the link is live → linked;
 //  4. an established link was lost and nothing has reached the main till
@@ -103,6 +109,9 @@ type linkView struct {
 func deriveLinkView(in linkInputs) linkView {
 	if !in.Replica {
 		return linkView{}
+	}
+	if in.Unpaired {
+		return linkView{State: linkRejoin}
 	}
 	now := in.Now
 	if now.IsZero() {
@@ -203,6 +212,7 @@ func linkInputsOf(ctx context.Context, d *common.Deps) linkInputs {
 	if !in.Replica {
 		return in
 	}
+	in.Unpaired = replicaUnpaired(ctx, d)
 	if d.LinkClient != nil {
 		in.HasClient, in.Client = true, d.LinkClient.Status()
 	}
@@ -214,6 +224,24 @@ func linkInputsOf(ctx context.Context, d *common.Deps) linkInputs {
 	fin := followInputsOf(ctx, d)
 	in.Target, in.CanFollow = fin.Target, followCanInstall(fin)
 	return in
+}
+
+// replicaUnpaired reports whether this replica lacks its LAN bearer or till
+// id, which a restore onto a new device clears (ut-docs#5162).
+func replicaUnpaired(ctx context.Context, d *common.Deps) bool {
+	for _, k := range []string{"sync.bearer", "sync.till_id"} {
+		if v, _, _ := d.Settings.Get(ctx, k); strings.TrimSpace(v) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// mainTillGone reports whether this till cannot use its main till right now:
+// the chip says unreachable, or it has no bearer to reach it with and must
+// join again (ut-docs#5162). Shop-wide writes and settings key off this.
+func (v linkView) mainTillGone() bool {
+	return v.State == linkUnreachable || v.State == linkRejoin
 }
 
 // replicaLinkView is the chip's view for this till now.

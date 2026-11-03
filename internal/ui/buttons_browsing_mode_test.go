@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 )
 
@@ -108,6 +110,16 @@ func mustContainNone(t *testing.T, body string, unwanted ...string) {
 func TestButtonsHTTPList_CategoryTabsModeRendersTiles(t *testing.T) {
 	_, _, h := newBrowsingModeTestHTTP(t)
 	h.BrowsingMode = "category_tabs"
+	// Only the plural count key is translated (ut-docs#4480); every other key
+	// still renders as its name.
+	tr, err := config.NewI18nFS(fstest.MapFS{
+		"en.json": &fstest.MapFile{Data: []byte(`{"categories.item_count_plural":"{count, plural, one {# item} other {# items}}"}`)},
+	}, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(tr, "en")
+	t.Cleanup(func() { httpx.InitI18n(nil, "en") })
 	body := renderList(t, h)
 
 	mustContainAll(t, body,
@@ -126,9 +138,8 @@ func TestButtonsHTTPList_CategoryTabsModeRendersTiles(t *testing.T) {
 		t.Fatalf("expected 4 category tiles (Food, Drinks, Household, Uncategorized), got %d: %s", got, body)
 	}
 	// Per-tile count is ITEMS (every active item in the subtree), not quick
-	// buttons: Food = Bread + Butter (nested Dairy). The test i18n renders a
-	// key as its name, so the count line reads as the key + the printf arg.
-	mustContainAll(t, body, `category-tile-count">categories.item_count%!(EXTRA int=2)<`)
+	// buttons: Food = Bread + Butter (nested Dairy).
+	mustContainAll(t, body, `category-tile-count">2 items<`)
 	mustContainNone(t, body, "products.category_button_count")
 	mustContainNone(t, body,
 		`class="tab-bar"`, `id="cat-tab-all"`, `id="cat-tab-more"`, `id="buttons-grid-all"`,

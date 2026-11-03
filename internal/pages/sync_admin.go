@@ -137,7 +137,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// Primary side: admin-state bundle. `?have=` lets a replica poll
 	// cheaply — matching fingerprint returns no body worth applying.
 	mux.HandleFunc("GET /api/sync/admin", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
@@ -174,7 +174,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// poll it and correct their local levels to match.
 	stockRepo := data.NewSyncStockRepo(posRepo)
 	mux.HandleFunc("GET /api/sync/stock", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -201,7 +201,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// the marketplace itself through the Ed25519-verified installer.
 	pluginsRepo := data.NewSyncPluginsRepo(d.Db)
 	mux.HandleFunc("GET /api/sync/plugins", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -231,7 +231,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// them. Raw key bytes, base64 — no fingerprint/`?have=`, this is
 	// fetch-once-then-persist, not a bundle.
 	mux.HandleFunc("GET /api/sync/secrets-key", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -260,8 +260,10 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 		if primary := d.SyncPrimaryURL(r.Context()); primary != "" {
 			queued, _ := countQueuedSales(r.Context(), posRepo, get("sync.push_cursor"))
 			fresh := withinLast(get("sync.last_contact_at"), 90*time.Second)
+			// A restored copy has no bearer or till id (ut-docs#5162).
+			rejoin := replicaUnpaired(r.Context(), d)
 			class := "ok"
-			if !fresh {
+			if !fresh || rejoin {
 				class = "warn"
 			}
 			label := get("sync.till_name")
@@ -278,6 +280,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 				"label":     label,
 				"queued":    queued,
 				"offline":   !fresh,
+				"rejoin":    rejoin,
 			})(w, r)
 			return
 		}

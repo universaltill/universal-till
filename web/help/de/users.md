@@ -14,7 +14,7 @@ Getrennte Kassierer- und Managerkonten mit PIN-Anmeldung sowie Schichtverfolgung
 
 ## Verwendung
 
-1. Verwalten Sie Konten unter Benutzer; Manager können auf Einstellungen und Berichte zugreifen, Kassierer können verkaufen.
+1. Verwalten Sie Konten unter Benutzer; Manager können auf Einstellungen und Berichte zugreifen, Kassierer können verkaufen. Benutzer (dort werden PINs vergeben) und Berechtigungen erreichen Sie auch über Einstellungen → Personal & Sicherheit; jeder Link erscheint nur für Personen, die die jeweilige Seite öffnen dürfen.
 2. Jede Person meldet sich mit ihrer eigenen PIN an der Kasse an.
 3. Eröffnen und schließen Sie Schichten, um Schubladenzählungen pro Person zu verfolgen.
 4. Der Schritt „Geschäftsname“ des Erstinbetriebnahme-Assistenten braucht einen echten Namen: Leer geht es nicht weiter, und ein Standardname wie „My Store“ wird abgelehnt, denn der Name steht auf jedem Beleg und benennt Ihr Geschäft online. Derselbe Schritt fragt auch, wie diese Kasse heißen soll, und auch das ist Pflicht: Es gibt keinen Standardnamen, geben Sie also einen ein (zum Beispiel „Vordere Theke“), bevor es weitergeht — hilfreich, sobald Sie mehr als eine Kasse haben, und später in den Einstellungen änderbar.
@@ -27,7 +27,7 @@ Getrennte Kassierer- und Managerkonten mit PIN-Anmeldung sowie Schichtverfolgung
 11. Der Einrichtungsassistent meldet Sie als ersten Admin dieser Kasse an — er verbindet die Kasse nicht mit IHREM eigenen Online-Konto. Für das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen siehe [Geschäftsregistrierung & Beanspruchung](/help/claim).
 12. Das Anlegen eines Benutzers, das Festlegen von jemandes PIN oder das Aktivieren/Deaktivieren eines Kontos erfordert die Rolle Manager oder Admin. Als Kassierer angemeldet und versuchen Sie es trotzdem? Der Bildschirm lehnt nicht einfach ab — er öffnet direkt vor Ort eine PIN-Abfrage, die ein Manager oder Admin genehmigen kann, genauso wie bei [anderen Manager-Freigabe-Abfragen](/help/elevation) anderswo in der Kasse.
 13. Ihr eigener Name im linken Menü (👤) öffnet „PIN ändern“; die Schaltfläche „Sperren“ daneben meldet Sie direkt zum PIN-Feld ab.
-14. Am Anmeldebildschirm einer Vollbild- oder Kiosk-Kasse festgesteckt? Der Anmeldebildschirm hat einen eingeklappten Link „Ausgesperrt? Zurück zum Desktop“: Öffnen Sie ihn und geben Sie eine Manager-PIN ein, um die Kasse zu verlassen und zum Desktop des Betriebssystems zurückzukehren — dafür ist keine vorherige Anmeldung nötig. Es ist dieselbe manager-PIN-geschützte Aktion „Zum Betriebssystem wechseln“ wie unter Einstellungen → Anzeige; siehe [Sprachen & Anzeige](/help/display) für ihre Wirkung auf jeder Kassenart.
+14. Am Anmeldebildschirm einer Vollbild- oder Kiosk-Kasse festgesteckt? Der Anmeldebildschirm hat einen eingeklappten Link „Ausgesperrt? Zurück zum Desktop“: Öffnen Sie ihn und geben Sie eine Manager-PIN ein, um die Kasse zu verlassen und zum Desktop des Betriebssystems zurückzukehren — dafür ist keine vorherige Anmeldung nötig. Es ist dieselbe Manager-PIN-geschützte Aktion „Zum Betriebssystem wechseln“ wie unter Einstellungen → Anzeige; siehe [Sprachen & Anzeige](/help/display) für ihre Wirkung auf jeder Kassenart.
 
 ## Ihre eigene PIN ändern
 

@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/agentaction"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -98,6 +101,41 @@ func resolveAgentConfirms(ctx context.Context, d *common.Deps, v *pluginview.Vie
 		}
 		return agentConfirmCard(p, locale)
 	})
+	v.ResolveItemLists(func(ids []string, missing int) *pluginview.ViewItemList {
+		return agentItemList(ctx, d, u, ids, missing)
+	})
+}
+
+// agentItemList is core's drawing of an item_list (ut-docs#4128): names,
+// thumbnails and links come from the catalogue and core's routes, only for
+// an operator whose role may manage the catalogue (the page the links open
+// needs it too). Unknown or inactive ids are dropped.
+func agentItemList(ctx context.Context, d *common.Deps, u auth.User, ids []string, missing int) *pluginview.ViewItemList {
+	if d.AuthSvc == nil || !agentRoleAllows(ctx, d, u, "catalog_management") {
+		return nil
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	thumbs, _ := repo.ItemThumbnailsFor(ctx, ids)
+	out := &pluginview.ViewItemList{}
+	for _, id := range ids {
+		it, ok, err := repo.GetItem(ctx, id)
+		if err != nil || !ok || !it.IsActive {
+			continue
+		}
+		li := pluginview.ViewListedItem{Name: it.Name, EditURL: "/catalog?item=" + url.QueryEscape(id)}
+		// Only a photo served from the till's own public tree is shown.
+		if p := thumbs[id]; strings.HasPrefix(p, "/public/") && !strings.Contains(p, "..") {
+			li.Thumb = p
+		}
+		out.Items = append(out.Items, li)
+	}
+	if len(out.Items) == 0 {
+		return nil
+	}
+	if missing >= 1 && missing <= data.GapAll {
+		out.CatalogURL = "/catalog?missing=" + strconv.Itoa(missing)
+	}
+	return out
 }
 
 func agentConfirmCard(p *agentaction.Proposal, locale string) *pluginview.ViewConfirm {
@@ -107,8 +145,12 @@ func agentConfirmCard(p *agentaction.Proposal, locale string) *pluginview.ViewCo
 		ConfirmLabel: fmt.Sprintf(httpx.T(locale, "agent.confirm.button"), httpx.FormatDecimal(strconv.Itoa(len(p.Rows)), locale)),
 	}
 	for _, r := range p.Rows {
+		item := r.Item
+		if r.ItemKey != "" {
+			item = httpx.T(locale, r.ItemKey)
+		}
 		c.Rows = append(c.Rows, pluginview.ViewConfirmRow{
-			Item: r.Item, Field: httpx.T(locale, r.FieldKey),
+			Item: item, Field: httpx.T(locale, r.FieldKey),
 			Before: agentValue(r.Before, locale), After: agentValue(r.After, locale),
 		})
 	}
@@ -119,6 +161,8 @@ func agentValue(v agentaction.Value, locale string) string {
 	switch v.Kind {
 	case "text":
 		return v.Text
+	case "key":
+		return httpx.T(locale, v.Text)
 	case "money":
 		return httpx.FormatMoneyIn(v.Minor, httpx.ActiveCurrency().Code, locale)
 	case "number":
@@ -142,6 +186,12 @@ func registerAgentProposals(mux *http.ServeMux, d *common.Deps) {
 			// A till that follows a main till forwards catalogue saves
 			// there; an agent change is never forwarded.
 			return "catalogue is edited on the main till"
+		}
+		if a.Area == "settings" && d.SyncPrimaryURL(ctx) != "" {
+			// A shop-wide setting changes on the main till and the
+			// satellites follow by sync (ADR-0086); an agent change is
+			// never forwarded.
+			return "settings are changed on the main till"
 		}
 		return ""
 	})
@@ -216,6 +266,15 @@ func agentProposalDecide(w http.ResponseWriter, r *http.Request, d *common.Deps,
 	if len(res.Stock) > 0 {
 		d.NudgeLink(fleetlink.ScopeStock)
 	}
+	for _, c := range res.Settings {
+		// The manual screen's d.SetState: the live runtime state follows
+		// the row just committed (only the stock guard lives in it), no
+		// restart. Never a LoadState: it would reset unrelated fields.
+		if c.Key == common.KeyAllowNegativeInventory {
+			on, _ := strconv.ParseBool(c.Value)
+			d.UpdateState(func(s *common.RuntimeState) { s.AllowNegativeInventory = on })
+		}
+	}
 	render(http.StatusOK, agentNotice{Level: "info", Key: "agent.notice.applied", Count: httpx.FormatDecimal(strconv.Itoa(res.Changes), locale)})
 	notifyAgentPlugin(ctx, d, p, "applied")
 }
@@ -255,6 +314,8 @@ func agentRoleAllows(ctx context.Context, d *common.Deps, u auth.User, perm stri
 		can, err = d.AuthSvc.Can(ctx, u, "catalog_management")
 	case "stock_management":
 		can, err = d.AuthSvc.Can(ctx, u, "stock_management")
+	case "settings":
+		can, err = d.AuthSvc.Can(ctx, u, "settings")
 	default:
 		return false
 	}

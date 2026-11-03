@@ -205,7 +205,7 @@ func (s *salesMirrorServer) preflight(w http.ResponseWriter, r *http.Request) (d
 		writeSalesMirrorError(w, http.StatusForbidden, salesMirrorError{Code: "tls_required", Message: "the sales copy is served over pinned TLS only; pair this till again"})
 		return data.TillRow{}, "", nil, false
 	}
-	till, ok := syncTill(r, s.tills)
+	till, ok := syncTill(w, r, s.tills)
 	if !ok {
 		writeSalesMirrorError(w, http.StatusUnauthorized, salesMirrorError{Code: "unauthorized", Message: "unknown till"})
 		return data.TillRow{}, "", nil, false

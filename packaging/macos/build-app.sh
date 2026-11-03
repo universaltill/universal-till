@@ -38,8 +38,19 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
   go build -ldflags "$LDFLAGS" -o "$APP/Contents/MacOS/unitill-pos" .
 
 # The WebView shell (CGO + system WKWebView, behind the `desktop` build tag).
+# clang defaults the deployment target to the runner SDK's macOS, so a newer
+# runner image would silently raise the binary's minimum above Info.plist's
+# LSMinimumSystemVersion (ut-docs#5214; floor checked by guard-macos-min-version.sh).
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(plutil -extract LSMinimumSystemVersion raw packaging/macos/Info.plist)}"
+export MACOSX_DEPLOYMENT_TARGET
 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
   go build -tags desktop -ldflags "$LDFLAGS" -o "$APP/Contents/MacOS/unitill-desktop" ./cmd/unitill-desktop
+# Fail if the target did not take effect (forced internal linker, SDK change).
+minos="$(vtool -show-build "$APP/Contents/MacOS/unitill-desktop" | awk '$1 == "minos" { print $2; exit }')"
+if [ "$minos" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
+  echo "unitill-desktop minos is '${minos}', want ${MACOSX_DEPLOYMENT_TARGET} (ut-docs#5214)" >&2
+  exit 1
+fi
 
 echo "==> staging web assets"
 # web/ is a resource, not code, so it goes in Contents/Resources (codesign

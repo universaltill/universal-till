@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -57,34 +58,21 @@ var ErrPairIdentityPinned = errors.New("this till's cloud identity is set in the
 // merchant or a well-formed token.
 var errPairAnswerRejected = errors.New("pair answer rejected")
 
+// ProblemKeyPairFailed tags a failed pairing attempt in the problems ring;
+// a successful pairing resolves it, so the shop's "Attention needed" does
+// not keep an earlier attempt's refusal (ut-docs#5098).
+const ProblemKeyPairFailed = "enrol.pair_failed"
+
 // Pair pairs this till with the shop the owner's pairing code belongs to
 // and returns the resulting status. Synchronous and bounded by ctx; the
 // till keeps selling offline whatever the outcome.
 func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (Status, error) {
 	code = strings.TrimSpace(code)
-	if code == "" || len(code) > maxRedeemCode {
-		return CurrentStatus(), fmt.Errorf("enter the pairing code from the shop's cloud account")
+	in, err := pairInputRefusal(ctx, cfg, kv, code)
+	if err != nil {
+		return CurrentStatus(), err
 	}
-	m := Effective(cfg).Marketplace
-	if strings.TrimSpace(m.EndpointURL) == "" {
-		return CurrentStatus(), ErrNotConfigured
-	}
-	replica := isReplica(ctx, kv)
-	mu.RLock()
-	// UT_MARKETPLACE_STORE_ID pins the store on a main or standalone till:
-	// Effective keeps the pinned store over the paired one, so adopting the
-	// paired token would split the identity. On a replica the pinned store
-	// is instead the store the answer must match (as in redeem), which keeps
-	// the identity whole, so it is not a refusal there.
-	pinned := tokenExplicit || explicitConfigured || deviceIDExplicit || (storeIDExplicit && !replica)
-	inUse := cur.StoreID
-	explicitStore := storeIDExplicit
-	mu.RUnlock()
-	if pinned {
-		// The environment's identity would win over the paired one
-		// (Effective), so pairing would only burn the single-use code.
-		return CurrentStatus(), ErrPairIdentityPinned
-	}
+	m, replica := in.m, in.replica
 	// Serialized with registration (RegisterNow and the background loop),
 	// so nothing registers the old device id mid-pair.
 	if !acquireAttempt(ctx) {
@@ -94,17 +82,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	defer releaseAttempt()
 
 	log := logging.L()
-	// The store this till actually belongs to, read before any write. On a
-	// replica it is kept current by the admin sync from its main till and
-	// is never cleared here.
-	own, _, _ := kv.Get(ctx, keyStoreID)
-	own = strings.TrimSpace(own)
-	if explicitStore {
-		own = strings.TrimSpace(m.StoreID)
-	}
-	if own == "" {
-		own = strings.TrimSpace(inUse)
-	}
+	own := pairOwnStore(ctx, kv, m, in)
 	if replica && own == "" {
 		// No answer could match a store this replica does not know yet, so
 		// refuse before clearing anything or burning the single-use code.
@@ -120,7 +98,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	// 3. Pair.
 	storeID, merchantID, token, err := postPair(ctx, m.EndpointURL, code, newID, DeviceName(ctx, kv), buildinfo.Version)
 	if err != nil {
-		log.Warnf("enrolment: pairing this till with a shop failed: %v (ADR-0116 D5)", err)
+		log.WarnProblemf(ProblemKeyPairFailed, "enrolment: pairing this till with a shop failed: %v (ADR-0116 D5)", err)
 		return CurrentStatus(), err
 	}
 	if replica && storeID != own {
@@ -128,8 +106,80 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 		return CurrentStatus(), ErrPairStoreMismatch
 	}
 	adoptPaired(ctx, kv, replica, newID, storeID, merchantID, token)
+	logging.ResolveProblems(ProblemKeyPairFailed)
 	log.Infof("enrolment: this till is now paired with store %s as device %s (ADR-0116 D5)", storeID, newID)
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
 	return CurrentStatus(), nil
+}
+
+// pairInput is what the refusal checks learned, reused by Pair.
+type pairInput struct {
+	m             config.MarketplaceConfig
+	replica       bool
+	inUse         string
+	explicitStore bool
+}
+
+// pairInputRefusal is Pair's first group of refusals: the ones decided
+// without taking the registration slot and without touching the identity.
+// code must already be trimmed.
+func pairInputRefusal(ctx context.Context, cfg *config.Config, kv Settings, code string) (pairInput, error) {
+	var in pairInput
+	if code == "" || len(code) > maxRedeemCode {
+		return in, fmt.Errorf("enter the pairing code from the shop's cloud account")
+	}
+	in.m = Effective(cfg).Marketplace
+	if strings.TrimSpace(in.m.EndpointURL) == "" {
+		return in, ErrNotConfigured
+	}
+	in.replica = isReplica(ctx, kv)
+	mu.RLock()
+	// UT_MARKETPLACE_STORE_ID pins the store on a main or standalone till:
+	// Effective keeps the pinned store over the paired one, so adopting the
+	// paired token would split the identity. On a replica the pinned store
+	// is instead the store the answer must match (as in redeem), which keeps
+	// the identity whole, so it is not a refusal there.
+	pinned := tokenExplicit || explicitConfigured || deviceIDExplicit || (storeIDExplicit && !in.replica)
+	in.inUse = cur.StoreID
+	in.explicitStore = storeIDExplicit
+	mu.RUnlock()
+	if pinned {
+		// The environment's identity would win over the paired one
+		// (Effective), so pairing would only burn the single-use code.
+		return in, ErrPairIdentityPinned
+	}
+	return in, nil
+}
+
+// pairOwnStore is the store this till actually belongs to, read before any
+// write. On a replica it is kept current by the admin sync from its main
+// till and is never cleared here.
+func pairOwnStore(ctx context.Context, kv Settings, m config.MarketplaceConfig, in pairInput) string {
+	own, _, _ := kv.Get(ctx, keyStoreID)
+	own = strings.TrimSpace(own)
+	if in.explicitStore {
+		own = strings.TrimSpace(m.StoreID)
+	}
+	if own == "" {
+		own = strings.TrimSpace(in.inUse)
+	}
+	return own
+}
+
+// PairPrecheck reports the refusals Pair makes before it touches the
+// till's identity, without touching it (ut-docs#3557: Settings answers them
+// before asking the operator to confirm replacing a working connection, so
+// nobody confirms something that would be refused). Pair re-checks under
+// its own lock; the error values are Pair's.
+func PairPrecheck(ctx context.Context, cfg *config.Config, kv Settings, code string) error {
+	in, err := pairInputRefusal(ctx, cfg, kv, strings.TrimSpace(code))
+	if err != nil {
+		return err
+	}
+	if in.replica && pairOwnStore(ctx, kv, in.m, in) == "" {
+		return ErrPairReplicaNoStore
+	}
+	return nil
 }
 
 // resetIdentityForPair clears exactly this till's cloud identity (ADR-0116
@@ -151,6 +201,10 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 	}
 	// A new identity is not the replaced one (ut-docs#5058).
 	clearReplaced(ctx, kv)
+	// And a pairing ends a restored-install reset (ut-docs#5157).
+	if err := kv.Set(ctx, keyRestoredAt, ""); err != nil {
+		log.Warnf("enrolment: pair: clear %s: %v", keyRestoredAt, err)
+	}
 	// A fresh device id: re-pairing is always as a new device.
 	if err := kv.Set(ctx, keyDeviceID, newID); err != nil {
 		log.Warnf("enrolment: pair: persist device_id: %v", err)
@@ -310,6 +364,11 @@ type ReplacedTill struct {
 func postPairFull(ctx context.Context, endpoint, code, deviceID, deviceName, version string, firstTill bool, replaceDeviceID string) (pairAnswer, error) {
 	none := pairAnswer{}
 	body := map[string]any{"code": code, "device_id": deviceID, "device_name": deviceName, "version": version}
+	// ut-docs#5127: the cloud pins the till's approval key in the transaction
+	// that mints the credential. No key (unusable file) never blocks pairing.
+	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
+		body["approval_key"] = ak
+	}
 	if firstTill {
 		body["first_till"] = true
 		if replaceDeviceID != "" {
@@ -459,7 +518,7 @@ func PairFirstTill(ctx context.Context, cfg *config.Config, code, tillName, repl
 	if err != nil {
 		var confirm *ReplaceConfirmError
 		if !errors.As(err, &confirm) { // the expected first half of a replace
-			logging.L().Warnf("enrolment: pair-first setup failed: %v (ADR-0166)", err)
+			logging.L().WarnProblemf(ProblemKeyPairFailed, "enrolment: pair-first setup failed: %v (ADR-0166)", err)
 		}
 		return nil, err
 	}
@@ -476,6 +535,7 @@ func (p *FirstTillPairing) Commit(ctx context.Context, cfg *config.Config, kv Se
 	defer releaseAttempt()
 	resetIdentityForPair(ctx, kv, false, p.DeviceID)
 	adoptPaired(ctx, kv, false, p.DeviceID, p.StoreID, p.MerchantID, p.Token)
+	logging.ResolveProblems(ProblemKeyPairFailed)
 	logging.L().Infof("enrolment: this till is now paired with store %s as device %s (ADR-0166)", p.StoreID, p.DeviceID)
 	return CurrentStatus(), nil
 }

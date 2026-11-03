@@ -13,7 +13,7 @@ PIN girişli ayrı kasiyer ve yönetici hesapları; kimin ne sattığını ve ç
 
 ## Nasıl kullanılır
 
-1. Hesapları Kullanıcılar altında yönetin; yöneticiler ayarlara ve raporlara erişir, kasiyerler satış yapar.
+1. Hesapları Kullanıcılar altında yönetin; yöneticiler ayarlara ve raporlara erişir, kasiyerler satış yapar. Kullanıcılar'a (PIN'lerin belirlendiği yer) ve İzinler'e Ayarlar → Personel ve güvenlik üzerinden de ulaşabilirsiniz; her bağlantı yalnızca o sayfayı açma yetkisi olana gösterilir.
 2. Herkes kasada kendi PIN'iyle giriş yapar.
 3. Kişi başına çekmece sayımı için vardiyaları açıp kapatın.
 4. İlk kurulum sihirbazının dükkân adı adımı gerçek bir ad ister: boş bırakarak devam edemezsiniz ve "My Store" gibi varsayılan bir ad reddedilir, çünkü ad her fişe basılır ve dükkânınızı çevrimiçi tanıtır. Aynı adım bu kasaya ne ad verileceğini de sorar ve bu da zorunludur: varsayılan bir ad yoktur, bu yüzden devam etmeden önce bir ad yazın (örneğin "Ön tezgâh") — birden fazla kasanız olduğunda işe yarar ve daha sonra Ayarlar'dan değiştirilebilir.

@@ -25,6 +25,22 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	return s.repo.Set(ctx, key, value)
 }
 
+// SyncBearerPrev, RotateSyncBearer and AdoptPrevSyncBearer are the
+// data.SettingsRepo methods of the same names (ut-docs#5203): the replica's
+// previous LAN bearer, kept so a main till restored from an older backup can
+// still be reached.
+func (s *Store) SyncBearerPrev(ctx context.Context) (string, error) {
+	return s.repo.SyncBearerPrev(ctx)
+}
+
+func (s *Store) RotateSyncBearer(ctx context.Context, old, fresh string) (bool, error) {
+	return s.repo.RotateSyncBearer(ctx, old, fresh)
+}
+
+func (s *Store) AdoptPrevSyncBearer(ctx context.Context, failed string) (string, bool, error) {
+	return s.repo.AdoptPrevSyncBearer(ctx, failed)
+}
+
 // GetOrCreate is data.SettingsRepo.GetOrCreate: the stored value, or
 // defaultValue persisted atomically when the key is absent. It makes Store an
 // enroll.Settings / discovery.SettingsReader (ut-docs#3307).

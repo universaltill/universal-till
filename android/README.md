@@ -545,6 +545,20 @@ the session that wrote it had no Android SDK:
 17. Background the app (Home) and send **Unlock kiosk** again — confirm
     my. shows `failed` / `no_shell` and nothing changes on the till.
 
+## Item photo: the system camera (ut-docs#5190)
+
+A file input with `capture` and image types (the catalog's **Take a Photo**)
+opens the system camera, not the document picker: `onShowFileChooser` checks
+`CaptureLogic.wantsCamera`, asks `CAMERA` on first use only, and launches
+`TakePicture` into a file under the private cache `captures/` directory. The
+camera app reaches it through `CaptureFileProvider` (authority
+`<applicationId>.captures`, `res/xml/file_paths_captures.xml`: that one
+directory, nothing else; separate from the update provider). The page gets the
+content Uri like any picked file. Permission refused or no camera app: the
+document picker, so the field is never dead. Captures older than an hour are
+swept on the next shot. The page uses this path whenever `window.AndroidKiosk`
+exists; desktop browsers keep the in-page viewfinder (#1472).
+
 ## Camera, microphone and screenshots (ut-docs#1435)
 
 Two gaps in the bug-report panel (🐞) on Android, both in `MainActivity`:

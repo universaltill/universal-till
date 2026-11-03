@@ -69,7 +69,8 @@ func (r *TillsRepo) EnrolTill(ctx context.Context, name, bearerHash, role, reque
 	}()
 	id = uuid.NewString()
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO tills (id, name, bearer_hash, role) VALUES (?, ?, ?, ?)`, id, name, bearerHash, role); err != nil {
+		`INSERT INTO tills (id, name, bearer_hash, role, bearer_issued_at) VALUES (?, ?, ?, ?, ?)`,
+		id, name, bearerHash, role, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return "", 0, fmt.Errorf("enrol till: insert: %w", err)
 	}
 	used, err := receiptPrefixesInUse(ctx, tx)

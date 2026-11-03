@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -262,7 +263,7 @@ func TestEnroll_SatelliteIsTLSOnlyFromEnrolment(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Data.Bearer == "" {
 		t.Fatalf("enroll body %s: %v", rec.Body, err)
 	}
-	row, ok, err := m.tills.TillByBearerHash(t.Context(), hashBearer(out.Data.Bearer))
+	row, ok, err := m.tills.TillByBearerHashAt(t.Context(), hashBearer(out.Data.Bearer), time.Now())
 	if err != nil || !ok || !row.TLSPinned {
 		t.Fatalf("satellite after TLS enrolment: pinned=%v ok=%v err=%v, want pinned", row.TLSPinned, ok, err)
 	}
@@ -277,7 +278,7 @@ func TestEnroll_SatelliteIsTLSOnlyFromEnrolment(t *testing.T) {
 		t.Fatalf("TLS additional enroll = %d %s", rec.Code, rec.Body)
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if row, _, _ := m.tills.TillByBearerHash(t.Context(), hashBearer(out.Data.Bearer)); row.TLSPinned {
+	if row, _, _ := m.tills.TillByBearerHashAt(t.Context(), hashBearer(out.Data.Bearer), time.Now()); row.TLSPinned {
 		t.Fatal("an additional till enrolled over TLS must not be pre-pinned")
 	}
 }
@@ -344,7 +345,7 @@ func TestSyncJoin_CodeJoinTriesTLSFirstAndStagesThePin(t *testing.T) {
 		t.Fatalf("staged primary_url %q, want the plain LAN address %q", id.PrimaryURL, base)
 	}
 	// The snapshot download over TLS pinned the new till on the main till.
-	row, ok, err := m.tills.TillByBearerHash(t.Context(), hashBearer(id.Bearer))
+	row, ok, err := m.tills.TillByBearerHashAt(t.Context(), hashBearer(id.Bearer), time.Now())
 	if err != nil || !ok || !row.TLSPinned {
 		t.Fatalf("joined till on the main till: pinned=%v ok=%v err=%v, want pinned", row.TLSPinned, ok, err)
 	}

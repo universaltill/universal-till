@@ -15,7 +15,7 @@ Satış ekranındaki **☰ Menü** düğmesine dokunun; kasanın her bölümü i
 
 Satış ekranı dışındaki her sayfada bir **← Geri** düğmesi vardır: yan çubuğun üstünde, logonun altında ya da telefonda üst çubuğun en başında. Sizi geldiğiniz sayfaya geri götürür — Menü → Ürünler → Stok, ardından Geri, Geri sizi önce Ürünler'e sonra Menü'ye döndürür; oraya hangi yoldan geldiğiniz fark etmez (bir Menü karosu, yan çubuk ya da başka bir sayfadaki bağlantı). Geri dönülecek bir sayfa yoksa — kasa o sayfada yeni açıldıysa ya da sayfayı bir yer iminden açtıysanız — Geri bunun yerine bir üst seviyeye gider: bir Ürünler bölümü (Katalog, Stok, …) **Ürünler**'e, bir Yönetim sayfası **Yönetim**'e, diğer her sayfa **Menü**'ye, Menü de satış ekranına. Aynı düğme kasada, tablette, telefonda ve kendi Geri düğmesi olmayan iPhone uygulamasında çalışır.
 
-Telefon boyutundaki bir ekranda listeler ve tablolar (konumlar, stok, denetim kaydı, rapor sekmeleri ve diğerleri), yana kaydırmanız gereken bir ızgara yerine her satır için bir kart olarak gösterilir: her kart ilk birkaç alanını gösterir, karttaki **Daha fazla** düğmesi geri kalanını gösterir (**Daha az** yeniden gizler).
+Telefon boyutundaki bir ekranda listeler ve tablolar (konumlar, stok, denetim kaydı, rapor sekmeleri ve diğerleri), yana kaydırmanız gereken bir ızgara yerine her satır için bir kart olarak gösterilir: her kart ilk birkaç alanını gösterir, karttaki **Daha fazla** düğmesi geri kalanını gösterir (**Daha az** yeniden gizler). İlgilenmeniz gereken bir satır — uyarılı bir içe aktarma satırı ya da atlanacak bir satır — durumunu kartın üzerinde tutar; neyin yanlış olduğunu görmek için **Daha fazla** düğmesine hiç gerek kalmaz.
 
 ## Yönetim
 

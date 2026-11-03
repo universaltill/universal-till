@@ -59,13 +59,12 @@
      inline form, never a modal; refusals come back as a fragment swapped
      into #voucher-top-up-msg, success sends the manager to the sale screen
      with the top-up line in the basket (nothing is credited until the sale
-     is paid). An additional till shows a note instead — top-ups are made
-     on the main till. */}}
+     is paid). An additional till shows the same form (ut-docs#4416): the
+     POST asks the main till first and answers with the replica note when
+     it can't take the top-up right now. */}}
 <div class="card" id="voucher-top-up" style="margin-block-start:1rem">
   <h2>{{ T "vouchers.top_up.title" }}</h2>
-  {{ if $t.replica }}
-  <p class="muted" role="status">{{ T "vouchers.top_up.replica_note" }}</p>
-  {{ else if $t.possible }}
+  {{ if $t.possible }}
   <p class="muted">{{ T "vouchers.top_up.intro" }}</p>
   <form hx-post="{{ $t.href }}" hx-target="#voucher-top-up-msg" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
         action="{{ $t.href }}" method="post" style="display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:end">

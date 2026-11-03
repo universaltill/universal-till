@@ -45,7 +45,7 @@ func registerSyncPeerCloses(mux *http.ServeMux, d *common.Deps) {
 			writeSalesMirrorError(w, http.StatusForbidden, salesMirrorError{Code: "tls_required", Message: "closes are sent over pinned TLS only"})
 			return
 		}
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSalesMirrorError(w, http.StatusUnauthorized, salesMirrorError{Code: "unauthorized", Message: "unknown till"})
 			return

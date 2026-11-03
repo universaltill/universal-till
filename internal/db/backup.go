@@ -227,6 +227,11 @@ func PendingRestore(dbPath string) bool {
 // RestoreRefused turns true for Settings → Backups to say so, and boot goes
 // on (false, nil) rather than swap in an unchecked file.
 func ApplyPendingRestore(dbPath string) (bool, error) {
+	if done, err := RecoverInterruptedRestore(dbPath); err != nil {
+		return false, err
+	} else if done {
+		return true, nil
+	}
 	pending := filepath.Join(filepath.Dir(dbPath), restorePendingName)
 	if _, err := os.Stat(pending); err != nil {
 		return false, nil
@@ -253,7 +258,14 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 	}
 	if _, err := os.Stat(dbPath); err == nil {
 		aside := filepath.Join(dir, preRestorePrefix+time.Now().UTC().Format(backupTimeLayout)+".db")
+		// Journal the swap before the first rename: a crash between the two
+		// renames leaves no db file, and RecoverInterruptedRestore finishes
+		// (or undoes) it at the next boot instead of opening an empty DB.
+		if err := writeRestoreSwap(dbPath, filepath.Base(aside)); err != nil {
+			return false, fmt.Errorf("journal restore swap: %w", err)
+		}
 		if err := os.Rename(dbPath, aside); err != nil {
+			clearRestoreSwap(dbPath)
 			return false, fmt.Errorf("set aside current db: %w", err)
 		}
 		// SQLite sidecar files from the old DB must not pollute the restored one.
@@ -263,7 +275,93 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 	if err := os.Rename(pending, dbPath); err != nil {
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
+	clearRestoreSwap(dbPath)
 	return true, nil
+}
+
+// restoreSwapName is the journal ApplyPendingRestore leaves next to the DB
+// while the two renames of a restore are in flight (ut-docs#5089). It holds
+// the base name of the pre-restore copy the live DB is being moved to.
+const restoreSwapName = "restore-swap"
+
+func writeRestoreSwap(dbPath, asideBase string) error {
+	f, err := os.OpenFile(filepath.Join(filepath.Dir(dbPath), restoreSwapName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(asideBase + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// RestoreSwapPending reports whether a restore swap journal is waiting for
+// RecoverInterruptedRestore; nothing may create or copy in a DB file then.
+func RestoreSwapPending(dbPath string) bool {
+	_, err := os.Stat(filepath.Join(filepath.Dir(dbPath), restoreSwapName))
+	return err == nil
+}
+
+func clearRestoreSwap(dbPath string) {
+	_ = os.Remove(filepath.Join(filepath.Dir(dbPath), restoreSwapName))
+}
+
+// RecoverInterruptedRestore repairs a restore swap a crash cut between its
+// two renames (ut-docs#5089). Call it first thing at boot, before anything
+// opens the DB (opening a missing file would create an empty one). It acts
+// only when the journal exists AND the DB file is missing:
+//   - the staged file is still there: it already carries the kept cloud
+//     identity, so it is moved into place as is (the restore completes);
+//   - otherwise the pre-restore copy is moved back (the restore is undone).
+//
+// A journal with the DB file present means the crash came before the first
+// rename (or the swap finished): the journal is dropped and the normal
+// apply path runs. Returns whether the DB file was put back by completing
+// the staged restore.
+func RecoverInterruptedRestore(dbPath string) (bool, error) {
+	dir := filepath.Dir(dbPath)
+	raw, err := os.ReadFile(filepath.Join(dir, restoreSwapName))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read restore journal %s: %w", restoreSwapName, err)
+	}
+	if _, err := os.Stat(dbPath); err == nil {
+		clearRestoreSwap(dbPath)
+		return false, nil
+	}
+	pending := filepath.Join(dir, restorePendingName)
+	if _, err := os.Stat(pending); err == nil {
+		// The old DB's sidecars must not be replayed into the restored file.
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+		if err := os.Rename(pending, dbPath); err != nil {
+			return false, fmt.Errorf("finish interrupted restore: %w", err)
+		}
+		clearRestoreSwap(dbPath)
+		logging.L().Warnf("restore: finished a restore interrupted between its two file moves")
+		return true, nil
+	}
+	aside := strings.TrimSpace(string(raw))
+	if aside != filepath.Base(aside) || !strings.HasPrefix(aside, preRestorePrefix) || !strings.HasSuffix(aside, ".db") {
+		return false, fmt.Errorf("restore journal names an unexpected file %q", aside)
+	}
+	bdir, err := BackupDir(dbPath)
+	if err != nil {
+		return false, err
+	}
+	if err := os.Rename(filepath.Join(bdir, aside), dbPath); err != nil {
+		return false, fmt.Errorf("undo interrupted restore (journal %s, previous data expected at %s): %w", restoreSwapName, filepath.Join(bdir, aside), err)
+	}
+	clearRestoreSwap(dbPath)
+	logging.L().Warnf("restore: undid a restore interrupted between its two file moves; the previous data is back")
+	return false, nil
 }
 
 // restoreRefusedName is the marker ApplyPendingRestore leaves next to the DB

@@ -78,6 +78,13 @@ else
   printf 'junk\n0.0.1\nmore\n' >"$tmp/shell"
   printf 'junk\n0.0.1\n%s\n' "$key" >"$tmp/server-with-key"
   printf 'junk\n0.0.1\nmore\n' >"$tmp/server-no-key"
+  # NOTE: the unstamped-fixture assertions below document current behaviour
+  # (they passed before ut-docs#5205 too); only the literal-grep assertions
+  # on "dev" are regression catchers.
+  # An unstamped build (ldflags -X broken): the default "dev" is a 3-char run,
+  # which `strings` drops, so it never shows as a line and is caught as a
+  # missing version (ut-docs#5205).
+  printf 'junk\ndev\nmore\n' >"$tmp/unstamped"
   run_check() { # run_check <file> [key] → prints "fail=<n>"
     VERSION=0.0.1 UT_MARKETPLACE_KEY_HEX="$key" bash -c "
       set -euo pipefail
@@ -95,6 +102,34 @@ else
   expect fail=0 "a shell with the version and no key passes" "$tmp/shell"
   expect fail=1 "a server without the key fails" "$tmp/server-no-key" key
   expect fail=0 "a server with the key passes" "$tmp/server-with-key" key
+  expect fail=1 "an unstamped build (line \"dev\", no version) fails" "$tmp/unstamped"
+  unstamped_msg="$(VERSION=0.0.1 bash -c "
+    set -euo pipefail
+    fail=0
+    $fn
+    check \"\$1\" label" _ "$tmp/unstamped" 2>&1 || true)"
+  if grep -q "does not contain the expected version" <<<"$unstamped_msg"; then
+    pass "an unstamped build fails with the expected-version error"
+  else
+    fail "an unstamped build did not fail with the expected-version error: $unstamped_msg"
+  fi
+  # The dead branch stays removed (strings -a drops 3-char runs).
+  # The pattern is the literal workflow text, not an expansion.
+  # shellcheck disable=SC2016
+  if grep -qF 'grep -qx "dev" <<< "$out"' <<<"$fn"; then
+    fail "check() still greps for a 3-char \"dev\" line that strings never prints"
+  else
+    pass "check() has no dead \"dev\" branch"
+  fi
+fi
+
+# Whole-file: no dead 3-char "dev" grep anywhere in release.yml.
+# The pattern is the literal workflow text.
+# shellcheck disable=SC2016
+if grep -qF 'grep -qx "dev"' <<<"$wf"; then
+  fail "release.yml still contains grep -qx \"dev\" (strings never prints 3-char runs)"
+else
+  pass "release.yml contains no dead grep -qx \"dev\""
 fi
 
 # 4. The premise: the shell never runs server code or reads the key.

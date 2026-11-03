@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/iconid"
 )
 
 // RelatedItemsRepo maintains the related_items co-occurrence table
@@ -168,6 +170,7 @@ SELECT i.id, i.sku, i.name, i.base_price,
        COALESCE((SELECT path FROM item_images
                  WHERE item_id = i.id AND role = 'thumbnail'
                  ORDER BY sort_order LIMIT 1), '') AS image_path,
+       COALESCE(i.icon, '') AS icon,
        SUM(r.score) AS blended
 FROM related_items r
 JOIN items i ON i.id = r.related_item_id
@@ -175,7 +178,7 @@ WHERE r.item_id IN (%s)
   AND r.related_item_id NOT IN (%s)
   AND i.is_active = 1
   AND i.sku IS NOT NULL AND i.sku <> ''
-GROUP BY i.id, i.sku, i.name, i.base_price
+GROUP BY i.id, i.sku, i.name, i.base_price, i.icon
 ORDER BY blended DESC, i.name
 LIMIT ?`, placeholders, placeholders)
 
@@ -188,9 +191,12 @@ LIMIT ?`, placeholders, placeholders)
 	var out []Suggestion
 	for rows.Next() {
 		var s Suggestion
-		if err = rows.Scan(&s.ItemID, &s.SKU, &s.Name, &s.PriceMinor, &s.ImageURL, &s.Score); err != nil {
+		var icon string
+		if err = rows.Scan(&s.ItemID, &s.SKU, &s.Name, &s.PriceMinor, &s.ImageURL, &icon, &s.Score); err != nil {
 			return nil, relatedItemsObs.wrap("suggest_for_basket", err)
 		}
+		// ut-docs#5124: the same one picture the tile and basket line show.
+		s.ImageURL = iconid.Picture(s.ImageURL, icon)
 		out = append(out, s)
 	}
 	err = rows.Err()

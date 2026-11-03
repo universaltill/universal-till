@@ -377,9 +377,9 @@
     }
     // Another <dialog> opened ON TOP of this one owns the focus while it is
     // up — the trap must not fight it. /categories has none today, but the
-    // ut-docs#2012 screens carry #plugin-install-modal, #hold-modal and
-    // friends, and yanking focus out of one of those would be this trap
-    // causing the very bug it exists to prevent.
+    // ut-docs#2012 screens carry #hold-modal and friends, and yanking focus
+    // out of one of those would be this trap causing the very bug it exists
+    // to prevent.
     var top = t.closest ? t.closest('dialog[open]') : null;
     if (top && top !== dialog) return;
     var list = focusables(dialog);

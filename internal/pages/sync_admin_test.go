@@ -145,6 +145,13 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	if err := dp.Settings.Set(ctx, "sync.till_name", "Front Till"); err != nil {
 		t.Fatalf("set till_name: %v", err)
 	}
+	// A paired replica holds its bearer and till id (ut-docs#5162: without
+	// them the chip says "join again").
+	for k, v := range map[string]string{"sync.bearer": "b", "sync.till_id": "t"} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatalf("set %s: %v", k, err)
+		}
+	}
 
 	mux := http.NewServeMux()
 	registerSyncAdmin(mux, dp)
@@ -200,6 +207,41 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `class="nav-badge"`) {
 		t.Fatalf("expected NO badge dot once the replica is fresh/online, got %q", rec.Body.String())
+	}
+}
+
+// ut-docs#5162: a restored copy has no bearer: warn state, a badge, and the
+// join-again words instead of "following".
+func TestSyncChip_ReplicaWithoutBearerSaysRejoin(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newMigratedSyncDeps(t, "restored.db")
+	initPagesI18n(t)
+	ctx := t.Context()
+	for k, v := range map[string]string{
+		"sync.primary_url":     "http://primary.example",
+		"sync.till_name":       "Front Till",
+		"sync.last_contact_at": time.Now().UTC().Format(time.RFC3339), // fresh: would read ok if paired
+	} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	registerSyncAdmin(mux, dp)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `sync-chip warn`) {
+		t.Fatalf("an unpaired replica must render class=warn, got %q", body)
+	}
+	if !strings.Contains(body, "Join the main till again") {
+		t.Fatalf("expected the rejoin title/aria, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected the badge dot, got %q", body)
+	}
+	if !strings.Contains(body, `href="/tills"`) {
+		t.Fatalf("expected a link to /tills, got %q", body)
 	}
 }
 
@@ -261,7 +303,7 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	// TillByBearerHash bumps last_seen_at as a side effect of authenticating
 	// (see syncTill / registerSyncAdmin's admin-bundle endpoint) -- simulate
 	// a real replica poll to freshen it.
-	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+	if _, ok, err := tills.TillByBearerHashAt(ctx, hashBearer("token-abc"), time.Now()); err != nil || !ok {
 		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
 	}
 	rec = httptest.NewRecorder()
@@ -442,7 +484,7 @@ func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testin
 	}
 	// Freshen last_seen_at so staleness alone would render "ok" -- isolating
 	// the assertion below to the quarantine-driven warn path.
-	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+	if _, ok, err := tills.TillByBearerHashAt(ctx, hashBearer("token-abc"), time.Now()); err != nil || !ok {
 		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
 	}
 	if err := data.NewPOSRepo(dp.Db).InsertJournalQuarantine(ctx, data.JournalQuarantineEntry{

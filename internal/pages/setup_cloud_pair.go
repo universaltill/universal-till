@@ -98,8 +98,16 @@ func (s *setupCloudState) nonceOK(got string) bool {
 
 func (s *setupCloudState) hold(p *enroll.FirstTillPairing, tillName string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.nonce == "" {
+		// Setup finished while the pair call was in flight (finish() clears
+		// the nonce): holding now would strand the hold on a till that is
+		// already set up.
+		return
+	}
 	s.held = &heldCloudPairing{p: p, tillName: tillName, at: cloudPairNow()}
-	s.mu.Unlock()
+	// ut-docs#5127: no till-born store while the shop's identity is pending.
+	enroll.HoldRegistration()
 }
 
 // current is the held pairing, nil when none or older than cloudPairHold.
@@ -108,21 +116,24 @@ func (s *setupCloudState) current() *heldCloudPairing {
 	defer s.mu.Unlock()
 	if s.held != nil && cloudPairNow().Sub(s.held.at) > cloudPairHold {
 		s.held = nil
+		enroll.ReleaseRegistration()
 	}
 	return s.held
 }
 
 func (s *setupCloudState) drop() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.held = nil
-	s.mu.Unlock()
+	enroll.ReleaseRegistration()
 }
 
 // finish discards the nonce and any pairing: setup completed.
 func (s *setupCloudState) finish() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.held, s.nonce = nil, ""
-	s.mu.Unlock()
+	enroll.ReleaseRegistration()
 }
 
 // guard answers 403 unless the request is a same-origin call from the till's
@@ -137,14 +148,8 @@ func (s *setupCloudState) guard(allow []*net.IPNet, w http.ResponseWriter, r *ht
 	if !languard.HostAllowed(r.Host, allow) {
 		return deny()
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+	if !sameOriginRequest(r) {
 		return deny()
-	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, r.Host) {
-			return deny()
-		}
 	}
 	got := r.Header.Get(setupNonceHeader)
 	if got == "" {
@@ -200,6 +205,24 @@ const maxReplaceTargetLen = 200
 // bidiIsolate wraps a cloud-supplied name or a date in Unicode first-strong
 // isolates, so it keeps its own direction inside an RTL sentence (ar, fa).
 func bidiIsolate(s string) string { return "\u2068" + s + "\u2069" }
+
+// stripBidiControls drops embedding/override/isolate controls (U+202A–U+202E,
+// U+2066–U+2069) from a value about to be wrapped by bidiIsolate, so a stray
+// PDI in a shop name or typed code can't close the isolate early and reorder
+// the sentence around it (ut-docs#3557 review).
+func stripBidiControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= '\u202A' && r <= '\u202E') || (r >= '\u2066' && r <= '\u2069') {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// unbreakableCode puts a WORD JOINER after each hyphen so a pairing code such
+// as "AB12-CD34-EF56" never wraps mid-code in a confirm dialog — the dialog
+// exists so the operator can read the code back (ut-docs#3557 test F1).
+func unbreakableCode(s string) string { return strings.ReplaceAll(s, "-", "-\u2060") }
 
 // cloudTillName is a till's fleet-row name, or the "unnamed" word.
 func cloudTillName(locale, name string) string {

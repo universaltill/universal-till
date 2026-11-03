@@ -40,20 +40,21 @@ Son iki durumda durum çubuğundaki bir işaret aşağıda anlatılan paneli aç
 
 ## Bulut eşitlemesi ücretli planlara dahildir
 
-Kayıt ve sahiplenme ücretsizdir, eklenti mağazası da öyle. Kasayı çevrimiçi hesabınızla eşitlenmiş tutmak (satış rakamları, ürün listesi, mağazanın bulut yönetim sayfasında yapılan değişiklikler) ücretli planlara dahildir. Mağaza ücretli bir planda değilken kasa bulutla eşitleme yapmaz ve Ayarlar → Kasa kaydı bulut eşitlemesinin kapalı olduğunu söyler. Kasa buluta yalnızca kısaca bilgi verir: kurulduğunda, bir güncellemeden sonra ve her gün ilk açıldığında.
+Kayıt ve sahiplenme ücretsizdir, eklenti mağazası da öyle. Kasayı çevrimiçi hesabınızla eşitlenmiş tutmak (satış rakamları, ürün listesi, my.universaltill.com üzerinde yapılan değişiklikler) ücretli planlara dahildir. Mağaza ücretli bir planda değilken kasa bulutla eşitleme yapmaz ve Ayarlar → Kasa kaydı bulut eşitlemesinin kapalı olduğunu söyler. Kasa buluta yalnızca kısaca bilgi verir: kurulduğunda, bir güncellemeden sonra ve her gün ilk açıldığında.
 
 1. Mağaza ücretli bir plana geçtiğinde kasa bunu yeni bir günde ilk açıldığında ya da daha önce, birisi o kasada kayıt, eşleştirme, eklenti kurma veya sahiplenme kodu oluşturma yaptığında öğrenir. Ayarlar → Kasa kaydı bölümünde **Ücretli planı kontrol et** düğmesine de basabilirsiniz (bir yönetici veya admin onaylar). Bulut eşitlemesi bir dakika içinde başlar ve kendiliğinden çalışmaya devam eder.
 2. Plan sona ererse bulut eşitlemesi kasanın bir sonraki yoklamasından sonra durur. Satış hiçbir zaman buna bağlı değildir: her satış her durumda çevrimdışı çalışır.
 
 ## Bulut bu kasayı artık kabul etmediğinde
 
-Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse durum çubuğunda bir uyarı görünür. Uyarı hiçbir satışı engellemez: kasa çevrimdışı satışa devam eder, buluta saatte bir yeniden bağlanmayı dener ve göndermesi gereken her şeyi yeniden bağlanana kadar kasada tutar. Uyarı şu üçünden birini söyler:
+Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse ya da bu kasanın verileri yeni bir cihaza geri yüklenirse durum çubuğunda bir uyarı görünür. Uyarı hiçbir satışı engellemez: kasa çevrimdışı satışa devam eder, buluta saatte bir yeniden bağlanmayı dener ve göndermesi gereken her şeyi yeniden bağlanana kadar kasada tutar. Uyarı şunlardan birini söyler:
 
 - **Mağazanın bulut hesabından kaldırıldı**: mağaza sahibi bu kasayı çevrimiçi olarak mağazadan kaldırdı.
 - **Bu kasanın yeniden eşleştirilmesi gerekiyor**: kasanın bulut kimlik bilgisi artık çalışmıyor, kasanın mağazayla yeniden eşleştirilmesi gerekir.
 - **Yeni mağaza olarak kaydol**: mağazanın sahip hesabı yok, bu yüzden kasa eşleştirilemez. Kasayı yeni bir mağaza olarak yeniden kaydedin; yalnızca eski cihaz geçmişi kaybolur.
+- **Yeni cihazda geri yüklendi — yeniden bağlanın**: bu kasanın verileri bir telefon veya iCloud yedeğinden (ya da kopyalanarak) yeni bir cihaza geldi, bu yüzden bulut bağlantısı sıfırlandı; kasadaki satışlara dokunulmaz. Ayarlar → Kasa kaydı'ndan kasayı mağazayla yeniden eşleştirin veya yeni mağaza olarak kaydedin. Eski cihaz kendi bağlantısını korur.
 
-Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, bulutla bir sonraki başarılı bağlantıdan sonra kaybolur.
+Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, bulutla bir sonraki başarılı bağlantıdan sonra kaybolur. Geri yükleme uyarısı, kasa yeniden eşleştirildiğinde veya kaydedildiğinde kaybolur.
 
 ## Şimdi kaydol veya Bu mağazayı sahiplen başarısız olduğunda
 
@@ -73,9 +74,9 @@ Kart sorunu tek satırda söyler; satış hiçbir zaman etkilenmez:
 Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gerekiyorsa ya da bir kasa mağazanın bulut hesabından kaldırıldıysa veya yeniden eşleştirilmesi gerektiğini söylüyorsa bunu kullanın.
 
 1. Mağazanın bulut hesabında «Kasa ekle veya yeniden eşleştir»i seçerek bir eşleştirme kodu alın (8 karakter, 15 dakika geçerli, tek kullanımlık).
-2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar.
+2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar. Bu kasa zaten bir mağazaya bağlıysa önce bu bağlantıyı değiştirmek isteyip istemediğinizi sorar ve kontrol edebilmeniz için girdiğiniz kodu gösterir; İptal hiçbir şeyi değiştirmez.
 3. Kasa yalnızca kendi bulut bağlantısını değiştirir: yeni bir cihaz kimliği ve kendine ait bir kimlik bilgisi alır. Satışlar, ürünler ve ayarlar kasada kalır; satış bu süre boyunca çevrimdışı çalışmaya devam eder.
-4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır.
+4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır. Bir mağazaya bağlı kasada da yanlış bir kod, kasayı yeni bir kodla eşleştirene kadar bağlantısız bırakır (kasa bu yüzden önce sorar); katılmış bir kasa ise ana kasası üzerinden yeniden kaydedilir.
 
 ## Mağazanın para birimi
 

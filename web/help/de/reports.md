@@ -406,14 +406,14 @@ Der Reiter **Yüzde usulü** ist für Geschäfte in der Türkei, die einen
 *yüzde usulü*-Pool führen (İş Kanunu 4857 Art. 51): ein Prozentsatz, der
 eingenommen und unter den Mitarbeitern aufgeteilt wird. Er erscheint nur,
 wenn als Land des Geschäfts die Türkei eingestellt ist. Wie der Reiter
-Trinkgeld erfasst er, was eine Führungskraft ihm mitteilt — die Software
+Trinkgeld erfasst er, was ein Manager ihm mitteilt — die Software
 erkennt, berechnet oder bewegt von sich aus kein Geld und entscheidet
 nicht, ob Ihr Geschäft einen Pool führt oder zu welchem Prozentsatz.
 
 - **Keine Zeile auf dem Kundenbeleg** — eine türkische Servicegebühr-Zeile
   fügt diese Kasse einem Beleg nicht hinzu; eine Pool-Einnahme wird daher
-  separat von einer Führungskraft erfasst und erscheint nie auf einem Beleg.
-- **Eine Einnahme erfassen** — eine Führungskraft (Berechtigung
+  separat von einem Manager erfasst und erscheint nie auf einem Beleg.
+- **Eine Einnahme erfassen** — ein Manager (Berechtigung
   Mitarbeiterauszahlungen) wählt das Datum der Einnahme, den Betrag und
   optional eine Notiz zur Aufteilungsgrundlage („Küche 30 % / Service
   70 %“) und sendet ab. Das Datum darf nicht in der Zukunft liegen — erfasst

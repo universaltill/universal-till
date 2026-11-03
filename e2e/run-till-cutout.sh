@@ -28,6 +28,9 @@ export UT_AI_IMAGE_ENDPOINT="http://127.0.0.1:${FAKE_PORT}" UT_AI_IMAGE_MODEL=u2
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
 # ut-docs#3814: no LAN discovery (mDNS) from a throwaway till. Overridable.
 : "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
+# ut-docs#5237: never poll the real GitHub releases from a throwaway till —
+# a new release would show "Update now" mid-run and move the status bar. Overridable.
+: "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
 
 node "$ROOT/e2e/fake-rembg-server.mjs" "$FAKE_PORT" &
 FAKE_PID=$!

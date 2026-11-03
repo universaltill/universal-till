@@ -40,20 +40,21 @@ In den beiden letzten Fällen öffnet ein Hinweis in der Statusleiste das unten 
 
 ## Die Cloud-Synchronisierung gehört zu den kostenpflichtigen Tarifen
 
-Registrieren und Beanspruchen sind kostenlos, ebenso der Plugin-Store. Die Kasse mit Ihrem Online-Konto synchron zu halten (Umsatzzahlen, Artikelliste, Änderungen auf der Cloud-Verwaltungsseite des Geschäfts) gehört zu den kostenpflichtigen Tarifen. Solange das Geschäft keinen davon hat, synchronisiert die Kasse nicht mit der Cloud, und Einstellungen → Kassenregistrierung zeigt an, dass die Cloud-Synchronisierung aus ist. Sie meldet sich nur kurz bei der Cloud: bei der Installation, nach einem Update und beim ersten Start jedes Tages.
+Registrieren und Beanspruchen sind kostenlos, ebenso der Plugin-Store. Die Kasse mit Ihrem Online-Konto synchron zu halten (Umsatzzahlen, Artikelliste, Änderungen auf my.universaltill.com) gehört zu den kostenpflichtigen Tarifen. Solange das Geschäft keinen davon hat, synchronisiert die Kasse nicht mit der Cloud, und Einstellungen → Kassenregistrierung zeigt an, dass die Cloud-Synchronisierung aus ist. Sie meldet sich nur kurz bei der Cloud: bei der Installation, nach einem Update und beim ersten Start jedes Tages.
 
 1. Sobald das Geschäft einen kostenpflichtigen Tarif hat, erfährt die Kasse das beim nächsten Start an einem neuen Tag oder schon früher, wenn jemand an ihr registriert, koppelt, ein Plugin installiert oder einen Beanspruchungscode erzeugt. Sie können auch unter Einstellungen → Kassenregistrierung auf **Nach einem kostenpflichtigen Tarif suchen** tippen (ein Manager oder Admin bestätigt das). Die Cloud-Synchronisierung startet dann innerhalb einer Minute und läuft von selbst weiter.
 2. Endet der Tarif, stoppt die Cloud-Synchronisierung nach dem nächsten Abgleich der Kasse mit der Cloud. Der Verkauf hängt nie davon ab: Jeder Verkauf funktioniert so oder so offline.
 
 ## Wenn die Cloud diese Kasse nicht mehr annimmt
 
-Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab, erscheint ein Hinweis in der Statusleiste. Er blockiert nie einen Verkauf: Die Kasse verkauft offline weiter, versucht es einmal pro Stunde erneut bei der Cloud und behält alles, was sie noch senden muss, bis sie wieder verbunden ist. Der Hinweis lautet:
+Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab oder wurden die Daten dieser Kasse auf einem neuen Gerät wiederhergestellt, erscheint ein Hinweis in der Statusleiste. Er blockiert nie einen Verkauf: Die Kasse verkauft offline weiter, versucht es einmal pro Stunde erneut bei der Cloud und behält alles, was sie noch senden muss, bis sie wieder verbunden ist. Der Hinweis lautet:
 
 - **Aus dem Cloud-Konto des Geschäfts entfernt**: Der Inhaber hat diese Kasse online aus dem Geschäft entfernt.
 - **Diese Kasse muss neu gekoppelt werden**: Die Cloud-Zugangsdaten der Kasse gelten nicht mehr; die Kasse muss erneut mit dem Geschäft gekoppelt werden.
 - **Als neues Geschäft registrieren**: Das Geschäft hat kein Inhaberkonto, daher kann die Kasse nicht gekoppelt werden. Registrieren Sie sie neu als neues Geschäft; nur der alte Kassenverlauf geht verloren.
+- **Auf einem neuen Gerät wiederhergestellt — erneut verbinden**: Die Daten dieser Kasse wurden aus einer Telefon- oder iCloud-Sicherung (oder durch Kopieren) auf ein neues Gerät übernommen, daher wurde ihre Cloud-Verbindung zurückgesetzt; die Verkäufe an der Kasse bleiben unberührt. Koppeln Sie sie unter Einstellungen → Kassenregistrierung erneut mit dem Geschäft oder registrieren Sie sie als neues Geschäft. Das alte Gerät behält seine eigene Verbindung.
 
-Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud.
+Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud. Der Hinweis zur Wiederherstellung verschwindet, sobald die Kasse erneut gekoppelt oder registriert ist.
 
 ## Wenn „Jetzt registrieren“ oder „Dieses Geschäft übernehmen“ fehlschlägt
 
@@ -73,9 +74,9 @@ Die Karte nennt die Ursache in einer Zeile; der Verkauf ist nie betroffen:
 Verwenden Sie dies, wenn das Geschäft bereits in der Universal-Till-Cloud existiert und diese Kasse ihm beitreten soll, oder wenn eine Kasse aus dem Cloud-Konto des Geschäfts entfernt wurde bzw. meldet, dass sie neu gekoppelt werden muss.
 
 1. Wählen Sie im Cloud-Konto des Geschäfts „Kasse hinzufügen oder neu koppeln“, um einen Kopplungscode zu erhalten (8 Zeichen, 15 Minuten gültig, einmal verwendbar).
-2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang.
+2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang. Ist diese Kasse bereits mit einem Geschäft verbunden, fragt sie zuerst, ob Sie diese Verbindung ersetzen möchten, und zeigt den eingegebenen Code zur Kontrolle an; „Abbrechen“ ändert nichts.
 3. Die Kasse ersetzt nur ihre eigene Cloud-Verbindung: Sie erhält eine neue Geräte-ID und eigene Zugangsdaten. Verkäufe, Artikel und Einstellungen bleiben auf der Kasse, und der Verkauf funktioniert die ganze Zeit offline weiter.
-4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln.
+4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln. Auch auf einer mit einem Geschäft verbundenen Kasse bleibt die Kasse nach einem falschen Code getrennt, bis Sie sie mit einem neuen Code koppeln (deshalb fragt die Kasse vorher nach); eine verbundene Nebenkasse wird über ihre Hauptkasse wieder registriert.
 
 ## Die Währung des Geschäfts
 

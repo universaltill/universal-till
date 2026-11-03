@@ -62,6 +62,21 @@ func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, r
 		return false, r.recordRefusal(ctx, tx, row.Kind, boundID(row.CloudID), row.Version, idErr)
 	}
 	row.CloudID = cloudID
+	if !r.lastPass {
+		// A newer version of a deferred row supersedes it (ut-docs#5098): the
+		// old version is settled as the refusal it was (counted and logged;
+		// the newer row's outcome is the one recorded).
+		kept := r.deferred[:0]
+		for _, d := range r.deferred {
+			if d.row.Kind != row.Kind || d.row.CloudID != row.CloudID || d.row.Version >= row.Version {
+				kept = append(kept, d)
+				continue
+			}
+			res.Refused++
+			logging.L().Warnf("catalogpull: %s %s version %d refused, the till keeps its previous version: %s", d.row.Kind, d.row.CloudID, d.row.Version, reason(d.err))
+		}
+		r.deferred = kept
+	}
 	switch why, err := r.skip(ctx, tx, row); {
 	case err != nil:
 		return false, fmt.Errorf("catalogpull: %w", errors.Join(err, ctx.Err()))
@@ -89,6 +104,21 @@ func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, r
 		return false, fmt.Errorf("catalogpull: %w", errors.Join(err, ctx.Err()))
 	case err != nil && !final:
 		return true, nil
+	case err != nil && !r.lastPass && errors.As(err, new(*notReachedError)):
+		// The row it names may still arrive later in this run (ut-docs#5098):
+		// neither refused nor logged yet; retryDeferred settles it. The link
+		// is touched now so a resync's prune cannot take the row meanwhile.
+		r.deferred = append(r.deferred, deferredRow{row: row, err: err})
+		// Recorded now, so a last pass that never runs (shutdown, deadline)
+		// leaves a visible, reported refusal and not a silent gap; a
+		// successful apply clears it.
+		if ferr := r.recordRefusal(ctx, tx, row.Kind, row.CloudID, row.Version, err); ferr != nil {
+			return false, ferr
+		}
+		if terr := r.links.Touch(ctx, tx, row.Kind, row.CloudID, gen); terr != nil {
+			return false, fmt.Errorf("catalogpull: %w", terr)
+		}
+		return false, nil
 	case err != nil:
 		res.Refused++
 		logging.L().Warnf("catalogpull: %s %s version %d refused, the till keeps its previous version: %s", row.Kind, row.CloudID, row.Version, reason(err))
@@ -366,10 +396,19 @@ func (r *runner) resolve(ctx context.Context, tx *sql.Tx, kind, cloudID string) 
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("%s %s has not reached this till", kindLabel(kind), id)
+		return "", &notReachedError{msg: fmt.Sprintf("%s %s has not reached this till", kindLabel(kind), id)}
 	}
 	return local, nil
 }
+
+// notReachedError is a refusal because a row the applied row names has no
+// link yet. The feed serves each row at its latest version, so the parent
+// can sit at a higher version than the child and arrive after it in the
+// same run; such a row is deferred to the end of the run (retryDeferred,
+// ut-docs#5098) instead of being refused for good.
+type notReachedError struct{ msg string }
+
+func (e *notReachedError) Error() string { return e.msg }
 
 func kindLabel(kind string) string {
 	switch kind {

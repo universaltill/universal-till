@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/universaltill/universal-till/catimport/barcode"
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -33,6 +34,7 @@ import (
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1389,7 +1391,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		CatalogTaxRateRefused: func(rateBP int, takeawayBP *int) bool {
 			return taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP)
 		},
-		CatalogItemPhotoReplaced: removeReplacedItemUpload,
+		CatalogItemPhotoReplaced: func(itemID, clearedPath string) {
+			removeReplacedItemUpload(itemID, clearedPath)
+			// ut-docs#5124: the open basket's line follows the new icon.
+			catalog.RefreshBasketPhoto(context.Background(), d, data.NewCatalogRepo(d.Db), itemID)
+		},
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},
@@ -1543,6 +1549,18 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// See remoteCountryReport.
 			if c, ok := remoteCountryReport(ctx, d); ok {
 				extra["country"] = c
+			}
+			// ut-docs#5127 (design §2, fix H2): the key id of the till's
+			// approval key on EVERY check-in, from a main and an additional
+			// till alike (any till can move). The cloud cancels a freshly
+			// pinned key whose device syncs without the same approval_kid,
+			// so a thief's early pin dies at the genuine till's next sync.
+			// Only the kid rides here: the cloud reads nothing else from
+			// /sync, and the key itself is reported by the till's own POST
+			// (enroll.kickApprovalKeyReport). Never blocks: no usable key
+			// just reports nothing.
+			if kid, ok := approvalkey.Shared().KeyID(); ok {
+				extra["approval_kid"] = kid
 			}
 			// The main till's directive key, on every check-in (contract
 			// §1): created here at the first one. A satellite never
@@ -1713,7 +1731,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		},
 	})
 	if err != nil {
-		failure := plugins.ClassifyInstallError(err)
+		failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 		saveFailed(failure.MessageKey, failure.Retryable)
 		return "", err
 	}

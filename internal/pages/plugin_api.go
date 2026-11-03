@@ -242,7 +242,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			},
 		})
 		if err != nil {
-			failure := plugins.ClassifyInstallError(err)
+			failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 				ListingID:  req.ListingID,
 				State:      plugins.InstallStateFailed,
@@ -712,7 +712,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 		},
 	})
 	if err != nil {
-		failure := plugins.ClassifyInstallError(err)
+		failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 			ListingID:  listingID,
 			PluginID:   pluginID,

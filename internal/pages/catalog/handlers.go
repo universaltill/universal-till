@@ -767,6 +767,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#4128: ?missing=<mask> narrows the list to items with a gap.
+		missingKey := ""
+		if mask := missingMask(r.URL.Query().Get("missing")); mask != 0 {
+			gaps, err := repo.CatalogGapIDs(r.Context(), mask)
+			if err != nil {
+				httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+				return
+			}
+			kept := items[:0:0]
+			for _, it := range items {
+				if gaps[it.ID] {
+					kept = append(kept, it)
+				}
+			}
+			items, missingKey = kept, missingFilterKey(mask)
+		}
 		cats, brands, err := listLookups(r.Context(), repo)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
@@ -862,6 +878,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
+			"MissingFilterKey":      missingKey,
 			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
@@ -2786,9 +2803,11 @@ func itemThumbFile(itemID string) string {
 // none) onto the open sale's basket rows, so a photo added, replaced or
 // removed mid-sale shows on the next render instead of only on a fresh sale
 // (ut-docs#4838). Best-effort: the write already succeeded, so a read error
-// logs. The cashier engine only — never the self-order kiosk's.
+// logs. Reaches the cashier engine, the self-order kiosk's basket and every
+// table session's basket (ut-docs#4959: the self-order cart shows the photo
+// too). Only the image is pushed; no basket is read across engines.
 func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogRepo, itemID string) {
-	if d == nil || d.Engine == nil {
+	if d == nil || (d.Engine == nil && d.KioskEngine == nil && d.SelfOrderSessions == nil) {
 		return
 	}
 	path, err := repo.ItemThumbnailFor(ctx, itemID)
@@ -2796,7 +2815,22 @@ func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogR
 		log.Printf("[catalog] refresh basket photo %s: %v", itemID, err)
 		return
 	}
-	d.Engine.SetItemImage(itemID, path)
+	// ut-docs#5124: an item whose picture is an icon id has no thumbnail row;
+	// resolve the same one picture the tile shows, else a refresh would blank it.
+	icon, err := repo.ItemIcon(ctx, itemID)
+	if err != nil {
+		// Still push the photo state (#4838); only the icon fallback is lost.
+		log.Printf("[catalog] refresh basket icon %s: %v", itemID, err)
+		icon = ""
+	}
+	img := ui.ItemThumb(path, icon)
+	if d.Engine != nil {
+		d.Engine.SetItemImage(itemID, img)
+	}
+	if d.KioskEngine != nil {
+		d.KioskEngine.SetItemImage(itemID, img)
+	}
+	d.SelfOrderSessions.SetItemImage(itemID, img) // nil-receiver-safe
 }
 
 // ErrItemThumbRow marks a StoreItemPhoto whose file was written but whose
@@ -3213,4 +3247,30 @@ func itemRoutingData(ctx context.Context, repo *data.CatalogRepo, posRepo *data.
 		}
 	}
 	return checks, strings.Join(categoryNames, ", "), len(itemRoutes) > 0
+}
+
+// missingMask reads the catalog page's ?missing= gap mask (data.GapBarcode…);
+// anything outside 1..GapAll is "no filter".
+func missingMask(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 1 || n > data.GapAll {
+		return 0
+	}
+	return n
+}
+
+// missingFilterKey is the banner's locale key for a mask: one key per
+// single gap, one shared key for a combination.
+func missingFilterKey(mask int) string {
+	switch mask {
+	case data.GapBarcode:
+		return "catalog.missing.barcode"
+	case data.GapImage:
+		return "catalog.missing.image"
+	case data.GapPrice:
+		return "catalog.missing.price"
+	case data.GapCategory:
+		return "catalog.missing.category"
+	}
+	return "catalog.missing.several"
 }

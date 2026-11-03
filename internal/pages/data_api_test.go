@@ -187,6 +187,40 @@ func TestResetTransactions_WrongPIN_NoMutation(t *testing.T) {
 	}
 }
 
+// ut-docs#5156: a cross-site POST carrying a valid manager PIN from a manager
+// session must not reach the mutation.
+func TestResetTransactions_CrossSite_ValidPIN_NoMutation(t *testing.T) {
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	// A real users row, so that if the gate regressed the reset would
+	// genuinely run (its audit row needs the actor) and empty sales.
+	mgrID, err := data.NewAuthRepo(dp.Db).CreateUser(t.Context(), "xsite-mgr", "Cross-site Manager", "manager")
+	if err != nil {
+		t.Fatalf("create session manager: %v", err)
+	}
+	mgr := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
+	req := httptest.NewRequest(http.MethodPost, "/api/data/reset-transactions",
+		strings.NewReader(url.Values{"override_pin": {dataAPITestManagerPIN}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req = auth.WithUser(req, mgr)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Header().Get("X-UT-Response") != "elevation-prompt" {
+		t.Fatalf("expected the elevation prompt (refusal), got %d: %s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("cross-site request mutated: %d sales rows left, want 1", count)
+	}
+}
+
 func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)

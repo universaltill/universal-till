@@ -1437,7 +1437,6 @@ var renderFiles = []string{
 	"ui/partials/buttons.html",
 	"ui/partials/buttons_admin.html",
 	"ui/partials/basket.html",
-	"ui/partials/plugin_install_modal.html",
 	"ui/partials/plugin_manual_import.html",
 	"ui/partials/help_topic.html",
 	"ui/partials/help_nav.html",

@@ -158,8 +158,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     `docs-shots-drift` issue listing screenshots stale through
     `web/locales/**`-only changes; never commits (#4582).
   - `desktop-darwin.yml` for `cmd/unitill-desktop/**` / `web/locales/**`:
-    builds and vets the macOS shell (cgo/Objective-C) on `macos-14`, which
-    otherwise compiled only at release time (ut-docs#5021).
+    builds and vets the macOS shell (cgo/Objective-C) on `macos-15`, which
+    otherwise compiled only at release time (ut-docs#5021); also `go test`s
+    every package with darwin-only files (paths `internal/selfupdate/**`,
+    `internal/lantls/**`, `internal/diskspace/**`, `**/*_darwin{,_test}.go`;
+    of `internal/db` only `lock_unix.go` triggers it; ut-docs#5279).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
     real on PRs; exceptions in `e2e/tests-i18n-audit/allowlist.json`;
@@ -189,5 +192,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `guard-help-breadcrumbs.sh`: a translated `Settings → X` breadcrumb must use
   the locale's own label for that section; shrink-only baseline
   `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696).
+  `guard-help-terms.sh`: a translated topic uses the locale UI's own word for
+  a role or thing (de: "Manager", never "Führungskraft"); entries in
+  `scripts/ci/help-terms.txt`; exception `help-term:allow <reason>` (#5243).
 - Keep `README.md` current in the same session whenever a change makes it
   stale.

@@ -11,12 +11,15 @@
 #
 # THE LIST: the canonical copy of this script is ut-docs
 # `scripts/guard-mail-addresses.sh`. The list below changes ONLY together with
-# the matching M365 alias (add the alias first), and ALL FOUR copies must stay
+# the matching M365 alias (add the alias first), and EVERY copy must stay
 # byte-identical (`cmp` them):
 #   ut-docs/scripts/guard-mail-addresses.sh
 #   universal-till/scripts/ci/guard-mail-addresses.sh
 #   ut-cloud/scripts/ci/guard-mail-addresses.sh
 #   ut-infra/scripts/guard-mail-addresses.sh
+#   ut-website/scripts/guard-mail-addresses.sh
+#   ut-my-shop/scripts/ci/guard-mail-addresses.sh
+#   ut-admin-app/scripts/ci/guard-mail-addresses.sh
 # The same goes for guard-mail-addresses_test.sh. Reference page:
 # ut-docs reference/mail-addresses.md.
 #
@@ -91,8 +94,8 @@ guard-mail-addresses: the address(es) above are not on the allow-list
 (ut-docs#4229). Nothing is delivered to an address that is not a real alias.
 Use one of the existing local parts: ${INBOUND[*]}
 (send-only: ${SEND_ONLY[*]}). To introduce a new one, add the M365 alias first,
-then add it to the list in all four byte-identical copies of this script in the
-same change -- see ut-docs reference/mail-addresses.md. A reviewed exception
+then add it to the list in every byte-identical copy of this script (listed in
+its header) in the same change -- see ut-docs reference/mail-addresses.md. A reviewed exception
 takes a same-line '${MARKER} <reason>'.
 EOT
   exit 1

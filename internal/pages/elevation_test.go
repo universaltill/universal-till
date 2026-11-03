@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -250,6 +251,160 @@ func TestCheckStepUp_NilAuthSvc_FailsClosed(t *testing.T) {
 	}
 	if got.Err == nil {
 		t.Fatal("Err = nil, want an error — a nil AuthSvc must fail closed")
+	}
+}
+
+// --- ut-docs#5156 (design-5127 §5 M5): checkStepUp's session + same-origin gates ---
+
+func stepUpRequest(u auth.User, hdr map[string]string) *http.Request {
+	r := elevationRequest(u)
+	for k, v := range hdr {
+		r.Header.Set(k, v)
+	}
+	return r
+}
+
+// A cashier session must be refused BEFORE any PIN lookup: a valid manager
+// PIN doesn't help, and repeated wrong PINs from that session must neither
+// reach AuthorizeManager (no device-wide lockout burned, no PIN oracle).
+func TestCheckStepUp_CashierSession_RefusedWithoutPINCheck(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	dp := newElevationTestDeps(t)
+	cashier := auth.User{ID: "cash-session", Role: "cashier"}
+
+	got := checkStepUp(dp, stepUpRequest(cashier, nil), "settings", "135790")
+	if got.Outcome != needsElevation || !errors.Is(got.Err, errStepUpSessionNotPermitted) {
+		t.Fatalf("got %+v, want needsElevation/errStepUpSessionNotPermitted", got)
+	}
+	if got.ActorID != "cash-session" || got.ApproverID != "" {
+		t.Fatalf("ActorID/ApproverID = %q/%q", got.ActorID, got.ApproverID)
+	}
+
+	// More wrong PINs than the lockout threshold: none may be counted.
+	for i := 0; i < 8; i++ {
+		g := checkStepUp(dp, stepUpRequest(cashier, nil), "settings", "000000")
+		if !errors.Is(g.Err, errStepUpSessionNotPermitted) {
+			t.Fatalf("attempt %d: Err = %v, want errStepUpSessionNotPermitted", i, g.Err)
+		}
+	}
+	mgr := auth.User{ID: "mgr-session", Role: "manager"}
+	ok := checkStepUp(dp, stepUpRequest(mgr, nil), "settings", "135790")
+	if ok.Outcome != elevated || ok.Err != nil {
+		t.Fatalf("manager after cashier probing: %+v, want elevated (lockout must be untouched)", ok)
+	}
+}
+
+// No session user at all (auth ON) is refused too.
+func TestCheckStepUp_NoSessionUser_Refused(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	dp := newElevationTestDeps(t)
+	r := httptest.NewRequest(http.MethodPost, "/elevation-test", nil)
+
+	got := checkStepUp(dp, r, "settings", "135790")
+
+	if got.Outcome != needsElevation || !errors.Is(got.Err, errStepUpSessionNotPermitted) {
+		t.Fatalf("got %+v, want needsElevation/errStepUpSessionNotPermitted", got)
+	}
+}
+
+func TestCheckStepUp_SameOriginGate(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mgr := auth.User{ID: "mgr-session", Role: "manager"}
+	cases := []struct {
+		name string
+		hdr  map[string]string
+		want bool // elevated
+	}{
+		{"cross-site", map[string]string{"Sec-Fetch-Site": "cross-site"}, false},
+		{"same-site", map[string]string{"Sec-Fetch-Site": "same-site"}, false},
+		{"none", map[string]string{"Sec-Fetch-Site": "none"}, false},
+		{"evil origin", map[string]string{"Origin": "http://evil.example"}, false},
+		{"null origin", map[string]string{"Origin": "null"}, false},
+		{"non-http origin", map[string]string{"Origin": "file://example.com"}, false},
+		{"matching origin", map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "http://example.com"}, true},
+		{"matching origin, other case", map[string]string{"Origin": "HTTP://EXAMPLE.com"}, true},
+		{"no headers", nil, true},
+		{"origin on another port", map[string]string{"Origin": "http://example.com:8080"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dp := newElevationTestDeps(t)
+			got := checkStepUp(dp, stepUpRequest(mgr, tc.hdr), "settings", "135790")
+			if tc.want {
+				if got.Outcome != elevated || got.Err != nil {
+					t.Fatalf("got %+v, want elevated", got)
+				}
+				return
+			}
+			if got.Outcome != needsElevation || !errors.Is(got.Err, errStepUpCrossOrigin) {
+				t.Fatalf("got %+v, want needsElevation/errStepUpCrossOrigin", got)
+			}
+		})
+	}
+}
+
+// An IPv6 till address: Host and Origin both carry the bracketed literal
+// and port, so a same-origin call from it passes.
+func TestCheckStepUp_SameOriginGate_IPv6Host(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	dp := newElevationTestDeps(t)
+	r := stepUpRequest(auth.User{ID: "mgr-session", Role: "manager"}, map[string]string{"Origin": "http://[::1]:8080", "Sec-Fetch-Site": "same-origin"})
+	r.Host = "[::1]:8080"
+	if got := checkStepUp(dp, r, "settings", "135790"); got.Outcome != elevated || got.Err != nil {
+		t.Fatalf("got %+v, want elevated", got)
+	}
+}
+
+// ADR-0128: a custom role holding the grant is judged by the grant, never
+// by its role name — its session passes the session gate and a manager PIN
+// elevates it.
+func TestCheckStepUp_CustomRoleWithGrant_Elevates(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	dp := newElevationTestDeps(t)
+	insertCloudRole(t, dp.Db, "c_backoffice", "Back office")
+	if err := data.NewAuthRepo(dp.Db).SetRolePermission(t.Context(), nil, "c_backoffice", "settings", true); err != nil {
+		t.Fatalf("grant custom role: %v", err)
+	}
+	got := checkStepUp(dp, stepUpRequest(auth.User{ID: "custom-session", Role: "c_backoffice"}, nil), "settings", "135790")
+	if got.Outcome != elevated || got.Err != nil {
+		t.Fatalf("got %+v, want elevated (grant-based session gate)", got)
+	}
+}
+
+// The origin check runs before any PIN lookup: cross-origin wrong PINs past
+// the lockout threshold must not lock out a later same-origin valid attempt.
+func TestCheckStepUp_CrossOrigin_DoesNotTouchPINLockout(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	dp := newElevationTestDeps(t)
+	mgr := auth.User{ID: "mgr-session", Role: "manager"}
+	for i := 0; i < 8; i++ {
+		checkStepUp(dp, stepUpRequest(mgr, map[string]string{"Sec-Fetch-Site": "cross-site"}), "settings", "000000")
+	}
+	got := checkStepUp(dp, stepUpRequest(mgr, nil), "settings", "135790")
+	if got.Outcome != elevated {
+		t.Fatalf("got %+v, want elevated", got)
+	}
+}
+
+// UT_AUTH=off: no session user, same-origin, valid PIN still elevates.
+func TestCheckStepUp_AuthDisabled_NoSession_ValidPINElevates(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newElevationTestDeps(t)
+	r := httptest.NewRequest(http.MethodPost, "/elevation-test", nil)
+
+	got := checkStepUp(dp, r, "settings", "135790")
+
+	if got.Outcome != elevated || got.Err != nil {
+		t.Fatalf("got %+v, want elevated", got)
+	}
+}
+
+func TestElevationErrorKey_StepUpSentinels(t *testing.T) {
+	if k := elevationErrorKey(errStepUpCrossOrigin); k != "elevation.error_unavailable" {
+		t.Fatalf("cross-origin key = %q", k)
+	}
+	if k := elevationErrorKey(errStepUpSessionNotPermitted); k != "common.error.manager_or_admin_required" {
+		t.Fatalf("session-not-permitted key = %q", k)
 	}
 }
 

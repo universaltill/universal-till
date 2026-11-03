@@ -21,6 +21,11 @@ type confirmPrompt struct {
 	Confirm   string
 	HelpTopic string
 	Hidden    []elevationHiddenField
+	// Danger (ut-docs#3557) is for an action that can't be undone from this
+	// till: the confirm button is red and Cancel, not the confirm button,
+	// takes the autofocus, so a repeated Enter after the form that raised
+	// the prompt can't confirm it unread.
+	Danger bool
 }
 
 // renderConfirmPrompt writes the confirm dialog fragment (web/ui/partials/
@@ -42,5 +47,6 @@ func renderConfirmPrompt(w http.ResponseWriter, r *http.Request, p confirmPrompt
 		"Confirm":   p.Confirm,
 		"HelpTopic": p.HelpTopic,
 		"Hidden":    p.Hidden,
+		"Danger":    p.Danger,
 	})(w, r)
 }

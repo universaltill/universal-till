@@ -56,7 +56,7 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // sale-screen tour is remembered per signed-in user, and auth-off never
 // auto-starts it. It must sort after login.spec.ts (first-boot wizard).
 const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156)\.spec\.ts$/;
 
 // ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
 // real plugins/layout-salon installed, which HIDES /tables and
@@ -79,7 +79,11 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // ut-docs#4477: the Settings → Language download spec lists a language pack
 // from its own fake catalog on the same port (it never registers); its name
 // sorts it first in this project (see the spec's header).
-const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477)\.spec\.ts$/;
+// ut-docs#4228: the plugin store detail-page click spec lists two plugins from its
+// own fake catalog on the same port (it never registers; downloads are intercepted).
+// Its name sorts it before the specs that register this till, so the cloud-terms
+// box it asserts is still shown.
+const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477|catalog-store-detail-actions-4228)\.spec\.ts$/;
 
 // ut-docs#3091: the release-notes spec needs a till stamped with a released
 // version and seeded as "just updated" (run-till-release-notes.sh), so the

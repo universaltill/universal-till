@@ -211,6 +211,7 @@ var demoDeniedRoutes = map[string]bool{
 	// Catalogue/data/voucher import and saving exports to the filesystem
 	// (ADR-0113 §1.5: file ingest).
 	"GET /import":                   true,
+	"GET /ui/join-sync":             true,
 	"POST /api/catalog/export-save": true,
 	"POST /api/data/export":         true,
 	"POST /api/data/import":         true,
@@ -301,6 +302,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/setup/tax-plugin-skip":           true,
 	"POST /api/setup/update-apply":              true,
 	"POST /api/setup/update-check":              true,
+	"POST /api/sync/bearer/rotate":              true, // ut-docs#5198: a replica's LAN bearer rotation
 	"POST /api/sync/cloud-device":               true,
 	"POST /api/sync/enroll":                     true,
 	"POST /api/sync/enroll/withdraw":            true,

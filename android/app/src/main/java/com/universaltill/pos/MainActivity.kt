@@ -237,6 +237,69 @@ class MainActivity : AppCompatActivity() {
             callback.onReceiveValue(uris)
         }
 
+    // ut-docs#5190: a file input with capture (the item photo's "Take a
+    // photo") opens the SYSTEM camera — focus, flash, full resolution, retake —
+    // as on iPhone/iPad, not the document picker (WebView's createIntent()
+    // ignores capture) and not the in-page getUserMedia viewfinder. The photo
+    // is written to a private cache file the camera app reaches through the
+    // narrow "captures" FileProvider (res/xml/file_paths_captures.xml), and
+    // the page receives that content:// Uri like any picked file. Camera
+    // permission is asked only now, on first use; refused -> the document
+    // picker, so the field is never dead.
+    private var pendingCaptureUri: Uri? = null
+    private var pendingCaptureFile: File? = null
+    private var pendingCaptureParams: WebChromeClient.FileChooserParams? = null
+    private val takePictureLauncher =
+        registerForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+            val callback = fileChooserCallback ?: return@registerForActivityResult
+            fileChooserCallback = null
+            val uri = pendingCaptureUri
+            val file = pendingCaptureFile
+            pendingCaptureUri = null
+            pendingCaptureFile = null
+            // some camera apps answer OK without writing the file: hand over
+            // nothing rather than a Uri the page cannot read
+            val usable = taken && uri != null && file != null && file.isFile && file.length() > 0
+            callback.onReceiveValue(if (usable) arrayOf(uri!!) else emptyArray())
+        }
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val params = pendingCaptureParams
+            pendingCaptureParams = null
+            if (fileChooserCallback == null) return@registerForActivityResult
+            if (granted) launchSystemCamera() else launchDocumentPicker(params)
+        }
+
+    private fun launchSystemCamera() {
+        val dir = File(cacheDir, "captures").apply { mkdirs() }
+        val now = System.currentTimeMillis()
+        CaptureLogic.staleCaptures(dir.list()?.toList().orEmpty(), now, 60 * 60 * 1000L)
+            .forEach { File(dir, it).delete() }
+        val file = File(dir, CaptureLogic.captureFileName(now))
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.captures", file)
+            pendingCaptureUri = uri
+            pendingCaptureFile = file
+            takePictureLauncher.launch(uri)
+        } catch (e: Exception) {
+            // no camera app, or the provider refused: never leave the callback
+            // unresolved (the WebView contract), fall back to the picker
+            pendingCaptureUri = null
+            pendingCaptureFile = null
+            launchDocumentPicker(null)
+        }
+    }
+
+    private fun launchDocumentPicker(params: WebChromeClient.FileChooserParams?) {
+        val intent = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+        try {
+            fileChooserLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            fileChooserCallback?.onReceiveValue(null)
+            fileChooserCallback = null
+        }
+    }
+
     // ut-docs#1435: the WebView-side half of camera/microphone access. A
     // page's getUserMedia() call surfaces as WebChromeClient.onPermissionRequest
     // (below, in onCreate's webChromeClient) — and a plain WebView's default
@@ -2013,6 +2076,20 @@ class MainActivity : AppCompatActivity() {
                     // must not be leaked.
                     fileChooserCallback?.onReceiveValue(null)
                     fileChooserCallback = filePathCallback
+                    if (fileChooserParams != null &&
+                        CaptureLogic.wantsCamera(fileChooserParams.isCaptureEnabled, fileChooserParams.acceptTypes.toList())
+                    ) {
+                        // ut-docs#5190: the system camera, not the picker
+                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            launchSystemCamera()
+                        } else {
+                            pendingCaptureParams = fileChooserParams
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                        return true
+                    }
                     val intent =
                         fileChooserParams?.createIntent()
                             ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }

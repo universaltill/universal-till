@@ -99,6 +99,9 @@ var (
 	ErrBadDeviceRequest = errors.New("enrol: invalid replica device request")
 	// errPrimaryUnsupported: the main till predates the vouch endpoint.
 	errPrimaryUnsupported = errors.New("enrol: main till has no cloud-device endpoint")
+	// errNotPairedReplica: no main-till URL or bearer is held (a restored
+	// copy until it joins again, ut-docs#5162). Steady state, not a failure.
+	errNotPairedReplica = errors.New("not a paired replica")
 
 	// vouchInterval is how often a replica re-asks after a success (or after
 	// finding a pre-fix main till), so the cloud's record of its version and
@@ -340,6 +343,10 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 			return backoff, false
 		}
 		return vouchInterval, true
+	case errors.Is(err, errNotPairedReplica):
+		// Nothing to ask until the owner joins again; checking at the
+		// slowest pace costs nothing and logs nothing.
+		return replicaRetryDelays[len(replicaRetryDelays)-1], false
 	default:
 		log.Infof("enrolment: main till could not register this replica in the cloud (will retry): %v", err)
 		return backoff, false
@@ -396,7 +403,7 @@ func (p primarySource) RequestVouch(ctx context.Context, deviceID, version strin
 	get := func(k string) string { v, _, _ := p.kv.Get(ctx, k); return strings.TrimSpace(v) }
 	primary, bearer := get(keySyncPrimaryURL), get(keySyncBearer)
 	if primary == "" || bearer == "" {
-		return Vouch{}, fmt.Errorf("not a paired replica")
+		return Vouch{}, errNotPairedReplica
 	}
 	body, err := json.Marshal(map[string]string{"device_id": deviceID, "version": version})
 	if err != nil {

@@ -741,7 +741,7 @@
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
               {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-              <span class="category-overflow-count">{{ printf (T "products.category_button_count") $g.VisibleButtons }}</span>
+              <span class="category-overflow-count">{{ TM "products.category_button_count_plural" "count" $g.VisibleButtons }}</span>
             </button>
             {{ end }}
           </div>
@@ -909,7 +909,7 @@
                   @click="openCategoryPopup($el)">
             {{ if .ImageURL }}<img class="category-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}
             <span class="category-tile-name">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-            <span class="category-tile-count">{{ printf (T "categories.item_count") .ItemCount }}</span>
+            <span class="category-tile-count">{{ TM "categories.item_count_plural" "count" .ItemCount }}</span>
           </button>
           {{ end }}
         </div>
@@ -1142,7 +1142,11 @@
        into the new order IN PLACE -- no buttons-changed re-render, which
        repainted the whole replica and lost the operator's scroll position
        (ut-docs#3074). On a refusal it puts the rows back and shows the
-       reason in #designer-categories-msg.
+       reason on the moved row itself (data-reorder-item-msg), where the
+       operator is looking: under the Move buttons while its form is open
+       (#designer-cat-move-msg-<id>), else under its name
+       (#designer-cat-msg-<id>). #designer-categories-msg can sit scrolled
+       out of view above a long list (ut-docs#3104); it stays the fallback.
        The help text describes the list ONCE (aria-describedby here, not
        on every row's button — a screen reader would repeat it per row);
        each row's button only names its keys (aria-keyshortcuts). */}}
@@ -1168,7 +1172,7 @@
         <span class="cat-thumb" aria-hidden="true">{{ if $c.Thumb }}<img src="{{ imgv $c.Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if $c.Color }}<span class="cat-thumb-swatch" style="--swatch: {{ $c.Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
         <span class="designer-cat-text">
           <span class="designer-cat-name">{{ $c.Name }}</span>
-          <span class="muted designer-cat-meta">{{ printf (T "products.category_button_count") $c.ButtonCount }} · {{ printf (T "categories.item_count") $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
+          <span class="muted designer-cat-meta">{{ TM "products.category_button_count_plural" "count" $c.ButtonCount }} · {{ TM "categories.item_count_plural" "count" $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
         </span>
       </button>
       <div class="list-actions designer-cat-actions">
@@ -1201,7 +1205,7 @@
       {{ if and $c.IsActive (gt $c.ItemCount 0) }}
       <p class="muted designer-cat-blocked" id="designer-cat-blocked-{{ $c.ID }}" data-testid="designer-cat-blocked-{{ $c.ID }}">{{ printf (T "designer.category.deactivate_blocked_hint") $c.ItemCount }}</p>
       {{ end }}
-      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite"></p>
+      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite" data-reorder-item-msg></p>
       <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       <form class="designer-cat-form" id="designer-cat-form-{{ $c.ID }}" x-show="editing" x-cloak
             hx-post="/api/designer/categories/{{ $c.ID }}" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML" autocomplete="off">
@@ -1227,6 +1231,10 @@
             <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span> {{ T "designer.move_down" }}
           </button>
         </div>
+        {{/* ut-docs#3104: a refused Move earlier/later says why right here,
+             under the button just pressed -- on a phone the row's own line
+             above sits off-screen behind this tall form. */}}
+        <p class="designer-cat-msg" id="designer-cat-move-msg-{{ $c.ID }}" role="status" aria-live="polite" data-reorder-item-msg></p>
         <div class="designer-cat-form-actions">
           <button type="submit" class="btn primary compact" id="designer-cat-save-{{ $c.ID }}">{{ T "common.save" }}</button>
           <button type="button" class="btn secondary compact" @click="editing = false">{{ T "common.cancel" }}</button>

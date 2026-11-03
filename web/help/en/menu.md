@@ -16,7 +16,7 @@ Tap **☰ Menu** on the sale screen to open a page of big touch tiles — one fo
 
 Every page except the sale screen has a **← Back** button: at the top of the side rail under the logo, or first in the top bar on a phone. It takes you back to the page you came from — Menu → Items → Inventory, then Back, Back returns to Items and then the Menu, whichever way you got there (a Menu tile, the rail, a link on another page). When there is no page to go back to — the till was just started on that page, or you opened it from a bookmark — Back goes one level up instead: an Items section (Catalog, Inventory, …) to **Items**, an Administration page to **Administration**, any other page to the **Menu**, and the Menu to the sale screen. The same button works on the till, a tablet, a phone and in the iPhone app, which has no Back button of its own.
 
-On a phone-sized screen, lists and tables (locations, stock, the audit trail, report tabs and the rest) show as cards, one per row, instead of a grid you would have to scroll sideways: each card shows its first few fields, and **More** on the card shows the rest (**Less** hides them again).
+On a phone-sized screen, lists and tables (locations, stock, the audit trail, report tabs and the rest) show as cards, one per row, instead of a grid you would have to scroll sideways: each card shows its first few fields, and **More** on the card shows the rest (**Less** hides them again). A row that needs your attention — an import row with a warning, or one that will be skipped — keeps its status on the card itself, so you never need **More** to see what is wrong.
 
 ## Administration
 

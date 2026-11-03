@@ -1966,8 +1966,14 @@
           }
           if (state && state !== lockState) {
             lockState = state;
-            applyMainTillLock(document, state === 'unreachable');
+            applyMainTillLock(document, mainTillLocks(state));
           }
+        }
+        // ut-docs#5162 review: a restored copy that must join again
+        // ("rejoin") is as cut off from its main till as an unreachable one,
+        // so the catalogue stays locked the way the server rendered it.
+        function mainTillLocks(state) {
+          return state === 'unreachable' || state === 'rejoin';
         }
         document.body.addEventListener('htmx:afterSwap', function (e) {
           if (e.target === mount) followChip();
@@ -1975,7 +1981,7 @@
         document.body.addEventListener('htmx:load', function (e) {
           var el = e.detail && e.detail.elt;
           if (!lockState || !el || !el.querySelectorAll || (mount && mount.contains(el))) return;
-          applyMainTillLock(el, lockState === 'unreachable');
+          applyMainTillLock(el, mainTillLocks(lockState));
         });
         followChip();
       })();

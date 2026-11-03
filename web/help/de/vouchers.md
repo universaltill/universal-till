@@ -84,7 +84,7 @@ Gut zu wissen:
 
 - Die Seite zeigt die neuesten 200 Gutscheine. Gibt es mehr, steht das dort — suchen oder filtern Sie, um ältere zu finden.
 - Gibt es noch keine Gutscheine, sagt die Seite, wie Sie beginnen: einen mit einem Gutschein-Artikel verkaufen oder Guthaben aus Ihrem bisherigen System importieren.
-- An einer zusätzlichen Kasse zeigt die Liste nur die Gutscheine, die diese Kasse kennt — hier verkauft, importiert oder eingelöst. Die vollständige Liste ist an der Hauptkasse.
+- An einer zusätzlichen Kasse zeigt die Liste nur die Gutscheine, die diese Kasse kennt — hier verkauft, importiert oder eingelöst. Die vollständige Liste ist an der Hauptkasse. Um einen anderswo verkauften Gutschein zu öffnen, suchen Sie nach seiner vollständigen Kartennummer: Die Kasse fragt die Hauptkasse danach.
 
 ## Ein Guthaben korrigieren
 
@@ -124,8 +124,9 @@ Was schiefgehen kann:
 - Ein Gutschein kann pro Verkauf einmal aufgeladen werden und kann seine eigene Aufladung nicht bezahlen.
 - Eine Aufladung braucht einen aktiven Geschenkgutschein-Artikel im Katalog — gibt es keinen, sagt die Seite das.
 - Das Stornieren des Verkaufs wird abgelehnt, sobald ein Teil des aufgeladenen Betrags ausgegeben wurde.
-- An einer zusätzlichen Kasse bittet die Seite Sie, an der Hauptkasse aufzuladen.
+- An einer zusätzlichen Kasse muss die Hauptkasse beim Hinzufügen der Aufladung erreichbar (und auf dem neuesten Stand) sein; andernfalls sagt die Seite das und dem Verkauf wird nichts hinzugefügt.
+- An einer zusätzlichen Kasse kann ein Verkauf, mit dem ein Gutschein verkauft oder aufgeladen wurde, nicht storniert werden: Die Kasse sagt das, nichts ändert sich, und der Gutschein behält seinen Wert.
 
 ## Tagesabschluss und andere Kassen
 
-Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften, eingelösten und korrigierten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).
+Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften, eingelösten und korrigierten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist, und nicht an einer zusätzlichen Kasse, die diese Stornierung ablehnt; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).

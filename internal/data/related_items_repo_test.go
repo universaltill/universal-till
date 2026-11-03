@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -165,5 +166,32 @@ func TestRelatedItems_RebuildReplacesOldPairs(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("rebuild must clear stale pairs: %+v", got)
+	}
+}
+
+// ut-docs#5124: a suggestion chip for an icon-only item (icon set on my.)
+// draws the same picture the tile does, not an empty box.
+func TestRelatedItems_SuggestIconOnlyItemHasPicture(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "tea", SKU: "TEA", Name: "Tea", BasePrice: 250, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "milk", SKU: "MILK", Name: "Milk", BasePrice: 130, IsActive: true})
+	if _, err := db.Exec(`UPDATE items SET icon = 'lucide:beer' WHERE id = 'milk'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"s1", "s2", "s3"} {
+		testsupport.SeedCompletedSale(t, db, id, "tea", "milk")
+	}
+	repo := NewRelatedItemsRepo(db)
+	ctx := context.Background()
+	if _, err := repo.Rebuild(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.SuggestForBasket(ctx, []string{"tea"}, 3)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("suggest: %v %+v", err, got)
+	}
+	if want := iconid.AssetPath("lucide:beer"); want == "" || got[0].ImageURL != want {
+		t.Fatalf("ImageURL = %q, want %q", got[0].ImageURL, want)
 	}
 }

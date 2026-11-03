@@ -20,8 +20,8 @@ FIXTURE_DIR="internal/pages"
 FAIL_COUNT=0
 
 fixtures=()
-# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
-# shellcheck disable=SC2317
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317/SC2329 false positive).
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   local status=$?
   if [[ ${#fixtures[@]} -gt 0 ]]; then

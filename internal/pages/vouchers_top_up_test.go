@@ -199,18 +199,19 @@ func TestVoucherTopUp_RefusalsInline(t *testing.T) {
 	}
 }
 
+// A replica whose main till can't be reached (ut-docs#4416): the page still
+// offers the form, and the POST refuses with the note and adds nothing. The
+// working replica paths are in vouchers_top_up_replica_test.go.
 func TestVoucherTopUp_ReplicaRefusedWithNote(t *testing.T) {
 	mux, dp := newTopUpTestDeps(t)
 	topUpSeedVoucher(t, dp, "GS-1", 1000)
-	if err := dp.Settings.Set(context.Background(), "sync.primary_url", "http://main-till.local:8080"); err != nil {
-		t.Fatal(err)
-	}
+	setReplicaSettings(t, dp.Settings, unreachableURL(), "b-replica")
 	body := vGet(t, mux, "/vouchers/GS-1?lang=en", &vManager, false).Body.String()
-	if !strings.Contains(body, httpx.T("en", "vouchers.top_up.replica_note")) || strings.Contains(body, "/top-up") {
-		t.Fatalf("a replica must show the note and no Top up form")
+	if !strings.Contains(body, `hx-post="/vouchers/GS-1/top-up"`) {
+		t.Fatalf("a replica must show the Top up form")
 	}
 	rec := vTopUp(t, mux, "GS-1", "5", &vManager, true)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), httpx.T("en", "vouchers.top_up.replica_note")) {
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), html.EscapeString(httpx.T("en", "vouchers.top_up.replica_note"))) {
 		t.Fatalf("replica POST = %d %s", rec.Code, rec.Body.String())
 	}
 	if n := len(dp.Engine.Lines()); n != 0 {

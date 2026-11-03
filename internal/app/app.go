@@ -145,11 +145,19 @@ func Run(ctx context.Context) error {
 	// comment for why that stays a hard exit.
 	var database *db.DB
 	restoreApplied := false
+	// A crash between the two renames of a restore leaves no database file;
+	// finish or undo it before anything below opens (and so creates) one
+	// (ut-docs#5089).
+	if recovered, recErr := db.RecoverInterruptedRestore(cfg.DBPath); recErr != nil {
+		log.Errorf("restore: recover an interrupted restore: %v", recErr)
+	} else if recovered {
+		restoreApplied = true
+	}
 	// ut-docs#5058 UT-5: a staged JOIN wipes this database on the apply
 	// below. Sales rung since it was staged go to the new main till first
 	// (bounded, best effort; a failure is logged and they stay in the
 	// pre-restore copy in the backups folder).
-	if db.PendingRestore(cfg.DBPath) {
+	if db.PendingRestore(cfg.DBPath) && !db.RestoreSwapPending(cfg.DBPath) {
 		if _, statErr := os.Stat(db.ReplicaIdentityPath(cfg.DBPath)); statErr == nil {
 			if old, openErr := db.Open(cfg.DBPath); openErr == nil {
 				pages.ReplayStagedJoinAtStart(ctx, old.DB, cfg.DBPath)
@@ -160,7 +168,11 @@ func Run(ctx context.Context) error {
 		}
 	}
 	for {
-		paths.MigrateLegacyData(cfg.DBPath)
+		// Not while a restore swap is unfinished: a copied-in legacy DB would
+		// hide the missing file and the journal would be dropped (ut-docs#5089).
+		if !db.RestoreSwapPending(cfg.DBPath) {
+			paths.MigrateLegacyData(cfg.DBPath)
+		}
 
 		var attemptErr error
 		if applied, restoreErr := db.ApplyPendingRestore(cfg.DBPath); restoreErr != nil {
@@ -243,7 +255,27 @@ func Run(ctx context.Context) error {
 		log.Infof("replica identity applied — this till is now part of the shop")
 	}
 
+	// ut-docs#5172: the LAN bearer lives under secrets/ (excluded from backup),
+	// not in a settings row every DB backup would copy. After
+	// ApplyReplicaIdentity (a fresh join writes the row, which this migrates)
+	// and before anything reads settings or CheckRestoredInstall runs, so its
+	// held check and its clear of sync.bearer both go through the file. A
+	// failure keeps the row behaviour: sync must never break over this.
+	if err := data.KeepSyncBearerOutOfDB(ctx, database.DB, paths.Data("secrets", "sync-bearer")); err != nil {
+		log.Warnf("sync bearer stays in the database (ut-docs#5172): %v", err)
+	}
+
 	settingsStore := settings.NewStore(database.DB)
+
+	// ut-docs#5157: a data folder restored onto another device (iCloud)
+	// carries the old till's cloud identity. Detect it before anything reads
+	// that identity: after ApplyPendingRestore/ApplyReplicaIdentity, before
+	// LoadRuntimeConfig and enroll.Init (cfg still holds only the
+	// environment's pins here). Outside Init so demo mode, which skips Init,
+	// is covered too. Never blocks boot. The journal lookup keeps a restored
+	// replica's sync.restored_since after the original's newest entry even if
+	// the original's clock ran ahead (ut-docs#5185).
+	enroll.CheckRestoredInstall(ctx, cfg, settingsStore, data.NewPOSRepo(database.DB).NewestLocalJournalEntryAt)
 
 	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
 	// main till's pin, every replica → main till request goes over pinned
@@ -483,6 +515,16 @@ func Run(ctx context.Context) error {
 	// Removed before the database closes, like the peer source above.
 	if deps != nil && deps.PrimaryWatch != nil {
 		defer lantls.SetPeerReproof(deps.PrimaryWatch.Reproof)()
+	}
+
+	// Bearer rotation (ut-docs#5198): when the main till marks an answer as
+	// due, this till swaps its sync bearer in the background. Removed before
+	// the database closes, like the hooks above.
+	if deps != nil {
+		defer lantls.SetBearerRotate(pages.SyncBearerRotator(deps))()
+		// ut-docs#5203: a main till restored from a backup older than the
+		// last rotation is reached again with the previous bearer.
+		defer lantls.SetBearerFallback(pages.SyncBearerFallback(deps))()
 	}
 
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {

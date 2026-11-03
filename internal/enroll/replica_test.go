@@ -663,3 +663,24 @@ func TestRegisterNowBusySlotIsSentinel(t *testing.T) {
 		t.Fatalf("err = %v, want ErrAttemptBusy wrapping DeadlineExceeded", err)
 	}
 }
+
+// ut-docs#5162: a restored replica has no bearer until it joins again. That
+// is a steady state, not a failure: the loop waits the longest delay and
+// logs nothing.
+func TestReplicaAttempt_UnpairedIsQuiet(t *testing.T) {
+	logs := captureLog(t)
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), keySyncPrimaryURL, "http://192.168.1.5:8080") // bearer cleared by the restore check
+	fastRetries(t)
+	src := primarySource{kv: kv}
+	wait, ok := replicaAttempt(context.Background(), config.MarketplaceConfig{}, kv, src, 0)
+	if ok {
+		t.Fatal("an unpaired replica cannot succeed")
+	}
+	if want := replicaRetryDelays[len(replicaRetryDelays)-1]; wait != want {
+		t.Fatalf("wait = %v, want the longest backoff %v", wait, want)
+	}
+	if out := logs.String(); strings.Contains(out, "not a paired replica") || strings.Contains(out, "could not register") {
+		t.Fatalf("an unpaired replica must not log each try:\n%s", out)
+	}
+}

@@ -598,7 +598,7 @@ for a role. Details:
 (ADR-0153 Decision 3, ut-docs#2838). An `ai.agent` plugin never writes
 till data itself. Inside a `ui.view.ask` / `ui.action.ask` it calls
 `action_propose(name, args)` (SDK `plugin.ActionPropose`) with a core
-action — `catalog.item.create.v1` or `stock.adjust.v1` — and gets back a
+action — `catalog.item.create.v1`, `catalog.item.update.v1` (name, price, category, or a barcode for an item that has none; ut-docs#4128) or `stock.adjust.v1` — and gets back a
 proposal id; it then answers a view document containing
 `{"type": "confirm", "proposal": "<id>"}` (at most 3 per document; no
 other field is accepted). Core draws that card in its own words: the
@@ -613,7 +613,7 @@ admin, and the operator's role must hold the manual screen's permission
 (a cashier is refused with `-2`). Outside an operator's ui ask (schedule,
 published event, job) it is `-2`, and so is a catalogue action on a till
 that follows a main till (the catalogue is edited there). Limits, codes
-and argument bounds: ut-docs `reference/plugin-host-functions.md`.
+and argument bounds: ut-docs `reference/plugin-host-functions.md`. To show items it found, it answers `{"type": "item_list", "items": [ids], "missing": mask?}`: core draws each item's name, thumbnail and edit-page link, and a link to the catalog filtered by `missing`, only for an operator who may manage the catalog (ut-docs#4128).
 
 ### Camera identify: `catalog.identify` (ADR-0121 §7)
 
