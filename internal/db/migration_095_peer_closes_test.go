@@ -6,7 +6,7 @@ import "testing"
 // a till with data, and the trigger logs only with the copy on, on the main
 // till.
 func TestMigration095_PeerCloses(t *testing.T) {
-	d, path := openAtPreMigrationSchema(t, 94, "peer-closes.db")
+	d, path := openAtPreMigrationSchema(t, 95, "peer-closes.db")
 	if _, err := d.DB.Exec(`INSERT INTO report_archive (id, kind, period, content_json) VALUES ('ra1', 'eod', 'p', '{}')`); err != nil {
 		t.Fatal(err)
 	}

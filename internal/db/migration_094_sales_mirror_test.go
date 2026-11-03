@@ -2,14 +2,14 @@ package db
 
 import "testing"
 
-// 093 adds the read-only sales copy and the main till's change log
+// 094 adds the read-only sales copy and the main till's change log
 // (ut-docs#5074). It must be safe on a till that already holds data: no
 // existing row changes, no backfill, nothing logged (the setting has no row
 // on any till, so it is off), and re-running it is a no-op.
 func TestMigration094_SalesMirror_SafeOnExistingData(t *testing.T) {
-	d, path := openAtPreMigrationSchema(t, 93, "sales-mirror.db")
+	d, path := openAtPreMigrationSchema(t, 94, "sales-mirror.db")
 	if _, err := d.DB.Exec(`SELECT 1 FROM mirror_sales`); err == nil {
-		t.Fatal("mirror_sales must not exist before 093")
+		t.Fatal("mirror_sales must not exist before 094")
 	}
 	for _, s := range []string{
 		`INSERT INTO sales (id, receipt_no, status, subtotal, total, local_date) VALUES ('s1', '000000001', 'completed', 1000, 1000, '2026-10-25')`,
@@ -35,10 +35,10 @@ func TestMigration094_SalesMirror_SafeOnExistingData(t *testing.T) {
 		"sales_mirror_log", "sales_mirror_acks"} {
 		var n int
 		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM ` + tb).Scan(&n); err != nil {
-			t.Fatalf("%s missing after 093: %v", tb, err)
+			t.Fatalf("%s missing after 094: %v", tb, err)
 		}
 		if n != 0 {
-			t.Errorf("%s has %d rows after 093 on an existing till, want 0", tb, n)
+			t.Errorf("%s has %d rows after 094 on an existing till, want 0", tb, n)
 		}
 	}
 	for _, trg := range []string{"trg_sales_mirror_log_sale_ins", "trg_sales_mirror_log_sale_upd",
