@@ -129,6 +129,9 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // spec that navigates to /orders with `networkidle` needs the same
   // treatment (none in e2e/tests/ does today).
   await page.route('**/api/orders/stream', (r) => r.fulfill({ status: 204 }));
+  // ut-docs#2743: a manager page on a main till also opens the pairing
+  // push stream (GET /api/pairings/stream) — same never-idle shape, same 204.
+  await page.route('**/api/pairings/stream', (r) => r.fulfill({ status: 204 }));
   await page.goto(url, { waitUntil: 'networkidle' });
 
   // The locale actually took: RTL locales must render flipped, same

@@ -584,7 +584,7 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 		}
 		if c, err := r.Cookie(CookieName); err == nil {
 			p := r.URL.Path
-			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && p != "/api/orders/stream"
+			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && !sseStream(p)
 			if u, ok := svc.ResolveFor(r.Context(), c.Value, touch, displayBoardRequest(r)); ok {
 				// ut-docs#3935: a request-scoped permission snapshot, so
 				// the ~10 Can checks a page render makes read the
@@ -680,4 +680,11 @@ func UserID(r *http.Request) string {
 // seam for non-middleware entry points.
 func WithUser(r *http.Request, u User) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), ctxKey{}, u))
+}
+
+// sseStream reports the long-lived session-authed EventSource routes. They
+// are excluded from the session touch so an open stream never keeps an idle
+// session alive (ADR-0079, ut-docs#2743).
+func sseStream(p string) bool {
+	return p == "/api/orders/stream" || p == "/api/pairings/stream"
 }
