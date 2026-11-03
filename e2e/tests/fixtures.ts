@@ -101,6 +101,12 @@ export const test = base.extend<{ resetPosOncePerFile: void }, WorkerOpts>({
   // (page-transitions-2223 does, for the swap-ease cases only).
   page: async ({ page }, use) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    // ut-docs#2743: a manager page on a main till opens the pairing push
+    // stream (GET /api/pairings/stream), an SSE request that never
+    // completes, so `waitUntil: 'networkidle'` would never resolve. A 204
+    // closes the EventSource without a reconnect, and the 30s poll still
+    // runs. A spec that tests the push itself calls page.unroute() first.
+    await page.route('**/api/pairings/stream', (r) => r.fulfill({ status: 204 }));
     await use(page);
   },
   // Auto fixture — every test opts in with no changes to the test body.
