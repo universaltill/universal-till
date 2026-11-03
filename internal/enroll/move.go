@@ -152,15 +152,15 @@ func SetMoveHooks(h MoveHooks) {
 	movesMu.Unlock()
 }
 
-// ResetMoveStateForTests forgets every pending and ended move, the wired
-// hooks and the cached /version capability, as a fresh process starts. Only
-// tests call it: they share one process, and a move test must not leave its
-// moves or its (closed) database hooks behind for the next one.
-func ResetMoveStateForTests() {
+// resetMoveState forgets every pending and ended move and the cached
+// /version capability: they are process memory tied to the identity Init
+// loads, so Init starts from none (at boot this is a no-op; the hooks the
+// pages wiring sets are left alone). Tests re-Init between cases, so a move
+// test leaves no moves behind for the next one.
+func resetMoveState() {
 	movesMu.Lock()
 	pending = map[string]*pendingEntry{}
 	ended = map[string]EndedMove{}
-	moveHooks = MoveHooks{}
 	movesMu.Unlock()
 	moveCapMu.Lock()
 	moveCapFor, moveCapOK, moveCapAt = "", false, time.Time{}

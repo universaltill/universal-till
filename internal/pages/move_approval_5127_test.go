@@ -142,8 +142,8 @@ func moveApprovalDeps(t *testing.T) (*http.ServeMux, *common.Deps, *moveStubClou
 	// credential, which would stay in enroll's process-wide identity for
 	// whichever test runs next (pages-shuffle seeds 22 / 1791386291628608919).
 	t.Cleanup(func() {
-		enroll.ResetMoveStateForTests()
-		enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{})
+		enroll.SetMoveHooks(enroll.MoveHooks{})                                            // bound to this test's DB
+		enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) // also forgets the moves
 	})
 	hash, err := auth.HashPIN(mvPIN)
 	if err != nil {

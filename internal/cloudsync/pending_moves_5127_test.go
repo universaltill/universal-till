@@ -44,7 +44,7 @@ func TestPushSyncCarriesPendingMovesOn200And402(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := pendingMovesCloud(t, status)
 			cfg, d := bootEnrolledTill(t, srv.URL)
-			t.Cleanup(enroll.ResetMoveStateForTests)
+			t.Cleanup(func() { enroll.ApplySyncMoves(json.RawMessage(`[]`), nil) })
 			settings := data.NewSettingsRepo(d.DB)
 			ctx := context.Background()
 			_, _ = pushSync(ctx, cfg, settings, buildSyncRequest(ctx, cfg, settings, Hooks{}))
