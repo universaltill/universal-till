@@ -55,6 +55,15 @@ func applyMacApp(ctx context.Context, appPath, version string, idle func() bool)
 	if dmgURL == "" {
 		return fmt.Errorf("no macOS .dmg in release v%s", version)
 	}
+	// Fail closed on a release without checksums.txt before fetching the dmg
+	// (see integrity gate #1 below), and refuse assets off the trusted release
+	// host before anything is downloaded (ut-docs#4080).
+	if checksumsURL == "" {
+		return fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version)
+	}
+	if err := rel.requireTrusted(dmgURL, checksumsURL); err != nil {
+		return err
+	}
 
 	// A work dir that OUTLIVES this process — the helper runs after we quit.
 	work, err := os.MkdirTemp("", "ut-macupdate-*")
@@ -76,9 +85,6 @@ func applyMacApp(ctx context.Context, appPath, version string, idle func() bool)
 	// Apply): every real release ships checksums.txt with the dmg's line
 	// appended by the macos-app release job, so a missing entry only ever
 	// means a broken or tampered release.
-	if checksumsURL == "" {
-		return cleanupOnErr(fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version))
-	}
 	want, err := checksumFor(ctx, checksumsURL, dmgName)
 	if err != nil {
 		return cleanupOnErr(err)

@@ -35,6 +35,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
+	"github.com/universaltill/universal-till/internal/releasesource"
 	"github.com/universaltill/universal-till/internal/updates"
 )
 
@@ -48,9 +49,11 @@ import (
 // moments later for no benefit.
 var applyMu sync.Mutex
 
-// releasesLatest is a var (not const) purely as a test seam: tests point it at
-// a local httptest server so no test ever talks to the real GitHub API.
-var releasesLatest = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+// releaseSource is where this build downloads updates from: the build-time
+// buildinfo.ReleasesBaseURL (ut-docs#4080), never UT_UPDATE_RELEASES_URL. It
+// is a var purely as a test seam: tests point it at a local httptest server so
+// no test ever talks to the real GitHub API.
+var releaseSource = releasesource.Build
 
 // Test seams. Production code never changes these; tests do, so that the full
 // Apply flow can run hermetically against a temp-dir "install" without ever
@@ -291,6 +294,22 @@ type ghAsset struct {
 type ghRelease struct {
 	TagName string    `json:"tag_name"`
 	Assets  []ghAsset `json:"assets"`
+
+	// src is the release source the metadata was fetched from; its trusted
+	// asset host gates every download (requireTrusted).
+	src releasesource.Source
+}
+
+// requireTrusted refuses any listed asset URL off the build's trusted
+// release host (ut-docs#4080). "" is skipped: the callers' existing
+// fail-closed "no checksums.txt" checks handle a missing one.
+func (r *ghRelease) requireTrusted(urls ...string) error {
+	for _, u := range urls {
+		if u != "" && !r.src.AssetTrusted(u) {
+			return fmt.Errorf("%w: %s", releasesource.ErrUntrustedAsset, u)
+		}
+	}
+	return nil
 }
 
 // Apply downloads the latest release, verifies it, swaps the binary + web/, and
@@ -406,6 +425,9 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	}
 	if archiveURL == "" {
 		return fmt.Errorf("no release archive for %s/%s (%s)", runtime.GOOS, runtime.GOARCH, archiveName)
+	}
+	if err := rel.requireTrusted(archiveURL, checksumsURL); err != nil {
+		return err
 	}
 
 	// Download + verify the archive.
@@ -533,9 +555,13 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 // fetchRelease reads one release's metadata: /releases/tags/v<version>, or
 // /releases/latest when version is "" (ut-docs#2738).
 func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
-	url := releasesLatest
+	src, err := releaseSource()
+	if err != nil {
+		return nil, fmt.Errorf("self-update: %w", err)
+	}
+	url := src.LatestURL()
 	if version != "" {
-		url = strings.TrimSuffix(releasesLatest, "/latest") + "/tags/v" + version
+		url = src.TagURL(version)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -556,6 +582,7 @@ func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
 	if strings.TrimPrefix(rel.TagName, "v") == buildinfo.Version {
 		return nil, errors.New("already on the latest version")
 	}
+	rel.src = src
 	return &rel, nil
 }
 

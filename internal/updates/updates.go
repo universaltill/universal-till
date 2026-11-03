@@ -19,32 +19,46 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
+	"github.com/universaltill/universal-till/internal/releasesource"
 )
 
-// defaultReleasesURL is the public GitHub Releases API for this repo.
-const defaultReleasesURL = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+// buildSource is the release source stamped into this build
+// (buildinfo.ReleasesBaseURL, ut-docs#4080; empty = our GitHub). Package vars
+// so tests can stamp one without ldflags.
+var buildSource, buildSourceErr = releasesource.Build()
 
-// releasesURL is what the check polls: the default, or an operator override
-// from UT_UPDATE_RELEASES_URL (read once at start-up) — for an air-gapped
-// till pointed at a local mirror of the releases API, and for the e2e
-// harness's fake release server (ut-docs#3940). It only decides where the
-// till LEARNS about a release and its release notes: internal/selfupdate
-// downloads the update itself from its own fixed URL, unaffected. Also a
-// test seam: tests point it at a local httptest server so no test ever
-// talks to the real GitHub API.
+// buildCheckURL is the build's own "latest release" URL, or "" when the
+// stamped value is unusable (the check then runs only from the env override;
+// it never falls back to our GitHub).
+func buildCheckURL() string {
+	if buildSourceErr != nil {
+		return ""
+	}
+	return buildSource.LatestURL()
+}
+
+// releasesURL is what the check polls: the build's own releases URL, or an
+// operator override from UT_UPDATE_RELEASES_URL (read once at start-up) — for
+// an air-gapped till pointed at a local mirror of the releases API, and for
+// the e2e harness's fake release server (ut-docs#3940). It only decides where
+// the till LEARNS about a release and its release notes: internal/selfupdate
+// downloads the update itself from the build-time buildinfo.ReleasesBaseURL,
+// which this variable never changes. Also a test seam: tests point it at a
+// local httptest server so no test ever talks to the real GitHub API. ""
+// means there is nothing to poll.
 var releasesURL = releasesURLFromEnv()
 
 // releasesURLFromEnv reads UT_UPDATE_RELEASES_URL; anything but an absolute
-// http(s) URL is ignored and the default is used (Start logs that — this
+// http(s) URL is ignored and the build's URL is used (Start logs that — this
 // runs at package init, before logging is configured).
 func releasesURLFromEnv() string {
 	v := strings.TrimSpace(os.Getenv("UT_UPDATE_RELEASES_URL"))
 	if v == "" {
-		return defaultReleasesURL
+		return buildCheckURL()
 	}
 	u, err := url.Parse(v)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return defaultReleasesURL
+		return buildCheckURL()
 	}
 	return v
 }
@@ -106,7 +120,10 @@ func Start(ctx context.Context, wg *sync.WaitGroup) {
 	if !enabledFromEnv() {
 		return
 	}
-	if v := strings.TrimSpace(os.Getenv("UT_UPDATE_RELEASES_URL")); v != "" && releasesURL == defaultReleasesURL {
+	if buildSourceErr != nil {
+		logging.L().Errorf("updates: %v; update check runs only from UT_UPDATE_RELEASES_URL", buildSourceErr)
+	}
+	if v := strings.TrimSpace(os.Getenv("UT_UPDATE_RELEASES_URL")); v != "" && releasesURL == buildCheckURL() {
 		logging.L().Warnf("updates: ignoring UT_UPDATE_RELEASES_URL %q: not an absolute http(s) URL", v)
 	}
 	wg.Add(1)
@@ -154,6 +171,9 @@ func enabledFromEnv() bool {
 }
 
 func checkOnce(ctx context.Context) {
+	if releasesURL == "" {
+		return
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, releasesURL, nil)
