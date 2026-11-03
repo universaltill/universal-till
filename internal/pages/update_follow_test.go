@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -220,7 +221,8 @@ func TestFollowErrorCode(t *testing.T) {
 		want string
 	}{
 		{selfupdate.ErrUnsupported, "unsupported"},
-		{errors.New("an update is already being applied"), "busy"},
+		{selfupdate.ErrApplyInProgress, "busy"},
+		{fmt.Errorf("x: %w", selfupdate.ErrApplyInProgress), "busy"},
 		{errors.New("releases API: HTTP 404"), "release"},
 		{errors.New("download: HTTP 503"), "download"},
 		{errors.New("checksum mismatch: got a want b"), "checksum"},

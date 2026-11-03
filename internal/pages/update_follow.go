@@ -354,7 +354,7 @@ func followErrorCode(err error) string {
 	switch {
 	case errors.As(err, &netErr):
 		return "network"
-	case strings.Contains(msg, "already being applied"):
+	case errors.Is(err, selfupdate.ErrApplyInProgress):
 		return "busy"
 	case strings.Contains(msg, "checksum"):
 		return "checksum"
