@@ -1416,16 +1416,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if shop == "" || config.IsPlaceholderStoreName(shop) {
 				shop = enroll.CurrentStatus().StoreID
 			}
+			// ut-docs#5127 UT-1b: where the cloud moves tills, pairing asks
+			// to MOVE this till (with its history) into the code's shop
+			// rather than replacing its connection; say that instead.
+			titleKey, bodyKey, confirmKey := "settings.enrol.pair_replace_title", "settings.enrol.pair_replace_body", "settings.enrol.pair_replace_confirm"
+			if enroll.PairWouldMove(r.Context(), d.Cfg, d.Settings) {
+				titleKey, bodyKey, confirmKey = "settings.move.confirm_title", "settings.move.confirm_body", "settings.move.confirm_btn"
+			}
 			// FSI..PDI keep the shop name and the code in their own
 			// direction inside an RTL (or LTR) sentence, so the typo check
 			// the dialog exists for reads true.
 			renderConfirmPrompt(w, r, confirmPrompt{
 				Action:   "/api/enrol/pair",
 				HxTarget: "#pair-msg",
-				Title:    httpx.T(locale, "settings.enrol.pair_replace_title"),
-				Body: fmt.Sprintf(httpx.T(locale, "settings.enrol.pair_replace_body"),
+				Title:    httpx.T(locale, titleKey),
+				Body: fmt.Sprintf(httpx.T(locale, bodyKey),
 					bidiIsolate(stripBidiControls(shop)), bidiIsolate(unbreakableCode(stripBidiControls(code)))),
-				Confirm:   httpx.T(locale, "settings.enrol.pair_replace_confirm"),
+				Confirm:   httpx.T(locale, confirmKey),
 				HelpTopic: "claim",
 				Danger:    true,
 				Hidden: []elevationHiddenField{
@@ -1448,6 +1455,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		status, err := enroll.Pair(r.Context(), d.Cfg, d.Settings, code)
+		var pendingMove *enroll.MovePendingError
+		if errors.As(err, &pendingMove) {
+			// ut-docs#5127 UT-1b: the cloud recorded the move; it waits for
+			// a fresh manager/admin PIN on the approval page. The till is
+			// still in its shop, selling as before.
+			id := pendingMove.Move.MoveID
+			settingsAudit(r, posRepo, elev, "enrollment", id, "move_requested", map[string]any{"target_store": pendingMove.Move.TargetStore})
+			w.Header().Set("HX-Redirect", "/settings/cloud/move/"+id)
+			fmt.Fprintf(w, `<span>%s <a href="/settings/cloud/move/%s">%s</a></span>`,
+				html.EscapeString(httpx.T(locale, "settings.move.pending_msg")), html.EscapeString(id),
+				html.EscapeString(httpx.T(locale, "settings.move.notice_review")))
+			return
+		}
 		if err != nil {
 			writePairError(w, locale, err)
 			return
@@ -3929,6 +3949,18 @@ func writePairError(w http.ResponseWriter, locale string, err error) {
 	case errors.Is(err, enroll.ErrPairReplicaNoStore):
 		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
 			html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
+		return
+	case errors.Is(err, enroll.ErrMoveSourceLost):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.move.source_lost")))
+		return
+	}
+	var refused *enroll.MoveRefusedError
+	if errors.As(err, &refused) {
+		// A refused move changed nothing on this till (ut-docs#5127).
+		logging.L().Warnf("enrol pair (move) refused: %v", err)
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, moveRefusalKey(refused.Code))))
 		return
 	}
 	// The raw reason is logged, never rendered: it is English-only

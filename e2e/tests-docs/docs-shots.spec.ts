@@ -343,7 +343,16 @@ const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotio
 
 const topics = routedTopics() as { id: string; route: string }[];
 
-for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id))) {
+// ut-docs#5127: the `claim` topic's first route is the move approval page,
+// /settings/cloud/move/{id}. It is captured on its own till (8093,
+// run-till-move.sh), whose fake cloud's sync answer carries one pending move
+// with this id (keep it equal to MOVE_ID there). A pending move shows a
+// banner on every page, so no other topic may use that till.
+const MOVE_BASE = 'http://127.0.0.1:8093';
+const MOVE_ID = '5127d0c5-0000-4000-8000-000000000001';
+const MOVE_TILL_TOPICS = ['claim'];
+
+for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id))) {
   for (const locale of LOCALES as string[]) {
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
       // The basket is server-side state shared across the run — staged once,
@@ -366,6 +375,28 @@ test.describe('manager-gated topics (auth till)', () => {
         await ensureOperator(page); // fresh Playwright context per test → log in each time
         await ensureFullEffects(page);
         await capture(page, topic!.id, locale, topic!.route);
+      });
+    }
+  }
+});
+
+test.describe('move approval (move till)', () => {
+  test.use({ baseURL: MOVE_BASE });
+  for (const id of MOVE_TILL_TOPICS) {
+    const topic = topics.find((t) => t.id === id);
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${id} (${locale})`, async ({ page }) => {
+        test.skip(!topic, `${id} topic no longer declares routes`);
+        const route = topic!.route.replace('{id}', MOVE_ID);
+        // The move arrives with the till's start-up cloud check-in (about
+        // 15s after boot): wait for the page to show it, not "gone".
+        await expect(async () => {
+          await page.goto(`${route}?lang=${locale}`);
+          await expect(page.getByTestId('move-approval')).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 60_000 });
+        await ensureFullEffects(page);
+        await capture(page, topic!.id, locale, route);
+        await expect(page.getByTestId('move-approval')).toBeVisible();
       });
     }
   }

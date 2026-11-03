@@ -533,6 +533,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
+	registerMoveApproval(mux, dp)                     // ut-docs#5127 UT-1b: approve or decline a move into another shop
 	registerSyncSales(mux, dp)
 	registerSyncSalesMirror(mux, dp)    // ut-docs#5074: the read-only sales copy's feed, main-till side (ships dark)
 	registerSyncPeerCloses(mux, dp)     // ut-docs#5074 M7: additional tills' own day closes for the copy
