@@ -60,7 +60,7 @@
 <div id="country-settings-status" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 <div id="country-settings-view">
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
 <p class="muted">{{ T "countrysettings.intro" }}</p>
 

@@ -20,8 +20,8 @@
     <dt>{{ T "channel_orders.col.channel" }}</dt><dd><code class="channel-order-key">{{ $o.PluginKey }}</code></dd>
     {{ if $o.CustomerCountry }}<dt>{{ T "channel_orders.detail.country" }}</dt><dd>{{ $o.CustomerCountry }}</dd>{{ end }}
   </dl>
-  {{ if $o.CurrencyMismatch }}<p class="login-error">{{ T "channel_orders.detail.currency_mismatch" }} ({{ $o.Currency }})</p>{{ end }}
-  {{ if $o.TotalMismatch }}<p class="login-error">{{ T "channel_orders.detail.total_mismatch" }}</p>{{ end }}
+  {{ if $o.CurrencyMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.currency_mismatch" }} ({{ $o.Currency }})</p>{{ end }}
+  {{ if $o.TotalMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.total_mismatch" }}</p>{{ end }}
 </div>
 <div class="card" style="margin-block-start:1rem">
   <div class="channel-order-scroll">

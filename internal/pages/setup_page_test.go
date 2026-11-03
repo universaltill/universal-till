@@ -396,7 +396,7 @@ func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
 			}
 			body := rec.Body.String()
 			want := template.HTMLEscapeString(httpx.T("en", "tills.pairing.error.name_required_field"))
-			if !strings.Contains(body, `<p class="login-error">`+want+`</p>`) {
+			if !strings.Contains(body, `<p class="login-error" role="alert">`+want+`</p>`) {
 				t.Errorf("re-render lacks the %q error: %s", want, body)
 			}
 			if !strings.Contains(body, "step: 4,") {

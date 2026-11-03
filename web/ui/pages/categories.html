@@ -23,7 +23,7 @@
 </div>
 
 {{ if .errKey }}
-<p class="login-error">
+<p class="login-error" role="alert">
   {{ if eq .errKey "categories.error.deactivate_blocked" }}
   {{ printf (T .errKey) .errCount }}
   {{ else }}

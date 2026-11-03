@@ -9,7 +9,7 @@
   <h1>{{ T "locations.title" }}</h1>
 </div>
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
 {{ template "list_header" (dict
      "searchID"       "locations-search"
