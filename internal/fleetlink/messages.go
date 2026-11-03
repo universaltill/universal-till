@@ -26,11 +26,16 @@ const (
 	ScopeHeldSales Scope = "held_sales"
 	ScopeTables    Scope = "tables"
 	ScopeOrders    Scope = "orders"
+	// ScopeSalesMirror (ut-docs#5074, ADR-0114 amendment 2026-10-26): the
+	// main till's sales-copy change log moved; pull the copy from your
+	// cursor (GET /api/sync/sales-mirror). Like every scope it carries no
+	// data. An older till ignores the unknown scope (no bit).
+	ScopeSalesMirror Scope = "sales_mirror"
 )
 
 // allScopes fixes both the bit each scope owns in a peer's dirty mask and
 // the order scopes are listed in a sync frame.
-var allScopes = []Scope{ScopeAdmin, ScopePlugins, ScopeStock, ScopeHeldSales, ScopeTables, ScopeOrders}
+var allScopes = []Scope{ScopeAdmin, ScopePlugins, ScopeStock, ScopeHeldSales, ScopeTables, ScopeOrders, ScopeSalesMirror}
 
 func scopeBit(s Scope) uint32 {
 	for i, v := range allScopes {

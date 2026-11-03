@@ -704,6 +704,9 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 			// Another till's sales moved the shop-wide stock and the
 			// orders board every linked till reads (ADR-0114 §2).
 			d.NudgeLink(fleetlink.ScopeStock, fleetlink.ScopeOrders)
+			// ut-docs#5074 M4: those sales are in the sales copy's change
+			// log now; tell the other tills at once, not at the next 1 s look.
+			d.PokeSalesMirrorNudge()
 		}
 		if applied > 0 || quarantined > 0 {
 			_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "sales_synced",
@@ -756,6 +759,9 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	syncPushSales(ctx, d, client, primary, bearer)
 	syncPushNoSales(ctx, d, client, primary, bearer)
 	syncPushClearedBaskets(ctx, d, client, primary, bearer)
+	// ut-docs#5074 M7: this till's own day closes for the sales copy; a
+	// no-op (settings reads only) while the copy is off.
+	syncPushCloses(ctx, d, client, primary, bearer, lantls.PeerPinned)
 }
 
 // parseSalesPushCursor splits the stored sync.push_cursor, "<created_at>|<id>"
