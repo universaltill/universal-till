@@ -2576,6 +2576,8 @@
   "settings.display.window_mode_fullscreen": "Tam ekran",
   "settings.display.window_mode_kiosk": "Kiosk",
   "settings.display.window_mode_kiosk_appliance": "Bu kasa özel bir kiosk cihazıdır: kiosk ekranını kasanın kendisi çalıştırır ve arkasında bir işletim sistemi masaüstü yoktur. Kiosk modundan çıkmak için pencere modunu buradan değiştirin — \"İşletim sistemi penceresine çık\" bu kasada geçerli değildir.",
+  "settings.display.window_mode_kiosk_help": "Tam ekran ve Kiosk burada aynı çalışır: kasa tüm ekranı kaplar ve «İşletim sistemi penceresine çık» masaüstünü geri getirir. Kiosk, «Self-servis kiosk» cihaz profili değildir.",
+  "settings.display.window_mode_kiosk_help_appliance": "Bu ekranı yalnızca Kiosk açık tutar. Tam ekran, Büyütülmüş ve Normal pencere ekranı kapatır. Kiosk, «Self-servis kiosk» cihaz profili değildir.",
   "settings.display.window_mode_label": "Pencere modu",
   "settings.display.window_mode_maximized": "Büyütülmüş",
   "settings.display.window_mode_no_shell": "Universal Till masaüstü uygulaması bu kasada çalışana kadar tam ekran ve kiosk modları kapalı kalır — pencerenin sahibi o uygulamadır ve tam ekrandan tekrar çıkmanızı sağlayan da odur.",

@@ -476,5 +476,7 @@
   "settings.move.refused_source_unavailable": {"description": "Move refused: the till's current shop is unavailable (deleted or merging).", "review": "standard"},
   "settings.move.refused_pending": {"description": "Move refused: another move is already pending for this till.", "review": "standard"},
   "settings.move.refused_declined_recently": {"description": "Move refused: a recent decline blocks this requester for a day.", "review": "standard"},
-  "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"}
+  "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"},
+  "settings.display.window_mode_kiosk_help": {"description": "Muted help line under the Window mode select in Settings → Display: says Fullscreen and Kiosk work the same on a computer, and that Kiosk is not the Self-order kiosk device profile.", "review": "standard"},
+  "settings.display.window_mode_kiosk_help_appliance": {"description": "Muted help line under the Window mode select in Settings → Display, shown only on a screen-only Pi kiosk appliance: only Kiosk keeps the screen on, the other modes turn it off.", "review": "standard"}
 }
