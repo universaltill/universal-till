@@ -217,7 +217,7 @@
         btn.disabled = false; msg.textContent = '✗ ' + t;
       });
     }, function () { btn.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + window.utElevationErrorText(e); });
   });
 })();
 </script>

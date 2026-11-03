@@ -1415,7 +1415,7 @@
     // button disabled forever on a network drop -- on an offline-first
     // product, the likeliest failure of all. Same tail as this file's other
     // utPostWithElevation caller (the report-archive export below).
-      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
+      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 (function () {
@@ -1460,7 +1460,7 @@
           if (r.ok) removeRowIfEmpty(row);
         }); },
         function () { restoreBtn.disabled = false; msg.textContent = ''; }
-      ).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', e); });
+      ).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
       return;
     }
     var purgeBtn = ev.target.closest('[data-purge-batch]');
@@ -1479,7 +1479,7 @@
           if (r.ok) removeRowIfEmpty(prow);
         }); },
         function () { purgeBtn.disabled = false; msg.textContent = ''; }
-      ).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', e); });
+      ).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
     }
   });
 })();
@@ -1541,7 +1541,7 @@
         renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
         if (r.ok) { row.remove(); } else { b.disabled = false; }
       });
-    }, function () { b.disabled = false; }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', e); });
+    }, function () { b.disabled = false; }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 (function () {
@@ -1614,7 +1614,7 @@
         else { run.disabled = false; }
       });
     }, function () { run.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { run.disabled = false; renderNotice(msg, 'error', e); });
+      .catch(function (e) { run.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 (function () {
@@ -1807,7 +1807,7 @@
           renderNotice(msg, 'error', t || ('HTTP ' + r.status));
         });
       }, function () { btn.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
+      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 </script>

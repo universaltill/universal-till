@@ -94,4 +94,32 @@ test.describe('PIN prompt in flight: Cancel and Escape are inert (ut-docs#5288)'
     await expect(page.locator('#elevation-modal form[aria-busy="true"]')).toHaveCount(0);
     await expect(dlg).toHaveJSProperty('open', false);
   });
+
+  // ut-docs#5298: the htmx PIN prompt's retry dropping at network level says
+  // the action may not have completed, in #pos-alert.
+  test('a network failure on the PIN retry shows the outcome-unknown alert', async ({ page }) => {
+    await ensureOperator(page);
+    await createCashier(page);
+    await loginAsCashier(page);
+    await page.goto('/');
+    let posts = 0;
+    await page.route('**/api/buttons/recategorize', (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts++;
+      return posts === 1 ? route.continue() : route.abort('failed');
+    });
+    await page.evaluate(() => {
+      const t = document.createElement('div');
+      t.id = 'buttons-add-error';
+      document.body.appendChild(t);
+      (window as any).htmx.ajax('POST', '/api/buttons/recategorize', { target: '#buttons-add-error', swap: 'innerHTML', values: { item_id: 'x', category_id: '' } });
+    });
+    const dlg = page.locator('#elevation-modal');
+    await expect(dlg).toHaveJSProperty('open', true);
+    await dlg.locator('input[name="override_pin"]').fill('123456');
+    await dlg.locator('button[type=submit]').click();
+    await expect(dlg).toHaveJSProperty('open', false);
+    await expect(page.locator('#pos-alert .notice-text')).toHaveText('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
+    expect(posts).toBe(2);
+  });
 });

@@ -1204,7 +1204,7 @@ document.addEventListener('click', function(e){
   if (!btn) return;
   var notice = btn.closest('.pos-notice');
   if (!notice) return;
-  if (notice.id === 'pos-alert') { notice.hidden = true; return; } // reusable slot
+  if (notice.id === 'pos-alert') { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
   notice.classList.add('hide');
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
@@ -1350,7 +1350,16 @@ document.addEventListener('click', function(e){
   function showAlert(kind){
     var alertBox = document.getElementById('pos-alert');
     if (!alertBox) return;
-    var msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
+    // ut-docs#5298: the "may not have completed" text is sticky -- a later
+    // generic network alert (status polls on an offline till) must not
+    // replace it; a server error or explicit new message still does.
+    if (kind === 'network' && alertBox.dataset.sticky === '1' && !alertBox.hidden) return;
+    var msg;
+    if (kind === 'outcome') { msg = alertBox.dataset.msgOutcomeUnknown; alertBox.dataset.sticky = '1'; }
+    else {
+      delete alertBox.dataset.sticky;
+      msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
+    }
     // Unhide BEFORE writing the text: a role=alert region that changes
     // while display:none doesn't reliably announce to screen readers.
     alertBox.hidden = false;
@@ -1419,7 +1428,13 @@ document.addEventListener('click', function(e){
     d.isError = false;
   });
   document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
-  document.body.addEventListener('htmx:sendError', function(){ showAlert('network'); });
+  // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
+  // data-after-request="elevation-done") failing at network level means the
+  // confirmed action may or may not have run (ut-docs#5298).
+  document.body.addEventListener('htmx:sendError', function(ev){
+    var el = ev.detail && ev.detail.elt;
+    showAlert(el && el.closest && el.closest('[data-after-request~="elevation-done"]') ? 'outcome' : 'network');
+  });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
   // variants, and fires this event via HX-Trigger-After-Swap once the
@@ -1511,7 +1526,7 @@ document.addEventListener('click', function(e){
   document.body.addEventListener('htmx:afterRequest', function(ev){
     if (!ev.detail || !ev.detail.successful) return;
     var alertBox = document.getElementById('pos-alert');
-    if (alertBox && !alertBox.hidden) alertBox.hidden = true;
+    if (alertBox && !alertBox.hidden && alertBox.dataset.sticky !== '1') alertBox.hidden = true;
   });
 })();
 
@@ -2471,6 +2486,7 @@ utSellCamera(function(){
   function showAlert(text, kind) {
     var box = document.getElementById('pos-alert');
     if (!box) return;
+    delete box.dataset.sticky; // an explicit new message replaces the sticky one (ut-docs#5298)
     var msg = text || (kind === 'network' ? box.dataset.msgNetwork : box.dataset.msgServer);
     box.hidden = false;
     var span = box.querySelector('.notice-text');
@@ -2534,7 +2550,7 @@ utSellCamera(function(){
   function postButtons(url, fd, onSaved) {
     var watch = window.utSellScreenWatch;
     var saved = (watch && typeof watch.ownWrite === 'function') ? watch.ownWrite() : function () {};
-    return new Promise(function (resolve) {
+    return new Promise(function (resolve, reject) {
       window.utPostWithElevation(url, fd, function (res) {
         if (res.ok) { saved(res.headers.get('X-UT-Sell-Version')); onSaved(); resolve(); return; }
         res.text().then(function (text) {
@@ -2547,7 +2563,7 @@ utSellCamera(function(){
         // one it's still showing.
         refetchGrid();
         resolve();
-      });
+      }).catch(reject);
     }).catch(function () {
       showAlert('', 'network');
       refetchGrid();
@@ -2962,8 +2978,20 @@ utSellCamera(function(){
 // onDone / onCancel fires. While the PIN retry is in flight the form carries
 // .htmx-request + aria-busy and its buttons are disabled (#5291, mirroring
 // #5288), so Cancel/Escape are inert; a close by any other path mid-flight
-// defers to the response: a terminal answer goes to onDone, a re-prompt or
-// network error to onCancel, and the closed dialog is never re-opened.
+// defers to the response: a terminal answer goes to onDone, a re-prompt to
+// onCancel, and the closed dialog is never re-opened.
+//
+// Outcome contract (ut-docs#5298). The returned promise settles when the
+// whole flow ends, and exactly one of these happens:
+//  - onDone(r) runs: the promise resolves with onDone's result, or rejects
+//    (untagged) if onDone throws or rejects.
+//  - The operator cancels: onCancel() runs, the promise resolves undefined.
+//  - A NETWORK failure on either leg (fetch itself rejected): neither
+//    callback runs, any open dialog is closed, and the promise rejects with
+//    the fetch error tagged e.utNetworkError = true. The action may or may
+//    not have run, so it is never reported as a cancel; callers show
+//    window.utElevationErrorText(e) from their existing .catch. Nothing is
+//    retried or replayed.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -2971,11 +2999,19 @@ utSellCamera(function(){
 // always carries Content-Disposition: attachment, and a real error is
 // http.Error's text/plain, so text/html is unambiguous.
 window.utPostWithElevation = function (url, params, onDone, onCancel) {
+ return new Promise(function (resolveAll, rejectAll) {
   var openDialog = null;
   var finished = false; // true once close() was called for it (we closed it ourselves)
-  var ended = false; // exactly one of onDone / onCancel ever fires (#5291)
-  function cancelOnce() { if (ended) return; ended = true; if (onCancel) onCancel(); }
-  function doneOnce(r) { if (ended) return; ended = true; return onDone(r); }
+  var ended = false; // exactly one of onDone / onCancel / network failure ever happens (#5291, #5298)
+  function cancelOnce() { if (ended) return; ended = true; if (onCancel) onCancel(); resolveAll(); }
+  function failOnce(e) { if (ended) return; ended = true; rejectAll(e); }
+  function doneOnce(r) {
+    if (ended) return;
+    ended = true;
+    var p;
+    try { p = onDone(r); } catch (err) { rejectAll(err); return; }
+    Promise.resolve(p).then(resolveAll, rejectAll);
+  }
   function close() {
     finished = true;
     if (!openDialog) return;
@@ -3034,16 +3070,15 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
         if (form.classList.contains('htmx-request')) return; // like hx-sync="this:drop"
         setBusy(true);
         // The retry's own promise chain is otherwise disconnected from
-        // whatever the caller attached to the original send(params) call
-        // (this listener fires later, asynchronously) — without this
-        // catch, a network failure on the RETRY specifically would be an
-        // unhandled rejection that never reaches the caller's .catch(),
-        // leaving its UI state (disabled button, spinner text) stuck.
+        // the first send (this listener fires later, asynchronously), so
+        // its failure is routed to the returned promise here. A network
+        // failure rejects it tagged (outcome unknown, ut-docs#5298); any
+        // other failure keeps releasing the caller as a cancel.
         send(new FormData(form), function () { setBusy(false); }).catch(function (e) {
           setBusy(false);
           if (window.console) console.error('utPostWithElevation: retry failed', e);
           close();
-          cancelOnce();
+          if (e && e.utNetworkError) failOnce(e); else cancelOnce();
         });
       });
     }
@@ -3060,6 +3095,12 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
+    }).catch(function (e) {
+      // ut-docs#5298: only fetch()'s own rejection is a network failure.
+      if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
+      var n = new Error(String(e));
+      n.utNetworkError = true;
+      throw n;
     }).then(function (r) {
       // Clear the busy state before every outcome (close, re-prompt,
       // redirect) — on the re-prompt branch only once its body is read, so
@@ -3076,7 +3117,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // renders its {code,message} error OBJECT directly, showing the
       // literal string "[object Object]" instead of a way back to sign in.
       // One fix here covers every utPostWithElevation caller.
-      if (r.status === 401) { close(); window.location.href = '/login'; return; }
+      if (r.status === 401) { close(); ended = true; resolveAll(); window.location.href = '/login'; return; }
       var cd = r.headers.get('Content-Disposition') || '';
       var ct = r.headers.get('Content-Type') || '';
       if (cd.indexOf('attachment') === -1 && ct.indexOf('text/html') !== -1) {
@@ -3102,10 +3143,26 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
         });
       }
       close();
-      return doneOnce(r);
+      doneOnce(r);
     });
   }
-  return send(params);
+  send(params).catch(function (e) {
+    close();
+    if (e && e.utNetworkError) failOnce(e);
+    else if (!ended) { ended = true; rejectAll(e); }
+  });
+ });
+};
+
+// ut-docs#5298: the translated "may not have completed" text (pos_alert.html data attr).
+window.utOutcomeUnknownText = function () {
+  var b = document.getElementById('pos-alert');
+  return (b && b.dataset.msgOutcomeUnknown) || '';
+};
+// For a utPostWithElevation .catch: the outcome-unknown text for a network
+// failure, else e unchanged.
+window.utElevationErrorText = function (e) {
+  return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 
 // ut-docs#2024 (moved here by ut-docs#2173): toggles the two fade classes

@@ -112,16 +112,21 @@ test.describe('prompt in flight: Cancel and Escape are inert (ut-docs#5288)', ()
     const cancel = dlg.locator('[data-action="close-closest"]');
     await dlg.locator('button[type=submit]').click();
     await expect.poll(() => posts).toBe(2);
-    // htmx re-enables the buttons when the request errors out; today the
-    // prompt's own after-request hook then closes the dialog (the generic
-    // error toast carries the failure). Either way the operator is never
-    // stranded behind a disabled Cancel.
-    await expect.poll(async () => (await dlg.evaluate((d: HTMLDialogElement) => d.open)) === false
-      || (await cancel.isEnabled())).toBe(true);
-    if (await dlg.evaluate((d: HTMLDialogElement) => d.open)) {
-      await page.keyboard.press('Escape');
-      await expect(dlg).toHaveJSProperty('open', false);
-    }
+    // The prompt's after-request hook closes the dialog on a network failure,
+    // so the operator is never stranded behind a disabled Cancel.
+    await expect(dlg).toHaveJSProperty('open', false);
+    // ut-docs#5298: the action may or may not have run, so #pos-alert says so
+    // (not the reassuring generic network text) and keeps saying so.
+    const alert = page.locator('#pos-alert');
+    await expect(alert).toBeVisible();
+    await expect(alert.locator('.notice-text')).toHaveText('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
+    // An unrelated successful htmx request must not self-heal it away.
+    await page.evaluate(() => (window as any).htmx.ajax('GET', '/settings', { target: 'body', swap: 'none' }));
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 500)));
+    await expect(alert).toBeVisible();
+    await expect(alert.locator('.notice-text')).toHaveText('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
+    await alert.locator('.notice-dismiss').click();
+    await expect(alert).toBeHidden();
   });
 
   test('Escape on an idle prompt still cancels (no regression)', async ({ page }) => {

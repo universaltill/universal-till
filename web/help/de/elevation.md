@@ -31,6 +31,10 @@ eine kleine PIN-Abfrage.
    allesamt einen klaren Grund im selben Dialog an, damit Sie wissen, was als
    Nächstes zu versuchen ist. Während die PIN geprüft wird, sind die Schaltflächen
    ausgegraut, ein Ladekreis erscheint, und „Abbrechen“ wartet auf die Antwort.
+   Bricht die Verbindung währenddessen ab, schließt sich der Dialog mit dem
+   Hinweis, dass die Aktion möglicherweise ausgeführt wurde oder auch nicht:
+   Prüfen Sie das, bevor Sie es erneut versuchen. Es wird nichts automatisch
+   wiederholt.
 
 ## Was aufgezeichnet wird
 
