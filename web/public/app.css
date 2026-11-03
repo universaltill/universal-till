@@ -4506,6 +4506,19 @@ body.osk-padded .payment-overlay {
 #refresh-indicator { margin-inline-start: .5rem; font-size: 1rem; animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; display: inline-block; }
+/* ut-docs#5291: busy ring on the submit button of any prompt dialog whose own
+   request is in flight (htmx-driven confirm/PIN prompts and the fetch-driven
+   PIN prompt of utPostWithElevation all carry form.htmx-request). Logical
+   properties only; static open ring under reduced motion. */
+dialog[data-ut-prompt] form.htmx-request .modifier-actions button[type=submit]::after {
+  content: ""; display: inline-block; inline-size: .9em; block-size: .9em;
+  margin-inline-start: .5em; vertical-align: -.125em;
+  border: 2px solid currentColor; border-block-start-color: transparent; border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog[data-ut-prompt] form.htmx-request .modifier-actions button[type=submit]::after { animation: none; }
+}
 svg.animate-spin { flex-shrink: 0; width: 1.25rem; height: 1.25rem; }
 
 /* ---------- Generic tables (settings, inventory, catalog, shifts…) ---------- */

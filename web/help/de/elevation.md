@@ -29,7 +29,8 @@ eine kleine PIN-Abfrage.
 4. Eine falsche PIN, zu viele Versuche oder eine PIN, die jemandem gehört,
    der diese bestimmte Aktion immer noch nicht ausführen darf, zeigen
    allesamt einen klaren Grund im selben Dialog an, damit Sie wissen, was als
-   Nächstes zu versuchen ist.
+   Nächstes zu versuchen ist. Während die PIN geprüft wird, sind die Schaltflächen
+   ausgegraut, ein Ladekreis erscheint, und „Abbrechen“ wartet auf die Antwort.
 
 ## Was aufgezeichnet wird
 

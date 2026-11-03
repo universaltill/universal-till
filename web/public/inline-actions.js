@@ -634,8 +634,16 @@
   function htmxHook(attr) {
     return function (ev) { dispatch(ev.target, attr, ev, ev.detail || {}); };
   }
+  // ut-docs#5291: aria-busy on a prompt's form while its own request runs
+  // (htmx adds .htmx-request and disables the buttons itself).
+  function markPromptBusy(el, on) {
+    var f = el && el.tagName === 'FORM' && el.closest && el.closest('dialog[data-ut-prompt]') ? el : null;
+    if (!f) return;
+    if (on) f.setAttribute('aria-busy', 'true'); else f.removeAttribute('aria-busy');
+  }
   document.addEventListener('htmx:beforeRequest', function (ev) {
     var detail = ev.detail || {};
+    try { markPromptBusy(ev.target, true); } catch (e) { /* a11y hint only */ }
     // The same object htmx later dispatches htmx:afterRequest with.
     try { detail[SRC] = ev.target; } catch (e) { /* no replay for this one */ }
     try { captureOpener(ev.target, detail); } catch (e) { /* focus return only */ }
@@ -645,6 +653,7 @@
   document.addEventListener('htmx:afterRequest', function (ev) {
     var detail = ev.detail || {};
     var src = detail[SRC];
+    try { markPromptBusy(ev.target, false); } catch (e) { /* a11y hint only */ }
     try { wirePrompt(ev, detail); } catch (e) { /* focus return only */ }
     // The source swapped itself out: this is htmx's re-dispatch on a
     // connected ancestor. Replay the source's own (missed) dispatch first.

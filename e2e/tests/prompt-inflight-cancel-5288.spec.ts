@@ -80,6 +80,9 @@ test.describe('prompt in flight: Cancel and Escape are inert (ut-docs#5288)', ()
     await h.heldRoute; // the request is now in flight
     await expect(confirm).toBeDisabled();
     await expect(cancel).toBeDisabled();
+    // ut-docs#5291: visible busy state while the prompt's own request runs.
+    await expect(dlg.locator('form')).toHaveAttribute('aria-busy', 'true');
+    expect(await confirm.evaluate((el) => getComputedStyle(el, '::after').content)).not.toBe('none');
 
     await page.keyboard.press('Escape');
     await expect(dlg).toHaveJSProperty('open', true);

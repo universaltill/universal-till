@@ -2946,7 +2946,8 @@ utSellCamera(function(){
 // checkOrElevate site is a normal hx-post button/form, so the dialog's own
 // OOB swap (hx-swap-oob="true" into the shared #elevation-modal
 // placeholder, web/ui/layouts/base.html) is handled by htmx automatically
-// — this helper exists ONLY for the two sites that bypass htmx.
+// — this helper exists ONLY for the sites that bypass htmx (settings resets,
+// EOD range/archive export, postButtons).
 //
 // url/params: the endpoint and its (non-PIN) form fields, exactly what
 // would otherwise go straight into a fetch() body.
@@ -2957,8 +2958,12 @@ utSellCamera(function(){
 // onCancel(): optional — called if the user dismisses the dialog (Cancel,
 // or any other way it closes) before a terminal response was ever reached,
 // so the caller can undo whatever "request in flight" UI state (disabled
-// button, spinner text) it set before calling this. Never called once
-// onDone has fired.
+// button, spinner text) it set before calling this. Exactly one of
+// onDone / onCancel fires. While the PIN retry is in flight the form carries
+// .htmx-request + aria-busy and its buttons are disabled (#5291, mirroring
+// #5288), so Cancel/Escape are inert; a close by any other path mid-flight
+// defers to the response: a terminal answer goes to onDone, a re-prompt or
+// network error to onCancel, and the closed dialog is never re-opened.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -2967,7 +2972,10 @@ utSellCamera(function(){
 // http.Error's text/plain, so text/html is unambiguous.
 window.utPostWithElevation = function (url, params, onDone, onCancel) {
   var openDialog = null;
-  var finished = false; // true once onDone has fired or close() was called for it
+  var finished = false; // true once close() was called for it (we closed it ourselves)
+  var ended = false; // exactly one of onDone / onCancel ever fires (#5291)
+  function cancelOnce() { if (ended) return; ended = true; if (onCancel) onCancel(); }
+  function doneOnce(r) { if (ended) return; ended = true; return onDone(r); }
   function close() {
     finished = true;
     if (!openDialog) return;
@@ -2989,33 +2997,59 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     if (old) old.replaceWith(dialog); else document.body.appendChild(dialog);
     openDialog = dialog;
     if (typeof dialog.show === 'function') dialog.show();
+    var form = dialog.querySelector('form');
     // Fires on Cancel (elevation_prompt.html's button calls
     // this.closest('dialog').close()) and on our own close() above — the
     // `finished` guard means it's a no-op in the latter case, so this is
-    // purely the "user backed out" signal.
+    // purely the "user backed out" signal. Closed mid-flight by some other
+    // path: the response decides (a terminal answer still reaches onDone).
     dialog.addEventListener('close', function () {
-      if (!finished && onCancel) onCancel();
+      if (finished) return;
+      if (form && form.classList.contains('htmx-request')) return;
+      cancelOnce();
     }, { once: true });
-    var form = dialog.querySelector('form');
     if (form) {
+      // ut-docs#5291: this form is not htmx-driven, so mark the retry in
+      // flight ourselves — the same .htmx-request class, aria-busy and
+      // disabled buttons #5288 relies on (base.html Escape, inline-actions
+      // closeDialog), so Cancel/Escape are inert while it runs.
+      var busyBtns = [];
+      var setBusy = function (on) {
+        if (on) {
+          form.classList.add('htmx-request');
+          form.setAttribute('aria-busy', 'true');
+          busyBtns = Array.prototype.filter.call(
+            dialog.querySelectorAll('button:not([data-osk-toggle])'),
+            function (b) { return !b.disabled; });
+          busyBtns.forEach(function (b) { b.disabled = true; });
+        } else {
+          form.classList.remove('htmx-request');
+          form.removeAttribute('aria-busy');
+          busyBtns.forEach(function (b) { b.disabled = false; });
+          busyBtns = [];
+        }
+      };
       form.addEventListener('submit', function (ev) {
         ev.preventDefault();
+        if (form.classList.contains('htmx-request')) return; // like hx-sync="this:drop"
+        setBusy(true);
         // The retry's own promise chain is otherwise disconnected from
         // whatever the caller attached to the original send(params) call
         // (this listener fires later, asynchronously) — without this
         // catch, a network failure on the RETRY specifically would be an
         // unhandled rejection that never reaches the caller's .catch(),
         // leaving its UI state (disabled button, spinner text) stuck.
-        send(new FormData(form)).catch(function (e) {
+        send(new FormData(form), function () { setBusy(false); }).catch(function (e) {
+          setBusy(false);
           if (window.console) console.error('utPostWithElevation: retry failed', e);
           close();
-          if (onCancel) onCancel();
+          cancelOnce();
         });
       });
     }
     return true;
   }
-  function send(bodyParams) {
+  function send(bodyParams, settle) {
     var body = new URLSearchParams();
     if (bodyParams instanceof FormData) {
       bodyParams.forEach(function (v, k) { body.append(k, v); });
@@ -3027,6 +3061,13 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
     }).then(function (r) {
+      // Clear the busy state before every outcome (close, re-prompt,
+      // redirect) — on the re-prompt branch only once its body is read, so
+      // a second tap can't start a parallel retry in the gap (#5291 review).
+      var cd0 = r.headers.get('Content-Disposition') || '';
+      var ct0 = r.headers.get('Content-Type') || '';
+      var isPrompt = r.status !== 401 && cd0.indexOf('attachment') === -1 && ct0.indexOf('text/html') !== -1;
+      if (settle && !isPrompt) settle();
       // ut-docs#2157: the auth middleware's non-htmx 401 (session expired)
       // answers with Content-Type: application/json, never text/html, so it
       // falls straight past the elevation-dialog branch below into
@@ -3043,6 +3084,11 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
         // afterward — never also hand `r` to onDone from this branch (its
         // body is already consumed by the time showDialog resolves).
         return r.text().then(function (html) {
+          if (settle) settle();
+          // A re-prompt means the action was NOT done. If the operator's
+          // dialog was closed — or removed/replaced by another prompt — by
+          // some other path meanwhile, never re-open it.
+          if (openDialog && (!openDialog.open || !openDialog.isConnected)) { close(); cancelOnce(); return; }
           if (!showDialog(html)) {
             close();
             // Nothing left to show the caller — this genuinely shouldn't
@@ -3051,12 +3097,12 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
             // state the same way a cancelled dialog would, rather than
             // leaving a disabled button stuck forever.
             if (window.console) console.error('utPostWithElevation: elevation response had no #elevation-modal', html);
-            if (onCancel) onCancel();
+            cancelOnce();
           }
         });
       }
       close();
-      return onDone(r);
+      return doneOnce(r);
     });
   }
   return send(params);
