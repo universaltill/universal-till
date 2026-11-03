@@ -50,7 +50,7 @@ Bir **kasa**, vardiyanın açıldığı ve satışın işlendiği satış noktas
 
 ## Ana kasa değiştirildiğinde
 
-Ana kasa bozulduysa mağaza sahibi onu my.universaltill.com üzerinde (Kasalar, ana kasa, **Bu kasayı değiştir**) yeni bir cihazla ya da mağazada zaten çalışan ve önce yükseltilen bir kasayla (Ayarlar → Kasalar → **Bu kasayı yükselt**) değiştirebilir. Yeni ana kasa fişlerini kendi önekiyle numaralandırır (örneğin M3f2a-000000001); böylece eski kasanın fiş veya fatura numaraları hiçbir zaman tekrarlanmaz.
+Ana kasa bozulduysa mağaza sahibi onu my.universaltill.com üzerinde (Kasalar, ana kasa, **Bu kasayı değiştir**) yeni bir cihazla ya da mağazada zaten çalışan ve önce yükseltilen bir kasayla (Ayarlar → Kasalar → **Bu kasayı yükselt**) değiştirebilir. Yeni ana kasa fişlerini kendi önekiyle numaralandırır (örneğin M3f2a9c01-000000001); böylece eski kasanın fiş veya fatura numaraları hiçbir zaman tekrarlanmaz.
 
 - **Eski kasa** yeniden açılırsa durum çubuğunda **Yerine geçen: …** ve her ekranda kapatılamayan bir başlık gösterir. Satış yapmaya devam edebilir, ancak bu satışlar ne buluta ne de ana kasaya ulaşır: bunun yerine yeni ana kasayı kullanın. Mağaza ağında artık ana kasa olarak görünmez, eşleştirme kodu göstermez ve diğer kasaların satışlarını kabul etmez; böylece bu satışlar onları yapan kasalarda kalır.
 - **Diğer kasalar** yeni ana kasaya katılır: her birinde Kasalar sayfasını açın ve "Nasıl kullanılır" bölümünün 3. adımındaki gibi yeni ana kasanın koduyla **Mevcut bir mağazaya katıl**'ı kullanın. Katılmadan önce o kasada günü kapatın ve Z raporunu yazdırın. Ürün, fiyat ve personel değişikliklerini yeni ana kasada yapın: eskisine gönderilen değişiklikler kasalar yenisine katıldığında kaybolur.

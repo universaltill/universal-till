@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -461,6 +462,13 @@ func keepLiveCloudIdentity(dbPath, pending string) error {
 				return err
 			}
 			for _, kv := range keep {
+				if kv[0] == receiptPrefixKey {
+					if _, err := tx.Exec(`DELETE FROM settings WHERE key = ?`, receiptPrefixKey); err != nil {
+						return fmt.Errorf("clear %s: %w", receiptPrefixKey, err)
+					}
+				}
+			}
+			for _, kv := range keep {
 				if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, kv[0], kv[1]); err != nil {
 					return fmt.Errorf("keep %s: %w", kv[0], err)
 				}
@@ -521,9 +529,24 @@ func liveIdentityRows(dbPath string) (rows [][2]string, readable bool, err error
 				break
 			}
 		}
+		if k == receiptPrefixKey && isReplacementMainTillPrefix(v) {
+			rows = append(rows, [2]string{k, v})
+		}
 	}
 	if err := q.Err(); err != nil {
 		return nil, false, err
 	}
 	return rows, true, nil
 }
+
+// receiptPrefixKey is the till's receipt/invoice series prefix. A
+// replacement main till's own prefix (ut-docs#5058 T4) is kept across a
+// restore: the old till's backup carries none, and restoring it must not put
+// the replacement back on the numbers the dead till already issued.
+const receiptPrefixKey = "sync.receipt_prefix"
+
+var replacementMainTillPrefixRe = regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+
+// isReplacementMainTillPrefix mirrors data.IsReplacementMainTillPrefix (db
+// cannot import data); TestReplacementPrefixMatcherMirrorsData pins them.
+func isReplacementMainTillPrefix(p string) bool { return replacementMainTillPrefixRe.MatchString(p) }

@@ -165,10 +165,10 @@ SELECT value FROM settings WHERE key = 'sync.receipt_prefix' AND value != ''`)
 // of a main till that replaced another one (ut-docs#5058 T4). The original
 // main till has no prefix, so a replacement on prefix "" would repeat every
 // receipt and invoice number of the till it replaced. The prefix is derived
-// from the new till's device id: M<4 hex>-, or M<8 hex>- when that equals
-// the replaced till's own derived prefix (it was itself a replacement). The
-// leading M cannot match T<n>- (tillPrefixRe) nor the provisional R<4 hex>-
-// of a restored copy, and is never empty.
+// from the new till's device id: always M<8 hex>-, never equal to the
+// replaced till's own derived prefix (the next 8 hex characters are taken
+// if it would be). The leading M cannot match T<n>- (tillPrefixRe) nor the
+// provisional R<4 hex>- of a restored copy, and is never empty.
 func ReplacementMainTillPrefix(newDeviceID, oldDeviceID string) string {
 	hexOf := func(id string) string {
 		h := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(id, "till-"), "-", ""))
@@ -178,11 +178,34 @@ func ReplacementMainTillPrefix(newDeviceID, oldDeviceID string) string {
 				b.WriteRune(r)
 			}
 		}
-		return (b.String() + "00000000")[:8]
+		return (b.String() + strings.Repeat("0", 32))[:32]
 	}
 	n, o := hexOf(newDeviceID), hexOf(oldDeviceID)
-	if oldDeviceID != "" && n[:4] == o[:4] {
-		return "M" + n + "-"
+	if oldDeviceID == "" {
+		return "M" + n[:8] + "-"
 	}
-	return "M" + n[:4] + "-"
+	for i := 0; i+8 <= len(n); i += 8 {
+		if n[i:i+8] != o[:8] {
+			return "M" + n[i:i+8] + "-"
+		}
+	}
+	return "M" + n[:8] + "-"
+}
+
+var replacementMainTillPrefixRe = regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+
+// IsReplacementMainTillPrefix reports whether p is exactly a prefix
+// ReplacementMainTillPrefix can return. internal/db mirrors it
+// (isReplacementMainTillPrefix; a test pins the two together).
+func IsReplacementMainTillPrefix(p string) bool { return replacementMainTillPrefixRe.MatchString(p) }
+
+// customerFacingPrefix is the part of sync.receipt_prefix that belongs in
+// numbers customers hear and read (order display numbers, counter orders).
+// A replacement main till numbers those as the original main did, with no
+// prefix (ut-docs#5058 review F3).
+func customerFacingPrefix(p string) string {
+	if IsReplacementMainTillPrefix(strings.TrimSpace(p)) {
+		return ""
+	}
+	return p
 }

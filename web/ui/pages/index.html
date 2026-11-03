@@ -276,10 +276,10 @@
       <button type="button" class="notice-dismiss" data-testid="next-steps-dismiss" hx-post="/ui/next-steps/dismiss" hx-target="#next-steps-card" hx-swap="outerHTML" aria-label="{{ T "setup.next_steps.dismiss" }}">✕</button>
     </div>
     <ul class="next-steps-list">
-      <li><a href="/users">{{ T "setup.next_steps.pins" }}</a></li>
-      <li><a href="/settings#settings-payments">{{ T "setup.next_steps.devices" }}</a></li>
-      <li><a href="/inventory">{{ T "setup.next_steps.stock" }}</a></li>
       {{ if .TillMaster }}<li><a href="/import">{{ T "setup.next_steps.no_catalog" }}</a></li>{{ end }}
+      <li><a href="/users">{{ T "setup.next_steps.pins" }}</a></li>
+      <li><a href="/settings#settings-printer">{{ T "setup.next_steps.devices" }}</a></li>
+      <li><a href="/inventory">{{ T "setup.next_steps.stock" }}</a></li>
     </ul>
   </section>
   {{ end }}

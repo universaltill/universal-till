@@ -102,7 +102,7 @@ func TestNextStepsCardVisibility(t *testing.T) {
 	}
 	_ = d.Settings.Set(ctx, nextStepsKey, "pending:cloud") // settings-write:allow test
 	body := nextStepsIndex(t, d, "manager")
-	for _, want := range []string{`data-testid="next-steps-card"`, "Next steps", `href="/users"`, `href="/settings#settings-payments"`, `href="/inventory"`, `data-testid="next-steps-dismiss"`, `hx-post="/ui/next-steps/dismiss"`} {
+	for _, want := range []string{`data-testid="next-steps-card"`, "Next steps", `href="/users"`, `href="/settings#settings-printer"`, `href="/inventory"`, `data-testid="next-steps-dismiss"`, `hx-post="/ui/next-steps/dismiss"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("card lacks %q", want)
 		}
@@ -138,8 +138,13 @@ func TestNextStepsNoCatalogLine(t *testing.T) {
 			if tc.cache != "" {
 				_ = d.Settings.Set(t.Context(), entitlement.KeyCatalogMaster, tc.cache) // settings-write:allow test
 			}
-			if got := strings.Contains(nextStepsIndex(t, d, "manager"), line); got != tc.want {
+			body := nextStepsIndex(t, d, "manager")
+			if got := strings.Contains(body, line); got != tc.want {
 				t.Fatalf("no_catalog line shown = %v, want %v", got, tc.want)
+			}
+			// F5: the line that blocks selling comes first in the list.
+			if tc.want && strings.Index(body, line) > strings.Index(body, `href="/users"`) {
+				t.Error("the no_catalog line is not the first in the list")
 			}
 		})
 	}
