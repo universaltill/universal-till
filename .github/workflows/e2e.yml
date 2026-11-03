@@ -17,7 +17,7 @@ name: UI E2E
 # UT_TEST_I18N_OVERLAY_DIR: webServer tills inherit process.env, so that
 # would reach every project (auth, layout, diagnostics, ...). With the var
 # set the two specs ASSERT real German rendered. If pack main ever breaks
-# this run, pin `ref:` to the last good v1.1.x tag and file a card; never
+# this run, pin `--branch` to the last good tag (e.g. v1.1.286) and file a card; never
 # continue-on-error. Least privilege: contents read, no persisted credentials.
 on:
   push:
@@ -34,13 +34,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Checkout ut-plugin-language-de
-        uses: actions/checkout@v7
-        with:
-          repository: universaltill/ut-plugin-language-de
-          ref: main
-          path: ut-plugin-language-de
-          persist-credentials: false
+      # A plain anonymous clone, not actions/checkout: the pack is public,
+      # so no token is sent at all, and a stray gitlink in the pack
+      # (ut-docs#5289: `.worktrees/ai-4129` with no .gitmodules) makes
+      # actions/checkout fail with "No url found for submodule path", while
+      # `git clone` without --recurse-submodules ignores it.
+      - name: Fetch ut-plugin-language-de (main)
+        run: git clone --depth 1 --branch main https://github.com/universaltill/ut-plugin-language-de.git ut-plugin-language-de
       - name: Require the German pack locales
         run: test -f ut-plugin-language-de/locales/de.json
       - uses: actions/setup-go@v7

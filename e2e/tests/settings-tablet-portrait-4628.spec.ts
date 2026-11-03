@@ -13,8 +13,9 @@ import { watchConsole, expectGermanIfPackLoaded } from './helpers';
 // English (see portrait-no-clip-sweep-3060.spec.ts), so the de cases prove real
 // German layout only where the overlay is set. That is ASSERTED when
 // UT_E2E_I18N_OVERLAY_DIR/UT_TEST_I18N_OVERLAY_DIR is set (always in CI,
-// ut-docs#4629); fa (RTL) is core and always real. The 600x960 cases already passed before #4628 (old 40rem
-// breakpoint) and guard against regressions; 800x1280 is the one that failed.
+// ut-docs#4629); fa (RTL) is core and always real. The 600x960 cases already
+// passed before #4628 (old 40rem breakpoint) and guard against regressions;
+// 800x1280 is the one that failed.
 
 const VIEWPORTS = [
   { width: 800, height: 1280 },
