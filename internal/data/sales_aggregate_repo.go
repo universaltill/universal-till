@@ -510,3 +510,29 @@ func (r *POSRepo) PruneSalesAggregateUploads(ctx context.Context, before string)
 	}
 	return res.RowsAffected()
 }
+
+// ResetSalesAggregateUploads forgets every daily rollup this till uploaded
+// (ut-docs#5127): after the till moves into another shop, the days are owed
+// to the new shop, so they upload again under it. The cloud replaces a day
+// rather than adding to it, so a re-send never double-counts.
+func (r *POSRepo) ResetSalesAggregateUploads(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM sales_aggregate_uploads`); err != nil {
+		return fmt.Errorf("reset sales aggregate uploads: %w", err)
+	}
+	return nil
+}
+
+// HasTradingHistory reports whether this till has any sale (live or
+// archived) or any archived close report (ut-docs#5127): such a till must
+// never silently re-pair as a new device, which would leave that history
+// behind in its old shop.
+func (r *POSRepo) HasTradingHistory(ctx context.Context) (bool, error) {
+	var has bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sales)
+		OR EXISTS (SELECT 1 FROM sales_archive)
+		OR EXISTS (SELECT 1 FROM report_archive)`).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("check trading history: %w", err)
+	}
+	return has, nil
+}

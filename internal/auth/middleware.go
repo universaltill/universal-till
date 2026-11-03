@@ -386,23 +386,24 @@ func exempt(path string) bool {
 // hx-triggers and fails on an unclassified one, or on a stale entry here.
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
-	"/ui/join-sync":           true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
-	"/ui/main-till-status":    true,
-	"/ui/net-status":          true, // status-bar light, fetch every 10 s (ut-docs#3095)
-	"/ui/subscription-chip":   true, // status-bar subscription chip, every 60 s (ut-docs#2569)
-	"/ui/sync-chip":           true,
-	"/ui/fiscal-chip":         true,
-	"/ui/diagnostics-chip":    true,
-	"/ui/pairing-notice":      true,
-	"/ui/join-notice":         true, // ambient join-discovery notice (ut-docs#2721)
-	"/ui/shop-name-notice":    true, // "Name your shop" banner, every 60 s (ut-docs#3114)
-	"/ui/theme-sync":          true,
-	"/ui/cloud-auth-chip":     true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
-	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
-	"/ui/disk-space-chip":     true, // low-disk chip, every 60 s (ut-docs#3121)
-	"/ui/backup-copy-chip":    true, // copy-a-backup-off reminder, every 10 min (ut-docs#5071)
-	"/ui/replaced-banner":     true, // this till was replaced as main till (ut-docs#5058)
-	"/ui/shop-currency-chip":  true, // shop currency differs, every 60 s (ut-docs#4539)
+	"/ui/join-sync":            true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
+	"/ui/main-till-status":     true,
+	"/ui/net-status":           true, // status-bar light, fetch every 10 s (ut-docs#3095)
+	"/ui/subscription-chip":    true, // status-bar subscription chip, every 60 s (ut-docs#2569)
+	"/ui/sync-chip":            true,
+	"/ui/fiscal-chip":          true,
+	"/ui/diagnostics-chip":     true,
+	"/ui/pairing-notice":       true,
+	"/ui/join-notice":          true, // ambient join-discovery notice (ut-docs#2721)
+	"/ui/shop-name-notice":     true, // "Name your shop" banner, every 60 s (ut-docs#3114)
+	"/ui/theme-sync":           true,
+	"/ui/cloud-auth-chip":      true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
+	"/ui/report-archive-chip":  true, // refused report upload (ADR-0147, ut-docs#574)
+	"/ui/disk-space-chip":      true, // low-disk chip, every 60 s (ut-docs#3121)
+	"/ui/backup-copy-chip":     true, // copy-a-backup-off reminder, every 10 min (ut-docs#5071)
+	"/ui/replaced-banner":      true, // this till was replaced as main till (ut-docs#5058)
+	"/ui/move-approval-notice": true, // a move into another shop waits for approval, every 30 s (ut-docs#5127)
+	"/ui/shop-currency-chip":   true, // shop currency differs, every 60 s (ut-docs#4539)
 	// Settings → Language download chip, every 3 s (ut-docs#4477).
 	"/ui/settings/language-install": true,
 	// Sale screen watchers (#2765, #2858).
@@ -498,24 +499,25 @@ func displayBoardRequest(r *http.Request) bool {
 // running (ut-docs#2935 review). TestShellRequestsAreBoardScoped scans the
 // two templates and fails on a shell request missing here.
 var shellGetPaths = map[string]bool{
-	"/ui/main-till-status":    true,
-	"/ui/net-status":          true,
-	"/ui/subscription-chip":   true, // ut-docs#2569
-	"/ui/sync-chip":           true,
-	"/ui/fiscal-chip":         true,
-	"/ui/diagnostics-chip":    true,
-	"/ui/pairing-notice":      true,
-	"/ui/join-notice":         true, // ut-docs#2721
-	"/ui/shop-name-notice":    true, // "Name your shop" banner, every 60 s (ut-docs#3114)
-	"/ui/theme-sync":          true,
-	"/ui/session-chip":        true,
-	"/ui/bugreport-chip":      true,
-	"/ui/cloud-auth-chip":     true,
-	"/ui/report-archive-chip": true,
-	"/ui/disk-space-chip":     true,
-	"/ui/backup-copy-chip":    true, // ut-docs#5071
-	"/ui/replaced-banner":     true, // ut-docs#5058
-	"/ui/shop-currency-chip":  true, // ut-docs#4539
+	"/ui/main-till-status":     true,
+	"/ui/net-status":           true,
+	"/ui/subscription-chip":    true, // ut-docs#2569
+	"/ui/sync-chip":            true,
+	"/ui/fiscal-chip":          true,
+	"/ui/diagnostics-chip":     true,
+	"/ui/pairing-notice":       true,
+	"/ui/join-notice":          true, // ut-docs#2721
+	"/ui/shop-name-notice":     true, // "Name your shop" banner, every 60 s (ut-docs#3114)
+	"/ui/theme-sync":           true,
+	"/ui/session-chip":         true,
+	"/ui/bugreport-chip":       true,
+	"/ui/cloud-auth-chip":      true,
+	"/ui/report-archive-chip":  true,
+	"/ui/disk-space-chip":      true,
+	"/ui/backup-copy-chip":     true, // ut-docs#5071
+	"/ui/replaced-banner":      true, // ut-docs#5058
+	"/ui/move-approval-notice": true, // ut-docs#5127
+	"/ui/shop-currency-chip":   true, // ut-docs#4539
 }
 
 var shellPostPaths = map[string]bool{

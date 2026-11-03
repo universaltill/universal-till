@@ -1549,6 +1549,12 @@
          innerHTML-swap placeholder shape and reasons as the mounts above;
          the state changes at most once, so 60s is plenty. -->
     <div id="replaced-banner-mount" hx-get="/ui/replaced-banner" hx-trigger="load, every 60s" hx-preserve></div>
+    <!-- ut-docs#5127 UT-1b: "<shop> asked to move this till into their
+         shop. Review" -- GET /ui/move-approval-notice (move_approval.go,
+         move_approval_notice.html), empty for a cashier, on a joined till,
+         on the sale screen, or when no move waits. Same innerHTML-swap
+         placeholder shape and reasons as the mounts above. -->
+    <div id="move-approval-notice-mount" hx-get="/ui/move-approval-notice" hx-trigger="load, every 30s" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme

@@ -1574,6 +1574,9 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// token_retired. Same rules as a 200's; the tick still fails
 			// with the 402 below.
 			applyPlanRequiredCredential(ctx, settings, body)
+			// ut-docs#5127: a till-born shop is usually unpaid, so the
+			// moves waiting for this till ride the 402 as well.
+			applySyncMoves(body)
 		}
 		cachePlanRequired(ctx, settings, err)
 		return nil, err
@@ -1615,7 +1618,25 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 	// doesn't pin the token; every cloud caller sends it from the next
 	// request (enroll.Effective). Never fails the sync.
 	enroll.ApplyRotatedCredential(ctx, settings, resp.Data.DeviceID, resp.Data.DeviceToken)
+	applySyncMoves(body)
 	return resp.Data.Directives, nil
+}
+
+// applySyncMoves hands a sync answer's pending_moves / ended_moves (the 200
+// and the 402 plan_required, ut-docs#5127 CL-2b) to enroll, which keeps the
+// moves waiting for this till's approval. Absent fields (the feature off, an
+// older cloud) change nothing; a malformed body is ignored.
+func applySyncMoves(body []byte) {
+	var env struct {
+		Data struct {
+			PendingMoves json.RawMessage `json:"pending_moves"`
+			EndedMoves   json.RawMessage `json:"ended_moves"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &env) != nil {
+		return
+	}
+	enroll.ApplySyncMoves(env.Data.PendingMoves, env.Data.EndedMoves)
 }
 
 // cacheEntitlement records the sync response's entitlement block in the

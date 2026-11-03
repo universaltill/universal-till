@@ -5,6 +5,7 @@ section: Bağlantı ve eklentiler
 order: 320
 summary: Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı SİZİN hesabınıza bağlar — çevrimiçi yönetim (Mağazalarım, kasa filosu) ve ücretli özellikler böyle açılır.
 keywords: [kayıt, sahiplenme, bulut, marketplace, mağaza, eşleştirme, eşleştirme kodu, yeniden eşleştirme]
+routes: [/settings/cloud/move/{id}]
 ---
 
 # Mağaza kaydı ve sahiplenme
@@ -77,6 +78,23 @@ Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gere
 2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar. Bu kasa zaten bir mağazaya bağlıysa önce bu bağlantıyı değiştirmek isteyip istemediğinizi sorar ve kontrol edebilmeniz için girdiğiniz kodu gösterir; İptal hiçbir şeyi değiştirmez.
 3. Kasa yalnızca kendi bulut bağlantısını değiştirir: yeni bir cihaz kimliği ve kendine ait bir kimlik bilgisi alır. Satışlar, ürünler ve ayarlar kasada kalır; satış bu süre boyunca çevrimdışı çalışmaya devam eder.
 4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır. Bir mağazaya bağlı kasada da yanlış bir kod, kasayı yeni bir kodla eşleştirene kadar bağlantısız bırakır (kasa bu yüzden önce sorar); katılmış bir kasa ise ana kasası üzerinden yeniden kaydedilir.
+
+## Bu kasayı başka bir mağazaya taşıma
+
+Universal Till bulutu bunu sunuyorsa, zaten bir mağazaya ait olan bir kasayı sahibi olduğunuz başka bir mağazanın koduyla eşleştirmek, kasayı ikinci kasa olarak eklemek yerine o mağazaya **taşır**. Kasa kimliğini korur; satış geçmişi, ürünleri ve ayarları da onunla gider: iki mağaza tek mağaza olur. Bir yönetici veya admin kasanın kendisinde onaylayana kadar hiçbir şey taşınmaz.
+
+1. Kodu «Bir mağazayla eşleştir» altına girip Eşleştir'e basın. Kasa taşımayı onaylamanızı ister, ardından taşıma sayfasını gösterir. Taşıma beklerken kasa kendi mağazasında kalır ve satışa devam eder.
+2. Taşıma sayfasında hedef mağazayı ve isteğin son geçerlilik zamanını (yaklaşık bir gün) kontrol edin. Onaylamak için o mağazanın adını yazın, **Taşımayı onayla**'ya basın ve bir yöneticinin veya adminin PIN'ini girin. **Reddet** de PIN ister. Kasiyer bu isteği hiç görmez.
+3. Biri karar verene kadar yöneticiler ve adminler, satış ekranı dışındaki her sayfada bir bildirim görür: "*mağaza* bu kasayı kendi mağazasına taşımak istiyor". **İncele** taşıma sayfasını açar.
+4. Onaydan sonra kasa "*mağaza* mağazasına taşındı" der; bulut hesabı birleştirilmiş geçmişi birkaç dakika içinde gösterir. Satış hiç durmaz.
+
+Bilmekte fayda var:
+
+- Onaylamak, bu mağazanın tüm satış geçmişini diğer hesaba gönderir. Destek ekibi bunu sizden asla istemez; sizin istemediğiniz bir taşımayı reddedin.
+- Onaylamak veya reddetmek için kasa çevrimiçi olmalıdır. Çevrimdışıyken düğmeler kapalıdır ve sonradan hiçbir şey gönderilmez.
+- Üç yanlış PIN taşımayı reddeder. Sahibi taşımayı bulut hesabında iptal ederse veya kimse zamanında karar vermezse bildirim bunu söyler ve hiçbir şey değişmez.
+- Bu kasanın mağazasında başka kasalar, bir mali cihaz, ücretli bir plan veya başka bir sahip varsa, iki mağaza farklı para birimleri kullanıyorsa ya da kod diğer mağazanın sahibi tarafından oluşturulmadıysa taşıma reddedilir ve hiçbir şey değişmez. Mesaj nedenini söyler.
+- "Bu kasanın onay anahtarı değişmiş" mesajı, kasanın taşımaları imzalayamadığı anlamına gelir: destekle iletişime geçin. Eski mağazası artık onu tanımayan ve satışları olan bir kasa yeni kasa olarak eşleştirilmez (satışları geride kalırdı); birleştirmek için destekle iletişime geçin.
 
 ## Mağazanın para birimi
 
