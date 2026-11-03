@@ -3064,6 +3064,18 @@ body.osk-padded #table-add-modal[open] {
   inset-block-start: .5rem;
   max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 1rem);
   overflow-y: auto; overscroll-behavior: contain;
+  /* ut-docs#5334: the sticky action row below covers the bottom ~5.05rem
+     (measured 80.75px at 16px root) of the scrollport; tell scrollIntoView /
+     osk.js's focus-centring to keep fields out of that band (+~.5rem). */
+  scroll-padding-block-end: 5.75rem;
+}
+@media (max-width: 480px) {
+  /* On a narrow screen the row can wrap to two lines (a long locale's button
+     labels), making it taller than the single-line 5.75rem above. */
+  body.osk-padded #elevation-modal[open],
+  body.osk-padded #hold-modal[open],
+  body.osk-padded #pfand-modal[open],
+  body.osk-padded #table-add-modal[open] { scroll-padding-block-end: 9rem; }
 }
 body.osk-padded #elevation-modal .modifier-actions,
 body.osk-padded #hold-modal .modifier-actions,
@@ -3071,6 +3083,27 @@ body.osk-padded #pfand-modal .modifier-actions,
 body.osk-padded #table-add-modal .modifier-actions {
   position: sticky; inset-block-end: -1.25rem; margin-block-end: -1.25rem;
   padding-block: .5rem 1.25rem; background: Canvas; /* the dialog's own UA background in every theme (dark.css --surface differs) */
+}
+/* ut-docs#5334: "more below" cue — a top-edge shadow on the sticky row while
+   content is still scrolled under it, fading out over the last 15% of the
+   dialog's scroll range (and absent when the dialog does not overflow).
+   Block-axis offset only, so RTL-safe. Reduced-motion and Light-effects
+   (which zero animation-duration / animation) and browsers without
+   scroll-driven animations just get no cue. */
+@supports (animation-timeline: scroll()) {
+  body.osk-padded #elevation-modal .modifier-actions,
+  body.osk-padded #hold-modal .modifier-actions,
+  body.osk-padded #pfand-modal .modifier-actions,
+  body.osk-padded #table-add-modal .modifier-actions {
+    animation: ut-actions-cue linear both; animation-timeline: scroll(nearest block);
+  }
+  /* Two layers so the cue shows in every theme: a 1px hairline in the theme's
+     own --border token (visible on a dark surface, where the black soft
+     shadow alone vanishes) plus the soft shadow. Both fade out together. */
+  @keyframes ut-actions-cue {
+    0%, 85% { box-shadow: 0 -1px 0 0 var(--border, #e2e8f0), 0 -.5rem .5rem -.4rem rgb(0 0 0 / .28); }
+    100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 rgb(0 0 0 / 0); }
+  }
 }
 .elevation-summary { font-weight: 600; margin-block: .4rem .6rem; }
 /* Satellite-role confirm dialog (ut-docs#2781): same non-modal treatment
