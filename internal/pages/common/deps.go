@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/netreach"
+	"github.com/universaltill/universal-till/internal/pairingpush"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -162,6 +163,13 @@ type Deps struct {
 	// (#516/#517/#528/#527) Subscribe instead of polling the table. Set once
 	// in pages.Init; handlers nil-check it so bare-Deps tests stay valid.
 	OrderStatus *pos.OrderStatusBroadcaster
+
+	// PairingPush is the payload-free "pending pairings changed" nudge behind
+	// GET /api/pairings/stream (ut-docs#2743, ADR-0114 §2): published on
+	// pairing create/approve/deny/expiry, so the manager's browser re-reads
+	// the queue within ~1s instead of waiting for its 30s poll. Set once in
+	// pages.Init; handlers nil-check it so bare-Deps tests stay valid.
+	PairingPush *pairingpush.Broadcaster
 
 	// Link is the main-till link hub (ADR-0114, ut-docs#2734): one
 	// WebSocket per linked additional till, served by GET /api/sync/link.

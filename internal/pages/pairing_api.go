@@ -29,6 +29,29 @@ import (
 
 const pairingRequestTTL = 10 * time.Minute
 
+// pairingExpiryAfter is time.AfterFunc; a var so tests capture the delay and
+// fire at once (ut-docs#2743).
+var pairingExpiryAfter = time.AfterFunc
+
+// publishPairingChange nudges the manager's pairing-queue streams (ut-docs#2743).
+func publishPairingChange(d *common.Deps) {
+	if d.PairingPush != nil {
+		d.PairingPush.Publish()
+	}
+}
+
+// schedulePairingExpiryNudge nudges once the request's TTL has passed. Expiry
+// is purely time-based (no write happens), so the stream needs its own timer.
+// +1s: expires_at is second-precision and the fragment reads keep rows with
+// expires_at >= now, so the re-fetch at TTL+1s already excludes the row.
+func schedulePairingExpiryNudge(d *common.Deps, after time.Duration) {
+	if d.PairingPush == nil {
+		return
+	}
+	push := d.PairingPush
+	pairingExpiryAfter(after+time.Second, push.Publish)
+}
+
 // pairRateLimiter caps pair-request bursts per source (ADR-0033 §8's
 // inbound mitigation — nothing under internal/ rate-limits today, so this
 // is deliberately small and scoped to this one endpoint, not a general
@@ -184,6 +207,8 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		publishPairingChange(d)
+		schedulePairingExpiryNudge(d, pairingRequestTTL)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": id}, "error": nil})
 	})
@@ -270,6 +295,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		publishPairingChange(d)
 		var approvedPayload any
 		if finalRole != "" {
 			approvedPayload = map[string]any{"role": finalRole}
@@ -300,6 +326,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		publishPairingChange(d)
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_denied",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		w.Header().Set("HX-Trigger", "tills-changed") // see approve above
