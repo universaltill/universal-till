@@ -2561,6 +2561,8 @@
   "settings.display.window_mode_fullscreen": "Fullscreen",
   "settings.display.window_mode_kiosk": "Kiosk",
   "settings.display.window_mode_kiosk_appliance": "This till is a dedicated kiosk appliance: the kiosk screen is driven by the till itself, with no OS desktop behind it. To leave kiosk mode, switch the window mode here — \"Exit to OS window\" does not apply on this till.",
+  "settings.display.window_mode_kiosk_help": "Fullscreen and Kiosk work the same here: the till fills the whole screen, and Exit to OS window brings the desktop back. Kiosk is not the Self-order kiosk device profile.",
+  "settings.display.window_mode_kiosk_help_appliance": "Only Kiosk keeps this screen on. Fullscreen, Maximized and Normal window turn it off. Kiosk is not the Self-order kiosk device profile.",
   "settings.display.window_mode_label": "Window mode",
   "settings.display.window_mode_maximized": "Maximized",
   "settings.display.window_mode_no_shell": "Full-screen and kiosk modes stay off until the Universal Till desktop app is running on this till — that app is what owns the window, and what lets you leave full screen again.",

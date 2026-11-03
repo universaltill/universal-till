@@ -3190,6 +3190,54 @@ func TestSettingsDisplayWindowControlNoteTellsTheTruthInAllThreeCases(t *testing
 	}
 }
 
+// TestSettingsDisplayWindowModeHelpMatchesTopology (ut-docs#3468): the help
+// line under the Window mode select tells Fullscreen from Kiosk truthfully
+// per topology; the appliance never gets the "work the same here" line.
+func TestSettingsDisplayWindowModeHelpMatchesTopology(t *testing.T) {
+	render := func(t *testing.T, mux *http.ServeMux) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	const (
+		normalHint    = "work the same here"
+		applianceHint = "Only Kiosk keeps this screen on"
+		profileHint   = "Self-order kiosk device profile"
+	)
+	normal := func(t *testing.T, body string) {
+		t.Helper()
+		if !strings.Contains(body, normalHint) || strings.Contains(body, applianceHint) {
+			t.Fatal("normal till must show the normal-till hint only")
+		}
+		if !strings.Contains(body, profileHint) {
+			t.Fatal("hint must name the device profile")
+		}
+	}
+	mux, _, _ := newFullAuthDeps(t)
+	normal(t, render(t, mux))
+
+	mux2, _, d2 := newFullAuthDeps(t)
+	d2.WindowCtl = common.NewShellPollWindowController(d2.Shell, nil)
+	d2.Shell.NoteSeen("normal")
+	normal(t, render(t, mux2))
+
+	mux3, _, d3 := newFullAuthDeps(t)
+	d3.WindowCtl = common.NewKioskSystemdWindowController()
+	body := render(t, mux3)
+	if !strings.Contains(body, applianceHint) || strings.Contains(body, normalHint) {
+		t.Fatal("appliance must show the appliance hint only")
+	}
+	if !strings.Contains(body, profileHint) {
+		t.Fatal("appliance hint must name the device profile")
+	}
+}
+
 // TestWindowModeStatusFragment_LivePollReflectsCurrentTopology covers
 // GET /ui/settings/window-mode-status (ut-docs#1060) — the fragment the
 // Display card's status note now polls every 15s so it stops going stale

@@ -585,6 +585,7 @@
         </select>
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
+      <p class="muted">{{ if .piKioskAppliance }}{{ T "settings.display.window_mode_kiosk_help_appliance" }}{{ else }}{{ T "settings.display.window_mode_kiosk_help" }}{{ end }}</p>
       <!-- ut-docs#1060: was a render-time-only conditional block here
            (still the exact same three mutually-exclusive notes, same
            strings, same comments) — moved into its own partial, same
