@@ -3051,17 +3051,24 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    behaviour would make that keyboard unreachable on kiosk hardware with no
    physical keyboard. */
 #elevation-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
-/* ut-docs#5304: with the on-screen keyboard open, keep the whole dialog above it.
-   Top-anchored (not 8vh) and capped to the free band; the form scrolls inside
-   and Cancel/Confirm stick to the bottom edge so they are never under #osk.
-   Same --osk-reserved-height source as .item-form-modal / .payment-overlay
-   (ut-docs#1998). Logical properties only (RTL). */
-body.osk-padded #elevation-modal[open] {
+/* ut-docs#5304 (#elevation-modal), ut-docs#5309 (#hold-modal, #pfand-modal,
+   #table-add-modal): with the on-screen keyboard open, keep the whole dialog
+   above it. Top-anchored (not 8vh) and capped to the free band; the form
+   scrolls inside and the action row sticks to the bottom edge so it is never
+   under #osk. Same --osk-reserved-height source as .item-form-modal /
+   .payment-overlay (ut-docs#1998). Logical properties only (RTL). */
+body.osk-padded #elevation-modal[open],
+body.osk-padded #hold-modal[open],
+body.osk-padded #pfand-modal[open],
+body.osk-padded #table-add-modal[open] {
   inset-block-start: .5rem;
   max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 1rem);
   overflow-y: auto; overscroll-behavior: contain;
 }
-body.osk-padded #elevation-modal .modifier-actions {
+body.osk-padded #elevation-modal .modifier-actions,
+body.osk-padded #hold-modal .modifier-actions,
+body.osk-padded #pfand-modal .modifier-actions,
+body.osk-padded #table-add-modal .modifier-actions {
   position: sticky; inset-block-end: -1.25rem; margin-block-end: -1.25rem;
   padding-block: .5rem 1.25rem; background: Canvas; /* the dialog's own UA background in every theme (dark.css --surface differs) */
 }
