@@ -28,7 +28,8 @@ PIN prompt right there.
    still isn't allowed to do that particular action all show a clear reason
    in the same dialog, so you know what to try next. To back out instead,
    tap Cancel or press Esc: nothing is done, and you're back on the field
-   or button you started from.
+   or button you started from. While the PIN is being checked, the buttons are
+   greyed out, a spinner shows, and Cancel waits for the answer.
 
 ## What gets recorded
 

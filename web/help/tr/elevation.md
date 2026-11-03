@@ -26,7 +26,8 @@ reddetmez: hemen orada küçük bir PIN penceresi açar.
    kapatıp hesap değiştirmez.
 4. Yanlış bir PIN, çok fazla deneme veya hâlâ bu belirli işleme yetkisi
    olmayan birine ait bir PIN — hepsi aynı pencerede açık bir neden
-   gösterir, böylece sonraki adımı bilirsiniz.
+   gösterir, böylece sonraki adımı bilirsiniz. PIN denetlenirken düğmeler soluk görünür, bir yükleme halkası çıkar
+   ve «İptal» yanıtı bekler.
 
 ## Neler kaydedilir
 
