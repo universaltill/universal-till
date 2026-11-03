@@ -68,6 +68,18 @@ func pairDeps(t *testing.T, d *common.Deps) *atomic.Int32 {
 	return calls
 }
 
+// setenvPinnedStore pins this till's store id through the environment for
+// one test. Its enroll reset is registered before t.Setenv, so it runs after
+// the variable is restored: pairDeps' own reset runs first (cleanups are
+// LIFO) while the variable is still set, which re-pinned enroll's
+// process-wide store id for whichever test ran next (pages-shuffle seed
+// 1791386291628608919, ut-docs#5305).
+func setenvPinnedStore(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+}
+
 func TestEnrolPair_DeniedSessionGetsPromptCarryingCode(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	calls := pairDeps(t, d)
@@ -182,7 +194,7 @@ func TestEnrolPair_ReplicaWithoutStoreHasOwnMessage(t *testing.T) {
 // not spent and a new one will never work), not the generic failure
 // (ut-docs#4062).
 func TestEnrolPair_PinnedIdentityHasOwnMessage(t *testing.T) {
-	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+	setenvPinnedStore(t)
 	mux, _, d := newFullAuthDeps(t)
 	calls := pairDeps(t, d)
 
@@ -827,7 +839,7 @@ func TestEnrolPair_RefusalsComeBeforeConfirm(t *testing.T) {
 }
 
 func TestEnrolPair_PinnedRefusalComesBeforeConfirm(t *testing.T) {
-	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+	setenvPinnedStore(t)
 	mux, _, d := newFullAuthDeps(t)
 	calls := pairDeps(t, d)
 	if err := d.Settings.Set(t.Context(), "marketplace.token", pairOldToken); err != nil {
@@ -841,6 +853,25 @@ func TestEnrolPair_PinnedRefusalComesBeforeConfirm(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("cloud calls = %d, want 0", calls.Load())
+	}
+}
+
+// The pinned-refusal tests set UT_MARKETPLACE_STORE_ID; once each is done,
+// enroll must not still treat the store id as pinned, or the next test's
+// pairing is refused before its gate (pages-shuffle seed
+// 1791386291628608919 hit TestSettingsEndpoints_RoleMatrix, ut-docs#5305).
+func TestEnrolPair_PinnedRefusalLeavesNoPin(t *testing.T) {
+	for _, run := range []func(*testing.T){TestEnrolPair_PinnedRefusalComesBeforeConfirm, TestEnrolPair_PinnedIdentityHasOwnMessage} {
+		t.Run("", run)
+		assertNoEnrolPin(t)
+	}
+}
+
+func assertNoEnrolPin(t *testing.T) {
+	t.Helper()
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1/api"}}
+	if err := enroll.PairPrecheck(t.Context(), cfg, newMemKV(), pairPageCode); errors.Is(err, enroll.ErrPairIdentityPinned) {
+		t.Fatalf("store id still pinned after the pinned-refusal test: %v", err)
 	}
 }
 

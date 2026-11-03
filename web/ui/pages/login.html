@@ -27,7 +27,7 @@
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <p class="login-tagline">{{ T "auth.tagline" }}</p>
 
-      {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+      {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
       {{ if .firstBoot }}
       <h1>{{ T "auth.setup.title" }}</h1>

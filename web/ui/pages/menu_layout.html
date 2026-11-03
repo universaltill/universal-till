@@ -4,7 +4,7 @@
   <a class="btn secondary" href="/settings"><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.settings" }}</a>
 </div>
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
 <p class="muted">{{ T "menulayout.intro" }}</p>
 

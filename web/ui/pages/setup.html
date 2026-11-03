@@ -70,7 +70,7 @@
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
       </div>
 
-      {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+      {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
       <form method="post" action="/api/setup">
         <input type="hidden" name="setup_nonce" value="{{ .setupNonce }}">
@@ -335,7 +335,7 @@
                unlike step 3's softer install_pending note this says plainly
                what that means, not just that a background retry exists. -->
           {{ if .taxPluginSkipped }}
-            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p>
+            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p> <!-- login-error-role:allow confirms the operator's own skip choice (not an error) and is read in order under the step heading -->
           {{ end }}
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}"
                  value="{{ .storeName }}" x-model="storeName" aria-required="true">
