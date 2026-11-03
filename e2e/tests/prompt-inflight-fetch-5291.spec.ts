@@ -178,3 +178,43 @@ test.describe('utPostWithElevation retry in flight (ut-docs#5291)', () => {
     await expect(page.locator('#elevation-modal form.htmx-request')).toHaveCount(0);
   });
 });
+
+// ut-docs#5300: the hand-inserted PIN dialog never gets an htmx:load, so its
+// OSK toggle stayed hidden. hasTouch enables osk.js `auto` mode at parse time.
+test.describe('utPostWithElevation OSK toggle (ut-docs#5300)', () => {
+  test.use({ hasTouch: true });
+
+  test('the PIN dialog shows a working OSK toggle', async ({ page }) => {
+    await setup(page);
+    await expect(page.locator('body')).toHaveAttribute('data-osk', /auto|on/);
+    await startCall(page);
+    const dlg = page.locator('#elevation-modal');
+    await expect(dlg).toHaveJSProperty('open', true);
+    await expect(dlg).toHaveAttribute('hx-disable', ''); // the fetch path, not an htmx swap
+    const toggle = dlg.locator('[data-osk-toggle]');
+    await expect(toggle).toBeVisible({ timeout: 1000 }); // short: a later htmx swap must not mask a regression
+    await toggle.click();
+    await expect(page.locator('#osk')).toBeVisible();
+    await expect(dlg.locator('input[name="override_pin"]')).toBeFocused();
+    await page.locator('#osk button[data-k="1"]').click();
+    await expect(dlg.locator('input[name="override_pin"]')).toHaveValue('1');
+    await toggle.click();
+    await expect(page.locator('#osk')).toBeHidden();
+    await dlg.locator('[data-action="close-closest"]').click();
+    await expect.poll(async () => (await rec(page)).cancelled).toBe(1);
+  });
+
+  test('a wrong-PIN re-prompt shows the toggle too', async ({ page }) => {
+    await setup(page);
+    const h = await holdRetry(page, 'reprompt');
+    await startCall(page);
+    await submitPin(page);
+    await h.inFlight;
+    h.release();
+    const dlg = page.locator('#elevation-modal');
+    await expect(dlg.locator('.login-error')).toBeVisible();
+    await expect(dlg.locator('[data-osk-toggle]')).toBeVisible({ timeout: 1000 });
+    await dlg.locator('[data-action="close-closest"]').click();
+    await expect.poll(async () => (await rec(page)).cancelled).toBe(1);
+  });
+});

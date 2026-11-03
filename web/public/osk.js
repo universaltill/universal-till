@@ -252,6 +252,8 @@
           if (node.nodeType !== 1) continue; // element nodes only
           guardField(node);
           if (node.querySelectorAll) guardSweep(node);
+          // ut-docs#5300: hand-inserted dialogs get no htmx:load.
+          if (enabled) updateToggles(node);
         }
       }
     }).observe(document.documentElement, {
@@ -836,12 +838,16 @@
   // On-demand affordance: reveal any data-osk-toggle buttons (they ship
   // hidden) whenever the OSK is available at all. Mode 'off' never reaches
   // here, so the buttons stay hidden there.
-  function updateToggles() {
-    var btns = document.querySelectorAll('[data-osk-toggle]');
+  // ut-docs#5300: optional root (also matched itself); the observer calls it
+  // for hand-inserted nodes such as the utPostWithElevation PIN dialog.
+  function updateToggles(root) {
+    root = root || document;
+    if (root.matches && root.matches('[data-osk-toggle]')) root.hidden = !enabled;
+    var btns = root.querySelectorAll('[data-osk-toggle]');
     for (var i = 0; i < btns.length; i++) btns[i].hidden = !enabled;
   }
   updateToggles();
   // ut-docs#3807: a menu link swaps #ut-page (ADR-0098), bringing the sell
   // page's toggle back hidden; reveal it again on every swap.
-  document.addEventListener('htmx:load', updateToggles);
+  document.addEventListener('htmx:load', function () { updateToggles(); });
 })();
