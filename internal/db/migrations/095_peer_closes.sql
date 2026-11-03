@@ -1,4 +1,4 @@
--- 094_peer_closes.sql — ut-docs#5074 M7 (design §3.2, D9): the additional
+-- 095_peer_closes.sql — ut-docs#5074 M7 (design §3.2, D9): the additional
 -- tills' own day closes, held by the main till so it can relay every close
 -- of the shop to every additional till's read-only copy, and a promoted till
 -- keeps them all.
@@ -9,7 +9,7 @@
 -- its closes here only while the shop setting sales_mirror.enabled is on
 -- (POST /api/sync/closes), so on every till today the table stays empty.
 --
--- The change-log trigger follows 093's gate exactly: it writes nothing unless
+-- The change-log trigger follows 094's gate exactly: it writes nothing unless
 -- the setting is on, this till is the main till, and its own kill switch is
 -- off. A close is immutable once archived, so only inserts are logged.
 --

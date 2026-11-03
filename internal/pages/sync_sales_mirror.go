@@ -15,7 +15,7 @@ package pages
 //
 // Ships dark: with sales_mirror.enabled off (the default) the feed answers
 // 409, the maintenance loop does one settings read per tick and nothing
-// else, and the change-log triggers write nothing (migration 093).
+// else, and the change-log triggers write nothing (migration 094).
 
 import (
 	"compress/gzip"

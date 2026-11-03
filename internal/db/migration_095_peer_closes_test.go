@@ -2,16 +2,16 @@ package db
 
 import "testing"
 
-// 094 adds peer_closes and its change-log trigger (ut-docs#5074 M7): safe on
+// 095 adds peer_closes and its change-log trigger (ut-docs#5074 M7): safe on
 // a till with data, and the trigger logs only with the copy on, on the main
 // till.
-func TestMigration094_PeerCloses(t *testing.T) {
+func TestMigration095_PeerCloses(t *testing.T) {
 	d, path := openAtPreMigrationSchema(t, 94, "peer-closes.db")
 	if _, err := d.DB.Exec(`INSERT INTO report_archive (id, kind, period, content_json) VALUES ('ra1', 'eod', 'p', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	d.Close()
-	d = openMigratedTo(t, path, 94)
+	d = openMigratedTo(t, path, 95)
 	ins := func(id, period string) {
 		t.Helper()
 		if _, err := d.DB.Exec(`INSERT INTO peer_closes (till_id, id, kind, period, content_json, created_at, received_at) VALUES ('t2', ?, 'eod', ?, '{}', 'x', 'x')`, id, period); err != nil {

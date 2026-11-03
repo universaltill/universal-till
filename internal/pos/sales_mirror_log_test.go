@@ -14,10 +14,10 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 )
 
-// Sales mirror change log (ut-docs#5074, migration 093). These run the REAL
+// Sales mirror change log (ut-docs#5074, migration 094). These run the REAL
 // migrated schema and the real pos.CompleteSale / void / Z archive paths.
 
-// mirrorTables are every table migration 093 adds. With the setting off,
+// mirrorTables are every table migration 094 adds. With the setting off,
 // none of them may gain a row from anything the sale path does.
 var mirrorTables = []string{
 	"mirror_sales", "mirror_sale_lines", "mirror_sale_line_modifiers", "mirror_payments",
@@ -121,7 +121,7 @@ func workload(t testing.TB, sqlDB *sql.DB) (saleIDs []string) {
 
 // Off is INERT (the owner's hard rule for shipping dark): with the setting
 // absent (every till today) the triggers write nothing — not one row in any
-// table migration 093 added — across sales, a void, a provenance stamp and a
+// table migration 094 added — across sales, a void, a provenance stamp and a
 // Z archive.
 func TestSalesMirrorLog_OffWritesNothing(t *testing.T) {
 	sqlDB := setupMirrorLogDB(t)

@@ -1,4 +1,4 @@
--- 093_sales_mirror.sql — ut-docs#5074 (ADR-0011 and ADR-0114, "Amendment
+-- 094_sales_mirror.sql — ut-docs#5074 (ADR-0011 and ADR-0114, "Amendment
 -- 2026-10-26"; design ut-docs reference/design-5074-mirror-sales-to-replicas.md
 -- §3; wire contract reference/contracts/pos-lan-sales-mirror.md).
 --

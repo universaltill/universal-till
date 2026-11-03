@@ -4,7 +4,7 @@ Part of ut-docs#5074 (design §3.2, D9). Stacked on M3.
 
 ## What shipped
 
-- Migration `094_peer_closes.sql` (pinned): `peer_closes` (the additional
+- Migration `095_peer_closes.sql` (pinned): `peer_closes` (the additional
   tills' own day closes the main till relays — never its `report_archive`,
   Z chain or numbers) and a change-log trigger gated exactly like 093's.
 - `POST /api/sync/closes` (main till): pinned TLS, bearer, satellites `403`,
@@ -26,7 +26,7 @@ Part of ut-docs#5074 (design §3.2, D9). Stacked on M3.
 ## Off = inert
 
 The push step returns after its settings reads; the route answers `409`;
-the trigger writes nothing (`TestMigration094_PeerCloses`); nothing on the
+the trigger writes nothing (`TestMigration095_PeerCloses`); nothing on the
 sale path (the push tick is its own loop). Full suite green.
 
 ## Tests

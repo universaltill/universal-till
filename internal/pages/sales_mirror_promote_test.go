@@ -64,6 +64,18 @@ func TestSalesMirrorPromote_AdoptsTheCopyWithoutMovingStock(t *testing.T) {
 	for range 3 {
 		fromM = append(fromM, shop.sell(shop.main, 300))
 	}
+	// The harness backdates only an additional till's sales (to give each its
+	// own second); M's own are stamped "now". M's close below is a minute
+	// ago, so M's sales must sit before it too, or they are after M's close
+	// and B's next Z rightly counts them (and whether it did depended on the
+	// test finishing within one wall-clock second of them: the window's
+	// upper bound is second-truncated).
+	for i, id := range fromM {
+		at := time.Now().UTC().Add(-2 * time.Hour).Add(time.Duration(i) * time.Second).Format(time.RFC3339)
+		if _, err := shop.main.d.Db.Exec(`UPDATE sales SET created_at = ?, completed_at = ? WHERE id = ?`, at, at, id); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// M closes the day: B's next Z must start after it.
 	if _, err := data.NewPOSRepo(shop.main.d.Db).ArchiveReport(ctx, "eod", "m-close", []byte(`{}`), "", "", time.Now().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
@@ -128,8 +140,13 @@ func TestSalesMirrorPromote_AdoptsTheCopyWithoutMovingStock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.From == "" || rep.From < floor[:10] {
-		t.Fatalf("Z from %q, want at or after the floor %s", rep.From, floor)
+	// The floor is a UTC "YYYY-MM-DD HH:MM:SS"; the report's From is local
+	// RFC3339. Compare instants, not strings (a string compare only holds
+	// where the host's local offset keeps both on one date).
+	floorAt, ferr := time.ParseInLocation("2006-01-02 15:04:05", floor, time.UTC)
+	fromAt, perr := time.Parse(time.RFC3339, rep.From)
+	if ferr != nil || perr != nil || fromAt.Before(floorAt) {
+		t.Fatalf("Z from %q (%v), want at or after the floor %s (%v)", rep.From, perr, floor, ferr)
 	}
 	// Nothing M's Z already counted is counted again: the 3 M sales and 4 A
 	// sales (all before M's close) are out of B's next Z, and so is ownB

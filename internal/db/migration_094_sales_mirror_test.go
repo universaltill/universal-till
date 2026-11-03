@@ -6,7 +6,7 @@ import "testing"
 // (ut-docs#5074). It must be safe on a till that already holds data: no
 // existing row changes, no backfill, nothing logged (the setting has no row
 // on any till, so it is off), and re-running it is a no-op.
-func TestMigration093_SalesMirror_SafeOnExistingData(t *testing.T) {
+func TestMigration094_SalesMirror_SafeOnExistingData(t *testing.T) {
 	d, path := openAtPreMigrationSchema(t, 93, "sales-mirror.db")
 	if _, err := d.DB.Exec(`SELECT 1 FROM mirror_sales`); err == nil {
 		t.Fatal("mirror_sales must not exist before 093")
@@ -22,7 +22,7 @@ func TestMigration093_SalesMirror_SafeOnExistingData(t *testing.T) {
 		}
 	}
 	d.Close()
-	d = openMigratedTo(t, path, 93)
+	d = openMigratedTo(t, path, 94)
 
 	var sales, archives int
 	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&sales)

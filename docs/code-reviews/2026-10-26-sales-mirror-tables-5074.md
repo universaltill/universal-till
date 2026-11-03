@@ -6,7 +6,7 @@ ADR-0011 / ADR-0114 "Amendment 2026-10-26", contract
 
 ## What shipped
 
-- Migration `093_sales_mirror.sql` (pinned): the read-only copy tables
+- Migration `094_sales_mirror.sql` (pinned): the read-only copy tables
   (`mirror_sales` + six child tables, `mirror_closes`, `mirror_state`), the
   main till's change log (`sales_mirror_log`, `sales_mirror_acks`), three
   change-log triggers on `sales` (insert, update of the copied columns) and
@@ -44,7 +44,7 @@ ADR-0011 / ADR-0114 "Amendment 2026-10-26", contract
   every one of the 11 new tables stays empty.
 - `TestSalesMirrorLog_OffEqualsNoTriggers`: the same workload on a database
   with the triggers dropped leaves **every table** with the same row count.
-- `TestMigration093_SalesMirror_SafeOnExistingData`: migrating a DB that
+- `TestMigration094_SalesMirror_SafeOnExistingData`: migrating a DB that
   already holds sales, a void and a close changes no row and logs nothing.
 - The whole `go test ./...` (every sale, Z-report, sync, journal and
   backup suite) runs on the migrated schema with the feature off: green.
