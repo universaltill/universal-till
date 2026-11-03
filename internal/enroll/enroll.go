@@ -429,6 +429,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGroup) {
 	log := logging.L()
 	ReleaseRegistration() // a hold never outlives the process state it guarded
+	resetMoveState()      // ut-docs#5127: moves belong to the identity loaded below
 	// Locals here; the mu-guarded globals are set under the lock below
 	// (ut-docs#3021).
 	storeIDExplicitLocal := os.Getenv("UT_MARKETPLACE_STORE_ID") != ""

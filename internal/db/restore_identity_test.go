@@ -60,6 +60,7 @@ func deadTillBackup(t *testing.T, dbPath string) string {
 		"diagnostics.session_id":        "dead-support-session",
 		"marker.sales":                  "from-the-backup",
 		"store.name":                    "Backup shop name",
+		"sales_mirror.epoch":            "epoch-of-the-backup",
 	} {
 		setSetting(t, d.DB, k, v)
 	}
@@ -297,5 +298,10 @@ func TestApplyPendingRestoreOverUnreadableLiveDBKeepsBackupIdentity(t *testing.T
 	}
 	if v, ok := getSetting(t, restored.DB, "cloudsync.snapshot_hash"); ok {
 		t.Errorf("push hash %q kept; the restored data must be pushed again", v)
+	}
+	// ut-docs#5074: the restored change log's seqs may go backwards, so the
+	// sales copy's epoch is dropped and re-minted; every copy re-syncs.
+	if v, ok := getSetting(t, restored.DB, "sales_mirror.epoch"); ok {
+		t.Errorf("sales copy epoch %q kept across a restore", v)
 	}
 }

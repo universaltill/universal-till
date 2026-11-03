@@ -91,6 +91,7 @@ func resetState() {
 	unsavedToken.Store(false)
 	signingKeyHits.Store(0)
 	resetApprovalReport()
+	resetMoves()
 }
 
 // signingKeyHits counts testMarketplace's signing-key requests, so a test

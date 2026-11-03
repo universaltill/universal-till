@@ -5,6 +5,7 @@ section: Connecting & extending
 order: 320
 summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
 keywords: [register, claim, cloud, marketplace, store, subscription, plan, pair, pairing code, re-pair]
+routes: [/settings/cloud/move/{id}]
 ---
 
 # Store registration & claiming
@@ -77,6 +78,23 @@ Use this when the shop already exists in the Universal Till cloud and this till 
 2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. If this till is already connected to a shop, it first asks you to confirm that you want to replace that connection and shows the code you typed, so you can check it; Cancel changes nothing. A manager or admin approves it afterwards.
 3. The till replaces only its own cloud connection: it takes a new device ID and a credential of its own. Sales, products and settings stay on the till, and selling keeps working offline the whole time.
 4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code. On a till that is connected to a shop, a code that is wrong for the shop also leaves it disconnected until you pair it with a fresh code (this is why the till asks first); a joined till is registered again through its main till.
+
+## Moving this till into another shop
+
+Where the Universal Till cloud offers it, pairing a till that already belongs to a shop with a code from another shop you own **moves** the till into that shop instead of adding it as a second till. The till keeps its identity, and its sales history, products and settings go with it: the two shops become one. Nothing moves until a manager or admin approves it on the till itself.
+
+1. Enter the code under Pair with a shop and press Pair. The till asks you to confirm the move, then shows the move page. The till stays in its shop and keeps selling while the move waits.
+2. On the move page, check the shop it moves into and the time the request expires (about a day). To approve, type that shop's name and press **Approve move**, then enter a manager's or admin's PIN. **Decline** also asks for a PIN. A cashier never sees the request.
+3. Until someone decides, managers and admins see a banner on every page except the sale screen: "*shop* asked to move this till into their shop". **Review** opens the move page.
+4. After approval the till says "Moved into *shop*"; the cloud account shows the merged history within a few minutes. Selling never stops.
+
+Good to know:
+
+- Approving sends all of this shop's sales history to the other account. Support never asks you to do this; decline a move you did not ask for.
+- The till must be online to approve or decline. Offline, the buttons are off and nothing is sent later.
+- Three wrong PINs decline the move. If the owner cancels it in the cloud account, or nobody decides in time, the banner says so and nothing changes.
+- A move is refused, with nothing changed, when this till's shop has other tills, a fiscal device, a paid plan or another owner, when the two shops use different currencies, or when the code was not made by the other shop's owner. The message says which.
+- "This till's approval key changed" means the till cannot sign moves: contact support. A till whose old shop no longer recognises it and that has sales is not paired as a new till (its sales would be left behind); contact support to merge it.
 
 ## The shop's currency
 

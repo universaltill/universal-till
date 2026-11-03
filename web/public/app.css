@@ -7325,3 +7325,17 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
   border-block-end: 1px solid var(--danger-tint-border); }
 .replaced-banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #replaced-banner-mount:empty { display: none; }
+/* ut-docs#5127 UT-1b: approve or decline moving this till into another
+   shop (move_approval.html). The route reads as a label/value list that
+   wraps on a 360px phone; the two actions stack below the typed name. */
+.move-approval { max-width: 40rem; }
+.move-route { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0 0 1rem; }
+.move-route dt { color: var(--muted); }
+.move-route dd { margin: 0; overflow-wrap: anywhere; }
+.move-warning { padding: .6rem .8rem; border-inline-start: 4px solid var(--danger); background: var(--surface); }
+#move-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .8rem; margin-block-start: 1rem; }
+.move-approve { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem; flex: 1 1 18rem; }
+.move-approve label { flex-basis: 100%; margin: 0; }
+.move-approve input[type="text"] { flex: 1 1 12rem; margin: 0; }
+.move-decline { margin: 0; }
+#move-approval-notice-mount:empty { display: none; }

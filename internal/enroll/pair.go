@@ -90,6 +90,17 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 		return CurrentStatus(), ErrPairReplicaNoStore
 	}
 
+	// 0. A till that belongs to a shop moves into the code's shop, keeping
+	// its device id and its history, when the cloud offers it (ut-docs#5127
+	// UT-1b). A refusal leaves it exactly as it was; only a cloud without
+	// moves, a code for its own shop, or an old shop that no longer vouches
+	// for a till with no history falls through to the ordinary pairing.
+	if !replica {
+		if outcome, err := pairMove(ctx, cfg, kv, code); outcome == moveDone {
+			return CurrentStatus(), err
+		}
+	}
+
 	// 1+2. Clear exactly this till's cloud identity and take a fresh device
 	// id (ADR-0116 D5).
 	newID := "till-" + uuid.NewString()

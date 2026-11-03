@@ -533,7 +533,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
+	registerMoveApproval(mux, dp)                     // ut-docs#5127 UT-1b: approve or decline a move into another shop
 	registerSyncSales(mux, dp)
+	registerSyncSalesMirror(mux, dp)    // ut-docs#5074: the read-only sales copy's feed, main-till side (ships dark)
+	registerSyncPeerCloses(mux, dp)     // ut-docs#5074 M7: additional tills' own day closes for the copy
+	registerSalesMirrorStatus(mux, dp)  // ut-docs#5074: this till's copy status (manager)
+	registerSalesMirrorUI(mux, dp)      // ut-docs#5074 M5: the Tills page's sales-copy card
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)
 	registerSyncOrders(mux, dp)         // cross-till orders board, primary side (ut-docs#1350)
@@ -611,6 +616,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("LAN sync push", func() { StartSyncPush(bgCtx, dp, wg) })                                  // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	StartSyncLink(bgCtx, dp, wg, syncAdminRepo)                                                                       // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
 	netaccess.StartService("LAN sync pull", func() { StartSyncPull(bgCtx, dp, rederiveSettings, wg) })                // joined by app.Run's drain
+	dp.SalesMirrorPullNow = make(chan struct{}, 1)                                                                    // before the link client, which kicks it (M4)
+	netaccess.StartService("sales mirror pull", func() { StartSalesMirrorPull(bgCtx, dp, wg) })                       // ut-docs#5074: the additional till's read-only sales copy; idle while off; joined by app.Run's drain
 	netaccess.StartService("main-till link client", func() { StartSyncLinkClient(bgCtx, dp, wg) })                    // replica side of the main-till link (ADR-0114); joined by app.Run's drain
 	netaccess.StartService("held-order table-claim re-affirm", func() { StartHeldOrderClaimReaffirm(bgCtx, dp, wg) }) // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartSelfOrderSessionSweep(bgCtx, dp, wg)                                                                         // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
@@ -618,14 +625,17 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("cloud sync", func() { StartCloudSync(bgCtx, dp, rederiveSettings, wg) })                  // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
 	netaccess.StartService("stock upload", func() { cloudsync.StartStockUpload(bgCtx, dp.Cfg, dp.Db, wg) })           // ADR-0169 §8 main-till on-hand upload to the cloud's stock mirror, realtime tier (ut-docs#4763); joined by app.Run's drain
-	StartEODScheduler(bgCtx, dp, wg)                                                                                  // background Z-report (docs: G30); joined by app.Run's drain
-	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })               // background unattended update (ut-docs#79); joined by app.Run's drain
-	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })           // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
-	StartFiscalSignReconcileSweep(bgCtx, dp, wg)                                                                      // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
-	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                           // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
-	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })          // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
-	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })                // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
-	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) })      // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	StartSalesMirrorMaintenance(bgCtx, dp, wg)                                                                        // ut-docs#5074: prune the sales copy's change log; idle while the copy is off; joined by app.Run's drain
+	dp.SalesMirrorNudgeNow = make(chan struct{}, 1)
+	StartSalesMirrorNudge(bgCtx, dp, wg)                                                                         // ut-docs#5074 M4: nudge linked tills to pull the sales copy within a second; idle with no peer or the copy off; joined by app.Run's drain
+	StartEODScheduler(bgCtx, dp, wg)                                                                             // background Z-report (docs: G30); joined by app.Run's drain
+	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })          // background unattended update (ut-docs#79); joined by app.Run's drain
+	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })      // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
+	StartFiscalSignReconcileSweep(bgCtx, dp, wg)                                                                 // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
+	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                      // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
+	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
+	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) }) // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser
 	// EventSources, and on a primary the replicas' bridges) the instant
 	// shutdown begins — server.Start's own Shutdown fires on this same

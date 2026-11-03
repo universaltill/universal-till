@@ -254,41 +254,45 @@ var demoDeniedRoutes = map[string]bool{
 	// Cloud enrolment, registration, telemetry and LAN
 	// sync/pairing/discovery/link (all /api/sync/*, /api/setup/*, the Tills
 	// pages).
-	"GET /api/enrol/devices":                    true,
-	"GET /api/setup/discover-primaries":         true,
-	"GET /api/setup/pair-status":                true,
-	"GET /api/sync/admin":                       true,
-	"GET /api/sync/assets":                      true,
-	"GET /api/sync/assets/categories":           true,
-	"GET /api/sync/assets/categories/file":      true,
-	"GET /api/sync/assets/file":                 true,
-	"GET /api/sync/discover-primaries":          true,
-	"GET /api/sync/held-sales":                  true,
-	"GET /api/sync/link":                        true,
-	"GET /api/sync/orders":                      true,
-	"GET /api/sync/orders/stream":               true,
-	"GET /api/sync/pair-requests":               true,
-	"GET /api/sync/pair-requests/{id}":          true,
-	"GET /api/sync/pair-status":                 true,
-	"GET /api/sync/ping":                        true,
-	"GET /api/sync/plugins":                     true,
-	"GET /api/sync/secrets-key":                 true,
-	"GET /api/sync/snapshot":                    true,
-	"GET /api/sync/stock":                       true,
-	"GET /api/sync/tables":                      true,
-	"GET /api/sync/vouchers/{id}":               true,
-	"GET /sync-quarantine":                      true,
-	"GET /tills":                                true,
-	"GET /ui/tills/pending-pairings":            true,
-	"GET /ui/tills/roster":                      true, // the denied /tills page's polled roster (ADR-0114 §10)
-	"POST /api/enrol/check-plan":                true, // ADR-0148: a demo till never contacts the cloud
-	"POST /api/subscription/check-now":          true, // ut-docs#4285: same — a demo till never contacts the cloud
-	"POST /api/subscription/panel":              true, // ut-docs#4286: refreshes from the cloud first
-	"POST /api/subscription/panel/handoff":      true, // ut-docs#4286: a QR to the real plans page
-	"POST /api/subscription/panel/poll":         true, // ut-docs#4286: an operator check-in
-	"POST /api/enrol/claim-code":                true,
-	"POST /api/enrol/now":                       true,
-	"POST /api/enrol/pair":                      true,
+	"GET /api/enrol/devices":               true,
+	"GET /api/setup/discover-primaries":    true,
+	"GET /api/setup/pair-status":           true,
+	"GET /api/sync/admin":                  true,
+	"GET /api/sync/assets":                 true,
+	"GET /api/sync/assets/categories":      true,
+	"GET /api/sync/assets/categories/file": true,
+	"GET /api/sync/assets/file":            true,
+	"GET /api/sync/discover-primaries":     true,
+	"GET /api/sync/held-sales":             true,
+	"GET /api/sync/link":                   true,
+	"GET /api/sync/orders":                 true,
+	"GET /api/sync/orders/stream":          true,
+	"GET /api/sync/pair-requests":          true,
+	"GET /api/sync/pair-requests/{id}":     true,
+	"GET /api/sync/pair-status":            true,
+	"GET /api/sync/ping":                   true,
+	"GET /api/sync/plugins":                true,
+	"GET /api/sync/secrets-key":            true,
+	"GET /api/sync/snapshot":               true,
+	"GET /api/sync/stock":                  true,
+	"GET /api/sync/tables":                 true,
+	"GET /api/sync/vouchers/{id}":          true,
+	"GET /sync-quarantine":                 true,
+	"GET /tills":                           true,
+	"GET /ui/tills/pending-pairings":       true,
+	"GET /ui/tills/roster":                 true, // the denied /tills page's polled roster (ADR-0114 §10)
+	"POST /api/enrol/check-plan":           true, // ADR-0148: a demo till never contacts the cloud
+	"POST /api/subscription/check-now":     true, // ut-docs#4285: same — a demo till never contacts the cloud
+	"POST /api/subscription/panel":         true, // ut-docs#4286: refreshes from the cloud first
+	"POST /api/subscription/panel/handoff": true, // ut-docs#4286: a QR to the real plans page
+	"POST /api/subscription/panel/poll":    true, // ut-docs#4286: an operator check-in
+	"POST /api/enrol/claim-code":           true,
+	"POST /api/enrol/now":                  true,
+	"POST /api/enrol/pair":                 true,
+	// ut-docs#5127 UT-1b: approving a move signs with the till's key and
+	// moves its cloud identity; a demo visitor never gets near it.
+	"GET /settings/cloud/move/{id}":             true,
+	"POST /api/cloud/move/{id}":                 true,
 	"POST /api/enrol/terms":                     true, // ut-docs#4792: a demo till never contacts the cloud
 	"POST /api/settings/auto-register":          true,
 	"POST /api/settings/telemetry":              true,
@@ -322,23 +326,32 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/primary-proof":              true,
 	"POST /api/sync/promote":                    true,
 	"POST /api/sync/sales":                      true,
-	"POST /api/sync/tables/claim":               true,
-	"POST /api/sync/tables/release":             true,
-	"POST /api/sync/tables/release-all":         true,
-	"POST /api/sync/tills/{id}/revoke":          true,
-	"POST /api/sync/till-role":                  true, // ut-docs#2781: a joined till's own role report
-	"POST /api/tills/{id}/role":                 true, // ut-docs#2781: Tills page Change role
-	"POST /api/tills/{id}/update-now":           true, // ut-docs#2945: Tills page Update now
-	"POST /api/tills/rotate-tls-key":            true, // ut-docs#4423: Tills page Change network key
-	"POST /api/sync/settings/apply":             true,
-	"POST /api/sync/catalog/apply":              true,
-	"POST /api/sync/users/apply":                true,
-	"POST /api/sync/vouchers/{id}/redeem":       true,
-	"POST /api/sync/vouchers/{id}/release":      true,
-	"POST /api/sync/vouchers/{id}/adjust":       true, // ut-docs#4253
-	"POST /ui/join-notice/dismiss":              true, // ut-docs#2721: writes sync.join_banner_dismissed
-	"POST /ui/agent/proposals/{id}/confirm":     true, // ut-docs#2838: applies an AI-agent change
-	"POST /ui/agent/proposals/{id}/cancel":      true, // ut-docs#2838: AI-agent proposals (no agent writes in the demo)
+	// ut-docs#5074: the read-only sales copy (peer feed + the manager switch
+	// and status); a demo till has no peers and no shop to copy.
+	"GET /api/sync/sales-mirror":            true,
+	"GET /api/sync/sales-mirror/state":      true,
+	"GET /api/sync/sales-mirror/status":     true,
+	"POST /api/sync/sales-mirror/enable":    true,
+	"POST /api/sync/sales-mirror/disable":   true,
+	"GET /ui/tills/sales-mirror":            true, // ut-docs#5074 M5: the Tills page's sales-copy card
+	"POST /api/sync/closes":                 true, // ut-docs#5074 M7: additional tills' own closes for the copy
+	"POST /api/sync/tables/claim":           true,
+	"POST /api/sync/tables/release":         true,
+	"POST /api/sync/tables/release-all":     true,
+	"POST /api/sync/tills/{id}/revoke":      true,
+	"POST /api/sync/till-role":              true, // ut-docs#2781: a joined till's own role report
+	"POST /api/tills/{id}/role":             true, // ut-docs#2781: Tills page Change role
+	"POST /api/tills/{id}/update-now":       true, // ut-docs#2945: Tills page Update now
+	"POST /api/tills/rotate-tls-key":        true, // ut-docs#4423: Tills page Change network key
+	"POST /api/sync/settings/apply":         true,
+	"POST /api/sync/catalog/apply":          true,
+	"POST /api/sync/users/apply":            true,
+	"POST /api/sync/vouchers/{id}/redeem":   true,
+	"POST /api/sync/vouchers/{id}/release":  true,
+	"POST /api/sync/vouchers/{id}/adjust":   true, // ut-docs#4253
+	"POST /ui/join-notice/dismiss":          true, // ut-docs#2721: writes sync.join_banner_dismissed
+	"POST /ui/agent/proposals/{id}/confirm": true, // ut-docs#2838: applies an AI-agent change
+	"POST /ui/agent/proposals/{id}/cancel":  true, // ut-docs#2838: AI-agent proposals (no agent writes in the demo)
 	// First-run setup wizard and first-owner creation (the demo template is
 	// already set up).
 	"GET /setup":           true,
@@ -509,6 +522,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/pairing-notice":               true,
 	"GET /ui/shop-name-notice":             true, // ut-docs#3114
 	"GET /ui/replaced-banner":              true, // ut-docs#5058: read-only banner, empty unless replaced
+	"GET /ui/move-approval-notice":         true, // ut-docs#5127: read-only banner, empty unless a move waits
 	"GET /ui/plugin-buttons":               true,
 	"GET /ui/slot/{slot}":                  true, // ut-docs#3872: core pages' content-slot placeholders; a demo installs no plugins, so it answers empty (panel actions post to /plugin/..., denied above)
 	"GET /ui/slot/{slot}/{plugin}/{entry}": true, // ut-docs#3946: one Settings plugin section's panel; read-only like the route above, and 404 in a demo (no plugins installed)

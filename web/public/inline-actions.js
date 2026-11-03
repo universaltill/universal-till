@@ -457,6 +457,7 @@
     },
     'dismiss-pairing-notice': function () { if (window.utPairingNoticeDismiss) window.utPairingNoticeDismiss(); },
     'dismiss-shop-name-notice': function () { if (window.utShopNameNoticeDismiss) window.utShopNameNoticeDismiss(); }, // ut-docs#3114
+    'dismiss-move-approval-notice': function () { if (window.utMoveApprovalNoticeDismiss) window.utMoveApprovalNoticeDismiss(); }, // ut-docs#5127
     // receipt.html's "ask" prompt: Print hides the prompt BEFORE any
     // window.print() fallback, so the question never lands on paper.
     'receipt-ask-print': function (ctx, no) {
