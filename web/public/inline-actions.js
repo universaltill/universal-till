@@ -139,7 +139,12 @@
   // Same-origin path only ("/refund/42"), never "//host" or "javascript:".
   function safePath(p) { return typeof p === 'string' && /^\/(?![\/\\])/.test(p) ? p : null; }
   function showDialog(d) { if (d && !d.open) d.show(); }
-  function closeDialog(d) { if (d && d.open) d.close(); }
+  // ut-docs#5288: a confirm / PIN prompt (data-ut-prompt) never closes while
+  // its own form has a request in flight (.htmx-request): its answer must
+  // still show. Prompts only: other dialogs (self-order kiosk, modifier
+  // picker) keep closing as before. The terminal after-request hook runs
+  // after htmx has cleared that class on the form it closes.
+  function closeDialog(d) { if (d && d.open && !(d.hasAttribute && d.hasAttribute('data-ut-prompt') && d.querySelector('form.htmx-request'))) d.close(); }
   function toMinor(v) { return window.utCurrency ? window.utCurrency.toMinor(v) : v; }
   function scanFocusLater() {
     setTimeout(function () {

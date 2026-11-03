@@ -50,6 +50,13 @@
      returns focus to the opener and removes this prompt's own hint on
      Cancel/Escape. All logic lives there (CSP, ut-docs#2913), not in the
      script below. */}}
+{{/* ut-docs#5288: hx-disabled-elt also greys Cancel (every button in this dialog but the PIN
+     pad's OSK toggle) while THIS form's request is in flight, and base.html's
+     Escape / inline-actions.js closeDialog ignore a close while the form has
+     .htmx-request. Closing mid-request would leave the (non-idempotent)
+     action done with no answer shown, and a late re-prompt could re-open the
+     dialog. Never an abort: htmx:abort is client-side only. htmx re-enables
+     the buttons when the request ends, answer or failure. */}}
 <span class="elevation-hint muted">{{ T "elevation.hint" }}</span>
 <dialog id="elevation-modal" class="modifier-modal elevation-dialog" hx-swap-oob="true" data-ut-focus-trap data-ut-escape-close data-ut-prompt>
   {{/* ut-docs#795 review S7: this form had NO after-request handler of its
@@ -88,7 +95,7 @@
        replay the action. Dropping the duplicate and greying the button
        while the request runs is harmless to every other site. */}}
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
-        hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
+        hx-sync="this:drop" hx-disabled-elt="#elevation-modal button:not([data-osk-toggle])"
         data-after-request="elevation-done">
     <h3>{{ T "elevation.prompt_title" }} {{ helpLink "elevation" }}</h3>
     <p class="muted">{{ T "elevation.prompt_help" }}</p>

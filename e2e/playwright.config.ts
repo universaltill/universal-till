@@ -55,8 +55,10 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // sale-screen-guided-tour-3710.spec.ts (ut-docs#3710) does too: the
 // sale-screen tour is remembered per signed-in user, and auth-off never
 // auto-starts it. It must sort after login.spec.ts (first-boot wizard).
+// ut-docs#5288: the manager-PIN dialog's in-flight Cancel/Escape spec raises the
+// real prompt for a cashier, so it needs a real session (it sorts after login).
 const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288)\.spec\.ts$/;
 
 // ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
 // real plugins/layout-salon installed, which HIDES /tables and
@@ -84,7 +86,8 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // Its name sorts it before the specs that register this till, so the cloud-terms
 // box it asserts is still shown.
 // ut-docs#5275: the pair-with-a-shop confirm's Escape/Cancel spec registers this
-// till against its own in-process fake cloud (see the spec's header).
+// till against its own in-process fake cloud (see the spec's header). ut-docs#5288:
+// the same file also covers Cancel/Escape while the confirmed pair POST is in flight.
 const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477|catalog-store-detail-actions-4228|pair-confirm-escape-5275)\.spec\.ts$/;
 
 // ut-docs#3091: the release-notes spec needs a till stamped with a released
