@@ -68,7 +68,7 @@ func TestEscapeAndCloseRefuseWhileFormInFlight_5288(t *testing.T) {
 		t.Fatal("base.html's Escape handler changed shape; update this test")
 	}
 	handler := string(base)[i:min(len(base), i+600)]
-	if !strings.Contains(handler, "form.htmx-request") {
+	if !strings.Contains(handler, "top.hasAttribute('data-ut-prompt') && top.querySelector('form.htmx-request')") {
 		t.Fatalf("base.html's Escape handler must ignore Escape while the dialog's own form is in flight (form.htmx-request), got: %s", handler)
 	}
 	ia, err := os.ReadFile("web/public/inline-actions.js")
@@ -76,7 +76,9 @@ func TestEscapeAndCloseRefuseWhileFormInFlight_5288(t *testing.T) {
 		t.Fatal(err)
 	}
 	cd := regexp.MustCompile(`function closeDialog\(d\) \{[^\n]*\}`).FindString(string(ia))
-	if !strings.Contains(cd, "htmx-request") {
-		t.Fatalf("inline-actions.js closeDialog must refuse a dialog whose form is in flight, got: %q", cd)
+	// Scoped to prompts (review M1): an unscoped guard stranded the self-order
+	// kiosk's close-clear Cancel behind an emptied, still-open modal.
+	if !strings.Contains(cd, "htmx-request") || !strings.Contains(cd, "data-ut-prompt") {
+		t.Fatalf("inline-actions.js closeDialog must refuse only a prompt (data-ut-prompt) whose form is in flight, got: %q", cd)
 	}
 }

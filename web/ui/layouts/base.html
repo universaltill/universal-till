@@ -597,7 +597,7 @@
             // cancelled -- the action may already be done and its answer
             // must still show. htmx marks the requesting form .htmx-request
             // until the request ends, then Escape works again.
-            if (top.querySelector('form.htmx-request')) return;
+            if (top.hasAttribute('data-ut-prompt') && top.querySelector('form.htmx-request')) return;
             var cancel = new Event('cancel', { cancelable: true });
             if (top.dispatchEvent(cancel)) top.close();
           } catch (err) { /* escape only */ }
