@@ -21,6 +21,7 @@
      fingerprint no longer matches and the notice reappears, satisfying
      "must clear itself... never a stale notice" with no extra state kept
      here. */}}
+{{ if .Count }}
 <div id="pairing-notice" class="pairing-notice" role="status" data-fingerprint="{{ .Fingerprint }}">
   <span class="pairing-notice-text">⇅ {{ .Count }} {{ if eq .Count 1 }}{{ T "tills.pairing.notice_device_one" }}{{ else }}{{ T "tills.pairing.notice_device_other" }}{{ end }} {{ T "tills.pairing.notice_waiting" }}</span>
   <a href="/tills">{{ T "tills.pairing.notice_link" }}</a>
@@ -41,3 +42,6 @@
   };
 })();
 </script>
+{{ end }}
+{{/* ut-docs#2743: marker pairing-stream.js keys on to open the single EventSource; present only for an authorised manager on a primary (the handler renders this partial for no one else). */}}
+<span hidden data-pairing-stream="/api/pairings/stream"></span>

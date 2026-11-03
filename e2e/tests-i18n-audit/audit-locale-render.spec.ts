@@ -113,6 +113,9 @@ async function auditRoute(page: Page, topicId: string, route: string): Promise<F
   // that one route. Answer it with a non-200, non-5xx status so the browser
   // treats the connection as closed (no reconnect-on-timer), not errored.
   await page.route('**/api/orders/stream', (r) => r.fulfill({ status: 204 }));
+  // ut-docs#2743: a manager page on a main till also opens the pairing
+  // push stream (GET /api/pairings/stream) — same never-idle shape, same 204.
+  await page.route('**/api/pairings/stream', (r) => r.fulfill({ status: 204 }));
   await page.goto(url, { waitUntil: 'networkidle' });
 
   // Several topics lazy-load their body after first paint via an

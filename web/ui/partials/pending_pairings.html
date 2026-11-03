@@ -1,4 +1,4 @@
-<div id="pending-pairings" hx-get="/ui/tills/pending-pairings" hx-trigger="every 30s" hx-target="this" hx-swap="outerHTML">
+<div id="pending-pairings" hx-get="/ui/tills/pending-pairings" hx-trigger="every 30s [!utPairingBusy()], tills-changed[!utPairingBusy()] from:body" hx-target="this" hx-swap="outerHTML">
 {{ if .Pending }}
 <!-- ut-docs#1548: display:block + overflow-x:auto is the same escape-hatch
      pattern .users-list .table / .settings-grid .card .table already use

@@ -268,6 +268,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /api/sync/orders":                 true,
 	"GET /api/sync/orders/stream":          true,
 	"GET /api/sync/pair-requests":          true,
+	"GET /api/pairings/stream":             true,
 	"GET /api/sync/pair-requests/{id}":     true,
 	"GET /api/sync/pair-status":            true,
 	"GET /api/sync/ping":                   true,
