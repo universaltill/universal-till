@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"runtime"
 	"strings"
@@ -182,11 +183,51 @@ func applyReportedTillName(tills *data.TillsRepo, registers *data.POSRepo, unusa
 	}
 }
 
+// pairingGetter is the one PairingRepo read the pending link makes (a seam
+// so a test can count reads: the limiter must run before any of them).
+type pairingGetter interface {
+	GetByID(ctx context.Context, id string) (data.PendingPairingRow, bool, error)
+}
+
+// pendingLinkRate is the pending link's per-source budget: its own bucket,
+// equal in strictness to the pair-request one (ADR-0114 amendment
+// 2026-11-03), so link reconnects can never spend what the post-approval
+// token fetch needs.
+const (
+	pendingLinkRateMax    = 5
+	pendingLinkRetryAfter = "60"
+)
+
+// maxPairRequestIDLen bounds the id a pending link may present; a longer one
+// is treated as unknown without a lookup (ids are UUIDs).
+const maxPairRequestIDLen = 64
+
+// unknownCommitment is compared against when the id is unknown, so that path
+// does the same hash and constant-time compare as a known one (no timing
+// oracle for "this id exists").
+const unknownCommitment = "0000000000000000000000000000000000000000000000000000000000000000"
+
 // registerSyncLink mounts GET /api/sync/link. Auth-middleware exempt (the
-// exempt list carries it); syncTill authenticates the upgrade request.
+// exempt list carries it); syncTill authenticates a peer's upgrade request,
+// and a request carrying the pair-request headers instead is a joining
+// till's pending link (servePendingLink).
 func registerSyncLink(mux *http.ServeMux, d *common.Deps) {
-	tills := data.NewTillsRepo(d.Db)
+	registerSyncLinkWith(mux, d, data.NewTillsRepo(d.Db), data.NewPairingRepo(d.Db),
+		newPairRateLimiter(time.Minute, pendingLinkRateMax))
+}
+
+func registerSyncLinkWith(mux *http.ServeMux, d *common.Deps, tills *data.TillsRepo, pairings pairingGetter, pendingLimiter *pairRateLimiter) {
 	mux.HandleFunc("GET /api/sync/link", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(fleetlink.HeaderPairRequestID) != "" || r.Header.Get(fleetlink.HeaderPairRequestSecret) != "" {
+			// A bearer and pairing headers together are two identities:
+			// refused, never guessed at.
+			if r.Header.Get("Authorization") != "" {
+				refusePendingLink(w)
+				return
+			}
+			servePendingLink(w, r, d, pairings, pendingLimiter)
+			return
+		}
 		till, ok := syncTill(w, r, tills)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -211,11 +252,107 @@ func registerSyncLink(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+// refusePendingLink is the one refusal writer for every authentication
+// failure of a pending link: byte-identical to the bearer path's refusal on
+// this route, so a prober cannot tell the branches or the causes apart.
+func refusePendingLink(w http.ResponseWriter) {
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+}
+
+// servePendingLink handles GET /api/sync/link with pair-request headers and
+// no bearer (ADR-0114 amendment 2026-11-03, ut-docs#5297). The order matters:
+// replica/replaced refusals, TLS and no-query, the per-source limit (before
+// any database read), then id + secret in constant time. It logs nothing on
+// refusal and never the URL, a header or an error that saw the URL.
+func servePendingLink(w http.ResponseWriter, r *http.Request, d *common.Deps, pairings pairingGetter, limiter *pairRateLimiter) {
+	if d.SyncPrimaryURL(r.Context()) != "" {
+		http.Error(w, "connect to the main till", http.StatusConflict)
+		return
+	}
+	if refuseIfReplaced(w, r, d) {
+		return
+	}
+	if d.PendingLinks == nil {
+		http.Error(w, "link unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	// TLS only, and no query at all: a client that put the secret in the URL
+	// fails closed whatever the parameter is called.
+	if r.TLS == nil || r.URL.RawQuery != "" {
+		refusePendingLink(w)
+		return
+	}
+	if !limiter.allow(sourceOf(r)) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", pendingLinkRetryAfter)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "too many requests"})
+		return
+	}
+	id := r.Header.Get(fleetlink.HeaderPairRequestID)
+	secret := r.Header.Get(fleetlink.HeaderPairRequestSecret)
+	var (
+		row data.PendingPairingRow
+		ok  bool
+	)
+	if id != "" && len(id) <= maxPairRequestIDLen {
+		var err error
+		row, ok, err = pairings.GetByID(r.Context(), id)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
+			return
+		}
+	}
+	commitment := unknownCommitment
+	if ok {
+		commitment = row.Commitment
+	}
+	match := commitmentMatches(secret, commitment) // always run, known id or not
+	if !ok || row.Status != "pending" || secret == "" || !match {
+		refusePendingLink(w)
+		return
+	}
+	expiresAt, err := time.Parse(time.RFC3339, row.ExpiresAt)
+	if err != nil {
+		expiresAt = time.Now().Add(pairingRequestTTL)
+	}
+	d.PendingLinks.Serve(w, r, id, expiresAt, func() string {
+		// The manager may have resolved the request between the check above
+		// and the link registering: say so at once.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cur, found, err := pairings.GetByID(ctx, id)
+		switch {
+		case err != nil:
+			return ""
+		case found && cur.Status == "approved":
+			return fleetlink.PairingApproved
+		case found:
+			return ""
+		case !time.Now().Before(expiresAt):
+			return fleetlink.PairingExpired
+		default:
+			return fleetlink.PairingDenied // the row is gone before its expiry: denied
+		}
+	})
+}
+
 // StartSyncLink runs the link's background side, joined to app.Run's drain:
 // the admin-generation watch, and on shutdown a `bye` to every linked till
 // before their connections close (http.Server.Shutdown does not track
 // hijacked connections, so without this they would outlive the server).
 func StartSyncLink(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, adminRepo *data.SyncAdminRepo) {
+	if d.PendingLinks != nil {
+		// The joining tills' pending links are hijacked too (ADR-0114
+		// amendment 2026-11-03): bye and close them on shutdown.
+		wg.Add(1)
+		go func() {
+			defer logging.RecoverAndLog("pages.pendingLinkClose")
+			defer wg.Done()
+			<-ctx.Done()
+			d.PendingLinks.Close()
+		}()
+	}
 	if d.Link == nil {
 		return
 	}

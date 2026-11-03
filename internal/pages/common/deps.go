@@ -178,6 +178,13 @@ type Deps struct {
 	// pages.Init before the server accepts requests; nil in bare-Deps tests.
 	Link *fleetlink.Hub
 
+	// PendingLinks holds the joining tills' pending links on the main till
+	// (ADR-0114 §2 and its 2026-11-03 amendment, ut-docs#5297): one per
+	// pending pair request, resolved by approve/deny, closed on expiry and
+	// shutdown. Main till only (a replica refuses at the route). Set once in
+	// pages.Init; nil in bare-Deps tests, and every user nil-checks it.
+	PendingLinks *fleetlink.PendingHub
+
 	// LinkClient is this till's side of the main-till link when it is an
 	// additional till (ADR-0114 §2–§4, ut-docs#2735): it dials the main
 	// till only when advertised, kicks SyncPullNow on every `sync` nudge
