@@ -36,3 +36,7 @@ compliance-claims, competitor-naming, rtl-logical-css, mail-addresses: exit 0
 (re-run after the fix).
 
 **Verdict:** merge. **Deferred:** none.
+
+## Follow-up commit
+
+CI `build` failed on `guard-docs-shots_test.sh`: the ar/fa/tr catalog topic hashes in `web/help/img/manifest.json` were stale. Ran `make docs-shots` (128 passed). No PNG changed, only the three topic hashes did. `guard-docs-shots.sh` and its `_test.sh` pass locally.
