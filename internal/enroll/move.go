@@ -152,6 +152,21 @@ func SetMoveHooks(h MoveHooks) {
 	movesMu.Unlock()
 }
 
+// ResetMoveStateForTests forgets every pending and ended move, the wired
+// hooks and the cached /version capability, as a fresh process starts. Only
+// tests call it: they share one process, and a move test must not leave its
+// moves or its (closed) database hooks behind for the next one.
+func ResetMoveStateForTests() {
+	movesMu.Lock()
+	pending = map[string]*pendingEntry{}
+	ended = map[string]EndedMove{}
+	moveHooks = MoveHooks{}
+	movesMu.Unlock()
+	moveCapMu.Lock()
+	moveCapFor, moveCapOK, moveCapAt = "", false, time.Time{}
+	moveCapMu.Unlock()
+}
+
 func currentMoveHooks() MoveHooks {
 	movesMu.Lock()
 	defer movesMu.Unlock()

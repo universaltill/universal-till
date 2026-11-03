@@ -579,13 +579,4 @@ func TestSyncMovesAreBounded(t *testing.T) {
 }
 
 // resetMoves clears the move state between tests (resetState calls it).
-func resetMoves() {
-	movesMu.Lock()
-	pending = map[string]*pendingEntry{}
-	ended = map[string]EndedMove{}
-	moveHooks = MoveHooks{}
-	movesMu.Unlock()
-	moveCapMu.Lock()
-	moveCapFor, moveCapOK, moveCapAt = "", false, time.Time{}
-	moveCapMu.Unlock()
-}
+func resetMoves() { ResetMoveStateForTests() }

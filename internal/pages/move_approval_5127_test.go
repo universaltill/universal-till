@@ -138,9 +138,12 @@ func moveApprovalDeps(t *testing.T) (*http.ServeMux, *common.Deps, *moveStubClou
 	}
 	d.Cfg.Marketplace.EndpointURL = cloud.srv.URL + "/api"
 	enroll.Init(ctx, d.Cfg, d.Settings, &sync.WaitGroup{})
+	// Never re-Init against d.Settings: it still holds this test's
+	// credential, which would stay in enroll's process-wide identity for
+	// whichever test runs next (pages-shuffle seeds 22 / 1791386291628608919).
 	t.Cleanup(func() {
-		enroll.ApplySyncMoves(json.RawMessage(`[]`), nil)
-		enroll.Init(context.Background(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+		enroll.ResetMoveStateForTests()
+		enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{})
 	})
 	hash, err := auth.HashPIN(mvPIN)
 	if err != nil {
@@ -155,6 +158,28 @@ func moveApprovalDeps(t *testing.T) (*http.ServeMux, *common.Deps, *moveStubClou
 	mux := http.NewServeMux()
 	registerMoveApproval(mux, d)
 	return mux, d, cloud
+}
+
+// The pages-shuffle seeds 22 and 1791386291628608919 ran a move test before
+// tests that read enroll's process-wide identity (TestPrimaryWatchCloud-
+// Credentials_AreThisTillsOwn, TestSetupWizardDE_TSEKickoffSuccess), which
+// then saw this file's 'store-src' credential: moveApprovalDeps' cleanup
+// re-ran enroll.Init against the test's own settings, re-loading it. Every
+// move test must leave enroll as a fresh process would.
+func TestMoveApprovalDeps_LeavesNoProcessState(t *testing.T) {
+	for _, run := range []func(*testing.T){TestMoveApprove_ValidPINSignsAndMoves, TestMoveApprove_WrongPINsSendNothingThenDecline} {
+		t.Run("", run)
+		cfg := &config.Config{}
+		if m := enroll.Effective(cfg).Marketplace; m.StoreID != "" || m.MerchantToken != "" || m.DeviceID == mvDevice {
+			t.Fatalf("leaked identity after a move test: store %q device %q token set %v", m.StoreID, m.DeviceID, m.MerchantToken != "")
+		}
+		if s := enroll.CurrentStatus(); s.Registered || s.StoreID != "" {
+			t.Fatalf("leaked status after a move test: %+v", s)
+		}
+		if p, e := enroll.PendingMoves(cfg), enroll.EndedMoves(); len(p) != 0 || len(e) != 0 {
+			t.Fatalf("leaked moves after a move test: pending %v ended %v", p, e)
+		}
+	}
 }
 
 func postMove(mux *http.ServeMux, user *auth.User, form string) *httptest.ResponseRecorder {
