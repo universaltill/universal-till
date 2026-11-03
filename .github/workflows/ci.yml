@@ -471,9 +471,10 @@ jobs:
           GOOS: windows
         run: |
           go vet ./internal/procjob/ ./internal/db/ ./internal/lantls/ ./cmd/unitill-desktop/
-          # The macOS hardware-UUID read (ut-docs#4450) is pure Go too;
-          # nothing else compiles darwin-tagged code before a release.
-          GOOS=darwin go vet ./internal/lantls/
+          # The macOS hardware-UUID read (ut-docs#4450) is pure Go too. Every
+          # PR cross-vets the darwin-compiled packages here; desktop-darwin.yml
+          # (path-scoped) also runs their tests on macOS (ut-docs#5279).
+          GOOS=darwin go vet ./internal/lantls/ ./internal/selfupdate/ ./internal/db/ ./internal/diskspace/
       - name: Windows exe carries the app icon + VERSIONINFO (ut-docs#2786)
         # The release's goreleaser pre-build hook, end to end: winres.sh
         # writes the .syso, a cross-compiled unitill-pos.exe links it, and
