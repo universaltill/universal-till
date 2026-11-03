@@ -79,6 +79,16 @@ export default defineConfig({
       reuseExistingServer: false,
       env: DOCS_SHOTS_ENV,
     },
+    // ut-docs#5127: the `claim` topic's move approval page needs a move
+    // waiting for approval, which also puts a banner on every other page —
+    // so it gets its own till, fed by a fake cloud sync (run-till-move.sh).
+    {
+      command: 'bash ./run-till-move.sh',
+      url: 'http://127.0.0.1:8093/healthz',
+      timeout: 120_000,
+      reuseExistingServer: false,
+      env: DOCS_SHOTS_ENV,
+    },
   ],
   projects: [
     {
