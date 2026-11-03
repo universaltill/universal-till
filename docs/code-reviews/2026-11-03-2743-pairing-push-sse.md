@@ -111,3 +111,10 @@ core-neutral. Full `go test ./...` result: see the PR.
 
 Safe to merge once CI is green. R5 (coalescing expiry timers into one) is an
 optional follow-up and is not filed.
+
+## Found by CI after the review (fixed on this branch)
+
+| # | Sev | Where | Scenario | Status |
+|---|-----|-------|----------|--------|
+| C1 | **major** | `web/public/pairing-stream.js` | Failing test: e2e `session-display-board-idle-2935`. An idle manager session on `/orders` is narrowed to board-only requests, and any other request revokes it. The pairing-notice poll is a shell request a board-only session may make, and it still rendered the stream marker. The stream request, and the heartbeat `SessionCheck`, then revoked the session, so the board dropped to /login. | **Fixed**: the script never opens on a display-board page (`/orders`, `/kitchen-display/<id>`). This mirrors `auth.displayBoardPage` and is pinned in `TestPairingStreamJS_SingleSourceNoUserText`, which was seen red first. |
+| C2 | major (harness) | e2e harnesses | The open stream kept Playwright's `networkidle` from ever resolving, which timed out the locale audit. A first fix used `page.route` with a 204, but that turned off the HTTP cache: persistent-shell refetched assets and the zoom/snapshot timings broke. | **Fixed**: `stubPairingStream()` in `e2e/tests/fixtures.ts` replaces the pairing EventSource with an inert, CLOSED object through `addInitScript`. The page fixture applies it, and so do the two specs that build their own context. docs-shots and the locale audit keep their 204 route, as they already do for `/api/orders/stream`. Locally, the 5 failing specs now pass (31 tests). |

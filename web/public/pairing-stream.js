@@ -38,9 +38,20 @@
     if (window.htmx) window.htmx.trigger(document.body, 'tills-changed');
   }
 
+  /* A display board (/orders, /kitchen-display/<id>) stays up on an idle
+     manager session that auth narrows to board-only requests. Any other
+     request, this stream included, would revoke that session, so the board
+     never opens the stream. Mirrors auth.displayBoardPage. */
+  function displayBoardPage() {
+    var p = window.location.pathname;
+    if (p === '/orders') return true;
+    var rest = p.indexOf('/kitchen-display/') === 0 ? p.slice('/kitchen-display/'.length) : '';
+    return rest !== '' && rest.indexOf('/') === -1;
+  }
+
   function sync() {
     var marker = document.querySelector('[data-pairing-stream]');
-    var want = !!marker && !!window.EventSource &&
+    var want = !!marker && !!window.EventSource && !displayBoardPage() &&
       document.visibilityState === 'visible';
     if (want && !es && Date.now() >= retryAt) {
       es = new EventSource(marker.getAttribute('data-pairing-stream'));
