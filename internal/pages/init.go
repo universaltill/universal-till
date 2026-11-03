@@ -28,6 +28,7 @@ import (
 	"github.com/universaltill/universal-till/internal/netreach"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pairingpush"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
@@ -366,6 +367,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
+		// Pairing-queue push (ut-docs#2743): payload-free nudge, capped streams.
+		PairingPush: pairingpush.New(pairingStreamCap),
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
@@ -647,9 +650,11 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		defer wg.Done()
 		<-bgCtx.Done()
 		dp.OrderStatus.Close()
+		dp.PairingPush.Close() // ut-docs#2743: same release for the pairing-queue streams
 	}()
-	dropStaleFiscalSignRetryQueue(bgCtx, dp) // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
-	registerInvoices(mux, dp)                // VAT invoices + credit notes (G31)
+	schedulePendingPairingExpiryNudges(bgCtx, dp) // ut-docs#2743: re-arm expiry nudges for requests already pending across a restart
+	dropStaleFiscalSignRetryQueue(bgCtx, dp)      // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
+	registerInvoices(mux, dp)                     // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerOpenOrders(mux, dp)      // Open orders list page: every parked (held) order (ut-docs#1918)
 	registerOpenOrdersBadge(mux, dp) // sale screen Open orders count badge (ut-docs#2702)
