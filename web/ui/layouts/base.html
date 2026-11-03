@@ -593,6 +593,11 @@
             var top = scrimSet[scrimSet.length - 1];
             if (!top || top.tagName !== 'DIALOG' || !top.hasAttribute('data-ut-escape-close')) return;
             e.preventDefault();
+            // ut-docs#5288: a prompt whose own request is in flight can't be
+            // cancelled -- the action may already be done and its answer
+            // must still show. htmx marks the requesting form .htmx-request
+            // until the request ends, then Escape works again.
+            if (top.querySelector('form.htmx-request')) return;
             var cancel = new Event('cancel', { cancelable: true });
             if (top.dispatchEvent(cancel)) top.close();
           } catch (err) { /* escape only */ }

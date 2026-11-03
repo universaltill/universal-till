@@ -110,4 +110,44 @@ test.describe.serial('pair confirm Escape / Cancel (ut-docs#5275)', () => {
       assertClean();
     });
   }
+
+  // ut-docs#5288: the confirmed pair POST is not idempotent (it clears the
+  // till's identity), so while it is in flight Cancel/Escape are inert and the
+  // answer still shows. The held request is fulfilled by the test, never sent
+  // to the till: the identity is not wiped.
+  test('Escape and Cancel while the confirmed pair request is in flight do nothing (ut-docs#5288)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    let posts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let held!: () => void;
+    const inFlight = new Promise<void>((r) => { held = r; });
+    await page.route('**/api/enrol/pair', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts++;
+      if (posts === 1) return route.continue();
+      held();
+      await gate;
+      return route.fulfill({ status: 200, contentType: 'text/html', body: '<span id="pair-answer-5288">Answer 5288</span>' });
+    });
+    await page.goto('/settings#registration');
+    const code = page.locator('#pair-code');
+    await code.fill('K7QX-M2RP');
+    await code.press('Enter');
+    const dlg = page.locator('#confirm-modal');
+    await expect(dlg).toHaveJSProperty('open', true);
+    const cancel = dlg.locator('[data-action="close-closest"]');
+    await dlg.locator('button[type=submit]').click();
+    await inFlight;
+    await expect(cancel).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await cancel.click({ force: true });
+    await expect(dlg).toHaveJSProperty('open', true);
+    await expect(page.locator('#pair-msg .elevation-hint')).toHaveCount(1);
+    expect(posts).toBe(2);
+    release();
+    await expect(page.locator('#pair-answer-5288')).toHaveText('Answer 5288');
+    await expect(dlg).toHaveJSProperty('open', false);
+    assertClean();
+  });
 });

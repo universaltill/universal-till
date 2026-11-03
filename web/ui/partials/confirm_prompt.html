@@ -30,10 +30,17 @@
      returns focus to the opener and removes this prompt's own hint on
      Cancel/Escape. All logic lives there (CSP, ut-docs#2913), not in the
      script below. */}}
+{{/* ut-docs#5288: hx-disabled-elt also greys Cancel (every button in this dialog but the PIN
+     pad's OSK toggle) while THIS form's request is in flight, and base.html's
+     Escape / inline-actions.js closeDialog ignore a close while the form has
+     .htmx-request. Closing mid-request would leave the (non-idempotent)
+     action done with no answer shown, and a late re-prompt could re-open the
+     dialog. Never an abort: htmx:abort is client-side only. htmx re-enables
+     the buttons when the request ends, answer or failure. */}}
 <span class="elevation-hint muted">{{ .Title }}</span>
 <dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true" data-ut-focus-trap data-ut-escape-close data-ut-prompt>
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
-        hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
+        hx-sync="this:drop" hx-disabled-elt="#confirm-modal button:not([data-osk-toggle])"
         data-after-request="elevation-done">
     <h3>{{ .Title }}{{ with .HelpTopic }} {{ helpLink . }}{{ end }}</h3>
     <p>{{ .Body }}</p>

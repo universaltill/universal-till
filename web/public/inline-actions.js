@@ -139,7 +139,10 @@
   // Same-origin path only ("/refund/42"), never "//host" or "javascript:".
   function safePath(p) { return typeof p === 'string' && /^\/(?![\/\\])/.test(p) ? p : null; }
   function showDialog(d) { if (d && !d.open) d.show(); }
-  function closeDialog(d) { if (d && d.open) d.close(); }
+  // ut-docs#5288: not while the dialog's own form has a request in flight
+  // (.htmx-request): its answer must still show. The terminal after-request
+  // hook runs after htmx has cleared that class on the form it closes.
+  function closeDialog(d) { if (d && d.open && !(d.querySelector && d.querySelector('form.htmx-request'))) d.close(); }
   function toMinor(v) { return window.utCurrency ? window.utCurrency.toMinor(v) : v; }
   function scanFocusLater() {
     setTimeout(function () {

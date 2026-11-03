@@ -224,7 +224,8 @@ func TestEnrolPair_PromptFormDropsDuplicateSubmits(t *testing.T) {
 	pairDeps(t, d)
 	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &cashUser)
 	assertElevationPrompt(t, "/api/enrol/pair", rec.Code, rec.Body.String())
-	for _, want := range []string{`hx-sync="this:drop"`, `hx-disabled-elt="find button[type=submit]"`} {
+	// ut-docs#5288: the guard now greys Cancel as well as the submit.
+	for _, want := range []string{`hx-sync="this:drop"`, `hx-disabled-elt="#elevation-modal button:not([data-osk-toggle])"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("elevation prompt lacks %q: %s", want, rec.Body.String())
 		}
