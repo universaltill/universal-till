@@ -311,6 +311,13 @@ func TestPairingStreamJS_SingleSourceNoUserText(t *testing.T) {
 	if !strings.Contains(js, "Date.now() >= retryAt") || !strings.Contains(js, "retryAt = Date.now() + RETRY_MS") {
 		t.Fatal("pairing-stream.js must back off after a refused stream (F1)")
 	}
+	// CI e2e (session-display-board-idle-2935): a display board's session is
+	// narrowed to board-only requests once idle, and any other request, the
+	// stream included, revokes it. So the stream never opens on a board page.
+	// Keep in step with auth.displayBoardPage.
+	if !strings.Contains(js, "p === '/orders'") || !strings.Contains(js, "'/kitchen-display/'") || !strings.Contains(js, "!displayBoardPage()") {
+		t.Fatal("pairing-stream.js must not open on a display-board page (/orders, /kitchen-display/<id>)")
+	}
 	if strings.Count(js, "new EventSource") != 1 {
 		t.Fatal("exactly one EventSource construction expected (one stream per page)")
 	}
