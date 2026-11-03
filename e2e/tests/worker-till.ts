@@ -183,6 +183,13 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
     // by design (watchConsole would fail every spec); only the `csp`
     // project's till (run-till-csp.sh) turns it on, never an inherited env.
     UT_CSP_REPORT_ONLY: '0',
+    // ut-docs#4629: default-project tills only (webServer tills inherit
+    // process.env, so a job-level UT_TEST_I18N_OVERLAY_DIR would reach every
+    // project). Absolute because the till runs with cwd = a tmp data dir.
+    // Unset: a developer's own UT_TEST_I18N_OVERLAY_DIR still flows through.
+    ...(process.env.UT_E2E_I18N_OVERLAY_DIR
+      ? { UT_TEST_I18N_OVERLAY_DIR: path.resolve(process.env.UT_E2E_I18N_OVERLAY_DIR) }
+      : {}),
   };
   const goOpts: ExecFileSyncOptions = { cwd: REPO_ROOT, env, stdio: ['ignore', 'ignore', 'inherit'] };
 

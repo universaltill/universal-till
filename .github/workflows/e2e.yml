@@ -3,16 +3,46 @@ name: UI E2E
 # Real-browser Playwright suite: boots a throwaway till and drives Chromium
 # through the operator flows (sale, settings/OSK, RTL, page smokes). Catches
 # the JS/htmx layer Go tests can't see.
+#
+# ut-docs#4629: German is a language-pack plugin, not a core locale, so a
+# till without the pack renders `?lang=de` in English and the long-locale
+# layout specs (portrait-no-clip-sweep-3060, settings-tablet-portrait-4628)
+# would only ever test English. This job therefore checks out
+# ut-plugin-language-de (public repo, `ref: main` so the suite sees what a
+# shop installing the pack gets today -- same choice as
+# locale-render-audit.yml) and passes its locales dir to the default
+# project's worker tills via UT_E2E_I18N_OVERLAY_DIR (read only by
+# e2e/tests/worker-till.ts, which maps it to the till's
+# UT_TEST_I18N_OVERLAY_DIR). It is deliberately NOT a job-level
+# UT_TEST_I18N_OVERLAY_DIR: webServer tills inherit process.env, so that
+# would reach every project (auth, layout, diagnostics, ...). With the var
+# set the two specs ASSERT real German rendered. If pack main ever breaks
+# this run, pin `ref:` to the last good v1.1.x tag and file a card; never
+# continue-on-error. Least privilege: contents read, no persisted credentials.
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   playwright:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Checkout ut-plugin-language-de
+        uses: actions/checkout@v7
+        with:
+          repository: universaltill/ut-plugin-language-de
+          ref: main
+          path: ut-plugin-language-de
+          persist-credentials: false
+      - name: Require the German pack locales
+        run: test -f ut-plugin-language-de/locales/de.json
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -39,6 +69,7 @@ jobs:
         run: npx playwright test
         env:
           CI: "1"
+          UT_E2E_I18N_OVERLAY_DIR: ${{ github.workspace }}/ut-plugin-language-de/locales
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
