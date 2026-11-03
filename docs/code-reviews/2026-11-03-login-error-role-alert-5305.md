@@ -43,6 +43,16 @@ Tester note 2 (per-call regexp) is N1.
   - Geometry and colour are identical before and after, and the screenshots show no visible difference.
 - Repo rules: no i18n keys, CSS, `showModal` or offline-path change. Nothing user-visible changes for sighted users.
 
+## CI follow-ups on the PR
+
+- **docs-shots surface hash.** The `web/ui` edits changed the surface hash. The Tester's before/after screenshots are identical, so I refreshed the hash with `scripts/ci/update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`) and did not regenerate the screenshots.
+- **pages-shuffle seed 1791386291628608919 went red.** `TestSettingsEndpoints_RoleMatrix/enrol-pair/cashier_denied` got the "set by whoever installed it" refusal.
+  - The two new tests shifted the shuffle order, so `TestEnrolPair_PinnedRefusalComesBeforeConfirm` now ran just before it.
+  - Root cause: that test calls `t.Setenv("UT_MARKETPLACE_STORE_ID")` and then `pairDeps`, which registers an `enroll.Init` reset. Cleanups run last-in, first-out, so the reset ran while the variable was still set and re-pinned enroll's process-wide `storeIDExplicit` for the next test.
+  - Fix: a new helper, `setenvPinnedStore`, registers the reset before `t.Setenv`, so it runs after the env is restored.
+  - An independent Sonnet review of this fix confirmed the cause. It found the same ordering bug in `TestEnrolPair_PinnedIdentityHasOwnMessage`, which now uses the helper too.
+  - Regression test: `TestEnrolPair_PinnedRefusalLeavesNoPin` runs both tests as subtests and asserts after each that `PairPrecheck` no longer reports `ErrPairIdentityPinned`. It fails without the helper's reset and passes with it, both verified locally. The failing seed was re-run locally on the branch.
+
 Pre-flight:
 - `web/help/` and `make docs-shots`: n/a. This is screen-reader semantics only; nothing visible changes, and the screenshots were confirmed identical.
 - `reference/` page: n/a. Optionally, `reference/ux-guidelines.md` could get one line: "conditional error banners carry `role="alert"`; enforced by `TestLoginErrorBannersAnnounce_5305`".
