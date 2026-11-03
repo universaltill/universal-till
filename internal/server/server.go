@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
+	"github.com/universaltill/universal-till/internal/httpserver"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -219,9 +220,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		}()
 	}
 
-	srv := &http.Server{
-		Handler: handler,
-	}
+	srv := httpserver.New(handler)
 
 	// Bind the configured port, or the next free one if it's already taken (a
 	// second till on the same machine, or another app on :8080) so a busy port

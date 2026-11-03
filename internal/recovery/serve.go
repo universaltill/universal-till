@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpserver"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/languard"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -102,7 +103,7 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 	if err != nil {
 		return Shutdown, fmt.Errorf("recovery mode: listen on %s: %w", cfg.ListenAddr, err)
 	}
-	srv := &http.Server{Handler: newHandler(cfg, failure, safeModeUsable, safeModeSQL, retry)}
+	srv := httpserver.New(newHandler(cfg, failure, safeModeUsable, safeModeSQL, retry))
 
 	serveErr := make(chan error, 1)
 	go func() {

@@ -1,0 +1,122 @@
+package httpserver
+
+import (
+	"bufio"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestNewPinsTimeouts(t *testing.T) {
+	h := http.NewServeMux()
+	s := New(h)
+	if s.Handler != h {
+		t.Fatal("handler not preserved")
+	}
+	if s.ReadHeaderTimeout != ReadHeaderTimeout || s.IdleTimeout != IdleTimeout {
+		t.Fatalf("got hdr=%v idle=%v", s.ReadHeaderTimeout, s.IdleTimeout)
+	}
+	if ReadHeaderTimeout <= 0 || ReadHeaderTimeout > 30*time.Second {
+		t.Fatalf("ReadHeaderTimeout %v out of bounds", ReadHeaderTimeout)
+	}
+	// Must outlast http.DefaultTransport's 90s idle reuse window.
+	if IdleTimeout <= 90*time.Second {
+		t.Fatalf("IdleTimeout %v must exceed 90s", IdleTimeout)
+	}
+	if s.ReadTimeout != 0 || s.WriteTimeout != 0 {
+		t.Fatal("Read/WriteTimeout must stay zero (SSE, long-poll, uploads)")
+	}
+}
+
+// Both till servers must be built via New, not a bare literal (#5337).
+func TestRealServersUseNew(t *testing.T) {
+	for _, p := range []string{"../server/server.go", "../recovery/serve.go"} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "&http.Server{") {
+			t.Errorf("%s builds a bare &http.Server{; use httpserver.New", p)
+		}
+		if !strings.Contains(string(b), "httpserver.New(") {
+			t.Errorf("%s does not call httpserver.New", p)
+		}
+	}
+}
+
+func start(t *testing.T, h http.Handler, hdr, idle time.Duration) string {
+	t.Helper()
+	s := newWith(h, hdr, idle)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = s.Serve(ln) }()
+	t.Cleanup(func() { _ = s.Close() })
+	return ln.Addr().String()
+}
+
+func closedWithin(c net.Conn, d time.Duration) bool {
+	_ = c.SetReadDeadline(time.Now().Add(d))
+	_, err := io.ReadAll(c)
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return false
+	}
+	return true
+}
+
+func TestStalledHeaderClosed(t *testing.T) {
+	addr := start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), 150*time.Millisecond, time.Minute)
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_, _ = c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n"))
+	if !closedWithin(c, 2*time.Second) {
+		t.Fatal("stalled-header conn was not closed")
+	}
+}
+
+func TestIdleKeepAliveClosedButServed(t *testing.T) {
+	addr := start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) }), time.Second, 200*time.Millisecond)
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_, _ = c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("resp=%v err=%v", resp, err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if !closedWithin(c, 2*time.Second) {
+		t.Fatal("idle keep-alive conn was not closed")
+	}
+}
+
+func TestStreamingHandlerOutlivesTimeouts(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f := w.(http.Flusher)
+		_, _ = w.Write([]byte("a"))
+		f.Flush()
+		time.Sleep(600 * time.Millisecond) // > both timeouts
+		_, _ = w.Write([]byte("b"))
+		f.Flush()
+	})
+	addr := start(t, h, 150*time.Millisecond, 150*time.Millisecond)
+	resp, err := http.Get("http://" + addr + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil || string(b) != "ab" {
+		t.Fatalf("body=%q err=%v", b, err)
+	}
+}
