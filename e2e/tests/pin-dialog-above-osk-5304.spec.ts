@@ -112,7 +112,8 @@ test.describe('PIN dialog stays above the OSK at 1024x600 (ut-docs#5304)', () =>
     await dlg.locator('[data-action="close-closest"]').tap(); // real tap, no force
     await expect(dlg).toHaveJSProperty('open', false);
     // The dialog's 'close' event (which runs onCancel) is dispatched as a
-    // queued task after close(), so `open` turns false first: poll, don't
+    // queued task after close() (Chromium: at the next rendering update, after
+    // a setTimeout(0)), so `open` turns false first: poll, don't
     // read once (it lost that race on main, ut-docs#5309 follow-up).
     await expect.poll(() => page.evaluate(() => (window as any).__c)).toBe(1);
   });
