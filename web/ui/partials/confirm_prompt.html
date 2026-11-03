@@ -25,8 +25,13 @@
      elevation prompt or another confirm) replaced this dialog by OOB swap
      already; anything else is terminal — close the dialog so the answer
      swapped into HxTarget is visible. */}}
+{{/* ut-docs#5275: data-ut-escape-close = Escape is Cancel (base.html's
+     handler; no request). data-ut-prompt = web/public/inline-actions.js
+     returns focus to the opener and removes this prompt's own hint on
+     Cancel/Escape. All logic lives there (CSP, ut-docs#2913), not in the
+     script below. */}}
 <span class="elevation-hint muted">{{ .Title }}</span>
-<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true" data-ut-focus-trap>
+<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true" data-ut-focus-trap data-ut-escape-close data-ut-prompt>
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
         hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
         data-after-request="elevation-done">

@@ -639,7 +639,7 @@ func TestEnrolPair_RegisteredTillAsksToConfirmFirst(t *testing.T) {
 
 	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &mgrUser)
 	body := assertConfirmPrompt(t, rec)
-	for _, want := range []string{"Corner Shop", pairPageCode, `name="confirm_replace" value="1"`, `name="code"`, `hx-target="#pair-msg"`, "Replace and pair"} {
+	for _, want := range []string{"Corner Shop", pairPageCode, `name="confirm_replace" value="1"`, `name="code"`, `hx-target="#pair-msg"`, "data-ut-escape-close", "data-ut-prompt", `<span class="elevation-hint`, "Replace and pair"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("confirm prompt lacks %q: %s", want, body)
 		}

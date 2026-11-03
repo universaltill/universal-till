@@ -2788,6 +2788,10 @@ utSellCamera(function(){
   // retired sheet offered by keyboard (Move earlier/later) is still there.
   document.addEventListener('keydown', function (e) {
     if (!active) return;
+    // ut-docs#5275: a confirm / PIN prompt (dialog[data-ut-prompt]) raised
+    // by an edit-mode action owns the keyboard: Escape cancels the prompt
+    // (base.html), never edit mode underneath it.
+    if (document.querySelector('dialog[data-ut-prompt][open]')) return;
     // ut-docs#2465: inside the Move to category dialog, Escape closes the
     // dialog (focus back on the badge), never edit mode; Tab stays in it.
     if (moveDialog() && moveDialog().open && e.target.closest && e.target.closest('#tile-move-dialog')) {
