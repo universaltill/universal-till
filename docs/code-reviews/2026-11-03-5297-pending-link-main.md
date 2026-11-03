@@ -64,6 +64,10 @@ The joining-till side is ut-docs#5330.
   - the data-access, netaccess, kiosk-engine and core-neutral guards.
   - The full `internal/pages` suite under -race runs in CI.
 
+- **CI found 2 more problems, both fixed:**
+  - `TestNoUnrecoveredGoroutines` (ut-docs#3304): the pending writer goroutine lacked `logging.RecoverAndLog`. It now has it, and the test passes locally.
+  - The docs-shots surface hash was stale. It was refreshed with `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`), since only JSON/WebSocket handlers changed and no rendered page did.
+
 Pre-flight:
 - `web/help/` n/a: nothing visible changes in B1; the help sentence ships with ut-docs#5330.
 - `reference/`: the ADR-0114 amendment and `architecture/lan-sync.md` are in ut-docs#5336.

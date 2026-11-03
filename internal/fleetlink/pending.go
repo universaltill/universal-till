@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // The joining till's pending link, main-till side (ADR-0114 §2 and its
@@ -127,7 +129,10 @@ func (h *PendingHub) ServeConn(id string, conn Conn, expiresAt time.Time, rechec
 	if old != nil {
 		old.stopWith(CloseReplaced, "replaced by a newer link", "")
 	}
-	go l.writeLoop()
+	go func() {
+		defer logging.RecoverAndLog("fleetlink.pendingWriteLoop")
+		l.writeLoop()
+	}()
 	// Unregister in a defer so a panic in recheck or readLoop cannot leak
 	// the id's slot. Registered after wg.Done, so it runs before it.
 	defer func() {
