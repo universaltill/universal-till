@@ -160,3 +160,29 @@ SELECT value FROM settings WHERE key = 'sync.receipt_prefix' AND value != ''`)
 	}
 	return out, nil
 }
+
+// ReplacementMainTillPrefix is the receipt prefix (and so the invoice series)
+// of a main till that replaced another one (ut-docs#5058 T4). The original
+// main till has no prefix, so a replacement on prefix "" would repeat every
+// receipt and invoice number of the till it replaced. The prefix is derived
+// from the new till's device id: M<4 hex>-, or M<8 hex>- when that equals
+// the replaced till's own derived prefix (it was itself a replacement). The
+// leading M cannot match T<n>- (tillPrefixRe) nor the provisional R<4 hex>-
+// of a restored copy, and is never empty.
+func ReplacementMainTillPrefix(newDeviceID, oldDeviceID string) string {
+	hexOf := func(id string) string {
+		h := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(id, "till-"), "-", ""))
+		var b strings.Builder
+		for _, r := range h {
+			if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+				b.WriteRune(r)
+			}
+		}
+		return (b.String() + "00000000")[:8]
+	}
+	n, o := hexOf(newDeviceID), hexOf(oldDeviceID)
+	if oldDeviceID != "" && n[:4] == o[:4] {
+		return "M" + n + "-"
+	}
+	return "M" + n[:4] + "-"
+}

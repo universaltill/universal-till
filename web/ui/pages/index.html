@@ -265,6 +265,25 @@
   </div>
   {{ end }}
 
+  {{/* ut-docs#5058 UT-3: the Next steps card after a cloud setup. `with`, not
+       `if .nextSteps.X`: internal/ui.NewRenderer renders this content without
+       the key. Not .pos-notice (app.js fades those out after 2.5 s) and not a
+       dialog: nothing takes focus, it stays until a manager closes it. */}}
+  {{ with .nextSteps }}
+  <section id="next-steps-card" class="next-steps-card" data-testid="next-steps-card" role="region" aria-labelledby="next-steps-title">
+    <div class="next-steps-head">
+      <h2 id="next-steps-title">{{ T "setup.next_steps.title" }}</h2>
+      <button type="button" class="notice-dismiss" data-testid="next-steps-dismiss" hx-post="/ui/next-steps/dismiss" hx-target="#next-steps-card" hx-swap="outerHTML" aria-label="{{ T "setup.next_steps.dismiss" }}">✕</button>
+    </div>
+    <ul class="next-steps-list">
+      <li><a href="/users">{{ T "setup.next_steps.pins" }}</a></li>
+      <li><a href="/settings#settings-payments">{{ T "setup.next_steps.devices" }}</a></li>
+      <li><a href="/inventory">{{ T "setup.next_steps.stock" }}</a></li>
+      {{ if .TillMaster }}<li><a href="/import">{{ T "setup.next_steps.no_catalog" }}</a></li>{{ end }}
+    </ul>
+  </section>
+  {{ end }}
+
   {{/* ut-docs#2308: `or` (the same idiom .currency uses just above) supplies a
        float64 0 when basketPanelWidthRem is absent from the data map entirely.
        A bare `gt .basketPanelWidthRem 0.0` is a HARD render error ("invalid

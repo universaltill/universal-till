@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"testing"
 )
@@ -229,5 +230,44 @@ func TestEnrolTill_ProvisionalRestorePrefixGetsANewTillNo(t *testing.T) {
 			t.Fatalf("requested %q = %d, %v; want a fresh T<n>- (n >= 3)", p, n, err)
 		}
 		_ = id
+	}
+}
+
+// ut-docs#5058 T4: a replacement main till must not reuse the dead till's
+// receipt (and invoice) numbers.
+func TestReplacementMainTillPrefix_NeverEqualsTheReplacedTill(t *testing.T) {
+	shape := regexp.MustCompile(`^M[0-9a-f]{4}([0-9a-f]{4})?-$`)
+	restored := regexp.MustCompile(`^R[0-9a-f]{4}-$`)
+	for _, tc := range []struct{ newID, oldID string }{
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-aaaaaaaa-0000-4000-8000-000000000001"},
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a0000-1111-4000-8000-000000000002"}, // same first 4 hex
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a9c1e-0000-4000-8000-000000000002"}, // same first 8 hex
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "main-till"},                                 // legacy / non-uuid old id
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", ""},
+	} {
+		got := ReplacementMainTillPrefix(tc.newID, tc.oldID)
+		if !shape.MatchString(got) {
+			t.Errorf("(%q,%q) = %q, want M<4or8 hex>-", tc.newID, tc.oldID, got)
+		}
+		if got == "" || restored.MatchString(got) || tillNoOf(got) != 0 {
+			t.Errorf("(%q,%q) = %q collides with the main/restored/T<n> prefixes", tc.newID, tc.oldID, got)
+		}
+		// The old till's own prefix, if it was itself a replacement.
+		if got == ReplacementMainTillPrefix(tc.oldID, "") {
+			t.Errorf("(%q,%q) = %q equals the old till's own prefix", tc.newID, tc.oldID, got)
+		}
+		if again := ReplacementMainTillPrefix(tc.newID, tc.oldID); again != got {
+			t.Errorf("not deterministic: %q vs %q", got, again)
+		}
+	}
+}
+
+// Documents the collision T4 fixes: a fresh install has no sync.* rows, so
+// its first receipt is the same 000000001 a replaced original main till had.
+func TestNextReceiptNo_FreshInstallHasNoPrefix(t *testing.T) {
+	d := openMigratedDB(t, "fresh-receipt.db")
+	got, err := NewPOSRepo(d.DB).NextReceiptNo(context.Background(), nil)
+	if err != nil || got != "000000001" {
+		t.Fatalf("NextReceiptNo = %q, %v; want 000000001", got, err)
 	}
 }

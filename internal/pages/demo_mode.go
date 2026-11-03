@@ -644,6 +644,9 @@ var demoAllowedRoutes = map[string]bool{
 	// ut-docs#3091: dismiss the after-update "what's new" chip (a per-till
 	// seen marker, nothing reaches the network).
 	"POST /api/release-notes/seen": true,
+	// ut-docs#5058 UT-3: close the "Next steps" card (a per-till marker; the
+	// card only follows a cloud setup, which a demo instance never has).
+	"POST /ui/next-steps/dismiss": true,
 	// ut-docs#3710: the visitor finished or skipped the sale-screen tour
 	// (their own tour.done.<user> key on their own instance).
 	"POST /api/tour/done":                 true,
