@@ -735,3 +735,101 @@ export async function expectGermanIfPackLoaded(page: Page): Promise<void> {
     expect(german, 'German pack configured (UT_E2E_I18N_OVERLAY_DIR) but ?lang=de rendered English').toBe(true);
   }
 }
+
+// ut-docs#5309/#5334: the non-modal dialogs that sit above the OSK.
+export type Dlg = { id: string; open: (page: Page) => Promise<void>; field: string };
+
+export const DIALOGS: Dlg[] = [
+  {
+    id: 'hold-modal',
+    field: '#hold-label-input',
+    open: async (page) => {
+      await page.request.post('/api/pos/reset');
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await page.getByRole('textbox').first().fill('5000000000012');
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+        page.locator('.scan-row button[type=submit]').click(),
+      ]);
+      await expect(page.locator('#basket')).toContainText('Coca-Cola');
+      await page.getByTestId('payment-open').click();
+      await page.getByTestId('payment-overlay-hold').click();
+      await expect(page.locator('#hold-modal')).toBeVisible();
+    },
+  },
+  {
+    id: 'pfand-modal',
+    field: '#pfand-amount',
+    open: async (page) => {
+      await page.goto('/menu');
+      await page.waitForSelector('.menu-grid');
+      await page.locator('[data-testid="menu-pfand-open"]').click();
+      await expect(page.locator('#pfand-modal')).toBeVisible();
+    },
+  },
+  {
+    id: 'table-add-modal',
+    field: '#table-add-label',
+    open: async (page) => {
+      await deactivateAllTables(page);
+      await createTable(page, 'E2E 5309');
+      await page.goto('/tables');
+      await page.locator('#tables-edit-toggle').click();
+      const bg = page.locator('.floorplan-bg');
+      const box = await bg.boundingBox();
+      await bg.click({ position: { x: box!.width * 0.15, y: box!.height * 0.2 } });
+      await expect(page.locator('#table-add-modal')).toHaveAttribute('open', '');
+    },
+  },
+  {
+    // The auth-off till never raises a real elevation prompt (that needs the
+    // auth project, see pin-dialog-above-osk-5304.spec.ts), so mount a copy of
+    // the elevation_prompt.html dialog body (same classes/fields/actions) into
+    // the base.html #elevation-modal placeholder and .show() it like app.js does.
+    id: 'elevation-modal',
+    field: '#elevation-modal input[name="override_pin"]',
+    open: async (page) => {
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await page.evaluate(() => {
+        const dlg = document.getElementById('elevation-modal') as HTMLDialogElement;
+        dlg.className = 'modifier-modal elevation-dialog';
+        dlg.innerHTML = '<form><h3>Manager PIN</h3><p class="muted">Enter a manager PIN to continue.</p>'
+          + '<label>PIN <input type="password" name="override_pin" inputmode="numeric" maxlength="8"></label>'
+          + '<div class="modifier-actions"><button type="button" class="btn secondary">Cancel</button>'
+          + '<button type="submit" class="btn">Confirm</button></div></form>';
+        dlg.show();
+      });
+      await expect(page.locator('#elevation-modal')).toHaveJSProperty('open', true);
+    },
+  },
+];
+
+export async function openOsk(page: Page, d: Dlg) {
+  await page.locator(d.field).tap();
+  await expect(page.locator('#osk.osk-open')).toBeVisible();
+  await expect(page.locator('body')).toHaveClass(/osk-padded/);
+}
+
+
+// ut-docs#5334: the field's rect must not intersect the sticky .modifier-actions
+// row, must sit inside the dialog and above the OSK (when open).
+export type Clearance = { ok: boolean; why?: string; f?: number[]; a?: number[]; dlg?: number[]; oskTop?: number };
+export function rectsClear(id: string, fieldSel: string | null, el?: Element): Clearance {
+  const dlg = document.getElementById(id)!;
+  const f = (el ?? dlg.querySelector(fieldSel!)!).getBoundingClientRect();
+  const a = dlg.querySelector('.modifier-actions')!.getBoundingClientRect();
+  const d = dlg.getBoundingClientRect();
+  const osk = document.getElementById('osk');
+  const oskTop = osk && osk.getBoundingClientRect().height > 0 ? osk.getBoundingClientRect().top : Infinity;
+  const why: string[] = [];
+  if (!(a.top >= f.bottom || a.bottom <= f.top)) why.push('field intersects action row');
+  if (!(f.top >= d.top)) why.push('field above dialog top');
+  if (!(f.bottom <= oskTop)) why.push('field under OSK');
+  return { ok: why.length === 0, why: why.join('; ') || undefined, f: [f.top, f.bottom], a: [a.top, a.bottom], dlg: [d.top, d.bottom], oskTop } as Clearance;
+}
+export async function actionsClearance(page: Page, id: string, fieldSel: string) {
+  const r = await page.evaluate(({ id, fieldSel, fn }) => (new Function('return ' + fn)())(id, fieldSel), { id, fieldSel, fn: rectsClear.toString() });
+  return r.ok ? { ok: true } : r;
+}
