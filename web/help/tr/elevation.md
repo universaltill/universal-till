@@ -28,6 +28,9 @@ reddetmez: hemen orada küçük bir PIN penceresi açar.
    olmayan birine ait bir PIN — hepsi aynı pencerede açık bir neden
    gösterir, böylece sonraki adımı bilirsiniz. PIN denetlenirken düğmeler soluk görünür, bir yükleme halkası çıkar
    ve «İptal» yanıtı bekler.
+   Bu sırada bağlantı koparsa pencere kapanır ve işlemin yapılmış olabileceğini
+   ya da yapılmamış olabileceğini belirten bir ileti görünür: tekrar denemeden
+   önce kontrol edin. Sizin yerinize hiçbir şey yeniden denenmez.
 
 ## Neler kaydedilir
 

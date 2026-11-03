@@ -611,6 +611,7 @@
   "common.error.invalid_upload": "Geçersiz yükleme",
   "common.error.manager_or_admin_required": "Yönetici veya admin gerekli",
   "common.error.network": "Bağlantı sorunu. Ağınızı kontrol edip tekrar deneyin.",
+  "common.error.outcome_unknown": "Bağlantı, kasa yanıt vermeden önce koptu; bu nedenle işlem yapılmış olabilir ya da olmayabilir. Tekrar denemeden önce kontrol edin.",
   "common.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "common.loading": "Yükleniyor…",
   "common.money.invalid": "Tutarı rakamla girin; ondalık kısmından önce nokta veya virgül kullanın (örneğin 3.50 veya 3,50).",
