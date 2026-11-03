@@ -453,13 +453,13 @@ func respondUpdateApply(w http.ResponseWriter, status int, ok bool, msg string) 
 // respondUpdateApplyCurrent is respondUpdateApply's "already up to date"
 // case — see respondUpdateApply's own doc comment for why this is
 // package-level rather than a handler-local closure.
-func respondUpdateApplyCurrent(w http.ResponseWriter) {
+func respondUpdateApplyCurrent(w http.ResponseWriter, locale string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"data": map[string]any{
 			"already_current": true,
-			"message":         "already up to date (v" + buildinfo.Version + ")",
+			"message":         httpx.T(locale, "status.update_uptodate") + " (v" + buildinfo.Version + ")",
 		},
 		"error": nil,
 	})
@@ -468,13 +468,52 @@ func respondUpdateApplyCurrent(w http.ResponseWriter) {
 // respondUpdateApplyInstalled is the success answer for POST
 // /api/update/apply: it names the version being installed so the status bar
 // reloads only once exactly that version answers (ut-docs#2759).
-func respondUpdateApplyInstalled(w http.ResponseWriter, version string) {
+func respondUpdateApplyInstalled(w http.ResponseWriter, locale, version string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"data":  map[string]any{"message": "update installed — restarting", "version": version},
+		"data":  map[string]any{"message": httpx.T(locale, "status.update_restarting"), "version": version},
 		"error": nil,
 	})
+}
+
+// updateApplyErrorKey maps an apply error to the i18n key shown to the
+// operator (ut-docs#5274). It reuses followErrorCode so there is one
+// classifier; anything unrecognised — including errors from other packages —
+// gets the generic message, never its own text.
+func updateApplyErrorKey(err error) string {
+	switch followErrorCode(err) {
+	case "unsupported":
+		return "settings.update.unavailable_here"
+	case "busy":
+		return "settings.update.error.busy"
+	case "network", "release":
+		return "settings.update.check_failed"
+	case "checksum":
+		return "settings.update.error.verify_failed"
+	}
+	return "settings.update.error.failed"
+}
+
+// updateApplyAlreadyCurrent reports the race where the release moved under
+// us and selfupdate found nothing newer. Matched by text because the sentinel
+// would touch lines open PR #2285 edits; follow-up card sentinelizes it.
+func updateApplyAlreadyCurrent(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "already on the latest version")
+}
+
+// respondUpdateApplyError logs the raw error once and answers with the
+// translated message only (ut-docs#5274). 4xx logs at Info, 5xx at Error.
+func respondUpdateApplyError(w http.ResponseWriter, r *http.Request, status int, key, logTag string, err error) {
+	if err != nil {
+		if status >= http.StatusInternalServerError {
+			logging.L().Errorf("[%s] %v", logTag, err)
+		} else {
+			logging.L().Infof("[%s] %v", logTag, err)
+		}
+	}
+	locale := httpx.ResolveLocale(w, r) // before WriteHeader: may set a cookie
+	respondUpdateApply(w, status, false, httpx.T(locale, key))
 }
 
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
@@ -483,10 +522,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
-		respond := func(status int, ok bool, msg string) { respondUpdateApply(w, status, ok, msg) }
-		respondCurrent := func() { respondUpdateApplyCurrent(w) }
+		locale := httpx.ResolveLocale(w, r)
 		if !selfupdate.Supported() {
-			respond(http.StatusBadRequest, false, selfupdate.ErrUnsupported.Error())
+			respondUpdateApplyError(w, r, http.StatusBadRequest, updateApplyErrorKey(selfupdate.ErrUnsupported), "update_apply", selfupdate.ErrUnsupported)
 			return
 		}
 		// Re-check freshness before applying, don't trust the button's
@@ -504,16 +542,20 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		// state applyMacApp's helper hits redoing a swap it just did.
 		st := updates.CheckNow(r.Context())
 		if !st.Available {
-			respondCurrent()
+			respondUpdateApplyCurrent(w, locale)
 			return
 		}
 		// Apply stages the swap and schedules the re-exec; the response flushes
 		// before the process restarts.
 		if err := selfupdate.Apply(r.Context()); err != nil {
-			respond(http.StatusBadGateway, false, err.Error())
+			if updateApplyAlreadyCurrent(err) {
+				respondUpdateApplyCurrent(w, locale)
+				return
+			}
+			respondUpdateApplyError(w, r, http.StatusBadGateway, updateApplyErrorKey(err), "update_apply", err)
 			return
 		}
-		respondUpdateApplyInstalled(w, st.Latest)
+		respondUpdateApplyInstalled(w, locale, st.Latest)
 	})
 
 	// ut-docs#2759: which version is running and whether an applied update
@@ -574,11 +616,11 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
 		if pin == "" && !androidUpdateSessionAuthorizes(d, r) {
-			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			respondUpdateApplyError(w, r, http.StatusForbidden, "settings.update.android.pin_needed", "update_android_install", nil)
 			return
 		}
 		if st := androidInstallCheckNow(r.Context()); !st.Available {
-			respondUpdateApplyCurrent(w)
+			respondUpdateApplyCurrent(w, httpx.ResolveLocale(w, r))
 			return
 		}
 		if pin == "" {
@@ -615,16 +657,16 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 				// live" is not much of an audit trail (review finding 4).
 				now := time.Now().UTC().Format(time.RFC3339)
 				_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, settingsActorID(r), "update", "android", "update_authorized", map[string]any{"via": "session"}, now, "")
-				respondUpdateApply(w, http.StatusOK, true, "authorized")
+				respondUpdateApply(w, http.StatusOK, true, httpx.T(httpx.ResolveLocale(w, r), "settings.update.android.authorized"))
 				return
 			}
-			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			respondUpdateApplyError(w, r, http.StatusForbidden, "settings.update.android.pin_needed", "update_android_install", nil)
 			return
 		}
 		if d.AuthSvc == nil {
 			// Fail closed, same convention as canPerform elsewhere in this
 			// package: no auth service wired means no way to prove manager.
-			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			respondUpdateApplyError(w, r, http.StatusForbidden, "settings.update.android.pin_needed", "update_android_install", nil)
 			return
 		}
 		approver, err := d.AuthSvc.AuthorizeManager(r.Context(), pin)
@@ -633,12 +675,16 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			if errors.Is(err, auth.ErrLockedOut) {
 				status = http.StatusTooManyRequests
 			}
-			respondUpdateApply(w, status, false, "manager PIN required")
+			key := "settings.update.android.pin_needed"
+			if status == http.StatusTooManyRequests {
+				key = "auth.error.locked"
+			}
+			respondUpdateApplyError(w, r, status, key, "update_android_install", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", map[string]any{"via": "pin"}, now, "")
-		respondUpdateApply(w, http.StatusOK, true, "authorized")
+		respondUpdateApply(w, http.StatusOK, true, httpx.T(httpx.ResolveLocale(w, r), "settings.update.android.authorized"))
 	})
 
 	// ut-docs#3940: the incoming version's release notes, loaded into

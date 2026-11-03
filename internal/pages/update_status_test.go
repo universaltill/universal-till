@@ -62,7 +62,7 @@ func TestUpdateStatus_ManagerGate(t *testing.T) {
 // can wait for exactly that version to answer (ut-docs#2759 review).
 func TestUpdateApplyInstalledResponseNamesVersion(t *testing.T) {
 	rec := httptest.NewRecorder()
-	respondUpdateApplyInstalled(rec, "0.22.2")
+	respondUpdateApplyInstalled(rec, "en", "0.22.2")
 	var env struct {
 		Data struct {
 			Message string `json:"message"`

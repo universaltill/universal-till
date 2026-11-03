@@ -2134,7 +2134,21 @@
               // A failed apply never left the server mid-restart — nothing to
               // poll for, and polling anyway just leaves the failure message
               // sitting there for 3 minutes before silently going stale.
-              if (failed) { btn.disabled = false; return; }
+              if (failed) {
+                btn.disabled = false;
+                // ut-docs#5274: the server already translated the reason
+                // (never raw error text); show it in the shared, non-modal
+                // #pos-alert banner. textContent only.
+                if (typeof res.error === 'string') {
+                  var pa = document.getElementById('pos-alert');
+                  if (pa) {
+                    pa.hidden = false;
+                    var pt = pa.querySelector('.notice-text');
+                    if (pt) pt.textContent = res.error;
+                  }
+                }
+                return;
+              }
               // Archive installs re-exec in place (reconnect + reload). The mac
               // .app quits and relaunches itself, so the window just closes and
               // reopens on the new version.
