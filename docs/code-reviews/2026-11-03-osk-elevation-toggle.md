@@ -85,7 +85,7 @@ No blocking findings. No product-code bug was found.
   (see finding 1) and pass with the fix, and run `settings-osk.spec.ts` plus
   the `prompt-inflight*` and `elevation*` specs.
 
-Pre-flight: gofmt clean, `go build ./...` ok (JS + e2e only, no Go change); Tester ran 13 ci.yml guards touching web/public (i18n, showmodal, rtl, inline-handlers, osk-loaded …), all exit 0; e2e `--project=auth` 5291+5288 specs 7/7 after the finding-1 fix, `settings-osk` + `osk-central-guard` 23/23; web/help n/a (elevation topic does not describe the toggle; behaviour now matches the htmx path, no screenshot change); reference/ n/a; README n/a; en.json n/a (no new key); review record this file; follow-up: open OSK covers the PIN dialog's Cancel/Confirm row at 1024×600 (pre-existing, filed as a Backlog card).
+Pre-flight: gofmt clean, `go build ./...` ok (JS + e2e only, no Go change); Tester ran 13 ci.yml guards touching web/public (i18n, showmodal, rtl, inline-handlers, osk-loaded …), all exit 0; e2e `--project=auth` 5291+5288 specs 7/7 after the finding-1 fix, `settings-osk` + `osk-central-guard` 23/23; web/help n/a (elevation topic does not describe the toggle; behaviour now matches the htmx path, no screenshot change); reference/ n/a; README n/a; en.json n/a (no new key); review record this file; docs-shots: surface hash refreshed only (`update-docs-shots-surface-hash.sh`) — the docs harness has no touch and never forces the OSK, so `enabled` stays false and no toggle is revealed in any shot; follow-up: open OSK covers the PIN dialog's Cancel/Confirm row at 1024×600 (pre-existing, filed as a Backlog card).
 
 ## Tester (separate Opus agent)
 
