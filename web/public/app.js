@@ -1364,6 +1364,11 @@ document.addEventListener('click', function(e){
     // while display:none doesn't reliably announce to screen readers.
     alertBox.hidden = false;
     alertBox.querySelector('.notice-text').textContent = msg || '';
+    // #pos-alert sits at the top of the document: on a scrolled page the
+    // outcome message would be off-screen (ut-docs#5298). No smooth scroll.
+    if (kind === 'outcome') {
+      try { alertBox.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+    }
   }
   // htmx never swaps a non-2xx response into its target by default — it
   // fires htmx:responseError instead and discards the body. That's fine
@@ -2486,6 +2491,8 @@ utSellCamera(function(){
   function showAlert(text, kind) {
     var box = document.getElementById('pos-alert');
     if (!box) return;
+    // A generic network failure must not replace a visible outcome-unknown message.
+    if (!text && kind === 'network' && box.dataset.sticky === '1' && !box.hidden) return;
     delete box.dataset.sticky; // an explicit new message replaces the sticky one (ut-docs#5298)
     var msg = text || (kind === 'network' ? box.dataset.msgNetwork : box.dataset.msgServer);
     box.hidden = false;
@@ -2563,7 +2570,7 @@ utSellCamera(function(){
         // one it's still showing.
         refetchGrid();
         resolve();
-      }).catch(reject);
+      }).then(resolve, reject);
     }).catch(function () {
       showAlert('', 'network');
       refetchGrid();

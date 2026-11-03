@@ -119,11 +119,18 @@ test.describe('prompt in flight: Cancel and Escape are inert (ut-docs#5288)', ()
     // (not the reassuring generic network text) and keeps saying so.
     const alert = page.locator('#pos-alert');
     await expect(alert).toBeVisible();
+    // The page is scrolled to Display; the alert (top of the document) must
+    // be brought into the viewport or the operator sees nothing.
+    await expect(alert).toBeInViewport();
     await expect(alert.locator('.notice-text')).toHaveText('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
     // An unrelated successful htmx request must not self-heal it away.
     await page.evaluate(() => (window as any).htmx.ajax('GET', '/settings', { target: 'body', swap: 'none' }));
-    await page.evaluate(() => new Promise((r) => setTimeout(r, 500)));
     await expect(alert).toBeVisible();
+    await expect(alert.locator('.notice-text')).toHaveText('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
+    // A later failing GENERIC request (not a prompt) must not overwrite it.
+    await page.route('**/__generic-fail-5298', (route) => route.abort('failed'));
+    await page.evaluate(() => (window as any).htmx.ajax('GET', '/__generic-fail-5298', { target: 'body', swap: 'none' }).catch(() => {}));
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
     await expect(alert.locator('.notice-text')).toHaveText('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
     await alert.locator('.notice-dismiss').click();
     await expect(alert).toBeHidden();
