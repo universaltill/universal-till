@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -333,6 +334,45 @@ func TestPending_T7_RecheckAtRegistrationClosesTheRace(t *testing.T) {
 	}
 	h.Close()
 	waitDone(t, gdone, "close")
+}
+
+// Fix (a): the per-link expiry timer rechecks first, so an approve that landed
+// in the last second is reported, not contradicted by `expired`.
+func TestPending_ExpiryRechecksBeforeSayingExpired(t *testing.T) {
+	for name, tc := range map[string]struct{ second, want string }{
+		"approved_in_last_second": {PairingApproved, PairingApproved},
+		"still_pending":           {"", PairingExpired},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := NewPendingHub(fastConfig())
+			var calls atomic.Int32
+			f, done := pendingServe(t, h, "r1", time.Now().Add(150*time.Millisecond), func() string {
+				if calls.Add(1) == 1 {
+					return "" // registration recheck: still pending
+				}
+				return tc.second
+			})
+			if got := nextPairing(t, f); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			waitDone(t, done, "expiry")
+		})
+	}
+}
+
+// A panic in recheck (net/http would recover it) must not leak the id's slot.
+func TestPending_PanicInRecheckFreesTheSlot(t *testing.T) {
+	h := NewPendingHub(fastConfig())
+	f := newFakeConn()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { _ = recover() }()
+		h.ServeConn("r1", f, time.Now().Add(time.Hour), func() string { panic("boom") })
+	}()
+	waitDone(t, done, "panic")
+	waitLen(t, h, 0)
+	h.Close()
 }
 
 func TestPending_T8_CloseSaysByeAndWaits(t *testing.T) {

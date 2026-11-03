@@ -118,6 +118,7 @@ func (h *PendingHub) ServeConn(id string, conn Conn, expiresAt time.Time, rechec
 		return
 	}
 	l := newPendingLink(h, id, conn, expiresAt)
+	l.recheck = recheck
 	h.links[id] = l
 	h.wg.Add(2) // this handler and the writer
 	h.mu.Unlock()
@@ -127,20 +128,23 @@ func (h *PendingHub) ServeConn(id string, conn Conn, expiresAt time.Time, rechec
 		old.stopWith(CloseReplaced, "replaced by a newer link", "")
 	}
 	go l.writeLoop()
+	// Unregister in a defer so a panic in recheck or readLoop cannot leak
+	// the id's slot. Registered after wg.Done, so it runs before it.
+	defer func() {
+		l.stopWith(CloseNormal, "link ended", "")
+		<-l.done
+		h.mu.Lock()
+		if h.links[id] == l {
+			delete(h.links, id)
+		}
+		h.mu.Unlock()
+	}()
 	if recheck != nil {
 		if st := recheck(); st != "" {
 			l.setStatus(st)
 		}
 	}
 	l.readLoop()
-	l.stopWith(CloseNormal, "link ended", "")
-	<-l.done
-
-	h.mu.Lock()
-	if h.links[id] == l {
-		delete(h.links, id)
-	}
-	h.mu.Unlock()
 }
 
 // Resolve records a terminal status for id's link (the first one wins) and
@@ -179,6 +183,7 @@ type pendingLink struct {
 	id        string
 	conn      Conn
 	expiresAt time.Time
+	recheck   func() string // see ServeConn; also asked when the link expires
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -326,7 +331,15 @@ func (l *pendingLink) writeLoop() {
 			}
 		case <-expire:
 			expire = nil
-			l.setStatus(PairingExpired)
+			// An approve may land in the last second of the row's TTL:
+			// ask once more before calling it expired.
+			st := PairingExpired
+			if l.recheck != nil {
+				if cur := l.recheck(); cur != "" {
+					st = cur
+				}
+			}
+			l.setStatus(st)
 		case <-ping.C:
 			if time.Since(time.Unix(0, l.lastIn.Load())) > l.h.cfg.PeerTimeout {
 				l.conn.Close(CloseGone, "no frame within timeout")

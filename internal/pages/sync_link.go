@@ -261,21 +261,12 @@ func refusePendingLink(w http.ResponseWriter) {
 
 // servePendingLink handles GET /api/sync/link with pair-request headers and
 // no bearer (ADR-0114 amendment 2026-11-03, ut-docs#5297). The order matters:
-// replica/replaced refusals, TLS and no-query, the per-source limit (before
-// any database read), then id + secret in constant time. It logs nothing on
+// TLS and no-query (no database read), the per-source limit, then the
+// replica/replaced/no-hub refusals (the settings reads), then id + secret in
+// constant time. So an unlimited prober cannot drive settings reads, and a
+// limited one learns nothing about the till's state. It logs nothing on
 // refusal and never the URL, a header or an error that saw the URL.
 func servePendingLink(w http.ResponseWriter, r *http.Request, d *common.Deps, pairings pairingGetter, limiter *pairRateLimiter) {
-	if d.SyncPrimaryURL(r.Context()) != "" {
-		http.Error(w, "connect to the main till", http.StatusConflict)
-		return
-	}
-	if refuseIfReplaced(w, r, d) {
-		return
-	}
-	if d.PendingLinks == nil {
-		http.Error(w, "link unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	// TLS only, and no query at all: a client that put the secret in the URL
 	// fails closed whatever the parameter is called.
 	if r.TLS == nil || r.URL.RawQuery != "" {
@@ -289,6 +280,17 @@ func servePendingLink(w http.ResponseWriter, r *http.Request, d *common.Deps, pa
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "too many requests"})
 		return
 	}
+	if d.SyncPrimaryURL(r.Context()) != "" {
+		http.Error(w, "connect to the main till", http.StatusConflict)
+		return
+	}
+	if refuseIfReplaced(w, r, d) {
+		return
+	}
+	if d.PendingLinks == nil {
+		http.Error(w, "link unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	id := r.Header.Get(fleetlink.HeaderPairRequestID)
 	secret := r.Header.Get(fleetlink.HeaderPairRequestSecret)
 	var (
@@ -299,7 +301,7 @@ func servePendingLink(w http.ResponseWriter, r *http.Request, d *common.Deps, pa
 		var err error
 		row, ok, err = pairings.GetByID(r.Context(), id)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "sync_link", err)
 			return
 		}
 	}

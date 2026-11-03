@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,11 +43,19 @@ func commitmentOf(secret string) string {
 type countingPairings struct {
 	inner pairingGetter
 	calls atomic.Int32
+	// script, when set, may replace the answer to call n (1-based): the
+	// first call is the handler's verification, the second the registration
+	// recheck. It gets the real answer and returns what to hand back.
+	script func(n int32, row data.PendingPairingRow, ok bool, err error) (data.PendingPairingRow, bool, error)
 }
 
 func (c *countingPairings) GetByID(ctx context.Context, id string) (data.PendingPairingRow, bool, error) {
-	c.calls.Add(1)
-	return c.inner.GetByID(ctx, id)
+	n := c.calls.Add(1)
+	row, ok, err := c.inner.GetByID(ctx, id)
+	if c.script != nil {
+		return c.script(n, row, ok, err)
+	}
+	return row, ok, err
 }
 
 type pendingLinkFixture struct {
@@ -291,16 +300,75 @@ func TestPendingLink_ApproveReachesOnlyItsOwnRequest(t *testing.T) {
 	}
 }
 
-// The race: approved after the caller verified but before the link
-// registered — the registration's recheck resolves it at once.
-func TestPendingLink_ApprovedBeforeOpenIsRefusedAndOpenAfterApproveGetsNothingStale(t *testing.T) {
+// An already-approved request is refused at the door (the branch only admits
+// a still-pending one).
+func TestPendingLink_ApprovedBeforeOpenIsRefused(t *testing.T) {
 	f := newPendingLinkFixture(t, fixtureOpts{})
 	id := f.newRequest(t, pendingTestSecret)
 	f.approve(t, id)
-	// Already approved: the branch only admits a still-pending request.
 	if _, resp, err := f.dial(t, id, pendingTestSecret); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("dial after approve: err %v resp %v", err, resp)
 	}
+}
+
+// The race: the request is resolved after the handler verified it but before
+// the link registered. The pages-level recheck (the second GetByID) must
+// resolve the link at once, with the right status.
+func TestPendingLink_RecheckAtRegistration(t *testing.T) {
+	resolved := func(f *pendingLinkFixture, mut func(row data.PendingPairingRow) (data.PendingPairingRow, bool, error)) {
+		f.counted.script = func(n int32, row data.PendingPairingRow, ok bool, err error) (data.PendingPairingRow, bool, error) {
+			if n == 2 {
+				return mut(row)
+			}
+			return row, ok, err
+		}
+	}
+	t.Run("approved", func(t *testing.T) {
+		f := newPendingLinkFixture(t, fixtureOpts{})
+		id := f.newRequest(t, pendingTestSecret)
+		resolved(f, func(row data.PendingPairingRow) (data.PendingPairingRow, bool, error) {
+			row.Status = "approved"
+			return row, true, nil
+		})
+		c, _, err := f.dial(t, id, pendingTestSecret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st, code := readPairing(t, c); st != fleetlink.PairingApproved || code != websocket.StatusNormalClosure {
+			t.Fatalf("got %q close %d, want approved + 1000", st, code)
+		}
+	})
+	t.Run("denied_row_gone_before_expiry", func(t *testing.T) {
+		f := newPendingLinkFixture(t, fixtureOpts{})
+		id := f.newRequest(t, pendingTestSecret)
+		resolved(f, func(row data.PendingPairingRow) (data.PendingPairingRow, bool, error) {
+			return data.PendingPairingRow{}, false, nil
+		})
+		c, _, err := f.dial(t, id, pendingTestSecret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st, code := readPairing(t, c); st != fleetlink.PairingDenied || code != websocket.StatusNormalClosure {
+			t.Fatalf("got %q close %d, want denied + 1000", st, code)
+		}
+	})
+	t.Run("db_error_leaves_link_open", func(t *testing.T) {
+		f := newPendingLinkFixture(t, fixtureOpts{})
+		id := f.newRequest(t, pendingTestSecret)
+		resolved(f, func(row data.PendingPairingRow) (data.PendingPairingRow, bool, error) {
+			return data.PendingPairingRow{}, false, errors.New("db down")
+		})
+		c, _, err := f.dial(t, id, pendingTestSecret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitLive(t, c)
+		// Still open and still resolvable by the manager.
+		f.approve(t, id)
+		if st, _ := readPairing(t, c); st != fleetlink.PairingApproved {
+			t.Fatalf("got %q after approve", st)
+		}
+	})
 }
 
 // T11: every refusal is the same 401 — status, body and headers.
@@ -372,8 +440,10 @@ func TestPendingLink_T12_SecretNeverLogged(t *testing.T) {
 	}
 }
 
-// T13: the dedicated limiter answers 429 before any database read.
-func TestPendingLink_T13_LimiterRunsBeforeAnyDBRead(t *testing.T) {
+// T13: the dedicated limiter answers 429 before the replica/replaced checks
+// (the settings reads) and before the credential lookup: a limited request is
+// 429 even on a replica, and reads no pairing row.
+func TestPendingLink_T13_LimiterRunsBeforeReplicaReplacedAndCredentialChecks(t *testing.T) {
 	f := newPendingLinkFixture(t, fixtureOpts{limiter: newPairRateLimiter(time.Minute, 5)})
 	id := f.newRequest(t, pendingTestSecret)
 	for i := range 5 {
@@ -389,7 +459,17 @@ func TestPendingLink_T13_LimiterRunsBeforeAnyDBRead(t *testing.T) {
 		t.Fatalf("6th: %+v", got)
 	}
 	if n := f.counted.calls.Load(); n != 5 {
-		t.Fatalf("the limited request read the database (%d calls)", n)
+		t.Fatalf("the limited request read the pairing table (%d calls)", n)
+	}
+	// A replica would answer 409 from a settings read; limited, it is 429.
+	if err := f.dp.Settings.Set(t.Context(), "sync.primary_url", "https://main.example"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.probe(t, f.httpsURL("/api/sync/link"), pairHeaders(id, pendingTestSecret)); got.code != http.StatusTooManyRequests {
+		t.Fatalf("limited request on a replica: %d, want 429 (the settings read ran before the limiter)", got.code)
+	}
+	if err := f.dp.Settings.Set(t.Context(), "sync.primary_url", ""); err != nil {
+		t.Fatal(err)
 	}
 	// Link opens never spend the per-id GET budget (AC11): the token fetch
 	// from the same source still works.
