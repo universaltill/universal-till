@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -611,6 +612,52 @@ func TestElevationPrompt_OOBRenderKeepsInnerFormUnnested(t *testing.T) {
 	}
 	if isDescendantOfTag(pinForm, "form") {
 		t.Fatal("the elevation dialog's own <form> must NOT be nested inside another <form>")
+	}
+}
+
+// ut-docs#5299: the wrong-PIN message must be exposed to assistive tech
+// (role="alert") when the prompt is re-shown.
+func TestElevationPrompt_WrongPINErrorHasRoleAlert(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	r := elevationRequest(auth.User{ID: "cash-session", Role: "cashier"})
+	check := checkOrElevate(dp, r, "settings", "000000")
+
+	rec := httptest.NewRecorder()
+	renderElevationPrompt(rec, r, "/api/sync/promote", "#promote-msg",
+		"Promote this till to a standalone primary.", nil, check)
+
+	doc, err := html.Parse(strings.NewReader(rec.Body.String()))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	found := false
+	for _, d := range findAllTag(doc, "div") {
+		var isErr, alert bool
+		for _, a := range d.Attr {
+			if a.Key == "class" && slices.Contains(strings.Fields(a.Val), "login-error") {
+				isErr = true
+			}
+			if a.Key == "role" && a.Val == "alert" {
+				alert = true
+			}
+		}
+		if isErr {
+			found = true
+			if !alert {
+				t.Fatalf(`.login-error must carry role="alert"; body: %s`, rec.Body.String())
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no .login-error rendered for a wrong PIN; body: %s", rec.Body.String())
+	}
+
+	// A first prompt (no PIN tried yet) must announce nothing.
+	first := httptest.NewRecorder()
+	renderElevationPrompt(first, r, "/api/sync/promote", "#promote-msg",
+		"Promote this till to a standalone primary.", nil, checkOrElevate(dp, r, "settings", ""))
+	if strings.Contains(first.Body.String(), `role="alert"`) {
+		t.Fatalf("first prompt must not render an alert; body: %s", first.Body.String())
 	}
 }
 
