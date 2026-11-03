@@ -80,6 +80,9 @@ test.describe('PIN prompt in flight: Cancel and Escape are inert (ut-docs#5288)'
     await expect(cancel).toBeDisabled();
     await expect(dlg.locator('button[type=submit]')).toBeDisabled();
     await expect(osk).toBeEnabled();
+    // ut-docs#5291: busy state on the htmx-driven prompt too.
+    await expect(dlg.locator('form')).toHaveAttribute('aria-busy', 'true');
+    expect(await dlg.locator('button[type=submit]').evaluate((el) => getComputedStyle(el, '::after').content)).not.toBe('none');
 
     await page.keyboard.press('Escape');
     await cancel.click({ force: true });
@@ -88,6 +91,7 @@ test.describe('PIN prompt in flight: Cancel and Escape are inert (ut-docs#5288)'
 
     release();
     await expect(page.locator('#pin-answer-5288')).toHaveText('Answer 5288');
+    await expect(page.locator('#elevation-modal form[aria-busy="true"]')).toHaveCount(0);
     await expect(dlg).toHaveJSProperty('open', false);
   });
 });

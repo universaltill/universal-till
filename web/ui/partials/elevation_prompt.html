@@ -56,7 +56,10 @@
      .htmx-request. Closing mid-request would leave the (non-idempotent)
      action done with no answer shown, and a late re-prompt could re-open the
      dialog. Never an abort: htmx:abort is client-side only. htmx re-enables
-     the buttons when the request ends, answer or failure. */}}
+     the buttons when the request ends, answer or failure.
+     ut-docs#5291: utPostWithElevation (app.js) inserts a copy of this dialog by hand
+     (hx-disable) and drives it with fetch; it sets the same .htmx-request class,
+     aria-busy and disabled buttons itself, and clears them on every outcome. */}}
 <span class="elevation-hint muted">{{ T "elevation.hint" }}</span>
 <dialog id="elevation-modal" class="modifier-modal elevation-dialog" hx-swap-oob="true" data-ut-focus-trap data-ut-escape-close data-ut-prompt>
   {{/* ut-docs#795 review S7: this form had NO after-request handler of its
