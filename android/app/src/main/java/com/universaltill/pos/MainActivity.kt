@@ -105,6 +105,10 @@ class MainActivity : AppCompatActivity() {
     private val updateHandler = Handler(Looper.getMainLooper())
     private var updatePollRunnable: Runnable? = null
     private var updateCheckingReuse = false
+
+    // ut-docs#5436: set while [verifyThenInstall] reads the APK's signer off
+    // the UI thread (v2 verification reads the whole file).
+    private var updateVerifyingApk = false
     private var updateLoggedPercent = -1
     private var lastUpdateState: String? = null
 
@@ -864,7 +868,7 @@ class MainActivity : AppCompatActivity() {
      * crashes the till — a failure leaves the operator able to retry.
      */
     private fun downloadAndInstallUpdate() {
-        if (updatePollRunnable != null || updateCheckingReuse) {
+        if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
             Log.i(TAG, "update: already in progress, re-reporting state")
             lastUpdateState?.let { pushUpdateState(it) }
             return
@@ -890,13 +894,14 @@ class MainActivity : AppCompatActivity() {
                 val (savedSuccessful, savedTotal) = savedDownloadOutcome(manager, savedId)
                 val expected = UpdateLogic.expectedApkLength(headContentLength(url), savedSuccessful, savedTotal)
                 val fileLength = if (dest.isFile) dest.length() else 0L
-                val archiveVersion = if (fileLength > 0) archiveVersionCode(dest) else null
+                val archiveVersion =
+                    if (fileLength > 0) inspectArchive(dest, false)?.takeIf { it.packageName == packageName }?.versionCode else null
                 runOnUiThread {
                     updateCheckingReuse = false
                     if (isDestroyed) return@runOnUiThread
                     if (UpdateLogic.canReuseDownloadedApk(fileLength, expected, archiveVersion, installedVersionCode())) {
                         Log.i(TAG, "update: reusing the complete APK already downloaded ($fileLength bytes, versionCode $archiveVersion)")
-                        launchPackageInstaller(dest)
+                        verifyThenInstall(dest, savedId)
                     } else {
                         enqueueUpdateDownload(manager, dest, url, savedId)
                     }
@@ -1055,7 +1060,7 @@ class MainActivity : AppCompatActivity() {
                         // (UpdateLogic.expectedApkLength). The next enqueue
                         // removes it.
                         reportUpdate("ready", 100, null)
-                        launchPackageInstaller(file)
+                        verifyThenInstall(file, id)
                         return false
                     }
                     DownloadManager.STATUS_FAILED -> {
@@ -1103,7 +1108,7 @@ class MainActivity : AppCompatActivity() {
      * unasked.
      */
     private fun resumeUpdateWatch() {
-        if (updatePollRunnable != null || updateCheckingReuse) return
+        if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) return
         val id = updatePrefs().getLong(UPDATE_PREF_ID, -1L)
         if (id < 0) return
         runCatching {
@@ -1167,14 +1172,111 @@ class MainActivity : AppCompatActivity() {
             }
         }.onFailure { Log.w(TAG, "update: size check failed: ${it.message}") }.getOrNull()
 
-    /** The versionCode of the APK at [apk] if it parses as THIS app's package. */
-    private fun archiveVersionCode(apk: File): Long? =
+    /** What [inspectArchive] read from an APK file (ut-docs#5436). */
+    private data class ArchiveFacts(
+        val packageName: String,
+        val versionCode: Long,
+        val signerDigests: List<String>?,
+    )
+
+    /**
+     * Parses the APK at [apk]: package, versionCode and, when [withSigners],
+     * the SHA-256 of each signing certificate (null when none could be read;
+     * [UpdateLogic.checkUpdateApk] then fails closed). Null when the file does
+     * not parse. [withSigners] reads and verifies the whole file, so call it
+     * off the UI thread; the reuse size check wants only the versionCode.
+     */
+    @Suppress("DEPRECATION")
+    private fun inspectArchive(
+        apk: File,
+        withSigners: Boolean,
+    ): ArchiveFacts? =
         runCatching {
-            @Suppress("DEPRECATION")
-            packageManager.getPackageArchiveInfo(apk.path, 0)
-                ?.takeIf { it.packageName == packageName }
-                ?.let { PackageInfoCompat.getLongVersionCode(it) }
+            val pm = packageManager
+            val flags =
+                when {
+                    !withSigners -> 0
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ->
+                        PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+                    else -> PackageManager.GET_SIGNATURES
+                }
+            val info = pm.getPackageArchiveInfo(apk.path, flags) ?: return@runCatching null
+            val digests =
+                if (!withSigners) {
+                    null
+                } else {
+                    // API 28+: the CURRENT signer (apkContentsSigners), which is
+                    // what the pin must contain under a v3 rotation. API 24-27,
+                    // or an API 28 archive without signingInfo: legacy signatures.
+                    val sigs =
+                        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.signingInfo?.apkContentsSigners else null)
+                            ?: info.signatures
+                    sigs?.takeIf { it.isNotEmpty() }?.map { UpdateLogic.sha256Hex(it.toByteArray()) }
+                }
+            ArchiveFacts(info.packageName, PackageInfoCompat.getLongVersionCode(info), digests)
         }.getOrNull()
+
+    /**
+     * ut-docs#5436 / ADR-0179: the only way to the installer. Checks off the
+     * UI thread that the downloaded [apk] is this app's package, newer, and
+     * signed by a pinned certificate ([UpdateLogic.checkUpdateApk]). On a
+     * refusal the file and the download record are removed and the update
+     * fails as `failed`; the kiosk lock, immersive mode and installer are
+     * never touched ([launchPackageInstaller] is what releases them).
+     */
+    private fun verifyThenInstall(
+        apk: File,
+        downloadId: Long,
+    ) {
+        updateVerifyingApk = true
+        Thread {
+            var facts: ArchiveFacts? = null
+            val pins = UpdateLogic.parsePinSet(BuildConfig.APK_SIGNER_SHA256S)
+            val verdict =
+                try {
+                    facts = inspectArchive(apk, true)
+                    UpdateLogic.checkUpdateApk(
+                        facts?.packageName,
+                        packageName,
+                        facts?.versionCode,
+                        installedVersionCode(),
+                        facts?.signerDigests,
+                        pins,
+                    )
+                } catch (e: Exception) {
+                    ApkCheck.Refuse("signer check failed: ${e.message}")
+                }
+            runOnUiThread {
+                updateVerifyingApk = false
+                if (isDestroyed) return@runOnUiThread
+                when (verdict) {
+                    is ApkCheck.Accept -> {
+                        Log.i(TAG, "update: APK signer verified (${verdict.digest.take(12)}...)")
+                        launchPackageInstaller(apk)
+                    }
+                    ApkCheck.AcceptUnpinned -> {
+                        Log.i(TAG, "update: APK signer not pinned (no certificate digest compiled in)")
+                        launchPackageInstaller(apk)
+                    }
+                    is ApkCheck.Refuse -> {
+                        Log.w(
+                            TAG,
+                            "update: refused: ${verdict.reason}; signers ${facts?.signerDigests}, pinned $pins, package ${facts?.packageName}",
+                        )
+                        runCatching {
+                            if (downloadId >= 0) (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(downloadId)
+                        }
+                        apk.delete()
+                        clearUpdateId()
+                        failUpdate("refused: ${verdict.reason}")
+                    }
+                }
+            }
+        }.apply {
+            name = "update-signer-check"
+            isDaemon = true
+        }.start()
+    }
 
     private fun installedVersionCode(): Long =
         runCatching {
@@ -1186,6 +1288,8 @@ class MainActivity : AppCompatActivity() {
      * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
      * is rejected from API 24 (FileUriExposedException) — this app's own
      * minSdk — so the content:// grant is the only route.
+     *
+     * Only called after [verifyThenInstall] accepted the file (ut-docs#5436).
      */
     private fun launchPackageInstaller(apk: File) {
         try {

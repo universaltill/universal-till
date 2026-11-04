@@ -199,4 +199,86 @@ class UpdateLogicTest {
             UpdateLogic.stateJson("failed", null, "bad \"thing\"\\ \n </script>  "),
         )
     }
+
+    // --- APK signer pin (ut-docs#5436 / ADR-0179) ------------------------------
+
+    private val own = "com.universaltill.pos"
+    private val a = "a".repeat(64)
+    private val b = "b".repeat(64)
+
+    private fun check(
+        pkg: String? = own,
+        versionCode: Long? = 20L,
+        signers: List<String>? = listOf(a),
+        pins: Set<String> = setOf(a),
+    ) = UpdateLogic.checkUpdateApk(pkg, own, versionCode, 10L, signers, pins)
+
+    private fun reason(c: ApkCheck): String = (c as ApkCheck.Refuse).reason
+
+    @Test
+    fun parsePinSetTrimsLowercasesAndDropsBlanks() {
+        assertEquals(emptySet<String>(), UpdateLogic.parsePinSet(""))
+        assertEquals(setOf("aa", "bb"), UpdateLogic.parsePinSet(" AA , BB,,"))
+    }
+
+    @Test
+    fun sha256HexMatchesTheKnownVector() {
+        assertEquals(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            UpdateLogic.sha256Hex("abc".toByteArray()),
+        )
+    }
+
+    @Test
+    fun pinnedSignerIsAccepted() {
+        assertEquals(ApkCheck.Accept(a), check())
+    }
+
+    @Test
+    fun unpinnedSignerIsRefused() {
+        assertTrue(reason(check(signers = listOf(b))).contains("not pinned"))
+    }
+
+    @Test
+    fun unreadableOrOtherPackageIsRefused() {
+        assertTrue(check(pkg = null) is ApkCheck.Refuse)
+        assertTrue(reason(check(pkg = "com.evil.app")).contains("com.evil.app"))
+        // Even dormant, another package never goes through.
+        assertTrue(check(pkg = "com.evil.app", pins = emptySet()) is ApkCheck.Refuse)
+    }
+
+    @Test
+    fun versionCodeMustBeNewer() {
+        assertTrue(check(versionCode = 10L) is ApkCheck.Refuse)
+        assertTrue(check(versionCode = 9L) is ApkCheck.Refuse)
+        assertTrue(check(versionCode = null) is ApkCheck.Refuse)
+    }
+
+    @Test
+    fun multipleOrMissingSignersAreRefused() {
+        assertTrue(reason(check(signers = listOf(a, b))).contains("multiple"))
+        assertTrue(check(signers = emptyList()) is ApkCheck.Refuse)
+        assertTrue(check(signers = null) is ApkCheck.Refuse)
+    }
+
+    @Test
+    fun anyPinInTheSetIsAccepted() {
+        assertEquals(ApkCheck.Accept(b), check(signers = listOf(b), pins = setOf(a, b)))
+    }
+
+    @Test
+    fun emptyPinSetIsDormant() {
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet()))
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet(), signers = null))
+    }
+
+    @Test
+    fun digestCompareIsCaseInsensitive() {
+        assertEquals(ApkCheck.Accept(a), check(signers = listOf(a.uppercase())))
+    }
+
+    @Test
+    fun packageReasonWinsOverSignerReason() {
+        assertTrue(reason(check(pkg = "com.evil.app", signers = listOf(b))).contains("package"))
+    }
 }

@@ -159,6 +159,15 @@ GitHub Releases API mechanism the other platforms already use).
   (`MAJOR*10000 + MINOR*100 + PATCH`) so it always strictly increases,
   which Android's package manager requires to treat a new APK as an
   upgrade (true for sideloading too, not just Play).
+- **In-app update signer pin (ADR-0179, ut-docs#5436).** The shell installs a
+  downloaded update only if it is this app's package, newer, and signed by a
+  certificate whose SHA-256 digest is in `app/apk-signer-sha256.txt`
+  (compiled into `BuildConfig.APK_SIGNER_SHA256S`; the build fails on a
+  malformed or missing file). `-PutApkSignerPins=<comma list>` overrides it for
+  driven tests with a test key; an empty value builds dormant (package and
+  version checks only, logged `not pinned`). `release.yml` fails when a built
+  APK's signer is not in the file. A fork replaces the file with its own
+  digest; see `RELEASING.md`.
 - Live-verified: a real signed release APK installed and launched on the
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.

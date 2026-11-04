@@ -162,6 +162,28 @@ signing key unlisted.
 A refused release shows on the till as `Update failed (signature)`. It is not
 retried within the same run; "Update now" retries.
 
+## Android update: signer pin (ADR-0179)
+
+The Android shell's in-app update installs an APK only if it is this app's
+package, has a higher versionCode, and has exactly one signing certificate whose
+SHA-256 digest is listed in `android/app/apk-signer-sha256.txt` (1 to 4 lowercase
+hex digests; `#` comments). Gradle stamps it into `BuildConfig.APK_SIGNER_SHA256S`.
+The digest is public; there is no secret or repository variable.
+
+- **The release checks it.** The "Verify each APK" step runs
+  `scripts/ci/check-apk-signer-pin.sh` per flavor and fails the release if the
+  APK's signer is not in the file.
+- **Fork / new key.** Put the SHA-256 of your own signing certificate
+  (`apksigner verify --print-certs app.apk`) in the file. The release fails until you do.
+- **Rotation** (only with an APK Signature Scheme v3 lineage; API 24 to 27 tills
+  can never follow). 1) Add the new digest next to the old one and release,
+  still signed with the old key. 2) Once tills have moved, sign with the new key.
+  3) After the overlap, remove the old digest. A till that skipped the overlap
+  must be reinstalled.
+- **Local tests with a test key:** `-PutApkSignerPins=<sha256 of the test cert>`;
+  an empty `-PutApkSignerPins=` builds dormant (no signer check, logged as
+  `not pinned`). Never use the override in `release.yml`.
+
 ## Nightly builds (testing `main`, not a release)
 
 `.github/workflows/nightly.yml` runs daily (03:00 UTC) plus on manual

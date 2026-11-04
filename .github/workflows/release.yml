@@ -791,6 +791,13 @@ jobs:
             "${BUILD_TOOLS}/apksigner" verify "$APK"
             FINGERPRINT="$("${BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | grep 'SHA-256 digest' | awk '{print $NF}')"
             echo "${flavor}: signed with SHA-256: ${FINGERPRINT}"
+            # ut-docs#5436 / ADR-0179: exactly one signer, and it must be one
+            # the shell pins, or armed tills would refuse this update.
+            [ "$(wc -l <<< "$FINGERPRINT")" = 1 ] && [ -n "$FINGERPRINT" ] || {
+              echo "::error::${flavor} APK: expected exactly one signer certificate, got: ${FINGERPRINT}"
+              exit 1
+            }
+            bash scripts/ci/check-apk-signer-pin.sh android/app/apk-signer-sha256.txt "$flavor" "$FINGERPRINT"
             # The ABI split is the whole point of #1541: fail rather than
             # publish an "arm64" APK that still carries the 32-bit library.
             got_abis="$(unzip -Z1 "$APK" | sed -n 's|^lib/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
