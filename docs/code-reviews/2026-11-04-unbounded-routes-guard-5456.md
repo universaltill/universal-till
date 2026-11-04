@@ -99,3 +99,32 @@ Findings:
 - `utPostWithElevation` legs time out on the same 30 s. reset-archives
   restore and reports/archive/export rely on that; already tracked on
   ut-docs#5445/#5454, so no new card.
+
+## Addendum: main's move-approval time bomb, fixed in this PR
+
+CI on this PR went red on `pages-shuffle (seed 22)` with every
+`internal/pages/move_approval_5127_test.go` test failing ("the pending move
+is not held", "This move is no longer waiting for approval"). It isn't the
+new guard (it runs later in that order) and it isn't test order:
+
+- The fixture's `mvExp` was the fixed `2026-11-03T09:30:00Z`.
+- The pages handlers read the real clock (`enroll.moveNow = time.Now`), and
+  `PendingMoves` drops a move 24 h after it expires (`pendingMoveGrace`).
+- So from 2026-11-04T09:30Z every move test fails on `main` too.
+
+The fix makes `mvExp` a package var, now + 6 h at second precision in
+RFC3339. All three uses (the signed approval, the stub cloud's reply,
+`ApplySyncMoves`) read the same string once. `enroll/move_5127_test.go`'s
+fixed `moveExp` is safe because it stubs `moveNow`.
+
+- **Author:** Opus.
+- **Review:** independent, Sonnet, read-only. Approved, with no upper bound
+  on `expires_at` anywhere (`parsePendingMove`).
+- **Verified:** the move tests pass, and the full package passes with
+  `-shuffle=22`. The failure reproduced locally before the fix.
+- **Deferred:** other fixed dates feed real-clock checks:
+  - `subscription_check_test.go:52`: 2026-11-14
+  - `entitlement_api_test.go:91,99`: 2026-12-31
+  - `enroll/replica_test.go:514,535`: 2026-12-31
+
+  They're filed as a follow-up card.
