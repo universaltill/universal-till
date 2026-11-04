@@ -1202,9 +1202,57 @@ document.addEventListener('htmx:afterSettle', function (evt) {
 // number in the qty box while the basket still holds the old one. The server
 // sends HX-Trigger: ut-basket-resync with the prompt; re-render the live basket
 // so the box shows the real quantity until the approver confirms.
-document.addEventListener('ut-basket-resync', function(){
-  if (window.htmx) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+document.addEventListener('ut-basket-resync', function(){ window.utBasketResync(); });
+
+// ut-docs#5458: re-render the live basket from the till's own state. source is
+// #basket so the xhr sits in the slot hx-sync="#basket:replace" aborts: a newer
+// tap always wins over this refresh. utBasketGen / utResyncGen are the belt for
+// a mutation that is not hx-synced (htmx:beforeRequest bumps the generation,
+// htmx:beforeSwap drops a resync that started before it).
+var utBasketGen = 0, utResyncGen = -1;
+function utIsResync(d) {
+  return !!(d && d.requestConfig && d.requestConfig.headers && d.requestConfig.headers['X-UT-Resync']);
+}
+window.utBasketResync = function () {
+  var b = document.getElementById('basket');
+  if (!b || !window.htmx) return;
+  utResyncGen = utBasketGen;
+  window.htmx.ajax('GET', '/ui/basket', { source: b, target: b, swap: 'outerHTML', headers: { 'X-UT-Resync': '1' } });
+};
+document.addEventListener('htmx:beforeRequest', function (ev) {
+  var d = ev.detail;
+  if (!d || utIsResync(d)) return;
+  if (d.target && d.target.id === 'basket') utBasketGen++;
 });
+document.addEventListener('htmx:beforeSwap', function (ev) {
+  var d = ev.detail;
+  if (utIsResync(d) && utResyncGen !== utBasketGen) d.shouldSwap = false;
+});
+
+// ut-docs#5458: a tapped tile whose request is still pending shows a busy
+// outline (CSS keys on aria-busy) after 300 ms, so a fast tap never flashes.
+// The delay lives here, not in CSS: fx-light / reduced motion zero transition
+// delays. The tile stays enabled: a second tap aborts the first (hx-sync).
+(function () {
+  function idle(ev) {
+    var el = ev.detail && ev.detail.elt;
+    if (!el || !el.removeAttribute || !el.matches || !el.matches('.btn-tile')) return;
+    if (el.__utBusyT) { clearTimeout(el.__utBusyT); el.__utBusyT = 0; }
+    el.removeAttribute('aria-busy');
+  }
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    var el = ev.detail && ev.detail.elt;
+    if (!el || !el.matches || !el.matches('.btn-tile')) return;
+    if (el.__utBusyT) clearTimeout(el.__utBusyT);
+    el.__utBusyT = setTimeout(function () {
+      el.__utBusyT = 0;
+      if (el.isConnected && el.classList.contains('htmx-request')) el.setAttribute('aria-busy', 'true');
+    }, 300);
+  });
+  ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:timeout', 'htmx:sendError'].forEach(function (n) {
+    document.body.addEventListener(n, idle);
+  });
+})();
 
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
@@ -1410,6 +1458,7 @@ document.addEventListener('click', function(e){
   document.body.addEventListener('htmx:beforeSwap', function(ev){
     var d = ev.detail;
     if (!d || !d.xhr || d.xhr.status < 400) return;
+    if (utIsResync(d)) return; // #5458: never swap an error body over the basket
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
     if (path.indexOf('/api/pos/') === 0) {
       // Sale-screen carve-out (ut-docs#213): only a 400 whose body is a
@@ -1440,7 +1489,10 @@ document.addEventListener('click', function(e){
     d.shouldSwap = true;
     d.isError = false;
   });
-  document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
+  document.body.addEventListener('htmx:responseError', function(ev){
+    if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
+    showAlert('server');
+  });
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
   // data-after-request="elevation-done") failing at network level means the
   // confirmed action may or may not have run (ut-docs#5298).
@@ -1508,6 +1560,7 @@ document.addEventListener('click', function(e){
     if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
   });
   document.body.addEventListener('htmx:sendError', function(ev){
+    if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
     showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
   });
   // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
@@ -1518,6 +1571,11 @@ document.addEventListener('click', function(e){
     var rc = d.requestConfig || {};
     var verb = String(rc.verb || '').toLowerCase();
     showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'outcome' : 'network');
+    // ut-docs#5458: the action may have applied; show the till's real basket.
+    // Deferred so htmx's own request lock on #basket is released first.
+    var rpath = utPathOf(rc.path || (d.pathInfo && d.pathInfo.requestPath));
+    if (!utIsPromptElt(d.elt) && verb !== 'get' && rpath.indexOf('/api/pos/') === 0 &&
+        document.getElementById('basket')) setTimeout(window.utBasketResync, 0);
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
