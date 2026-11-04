@@ -216,3 +216,45 @@ func TestCloudSetupWithoutReplaceKeepsNoReceiptPrefix(t *testing.T) {
 		t.Fatalf("sync.receipt_prefix = %q, want empty", got)
 	}
 }
+
+// ut-docs#5332: "Remove, then add" - the owner removed the main till on my.
+// and a new device joins with an ordinary code. The cloud says had_main_till,
+// so the till numbers under its own M<8hex>- prefix (same as T4, no replaced).
+func hadMainTillAnswer(flag string) string {
+	return `{"data":{"store_id":"` + pairPageStore + `","merchant_id":"merchant-1","device_id":"x","device_token":"` + pairPageToken + `",` +
+		`"store":{"name":"Cloud Cafe","country":"DE","currency":"EUR","currency_decimals":2,"catalog_master":"cloud"` + flag + `}},"error":null}`
+}
+
+func TestCloudSetupAfterRemoveGivesANewReceiptPrefix(t *testing.T) {
+	for _, failCommit := range []bool{false, true} {
+		mux, d, stub, nonce := cloudWizard(t)
+		stub.set(200, hadMainTillAnswer(`,"had_main_till":true`))
+		doCloudPair(mux, nonce, nil)
+		if failCommit {
+			prev := commitCloudPairing
+			commitCloudPairing = func(context.Context, *common.Deps, *enroll.FirstTillPairing) error { return errors.New("boom") }
+			t.Cleanup(func() { commitCloudPairing = prev })
+		}
+		finalCloudPost(mux, nonce, nil)
+		got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix")
+		if !regexp.MustCompile(`^M[0-9a-f]{8}-$`).MatchString(got) {
+			t.Fatalf("failCommit=%v: sync.receipt_prefix = %q, want M<8hex>-", failCommit, got)
+		}
+		no, err := data.NewPOSRepo(d.Db).NextReceiptNo(t.Context(), nil)
+		if err != nil || no != got+"000000001" {
+			t.Fatalf("failCommit=%v: first receipt %q (%v), want %q", failCommit, no, err, got+"000000001")
+		}
+	}
+}
+
+func TestCloudSetupHadMainTillFalseKeepsNoReceiptPrefix(t *testing.T) {
+	for name, flag := range map[string]string{"false": `,"had_main_till":false`, "absent": ``} {
+		mux, d, stub, nonce := cloudWizard(t)
+		stub.set(200, hadMainTillAnswer(flag))
+		doCloudPair(mux, nonce, nil)
+		finalCloudPost(mux, nonce, nil)
+		if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "" {
+			t.Fatalf("%s: sync.receipt_prefix = %q, want empty", name, got)
+		}
+	}
+}
