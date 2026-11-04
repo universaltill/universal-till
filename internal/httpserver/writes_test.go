@@ -248,18 +248,23 @@ func TestHijackedConnNotCut(t *testing.T) {
 	}
 }
 
+// TestWebsocketOutlivesGrace hands the upgraded connection to a goroutine and
+// returns from the handler, like a real hub: the write happens after the
+// handler is gone and past the write grace, so it only passes while
+// boundWrites knows the conn was hijacked (#5459).
 func TestWebsocketOutlivesGrace(t *testing.T) {
+	serverDone := make(chan error, 1)
 	addr := startLimits(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, nil)
 		if err != nil {
+			serverDone <- err
 			return
 		}
-		defer c.CloseNow()
-		time.Sleep(900 * time.Millisecond)
-		if err := c.Write(context.Background(), websocket.MessageBinary, make([]byte, 1<<20)); err != nil {
-			t.Errorf("ws write: %v", err)
-		}
-		_ = c.Close(websocket.StatusNormalClosure, "")
+		go func() {
+			defer c.CloseNow()
+			time.Sleep(900 * time.Millisecond) // 3x grace, handler already returned
+			serverDone <- c.Write(context.Background(), websocket.MessageBinary, make([]byte, 1<<20))
+		}()
 	}), testLimits())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -272,6 +277,9 @@ func TestWebsocketOutlivesGrace(t *testing.T) {
 	_, msg, err := c.Read(ctx)
 	if err != nil || len(msg) != 1<<20 {
 		t.Fatalf("len=%d err=%v", len(msg), err)
+	}
+	if err := waitDone(t, serverDone, 10*time.Second, "ws server goroutine"); err != nil {
+		t.Fatalf("ws server: %v", err)
 	}
 }
 
