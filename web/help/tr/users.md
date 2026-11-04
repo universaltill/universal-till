@@ -25,14 +25,14 @@ PIN girişli ayrı kasiyer ve yönetici hesapları; kimin ne sattığını ve ç
 10. Sihirbazın son ekranı ayrıca — bir kez ve siz işaretlemedikçe işaretsiz — bu kasayı Universal Till bulutuna hemen kaydetmek isteyip istemediğinizi sorar. İşaretlerseniz kurulum biter bitmez kasa; cihaz kimliğini, mağaza adınızı, mağaza ülkenizi, mağaza bölgenizi ve yazılım sürümünü, destek, güncellemeler ve lisanslama için kullanılan Universal Till bulut pazaryerine gönderir — adresiniz gönderilmez. İşaretlemezseniz hiçbir şey gönderilmez — kasa yalnızca eklenti mağazasını ilk kullandığınızda veya Şimdi kaydol'a bastığınızda kaydolur. Her iki durumda da kurulum interneti beklemez: işaretlediğinizde çevrimdışıysanız kurulum yine de tamamlanır ve kasa, eklenti mağazasını açana, Şimdi kaydol'a basana veya çevrimiçi olduğunuzda Ayarlar → Kasa kaydı bölümünü kontrol edene kadar kayıtsız kalır. Kararınızı istediğiniz zaman oradan değiştirebilirsiniz; bkz. [Mağaza kaydı ve sahiplenme](/help/claim).
 11. Kurulum sihirbazı sizi bu kasanın ilk admini olarak oturum açtırır — kasayı çevrimiçi SİZİN hesabınıza bağlamaz. Çevrimiçi yönetim (Mağazalarım, kasa filosu) ve ücretli özellikler için [Mağaza kaydı ve sahiplenme](/help/claim) sayfasına bakın.
 12. Bir kullanıcı oluşturmak, birinin PIN'ini ayarlamak veya bir hesabı etkinleştirmek/devre dışı bırakmak bir yönetici veya admin rolü gerektirir. Kasiyer olarak oturum açtıysanız ve bunlardan birini denerseniz, ekran sadece reddetmez: orada bir yönetici veya adminin onaylayabileceği anında bir PIN penceresi açar — kasadaki [diğer anında yönetici onayları](/help/elevation) gibi.
-13. Yan menüdeki kendi adınız (👤) PIN değiştirme'yi açar; yanındaki Kilitle düğmesi sizi doğrudan PIN pad'ine çıkış yapar.
+13. Yan menüdeki kendi adınız (kişi simgesi) PIN değiştirme'yi açar; yanındaki Kilitle düğmesi sizi doğrudan PIN pad'ine çıkış yapar.
 14. Tam ekran veya kiosk modunda bir kasada oturum açma ekranında mı sıkıştınız? Oturum açma ekranında varsayılan olarak kapalı "Kilitli mi kaldınız? Masaüstüne dönün" bağlantısı vardır: açın ve kasadan çıkıp işletim sistemi masaüstüne dönmek için bir yönetici PIN'i girin — önce oturum açmanız gerekmez. Bu, Ayarlar → Ekran'daki yönetici PIN'i korumalı "İşletim sistemi penceresine çık" eyleminin aynısıdır; her kasa türünde ne yaptığını görmek için [Diller ve görünüm](/help/display) konusuna bakın.
 
 ## Kendi PIN'inizi değiştirme
 
 Herkes kendi PIN'ini değiştirebilir, yönetici gerekmez — yönetici sadece *başkasının* PIN'ini Kullanıcılar'dan ayarlamak veya sıfırlamak için gereklidir.
 
-1. Yan menüdeki adınıza (👤) dokunarak PIN değiştirme'yi açın.
+1. Yan menüdeki adınıza (kişi simgesi) dokunarak PIN değiştirme'yi açın.
 2. Mevcut PIN'inizi, ardından yeni PIN'inizi iki kez girin.
 3. Gönderin: oturumunuz kapatılır ve PIN pad'ine dönersiniz — yeni PIN ile tekrar giriş yapın.
 
