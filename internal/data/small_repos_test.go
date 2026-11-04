@@ -968,7 +968,7 @@ VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 100, 0, 20, 120, '2026-01-01T1
 
 	// No rows matched → zero, not an error (COALESCE guards SQL NULL on an
 	// empty SUM).
-	net, tax, gross, err = repo.Totals(ctx, "2027-01-01", "2027-12-31")
+	net, tax, gross, err = repo.Totals(ctx, "2027-01-01", "2027-12-31") // fixed-date:ok explicit empty range, no clock
 	if err != nil {
 		t.Fatal(err)
 	}

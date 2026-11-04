@@ -128,7 +128,7 @@ func TestPromotionsPageCreate_DatesInvalidRejected(t *testing.T) {
 
 	rec := postForm(mux, "/api/promotions", url.Values{
 		"code": {"BADDATES"}, "type": {"amount"}, "value_amount": {"5.00"},
-		"starts_at": {"2026-12-31"}, "ends_at": {"2026-01-01"},
+		"starts_at": {"2026-12-31"}, "ends_at": {"2026-01-01"}, // fixed-date:ok start>end validation only, no clock
 	}, &manager)
 	if rec.Header().Get("Location") != "/promotions?err=promotions.error.dates_invalid" {
 		t.Fatalf("ends before starts: loc=%q", rec.Header().Get("Location"))

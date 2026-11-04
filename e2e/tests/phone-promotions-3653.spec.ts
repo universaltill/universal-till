@@ -17,7 +17,7 @@ test.beforeAll(async ({ request }) => {
     form: {
       code: CODE, type: 'amount', value_amount: '2.50',
       description: 'Weekend offer on every hot drink and pastry',
-      starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '',
+      starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '', // fixed-date:ok layout seed; /promotions lists by is_active, not dates
     },
     maxRedirects: 0,
   });

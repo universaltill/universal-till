@@ -511,7 +511,7 @@ func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
 	primary := newFakePrimary(t, 0, 0)
 	primary.entitlement = map[string]string{
 		"plan": "pro", "subscription_status": "active",
-		"expires_at": "2026-12-31T00:00:00Z", "last_confirmed_at": "2026-09-20T10:00:00Z",
+		"expires_at": "2026-12-31T00:00:00Z", "last_confirmed_at": "2026-09-20T10:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 	}
 	kv := newFakeKV()
 	for k, v := range map[string]string{
@@ -532,7 +532,7 @@ func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
 	for k, want := range map[string]string{
 		"entitlement.plan":                "pro",
 		"entitlement.subscription_status": "active",
-		"entitlement.expires_at":          "2026-12-31T00:00:00Z",
+		"entitlement.expires_at":          "2026-12-31T00:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 		"entitlement.last_confirmed_at":   "2026-09-20T10:00:00Z",
 	} {
 		if got := kv.get(k); got != want {
