@@ -83,8 +83,15 @@ func TestApplyMacAppDmgDownloadFails(t *testing.T) {
 	oldVer := buildinfo.Version
 	buildinfo.Version = "0.1.0"
 	t.Cleanup(func() { buildinfo.Version = oldVer })
-	// A nil asset body is listed in /latest but 404s on download.
-	newReleaseServer(t, "v0.2.0", map[string][]byte{"unitill-pos-0.2.0-macOS-arm64.dmg": nil})
+	// A nil asset body is listed in /latest but 404s on download. The
+	// release still carries checksums.txt with the dmg's line: since
+	// ADR-0178 the checksums are read before any download, so without it
+	// this would stop at "no checksums.txt" and never reach the download.
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		dmgName:         nil,
+		"checksums.txt": []byte(sha256hex([]byte("x")) + "  " + dmgName + "\n"),
+	})
 	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "download .dmg") {
 		t.Fatalf("err = %v, want download failure", err)
