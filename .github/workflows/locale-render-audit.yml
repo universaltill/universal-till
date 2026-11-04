@@ -34,7 +34,7 @@ name: locale-render-audit
 # its check-key-drift.sh fails a key core doesn't have yet (orphan) — so
 # without this, every PR adding a visible key deadlocked. The pack PR
 # follows right after merge (ut-docs#1857), and push to main stays strict,
-# so a pack still lagging after merge is still caught. Hardcoded English
+# a pack still lagging after merge is reported but no longer fails push (ADR-0160 section 2). Hardcoded English
 # and pre-existing keys still fail on PRs too. Rule + reasons:
 # e2e/tests-i18n-audit/lib/new-keys.js.
 #
@@ -145,6 +145,11 @@ jobs:
         run: node --test e2e/tests-i18n-audit/lib/new-keys_test.js
 
       - name: German (de) render audit
+        # ADR-0160 section 2: code merges with English only, so after merge the
+        # de pack lags until Weblate catches up. Push/dispatch runs report
+        # findings but never red main; PRs stay strict (hardcoded English and
+        # pre-existing keys still fail there).
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
         env:
           # Set on pull_request only (empty otherwise => strict): the base
           # branch's en.json checked out above, read by
