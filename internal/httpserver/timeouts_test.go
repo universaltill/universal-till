@@ -93,7 +93,24 @@ func start(t *testing.T, h http.Handler, hdr, idle time.Duration) string {
 
 func startBody(t *testing.T, h http.Handler, hdr, idle, grace time.Duration, rate int64) string {
 	t.Helper()
-	s := newWith(h, hdr, idle, grace, rate)
+	l := testLimits()
+	l.hdr, l.idle, l.bodyGrace, l.bodyRate = hdr, idle, grace, rate
+	return startLimits(t, h, l)
+}
+
+// testLimits are the short write bounds the tests share: 300ms grace,
+// 64 KiB/s, 64 KiB sendfile slices. Body limits are generous defaults.
+func testLimits() limits {
+	return limits{
+		hdr: time.Second, idle: time.Minute,
+		bodyGrace: 5 * time.Second, bodyRate: 1 << 10,
+		writeGrace: 300 * time.Millisecond, writeRate: 64 << 10, writeChnk: 64 << 10,
+	}
+}
+
+func startLimits(t *testing.T, h http.Handler, l limits) string {
+	t.Helper()
+	s := newWith(h, l)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
