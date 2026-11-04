@@ -17,3 +17,5 @@ only the 128 topic hashes in `web/help/img/manifest.json` were refreshed (script
 files). Rebased onto main (bug-reporting.md conflict: main's summary kept, `public: true` added).
 Independent Opus pass on this delta: sound — only hash values changed, all 128 recomputed and
 match, guard + internal/manual + internal/pages green. Verdict: safe to merge.
+
+Second CI failure: guard-help-breadcrumbs_test.sh pinned `tr/updates.md:15`; the added `public:` line shifts it to 16. The test now computes the planted line (verified the guard reports :16: on a manual plant; the sed -i in the test is GNU-only so it cannot run on macOS, CI is the check).
