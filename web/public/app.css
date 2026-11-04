@@ -7359,6 +7359,20 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
   border-block-end: 1px solid var(--danger-tint-border); }
 .replaced-banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #replaced-banner-mount:empty { display: none; }
+/* ut-docs#5058 UT-3: the Next steps card above the sale grid after a cloud
+   setup. In flow (the sale screen is 100dvh, so it shrinks the grid and never
+   pushes Pay off screen), info tint of .pos-notice.info, never a dialog and
+   not a .pos-notice (those fade out). Capped at a third of the screen. */
+.next-steps-card { padding-block: .5rem; padding-inline: .8rem;
+  max-block-size: 35dvh; overflow-y: auto;
+  background: rgba(37, 99, 235, .1); color: var(--text);
+  border-block-end: 1px solid rgba(37, 99, 235, .3); }
+.next-steps-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.next-steps-head h2 { margin: 0; font-size: 1rem; text-align: start; }
+.next-steps-list { list-style: none; margin: 0; padding: 0; display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: .25rem .8rem; }
+.next-steps-list a { display: flex; align-items: center; min-block-size: 44px;
+  color: inherit; text-align: start; text-decoration: underline; overflow-wrap: anywhere; }
 /* ut-docs#5127 UT-1b: approve or decline moving this till into another
    shop (move_approval.html). The route reads as a label/value list that
    wraps on a 360px phone; the two actions stack below the typed name. */

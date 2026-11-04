@@ -1,15 +1,20 @@
 package pages
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // ut-docs#5058 (design §3.3 T1, §4.2-§4.3): a replace code on the wizard's
@@ -176,5 +181,38 @@ func TestSettingsPairWithAReplaceCodeSaysWhereItBelongs(t *testing.T) {
 	err := fmt.Errorf("pair: %w", &enroll.RegisterHTTPError{Op: "pair", Status: 409, Code: "replace_code_main_till_only"})
 	if got := enrolFailureKey(err); got != "setup.cloud.error.replace_main_till_only" {
 		t.Fatalf("enrolFailureKey = %q", got)
+	}
+}
+
+// ut-docs#5058 T4 (design-ut3 §3, N7): a replacement main till numbers its
+// receipts under its own prefix, so it never repeats the dead till's numbers.
+func TestCloudSetupAfterReplaceGivesANewReceiptPrefix(t *testing.T) {
+	for _, failCommit := range []bool{false, true} {
+		mux, d, stub, nonce := cloudWizard(t)
+		stub.set(200, replacedAnswer)
+		postCloudPairForm(mux, nonce, url.Values{"code": {pairPageCode}, "name": {"Till 1"}, "replace_device_id": {"till-old"}, "confirm_replace": {"1"}})
+		if failCommit {
+			prev := commitCloudPairing
+			commitCloudPairing = func(context.Context, *common.Deps, *enroll.FirstTillPairing) error { return errors.New("boom") }
+			t.Cleanup(func() { commitCloudPairing = prev })
+		}
+		finalCloudPost(mux, nonce, nil)
+		got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix")
+		if !regexp.MustCompile(`^M[0-9a-f]{4}([0-9a-f]{4})?-$`).MatchString(got) {
+			t.Fatalf("failCommit=%v: sync.receipt_prefix = %q, want an M<hex>- prefix", failCommit, got)
+		}
+		no, err := data.NewPOSRepo(d.Db).NextReceiptNo(t.Context(), nil)
+		if err != nil || !strings.HasPrefix(no, got) {
+			t.Fatalf("failCommit=%v: first receipt %q (%v), want prefix %q", failCommit, no, err, got)
+		}
+	}
+}
+
+func TestCloudSetupWithoutReplaceKeepsNoReceiptPrefix(t *testing.T) {
+	mux, d, _, nonce := cloudWizard(t)
+	doCloudPair(mux, nonce, nil)
+	finalCloudPost(mux, nonce, nil)
+	if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "" {
+		t.Fatalf("sync.receipt_prefix = %q, want empty", got)
 	}
 }

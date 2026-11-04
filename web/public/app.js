@@ -1198,6 +1198,14 @@ document.addEventListener('htmx:afterSettle', function (evt) {
   });
 })();
 
+// ut-docs#5411: a quantity edit that needs a manager's PIN leaves the typed
+// number in the qty box while the basket still holds the old one. The server
+// sends HX-Trigger: ut-basket-resync with the prompt; re-render the live basket
+// so the box shows the real quantity until the approver confirms.
+document.addEventListener('ut-basket-resync', function(){
+  if (window.htmx) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+});
+
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
   var btn = e.target.closest ? e.target.closest('.notice-dismiss') : null;

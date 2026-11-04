@@ -3,9 +3,12 @@ package httpserver
 import (
 	"bufio"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +17,17 @@ import (
 func TestNewPinsTimeouts(t *testing.T) {
 	h := http.NewServeMux()
 	s := New(h)
-	if s.Handler != h {
-		t.Fatal("handler not preserved")
+	if s.Handler == nil {
+		t.Fatal("handler missing")
+	}
+	if s.MaxHeaderBytes != MaxHeaderBytes || MaxHeaderBytes != 64<<10 {
+		t.Fatalf("MaxHeaderBytes=%d const=%d", s.MaxHeaderBytes, MaxHeaderBytes)
+	}
+	if BodyReadGrace <= 0 || BodyReadGrace > 60*time.Second {
+		t.Fatalf("BodyReadGrace %v out of bounds", BodyReadGrace)
+	}
+	if BodyMinRate <= 0 || BodyMinRate > 16<<10 {
+		t.Fatalf("BodyMinRate %d out of bounds", BodyMinRate)
 	}
 	if s.ReadHeaderTimeout != ReadHeaderTimeout || s.IdleTimeout != IdleTimeout {
 		t.Fatalf("got hdr=%v idle=%v", s.ReadHeaderTimeout, s.IdleTimeout)
@@ -32,25 +44,56 @@ func TestNewPinsTimeouts(t *testing.T) {
 	}
 }
 
-// Both till servers must be built via New, not a bare literal (#5337).
+// Both till servers must be built via New, not a bare literal (#5337), and no
+// other non-test file under internal/ may build one either (#5338).
 func TestRealServersUseNew(t *testing.T) {
 	for _, p := range []string{"../server/server.go", "../recovery/serve.go"} {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(b), "&http.Server{") {
-			t.Errorf("%s builds a bare &http.Server{; use httpserver.New", p)
-		}
 		if !strings.Contains(string(b), "httpserver.New(") {
 			t.Errorf("%s does not call httpserver.New", p)
 		}
 	}
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") ||
+			filepath.ToSlash(path) == "../httpserver/timeouts.go" {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if m := bareServer.FindString(string(b)); m != "" {
+			t.Errorf("%s uses %q (no timeouts, no body bound); use httpserver.New", path, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
+
+var bareServer = regexp.MustCompile(`&?http\.Server\{|http\.(ListenAndServe|ListenAndServeTLS|Serve|ServeTLS)\(`)
 
 func start(t *testing.T, h http.Handler, hdr, idle time.Duration) string {
 	t.Helper()
-	s := newWith(h, hdr, idle)
+	return startBody(t, h, hdr, idle, 200*time.Millisecond, 1<<10)
+}
+
+func startBody(t *testing.T, h http.Handler, hdr, idle, grace time.Duration, rate int64) string {
+	t.Helper()
+	s := newWith(h, hdr, idle, grace, rate)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
