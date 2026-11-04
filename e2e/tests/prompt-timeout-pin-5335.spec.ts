@@ -119,10 +119,10 @@ test.describe('PIN prompt timeout (ut-docs#5335)', () => {
       w.utPostWithElevation('/api/buttons/recategorize', { item_id: 'x', category_id: '' },
         (r: Response) => { w.__r.done = r.status; },
         () => { w.__r.cancelled++; })
-        .catch((e: any) => { w.__r.rejected = true; w.__r.net = !!e.utNetworkError; });
+        .catch((e: any) => { w.__r.rejected = true; w.__r.net = !!e.utNetworkError; w.__r.to = e.utTimeout === true; });
     });
   }
-  const rec = (page: Page) => page.evaluate(() => (window as any).__r as { done: number | null; cancelled: number; net: boolean | null; rejected: boolean });
+  const rec = (page: Page) => page.evaluate(() => (window as any).__r as { done: number | null; cancelled: number; net: boolean | null; to: boolean | null; rejected: boolean });
 
   test('T10 fetch PIN retry held: dialog closed, busy cleared, tagged, late re-prompt ignored', async ({ page }) => {
     await setup(page);
@@ -132,13 +132,13 @@ test.describe('PIN prompt timeout (ut-docs#5335)', () => {
     await h.inFlight;
     await expect(dlg).toHaveJSProperty('open', false, { timeout: 5000 });
     await expect.poll(async () => (await rec(page)).rejected).toBe(true);
-    expect(await rec(page)).toMatchObject({ net: true, done: null, cancelled: 0 });
+    expect(await rec(page)).toMatchObject({ net: true, to: true, done: null, cancelled: 0 });
     await expect(page.locator('#elevation-modal form.htmx-request')).toHaveCount(0);
     expect(h.posts()).toBe(2);
     h.release('prompt');
     await page.waitForTimeout(500);
     await expect(page.locator('#elevation-modal')).not.toHaveJSProperty('open', true);
-    expect(await rec(page)).toMatchObject({ net: true, done: null, cancelled: 0 });
+    expect(await rec(page)).toMatchObject({ net: true, to: true, done: null, cancelled: 0 });
     expect(h.posts()).toBe(2);
   });
 

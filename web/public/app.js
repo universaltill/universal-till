@@ -3095,7 +3095,11 @@ utSellCamera(function(){
 //    the fetch error tagged e.utNetworkError = true. The action may or may
 //    not have run, so it is never reported as a cancel; callers show
 //    window.utElevationErrorText(e) from their existing .catch. Nothing is
-//    retried or replayed.
+//    retried or replayed. When the leg's own timer fired, the error is also
+//    tagged e.utTimeout = true (ut-docs#5484) and utElevationErrorText
+//    returns the "did not reply in time" text (common.error.outcome_timeout,
+//    as the htmx path does, #5463); other network failures keep the
+//    outcome-unknown text.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -3202,9 +3206,10 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     function stopTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
     function tagNet(e) {
       stopTimer();
-      if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
+      if (e && typeof e === 'object') { e.utNetworkError = true; if (timedOut) e.utTimeout = true; throw e; }
       var n = new Error(String(e));
       n.utNetworkError = true;
+      if (timedOut) n.utTimeout = true;
       throw n;
     }
     if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
@@ -3218,7 +3223,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // (an abort from the #5335 timer included).
       tagNet(e);
     }).then(function (r) {
-      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; throw t; }
+      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; t.utTimeout = true; throw t; }
       // Clear the busy state before every outcome (close, re-prompt,
       // redirect) — on the re-prompt branch only once its body is read, so
       // a second tap can't start a parallel retry in the gap (#5291 review).
@@ -3281,9 +3286,17 @@ window.utOutcomeUnknownText = function () {
   var b = document.getElementById('pos-alert');
   return (b && b.dataset.msgOutcomeUnknown) || '';
 };
-// For a utPostWithElevation .catch: the outcome-unknown text for a network
+// ut-docs#5484: the translated "did not reply in time" text; falls back to
+// the outcome-unknown text, as the htmx path does (#5463).
+window.utOutcomeTimeoutText = function () {
+  var b = document.getElementById('pos-alert');
+  return (b && b.dataset.msgOutcomeTimeout) || window.utOutcomeUnknownText();
+};
+// For a utPostWithElevation .catch: the timeout text when the leg's timer
+// fired (e.utTimeout), the outcome-unknown text for any other network
 // failure, else e unchanged.
 window.utElevationErrorText = function (e) {
+  if (e && e.utTimeout) return window.utOutcomeTimeoutText() || e;
   return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 
