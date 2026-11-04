@@ -3,6 +3,7 @@ id: inventory
 title: Stok ve envanter
 section: Dükkanı kurma
 order: 120
+public: true
 summary: Ürün ve varyant bazında eldeki miktarı izler.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 ---

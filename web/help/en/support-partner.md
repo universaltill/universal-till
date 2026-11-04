@@ -3,6 +3,7 @@ id: support-partner
 title: Support partner
 section: Connecting & extending
 order: 362
+public: true
 summary: "A support partner is a company that helps your shop with Universal Till. The shop's owner connects or disconnects one in Manage shop on my.universaltill.com — never on the till itself."
 keywords: [partner, reseller, support, help, consent, owner, partner code, disconnect]
 ---

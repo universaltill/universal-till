@@ -3,6 +3,7 @@ id: order-status
 title: Sipariş durumu (mutfak ilerlemesi)
 section: Günlük satış
 order: 45
+public: true
 summary: "Her siparişin ilerlemesini — hazırlanıyor, hazır, teslim edildi — tek dokunuşla işaretleyin; herkes siparişin nerede olduğunu görsün."
 routes: [/orders, /orders/{receipt}]
 ---

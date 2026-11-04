@@ -3,6 +3,7 @@ id: sell
 title: Satış ve ödeme ekranı
 section: Günlük satış
 order: 10
+public: true
 summary: "Ana kasa ekranı: ürünleri okutun veya seçin, ödemeyi alın, fişi yazdırın ya da atlayın."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
 keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]

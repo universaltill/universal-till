@@ -3,6 +3,7 @@ id: customer-order-tracking
 title: Müşteri sipariş takibi (QR)
 section: Günlük satış
 order: 46
+public: true
 summary: "Müşteri, self servis kioskun onay ekranındaki ya da kasada girilen bir satışın fişindeki QR kodu okutarak siparişinin durumunu kendi telefonundan izler. Shop, Pro ve Multi-location planlarına dahildir."
 routes: [/o/{token}, /o/{token}/status]
 ---

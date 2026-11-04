@@ -35,9 +35,11 @@ fi
 
 # Plant: tr Updates topic, item 1, uses a different section name.
 TOPIC="web/help/tr/updates.md"
+# The line is computed, not pinned: front-matter keys (e.g. `public:`) shift it (ut-docs#5351).
+PLANT_LINE="$(awk -v p='Ayarlar → Yazılım güncellemesi →' 'index($0, p) { print NR; exit }' "${TOPIC}")"
 sed -i '0,/Ayarlar → Yazılım güncellemesi →/s//Ayarlar → Yazılım güncelleme →/' "${TOPIC}"
 run
-if [ "${RC}" -ne 0 ] && has "${OUT}" "${TOPIC}:15:" && has "${OUT}" 'expected "Yazılım güncellemesi"'; then
+if [ "${RC}" -ne 0 ] && has "${OUT}" "${TOPIC}:${PLANT_LINE}:" && has "${OUT}" 'expected "Yazılım güncellemesi"'; then
   pass "planted mismatch fails with file:line and the expected label"
 else
   fail "planted mismatch: rc=${RC} out=${OUT}"

@@ -3,6 +3,7 @@ id: categories
 title: Categories
 section: Setting up your shop
 order: 114
+public: true
 summary: Group your catalog into categories — the tabs on the sale screen and the department a product lists under — and create, rename, reorder or deactivate them here.
 keywords: [category, categories, department, sale screen, tabs, kitchen routing, search]
 routes: [/categories]

@@ -3,6 +3,7 @@ id: printing
 title: Receipts & printing
 section: Running the business
 order: 230
+public: true
 summary: Prints receipts, invoices and end-of-day reports on a thermal receipt printer or a regular office printer; kitchen orders can print to a separate printer; also covers shelf/price labels and what to check when nothing prints.
 # No routes: of its own. The printer setup fields live inside Settings
 # (/settings), a page already claimed by display.md's routes: — the

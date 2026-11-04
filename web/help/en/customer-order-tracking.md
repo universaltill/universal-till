@@ -3,6 +3,7 @@ id: customer-order-tracking
 title: Customer order tracking (QR)
 section: Everyday selling
 order: 46
+public: true
 summary: "Customers scan a QR code, on the self-order kiosk's confirmation or on the receipt of a sale rung up at the till, to follow their order's status on their own phone. Part of the Shop, Pro and Multi-location plans."
 routes: [/o/{token}, /o/{token}/status]
 keywords: [tracking, QR, customer, order status, self order, phone, receipt, counter]

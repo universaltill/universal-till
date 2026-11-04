@@ -3,6 +3,7 @@ id: sell
 title: Verkaufen & Kassieren
 section: Täglicher Verkauf
 order: 10
+public: true
 summary: "Der Hauptbildschirm der Kasse: Artikel scannen oder auswählen, Zahlung entgegennehmen, Beleg drucken oder überspringen."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
 keywords: [warenkorb, kassieren, zahlung, bezahlen, scannen, halten, rabatt, kamera, tisch, tische, modifikator, anpassung, variante, größe, kunde, treue, aktion, bestellart, außer haus, vor ort, vorschläge, offline, sync-chip]

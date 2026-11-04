@@ -3,6 +3,7 @@ id: tax-codes
 title: Tax codes
 section: Setting up your shop
 order: 111
+public: true
 summary: "Create and edit tax codes — the dine-in rate and any takeaway rate an item is charged — and activate or deactivate them."
 routes: [/catalog/tax-codes]
 keywords: [tax, vat, rate, takeaway, tax code]

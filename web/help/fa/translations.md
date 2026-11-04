@@ -3,6 +3,7 @@ id: translations
 title: ویرایشگر ترجمه
 section: راه‌اندازی فروشگاه
 order: 150
+public: true
 summary: مدیران می‌توانند هر برچسب یا پیام صندوق را به هر یک از زبان‌های صندوق بازنویسی کنند.
 routes: [/translations]
 ---

@@ -42,6 +42,13 @@ type Topic struct {
 	Routes   []string
 	Keywords []string
 
+	// Public is the front-matter `public:` flag (ut-docs#5351): true marks a
+	// topic as publishable documentation, which the public help site and the
+	// assistant connector's help index may serve. PublicSet is false when the
+	// page does not declare the flag.
+	Public    bool
+	PublicSet bool
+
 	// Locale the content actually came from — may differ from the requested
 	// locale when falling back.
 	Locale string
@@ -577,6 +584,13 @@ func parseTopic(raw []byte) (*Topic, error) {
 				return nil, fmt.Errorf("order %q is not a number", val)
 			}
 			tp.Order = n
+		case "public":
+			switch val {
+			case "true", "false":
+				tp.Public, tp.PublicSet = val == "true", true
+			default:
+				return nil, fmt.Errorf("public %q must be true or false", val)
+			}
 		case "routes":
 			tp.Routes = parseList(val)
 		case "keywords":

@@ -3,6 +3,7 @@ id: categories
 title: Kategoriler
 section: Dükkanı kurma
 order: 114
+public: true
 summary: "Kataloğunuzu kategorilere ayırın — satış ekranındaki sekmeler ve bir ürünün listelendiği reyon — ve burada oluşturun, yeniden adlandırın, sıralayın veya devre dışı bırakın."
 keywords: [kategori, kategoriler, reyon, satış ekranı, sekme, mutfak yönlendirme, arama]
 routes: [/categories]

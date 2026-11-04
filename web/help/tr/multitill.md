@@ -3,6 +3,7 @@ id: multitill
 title: Birden çok kasa (tek dükkân)
 section: Bağlantı ve eklentiler
 order: 310
+public: true
 summary: "Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, diğerleri ona katılır; katalog, fiyatlar, ayarlar ve stok otomatik paylaşılır."
 routes: [/tills, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 ---

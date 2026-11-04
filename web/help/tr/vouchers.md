@@ -3,6 +3,7 @@ id: vouchers
 title: Hediye çekleri
 section: Günlük satış
 order: 25
+public: true
 summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
 keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme, bakiye yükleme, yükle, değer ekle]
 routes: [/vouchers, /vouchers/{id}]

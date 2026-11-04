@@ -3,6 +3,7 @@ id: my-reports
 title: Meine Berichte
 section: Verbinden & erweitern
 order: 361
+public: true
 summary: "Sehen Sie die von dieser Kasse erfassten Problemberichte — gesendet oder noch ausstehend (die letzten 100) — mit ihrem letzten bekannten Status. Funktioniert auch offline."
 routes: [/my-reports]
 keywords: [fehler, problem, bericht, status, gesendet, ausstehend, github, verfolgung]

@@ -3,6 +3,7 @@ id: multitill
 title: عدة صناديق (متجر واحد)
 section: الاتصال والإضافات
 order: 310
+public: true
 summary: "شغّل عدة صناديق على شبكة المتجر نفسها: أحدها رئيسي وتنضم إليه البقية، فيتشارك الجميع الكتالوج والأسعار والإعدادات والمخزون تلقائياً."
 routes: [/tills, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 ---

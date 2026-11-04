@@ -3,6 +3,7 @@ id: catalog
 title: Katalog, Varianten & Barcodes
 section: Ihr Geschäft einrichten
 order: 110
+public: true
 summary: "Ihre Produkte: Namen, Preise, Abteilungen, Artikelvarianten (Größe, Geschmack …) und beliebig viele Barcodes pro Artikel oder Variante."
 routes: [/catalog, /import]
 keywords: [artikel, preise, barcode, varianten, modifikatoren, import, export]

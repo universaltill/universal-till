@@ -3,6 +3,7 @@ id: backups
 title: Datensicherungen
 section: Den Betrieb führen
 order: 250
+public: true
 summary: Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen), die Sie herunterladen und sicher aufbewahren können.
 keywords: [sicherung, backup, wiederherstellen, herunterladen, kopie, deinstallieren, entfernen]
 ---

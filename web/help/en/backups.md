@@ -3,6 +3,7 @@ id: backups
 title: Backups
 section: Running the business
 order: 250
+public: true
 summary: Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe.
 keywords: [backup, restore, download, copy, uninstall, remove, replace, new till, broken]
 ---

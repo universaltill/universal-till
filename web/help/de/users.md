@@ -3,6 +3,7 @@ id: users
 title: Benutzer, PINs & Schichten
 section: Verbinden & erweitern
 order: 340
+public: true
 summary: Getrennte Kassierer- und Managerkonten mit PIN-Anmeldung sowie Schichtverfolgung, damit Sie wissen, wer was verkauft hat und wann die Schublade gezählt wurde.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 keywords: [pin, personal, rollen, anmelden, sperren, berechtigungen]

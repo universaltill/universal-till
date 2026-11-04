@@ -3,6 +3,7 @@ id: kitchen-stations
 title: Kitchen stations
 section: Running the business
 order: 235
+public: true
 summary: Route each food category — or a single item — to its own kitchen printer or kitchen screen, so the grill order prints at the grill and the drinks order prints at the bar.
 keywords: [kitchen, station, printer, display, screen, routing, ticket, grill, bar]
 routes: [/kitchen-stations, /kitchen-display/{station_id}]

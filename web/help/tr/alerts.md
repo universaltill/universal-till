@@ -3,6 +3,7 @@ id: alerts
 title: Uyarılar ve bildirimler
 section: Dükkanı kurma
 order: 130
+public: true
 summary: "Kasa işinizi izler ve erken uyarır: tükenmek üzere olan ürünler, kalan stok günü, sipariş önerileri ve olağan dışı yüksek/düşük satış günleri."
 routes: [/backoffice]
 ---

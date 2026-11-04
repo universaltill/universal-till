@@ -3,6 +3,7 @@ id: elevation
 title: Manager-Freigabe vor Ort
 section: Verbinden & erweitern
 order: 341
+public: true
 summary: Verlangt ein Bildschirm eine Manager-Freigabe, kann ein Manager oder Admin diese direkt vor Ort mit der eigenen PIN erteilen — kein Ab- und Neuanmelden nötig.
 keywords: [pin, freigabe, manager-pin, override, elevation, berechtigung]
 ---

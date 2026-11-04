@@ -1,6 +1,7 @@
 package manual
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -629,5 +630,45 @@ func TestSearchSnippetKeepsOriginalCase(t *testing.T) {
 	}
 	if !strings.Contains(res[0].Snippet, "Tap") {
 		t.Errorf("snippet lost its casing: %q", res[0].Snippet)
+	}
+}
+
+func TestParsePublicFlag(t *testing.T) {
+	for val, want := range map[string]bool{"true": true, "false": false} {
+		tp, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: " + val + "\n---\nbody\n"))
+		if err != nil || tp.Public != want || !tp.PublicSet {
+			t.Errorf("public: %s -> %+v, %v", val, tp, err)
+		}
+	}
+	if tp, err := parseTopic([]byte("---\nid: a\ntitle: A\n---\nbody\n")); err != nil || tp.PublicSet {
+		t.Errorf("absent flag: %+v, %v", tp, err)
+	}
+	if _, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: yes\n---\nbody\n")); err == nil {
+		t.Error("public: yes accepted")
+	}
+}
+
+// Every shipped help page declares whether it is publishable documentation
+// (ut-docs#5351): the public help site and the assistant connector's index
+// serve only `public: true` pages, and a new page must be classified on
+// purpose, in every language the same way as English.
+func TestShippedHelpDeclaresPublicAndLocalesAgree(t *testing.T) {
+	lib, err := Load(os.DirFS("../../web"), "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	en := lib.byLocale[FallbackLocale]
+	if len(en) == 0 {
+		t.Fatal("no English help topics loaded")
+	}
+	for loc, topics := range lib.byLocale {
+		for id, tp := range topics {
+			if !tp.PublicSet {
+				t.Errorf("%s/%s.md: add `public: true` (publishable documentation) or `public: false` (internal) to the front matter", loc, id)
+			}
+			if e, ok := en[id]; ok && e.Public != tp.Public {
+				t.Errorf("%s/%s.md: public=%v but English says %v", loc, id, tp.Public, e.Public)
+			}
+		}
 	}
 }

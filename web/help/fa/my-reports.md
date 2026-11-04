@@ -3,6 +3,7 @@ id: my-reports
 title: گزارش‌های من
 section: اتصال و افزونه‌ها
 order: 361
+public: true
 summary: "گزارش‌های مشکلی که این صندوق ثبت کرده — ارسال‌شده یا در انتظار ارسال (۱۰۰ مورد اخیر) — را با آخرین وضعیت شناخته‌شده ببینید. آفلاین هم کار می‌کند."
 routes: [/my-reports]
 keywords: [bug, issue, report, status, sent, pending, github, tracking]

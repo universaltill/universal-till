@@ -3,6 +3,7 @@ id: promotions
 title: Promotions & promo codes
 section: Setting up your shop
 order: 125
+public: true
 summary: Create, edit and deactivate promo codes that customers redeem at checkout.
 routes: [/promotions]
 keywords: [promo, promotion, discount, coupon, code]

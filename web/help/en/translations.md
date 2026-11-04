@@ -3,6 +3,7 @@ id: translations
 title: Translation editor
 section: Setting up your shop
 order: 150
+public: true
 summary: Managers can reword any label or message on the till, in any of the till's languages.
 routes: [/translations]
 keywords: [translations, language, labels, wording]

@@ -3,6 +3,7 @@ id: sell
 title: فروش و تسویه
 section: فروش روزمره
 order: 10
+public: true
 summary: "صفحه اصلی صندوق: کالاها را اسکن یا انتخاب کنید، پرداخت را بگیرید، رسید را چاپ کنید یا رد شوید."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
 keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]
