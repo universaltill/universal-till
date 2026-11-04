@@ -3,6 +3,7 @@ id: reports
 title: Berichte & Tagesabschluss
 section: Den Betrieb führen
 order: 210
+public: true
 summary: Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; tote Ware; umsatzstärkste Tage und Stunden; Margen; Steuerübersicht; Jahresvergleich — plus der Tagesabschlussbericht (Z) zum Kassieren.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
 keywords: [z-bericht, tagesabschluss, tageseinnahmen, journal, kassenjournal, schicht, prüfprotokoll, trinkgeld, tronc, servicegebühr, mitarbeiterzuweisung, yüzde usulü, trinkgeld-pool]

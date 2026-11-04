@@ -3,6 +3,7 @@ id: claim
 title: Store registration & claiming
 section: Connecting & extending
 order: 320
+public: true
 summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
 keywords: [register, claim, cloud, marketplace, store, subscription, plan, pair, pairing code, re-pair]
 routes: [/settings/cloud/move/{id}]

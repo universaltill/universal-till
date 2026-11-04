@@ -3,6 +3,7 @@ id: catalog
 title: Katalog, varyantlar ve barkodlar
 section: Dükkanı kurma
 order: 110
+public: true
 summary: "Ürünleriniz: adlar, fiyatlar, reyonlar, ürün varyantları (beden, aroma…) ve ürün ya da varyant başına istediğiniz kadar barkod."
 routes: [/catalog, /import, /items, /modifiers]
 ---

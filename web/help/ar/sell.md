@@ -3,6 +3,7 @@ id: sell
 title: البيع والدفع
 section: البيع اليومي
 order: 10
+public: true
 summary: "شاشة الصندوق الرئيسية: امسح المنتجات أو اخترها، واستلم الدفع، واطبع الإيصال أو تجاوزه."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
 keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]

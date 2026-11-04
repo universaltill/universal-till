@@ -3,6 +3,7 @@ id: plugins
 title: Plugin store
 section: Connecting & extending
 order: 330
+public: true
 summary: "Add features without changing the core app: payments, themes, language packs, integrations, AI tools and more."
 routes: [/plugins, /plugins/store, /plugins/store/{listing_id}, /plugins/{section}/{listing_id}, /plugins/{id}/settings]
 keywords: [plugin, marketplace, install, extension, theme]

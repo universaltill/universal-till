@@ -3,6 +3,7 @@ id: users
 title: Users, PINs & shifts
 section: Connecting & extending
 order: 340
+public: true
 summary: Separate cashier and manager accounts with PIN login, and shift tracking so you know who sold what and when the drawer was counted.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 keywords: [pin, staff, roles, sign in, lock, permissions]

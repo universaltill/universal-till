@@ -3,6 +3,7 @@ id: bug-reporting
 title: Sorun bildirme
 section: Bağlantı ve eklentiler
 order: 360
+public: true
 summary: "Kasada bir sorun mu var? Her ekrandan Sorun bildir düğmesiyle bir rapor gönderin — yazarak, sesli notla veya ekran kaydıyla."
 routes: [/report-issue]
 keywords: [bug, issue, problem, report, support, recording, voice]

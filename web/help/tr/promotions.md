@@ -3,6 +3,7 @@ id: promotions
 title: Promosyonlar ve promosyon kodları
 section: Dükkanı kurma
 order: 125
+public: true
 summary: Müşterilerin ödeme sırasında kullandığı promosyon kodlarını oluşturun, düzenleyin ve devre dışı bırakın.
 routes: [/promotions]
 ---

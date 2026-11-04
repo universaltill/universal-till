@@ -3,6 +3,7 @@ id: country-settings
 title: Country settings
 section: Setting up
 order: 145
+public: true
 summary: The default currency, tax rate and archive retention used for each country, and how to adjust them for your own shop.
 keywords: [country, currency, tax, vat, retention, archive, region, defaults]
 routes: [/country-settings]

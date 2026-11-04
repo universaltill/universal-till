@@ -3,6 +3,7 @@ id: elevation
 title: Anında yönetici onayı
 section: Bağlantı ve eklentiler
 order: 341
+public: true
 summary: Bir ekran yönetici onayı istediğinde, bir yönetici veya admin oturumu kapatıp yeniden açmadan orada PIN'iyle onaylayabilir.
 keywords: [pin, onay, yönetici pin, geçersiz kılma, izin]
 ---

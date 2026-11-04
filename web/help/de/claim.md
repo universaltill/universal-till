@@ -3,6 +3,7 @@ id: claim
 title: Geschäftsregistrierung & Beanspruchung
 section: Verbinden & erweitern
 order: 320
+public: true
 summary: Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Beanspruchung verknüpft das Geschäft mit IHREM Konto, sodass Sie das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen erhalten.
 keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft, abonnement, tarif, koppeln, kopplungscode, neu koppeln]
 routes: [/settings/cloud/move/{id}]

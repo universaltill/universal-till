@@ -3,6 +3,7 @@ id: self-order
 title: Self servis sipariş
 section: Günlük satış
 order: 40
+public: true
 summary: Müşterilerin kataloğa göz atıp kendi siparişlerini oluşturduğu müşteriye dönük mod.
 ---
 

@@ -3,6 +3,7 @@ id: users
 title: کاربران، پین‌ها و شیفت‌ها
 section: اتصال و افزونه‌ها
 order: 340
+public: true
 summary: حساب جدا برای صندوقدار و مدیر با ورود پین، و پیگیری شیفت تا بدانید چه کسی چه فروخته و صندوق کی شمارش شده است.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 ---

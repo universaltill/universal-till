@@ -3,6 +3,7 @@ id: translate-mode
 title: Çeviri modu
 section: Dükkanı kurma
 order: 151
+public: true
 summary: Yöneticiler her etiketin hangi metin anahtarından geldiğini görebilir, metni Weblate'te açabilir ve ifadesini bu mağaza için değiştirebilir.
 keywords: [çeviri modu, çeviri, weblate, dil, ifade]
 ---

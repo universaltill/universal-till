@@ -3,6 +3,7 @@ id: sell
 title: Selling & checkout
 section: Everyday selling
 order: 10
+public: true
 summary: "The main register screen: scan or pick items, take payment, print or skip the receipt."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
 keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, dine-in/takeaway prompt, before first item, at pay, suggestions, offline, sync chip, voucher, gutschein, gift card]

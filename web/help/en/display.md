@@ -3,6 +3,7 @@ id: display
 title: Languages & display
 section: Setting up your shop
 order: 140
+public: true
 summary: The whole till speaks English, Türkçe, فارسی and العربية — including right-to-left layout — and adapts to touch screens with an on-screen keyboard and adjustable text size.
 routes: [/settings]
 keywords: [theme, scale, kiosk, screen, osk, keyboard, effects, animation, raspberry pi]

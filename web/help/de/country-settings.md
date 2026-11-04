@@ -3,6 +3,7 @@ id: country-settings
 title: Ländereinstellungen
 section: Einrichtung
 order: 145
+public: true
 summary: Die Standardwährung, der Steuersatz und die Archivaufbewahrung für jedes Land — und wie Sie diese für Ihr eigenes Geschäft anpassen.
 keywords: [land, währung, steuer, mwst, aufbewahrung, archiv, region, standardwerte]
 routes: [/country-settings]

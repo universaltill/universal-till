@@ -3,6 +3,7 @@ id: categories
 title: Kategorien
 section: Ihr Geschäft einrichten
 order: 114
+public: true
 summary: Gruppieren Sie Ihren Katalog in Kategorien — die Reiter auf dem Verkaufsbildschirm und die Abteilung, unter der ein Produkt geführt wird — und erstellen, benennen um, ordnen oder deaktivieren Sie sie hier.
 keywords: [kategorie, kategorien, abteilung, verkaufsbildschirm, reiter, küchen-routing, suche]
 routes: [/categories]

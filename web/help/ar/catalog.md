@@ -3,6 +3,7 @@ id: catalog
 title: الكتالوج والأصناف الفرعية والباركود
 section: إعداد متجرك
 order: 110
+public: true
 summary: "منتجاتك: الأسماء والأسعار والأقسام والأصناف الفرعية (المقاس، النكهة…) وأي عدد من الباركودات لكل منتج أو صنف فرعي."
 routes: [/catalog, /import, /items, /modifiers]
 ---

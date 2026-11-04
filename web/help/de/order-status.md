@@ -3,6 +3,7 @@ id: order-status
 title: Bestellstatus (Küchenfortschritt)
 section: Täglicher Verkauf
 order: 45
+public: true
 summary: "Markieren Sie den Fortschritt jeder Bestellung — in Zubereitung, fertig, abgeholt — mit einem Tipp, damit jeder sehen kann, wo eine Bestellung steht."
 routes: [/orders, /orders/{receipt}]
 keywords: [bestellungen, küche, in zubereitung, fertig, abgeholt, storniert, status, scannen, abholen]

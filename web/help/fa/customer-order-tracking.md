@@ -3,6 +3,7 @@ id: customer-order-tracking
 title: پیگیری سفارش توسط مشتری (QR)
 section: فروش روزمره
 order: 46
+public: true
 summary: "مشتری با اسکن یک کد QR، روی صفحه تأیید کیوسک سفارش یا روی رسید فروشی که پشت صندوق ثبت شده، وضعیت سفارش خود را روی تلفن خودش دنبال می‌کند. بخشی از طرح‌های Shop، Pro و Multi-location."
 routes: [/o/{token}, /o/{token}/status]
 ---

@@ -3,6 +3,7 @@ id: bug-reporting
 title: الإبلاغ عن مشكلة
 section: الاتصال والإضافات
 order: 360
+public: true
 summary: "هل توجد مشكلة في الصندوق؟ أرسل تقريرًا من أي شاشة عبر زر الإبلاغ عن مشكلة — كتابةً أو صوتًا أو مع تسجيل للشاشة."
 routes: [/report-issue]
 keywords: [bug, issue, problem, report, support, recording, voice]

@@ -3,6 +3,7 @@ id: fiscal-register
 title: Fiskalregister (Deutschland)
 section: Ihr Geschäft einrichten
 order: 112
+public: true
 summary: "Erfassen Sie die Kassen- und TSE-Angaben, die die deutsche Kassenmeldung nach §146a Abs. 4 AO benötigt, gruppiert nach Betriebsstätte — die Meldung selbst reichen Sie über Mein ELSTER ein."
 routes: [/fiscal-register]
 keywords: [fiskal, deutschland, AO, TSE, ELSTER, kassensichv, meldung, kasse, registrierung]

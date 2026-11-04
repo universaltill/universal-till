@@ -3,6 +3,7 @@ id: elevation
 title: Manager approval on the spot
 section: Connecting & extending
 order: 341
+public: true
 summary: When a screen tells you manager approval is required, a manager or admin can approve it right there with their PIN — no need to sign out and back in.
 keywords: [pin, approval, manager pin, override, elevation, permission]
 ---

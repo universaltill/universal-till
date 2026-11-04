@@ -3,6 +3,7 @@ id: invoices
 title: فاکتورها و فاکتور رسمی
 section: اداره کسب‌وکار
 order: 220
+public: true
 summary: برای یک فروش، فاکتور رسمی (مالیاتی) صادر کنید — برای مشتریان تجاری یا هر جا که فاکتور رسمی لازم است.
 routes: [/invoices, /invoice/{display_no}]
 ---
