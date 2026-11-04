@@ -1260,7 +1260,7 @@ class MainActivity : AppCompatActivity() {
                         facts?.signerHistory,
                     )
                 } catch (e: Exception) {
-                    ApkCheck.Refuse("signer check failed: ${e.message}")
+                    ApkCheck.Refuse(RefuseClass.CHECK_ERROR, "signer check failed: ${e.message}")
                 }
             runOnUiThread {
                 updateVerifyingApk = false
@@ -1276,9 +1276,19 @@ class MainActivity : AppCompatActivity() {
                     apk.delete()
                     downloaded.delete()
                     clearUpdateId()
+                    // ut-docs#5446: tell the fleet roster, class only (never
+                    // verdict.reason: digests and foreign package names). Runs
+                    // even if the Activity is gone, and a missing Go library
+                    // must never break the refusal.
+                    runCatching { Mobile.reportAndroidUpdateRefused(verdict.cls.wire) }
+                        .onFailure { Log.w(TAG, "update: could not report refusal", it) }
                     if (!isDestroyed) failUpdate("refused: ${verdict.reason}")
                     return@runOnUiThread
                 }
+                // The check passed (pinned or dormant): resolve an earlier
+                // refusal on the fleet roster, whether or not the Activity lives.
+                runCatching { Mobile.reportAndroidUpdateAccepted() }
+                    .onFailure { Log.w(TAG, "update: could not report acceptance", it) }
                 if (isDestroyed) return@runOnUiThread
                 when (verdict) {
                     is ApkCheck.Accept -> {

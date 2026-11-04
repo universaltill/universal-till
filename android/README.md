@@ -172,7 +172,14 @@ GitHub Releases API mechanism the other platforms already use).
   API 28+ a signer whose rotation lineage contains a pinned key is accepted; API
   24 to 27 see the old key, so keep the old digest while they exist. Never
   advise uninstalling to recover: it deletes local data. A fork replaces the file
-  with its own digest; see `RELEASING.md`.
+  with its own digest; see `RELEASING.md`. A refusal is also reported to the
+  fleet roster (ut-docs#5446): `MainActivity` calls
+  `Mobile.reportAndroidUpdateRefused(<class>)`, raising the keyed problem
+  `androidupdate.refused` on the heartbeat problems feed (class only, never the
+  digest or package name) until `Mobile.reportAndroidUpdateAccepted()` after a
+  later APK passes. Classes (`UpdateLogic.RefuseClass`, mirrored by Go's
+  `internal/androidupdate`): `unreadable_apk`, `wrong_package`, `not_newer`,
+  `signer_unreadable`, `multiple_signers`, `signer_not_pinned`, `check_error`.
 - Live-verified: a real signed release APK installed and launched on the
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.

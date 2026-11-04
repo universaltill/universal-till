@@ -8,7 +8,27 @@ sealed interface ApkCheck {
     /** Dormant: no pin compiled in (package and version checks still passed). */
     object AcceptUnpinned : ApkCheck
 
-    data class Refuse(val reason: String) : ApkCheck
+    /**
+     * [cls] is the closed class reported to the fleet roster (ut-docs#5446);
+     * [reason] is the detailed text for logcat and the page only and must
+     * never leave the device (it carries digests and foreign package names).
+     */
+    data class Refuse(val cls: RefuseClass, val reason: String) : ApkCheck
+}
+
+/**
+ * ut-docs#5446: why an update APK was refused. [wire] is what
+ * `Mobile.reportAndroidUpdateRefused` sends; it mirrors the closed set in Go's
+ * internal/androidupdate (`classes`), which pins it with a test.
+ */
+enum class RefuseClass(val wire: String) {
+    UNREADABLE_APK("unreadable_apk"),
+    WRONG_PACKAGE("wrong_package"),
+    NOT_NEWER("not_newer"),
+    SIGNER_UNREADABLE("signer_unreadable"),
+    MULTIPLE_SIGNERS("multiple_signers"),
+    SIGNER_NOT_PINNED("signer_not_pinned"),
+    CHECK_ERROR("check_error"),
 }
 
 /**
@@ -154,14 +174,14 @@ object UpdateLogic {
         pins: Set<String>,
         signerHistory: List<String>? = null,
     ): ApkCheck {
-        if (archivePackage == null) return ApkCheck.Refuse("not a readable APK")
-        if (archivePackage != ownPackage) return ApkCheck.Refuse("package $archivePackage, expected $ownPackage")
+        if (archivePackage == null) return ApkCheck.Refuse(RefuseClass.UNREADABLE_APK, "not a readable APK")
+        if (archivePackage != ownPackage) return ApkCheck.Refuse(RefuseClass.WRONG_PACKAGE, "package $archivePackage, expected $ownPackage")
         if (archiveVersionCode == null || archiveVersionCode <= installedVersionCode) {
-            return ApkCheck.Refuse("versionCode $archiveVersionCode not newer than $installedVersionCode")
+            return ApkCheck.Refuse(RefuseClass.NOT_NEWER, "versionCode $archiveVersionCode not newer than $installedVersionCode")
         }
         if (pins.isEmpty()) return ApkCheck.AcceptUnpinned
-        if (signerDigests.isNullOrEmpty()) return ApkCheck.Refuse("signer unreadable")
-        if (signerDigests.size > 1) return ApkCheck.Refuse("multiple signers")
+        if (signerDigests.isNullOrEmpty()) return ApkCheck.Refuse(RefuseClass.SIGNER_UNREADABLE, "signer unreadable")
+        if (signerDigests.size > 1) return ApkCheck.Refuse(RefuseClass.MULTIPLE_SIGNERS, "multiple signers")
         val d = signerDigests[0].lowercase()
         if (d in pins) return ApkCheck.Accept(d)
         // API 28+ key rotation: the platform-verified proof-of-rotation lineage
@@ -169,7 +189,7 @@ object UpdateLogic {
         // key vouched for this signer. Only reached for a single signer.
         val ancestor = signerHistory?.map { it.lowercase() }?.firstOrNull { it in pins }
         if (ancestor != null) return ApkCheck.Accept(ancestor)
-        return ApkCheck.Refuse("signer $d not pinned")
+        return ApkCheck.Refuse(RefuseClass.SIGNER_NOT_PINNED, "signer $d not pinned")
     }
 
     /** Whole percent of [done] over [total], or null when the total is unknown. */
