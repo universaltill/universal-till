@@ -80,7 +80,7 @@ page buttons, not rail buttons — outside this card.
   post-wizard session (the first-run sale-screen hand-off/guided tour, or the
   boosted-shell fallback reloading the response URL). Not reproduced, so no card.
 
-Pre-flight: web/help topic updated (5 topics × en/de/fa/ar/tr); `make docs-shots` n/a (text-only, no UI change, no screenshot shows the emoji); reference/ n/a; README n/a (no stale text); en.json keys n/a (none added/changed); lang packs n/a (de/es pack help copies live in pack repos, card non-goal); ADR n/a; review record this file.
+Pre-flight: web/help topic updated (5 topics × en/de/fa/ar/tr); `make docs-shots` re-run after CI's `guard-docs-shots_test.sh` flagged the 5 en topics as stale (the manifest hashes topic markdown); PNGs byte-identical, only `web/help/img/manifest.json` changed; reference/ n/a; README n/a (no stale text); en.json keys n/a (none added/changed); lang packs n/a (de/es pack help copies live in pack repos, card non-goal); ADR n/a; review record this file.
 
 ## Verdict
 
