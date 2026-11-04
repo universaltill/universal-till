@@ -20,7 +20,7 @@ import pvFa from '../seed_plugin_views/locales/fa.json';
 // Core strings come from web/locales/*.json; the plugin's own strings from
 // e2e/seed_plugin_views/locales/*.json (its bundle, a fixture, not core
 // i18n). The `confirm` component needs an auth-on till and a signed-in
-// manager (ut-docs#5466) and is not covered here.
+// manager and is covered by plugin-confirm-5466.spec.ts (ut-docs#5466).
 test.describe.configure({ mode: 'serial' });
 
 const CORE: Record<string, Record<string, string>> = { en, fa };

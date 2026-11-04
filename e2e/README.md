@@ -21,6 +21,12 @@ specs across projects, each against its own server(s):
   There is no `webServer` entry and no fixed port for it any more — a
   spec that needs its own URL takes the `baseURL` fixture, never a
   literal.
+  `startWorkerTill(idx, { auth: true })` boots an auth-ON till on worker
+  port + 150 (`AUTH_PORT_OFFSET`); first boot goes through
+  `POST /api/auth/setup` with the admin PIN, the returned till exposes
+  `adminPin`, and a spec signs in through `/login`. Used by
+  `plugin-confirm-5466.spec.ts` (the plugin-view `confirm` component needs a
+  signed-in operator, ut-docs#5466).
 - **auth** (`run-till-auth.sh`, port 8092, auth ON) — a genuinely fresh
   install with no operator PINs set yet, so `login.spec.ts` and its 4
   sibling specs (nav-rail lock/icons, session-expiry x2) can drive the
