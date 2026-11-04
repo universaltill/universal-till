@@ -74,9 +74,11 @@ in the repo. The only other `http.Server` is the loopback
   ./internal/httpserver/...` 0 issues; `go test -race -count=5
   ./internal/httpserver/` green (155 s). In `internal/pages`, the
   recovery/SSE/stream/window-state/pairing tests passed under `-race`. The
-  full `pages` package under `-race` had not finished after about 45 min on
-  the shared CPU (0 races reported so far), as with #5338, so CI is the
-  authority for it.
+  full `pages` package under `-race` hit its 60 min `-timeout` on the shared
+  CPU, while it was running `TestReplicaPushToReplacedMainTillKeepsItsSalesQueued`.
+  Up to that point it reported 0 data races and no `--- FAIL`; the logged
+  panics are the recovery tests' deliberate "boom". This matches #5338, so CI
+  is the authority for it.
 
 Pre-flight: till user-visible behaviour: n/a (no UI and no help topic; these
 are LAN transport bounds only); reference/architecture: deferred to the
