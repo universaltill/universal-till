@@ -187,7 +187,10 @@ func (r *CloudNoticeRepo) evict(ctx context.Context, tx *sql.Tx, now time.Time) 
 		rank    int
 		created string
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, length(title)+length(body)+length(link_json)+length(sender_name),
+	// length(CAST(x AS BLOB)) counts bytes; length(x) on TEXT counts
+	// characters, which would let a four-byte-per-rune body take 4x the
+	// budget (ADR-0176 §3 is a byte bound).
+	rows, err := tx.QueryContext(ctx, `SELECT id, length(CAST(title AS BLOB))+length(CAST(body AS BLOB))+length(CAST(link_json AS BLOB))+length(CAST(sender_name AS BLOB)),
  severity, (read_at IS NOT NULL OR dismissed_at IS NOT NULL), expires_at <= ?, created_at FROM cloud_notices`, noticeFmt(now))
 	if err != nil {
 		return fmt.Errorf("notices evict: %w", err)

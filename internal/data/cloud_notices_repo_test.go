@@ -236,6 +236,16 @@ func TestNoticeBounds_RowsAndBytes_EvictionOrder(t *testing.T) {
 	if len(p) != 1 || p[0].ID != "unreadcrit" {
 		t.Fatalf("under the byte cap an unread critical is evicted last, held=%v", p)
 	}
+	// The cap counts BYTES, not characters: 30 four-byte runes are 120 bytes.
+	r.maxRows, r.maxBytes = 100, 100
+	wide := nrow("wide", 1, "info")
+	wide.Title, wide.Body, wide.SenderName, wide.LinkJSON = "t", strings.Repeat("😀", 30), "s", ""
+	if err := r.Mirror(ctx, []CloudNotice{wide}, noticeNow); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ = r.Pairs(ctx); len(p) != 0 {
+		t.Fatalf("a 120-byte body must not fit a 100-byte budget (character count would say 32): held=%v", p)
+	}
 }
 
 func TestNoticeReset(t *testing.T) {
