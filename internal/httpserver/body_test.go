@@ -162,3 +162,69 @@ func TestHijackedGetOutlivesBodyGrace(t *testing.T) {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
+
+// R1 (ut-docs#5338 review): the middleware must not replace net/http's own
+// request body, or the server loses its immediate close of unread big bodies.
+func answeredWithin(t *testing.T, head string, max time.Duration) {
+	t.Helper()
+	addr := startBody(t, http.HandlerFunc(deny), time.Second, time.Minute, 15*time.Second, 1<<10)
+	c := dial(t, addr)
+	begin := time.Now()
+	_, _ = c.Write([]byte(head))
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil || resp.StatusCode != 403 {
+		t.Fatalf("no 403: resp=%v err=%v", resp, err)
+	}
+	if d := time.Since(begin); d > max {
+		t.Fatalf("403 took %v, want < %v (grace is 15s)", d, max)
+	}
+}
+
+func TestUnreadBigBodyAnsweredAtOnce(t *testing.T) {
+	answeredWithin(t, "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 10000000\r\n\r\n", 3*time.Second)
+}
+
+func TestUnreadExpectContinueAnsweredAtOnce(t *testing.T) {
+	answeredWithin(t, "POST /x HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 1000\r\n\r\n", 3*time.Second)
+}
+
+// R2: a handler that works before its first Read keeps the full grace.
+func TestSlowHandlerBeforeFirstReadKeepsGrace(t *testing.T) {
+	got := make(chan error, 1)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond) // longer than the 200ms grace
+		b, err := io.ReadAll(r.Body)
+		if err == nil && len(b) != 5 {
+			err = fmt.Errorf("got %d bytes", len(b))
+		}
+		got <- err
+	})
+	addr := start(t, h, time.Second, time.Minute)
+	c := dial(t, addr)
+	_, _ = c.Write([]byte("POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n"))
+	time.Sleep(100 * time.Millisecond)
+	_, _ = c.Write([]byte("hello"))
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler never finished")
+	}
+}
+
+// R4: degenerate rates and huge counts must not panic or overflow.
+func TestRateBodyDeadlineArithmetic(t *testing.T) {
+	now := time.Now()
+	if d := bodyDeadline(now, time.Second, 0, 100); !d.After(now) {
+		t.Fatal("rate 0 gave a past deadline")
+	}
+	if d := bodyDeadline(now, time.Second, 1, 1<<62); !d.After(now) {
+		t.Fatalf("overflow: %v", d)
+	}
+	if d := bodyDeadline(now, time.Second, 1<<10, 2<<10); d != now.Add(3*time.Second) {
+		t.Fatalf("got %v", d.Sub(now))
+	}
+}

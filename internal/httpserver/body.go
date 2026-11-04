@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"io"
+	"math"
 	"net/http"
 	"time"
 )
@@ -15,6 +16,8 @@ import (
 // it with no deadline (ReadTimeout is zero), holding the goroutine and fd and
 // delaying the response. A 401/403/404 on a stalled POST hit that as much as
 // an exempt handler did.
+//
+// The rate-based deadline starts at the first Read, not handler entry.
 //
 // Requests without a body (ContentLength == 0) are untouched, so SSE, the
 // replica websocket and the shell long-poll never get a read deadline.
@@ -33,8 +36,12 @@ func boundBodies(next http.Handler, grace time.Duration, rate int64) http.Handle
 			next.ServeHTTP(w, r)
 			return
 		}
-		r.Body = &rateBody{rc: rc, body: r.Body, start: start, grace: grace, rate: rate}
-		next.ServeHTTP(w, r)
+		// Shallow copy: never replace the body on net/http's own *Request,
+		// which the server inspects after the handler returns (unread-body
+		// close, Expect: 100-continue, close-on-error).
+		r2 := *r
+		r2.Body = &rateBody{rc: rc, body: r.Body, start: start, grace: grace, rate: rate}
+		next.ServeHTTP(w, &r2)
 	})
 }
 
@@ -49,13 +56,20 @@ type rateBody struct {
 	grace time.Duration
 	rate  int64
 	n     int64
+	read  bool // first Read seen; the clock restarts there
 	done  bool
 }
 
 func (b *rateBody) Read(p []byte) (int, error) {
 	if !b.done {
-		d := b.start.Add(b.grace + time.Duration(b.n)*time.Second/time.Duration(b.rate))
-		_ = b.rc.SetReadDeadline(d)
+		if !b.read {
+			// A handler that works before its first Read must not lose the
+			// grace. The pre-armed deadline from handler entry only bounds
+			// the post-handler drain when nothing is read.
+			b.read = true
+			b.start = time.Now()
+		}
+		_ = b.rc.SetReadDeadline(bodyDeadline(b.start, b.grace, b.rate, b.n))
 	}
 	n, err := b.body.Read(p)
 	b.n += int64(n)
@@ -66,3 +80,17 @@ func (b *rateBody) Read(p []byte) (int, error) {
 }
 
 func (b *rateBody) Close() error { return b.body.Close() }
+
+// bodyDeadline is start + grace + n/rate, without overflow or a zero divide.
+func bodyDeadline(start time.Time, grace time.Duration, rate, n int64) time.Time {
+	if rate <= 0 {
+		rate = 1
+	}
+	const maxSecs = int64(math.MaxInt64/int64(time.Second)) / 2
+	secs := n / rate
+	if secs > maxSecs {
+		secs = maxSecs
+	}
+	frac := time.Duration(n%rate) * time.Second / time.Duration(rate)
+	return start.Add(grace + time.Duration(secs)*time.Second + frac)
+}

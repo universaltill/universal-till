@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -73,8 +74,8 @@ func TestRealServersUseNew(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(b), "&http.Server{") {
-			t.Errorf("%s builds a bare &http.Server{; use httpserver.New", path)
+		if m := bareServer.FindString(string(b)); m != "" {
+			t.Errorf("%s uses %q (no timeouts, no body bound); use httpserver.New", path, m)
 		}
 		return nil
 	})
@@ -82,6 +83,8 @@ func TestRealServersUseNew(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+var bareServer = regexp.MustCompile(`&?http\.Server\{|http\.(ListenAndServe|ListenAndServeTLS|Serve|ServeTLS)\(`)
 
 func start(t *testing.T, h http.Handler, hdr, idle time.Duration) string {
 	t.Helper()
