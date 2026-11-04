@@ -26,7 +26,7 @@ LDFLAGS="-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Ver
 # (UT_MARKETPLACE_KEY_HEX, from scripts/ci/resolve-marketplace-key.sh). Unset
 # locally = a source build that uses the env/lazy-fetch key.
 if [ -n "${UT_MARKETPLACE_KEY_HEX:-}" ]; then
-  LDFLAGS="$LDFLAGS -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}"
+  LDFLAGS="$LDFLAGS -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX:-}"
 fi
 
 echo "==> building binaries (arm64)"

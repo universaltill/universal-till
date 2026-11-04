@@ -108,8 +108,59 @@ refused too — use the nightly pre-release for test builds.
 6. **Existing tills auto-notice.** `internal/updates` polls the releases API and
    compares against `buildinfo.Version`; an older till shows an "Update
    available" chip, and where self-update is supported a manager can click
-   "Update now" (verifies the SHA256 against `checksums.txt`, swaps the binary,
-   restarts). `.deb` installs update via `apt` instead.
+   "Update now" (verifies the SHA256 against `checksums.txt`, and — once release
+   signing is armed, see below — `checksums.txt` against its `checksums.txt.sig`
+   signature first; then swaps the binary, restarts). `.deb` installs update via `apt` instead.
+
+## Release signing (ADR-0178)
+
+The till's self-updater trusts `checksums.txt` only if `checksums.txt.sig` is a
+valid Ed25519 signature over its exact bytes by a key compiled into the build
+(`buildinfo.ReleasePublicKeys`). The SHA-256 lines then vouch for each artifact.
+It is **dormant until armed**: with no key configured, builds carry an empty
+list and the updater checks SHA-256 only. The release run warns
+(`release signing is not configured`) every time.
+
+**Arming** (owner, once; the key ceremony is its own Admin Review card):
+
+1. Offline, mint two keypairs, A (current) and B (next):
+   `go run ./scripts/releasesig keygen` (prints seed, public key, key id).
+   Keep both seeds in the password manager.
+2. GitHub environment `release-signing` of this repo: secret
+   `UT_RELEASE_SIGNING_KEY` = A's seed (64 hex).
+3. Repository variable `UT_RELEASE_PUBLIC_KEYS` = `<A public hex>,<B public hex>`
+   (1-4 lowercase 64-hex keys, comma separated, no spaces).
+4. Cut the next release R1. Tills already installed accept R1 on SHA-256 only
+   (they carry no key yet); R2 and later are signature-verified. Confirm in R1's
+   run: the `checksums` job signed and verified, `verify-versions` found the
+   compiled keys, `macos-dmg-attach` re-signed (the published `checksums.txt.sig`
+   has two lines after the `.dmg` is folded in), and offline
+   `UT_RELEASE_KEYS_HEX=<list> go run ./scripts/releasesig verify --checksums
+   checksums.txt --sig checksums.txt.sig` passes on the downloaded pair.
+5. Record the key ids (public) here.
+
+A half-configured state fails the `checksums` job, so the release stays a draft:
+secret without variable, or variable without secret.
+
+**Rotation** (ADR-0178 section 6). Every armed build already carries the current
+key **and the next one**, as `A,B`; CI signs with A. Tills accept any listed
+key. `releasesig sign` refuses a seed that is not in `UT_RELEASE_PUBLIC_KEYS`,
+so the secret and the variable are never changed in a way that leaves the
+signing key unlisted.
+
+- *Planned:* swap the secret `UT_RELEASE_SIGNING_KEY` to B's seed. B is
+  already listed, so every armed till accepts the release. Some releases later,
+  once the fleet heartbeat shows no till on a build older than the first `A,B`
+  build, set the variable to `B,C` (mint C offline), which retires A.
+- *A is compromised:* do the same swap at once (secret to B, whose key every
+  armed till already trusts) and drop A from the variable in the next build
+  (`B,C`). Never switch to fresh keys that armed tills do not trust.
+- *Last resort only:* if B is lost or compromised too, fresh keys are the only
+  way out. Every armed till then refuses the new release and needs a manual
+  reinstall: that is the cost ADR-0178 section 6 accepts, so keep B offline.
+
+A refused release shows on the till as `Update failed (signature)`. It is not
+retried within the same run; "Update now" retries.
 
 ## Nightly builds (testing `main`, not a release)
 
