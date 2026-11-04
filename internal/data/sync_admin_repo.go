@@ -736,6 +736,10 @@ const (
 	BackupCopySinceSettingsKey = "backup.copy_reminder_since"
 )
 
+// BackupRetentionDaysSettingsKey is how many days of backups this till keeps
+// (ut-docs#3092). Per till: each till prunes its own disk.
+const BackupRetentionDaysSettingsKey = "backup.retention_days"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -763,7 +767,7 @@ const (
 // registers each replica's own device (internal/enroll, POST
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
-	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey,
+	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey, BackupRetentionDaysSettingsKey,
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is

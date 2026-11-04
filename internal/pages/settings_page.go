@@ -875,6 +875,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// renders consistently.
 			"receiptPolicyAdvisoryDE": strings.EqualFold(strings.TrimSpace(all[common.KeyCountry]), "DE"),
 			"backups":                 listBackupsForUI(d, locale),
+			"backupRetentionDays":     data.BackupRetentionDays(r.Context(), d.Db),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the

@@ -308,7 +308,7 @@ const ProblemKeyDailyBackupFailed = "backup.daily_failed"
 var snapshotWithAssets = dbpkg.SnapshotWithAssets
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
-// already exists, then prunes old snapshots to the newest DefaultBackupKeep.
+// already exists, then prunes snapshots older than the retention days.
 func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 	list, err := dbpkg.ListBackups(dbPath)
 	// A backup file a manager uploaded (ut-docs#5070) holds another copy
@@ -346,7 +346,14 @@ func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 		logging.ResolveProblems(ProblemKeyDailyBackupNoPhotos)
 	}
 	log.Printf("[Backup] daily snapshot: %s", path)
-	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
+	// Keep the last backup.retention_days days (default 7), never the newest
+	// (ut-docs#3092).
+	if days, err := data.BackupRetentionDaysChecked(context.Background(), db); err != nil {
+		// Fail toward retaining: never prune by a guessed window.
+		log.Printf("[Backup] not pruning old backups, retention setting unreadable: %v", err)
+	} else {
+		_, _ = dbpkg.PruneBackupsOlderThan(dbPath, days, time.Now())
+	}
 }
 
 // raiseOnce logs a keyed Problem unless one with that key is already open, so
@@ -508,6 +515,12 @@ func sweepHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now 
 	limits := housekeeping.Normal
 	if low {
 		limits = housekeeping.LowDisk
+	} else if days, err := data.BackupRetentionDaysChecked(context.Background(), db); err != nil {
+		// Fail toward retaining: no age rule when the setting can't be read.
+		log.Printf("[Housekeeping] backups: retention setting unreadable, no age pruning this run: %v", err)
+		limits.BackupMaxAge = 0
+	} else {
+		limits.BackupMaxAge = time.Duration(days) * 24 * time.Hour
 	}
 	if low && !diskLowOpen(now) {
 		log.Printf("[Housekeeping] low disk: %d MB free of %d MB (floor %d MB) — pruning each kind to its minimum", usage.Free>>20, usage.Total>>20, diskspace.Floor(usage.Total)>>20)

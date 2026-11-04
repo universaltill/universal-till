@@ -224,9 +224,11 @@ var demoDeniedRoutes = map[string]bool{
 	// Backups: create, save-copy, download (a flagged demo database never
 	// leaves the demo), restore, and restart.
 	"GET /api/backup/download/{name}":   true,
+	"POST /api/backup/delete":           true,
 	"POST /api/backup/now":              true,
 	"POST /api/backup/restart-now":      true,
 	"POST /api/backup/restore":          true,
+	"POST /api/backup/retention":        true,
 	"POST /api/backup/save-copy/{name}": true,
 	"POST /api/backup/upload":           true,
 	// Uploads with their own endpoint (item/variant photos, receipt logo) —

@@ -46,7 +46,7 @@ A restored backup brings back products, sales, receipts, staff with their PINs, 
 
 A backup is the only way to bring sales, receipts, customers and staff PINs back on a new till: the cloud does not keep them on any plan. Keep a recent copy off the till. Managers see **No backup copied off this till in 7 days** in the status bar until a backup has been saved off it.
 
-Where the till keeps its backups (the newest 14):
+Where the till keeps its backups (the last 7 days by default):
 
 - macOS: `~/Library/Application Support/UniversalTill/backups`
 - Windows: `%LOCALAPPDATA%\UniversalTill\backups`
@@ -60,11 +60,17 @@ Where the till keeps its backups (the newest 14):
 
 Sales made on the old till after the backup was taken are not in it.
 
+## Deleting a backup and choosing how long backups are kept
+
+In Settings → Backups, a manager or admin sees **Delete** on every backup except the newest one. The till asks you to confirm, then removes that file for good. The newest backup has no Delete button and is never deleted, by hand or automatically. A cashier cannot delete backups.
+
+Under the list, **Keep backups for (days)** sets how many days of backups this till keeps (1 to 365, 7 by default). Each till has its own number, because each till has its own disk. A smaller number takes effect at the next backup, or the next daily clean-up; saving it never deletes anything by itself. Restoring a backup also brings back the number that was saved in it.
+
 ## Automatic clean-up
 
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:
 
-- Backups: the newest 14 are kept. Together they never take more than a quarter of the free disk space: the oldest go first, but the newest 3 are always kept.
+- Backups: the last 7 days are kept (you can change the number of days, see below). Older ones are deleted whenever a new backup is made and again once a day. The newest backup is always kept. Together they never take more than a quarter of the free disk space: the oldest go first, but the newest 3 are always kept.
 - The copy of your data set aside when you restore a backup: kept for as long as the law requires you to keep sales records; after that, only the newest 3 are kept, and none older than 30 days.
 - Issue reports that couldn't be sent: removed after 7 days.
 - Downloaded updates: removed after 7 days.

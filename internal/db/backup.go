@@ -6,6 +6,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
@@ -89,19 +91,41 @@ func ListBackups(dbPath string) ([]BackupInfo, error) {
 		}
 		out = append(out, BackupInfo{Name: e.Name(), Size: info.Size(), ModTime: info.ModTime()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) })
+	// Name breaks a tie: the name carries the UTC timestamp, and "newest"
+	// must not change between two calls when mtimes are equal.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ModTime.Equal(out[j].ModTime) {
+			return out[i].ModTime.After(out[j].ModTime)
+		}
+		return out[i].Name > out[j].Name
+	})
 	return out, nil
 }
+
+// NewestOwnBackup is the till's newest snapshot of its OWN data: the first
+// entry of list (newest-first) that is not a file a manager uploaded
+// (IsUploadedBackupName). An upload is renamed into place with mtime = now,
+// so it sorts first and must not take the "never delete the newest" rule
+// over from the real snapshot (ut-docs#3092). Returns "" for none.
+func NewestOwnBackup(list []BackupInfo) string {
+	for _, b := range list {
+		if !IsUploadedBackupName(b.Name) {
+			return b.Name
+		}
+	}
+	return ""
+}
+
+// backupMu serialises the list-then-remove steps of DeleteBackup and the age
+// prune, so two concurrent deletes cannot each see the other file as the
+// protected newest one.
+var backupMu sync.Mutex
 
 // ValidBackupName guards path traversal on user-supplied backup names.
 func ValidBackupName(name string) bool {
 	return name == filepath.Base(name) &&
 		strings.HasPrefix(name, backupPrefix) && strings.HasSuffix(name, ".db")
 }
-
-// DefaultBackupKeep is how many unitill-pos-* snapshots the daily backup,
-// the manual "Back up now" and device housekeeping keep (ut-docs#3092).
-const DefaultBackupKeep = 14
 
 // PruneBackups keeps the newest keep snapshots, removing the rest.
 func PruneBackups(dbPath string, keep int) error {
@@ -115,6 +139,89 @@ func PruneBackups(dbPath string, keep int) error {
 	dir, _ := BackupDir(dbPath)
 	for _, b := range list[min(keep, len(list)):] {
 		_ = os.Remove(filepath.Join(dir, b.Name))
+	}
+	return nil
+}
+
+// Errors DeleteBackup returns so the handler can answer precisely.
+var (
+	ErrInvalidBackupName = errors.New("invalid backup name")
+	ErrBackupNotFound    = errors.New("backup not found")
+	// ErrNewestBackup: the newest snapshot is the shop's last line of
+	// defence and is never deleted.
+	ErrNewestBackup = errors.New("the newest backup is never deleted")
+)
+
+// PruneBackupsOlderThan removes the unitill-pos-* snapshots older than days
+// days (at least one), always keeping the newest one whatever its age. A
+// file a manager uploaded (IsUploadedBackupName) is not this till's rolling
+// snapshot and is left for its owner to delete; pre-restore-* copies are
+// not snapshots and belong to PrunePreRestore (ADR-0040, ut-docs#3365).
+// keepNames are also kept (the restore source just staged). Returns how many
+// files were removed.
+func PruneBackupsOlderThan(dbPath string, days int, now time.Time, keepNames ...string) (int, error) {
+	if days < 1 {
+		days = 1
+	}
+	backupMu.Lock()
+	defer backupMu.Unlock()
+	list, err := ListBackups(dbPath)
+	if err != nil {
+		return 0, err
+	}
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return 0, err
+	}
+	limit := time.Duration(days) * 24 * time.Hour
+	protect := map[string]bool{NewestOwnBackup(list): true}
+	for _, n := range keepNames {
+		protect[n] = true
+	}
+	removed := 0
+	for _, b := range list {
+		if protect[b.Name] || IsUploadedBackupName(b.Name) || now.Sub(b.ModTime) <= limit {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, b.Name)) == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// DeleteBackup removes one snapshot by name (the Delete button on
+// Settings → Backups). It refuses a name that is not a snapshot, a missing
+// file and the newest snapshot.
+func DeleteBackup(dbPath, name string) error {
+	if !ValidBackupName(name) {
+		return ErrInvalidBackupName
+	}
+	backupMu.Lock()
+	defer backupMu.Unlock()
+	list, err := ListBackups(dbPath)
+	if err != nil {
+		return err
+	}
+	if name == NewestOwnBackup(list) {
+		return ErrNewestBackup
+	}
+	found := false
+	for _, b := range list {
+		found = found || b.Name == name
+	}
+	if !found {
+		return ErrBackupNotFound
+	}
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if os.IsNotExist(err) {
+			return ErrBackupNotFound
+		}
+		return err
 	}
 	return nil
 }
