@@ -5290,6 +5290,7 @@ func (r *POSRepo) NextDisplayNo(ctx context.Context, tx *sql.Tx) (string, error)
 	var prefix string
 	_ = exec.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&prefix)
+	prefix = customerFacingPrefix(prefix)
 	var scheme string
 	_ = exec.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = ?`, SaleDisplayNoSchemeKey).Scan(&scheme)
