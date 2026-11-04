@@ -113,7 +113,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
     });
   }
 
-  test('T8 default timeout is 30000 for prompt requests only', async ({ page }) => {
+  test('T8 default timeout is 30000 for prompt requests, none for htmx.ajax', async ({ page }) => {
     const seen: Record<string, number> = {};
     await page.route('**/api/settings/display-mode', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
@@ -193,7 +193,7 @@ test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
     expect(out).toBe('a,b\n1,2\n');
   });
 
-  test('T6 a non-prompt htmx request is never timed out', async ({ page }) => {
+  test('T6 a non-prompt htmx.ajax request is never timed out (#5404 times user events only)', async ({ page }) => {
     await shortTimeout(page);
     const h = await holdSecondPost(page, '**/__ut5335/plain', false);
     await page.goto('/');

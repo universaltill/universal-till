@@ -1444,31 +1444,77 @@ document.addEventListener('click', function(e){
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
   // data-after-request="elevation-done") failing at network level means the
   // confirmed action may or may not have run (ut-docs#5298).
-  // ut-docs#5335: a prompt's own request (htmx form or utPostWithElevation
-  // leg) is abandoned after this long with no response, and handled exactly
-  // like a network failure (#5298: outcome unknown, no replay). Prompt
-  // requests only -- never htmx.config.timeout.
-  var UT_PROMPT_TIMEOUT_MS = 30000;
+  // ut-docs#5335 / #5404: a prompt's own request (htmx form or
+  // utPostWithElevation leg) and, since #5404, every ordinary user-initiated
+  // htmx request (see utIsTimedRequest) is abandoned after this long with no
+  // response and handled like a network failure (#5298: outcome unknown, no
+  // replay). Per request only -- htmx.config.timeout stays 0.
+  var UT_REQUEST_TIMEOUT_MS = 30000;
   // Test-only override: e2e sets window.__utPromptTimeoutMs via
   // page.addInitScript so specs don't wait 30 s. Read at request time.
-  window.utPromptTimeoutMs = function () {
+  window.utRequestTimeoutMs = function () {
     var o = window.__utPromptTimeoutMs;
-    return (typeof o === 'number' && isFinite(o) && o > 0) ? o : UT_PROMPT_TIMEOUT_MS;
+    return (typeof o === 'number' && isFinite(o) && o > 0) ? o : UT_REQUEST_TIMEOUT_MS;
   };
+  window.utPromptTimeoutMs = window.utRequestTimeoutMs; // #5335 name, kept
   function utIsPromptElt(el) {
     return !!(el && el.closest && el.closest('[data-after-request~="elevation-done"]'));
+  }
+  // ut-docs#5404: user events whose request gets the timeout. Custom events
+  // (`x-changed from:body`, `revealed`) are background refreshes: unbounded.
+  var UT_USER_EVENTS = { click: 1, dblclick: 1, submit: 1, change: 1, input: 1, keyup: 1, keydown: 1, search: 1 };
+  // Legitimately long or restarting endpoints: never timed. Tender, refund
+  // and kiosk checkout wait on a card terminal / fiscal device (the server's
+  // own payment-gate deadline is already 30 s, wasm_runtime.go
+  // paymentGateTimeout); a join backs up and replaces this till's data
+  // behind a 60 s LAN client. A client abort there would show "may not have
+  // been done" while the sale or join is still completing.
+  var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
+                            '/api/update/apply', '/api/setup/update-apply',
+                            '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
+                            '/api/sync/join', '/api/setup/join'];
+  function utPathOf(p) {
+    try { return new URL(p || '', window.location.href).pathname; } catch (e) { return String(p || ''); }
+  }
+  function utIsUnboundedPath(p) {
+    var path = utPathOf(p);
+    if (/\/pairing-restart$/.test(path)) return true; // till restarts itself
+    for (var i = 0; i < UT_UNBOUNDED_PATHS.length; i++) {
+      if (path.indexOf(UT_UNBOUNDED_PATHS[i]) === 0) return true;
+    }
+    return false;
+  }
+  // True when this ordinary request should be bounded. Opt out a new
+  // long-running action with data-ut-no-timeout on it or an ancestor.
+  function utIsTimedRequest(d, el) {
+    if (!el || !el.closest) return false;
+    if (el.closest('[data-ut-no-timeout]')) return false;
+    var te = d.triggeringEvent;
+    if (!te || !UT_USER_EVENTS[te.type]) return false; // load/every/intersect/htmx.ajax/custom
+    if (d.boosted) return false;                       // page navigation, not an action
+    if (el.closest('[hx-encoding="multipart/form-data"],form[enctype="multipart/form-data"]')) return false;
+    if (utIsUnboundedPath(d.path)) return false;
+    return true;
   }
   // htmx 1.9.12 reads detail.timeout back into xhr.timeout after this event.
   document.body.addEventListener('htmx:configRequest', function(ev){
     var d = ev.detail;
-    if (d && utIsPromptElt(d.elt || ev.target)) d.timeout = window.utPromptTimeoutMs();
+    if (!d) return;
+    var el = d.elt || ev.target;
+    if (d.timeout > 0) return; // hx-request / etc already set one
+    if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
   });
   document.body.addEventListener('htmx:sendError', function(ev){
     showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
   });
-  // htmx fires afterRequest (elevation-done closes the dialog) then this.
+  // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
+  // then this. Only requests we bounded can reach ontimeout. A GET is safe to
+  // repeat (network text); anything else may have applied (sticky outcome).
   document.body.addEventListener('htmx:timeout', function(ev){
-    if (utIsPromptElt(ev.detail && ev.detail.elt)) showAlert('outcome');
+    var d = ev.detail || {};
+    var rc = d.requestConfig || {};
+    var verb = String(rc.verb || '').toLowerCase();
+    showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'outcome' : 'network');
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
