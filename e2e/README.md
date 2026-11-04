@@ -66,10 +66,27 @@ genuinely fresh till shows `1.20`, not `1.44`. Fixed both the isolation
 bug and the now-exposed test.
 
     cd e2e && npm ci && npx playwright install chromium
-    npx playwright test                    # headless, every project in playwright.config.ts
+    npx playwright test                    # headless, every project in playwright.config.ts (Chromium; WebKit is separate)
     npx playwright test --headed           # watch it
     npx playwright test --project=default  # skip the auth/setup specs
     npx playwright test --project=auth     # just login.spec.ts and its siblings
+
+### WebKit phone lane (ut-docs#3734)
+
+The iOS app (WKWebView) and the Pi shell (WebKitGTK) render in WebKit, so the
+specs whose purpose is phone width also run under Playwright WebKit, from a
+separate config (`playwright.webkit.config.ts`) so the Chromium run and dev
+machines never need WebKit and no static tills are booted for it.
+
+- Covers every spec with `phone` in its file name, minus the `*_ONLY_SPECS`
+  sets (the auth-project `phone-drawer-*` specs are not in the lane).
+- Locally: `npx playwright install webkit && npx playwright test -c playwright.webkit.config.ts`
+  (or `npm run test:webkit`); `--list` needs no browser.
+- CI: the `webkit-phone` job in `.github/workflows/e2e.yml`, parallel to the
+  Chromium job; on a PR it runs only if the diff touches `web/**`, `e2e/**` or `e2e.yml`,
+  always on push to main.
+- A spec that cannot run in WebKit is skipped per test with
+  `test.skip(browserName === 'webkit', '<reason> ut-docs#N')`, never blanket.
 
 Rules learned the hard way:
 - **One till per worker, never one till shared by two workers** — a
