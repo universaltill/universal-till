@@ -64,6 +64,9 @@ It is the pattern for any admin page's message spot from here on — see
    tender/refund/kiosk-checkout paths (the server bounds them; its
    payment-gate deadline is a 30 s floor) and the till-join paths, and
    anything under `data-ut-no-timeout` (put it on a new long-running action).
+   A new long-running POST route goes in `UT_UNBOUNDED_PATHS` and in
+   `unboundedRoutes` (`internal/pages/unbounded_routes_test.go`), which
+   `TestUnboundedRoutesMatchAppJS` keeps paired.
    `htmx.config.timeout` stays 0.
    `utPostWithElevation` aborts each leg the same way after the same time,
    except on those listed paths (ut-docs#5454).

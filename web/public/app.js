@@ -1471,6 +1471,9 @@ document.addEventListener('click', function(e){
   // can be longer, wasm_runtime.go); a join backs up and replaces this till's data
   // behind a 60 s LAN client. A client abort there would show "may not have
   // been done" while the sale or join is still completing.
+  // Keep paired with `unboundedRoutes` in internal/pages/unbounded_routes_test.go
+  // (TestUnboundedRoutesMatchAppJS reads this list): a new long-running POST
+  // route goes in both.
   var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
                             '/api/update/apply', '/api/setup/update-apply',
                             '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
