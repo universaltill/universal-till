@@ -63,6 +63,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-tills", Label: "🔗 Tills", Group: devices, Cat: "devices"},
 		{Key: "settings-kiosk-idle-reset", Label: "Kiosk idle reset", Group: devices, Cat: "devices"},
 		{Key: "settings-kiosk-payment-mode", Label: "Kiosk payment mode", Group: devices, Cat: "devices"},
+		{Key: "settings-notices", Label: "Notices", Group: devices, Cat: "devices"},
 		{Key: "settings-menulayout", Label: "Hidden menu tiles", Group: look, Cat: "look"},
 		{Key: "settings-theme", Label: "Theme", Group: look, Cat: "look"},
 		{Key: "settings-display", Label: "Display", Group: look, Cat: "look"},
