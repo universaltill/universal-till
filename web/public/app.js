@@ -1463,9 +1463,16 @@ document.addEventListener('click', function(e){
   // ut-docs#5404: user events whose request gets the timeout. Custom events
   // (`x-changed from:body`, `revealed`) are background refreshes: unbounded.
   var UT_USER_EVENTS = { click: 1, dblclick: 1, submit: 1, change: 1, input: 1, keyup: 1, keydown: 1, search: 1 };
-  // Legitimately long or restarting endpoints: never timed.
+  // Legitimately long or restarting endpoints: never timed. Tender, refund
+  // and kiosk checkout wait on a card terminal / fiscal device (the server's
+  // own payment-gate deadline is already 30 s, wasm_runtime.go
+  // paymentGateTimeout); a join backs up and replaces this till's data
+  // behind a 60 s LAN client. A client abort there would show "may not have
+  // been done" while the sale or join is still completing.
   var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
-                            '/api/update/apply', '/api/setup/update-apply'];
+                            '/api/update/apply', '/api/setup/update-apply',
+                            '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
+                            '/api/sync/join', '/api/setup/join'];
   function utPathOf(p) {
     try { return new URL(p || '', window.location.href).pathname; } catch (e) { return String(p || ''); }
   }

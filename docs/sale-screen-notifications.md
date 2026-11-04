@@ -60,7 +60,9 @@ It is the pattern for any admin page's message spot from here on — see
    `htmx:configRequest`); `htmx:timeout` on a GET shows the network text, on
    any other verb (or a prompt) the sticky outcome text. Never timed:
    `load`/`every`/custom-event refreshes, `htmx.ajax`, boosted navigation,
-   multipart uploads, the backup/import/update/pairing-restart paths, and
+   multipart uploads, the backup/import/update/pairing-restart paths, the
+   tender/refund/kiosk-checkout paths (a card terminal can take the server's
+   whole 30 s payment-gate deadline) and the till-join paths, and
    anything under `data-ut-no-timeout` (put it on a new long-running action).
    `htmx.config.timeout` stays 0.
    `utPostWithElevation` aborts each leg the same way after the same time.

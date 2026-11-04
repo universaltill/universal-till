@@ -184,6 +184,33 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
     await expect(page.locator('#pos-alert')).toBeHidden();
   });
 
+  // Review: tender/refund/kiosk checkout wait on a card terminal (server
+  // payment gate alone is 30 s) and a join replaces local data -- a client
+  // abort would be a false "may not have been done". Query string and a
+  // relative URL must still match; a sibling path must still be timed.
+  test('A8 payment and join paths stay unbounded (query/relative URL too); a sibling is timed', async ({ page }) => {
+    await shortTimeout(page);
+    await page.route('**/api/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<span>ok</span>' }));
+    await page.goto('/');
+    await recordTimeouts(page);
+    const cases: Array<[string, string]> = [
+      ['/api/pos/tender?x=1', '/api/pos/tender?x=1'],
+      ['/api/refund', '/api/refund'],
+      ['/api/self-order/checkout', '/api/self-order/checkout'],
+      ['/api/sync/join', '/api/sync/join'],
+      ['api/setup/join', 'api/setup/join'],
+    ];
+    let html = '<div id="t5404"></div><button id="sib" hx-post="/api/pos/scan" hx-target="#t5404">s</button>';
+    cases.forEach(([url], i) => { html += `<button id="u${i}" hx-post="${url}" hx-target="#t5404">u</button>`; });
+    await probe(page, html);
+    for (let i = 0; i < cases.length; i++) await page.locator('#u' + i).click();
+    await page.locator('#sib').click();
+    for (const [, reqPath] of cases) {
+      await expect.poll(() => xt(page, reqPath), { message: reqPath }).toBe(0);
+    }
+    await expect.poll(() => xt(page, '/api/pos/scan')).toBe(OVERRIDE_MS);
+  });
+
   test('A7 default timeout is 30000 and the getters agree', async ({ page }) => {
     await page.route('**/__ut5404/def', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: 'ok' }));
     await page.goto('/');
