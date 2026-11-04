@@ -110,10 +110,10 @@ func isLoopbackAddr(remoteAddr string) bool {
 // AdoptIfUntouched refuses to escalate into a chrome-hiding mode, so it
 // cannot be used to lock the real shell down either.
 //
-// Long-poll safety: internal/server/server.go's http.Server sets no
-// WriteTimeout (only the control listener in the shell sets
-// ReadHeaderTimeout), so holding a request for up to ShellPollMaxWait
-// (25s) is safe. If a WriteTimeout is ever added there, it must exceed
+// Long-poll safety: the till's http.Server (httpserver.New) sets
+// ReadHeaderTimeout and IdleTimeout but no WriteTimeout. Neither touches an
+// in-flight request, so holding one for up to ShellPollMaxWait (25s) is
+// safe. If a WriteTimeout is ever added there, it must exceed
 // ShellPollMaxWait or every shell poll will be severed mid-hold.
 func registerWindowState(mux *http.ServeMux, d *common.Deps) {
 	// One counted semaphore per registration: how many polls are parked
