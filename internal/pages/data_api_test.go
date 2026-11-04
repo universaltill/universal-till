@@ -115,6 +115,7 @@ func TestDataAPI_AllEndpointsRequireManager(t *testing.T) {
 		{http.MethodGet, "/api/data/obsolete-items"},
 		{http.MethodPost, "/api/data/cleanup-catalog"},
 		{http.MethodGet, "/api/data/reset-archives"},
+		{http.MethodGet, "/api/data/jobs/some-job"},
 		{http.MethodPost, "/api/data/reset-archives/some-batch/restore"},
 		{http.MethodPost, "/api/data/reset-archives/some-batch/purge"},
 	}
@@ -229,10 +230,7 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 	}
 
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	body := dataAPIJSONBody(t, rec)
+	body := mustDataJob(t, mux, rec, http.StatusOK)
 	if body["error"] != nil {
 		t.Fatalf("expected error:null, got %+v", body)
 	}
@@ -291,9 +289,7 @@ func TestResetArchives_ListAndRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 
 	// List: { data: { batches: [ {id, created_at, actor_id, sales_count} ] } }
 	req := httptest.NewRequest(http.MethodGet, "/api/data/reset-archives", nil)
@@ -342,9 +338,7 @@ func TestResetArchives_ListAndRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("expected the invalid-PIN error in the re-rendered prompt, got: %s", rec.Body.String())
 	}
 	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("restore: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var live, archived, remaining int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&live); err != nil {
 		t.Fatal(err)
@@ -375,9 +369,7 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var batchID string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&batchID); err != nil {
 		t.Fatal(err)
@@ -420,9 +412,7 @@ func TestResetArchivesPurge_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -452,9 +442,7 @@ func TestResetArchivesPurge_WrongPIN_NoMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -491,9 +479,7 @@ func TestResetArchivesPurge_WithinGlobalFloorRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -533,17 +519,13 @@ func TestResetArchivesPurge_NoTradingHistoryDeletesImmediately(t *testing.T) {
 	mux, dp := newDataAPITestDeps(t)
 	// No sale at all -- reset still writes a header row with sales_count=0.
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("purge of a zero-sales batch: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var remaining int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
 		t.Fatal(err)
@@ -560,9 +542,7 @@ func TestResetArchivesPurge_OutsideWindowDeletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -573,9 +553,7 @@ func TestResetArchivesPurge_OutsideWindowDeletes(t *testing.T) {
 	}
 
 	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("purge outside window: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var remaining, archived int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
 		t.Fatal(err)
@@ -600,9 +578,7 @@ func TestResetArchivesList_OutsideWindowIsPurgeable(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -656,9 +632,7 @@ func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var id string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -680,9 +654,7 @@ func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("purge 1 day past GB's window: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 }
 
 // newRealDBDataAPIDeps wires registerDataAPI over a REAL migrated database
@@ -726,9 +698,7 @@ func TestResetArchivesRestore_ReferencesRemovedItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var batchID string
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&batchID); err != nil {
 		t.Fatal(err)
@@ -740,10 +710,9 @@ func TestResetArchivesRestore_ReferencesRemovedItem(t *testing.T) {
 	}
 
 	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("restore after item removed: expected 422, got %d: %s", rec.Code, rec.Body.String())
-	}
-	body := dataAPIJSONBody(t, rec)
+	// ut-docs#5445: the in-tx re-check still refuses with 422, now reported
+	// through the job's result (the start answers 202).
+	body := mustDataJob(t, mux, rec, http.StatusUnprocessableEntity)
 	if s, _ := body["error"].(string); s == "" {
 		t.Fatalf("422 must carry a clear error message, got %+v", body)
 	}
@@ -949,9 +918,7 @@ func TestCleanupCatalog_RemovesObsoleteItemsWhenConfirmed(t *testing.T) {
 	}
 
 	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='obs1'`).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -987,10 +954,7 @@ func TestCleanupCatalog_IncludeActive_RemovesNeverSoldActiveItemAndCascadesButto
 	}
 
 	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}, "include_active": {"1"}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	body := dataAPIJSONBody(t, rec)
+	body := mustDataJob(t, mux, rec, http.StatusOK)
 	if body["error"] != nil {
 		t.Fatalf("expected error:null, got %+v", body)
 	}
@@ -1030,10 +994,7 @@ func TestCleanupCatalog_WithoutIncludeActive_KeepsActiveItem(t *testing.T) {
 	}
 
 	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	body := dataAPIJSONBody(t, rec)
+	body := mustDataJob(t, mux, rec, http.StatusOK)
 	if body["error"] != nil {
 		t.Fatalf("expected error:null, got %+v", body)
 	}
@@ -1067,9 +1028,7 @@ func TestCleanupCatalog_IncludeActive_KeepsActiveItemWithSaleHistory(t *testing.
 	}
 
 	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}, "include_active": {"1"}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+	mustDataJob(t, mux, rec, http.StatusOK)
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='active-sold'`).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -1132,9 +1091,7 @@ func TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover(t *testing.T) {
 			}
 		}
 		rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("setup reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
-		}
+		mustDataJob(t, mux, rec, http.StatusOK)
 		var id string
 		if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 			t.Fatal(err)
@@ -1208,8 +1165,12 @@ func TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover(t *testing.T) {
 
 			path, form := tc.setup(t, mux, dp)
 			rec := postForm(mux, path, form, &auth.User{ID: sessionMgrID, Role: "manager"})
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			switch rec.Code {
+			case http.StatusAccepted: // ut-docs#5445: background job
+				mustDataJob(t, mux, rec, http.StatusOK)
+			case http.StatusOK: // customer erase stays synchronous
+			default:
+				t.Fatalf("expected 200/202, got %d: %s", rec.Code, rec.Body.String())
 			}
 
 			var actorID, blockedActorID sql.NullString

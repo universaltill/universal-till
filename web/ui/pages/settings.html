@@ -1155,7 +1155,7 @@
      heading — gate the whole card on "isManager OR any of the
      elevation-wired sub-features actually has something to show". -->
 {{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins }}
-<div class="card" id="settings-data">
+<div class="card" id="settings-data"{{ if .dataJob }} data-job-id="{{ .dataJob.ID }}" data-job-action="{{ .dataJob.Action }}"{{ end }}>
   <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "display" }}</h2>
   <!-- ut-docs#867: the elevation-wired actions in this card
        (remove-demo-catalogue, dismiss-pending-base-plugin) render
@@ -1170,10 +1170,15 @@
        the same treatment in place of its typed RESTORE word. Only export
        stays manager-only raw fetch() with no elevation path. -->
   {{ if .isManager }}
+  {{/* ut-docs#5445: the one card-level line for a running data-management
+       job. A stable live region (empty at load) so the text, set once by
+       the script below, is announced; the buttons it explains are disabled
+       while it shows. */}}
+  <div id="data-job-msg" role="status" aria-live="polite" tabindex="-1" class="muted" style="min-height:1.2rem"></div>
   <p class="muted">{{ T "settings.data.help" }}</p>
   <p class="muted" style="color:#b45309">{{ T "settings.data.warn" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
-    <button class="btn secondary" id="data-reset-btn" data-testid="data-reset">{{ T "settings.data.reset_btn" }}</button>
+    <button class="btn secondary" id="data-reset-btn" data-job-lock data-testid="data-reset">{{ T "settings.data.reset_btn" }}</button>
     <div id="data-reset-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
 
@@ -1190,9 +1195,9 @@
           <td>{{ .CreatedAt }}</td>
           <td>{{ .SalesCount }}</td>
           <td style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center">
-            <button class="btn secondary" data-restore-batch="{{ .ID }}" data-testid="archive-restore">{{ T "settings.data.archives_restore_btn" }}</button>
+            <button class="btn secondary" data-job-lock data-restore-batch="{{ .ID }}" data-testid="archive-restore">{{ T "settings.data.archives_restore_btn" }}</button>
             {{ if .Purgeable }}
-            <button class="btn secondary" data-purge-batch="{{ .ID }}" data-testid="archive-purge">{{ T "settings.data.archives_purge_btn" }}</button>
+            <button class="btn secondary" data-job-lock data-purge-batch="{{ .ID }}" data-testid="archive-purge">{{ T "settings.data.archives_purge_btn" }}</button>
             {{ else }}
             <!-- ut-docs#698: still inside its retention window -- the
                  button is hidden rather than merely disabled, so an
@@ -1226,12 +1231,12 @@
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.catalog_title" }}</h3>
   <p class="muted">{{ T "settings.data.catalog_help" }}</p>
   <div style="display:flex; align-items:center; gap:.4rem; flex-wrap:wrap">
-    <label><input type="checkbox" id="cat-include-active"> {{ T "settings.data.catalog_include_active" }}</label>
+    <label><input type="checkbox" id="cat-include-active" data-job-lock> {{ T "settings.data.catalog_include_active" }}</label>
   </div>
   <p class="muted">{{ T "settings.data.catalog_include_active_help" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
-    <button class="btn secondary" id="cat-preview-btn">{{ T "settings.data.catalog_preview_btn" }}</button>
-    <button class="btn secondary" id="cat-cleanup-btn" data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
+    <button class="btn secondary" id="cat-preview-btn" data-job-lock>{{ T "settings.data.catalog_preview_btn" }}</button>
+    <button class="btn secondary" id="cat-cleanup-btn" data-job-lock data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
     <div id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   <div id="cat-results" class="set-gap-s"></div>
@@ -1376,6 +1381,103 @@
      inside the same gate. -->
 {{ if .isManager }}
 <script>
+// ut-docs#5445: the four Data-management actions (reset, archive restore and
+// purge, catalog cleanup) run as ONE till-wide background job. The start
+// answers 202 {job_id}; this helper polls GET /api/data/jobs/{id} and hands
+// the finished result to the action's own renderer as (status, json) -- the
+// same pair the old synchronous response was. Page-local, not app.js. Plain
+// persistent text in #data-job-msg (never renderNotice: it auto-expires,
+// ut-docs#918), no dialog, no showModal.
+(function () {
+  var jobMsg = document.getElementById('data-job-msg');
+  if (!jobMsg) return;
+  var T = {
+    running: "{{ T "settings.data.job_running" }}",
+    interrupted: "{{ T "settings.data.job_interrupted" }}",
+    failed: "{{ T "settings.data.job_failed" }}"
+  };
+  var locked = false;
+  function lockEls() { return document.querySelectorAll('#settings-data [data-job-lock]'); }
+  // Native `disabled` on every lock-marked control; remembers each control's
+  // own prior state so unlock() restores it (e.g. cleanup stays off until a
+  // preview found something).
+  function applyLock() {
+    Array.prototype.forEach.call(lockEls(), function (el) {
+      if (!el.hasAttribute('data-job-was')) el.setAttribute('data-job-was', el.disabled ? '1' : '0');
+      el.disabled = true;
+    });
+  }
+  function lock() { locked = true; applyLock(); }
+  function unlock() {
+    locked = false;
+    Array.prototype.forEach.call(lockEls(), function (el) {
+      if (el.hasAttribute('data-job-was')) {
+        el.disabled = el.getAttribute('data-job-was') === '1';
+        el.removeAttribute('data-job-was');
+      }
+    });
+    jobMsg.textContent = '';
+  }
+  function track(id, msg, onResult, resumed) {
+    lock();
+    if (msg) msg.textContent = '';
+    jobMsg.textContent = T.running; // once -- never on every poll (re-announced)
+    if (!resumed) { try { jobMsg.focus(); } catch (e) { /* not focusable */ } }
+    var fails = 0;
+    return new Promise(function (resolve) {
+      function end(fn) { unlock(); try { fn(); } finally { resolve(); } }
+      function next() { setTimeout(tick, fails >= 5 ? 5000 : 1000); }
+      function tick() {
+        var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+        var timer = ctl ? setTimeout(function () { ctl.abort(); }, 10000) : null;
+        fetch('/api/data/jobs/' + encodeURIComponent(id), { signal: ctl ? ctl.signal : undefined })
+          .then(function (r) {
+            if (timer !== null) clearTimeout(timer);
+            if (r.status === 401) { window.location.href = '/login'; resolve(); return; }
+            if (r.status === 404 || r.status === 403) { end(function () { renderNotice(msg, 'error', T.interrupted); }); return; }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json().then(function (j) {
+              fails = 0;
+              var d = j.data || {};
+              if (d.state === 'done') { end(function () { onResult(d.http_status, d.result || {}); }); }
+              else if (d.state === 'failed') { end(function () { renderNotice(msg, 'error', T.failed); }); }
+              else next();
+            });
+          })
+          // A poll that fails is not the action failing (offline is normal
+          // on this product): keep the text, keep polling, slow down.
+          .catch(function () { if (timer !== null) clearTimeout(timer); fails++; next(); });
+      }
+      tick();
+    });
+  }
+  var resumers = {};
+  window.utDataJob = {
+    // Registers how a resumed (reloaded-page) job of `action` reports.
+    register: function (action, msg, onResult) { resumers[action] = { msg: msg, onResult: onResult }; },
+    // Starts an action through the step-up dialog; 202 -> tracked job,
+    // anything else -> onResult(status, json) as before. Resolves when done.
+    run: function (url, params, msg, onResult, onCancel) {
+      return window.utPostWithElevation(url, params, function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (r.status === 202 && j.data && j.data.job_id) return track(j.data.job_id, msg, onResult, false);
+          onResult(r.status, j);
+        });
+      }, onCancel);
+    },
+    resume: function () {
+      var card = document.getElementById('settings-data');
+      var id = card && card.getAttribute('data-job-id');
+      if (!id) return;
+      var rs = resumers[card.getAttribute('data-job-action')] || {};
+      // Lock and say so before the first poll returns: no flash of live buttons.
+      track(id, rs.msg || jobMsg, rs.onResult || function () {}, true);
+    }
+  };
+  jobMsg.setAttribute('data-ready', '1');
+})();
+</script>
+<script>
 (function () {
   var btn = document.getElementById('data-reset-btn');
   if (!btn) return;
@@ -1391,6 +1493,15 @@
     // replacement pattern (ut-docs#2281 review, nit 7)
     return String(template || '').replace('%d', function () { return a; }).replace('%s', function () { return b; });
   }
+  // ut-docs#5445: called with the job's final (status, json) -- or a
+  // synchronous refusal's -- exactly what the old response was.
+  function renderResult(status, j) {
+    btn.disabled = false;
+    var ok = status >= 200 && status < 300;
+    var okMsg = (j.data && typeof j.data.archived === 'number') ? fmt(T.resetDone, j.data.archived, j.data.batch_id) : (j.data && j.data.message);
+    renderNotice(msg, ok ? 'success' : 'error', (ok ? okMsg : j.error) || ('HTTP ' + status));
+  }
+  window.utDataJob.register('reset_transactions', msg, renderResult);
   btn.addEventListener('click', function () {
     // ut-docs#1841 (ADR-0087): step-up re-authentication (a manager PIN,
     // required at the moment of the act) replaces the old typed-word
@@ -1403,13 +1514,7 @@
     // flight (ut-docs#918 review finding 2) — plain text persists until
     // the renderNotice() success/error call below replaces it.
     btn.disabled = true; msg.textContent = T.clearing;
-    window.utPostWithElevation('/api/data/reset-transactions', {}, function (r) {
-      return r.json().catch(function () { return {}; }).then(function (j) {
-        btn.disabled = false;
-        var okMsg = (j.data && typeof j.data.archived === 'number') ? fmt(T.resetDone, j.data.archived, j.data.batch_id) : (j.data && j.data.message);
-        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? okMsg : j.error) || ('HTTP ' + r.status));
-      });
-    }, function () { btn.disabled = false; msg.textContent = ''; })
+    window.utDataJob.run('/api/data/reset-transactions', {}, msg, renderResult, function () { btn.disabled = false; msg.textContent = ''; })
     // ut-docs#1841 review finding 1: utPostWithElevation only guards the
     // RETRY leg internally, so an unguarded first send leaves a destructive
     // button disabled forever on a network drop -- on an offline-first
@@ -1439,6 +1544,27 @@
       box.innerHTML = '<p class="muted">' + T.empty + '</p>';
     }
   }
+  function isBusy(j) { return !!(j && j.data && j.data.code === 'job_busy'); }
+  // ut-docs#5445: a job resumed after a reload has no row to remove, so the
+  // list is refreshed by reloading once the notice has been shown.
+  function reloadSoon() { setTimeout(function () { UT.reload('data-job-resumed'); }, 2500); }
+  function renderRestore(status, j, row) {
+    var ok = status >= 200 && status < 300;
+    // job_busy is also a 409: tell it apart by data.code, never by text.
+    if (!isBusy(j) && status === 409) { renderNotice(msg, 'error', T.conflict); return; }
+    if (status === 422) { renderNotice(msg, 'error', T.referencesRemoved); return; }
+    renderNotice(msg, ok ? 'success' : 'error', (ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + status));
+    if (ok) { if (row) removeRowIfEmpty(row); else reloadSoon(); }
+  }
+  function renderPurge(status, j, row) {
+    var ok = status >= 200 && status < 300;
+    // 409 here means "still within the retention window" -- the server's own
+    // message (j.error) already names the date, so show it directly.
+    renderNotice(msg, ok ? 'success' : 'error', (ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + status));
+    if (ok) { if (row) removeRowIfEmpty(row); else reloadSoon(); }
+  }
+  window.utDataJob.register('archive_restore', msg, function (st, j) { renderRestore(st, j, null); });
+  window.utDataJob.register('archive_purge', msg, function (st, j) { renderPurge(st, j, null); });
   // ut-docs#1841 (ADR-0087): both restore and purge moved off their typed
   // RESTORE/PURGE words onto step-up re-authentication — see the
   // data-reset-btn handler above for the shared utPostWithElevation shape.
@@ -1449,16 +1575,11 @@
     if (restoreBtn) {
       var row = restoreBtn.closest('tr');
       restoreBtn.disabled = true; msg.textContent = T.restoring;
-      window.utPostWithElevation(
+      window.utDataJob.run(
         '/api/data/reset-archives/' + encodeURIComponent(restoreBtn.getAttribute('data-restore-batch')) + '/restore',
         {},
-        function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-          restoreBtn.disabled = false;
-          if (r.status === 409) { renderNotice(msg, 'error', T.conflict); return; }
-          if (r.status === 422) { renderNotice(msg, 'error', T.referencesRemoved); return; }
-          renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-          if (r.ok) removeRowIfEmpty(row);
-        }); },
+        msg,
+        function (status, j) { restoreBtn.disabled = false; renderRestore(status, j, row); },
         function () { restoreBtn.disabled = false; msg.textContent = ''; }
       ).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
       return;
@@ -1467,17 +1588,11 @@
     if (purgeBtn) {
       var prow = purgeBtn.closest('tr');
       purgeBtn.disabled = true; msg.textContent = T.purging;
-      window.utPostWithElevation(
+      window.utDataJob.run(
         '/api/data/reset-archives/' + encodeURIComponent(purgeBtn.getAttribute('data-purge-batch')) + '/purge',
         {},
-        function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-          purgeBtn.disabled = false;
-          // 409 here means "still within the retention window" -- the
-          // server's own message (data.error) already names the date, so
-          // show it directly rather than a fixed string that can't.
-          renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-          if (r.ok) removeRowIfEmpty(prow);
-        }); },
+        msg,
+        function (status, j) { purgeBtn.disabled = false; renderPurge(status, j, prow); },
         function () { purgeBtn.disabled = false; msg.textContent = ''; }
       ).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
     }
@@ -1599,23 +1714,25 @@
     // manager PIN, a strictly stronger confirmation than either did alone.
     run.disabled = true; msg.textContent = T.removing; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     var params = (includeActive && includeActive.checked) ? { include_active: '1' } : {};
-    window.utPostWithElevation('/api/data/cleanup-catalog', params, function (r) {
-      return r.json().catch(function () { return {}; }).then(function (j) {
-        var n = (j.data && typeof j.data.removed === 'number') ? j.data.removed : null;
-        if (r.ok && n !== null) {
-          // ut-docs#2281: 0 removed is not a success — the notice renders
-          // as an error/warning style so an operator doesn't read a no-op
-          // as confirmation the catalog was cleared.
-          renderNotice(msg, n > 0 ? 'success' : 'error', n > 0 ? fmt(T.removed, n) : T.removedNone);
-        } else {
-          renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-        }
-        if (r.ok) { out.innerHTML = ''; run.disabled = true; }
-        else { run.disabled = false; }
-      });
-    }, function () { run.disabled = false; msg.textContent = ''; })
+    window.utDataJob.run('/api/data/cleanup-catalog', params, msg, renderCleanup, function () { run.disabled = false; msg.textContent = ''; })
       .catch(function (e) { run.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
+  // ut-docs#5445: the job's final (status, json), or a synchronous refusal's.
+  function renderCleanup(status, j) {
+    var ok = status >= 200 && status < 300;
+    var n = (j.data && typeof j.data.removed === 'number') ? j.data.removed : null;
+    if (ok && n !== null) {
+      // ut-docs#2281: 0 removed is not a success — the notice renders
+      // as an error/warning style so an operator doesn't read a no-op
+      // as confirmation the catalog was cleared.
+      renderNotice(msg, n > 0 ? 'success' : 'error', n > 0 ? fmt(T.removed, n) : T.removedNone);
+    } else {
+      renderNotice(msg, ok ? 'success' : 'error', (ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + status));
+    }
+    if (ok) { out.innerHTML = ''; run.disabled = true; }
+    else { run.disabled = false; }
+  }
+  window.utDataJob.register('catalog_cleanup', msg, renderCleanup);
 })();
 (function () {
   var btn = document.getElementById('export-run-btn');
@@ -1664,6 +1781,10 @@
     }).catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
+</script>
+<script>
+// ut-docs#5445: last, so every action has registered its renderer.
+if (window.utDataJob) window.utDataJob.resume();
 </script>
 {{ end }}
 <div class="card" id="settings-retention">

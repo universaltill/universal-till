@@ -36,6 +36,7 @@ func TestDataManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 	}{
 		{"reset-transactions", http.MethodPost, "/api/data/reset-transactions"},
 		{"reset-archives list", http.MethodGet, "/api/data/reset-archives"},
+		{"data job poll", http.MethodGet, "/api/data/jobs/some-job"},
 		{"reset-archives restore", http.MethodPost, "/api/data/reset-archives/some-batch/restore"},
 		{"reset-archives purge", http.MethodPost, "/api/data/reset-archives/some-batch/purge"},
 		{"customers search", http.MethodGet, "/api/data/customers"},

@@ -411,6 +411,74 @@ ORDER BY created_at DESC, id DESC LIMIT 200`)
 	return out, nil
 }
 
+// restorePreconditions is RestoreResetBatch's refusal block (unknown batch,
+// till has traded since), over either r.db (the ut-docs#5445 preflight) or
+// the restore's own tx (authoritative re-check).
+func restorePreconditions(ctx context.Context, q queryRower, batchID string) error {
+	var exists int
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM reset_batches WHERE id = ?`, batchID).Scan(&exists); err != nil {
+		return fmt.Errorf("restore: look up batch: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("restore batch %q: %w", batchID, ErrResetBatchNotFound)
+	}
+	for _, tbl := range restoreEmptyCheckTables {
+		var c int64
+		if err := q.QueryRowContext(ctx, `SELECT count(*) FROM `+tbl).Scan(&c); err != nil {
+			return fmt.Errorf("restore: check %s empty: %w", tbl, err)
+		}
+		if c != 0 {
+			return fmt.Errorf("restore batch %q: %s has %d row(s): %w", batchID, tbl, c, ErrShopHasTradedSinceReset)
+		}
+	}
+	return nil
+}
+
+// CheckRestorable reports, without changing anything, whether
+// RestoreResetBatch would refuse up front (ErrResetBatchNotFound /
+// ErrShopHasTradedSinceReset). The handler calls it before starting the
+// background job so those refusals stay synchronous (ut-docs#5445); the
+// restore re-checks inside its transaction.
+func (r *POSRepo) CheckRestorable(ctx context.Context, batchID string) error {
+	return restorePreconditions(ctx, r.db, batchID)
+}
+
+// purgePreconditions is DeleteResetBatch's refusal block (unknown batch,
+// retention window) and returns the batch's sales_count for the audit row.
+func (r *POSRepo) purgePreconditions(ctx context.Context, q queryRower, batchID string) (int64, error) {
+	var createdAt string
+	var salesCount int64
+	err := q.QueryRowContext(ctx, `SELECT created_at, sales_count FROM reset_batches WHERE id = ?`, batchID).Scan(&createdAt, &salesCount)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("delete batch %q: %w", batchID, ErrResetBatchNotFound)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("delete: look up batch: %w", err)
+	}
+	if salesCount > 0 {
+		minDays, err := r.resolveArchiveMinDays(ctx, q)
+		if err != nil {
+			return 0, err
+		}
+		archivedAt, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return 0, fmt.Errorf("delete: parse batch created_at %q: %w", createdAt, err)
+		}
+		retainedUntil := computeRetainedUntil(archivedAt, minDays)
+		if time.Now().UTC().Before(retainedUntil) {
+			return 0, &ArchiveWithinRetentionWindowError{RetainedUntil: retainedUntil}
+		}
+	}
+	return salesCount, nil
+}
+
+// CheckPurgeable is the read-only preflight of DeleteResetBatch (ut-docs#5445),
+// mirroring CheckRestorable.
+func (r *POSRepo) CheckPurgeable(ctx context.Context, batchID string) error {
+	_, err := r.purgePreconditions(ctx, r.db, batchID)
+	return err
+}
+
 // RestoreResetBatch moves every archived row of one reset batch back into
 // its live table, deletes the archived copies and the batch header (a
 // restored batch stops existing as an archive and cannot be restored twice
@@ -432,22 +500,8 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID, block
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var exists int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM reset_batches WHERE id = ?`, batchID).Scan(&exists); err != nil {
-		return 0, fmt.Errorf("restore: look up batch: %w", err)
-	}
-	if exists == 0 {
-		return 0, fmt.Errorf("restore batch %q: %w", batchID, ErrResetBatchNotFound)
-	}
-
-	for _, tbl := range restoreEmptyCheckTables {
-		var c int64
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM `+tbl).Scan(&c); err != nil {
-			return 0, fmt.Errorf("restore: check %s empty: %w", tbl, err)
-		}
-		if c != 0 {
-			return 0, fmt.Errorf("restore batch %q: %s has %d row(s): %w", batchID, tbl, c, ErrShopHasTradedSinceReset)
-		}
+	if err := restorePreconditions(ctx, tx, batchID); err != nil {
+		return 0, err
 	}
 
 	// Parents before children (reverse of the archive order), so re-inserted
@@ -630,29 +684,9 @@ func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID, blocke
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var createdAt string
-	var salesCount int64
-	err = tx.QueryRowContext(ctx, `SELECT created_at, sales_count FROM reset_batches WHERE id = ?`, batchID).Scan(&createdAt, &salesCount)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("delete batch %q: %w", batchID, ErrResetBatchNotFound)
-	}
+	salesCount, err := r.purgePreconditions(ctx, tx, batchID)
 	if err != nil {
-		return fmt.Errorf("delete: look up batch: %w", err)
-	}
-
-	if salesCount > 0 {
-		minDays, err := r.resolveArchiveMinDays(ctx, tx)
-		if err != nil {
-			return err
-		}
-		archivedAt, err := time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return fmt.Errorf("delete: parse batch created_at %q: %w", createdAt, err)
-		}
-		retainedUntil := computeRetainedUntil(archivedAt, minDays)
-		if time.Now().UTC().Before(retainedUntil) {
-			return &ArchiveWithinRetentionWindowError{RetainedUntil: retainedUntil}
-		}
+		return err
 	}
 
 	for _, t := range resetArchiveTables {

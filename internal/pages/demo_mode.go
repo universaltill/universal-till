@@ -665,6 +665,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /api/data/customers":      true,
 	"GET /api/data/obsolete-items": true,
 	"GET /api/data/reset-archives": true,
+	"GET /api/data/jobs/{id}":      true,
 	"GET /api/entitlement":         true,
 	"GET /country-settings":        true,
 	"GET /locations":               true,

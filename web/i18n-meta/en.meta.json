@@ -484,5 +484,9 @@
   "settings.move.refused_source_unavailable": {"description": "Move refused: the till's current shop is unavailable (deleted or merging).", "review": "standard"},
   "settings.move.refused_pending": {"description": "Move refused: another move is already pending for this till.", "review": "standard"},
   "settings.move.refused_declined_recently": {"description": "Move refused: a recent decline blocks this requester for a day.", "review": "standard"},
-  "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"}
+  "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"},
+  "settings.data.job_running": {"description": "Persistent line at the top of Settings > Data management while a reset, archive restore or purge, or catalogue cleanup runs in the background: tells the manager it can take minutes and that they can leave the page and come back.", "review": "standard"},
+  "settings.data.job_busy": {"description": "Error shown when a manager starts a Data management action (reset, archive restore or purge, catalogue cleanup) while another one is still running: wait, then try again.", "review": "standard"},
+  "settings.data.job_interrupted": {"description": "Notice shown when the till has no record of a Data management action the page was waiting for (for example the till restarted): tells the manager to check the archive list and their data before retrying.", "review": "standard"},
+  "settings.data.job_failed": {"description": "Notice shown when a Data management action stopped before finishing; the action is all-or-nothing, so nothing was changed, and the manager can try again.", "review": "standard"}
 }

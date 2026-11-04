@@ -831,6 +831,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ADR-0119: the effects selector and what Auto detected.
 			"fxView":             effectsLevelViewFrom(all),
 			"isManager":          isManager,
+			"dataJob":            settingsDataJobView(isManager),
 			"canReportIssue":     canReportIssue,
 			"canManageUsers":     canManageUsers,
 			"canEditPermissions": canEditPermissions,
@@ -4016,4 +4017,18 @@ func enrolFailureKey(err error) string {
 		return "setup.cloud.error.replace_main_till_only"
 	}
 	return ""
+}
+
+// settingsDataJobView is the Data-management card's resume hint (ut-docs#5445):
+// the running data job (or one whose result nobody has fetched yet), so a
+// reload mid-job locks the card and resumes polling. Managers only.
+func settingsDataJobView(isManager bool) map[string]string {
+	if !isManager {
+		return nil
+	}
+	j, ok := dataJobs.current()
+	if !ok {
+		return nil
+	}
+	return map[string]string{"ID": j.id, "Action": j.action}
 }

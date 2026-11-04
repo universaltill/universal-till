@@ -192,6 +192,119 @@ func dataAPIRespond(w http.ResponseWriter, status int, ok bool, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
 }
 
+// dataAPIBusy answers 409 when a data-management job already holds the
+// till-wide slot (ut-docs#5445). data.code is machine-readable: the client
+// must not tell it from a restore conflict by the translated text.
+func dataAPIBusy(w http.ResponseWriter, locale string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data":  map[string]any{"code": "job_busy"},
+		"error": httpx.T(locale, "settings.data.job_busy"),
+	})
+}
+
+// dataAPIStarted answers 202 for a started data job.
+func dataAPIStarted(w http.ResponseWriter, id, action string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data":  map[string]any{"job_id": id, "action": action, "state": string(dataJobRunning)},
+		"error": nil,
+	})
+}
+
+// startDataJob starts run as the data job and writes the 202 (or 409 busy /
+// 500) response. run gets a context detached from the request.
+func startDataJob(w http.ResponseWriter, r *http.Request, d *common.Deps, locale, action string,
+	run func(ctx context.Context) (int, map[string]any)) {
+	id, err := dataJobs.start(d, r.Context(), action, run)
+	switch {
+	case errors.Is(err, errDataJobBusy):
+		dataAPIBusy(w, locale)
+	case err != nil:
+		dataAPIRespond(w, http.StatusInternalServerError, false, err.Error())
+	default:
+		dataAPIStarted(w, id, action)
+	}
+}
+
+// writeDataResult writes a job-shaped result (status + envelope) as a
+// synchronous response.
+func writeDataResult(w http.ResponseWriter, status int, body map[string]any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func dataResultOK(msg string) map[string]any {
+	return map[string]any{"data": map[string]any{"message": msg}, "error": nil}
+}
+
+func dataResultErr(msg string) map[string]any {
+	return map[string]any{"data": nil, "error": msg}
+}
+
+// resetResult builds what POST reset-transactions used to write. archived /
+// batch_id are machine-readable for settings.html's i18n'd notice
+// (ut-docs#2281); message is kept for non-browser callers. ADR-0042:
+// nothing was destroyed -- say so.
+func resetResult(n int64, batchID string, err error) (int, map[string]any) {
+	if err != nil {
+		return http.StatusInternalServerError, dataResultErr(err.Error())
+	}
+	return http.StatusOK, map[string]any{"data": map[string]any{
+		"message":  fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data management until the till trades again", n, batchID),
+		"archived": n,
+		"batch_id": batchID,
+	}, "error": nil}
+}
+
+// restoreResult maps RestoreResetBatch's outcome (ADR-0042 §2). The in-tx
+// re-checks stay authoritative, so 404/409/422 can still arrive here.
+func restoreResult(locale string, n int64, err error) (int, map[string]any) {
+	_ = locale // restore's refusal texts are English-only (unchanged shape)
+	switch {
+	case err == nil:
+		return http.StatusOK, dataResultOK(fmt.Sprintf("restored %d sales and related records", n))
+	case errors.Is(err, data.ErrResetBatchNotFound):
+		return http.StatusNotFound, dataResultErr("reset archive batch not found")
+	case errors.Is(err, data.ErrShopHasTradedSinceReset):
+		return http.StatusConflict, dataResultErr("the till has traded since this reset — the archived batch can no longer be restored automatically")
+	case errors.Is(err, data.ErrArchiveReferencesRemoved):
+		return http.StatusUnprocessableEntity, dataResultErr("this archive references a product, stock location or customer that was removed or erased after the reset and can no longer be restored automatically")
+	default:
+		return http.StatusInternalServerError, dataResultErr(err.Error())
+	}
+}
+
+// purgeResult maps DeleteResetBatch's outcome (ADR-0042 §3, ut-docs#661).
+func purgeResult(locale string, err error) (int, map[string]any) {
+	if err == nil {
+		return http.StatusOK, dataResultOK(httpx.T(locale, "settings.data.archives_purge_done"))
+	}
+	var within *data.ArchiveWithinRetentionWindowError
+	switch {
+	case errors.Is(err, data.ErrResetBatchNotFound):
+		return http.StatusNotFound, dataResultErr(httpx.T(locale, "settings.data.archives_purge_not_found"))
+	case errors.As(err, &within):
+		return http.StatusConflict, dataResultErr(fmt.Sprintf(
+			httpx.T(locale, "settings.data.archives_purge_retained_until"), within.RetainedUntil.Format("2006-01-02")))
+	default:
+		return http.StatusInternalServerError, dataResultErr(err.Error())
+	}
+}
+
+func cleanupResult(n int64, err error) (int, map[string]any) {
+	if err != nil {
+		return http.StatusInternalServerError, dataResultErr(err.Error())
+	}
+	return http.StatusOK, map[string]any{"data": map[string]any{
+		"message": fmt.Sprintf("removed %d obsolete products", n),
+		"removed": n,
+	}, "error": nil}
+}
+
 // elevationActors resolves one elevationCheck into the (actor, blockedActor)
 // pair the audit layer wants (ut-docs#1841, ADR-0087).
 //
@@ -231,6 +344,10 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
+		if dataJobs.running() { // ut-docs#5445: refuse before asking for a PIN
+			dataAPIBusy(w, httpx.ResolveLocale(w, r))
+			return
+		}
 		_ = r.ParseForm()
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		// Tested POSITIVELY (ut-docs#1841 review finding 3): only an
@@ -247,24 +364,13 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		actorID, blockedActorID := elevationActors(elev)
-		n, batchID, err := data.NewPOSRepo(d.Db).ResetTransactionHistory(r.Context(), actorID, blockedActorID)
-		if err != nil {
-			respond(w, http.StatusInternalServerError, false, err.Error())
-			return
-		}
-		// Refresh the in-memory shift/menu state is unnecessary — the basket is
-		// in memory and unaffected; the next receipt number restarts from 1.
-		// ADR-0042: nothing was destroyed — say so.
-		// ut-docs#2281: `archived`/`batch_id` are machine-readable fields for
-		// the settings page's own JS, which renders an i18n'd notice from
-		// them (settings.data.reset_done) rather than this English message
-		// verbatim — `message` is kept for non-browser API callers.
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
-			"message":  fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data management until the till trades again", n, batchID),
-			"archived": n,
-			"batch_id": batchID,
-		}, "error": nil})
+		// ut-docs#5445: the transaction runs as a background job, not on the
+		// request (a dropped request used to roll it back). The shift/menu
+		// state needs no refresh -- the basket is in memory and unaffected;
+		// the next receipt number restarts from 1.
+		startDataJob(w, r, d, httpx.ResolveLocale(w, r), dataActionReset, func(ctx context.Context) (int, map[string]any) {
+			return resetResult(data.NewPOSRepo(d.Db).ResetTransactionHistory(ctx, actorID, blockedActorID))
+		})
 	})
 
 	// ADR-0042: list the archived reset batches, newest first.
@@ -315,30 +421,33 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
+		if dataJobs.running() { // ut-docs#5445: refuse before asking for a PIN
+			dataAPIBusy(w, httpx.ResolveLocale(w, r))
+			return
+		}
+		id := r.PathValue("id")
+		repo := data.NewPOSRepo(d.Db)
 		_ = r.ParseForm()
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		if elev.Outcome != elevated {
 			locale := httpx.ResolveLocale(w, r)
-			renderElevationPrompt(w, r, "/api/data/reset-archives/"+r.PathValue("id")+"/restore", "#archives-msg",
+			renderElevationPrompt(w, r, "/api/data/reset-archives/"+id+"/restore", "#archives-msg",
 				httpx.T(locale, "elevation.summary.data_archive_restore"), nil, elev)
 			return
 		}
-		actorID, blockedActorID := elevationActors(elev)
-		n, err := data.NewPOSRepo(d.Db).RestoreResetBatch(r.Context(), r.PathValue("id"), actorID, blockedActorID)
-		if err != nil {
-			switch {
-			case errors.Is(err, data.ErrResetBatchNotFound):
-				respond(w, http.StatusNotFound, false, "reset archive batch not found")
-			case errors.Is(err, data.ErrShopHasTradedSinceReset):
-				respond(w, http.StatusConflict, false, "the till has traded since this reset — the archived batch can no longer be restored automatically")
-			case errors.Is(err, data.ErrArchiveReferencesRemoved):
-				respond(w, http.StatusUnprocessableEntity, false, "this archive references a product, stock location or customer that was removed or erased after the reset and can no longer be restored automatically")
-			default:
-				respond(w, http.StatusInternalServerError, false, err.Error())
-			}
+		locale := httpx.ResolveLocale(w, r)
+		// Synchronous preflight (404/409 keep their codes); the job re-checks
+		// inside its transaction.
+		if err := repo.CheckRestorable(r.Context(), id); err != nil {
+			st, body := restoreResult(locale, 0, err)
+			writeDataResult(w, st, body)
 			return
 		}
-		respond(w, http.StatusOK, true, fmt.Sprintf("restored %d sales and related records", n))
+		actorID, blockedActorID := elevationActors(elev)
+		startDataJob(w, r, d, locale, dataActionRestore, func(ctx context.Context) (int, map[string]any) {
+			n, err := repo.RestoreResetBatch(ctx, id, actorID, blockedActorID)
+			return restoreResult(locale, n, err)
+		})
 	})
 
 	// ADR-0042 §3 / ut-docs#661: permanently purge one archived reset
@@ -352,29 +461,52 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusForbidden, false, httpx.T(locale, "settings.data.archives_purge_manager_only"))
 			return
 		}
+		if dataJobs.running() { // ut-docs#5445: refuse before asking for a PIN
+			dataAPIBusy(w, locale)
+			return
+		}
+		id := r.PathValue("id")
+		repo := data.NewPOSRepo(d.Db)
 		_ = r.ParseForm()
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		if elev.Outcome != elevated {
-			renderElevationPrompt(w, r, "/api/data/reset-archives/"+r.PathValue("id")+"/purge", "#archives-msg",
+			renderElevationPrompt(w, r, "/api/data/reset-archives/"+id+"/purge", "#archives-msg",
 				httpx.T(locale, "elevation.summary.data_archive_purge"), nil, elev)
 			return
 		}
-		actorID, blockedActorID := elevationActors(elev)
-		err := data.NewPOSRepo(d.Db).DeleteResetBatch(r.Context(), r.PathValue("id"), actorID, blockedActorID)
-		if err != nil {
-			var within *data.ArchiveWithinRetentionWindowError
-			switch {
-			case errors.Is(err, data.ErrResetBatchNotFound):
-				respond(w, http.StatusNotFound, false, httpx.T(locale, "settings.data.archives_purge_not_found"))
-			case errors.As(err, &within):
-				respond(w, http.StatusConflict, false, fmt.Sprintf(
-					httpx.T(locale, "settings.data.archives_purge_retained_until"), within.RetainedUntil.Format("2006-01-02")))
-			default:
-				respond(w, http.StatusInternalServerError, false, err.Error())
-			}
+		// Synchronous preflight (404 / retained-until 409 keep their codes);
+		// the job re-checks inside its transaction.
+		if err := repo.CheckPurgeable(r.Context(), id); err != nil {
+			st, body := purgeResult(locale, err)
+			writeDataResult(w, st, body)
 			return
 		}
-		respond(w, http.StatusOK, true, httpx.T(locale, "settings.data.archives_purge_done"))
+		actorID, blockedActorID := elevationActors(elev)
+		startDataJob(w, r, d, locale, dataActionPurge, func(ctx context.Context) (int, map[string]any) {
+			return purgeResult(locale, repo.DeleteResetBatch(ctx, id, actorID, blockedActorID))
+		})
+	})
+
+	// ut-docs#5445: poll the data-management background job. Manager-gated
+	// like the actions; the slot only ever holds data jobs, so this can read
+	// no other kind of job. Unknown/expired/restarted -> 404.
+	mux.HandleFunc("GET /api/data/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "data_management") {
+			respond(w, http.StatusForbidden, false, "manager only")
+			return
+		}
+		j, ok := dataJobs.get(r.PathValue("id"))
+		if !ok {
+			respond(w, http.StatusNotFound, false, httpx.T(httpx.ResolveLocale(w, r), "settings.data.job_interrupted"))
+			return
+		}
+		out := map[string]any{"job_id": j.id, "action": j.action, "state": string(j.state)}
+		if j.state == dataJobDone {
+			out["http_status"] = j.httpStatus
+			out["result"] = j.body
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": out, "error": nil})
 	})
 
 	// GDPR: find a customer to erase.
@@ -465,6 +597,10 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
+		if dataJobs.running() { // ut-docs#5445: refuse before asking for a PIN
+			dataAPIBusy(w, httpx.ResolveLocale(w, r))
+			return
+		}
 		_ = r.ParseForm()
 		includeActive := r.FormValue("include_active") == "1"
 		// ut-docs#2281 (review finding 1): the LIVE cashier/kiosk basket is
@@ -518,16 +654,10 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		actorID, blockedActorID := elevationActors(elev)
-		n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(r.Context(), actorID, blockedActorID, includeActive)
-		if err != nil {
-			respond(w, http.StatusInternalServerError, false, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
-			"message": fmt.Sprintf("removed %d obsolete products", n),
-			"removed": n,
-		}, "error": nil})
+		startDataJob(w, r, d, httpx.ResolveLocale(w, r), dataActionCleanup, func(ctx context.Context) (int, map[string]any) {
+			n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(ctx, actorID, blockedActorID, includeActive)
+			return cleanupResult(n, err)
+		})
 	})
 
 	// Dispatch a date-ranged export/report to a SPECIFIC installed export-
