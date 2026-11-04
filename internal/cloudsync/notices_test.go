@@ -179,18 +179,77 @@ func TestNotices_MalformedBlockChangesNothing(t *testing.T) {
 	}
 }
 
-func TestNotices_ItemCapIsTwenty(t *testing.T) {
+func TestNotices_ItemCapIsTwenty_KeepsTheMostSevere(t *testing.T) {
 	d, repo, _ := noticeSetup(t, true)
+	// 30 items, info first; the one critical and one important sit LAST,
+	// where a cloud that forgot its own ordering (or a hostile one) would
+	// put them. The cap keeps the 20 most severe, never the first 20.
 	var items []map[string]any
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 28; i++ {
 		items = append(items, noticeItem(fmt.Sprintf("n%02d", i), 1, "info"))
 	}
-	c := &fakeCloud{notices: block("r1", items...)}
+	items = append(items, noticeItem("imp", 1, "important"), noticeItem("crit", 1, "critical"))
+	b, _ := json.Marshal(map[string]any{"rev": "r1", "more": true, "items": items})
+	c := &fakeCloud{notices: b}
 	srv := httptest.NewServer(c.handler())
 	defer srv.Close()
 	runTick(t, srv.URL, d, "en")
-	if p, _ := repo.Pairs(context.Background()); len(p) != cloudnotice.MaxItems {
+	p, _ := repo.Pairs(context.Background())
+	if len(p) != cloudnotice.MaxItems {
 		t.Fatalf("held %d, want cap %d", len(p), cloudnotice.MaxItems)
+	}
+	held := map[string]bool{}
+	for _, x := range p {
+		held[x.ID] = true
+	}
+	if !held["crit"] || !held["imp"] {
+		t.Fatalf("the cap dropped a critical/important at position 29/30: held %v", held)
+	}
+}
+
+func TestNotices_OversizedItemIsDroppedAlone(t *testing.T) {
+	d, repo, _ := noticeSetup(t, true)
+	big := noticeItem("big", 1, "info")
+	texts := map[string]any{}
+	for i := 0; i < 40; i++ { // 40 languages x ~150 bytes > the 4 KiB item cap
+		texts[fmt.Sprintf("x%02d-xx", i)] = map[string]any{"title": "t", "body": strings.Repeat("b", 120)}
+	}
+	texts["en-gb"] = map[string]any{"title": "t", "body": "b"}
+	big["texts"] = texts
+	c := &fakeCloud{notices: block("r1", big, noticeItem("ok", 1, "info"))}
+	srv := httptest.NewServer(c.handler())
+	defer srv.Close()
+	runTick(t, srv.URL, d, "en")
+	p, _ := repo.Pairs(context.Background())
+	if len(p) != 1 || p[0].ID != "ok" {
+		t.Fatalf("held = %v, want only ok (the oversized item costs only itself)", p)
+	}
+}
+
+func TestNotices_MarkMadeWhileThePostIsInFlightIsStillReported(t *testing.T) {
+	d, repo, _ := noticeSetup(t, true)
+	ctx := context.Background()
+	// The clock moves one minute per read: attach (collecting acks) sees an
+	// earlier time than apply (stamping reported_at).
+	calls := 0
+	noticeNow = func() time.Time { calls++; return tNow.Add(time.Duration(calls) * time.Minute) }
+	c := &fakeCloud{notices: block("r1", noticeItem("a", 1, "info"))}
+	// While the sync request is being answered, the operator opens the notice.
+	c.noticesFn = func(req map[string]any) json.RawMessage {
+		if req != nil && req["acks"] != nil {
+			_ = repo.MarkRead(ctx, "a", tNow.Add(time.Duration(calls)*time.Minute+30*time.Second))
+		}
+		return block("r1", noticeItem("a", 1, "info"))
+	}
+	srv := httptest.NewServer(c.handler())
+	defer srv.Close()
+	runTick(t, srv.URL, d, "en") // stores a
+	runTick(t, srv.URL, d, "en") // sends delivered_at; the read happens mid-flight
+	runTick(t, srv.URL, d, "en") // the read must go up now
+	req := lastNoticesReq(t, c)
+	acks, _ := req["acks"].([]any)
+	if len(acks) != 1 || acks[0].(map[string]any)["read_at"] == nil {
+		t.Fatalf("a read marked while the previous POST was in flight must still be reported: %v", req["acks"])
 	}
 }
 

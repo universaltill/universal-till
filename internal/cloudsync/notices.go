@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudnotice"
@@ -139,17 +140,21 @@ func (n *noticeClient) attach(ctx context.Context, req *syncRequest) {
 	for i, a := range acks {
 		ackIDs[i] = a.ID
 	}
-	req.onNotices = func(raw json.RawMessage) { n.apply(ctx, raw, lang, ackIDs) }
+	// collected is when the acks were read; reported_at is stamped with it
+	// (not the response time) so a mark made while the POST is in flight is
+	// newer than the report and goes up next tick instead of being lost.
+	collected := now
+	req.onNotices = func(raw json.RawMessage) { n.apply(ctx, raw, lang, ackIDs, collected) }
 }
 
 // apply handles the response's notices block. Best-effort: it logs and never
 // fails the tick. A block that does not parse changes nothing.
-func (n *noticeClient) apply(ctx context.Context, raw json.RawMessage, lang string, ackIDs []string) {
+func (n *noticeClient) apply(ctx context.Context, raw json.RawMessage, lang string, ackIDs []string, collected time.Time) {
 	var blk struct {
-		Unchanged bool               `json:"unchanged"`
-		Rev       string             `json:"rev"`
-		More      bool               `json:"more"`
-		Items     []cloudnotice.Item `json:"items"`
+		Unchanged bool              `json:"unchanged"`
+		Rev       string            `json:"rev"`
+		More      bool              `json:"more"`
+		Items     []json.RawMessage `json:"items"`
 	}
 	// Bounded: ADR-0176 §4 says a response is at most 80 KiB.
 	if len(raw) > 128<<10 || json.Unmarshal(raw, &blk) != nil {
@@ -159,7 +164,7 @@ func (n *noticeClient) apply(ctx context.Context, raw json.RawMessage, lang stri
 	now := noticeNow()
 	// The cloud has the acks now (the block exists, so it knows notices).
 	if len(ackIDs) > 0 {
-		if err := n.repo.MarkReported(ctx, ackIDs, now); err != nil {
+		if err := n.repo.MarkReported(ctx, ackIDs, collected); err != nil {
 			logging.L().Warnf("cloudsync: notices acks not marked: %v", err)
 		}
 	}
@@ -167,11 +172,35 @@ func (n *noticeClient) apply(ctx context.Context, raw json.RawMessage, lang stri
 		n.remember(ctx, blk.Rev, lang)
 		return
 	}
-	if len(blk.Items) > cloudnotice.MaxItems {
-		blk.Items = blk.Items[:cloudnotice.MaxItems]
+	// Each item is bounded on its own (§4: ≤ 4 KiB serialised) and decoded
+	// alone, so one oversized or malformed item costs only itself.
+	items := make([]cloudnotice.Item, 0, len(blk.Items))
+	for _, rawItem := range blk.Items {
+		if len(rawItem) > cloudnotice.MaxItemBytes {
+			logging.L().Warnf("cloudsync: dropped an oversized notice item (%d bytes)", len(rawItem))
+			continue
+		}
+		var it cloudnotice.Item
+		if err := json.Unmarshal(rawItem, &it); err != nil {
+			logging.L().Warnf("cloudsync: dropped a malformed notice item: %v", err)
+			continue
+		}
+		items = append(items, it)
+	}
+	// The wire contract has no paging: with `more` the cloud itself held
+	// back live items (it lists critical first, cap 20). The till cannot
+	// fetch the rest, so it says so in the log (counts only) and, when a
+	// response overruns the cap, truncates severity-first so a critical is
+	// never the one dropped.
+	if blk.More || len(items) > cloudnotice.MaxItems {
+		logging.L().Warnf("cloudsync: cloud listed more notices than the cap (%d received, more=%v): keeping the %d most severe", len(items), blk.More, cloudnotice.MaxItems)
+	}
+	if len(items) > cloudnotice.MaxItems {
+		cloudnotice.SortForCap(items)
+		items = items[:cloudnotice.MaxItems]
 	}
 	var keep []data.CloudNotice
-	for _, it := range blk.Items {
+	for _, it := range items {
 		if err := cloudnotice.Validate(it, now); err != nil {
 			logging.L().Warnf("cloudsync: dropped notice %s: %v", cloudnotice.Describe(it), err)
 			continue
