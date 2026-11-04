@@ -624,6 +624,16 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
 	}
+	// ut-docs#4768 (channel-order-action.md "Upload order"): the main till's queued
+	// channel order actions go up after the check-in answered and BEFORE this tick's
+	// channel_order(_update) directives are applied, so an action is judged against the
+	// cloud's newest state and its answer's `current` is applied first (a directive of
+	// the same revision is then ignored). Runs on a 304 tick too: the queue does not
+	// depend on catalogue changes. Logged, never returned.
+	if !refusedMidTick {
+		// A non-main or unenrolled till blocks its stranded rows inside (finding 2).
+		uploadChannelOrderActions(ctx, cfg, db, hooks)
+	}
 	// Archived reports (ADR-0147 §2, ut-docs#574): only in retention mode
 	// cloud/both, from EVERY till — report_archive is per-till and not
 	// synced, so each till uploads its own Z chain, an additional till under

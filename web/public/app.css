@@ -7330,6 +7330,28 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* Staff actions on an online order (ut-docs#4768 slice D). Logical properties
+   only (RTL). Three blocks, never one flex row: opening Ship or Cancel must not
+   move its own summary from under the finger (the parked-orders bug, #3630) -- the
+   panel opens BELOW the summary. Targets keep .btn's 3rem; no nowrap, so the longest
+   de/tr labels wrap instead of clipping. */
+.channel-order-status[data-status="pending"] { border-style: dashed; }
+.channel-order-status[data-status="refused"] { font-weight: 600; }
+.channel-order-actions-card > h2 { margin-block-start: 0; }
+.channel-order-pending { list-style: none; margin: 0 0 .5rem; padding: 0; display: grid; gap: .5rem; }
+.channel-order-pending > li { display: grid; gap: .35rem; justify-items: start; }
+.channel-order-actions-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+.channel-order-actions-row > form { margin: 0; }
+.channel-order-action-form { margin-block-start: .75rem; }
+.channel-order-cancel { margin-block-start: 1rem; padding-block-start: 1rem; border-block-start: 1px solid var(--border); }
+.channel-order-action-form > summary { list-style: none; cursor: pointer; inline-size: fit-content; }
+.channel-order-action-form > summary::-webkit-details-marker { display: none; }
+.channel-order-action-panel { display: grid; gap: .75rem; margin-block-start: .75rem; max-inline-size: 32rem; }
+.channel-order-field { display: grid; gap: .25rem; }
+.channel-order-field input, .channel-order-field select { inline-size: 100%; min-inline-size: 0; box-sizing: border-box; min-block-size: 46px; }
+.channel-order-check { display: flex; align-items: center; gap: .5rem; min-block-size: 46px; }
+.channel-order-check input { inline-size: 1.25rem; block-size: 1.25rem; }
+.channel-order-outcome form { margin-block-start: .5rem; }
 /* ut-docs#5070: Settings → Backups → Restore from a file, and the welcome
    page's restore line. Logical properties only (RTL). */
 .backup-upload { margin-block-start: 1rem; }

@@ -1,12 +1,14 @@
 package pages
 
 import (
+	"context"
 	"database/sql"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/channelactions"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/entitlement"
@@ -171,4 +173,164 @@ func decodeFixtureForHook(t *testing.T) (cloudsync.ChannelOrderDirective, string
 			{LineID: "l-2", Name: "Gift wrap", Qty: 1, UnitPrice: money.FromMinor(200), TaxBP: 2000, TaxIncluded: true},
 		},
 	}}, ""
+}
+
+// Slice D (ut-docs#4768): an ACTION answered by the cloud applies its `current`
+// through the same hook. Queuing, answering and applying a ship and a cancel
+// with restock must leave sales, payments, the drawer, the Z report and the
+// fiscal journal as they were; only the channel tables, stock and audit move,
+// and stock moves exactly once (the restock) however often the answer repeats.
+func TestChannelActionAnswers_LeaveZReportDrawerAndFiscalJournalUnchanged(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	x := func(q string, a ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, a...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	x(`INSERT INTO tax_codes(id,name,rate_basis_points,is_active) VALUES('tc-co','Std',2000,1)`)
+	x(`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('co-itm','CO-1','Shirt',3500,'tc-co',1)`)
+	x(`INSERT INTO inventory(id,item_id,location_id,quantity) VALUES('co-inv','co-itm','loc_main',10)`)
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('co-sale','CO-R1','completed','sale','GBP',3500,0,583,3500,?)`,
+		time.Now().UTC().Format(time.RFC3339))
+	o, _ := decodeFixtureForHook(t)
+	o.Lines[0].CloudItemID, o.Lines[0].SKU = "co-itm", "CO-1"
+	if _, err := cloudApplyChannelOrder(t.Context(), dp, o); err != nil { // revision 1: 2 units leave stock
+		t.Fatal(err)
+	}
+	var orderID string
+	_ = dp.Db.QueryRow(`SELECT id FROM channel_orders`).Scan(&orderID)
+
+	pos := data.NewPOSRepo(dp.Db)
+	from, to := time.Now().Add(-48*time.Hour), time.Now().Add(48*time.Hour)
+	zBefore, err := pos.EndOfDayInstant(t.Context(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalBefore, _ := pos.ListRecentSales(t.Context(), 50)
+	countsBefore := tableCounts(t, dp.Db)
+
+	repo := data.NewChannelOrderActionsRepo(dp.Db)
+	if _, _, err := repo.Enqueue(t.Context(), data.ChannelOrderActionInput{OrderID: orderID, Action: "accept", Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.Enqueue(t.Context(), data.ChannelOrderActionInput{OrderID: orderID, Action: "ship", Now: time.Now(),
+		Shipment: &data.ChannelShipment{Carrier: "Royal Mail", TrackingNumber: "AB1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Queuing alone moved no stock and no status.
+	var q float64
+	_ = dp.Db.QueryRow(`SELECT quantity FROM inventory WHERE id='co-inv'`).Scan(&q)
+	if q != 8 {
+		t.Fatalf("stock after queuing = %v", q)
+	}
+
+	// The cloud accepts then ships: revisions 2 and 3, writeback skipped on the ship.
+	revisions := map[string]struct {
+		rev    int64
+		status string
+	}{}
+	post := func(_ context.Context, as []channelactions.Action) ([]channelactions.Result, error) {
+		var out []channelactions.Result
+		for _, a := range as {
+			rev, st := int64(2), "accepted"
+			if a.Action == "ship" {
+				rev, st = 3, "shipped"
+			}
+			revisions[a.ActionID] = struct {
+				rev    int64
+				status string
+			}{rev, st}
+			out = append(out, channelactions.Result{ActionID: a.ActionID, Status: "applied", Revision: rev, Writeback: map[bool]string{true: "skipped", false: "not_applicable"}[a.Action == "ship"],
+				Current: map[string]any{"revision": float64(rev)}})
+		}
+		return out, nil
+	}
+	apply := func(ctx context.Context, actionID string, cur map[string]any) error {
+		v := revisions[actionID]
+		in := o
+		in.Revision, in.Status = v.rev, v.status
+		in.DirectiveID = "action:" + actionID
+		_, err := cloudApplyChannelOrder(ctx, dp, in)
+		return err
+	}
+	if _, err := channelactions.Run(t.Context(), dp.Db, post, apply, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	_ = dp.Db.QueryRow(`SELECT status FROM channel_orders WHERE id=?`, orderID).Scan(&status)
+	if status != "shipped" {
+		t.Fatalf("status = %s", status)
+	}
+	// The ship's "skipped" write-back is kept as a note for the shop to see.
+	var noted int
+	_ = dp.Db.QueryRow(`SELECT COUNT(*) FROM channel_order_actions WHERE state='noted'`).Scan(&noted)
+	if noted != 1 {
+		t.Fatalf("noted rows = %d", noted)
+	}
+
+	// A second order: accept + cancel with restock; the cloud's `current` carries the restock.
+	o2 := o
+	o2.ExternalOrderID, o2.OrderNumber, o2.DirectiveID = "o-9002", "#1002", "dir-o2"
+	o2.Lines = append([]data.ChannelOrderLineInput(nil), o.Lines...)
+	o2.Lines[0].CloudItemID, o2.Lines[0].SKU = "co-itm", "CO-1"
+	o2.Revision = 1
+	if _, err := cloudApplyChannelOrder(t.Context(), dp, o2); err != nil { // stock 8 -> 6
+		t.Fatal(err)
+	}
+	var id2 string
+	_ = dp.Db.QueryRow(`SELECT id FROM channel_orders WHERE external_order_id='o-9002'`).Scan(&id2)
+	_, _, _ = repo.Enqueue(t.Context(), data.ChannelOrderActionInput{OrderID: id2, Action: "accept", Now: time.Now()})
+	_, _, _ = repo.Enqueue(t.Context(), data.ChannelOrderActionInput{OrderID: id2, Action: "cancel", Now: time.Now(), Cancel: &data.ChannelCancel{Reason: "out_of_stock", Restock: true}})
+	post2 := func(_ context.Context, as []channelactions.Action) ([]channelactions.Result, error) {
+		var out []channelactions.Result
+		for _, a := range as {
+			rev := int64(2)
+			if a.Action == "cancel" {
+				rev = 3
+			}
+			out = append(out, channelactions.Result{ActionID: a.ActionID, Status: "applied", Revision: rev, Writeback: "queued", Current: map[string]any{}})
+		}
+		return out, nil
+	}
+	apply2 := func(ctx context.Context, actionID string, _ map[string]any) error {
+		in := o2
+		in.DirectiveID = "action:" + actionID
+		var rev int64
+		_ = dp.Db.QueryRow(`SELECT revision FROM channel_orders WHERE id=?`, id2).Scan(&rev)
+		in.Revision, in.Status = rev+1, "accepted"
+		if rev+1 == 3 {
+			in.Status = "cancelled"
+			in.Lines = append([]data.ChannelOrderLineInput(nil), o2.Lines...)
+			in.Lines[0].RefundedQuantity, in.Lines[0].RestockedQuantity = in.Lines[0].Qty, in.Lines[0].Qty
+		}
+		_, err := cloudApplyChannelOrder(ctx, dp, in)
+		return err
+	}
+	if _, err := channelactions.Run(t.Context(), dp.Db, post2, apply2, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	_ = dp.Db.QueryRow(`SELECT quantity FROM inventory WHERE id='co-inv'`).Scan(&q)
+	if q != 8 { // 10 - 2 (order 1) - 2 (order 2) + 2 (the restock)
+		t.Fatalf("stock after the cancel with restock = %v, want 8", q)
+	}
+
+	zAfter, err := pos.EndOfDayInstant(t.Context(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zBefore.GeneratedAt, zAfter.GeneratedAt = "", ""
+	if !reflect.DeepEqual(zBefore, zAfter) {
+		t.Errorf("Z report changed:\nbefore %+v\nafter  %+v", zBefore, zAfter)
+	}
+	journalAfter, _ := pos.ListRecentSales(t.Context(), 50)
+	if !reflect.DeepEqual(journalBefore, journalAfter) {
+		t.Errorf("sales journal changed")
+	}
+	moves := map[string]bool{"channel_orders": true, "channel_order_lines": true, "channel_order_actions": true, "stock_movements": true, "inventory": true, "audit_log": true}
+	for tbl, n := range tableCounts(t, dp.Db) {
+		if !moves[tbl] && n != countsBefore[tbl] {
+			t.Errorf("table %s: %d -> %d rows; an action answer must not write it", tbl, countsBefore[tbl], n)
+		}
+	}
 }

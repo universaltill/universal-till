@@ -261,6 +261,16 @@
       if (ctx.event && ctx.event.type === 'click') preventDefault(ctx);
     },
 
+    // Close the <details> this control sits in and hand focus back to its
+    // summary (Online orders: the Ship and Cancel panels, ut-docs#4768).
+    'close-details': function (ctx) {
+      var d = ctx.el.closest('details');
+      if (!d) return;
+      d.open = false;
+      var s = d.querySelector('summary');
+      if (s && s.focus) s.focus();
+    },
+
     // ---- elements ----
     'focus': function (ctx, id) { var el = byId(id); if (el) el.focus(); },
     // Back to the scan field once the tap's own focus has settled.
