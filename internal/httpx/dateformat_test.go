@@ -43,7 +43,7 @@ func TestFormatDateLatin(t *testing.T) {
 		t.Errorf("FormatDateLatin de-DE = %q", got)
 	}
 	// fa would digit-substitute under FormatDate; Latin variant must not —
-	// same ESC/POS text-mode constraint as FormatMoneyLatin/FormatQtyLatin.
+	// same ESC/POS text-mode constraint as FormatMoneyPrint/FormatQtyLatin.
 	if got := FormatDateLatin(d, "fa"); got != "06/09/2026" {
 		t.Errorf("FormatDateLatin fa = %q, want Latin digits", got)
 	}

@@ -7387,3 +7387,6 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .move-approve input[type="text"] { flex: 1 1 12rem; margin: 0; }
 .move-decline { margin: 0; }
 #move-approval-notice-mount:empty { display: none; }
+
+/* ut-docs#5410: Currency display select (Settings -> Currency). */
+.currency-display-select { min-block-size: 44px; }

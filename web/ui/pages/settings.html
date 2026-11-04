@@ -2275,6 +2275,38 @@
     <span id="settings-save-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  <!-- ut-docs#5410: how amounts write the shop currency (auto/symbol/code).
+       Its own lock region, like the language card; options are built in Go
+       ("Symbol (£12.50)") so no digits sit in translation strings. -->
+  <div id="settings-currency-display">
+  <fieldset class="set-lock" data-lock-region="settings-currency-display"{{ if index $.lockedRegions "settings-currency-display" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-currency-display" }}{{ template "set-lock-note" }}{{ end }}
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail save-error:settings-save-error">
+    <label class="set-row" for="currency-display"><span id="currency-display-title">{{ T "settings.currency_display.title" }}</span>
+      <select id="currency-display" name="currency_display" class="currency-display-select" aria-describedby="currency-display-help currency-display-example">
+        {{ range .currencyDisplayOptions }}
+        <option value="{{ .Value }}" data-example="{{ .Example }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <p class="muted" id="currency-display-help">{{ T "settings.currency_display.help" }}</p>
+    <p class="muted" id="currency-display-example" data-testid="currency-display-example"><bdi>{{ range .currencyDisplayOptions }}{{ if .Selected }}{{ .Example }}{{ end }}{{ end }}</bdi></p>
+    <button class="btn btn-touch" type="submit" id="currency-display-apply" aria-labelledby="currency-display-apply currency-display-title">{{ T "settings.currency.apply" }}</button>
+  </form>
+  </fieldset>
+  </div>
+  <script>
+  (function () {
+    var sel = document.getElementById('currency-display');
+    var ex = document.getElementById('currency-display-example');
+    if (!sel || !ex) return;
+    sel.addEventListener('change', function () {
+      var o = sel.options[sel.selectedIndex];
+      var b = ex.querySelector('bdi');
+      if (o && b) b.textContent = o.getAttribute('data-example') || '';
+    });
+  })();
+  </script>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
 <!-- ut-docs#861: the shop's default locale — used for anything with no

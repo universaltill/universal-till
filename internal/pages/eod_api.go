@@ -303,7 +303,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// STORNOS, Erstellt von, Anmerkung and the ÖKC slip names.
 	printLocale := httpx.DefaultLocale()
 	T := func(key string) string { return httpx.T(printLocale, key) }
-	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	money := func(minor int64) string { return httpx.FormatMoneyPrint(minor, printLocale, charset) }
 	method := func(id string) string { return receiptMethodLabel(printLocale, id) }
 	hdr := eodRateTableHeader(printLocale)
 	generatedAt := rep.GeneratedAt

@@ -1273,6 +1273,9 @@ func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
 	}
 
 	httpx.InitCurrency("IRT")
+	// ut-docs#5410: these pin the symbol (word) form; auto shows the code.
+	httpx.InitCurrencyDisplay("symbol")
+	t.Cleanup(func() { httpx.InitCurrencyDisplay("") })
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body = getReportsTab(t, mux, "tips", "?days=14").Body.String()
 	if !strings.Contains(body, "(تومان)") {

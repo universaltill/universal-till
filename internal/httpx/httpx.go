@@ -391,9 +391,28 @@ var (
 	i18nEpoch     atomic.Uint64
 	defaultLocale atomic.Value // string
 	currencyCode  atomic.Value // string
+	// currencyDisplay is store.currency_display (auto|symbol|code, ut-docs#5410).
+	currencyDisplay atomic.Value // string
 )
 
 func InitCurrency(code string) { currencyCode.Store(code) }
+
+// InitCurrencyDisplay publishes the shop's currency display mode. An
+// unknown value is stored as auto, never as a surprise third behaviour.
+func InitCurrencyDisplay(mode string) {
+	if !IsCurrencyDisplayMode(mode) {
+		mode = CurrencyDisplayAuto
+	}
+	currencyDisplay.Store(mode)
+}
+
+// CurrencyDisplayMode returns the published display mode (auto when unset).
+func CurrencyDisplayMode() string {
+	if v, ok := currencyDisplay.Load().(string); ok && v != "" {
+		return v
+	}
+	return CurrencyDisplayAuto
+}
 
 // minorUnits extracts an amount as integer minor units. Templates pass either
 // the typed money.Money basket amounts or int64 display DTOs.
@@ -1113,7 +1132,7 @@ func FuncsFor(locale string) template.FuncMap {
 		if !ok {
 			return ""
 		}
-		return FormatMoneyIn(minor, code, locale)
+		return FormatMoneyInDisplay(minor, code, locale)
 	}
 	// {{ bpPercent .Raw }}: a percent discount's rate in the request
 	// locale's decimal separator, next to the locale-bound money above
