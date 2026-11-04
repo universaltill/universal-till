@@ -69,7 +69,7 @@ func (b *rateBody) Read(p []byte) (int, error) {
 			b.read = true
 			b.start = time.Now()
 		}
-		_ = b.rc.SetReadDeadline(bodyDeadline(b.start, b.grace, b.rate, b.n))
+		_ = b.rc.SetReadDeadline(rateDeadline(b.start, b.grace, b.rate, b.n))
 	}
 	n, err := b.body.Read(p)
 	b.n += int64(n)
@@ -81,8 +81,8 @@ func (b *rateBody) Read(p []byte) (int, error) {
 
 func (b *rateBody) Close() error { return b.body.Close() }
 
-// bodyDeadline is start + grace + n/rate, without overflow or a zero divide.
-func bodyDeadline(start time.Time, grace time.Duration, rate, n int64) time.Time {
+// rateDeadline is start + grace + n/rate, without overflow or a zero divide.
+func rateDeadline(start time.Time, grace time.Duration, rate, n int64) time.Time {
 	if rate <= 0 {
 		rate = 1
 	}
