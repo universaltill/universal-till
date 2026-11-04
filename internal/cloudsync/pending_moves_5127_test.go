@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -24,7 +25,7 @@ func pendingMovesCloud(t *testing.T, status int) *httptest.Server {
 			"directives": []any{},
 			"pending_moves": []any{map[string]any{
 				"move_id": pmMoveID, "source_store": "store-1", "target_store": "store-t",
-				"target_name": "Corner Café", "nonce": "bm9uY2U", "expires_at": "2026-11-03T09:30:00Z",
+				"target_name": "Corner Café", "nonce": "bm9uY2U", "expires_at": time.Now().UTC().Add(72 * time.Hour).Format(time.RFC3339), // relative: a fixed date expires
 			}},
 		}
 		if status == http.StatusPaymentRequired {

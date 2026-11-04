@@ -40,10 +40,14 @@ const (
 	mvToken  = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
 	mvNew    = "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"
 	mvNonce  = "bm9uY2Utbm9uY2Utbm9uY2U"
-	mvExp    = "2026-11-03T09:30:00Z"
 	mvPIN    = "135790"
 	mvName   = "Corner Café"
 )
+
+// Move expiries are relative to the real clock (the code under test reads
+// time.Now via moveNow): a fixed date expired on 2026-11-04 09:30 UTC, one
+// day's grace after it, and turned these tests red on main.
+var mvExp = time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type moveStubCloud struct {
 	srv     *httptest.Server
