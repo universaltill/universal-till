@@ -20,6 +20,7 @@ Date: 2026-11-04. Lane: `lane:cloud-41`. Built by Sonnet; tested and reviewed in
 ## Verification
 - **TDD re-run by the reviewer:** with `app.js` reverted, T3, T4 and pin T10 fail for the claimed reason ("The connection dropped…" received; `to: false`). T3b passes. With the fix restored, 40/40 pass across prompt-timeout-5335, prompt-timeout-pin-5335, action-timeout-5404 and prompt-inflight-*.
 - **Guards:** guard-i18n, guard-help-topics, guard-help-drift, guard-no-showmodal and guard-rtl-logical-css pass, plus the JS-scanning guards in ci.yml `build`.
+- **docs-shots:** CI's `guard-docs-shots_test.sh` caught a stale manifest after the first push. Only the hashes were refreshed (`update-docs-shots-surface-hash.sh` and the `sell/en` topic hash), as #5463 did. No screenshotted page renders the timeout path, and the `sell.md` edit is prose only. Afterwards the guard and its self-test pass locally.
 - **UX gate:** pass. Only the choice between two existing translated messages changes. The timeout text is the right one for Data reset, customer erase and end of day, and it matches the htmx path.
 
 Pre-flight: web/help topic updated (sell.md); docs-shots n/a (text-only, shows only on a timeout); reference/ n/a (no page covers this path); README n/a; en.json/meta/locales/lang packs n/a (existing key `common.error.outcome_timeout`); ADR n/a; mirrors n/a; review record this file; follow-up deferred → ut-docs#5491.
