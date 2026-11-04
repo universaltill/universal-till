@@ -20,6 +20,6 @@ Orders taken on your web shop or marketplaces and recorded on this till: what wa
 
 ## Notes
 
-- These orders are **not till sales**. They are not in the drawer, the Z report, the Journal or the fiscal journal; the shop took and was paid for them online.
+- These orders are **not till sales**. They are not in the drawer, the Z report, the Journal or the fiscal journal; the shop took and was paid for them online. To see totals per channel for a period, open the Online channels tab in Reports on the main till.
 - Only the main till records online orders, and only people who may see Reports can open this page. Accepting, packing and shipping an order is done in my.universaltill.com for now; this page is read-only.
 - If the till is offline, orders wait in the cloud and are recorded the next time it connects. Selling at the till is never held up by this.

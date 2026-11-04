@@ -7318,7 +7318,11 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 
 /* Online orders (ADR-0169 §9, ut-docs#4768): logical properties only. */
 .channel-orders-intro { margin-block: .25rem .75rem; max-inline-size: 60ch; }
-.channel-orders-num { text-align: end; font-variant-numeric: tabular-nums; }
+/* ut-docs#5427 (UX A2): `.card table th/td { text-align: start }` outranks a
+   bare class, so numbers inside a .card (Online orders, Online channels) were
+   start-aligned; the :is() selector wins on specificity. */
+.channel-orders-num,
+:is(table.table, .card table) :is(th, td).channel-orders-num { text-align: end; font-variant-numeric: tabular-nums; }
 .channel-order-status { display: inline-block; padding-block: .1rem; padding-inline: .55rem; border-radius: 999px;
   border: 1px solid var(--border, currentColor); font-size: .8rem; white-space: nowrap; }
 .channel-order-status[data-status="cancelled"], .channel-order-status[data-status="refunded"],
@@ -7330,6 +7334,18 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* Reports → Online channels (ut-docs#5427). Reuses .channel-order-scroll,
+   .channel-orders-num and .channel-order-key; logical properties only. */
+.online-channels-notice { margin-block: .25rem .75rem; max-inline-size: 70ch; }
+.online-channels-link { display: inline-flex; align-items: center; min-block-size: 44px; }
+.online-channels-note { margin-block: .5rem 0; max-inline-size: 70ch; }
+.online-channels .online-channels-total :is(th, td) { font-weight: 600; }
+.online-channels .online-channels-total th { font-size: inherit; text-transform: none; letter-spacing: normal; color: var(--text); text-align: start; border-block-end: 1px solid var(--border); }
+/* The rule above the Total row only on the table layout: below 481px every
+   cell is its own line in the card (table-cards), and a rule per line is noise. */
+@media (min-width: 481px) {
+  .online-channels .online-channels-total :is(th, td) { border-block-start: 2px solid var(--border, currentColor); }
+}
 /* ut-docs#5070: Settings → Backups → Restore from a file, and the welcome
    page's restore line. Logical properties only (RTL). */
 .backup-upload { margin-block-start: 1rem; }

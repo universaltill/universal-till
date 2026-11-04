@@ -14,7 +14,7 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 ## Nasıl kullanılır
 
 1. Raporlar'ı açın: üstteki satır seçili dönemin ana rakamlarını (ciro, satış, ortalama satış, vergi, indirimler, iadeler, net, geçen yıl) ve düşük stok uyarısını her zaman gösterir. Dönemi üstündeki çiplerle seçin — Bugün, Dün, Bu hafta veya Bu ay; Özel seçeneği son günler, tam bir yıl veya başka bir tarih için önceki denetimleri korur. Çipler iş günü başlangıcınızı izler; geç bir kapanıştan sonra "Bugün" hâlâ içinde bulunduğunuz iş günüdür.
-2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar, Bahşişler veya Gün sonu (EOD) — o rapor yalnızca sekmeyi açtığınızda çalışır.
+2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar, Bahşişler, Gün sonu (EOD) veya Çevrimiçi kanallar (bu kasa bir çevrimiçi sipariş kaydettikten sonra) — o rapor yalnızca sekmeyi açtığınızda çalışır.
 3. Kapanışta Gün sonu'nu (Gün sonu sekmesinde) çalıştırın: günü toplar ve kayıtlarınız için yazdırabilir.
 
 ## Rapor dönemleri
@@ -23,7 +23,17 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 
 - **Özel** — orijinal kayan pencere (bugün, şimdiden geriye 7/14/30/90 gün).
 - **Gün / Hafta / Ay / Yıl** — kayan bir sayım yerine gerçek bir takvim dönemi: Gün bir işletme günü, Hafta Pazartesi-Pazar, Ay bir takvim ayı, Yıl bir takvim yılıdır. Seçimin yanında bir tarih seçici görünür, böylece geçmiş bir dönemi görebilirsiniz — örneğin Ay'ı seçip Temmuz'da bir tarih seçerek, bugün Ağustos olsa bile Temmuz'un rakamlarını görebilirsiniz.
-- Satış eğilimi, Ürünler, Vergi ve Ödemeler ve kanallar seçili dönemi kullanır, böylece her zaman yukarıdaki rakamlarla uyuşur. Tahmin ve Gün sonu arşiv listesi ise kullanmaz — bunlar dönem seçiciden bağımsız olarak kendi sabit pencerelerini gösterir.
+- Satış eğilimi, Ürünler, Vergi ve Ödemeler ve kanallar seçili dönemi kullanır, böylece her zaman yukarıdaki rakamlarla uyuşur. Tahmin ve Gün sonu arşiv listesi ise kullanmaz — bunlar dönem seçiciden bağımsız olarak kendi sabit pencerelerini gösterir. Çevrimiçi kanallar da seçili dönemi izler, ancak siparişleri yukarıdaki rakamlardan ayrıdır (aşağıdaki Çevrimiçi kanallar bölümüne bakın).
+
+## Çevrimiçi kanallar
+
+«Çevrimiçi kanallar» sekmesi, seçtiğiniz dönem için web mağazanızdan ve pazaryerlerinden gelen siparişleri (Çevrimiçi siparişler sayfasındakileri) toplar: her kanal ve para birimi için bir satır. Bu kasa bir çevrimiçi sipariş kaydettikten sonra görünür; bunları yalnızca ana kasa kaydeder.
+
+- Bu siparişler kasa satışı değildir. Raporlar'ın üstündeki rakamlarda, çekmecede, gün sonu (Z) raporunda ve mali günlükte yer almazlar; başka hiçbir sekmedeki satış rakamı da onlar yüzünden değişmez. Ancak stoku düşürürler; bu yüzden bir web siparişinden sonra stok uyarıları, Tahmin ve ölü stok değişebilir.
+- Sipariş tutarı, kanalın bildirdiği sipariş toplamlarıdır; kargo ve kanalın eklediği vergi dahildir. İade sonrası, sipariş tutarından iadelerin düşülmüş halidir.
+- İadeler, bu dönemde verilen siparişlerde şimdiye kadar iade edilen tutarlardır; iadenin hangi gün yapıldığı fark etmez: bugün geçen ayın siparişi için yapılan iade geçen ayda görünür.
+- Ödenmeden önce iptal edilen sipariş sayılmaz; sekme kaç tane olduğunu söyler. Ödendikten sonra iptal edilen sipariş sayılır ve iadesi onu geri düşer.
+- Tutarlar her siparişin kendi para biriminde kalır ve para birimleri arasında asla toplanmaz. İki veya daha fazla kanal aynı para biriminde satış yaptığında, bir Toplam satırı onları o para birimi için toplar.
 
 ## İşletme günü başlangıcı
 
