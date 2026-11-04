@@ -114,8 +114,15 @@ new guard (it runs later in that order) and it isn't test order:
 
 The fix makes `mvExp` a package var, now + 6 h at second precision in
 RFC3339. All three uses (the signed approval, the stub cloud's reply,
-`ApplySyncMoves`) read the same string once. `enroll/move_5127_test.go`'s
-fixed `moveExp` is safe because it stubs `moveNow`.
+`ApplySyncMoves`) read the same string once. CI then showed
+`enroll/move_5127_test.go`'s fixed `moveExp` has the same bomb: only the
+MoveCapable TTL test stubs `moveNow`, and 11 tests failed on `main`. It got
+the same fix (approved by the same reviewer), and `go test -race
+./internal/enroll/` passes.
+
+The docs-shots surface hash was refreshed with
+`update-docs-shots-surface-hash.sh`, because every surface change here is
+a test file or a JS comment (`Docs-Shots-Unchanged: true`).
 
 - **Author:** Opus.
 - **Review:** independent, Sonnet, read-only. Approved, with no upper bound
