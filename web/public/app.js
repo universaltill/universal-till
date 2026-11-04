@@ -1368,7 +1368,13 @@ document.addEventListener('click', function(e){
     // replace it; a server error or explicit new message still does.
     if (kind === 'network' && alertBox.dataset.sticky === '1' && !alertBox.hidden) return;
     var msg;
-    if (kind === 'outcome') { msg = alertBox.dataset.msgOutcomeUnknown; alertBox.dataset.sticky = '1'; }
+    if (kind === 'outcome' || kind === 'timeout') {
+      // ut-docs#5463: 'timeout' = the till answered too slowly (not a dropped link).
+      msg = kind === 'timeout'
+        ? (alertBox.dataset.msgOutcomeTimeout || alertBox.dataset.msgOutcomeUnknown)
+        : alertBox.dataset.msgOutcomeUnknown;
+      alertBox.dataset.sticky = '1';
+    }
     else {
       delete alertBox.dataset.sticky;
       msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
@@ -1379,7 +1385,7 @@ document.addEventListener('click', function(e){
     alertBox.querySelector('.notice-text').textContent = msg || '';
     // #pos-alert sits at the top of the document: on a scrolled page the
     // outcome message would be off-screen (ut-docs#5298). No smooth scroll.
-    if (kind === 'outcome') {
+    if (kind === 'outcome' || kind === 'timeout') {
       try { alertBox.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
     }
   }
@@ -1520,12 +1526,13 @@ document.addEventListener('click', function(e){
   });
   // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
   // then this. Only requests we bounded can reach ontimeout. A GET is safe to
-  // repeat (network text); anything else may have applied (sticky outcome).
+  // repeat (network text); anything else may have applied (sticky timeout text,
+  // ut-docs#5463: the till was slow, the link was fine).
   document.body.addEventListener('htmx:timeout', function(ev){
     var d = ev.detail || {};
     var rc = d.requestConfig || {};
     var verb = String(rc.verb || '').toLowerCase();
-    showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'outcome' : 'network');
+    showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'timeout' : 'network');
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable

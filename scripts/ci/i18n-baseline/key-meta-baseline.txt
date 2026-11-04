@@ -680,7 +680,6 @@ elevation.summary.barcode_symbology_off
 elevation.summary.barcode_symbology_on
 elevation.summary.browsing_mode
 elevation.summary.buttons_add
-elevation.summary.buttons_delete_item
 elevation.summary.buttons_hide
 elevation.summary.buttons_move
 elevation.summary.buttons_recategorize
@@ -3004,8 +3003,6 @@ tender.voucher_check
 tender.voucher_id
 tender.voucher_id_placeholder
 tile_sheet.aria
-tile_sheet.delete_item
-tile_sheet.delete_item_confirm
 tile_sheet.edit
 tile_sheet.hidden_state
 tile_sheet.hide

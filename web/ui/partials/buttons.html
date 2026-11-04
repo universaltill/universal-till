@@ -328,7 +328,19 @@
         this.$watch('tab', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: v }); });
         this.$watch('q', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { q: v }); });
       },
-      openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
+      {{/* ut-docs#5483: WebKit (26.5) once left the field visible but
+           unfocused after $nextTick's focus() (#products-search carries
+           inputmode="none" from osk.js). One retry a frame later, only if
+           focus did not take, so a real tap always lands in the field. */}}
+      openSearch() {
+        this.searching = true;
+        this.$nextTick(() => {
+          const i = this.$refs.search;
+          if (!i) return;
+          i.focus();
+          if (document.activeElement !== i) requestAnimationFrame(() => { if (this.searching) i.focus(); });
+        });
+      },
       closeSearch() {
         this.searching = false;
         this.q = '';

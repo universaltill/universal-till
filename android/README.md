@@ -202,6 +202,13 @@ GitHub Releases API mechanism the other platforms already use).
   compile-time table by `Build.SUPPORTED_ABIS[0]` (`UpdateLogic.updateApkUrl`).
   `installUpdate()` still takes no argument. `scripts/ci/guard-android-abi-packages.sh`
   keeps the flavors, the compression and release.yml's published names in step.
+  The base of those names is the Gradle property `updateApkUrlBase` (default
+  our GitHub `releases/latest/download/`; `-PupdateApkUrlBase=https://…/`
+  overrides it; an empty or malformed value fails the build, never a fallback
+  to ours). `release.yml` passes
+  `https://github.com/$GITHUB_REPOSITORY/releases/latest/download/`, or the
+  repository variable `UT_ANDROID_UPDATE_APK_URL_BASE` for a non-GitHub
+  mirror, and fails if an APK's dex does not carry it (ut-docs#5271).
 - **Reliable update flow.** One shared page flow (`web/public/android-update.js`)
   for the status chip, the Settings form and the check-for-updates button. In
   `MainActivity`: the DownloadManager id is kept (SharedPreferences

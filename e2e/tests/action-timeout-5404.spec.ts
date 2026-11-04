@@ -9,6 +9,7 @@ import type { Page, Route } from '@playwright/test';
 // window.__utPromptTimeoutMs.
 
 const OUTCOME = 'The connection dropped before the till replied, so this may or may not have been done. Check before you try again.';
+const TIMEOUT_TEXT = 'The till did not reply in time, so this may or may not have been done. Check before you try again.';
 const OVERRIDE_MS = 1000;
 // Note: htmx 1.9.12 keeps .htmx-request on an element that is both the
 // indicator and its own hx-disabled-elt (shared requestCount), so probes
@@ -71,7 +72,7 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
     await probe(page, '<button id="p" hx-post="/__ut5404/x" hx-target="#t5404" hx-disabled-elt="#dis1">go</button><button id="dis1">other</button><div id="t5404"></div>');
     await page.locator('#p').click();
     await h.inFlight;
-    await expect(alertText(page)).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(alertText(page)).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
     await expect(page.locator('#p')).not.toHaveClass(/htmx-request/);
     await expect(page.locator('#dis1')).toBeEnabled();
     expect(h.count()).toBe(1);
@@ -91,7 +92,7 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
     await page.locator('#g').click();
     await h.inFlight;
     await expect(alertText(page)).toHaveText(net!, { timeout: 5000 });
-    await expect(alertText(page)).not.toHaveText(OUTCOME);
+    await expect(alertText(page)).not.toHaveText(TIMEOUT_TEXT);
     await expect(page.locator('#g')).not.toHaveClass(/htmx-request/);
     await expect(page.locator('#dis2')).toBeEnabled();
   });
@@ -106,11 +107,11 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
       + '<button id="g2" hx-get="/__ut5404/g2" hx-target="#t5404">get</button><div id="t5404"></div>');
     await page.locator('#d').click();
     await hd.inFlight;
-    await expect(alertText(page)).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(alertText(page)).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
     await page.locator('#g2').click();
     await hg.inFlight;
     await page.waitForTimeout(OVERRIDE_MS * 1.8);
-    await expect(alertText(page)).toHaveText(OUTCOME);
+    await expect(alertText(page)).toHaveText(TIMEOUT_TEXT);
   });
 
   test('A4 sale-screen tile tap: outcome, nothing stuck busy, a second tap sends a request', async ({ page }) => {
@@ -121,7 +122,7 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
     await expect(tile).toBeVisible();
     await tile.click();
     await h.inFlight;
-    await expect(alertText(page)).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(alertText(page)).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
     await expect(tile).not.toHaveClass(/htmx-request/);
     await expect(page.locator('#basket')).not.toHaveClass(/htmx-request/);
     expect(h.count()).toBe(1);
@@ -137,9 +138,33 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
     await probe(page, '<form id="pf" hx-post="/__ut5404/prompt" hx-target="#t5404"><button id="ps" type="submit">ok</button></form><div id="t5404"></div>');
     await page.locator('#ps').click();
     await h.inFlight;
-    await expect(alertText(page)).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(alertText(page)).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
     await expect(page.locator('#ps')).toBeEnabled();
     await expect(page.locator('dialog[open]')).toHaveCount(0);
+  });
+
+  test('A10 prompt POST dropped (sendError) keeps the connection-dropped text, not the timeout text', async ({ page }) => {
+    await page.route('**/__ut5463/drop', (r) => r.abort('failed'));
+    await page.goto('/');
+    await probe(page, '<form id="pd" hx-post="/__ut5463/drop" hx-target="#t5404" data-after-request="elevation-done"><button id="pds" type="submit">ok</button></form><div id="t5404"></div>');
+    await page.locator('#pds').click();
+    await expect(alertText(page)).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(alertText(page)).not.toHaveText(TIMEOUT_TEXT);
+  });
+
+  test('A11 #pos-alert carries the timeout text; a later server alert replaces it', async ({ page }) => {
+    await shortTimeout(page);
+    await page.goto('/');
+    expect(await page.locator('#pos-alert').getAttribute('data-msg-outcome-timeout')).toBe(TIMEOUT_TEXT);
+    const h = await hold(page, '**/__ut5463/x');
+    await page.route('**/__ut5463/err', (r) => r.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' }));
+    await probe(page, '<button id="p" hx-post="/__ut5463/x" hx-target="#t5404">go</button><button id="e" hx-post="/__ut5463/err" hx-target="#t5404">err</button><div id="t5404"></div>');
+    await page.locator('#p').click();
+    await h.inFlight;
+    await expect(alertText(page)).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
+    const srv = await page.locator('#pos-alert').getAttribute('data-msg-server');
+    await page.locator('#e').click();
+    await expect(alertText(page)).toHaveText(srv!, { timeout: 5000 });
   });
 
   test('A6 background, boosted, multipart, listed-path and opted-out requests are not timed', async ({ page }) => {
