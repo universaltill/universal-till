@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netreach"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -33,7 +34,7 @@ const (
 	keyBuiltinBundleChecked     = "i18n.builtin_bundle_checked"
 	builtinBundleRecheck        = 24 * time.Hour
 	builtinBundleAttemptTimeout = 60 * time.Second
-	firstPartyLanguagePfx       = "com.universaltill.language-"
+	firstPartyLanguagePfx       = plugins.FirstPartyIDPrefix + "language-"
 )
 
 // builtinBundleSpec is the language spec to queue for the shop locale, or
@@ -48,7 +49,7 @@ func builtinBundleSpec(locale string) (basePluginSpec, bool) {
 }
 
 // hasFirstPartyBundle reports whether a first-party language bundle for lang
-// (id com.universaltill.language-<lang>[-region]) is installed.
+// (id <first-party prefix>language-<lang>[-region]) is installed.
 func hasFirstPartyBundle(installedIDs []string, lang string) bool {
 	want := firstPartyLanguagePfx + lang
 	for _, id := range installedIDs {
