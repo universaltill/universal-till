@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,6 +23,20 @@ import (
 )
 
 func sigSeed(n byte) []byte { return bytes.Repeat([]byte{n}, ed25519.SeedSize) }
+
+// testSign is a test-only signer producing the releasesig line format.
+func testSign(seed, data []byte) string {
+	priv := ed25519.NewKeyFromSeed(seed)
+	return "ed25519 " + releasesig.KeyID(priv.Public().(ed25519.PublicKey)) + " " + base64.StdEncoding.EncodeToString(ed25519.Sign(priv, data))
+}
+
+func testAppendSig(existing []byte, line string) []byte {
+	out := append([]byte{}, existing...)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	return append(append(out, line...), '\n')
+}
 
 func sigPubHex(n byte) string {
 	return hex.EncodeToString(ed25519.NewKeyFromSeed(sigSeed(n)).Public().(ed25519.PublicKey))
@@ -148,8 +163,8 @@ func TestVerifiedChecksumsRefusals(t *testing.T) {
 		sigs := func(sums []byte) map[string][]byte {
 			return map[string][]byte{
 				"missing sig":   nil,
-				"unknown key":   []byte(releasesig.Sign(sigSeed(9), sums) + "\n"),
-				"bad signature": []byte(releasesig.Sign(sigSeed(1), append([]byte("x"), sums...)) + "\n"),
+				"unknown key":   []byte(testSign(sigSeed(9), sums) + "\n"),
+				"bad signature": []byte(testSign(sigSeed(1), append([]byte("x"), sums...)) + "\n"),
 				"malformed":     []byte("garbage\n"),
 			}
 		}
@@ -178,7 +193,7 @@ func TestVerifiedChecksumsRefusals(t *testing.T) {
 			art, _, untouched := p.setup(t)
 			sums := goodSums(p.artifact, art)
 			hs := newHitServer(t, "v0.2.0", map[string][]byte{p.artifact: art, "checksums.txt": sums,
-				releasesig.SigAsset: []byte(releasesig.Sign(sigSeed(1), sums) + "\n")})
+				releasesig.SigAsset: []byte(testSign(sigSeed(1), sums) + "\n")})
 			err := Apply(context.Background())
 			if !errors.Is(err, ErrSignature) {
 				t.Fatalf("err = %v, want ErrSignature", err)
@@ -194,7 +209,7 @@ func TestVerifiedChecksumsRefusals(t *testing.T) {
 			art, _, untouched := p.setup(t)
 			sums := goodSums(p.artifact, art)
 			hs := newHitServer(t, "v0.2.0", map[string][]byte{p.artifact: art, "checksums.txt": sums,
-				releasesig.SigAsset: []byte(releasesig.Sign(sigSeed(7), sums) + "\n")})
+				releasesig.SigAsset: []byte(testSign(sigSeed(7), sums) + "\n")})
 			if err := Apply(context.Background()); !errors.Is(err, ErrSignature) {
 				t.Fatalf("err = %v, want ErrSignature", err)
 			}
@@ -215,9 +230,9 @@ func TestVerifiedChecksumsAcceptances(t *testing.T) {
 		}{
 			{"dormant without sig", "", func([]byte) []byte { return nil }},
 			{"dormant ignores a present sig", "", func(s []byte) []byte { return []byte("garbage\n") }},
-			{"armed valid", sigPubHex(1), func(s []byte) []byte { return []byte(releasesig.Sign(sigSeed(1), s) + "\n") }},
+			{"armed valid", sigPubHex(1), func(s []byte) []byte { return []byte(testSign(sigSeed(1), s) + "\n") }},
 			{"armed two-line (post-dmg shape)", sigPubHex(1) + "," + sigPubHex(2), func(s []byte) []byte {
-				return releasesig.Append([]byte(releasesig.Sign(sigSeed(3), s)+"\n"), releasesig.Sign(sigSeed(2), s))
+				return testAppendSig([]byte(testSign(sigSeed(3), s)+"\n"), testSign(sigSeed(2), s))
 			}},
 		} {
 			t.Run(p.name+"/"+tc.name, func(t *testing.T) {

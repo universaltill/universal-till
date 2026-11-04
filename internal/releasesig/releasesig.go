@@ -1,6 +1,6 @@
-// Package releasesig signs and verifies a till release's checksums.txt
-// (ADR-0178). It is pure (no I/O) and shared by the till's self-updater and
-// by CI (scripts/releasesig).
+// Package releasesig verifies a till release's checksums.txt signature
+// (ADR-0178). It is pure (no I/O) and verify-only: signing lives in the CI
+// CLI (scripts/releasesig), so the till binary carries no signing code.
 //
 // A signature file holds one line per signer:
 //
@@ -82,54 +82,6 @@ func ParseKeys(stamp string) ([]Key, error) {
 		keys = append(keys, Key{ID: KeyID(pub), Pub: pub})
 	}
 	return keys, nil
-}
-
-// Sign returns one signature line for data, signed with the 32-byte seed.
-func Sign(seed, data []byte) string {
-	priv := ed25519.NewKeyFromSeed(seed)
-	pub := priv.Public().(ed25519.PublicKey)
-	sig := ed25519.Sign(priv, data)
-	return "ed25519 " + KeyID(pub) + " " + base64.StdEncoding.EncodeToString(sig)
-}
-
-// Append returns existingSig with line added, newline-terminated.
-func Append(existingSig []byte, line string) []byte {
-	out := append([]byte{}, existingSig...)
-	if len(out) > 0 && out[len(out)-1] != '\n' {
-		out = append(out, '\n')
-	}
-	out = append(out, line...)
-	return append(out, '\n')
-}
-
-// AppendPruned is Append for a re-sign: it adds line, but first drops every
-// existing line that is identical to it, and every existing line by pub's key
-// that verifies none of keep (the checksums.txt bytes a till could still read
-// while the new file is being uploaded). Re-running a release job therefore
-// leaves at most len(keep)+1 lines per key instead of growing the file past
-// the verifier's line cap. Lines by other keys are left alone.
-func AppendPruned(existingSig []byte, line string, pub ed25519.PublicKey, keep ...[]byte) []byte {
-	id := KeyID(pub)
-	var kept []string
-	for _, l := range strings.Split(string(existingSig), "\n") {
-		if l == "" || l == line {
-			continue
-		}
-		if m := lineRe.FindStringSubmatch(l); m != nil && m[1] == id {
-			raw, err := base64.StdEncoding.DecodeString(m[2])
-			ok := false
-			for _, d := range keep {
-				if err == nil && ed25519.Verify(pub, d, raw) {
-					ok = true
-				}
-			}
-			if !ok {
-				continue
-			}
-		}
-		kept = append(kept, l)
-	}
-	return Append([]byte(strings.Join(kept, "\n")), line)
 }
 
 // Verify checks that sig holds a valid signature over data by one of keys and
