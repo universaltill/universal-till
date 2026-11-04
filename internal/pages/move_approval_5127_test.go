@@ -40,10 +40,12 @@ const (
 	mvToken  = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
 	mvNew    = "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"
 	mvNonce  = "bm9uY2Utbm9uY2Utbm9uY2U"
-	mvExp    = "2026-11-03T09:30:00Z"
 	mvPIN    = "135790"
 	mvName   = "Corner Café"
 )
+
+// Relative to now so the fixture never expires (ut-docs#5468).
+var mvExp = time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type moveStubCloud struct {
 	srv     *httptest.Server
