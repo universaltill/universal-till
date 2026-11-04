@@ -58,7 +58,12 @@ It is the pattern for any admin page's message spot from here on — see
    (click/submit/change/input/key events) get a client timeout, except on the never-timed paths below
    (`utRequestTimeoutMs()`, 30 s, alias `utPromptTimeoutMs()`, set on
    `htmx:configRequest`); `htmx:timeout` on a GET shows the network text, on
-   any other verb (or a prompt) the sticky outcome text. Never timed:
+   any other verb (or a prompt) the sticky timeout text
+   `data-msg-outcome-timeout` (ut-docs#5463: "The till did not reply in time, so
+   this may or may not have been done"; the till was slow, the connection was
+   fine, falling back to the outcome-unknown text if a page lacks the
+   attribute). `htmx:sendError` on a prompt and the `utPostWithElevation`
+   fetch path keep `data-msg-outcome-unknown`. Never timed:
    `load`/`every`/custom-event refreshes, `htmx.ajax`, boosted navigation,
    multipart uploads, the backup/import/update/pairing-restart paths, the
    tender/refund/kiosk-checkout paths (the server bounds them; its
