@@ -159,8 +159,27 @@ func TestNotices_BadItemsAreDroppedGoodOnesKept(t *testing.T) {
 	defer srv.Close()
 	runTick(t, srv.URL, d, "en")
 	p, _ := repo.Pairs(context.Background())
-	if len(p) != 1 || p[0].ID != "ok" {
-		t.Fatalf("held = %v, want only ok", p)
+	// x2 has only a bad LINK: the notice is kept, the link dropped (ADR-0176 §6).
+	if len(p) != 2 {
+		t.Fatalf("held = %v, want ok and x2", p)
+	}
+	got, found, err := repo.Get(context.Background(), "x2")
+	if err != nil || !found || got.LinkJSON != "" {
+		t.Fatalf("x2 = %+v found=%v err=%v, want kept with no link", got, found, err)
+	}
+}
+
+func TestNotices_CriticalWithBadLinkStillShowsOnTheStrip(t *testing.T) {
+	d, repo, _ := noticeSetup(t, true)
+	crit := noticeItem("crit", 1, "critical")
+	crit["link"] = map[string]any{"kind": "https", "target": "https://universaltill.com/" + strings.Repeat("a", 300)}
+	c := &fakeCloud{notices: block("r1", crit)}
+	srv := httptest.NewServer(c.handler())
+	defer srv.Close()
+	runTick(t, srv.URL, d, "en")
+	s, err := repo.Strip(context.Background(), tNow)
+	if err != nil || len(s) != 1 || s[0].ID != "crit" || s[0].LinkJSON != "" {
+		t.Fatalf("strip = %+v err=%v, want the critical notice without a link", s, err)
 	}
 }
 

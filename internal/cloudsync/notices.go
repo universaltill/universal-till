@@ -201,10 +201,15 @@ func (n *noticeClient) apply(ctx context.Context, raw json.RawMessage, lang stri
 	}
 	var keep []data.CloudNotice
 	for _, it := range items {
-		if err := cloudnotice.Validate(it, now); err != nil {
+		clean, err := cloudnotice.Clean(it, now)
+		if err != nil {
 			logging.L().Warnf("cloudsync: dropped notice %s: %v", cloudnotice.Describe(it), err)
 			continue
 		}
+		if it.Link != nil && clean.Link == nil {
+			logging.L().Warnf("cloudsync: dropped the link of notice %s (not a safe link); the notice is kept", cloudnotice.Describe(it))
+		}
+		it = clean
 		picked, tx, ok := cloudnotice.PickText(it.Texts, lang)
 		if !ok {
 			continue

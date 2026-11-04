@@ -213,3 +213,73 @@ func TestParseLink_OnlySafeLinksSurviveTheStore(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0176 §6: an invalid link drops the LINK, never the notice (a critical
+// notice must still reach the shop). Clean is what cloudsync applies.
+func TestClean_InvalidLinkDropsOnlyTheLink(t *testing.T) {
+	long := "https://universaltill.com/" + strings.Repeat("a", 280) // 306 bytes, over the till's 300
+	cases := map[string]Link{
+		"route off the allow-list": {Kind: "route", Target: "/admin/secret", Label: "x"},
+		"javascript scheme":        {Kind: "https", Target: "javascript:alert(1)"},
+		"foreign host":             {Kind: "https", Target: "https://evil.example/x"},
+		"over-long target":         {Kind: "https", Target: long},
+		"unknown kind":             {Kind: "mailto", Target: "a@b.c"},
+		"bidi label":               {Kind: "route", Target: "/settings", Label: "Open‮"},
+	}
+	for _, sev := range []string{Info, Important, Critical} {
+		for name, l := range cases {
+			l := l
+			it := validItem()
+			it.Severity = sev
+			it.Link = &l
+			got, err := Clean(it, time.Now())
+			if err != nil {
+				t.Errorf("%s/%s: notice dropped (%v), want kept without its link", sev, name, err)
+				continue
+			}
+			if got.Link != nil {
+				t.Errorf("%s/%s: link kept: %+v", sev, name, got.Link)
+			}
+			if got.ID != it.ID || got.Texts["en-gb"].Title != it.Texts["en-gb"].Title {
+				t.Errorf("%s/%s: notice content changed", sev, name)
+			}
+		}
+	}
+}
+
+func TestClean_GoodLinkIsKept_AndOtherDefectsStillDropTheNotice(t *testing.T) {
+	it := validItem()
+	it.Link = &Link{Kind: "route", Target: "/settings", Label: "Open settings"}
+	got, err := Clean(it, time.Now())
+	if err != nil || got.Link == nil || got.Link.Target != "/settings" {
+		t.Fatalf("good link: %+v err=%v", got.Link, err)
+	}
+	bad := validItem()
+	bad.Texts["en-gb"] = Text{Title: "<script>x</script>", Body: "b"}
+	bad.Link = &Link{Kind: "route", Target: "/settings"}
+	if _, err := Clean(bad, time.Now()); err == nil {
+		t.Fatal("a notice with unsafe text must still be dropped")
+	}
+}
+
+func TestClean_PartnerLinkIsStrippedNotFatal(t *testing.T) {
+	it := validItem()
+	it.Sender = Sender{Kind: SenderPartner, Name: "Acme"}
+	it.Severity = Important
+	it.Link = &Link{Kind: "route", Target: "/settings"}
+	got, err := Clean(it, time.Now())
+	if err != nil || got.Link != nil {
+		t.Fatalf("partner link: link=%v err=%v, want kept notice without link", got.Link, err)
+	}
+}
+
+func TestClean_DoesNotMutateTheInput(t *testing.T) {
+	it := validItem()
+	it.Link = &Link{Kind: "https", Target: "https://evil.example/"}
+	if _, err := Clean(it, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if it.Link == nil {
+		t.Fatal("Clean changed its argument")
+	}
+}

@@ -100,8 +100,42 @@ var RouteAllowList = map[string]bool{
 
 var idRe = regexp.MustCompile(`^[0-9A-Za-z-]{1,64}$`)
 
-// Validate re-checks an item. A non-nil error means the till drops it.
+// Validate re-checks an item in full, link included. A non-nil error means the
+// item is unusable as sent. The till itself calls Clean, which treats a bad
+// link as droppable rather than fatal.
 func Validate(it Item, now time.Time) error {
+	if err := validateCore(it, now); err != nil {
+		return err
+	}
+	return validateLink(it)
+}
+
+// Clean is what the till applies to a notice from the cloud (ADR-0176 §6): a
+// defect in the notice itself drops the notice, but an invalid link (not
+// allow-listed, foreign host, over 300 bytes, unknown kind, a bad label, or
+// any link from a partner) drops only the LINK. The message, above all a
+// critical one, still reaches the shop. The input is not modified.
+func Clean(it Item, now time.Time) (Item, error) {
+	if err := validateCore(it, now); err != nil {
+		return it, err
+	}
+	if it.Link != nil && validateLink(it) != nil {
+		it.Link = nil
+	}
+	return it, nil
+}
+
+func validateLink(it Item) error {
+	if it.Link == nil {
+		return nil
+	}
+	if it.Sender.Kind == SenderPartner {
+		return errors.New("partner link") // ADR-0176 §6: partners get no links in v1
+	}
+	return checkLink(*it.Link)
+}
+
+func validateCore(it Item, now time.Time) error {
 	if !idRe.MatchString(it.ID) {
 		return errors.New("bad id")
 	}
@@ -156,14 +190,6 @@ func Validate(it Item, now time.Time) error {
 			return err
 		}
 		if err := checkContent(body, true, partner); err != nil {
-			return err
-		}
-	}
-	if it.Link != nil {
-		if partner {
-			return errors.New("partner link") // ADR-0176 §6: partners get no links in v1
-		}
-		if err := checkLink(*it.Link); err != nil {
 			return err
 		}
 	}
