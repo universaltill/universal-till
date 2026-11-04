@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,16 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// registerPairingJoinAPIT registers the pairing join API on a context the
+// test cancels and joins at cleanup: a leaked watch hangs the test, loudly.
+func registerPairingJoinAPIT(t *testing.T, mux *http.ServeMux, d *common.Deps) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	registerPairingJoinAPI(mux, d, ctx, &wg)
+	t.Cleanup(func() { cancel(); wg.Wait() })
+}
 
 // --- registerPairingJoinAPI: the replica-side "select a discovered primary
 // -> pair" flow (ADR-0033 part 3/3, ut-docs#185). ---
@@ -48,7 +60,7 @@ func TestPairStart_RequiresManager(t *testing.T) {
 	t.Setenv("UT_AUTH", "on")
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, "http://example.invalid", "primary-till-1", "Till 2")
 	if rec.Code != http.StatusForbidden {
@@ -76,7 +88,7 @@ func TestPairStart_SendsRequestAndShowsIndependentlyDerivedCode(t *testing.T) {
 	// Replica driving POST /api/sync/pair-start against the real primary.
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, srv.URL, primaryTillID, "Bar Till")
 	if rec.Code != http.StatusOK {
@@ -115,7 +127,7 @@ func TestPairStart_SurfacesUnreachablePrimary(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, "http://127.0.0.1:1", "some-till-id", "Bar Till")
 	// Always 200 — htmx (vendored 1.9.12 here) does not swap non-2xx
@@ -162,7 +174,7 @@ func TestPairStart_SurfacesUnreachablePrimary_MultiLocale(t *testing.T) {
 			t.Setenv("UT_AUTH", "off")
 			replica, _ := newSyncDepsWithPath(t, "replica.db")
 			rmux := http.NewServeMux()
-			registerPairingJoinAPI(rmux, replica)
+			registerPairingJoinAPIT(t, rmux, replica)
 
 			wantPrefix := strings.SplitN(httpx.T(locale, "tills.pairing.error.unreachable"), "%s", 2)[0]
 			if wantPrefix == "tills.pairing.error.unreachable" {
@@ -195,7 +207,7 @@ func TestPairStart_RejectsInvalidBaseURL(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	for _, bad := range []string{"javascript:alert(1)", "not a url", "ftp://example.com"} {
 		rec := postPairStart(t, rmux, bad, "some-till-id", "Bar Till")
@@ -228,7 +240,7 @@ func TestPairStart_MissingNameRendersTranslatedFieldSpecificMessage(t *testing.T
 	t.Setenv("UT_AUTH", "off")
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, "http://primary.example", "some-till-id", "")
 	if rec.Code != http.StatusOK {
@@ -258,7 +270,7 @@ func TestPairStatus_NoActiveAttemptRendersSafely(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := getPairStatus(t, rmux)
 	if rec.Code != http.StatusOK {
@@ -296,7 +308,7 @@ func TestPairStatus_ErrorStateKeepsPollingAndKeepsItsMessage(t *testing.T) {
 
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	if rec := postPairStart(t, rmux, primary.URL, "primary-till-1", "Bar Till"); rec.Code != http.StatusOK {
 		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -352,7 +364,7 @@ func TestPairStatus_FullFlow_CompletesJoinAndStagesRestore(t *testing.T) {
 
 	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, srv.URL, primaryTillID, "Bar Till")
 	if rec.Code != http.StatusOK {
@@ -426,7 +438,7 @@ func TestPairStatus_TreatsPrimary404AsStillWaiting(t *testing.T) {
 
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, srv.URL, "stub-till-id", "Bar Till")
 	if rec.Code != http.StatusOK {
@@ -461,7 +473,7 @@ func TestPairStatus_TreatsPrimary429AsStillWaiting(t *testing.T) {
 
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, srv.URL, "stub-till-id", "Bar Till")
 	if rec.Code != http.StatusOK {
@@ -498,7 +510,7 @@ func TestPairStatus_ExpiresAfterTTL(t *testing.T) {
 
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, srv.URL, "stub-till-id", "Bar Till")
 	if rec.Code != http.StatusOK {

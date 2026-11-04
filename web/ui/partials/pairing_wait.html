@@ -5,9 +5,15 @@
      restartURL / restartSupported (ut-docs#1550): the "joined" branch's
      restart trigger, split the same way (/api/sync/pairing-restart vs
      /api/setup/pairing-restart), and whether this platform can restart the
-     process in place at all (internal/procrestart.Supported). -->
+     process in place at all (internal/procrestart.Supported).
+     pollEvery (ut-docs#5330): "1s" while a pending link to the main till can
+     still bring news, else "15s"; only ever one of those two literals, set
+     by Go. have: the render key (code + pollEvery) echoed back as "have" on
+     each poll — a poll whose key still matches gets 204 and no swap, so the
+     aria-live host of the setup wizard does not re-announce an unchanged
+     screen every second. -->
 <div id="pairing-status"
-     {{ if .polling }}hx-get="{{ .statusURL }}" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
+     {{ if .polling }}hx-get="{{ .statusURL }}" hx-trigger="every {{ .pollEvery }}"{{ if .have }} hx-vals='{{ jsonVals "have" .have }}'{{ end }} hx-target="this" hx-swap="outerHTML"{{ end }}>
 {{ if eq .status "waiting" }}
   <p>{{ T "tills.pairing.waiting_title" }}</p>
   <p class="pairing-code" style="font-size:1.5rem; letter-spacing:.2em; font-weight:bold">{{ .code }}</p>

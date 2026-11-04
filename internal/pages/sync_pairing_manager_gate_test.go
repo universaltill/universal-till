@@ -70,7 +70,7 @@ func TestSyncManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 	registerPairingAPI(mux, dp, dp.AuthSvc, tokens)
 	registerPendingPairingsUI(mux, dp)
 	registerDiscoveryAPI(mux, dp)
-	registerPairingJoinAPI(mux, dp)
+	registerPairingJoinAPIT(t, mux, dp)
 
 	cases := []struct {
 		name, method, path string
