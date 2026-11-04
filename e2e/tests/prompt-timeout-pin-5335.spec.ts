@@ -10,7 +10,7 @@ import { ensureOperator, markTourDone } from './helpers';
 const RUN = Date.now().toString(36).toUpperCase();
 const CASHIER_USERNAME = `cashier5335${RUN}`;
 const CASHIER_PIN = '246813';
-const OUTCOME = 'The connection dropped before the till replied, so this may or may not have been done. Check before you try again.';
+const TIMEOUT_TEXT = 'The till did not reply in time, so this may or may not have been done. Check before you try again.';
 const OVERRIDE_MS = 1000;
 const URL_GLOB = '**/api/buttons/recategorize';
 
@@ -101,14 +101,14 @@ test.describe('PIN prompt timeout (ut-docs#5335)', () => {
     const dlg = await submitPin(page);
     await h.inFlight;
     await expect(dlg).toHaveJSProperty('open', false, { timeout: 5000 });
-    await expect(page.locator('#pos-alert .notice-text')).toHaveText(OUTCOME);
+    await expect(page.locator('#pos-alert .notice-text')).toHaveText(TIMEOUT_TEXT);
     await expect(page.locator('#pos-alert')).toBeInViewport();
     expect(h.posts()).toBe(2);
     h.release({ status: 200, contentType: 'text/html', body: '<span id="late-5335">late</span>' });
     await page.waitForTimeout(500);
     await expect(page.locator('#late-5335')).toHaveCount(0);
     await expect(dlg).toHaveJSProperty('open', false);
-    await expect(page.locator('#pos-alert .notice-text')).toHaveText(OUTCOME);
+    await expect(page.locator('#pos-alert .notice-text')).toHaveText(TIMEOUT_TEXT);
     expect(h.posts()).toBe(2);
   });
 

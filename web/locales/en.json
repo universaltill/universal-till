@@ -612,6 +612,7 @@
   "common.error.manager_or_admin_required": "Manager or admin required",
   "common.error.network": "Connection problem. Check your network and try again.",
   "common.error.outcome_unknown": "The connection dropped before the till replied, so this may or may not have been done. Check before you try again.",
+  "common.error.outcome_timeout": "The till did not reply in time, so this may or may not have been done. Check before you try again.",
   "common.error.server": "Something went wrong. Please try again.",
   "common.loading": "Loading…",
   "common.money.invalid": "Enter the amount in digits, with a dot or a comma before the decimals (for example 3.50 or 3,50).",

@@ -12,6 +12,7 @@ import { REPO_ROOT } from './worker-till';
 // prompt-timeout-pin-5335.spec.ts (auth project).
 
 const OUTCOME = 'The connection dropped before the till replied, so this may or may not have been done. Check before you try again.';
+const TIMEOUT_TEXT = 'The till did not reply in time, so this may or may not have been done. Check before you try again.';
 const OVERRIDE_MS = 1000;
 
 function setting(op: 'set' | 'delete', key: string, value?: string) {
@@ -86,7 +87,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
     await h.inFlight;
     await expect(dlg).toHaveJSProperty('open', false, { timeout: 5000 });
     const text = page.locator('#pos-alert .notice-text');
-    await expect(text).toHaveText(OUTCOME);
+    await expect(text).toHaveText(TIMEOUT_TEXT);
     await expect(page.locator('#pos-alert')).toBeInViewport();
     expect(h.posts()).toBe(2);
     h.release();
@@ -99,7 +100,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
       const dlg = await openConfirm(page);
       await dlg.locator('button[type=submit]').click();
       await h.inFlight;
-      await expect(page.locator('#pos-alert .notice-text')).toHaveText(OUTCOME);
+      await expect(page.locator('#pos-alert .notice-text')).toHaveText(TIMEOUT_TEXT);
       await expect(dlg).toHaveJSProperty('open', false);
       h.release(kind === 'success'
         ? { status: 200, contentType: 'text/html', body: '<span id="late-5335">late</span>' }
@@ -108,7 +109,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
       await page.waitForTimeout(500);
       await expect(dlg).toHaveJSProperty('open', false);
       await expect(page.locator('#late-5335')).toHaveCount(0);
-      await expect(page.locator('#pos-alert .notice-text')).toHaveText(OUTCOME);
+      await expect(page.locator('#pos-alert .notice-text')).toHaveText(TIMEOUT_TEXT);
       expect(h.posts()).toBe(2);
     });
   }
@@ -272,6 +273,7 @@ test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
     await page.waitForTimeout(OVERRIDE_MS * 2.5);
     expect(await page.evaluate(() => (window as any).__timeouts)).toBe(0);
     await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(OUTCOME);
+    await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(TIMEOUT_TEXT);
     h.release({ status: 200, contentType: 'text/html', body: 'x' });
   });
 
