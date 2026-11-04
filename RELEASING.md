@@ -175,6 +175,11 @@ The digest is public; there is no secret or repository variable.
   APK's signer is not in the file.
 - **Fork / new key.** Put the SHA-256 of your own signing certificate
   (`apksigner verify --print-certs app.apk`) in the file. The release fails until you do.
+- **Fork / update source (ut-docs#5271).** The in-app update downloads from the
+  Gradle property `updateApkUrlBase`. A GitHub fork needs nothing: `release.yml`
+  derives it from the repository it releases to. For another host set the
+  repository variable `UT_ANDROID_UPDATE_APK_URL_BASE` (https, ending in `/`);
+  the mirror must serve the three `unitill-pos-android*-latest.apk` names.
 - **Rotation** (needs an APK Signature Scheme v3 lineage old to new).
   1) Add the new digest next to the old one in the file. 2) Sign with the new
   key plus the lineage, and keep the v1/v2 signature by the old key while any API
