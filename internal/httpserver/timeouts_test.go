@@ -104,7 +104,7 @@ func testLimits() limits {
 	return limits{
 		hdr: time.Second, idle: time.Minute,
 		bodyGrace: 5 * time.Second, bodyRate: 1 << 10,
-		writeGrace: 300 * time.Millisecond, writeRate: 64 << 10, writeChnk: 64 << 10,
+		writeGrace: 300 * time.Millisecond, writeRate: 64 << 10, writeChunk: 64 << 10,
 	}
 }
 

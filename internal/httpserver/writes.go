@@ -26,9 +26,10 @@ const copyBufSize = 32 << 10
 // writes, and a deadline that expired during an idle gap only fails a write
 // issued after it, never an idle connection.
 //
-// Hijack: net/http clears both deadlines on hijack itself; the wrapper only
-// records it and never sets a deadline afterwards (response.SetWriteDeadline
-// has no hijack check), so websockets keep their own timeouts.
+// Hijack: net/http clears both deadlines on hijack itself; the wrapper arms
+// the grace for the pre-hijack flush, records the hijack and never sets a
+// deadline afterwards (response.SetWriteDeadline has no hijack check), so
+// websockets keep their own timeouts.
 //
 // When the handler returns, the deadline is re-armed to now + grace: the
 // server flushes the buffered tail and chunk trailer after the handler, under
@@ -83,9 +84,21 @@ func (b *boundWriter) WriteHeader(code int) {
 	b.rw.WriteHeader(code)
 }
 
+// Write feeds p in chunk-sized slices, each with its own deadline, so one
+// large Write (a rendered page, an image, an export) gives a stalled peer
+// grace + chunk/rate per slice, not grace + len(p)/rate for the whole of it.
 func (b *boundWriter) Write(p []byte) (int, error) {
-	b.arm(int64(len(p)))
-	return b.rw.Write(p)
+	var total int
+	for {
+		n := min(int64(len(p)), b.chunk)
+		b.arm(n)
+		k, err := b.rw.Write(p[:n])
+		total += k
+		p = p[n:]
+		if err != nil || len(p) == 0 {
+			return total, err
+		}
+	}
 }
 
 // Flush pushes up to a buffer of bytes; the grace covers that.
@@ -98,9 +111,13 @@ func (b *boundWriter) FlushError() error {
 	return b.rc.Flush()
 }
 
-// Hijack records the takeover before delegating (a failed hijack errs on the
-// safe side) and sets no deadline: net/http clears them.
+// Hijack arms the grace first, because response.Hijack flushes the pending
+// header (a websocket's 101) before net/http clears the deadlines, and a
+// handler that wrote it then worked past the grace would otherwise lose it. It then records the
+// takeover before delegating (hijackLocked can fail after it has already
+// hijacked and cleared the deadlines) and never sets a deadline afterwards.
 func (b *boundWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	b.arm(0)
 	b.hijacked = true
 	return b.rc.Hijack()
 }

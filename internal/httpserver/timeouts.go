@@ -45,19 +45,19 @@ const (
 	// the same floor as BodyMinRate.
 	WriteMinRate = 8 << 10 // bytes per second
 
-	// writeChunk bounds one sendfile slice so a stalled peer is cut within
-	// WriteGrace + writeChunk/WriteMinRate (15s + 32s) rather than after the
-	// whole file.
+	// writeChunk bounds one Write or sendfile slice so a stalled peer is cut
+	// within WriteGrace + writeChunk/WriteMinRate (15s + 32s) rather than after
+	// the whole body.
 	writeChunk = 256 << 10
 )
 
 // limits are the tunable bounds behind New; tests shorten them via newWith.
 type limits struct {
-	hdr, idle            time.Duration
-	bodyGrace            time.Duration
-	bodyRate             int64
-	writeGrace           time.Duration
-	writeRate, writeChnk int64
+	hdr, idle             time.Duration
+	bodyGrace             time.Duration
+	bodyRate              int64
+	writeGrace            time.Duration
+	writeRate, writeChunk int64
 }
 
 // New returns a server for h with ReadHeaderTimeout, IdleTimeout and
@@ -77,14 +77,14 @@ func New(h http.Handler) *http.Server {
 	return newWith(h, limits{
 		hdr: ReadHeaderTimeout, idle: IdleTimeout,
 		bodyGrace: BodyReadGrace, bodyRate: BodyMinRate,
-		writeGrace: WriteGrace, writeRate: WriteMinRate, writeChnk: writeChunk,
+		writeGrace: WriteGrace, writeRate: WriteMinRate, writeChunk: writeChunk,
 	})
 }
 
 // newWith lets tests shorten the timeouts; production uses New.
 func newWith(h http.Handler, l limits) *http.Server {
 	return &http.Server{
-		Handler:           boundWrites(boundBodies(h, l.bodyGrace, l.bodyRate), l.writeGrace, l.writeRate, l.writeChnk),
+		Handler:           boundWrites(boundBodies(h, l.bodyGrace, l.bodyRate), l.writeGrace, l.writeRate, l.writeChunk),
 		ReadHeaderTimeout: l.hdr,
 		IdleTimeout:       l.idle,
 		MaxHeaderBytes:    MaxHeaderBytes,

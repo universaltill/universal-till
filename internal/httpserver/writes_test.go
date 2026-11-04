@@ -516,8 +516,9 @@ func TestNoRearmAfterHijack(t *testing.T) {
 		_, _, _ = w.(http.Hijacker).Hijack()
 	}), time.Second, 1<<10, 4<<10)
 	h.ServeHTTP(rw, httptest.NewRequest("GET", "/", nil))
-	if rw.hijacks != 1 || len(rw.deadlines) != 1 {
-		t.Fatalf("hijacks=%d deadlines=%d, want 1 and 1 (no re-arm at exit)", rw.hijacks, len(rw.deadlines))
+	// One for the Write, one for the pre-hijack flush, none at exit.
+	if rw.hijacks != 1 || len(rw.deadlines) != 2 {
+		t.Fatalf("hijacks=%d deadlines=%d, want 1 and 2 (no re-arm at exit)", rw.hijacks, len(rw.deadlines))
 	}
 }
 
@@ -530,5 +531,50 @@ func TestNewWrapsWithBoundWrites(t *testing.T) {
 	}
 	if WriteGrace <= 0 || WriteGrace > 60*time.Second || WriteMinRate <= 0 || WriteMinRate > 16<<10 {
 		t.Fatalf("write bounds out of range: %v %d", WriteGrace, WriteMinRate)
+	}
+}
+
+// One huge Write must not earn a stalled peer grace + len/rate: it is fed in
+// chunk-sized slices, each with its own deadline.
+func TestSingleLargeWriteNonReaderCut(t *testing.T) {
+	done := make(chan error, 1)
+	addr := startLimits(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write(make([]byte, 32<<20)) // 512s at the test rate if unsliced
+		done <- err
+	}), testLimits())
+	dialStalled(t, addr, "/")
+	if err := waitDone(t, done, 10*time.Second, "single large write"); err == nil {
+		t.Fatal("handler wrote everything to a peer that never reads")
+	}
+}
+
+// response.Hijack flushes the pending header before net/http clears the
+// deadlines. A handler that wrote its 101 (as coder/websocket's Accept does),
+// worked past the grace, then hijacked must still get the header out.
+func TestHijackAfterIdleFlushesHeader(t *testing.T) {
+	addr := startLimits(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "test")
+		w.WriteHeader(http.StatusSwitchingProtocols) // buffered; arms now+grace
+		time.Sleep(600 * time.Millisecond)
+		conn, brw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = brw.WriteString("world")
+		_ = brw.Flush()
+	}), testLimits())
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_, _ = c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n"))
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	b, _ := io.ReadAll(c)
+	if !strings.HasPrefix(string(b), "HTTP/1.1 101") || !strings.HasSuffix(string(b), "world") {
+		t.Fatalf("got %q, want the 101 header then the hijacked bytes", b)
 	}
 }
