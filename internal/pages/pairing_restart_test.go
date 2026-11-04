@@ -61,7 +61,7 @@ func TestPairingRestart_ManagerRouteRequiresManager(t *testing.T) {
 	stubPairingRestorePending(t, true)
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairingRestart(t, rmux, "/api/sync/pairing-restart")
 	if rec.Code != http.StatusForbidden {
@@ -78,7 +78,7 @@ func TestPairingRestart_ManagerRouteSchedulesRestartAndAnswersEnvelope(t *testin
 	stubPairingRestorePending(t, true)
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairingRestart(t, rmux, "/api/sync/pairing-restart")
 	if rec.Code != http.StatusOK {
@@ -150,7 +150,7 @@ func TestPairingRestart_ManagerRouteRealSessionGatesByRole(t *testing.T) {
 	stubPairingRestorePending(t, true)
 	dp := newSyncPairingGateTestDeps(t)
 	mux := http.NewServeMux()
-	registerPairingJoinAPI(mux, dp)
+	registerPairingJoinAPIT(t, mux, dp)
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/pairing-restart", nil), auth.User{ID: "u1", Role: "cashier"})
 	rec := httptest.NewRecorder()
@@ -205,7 +205,7 @@ func TestPairingRestart_ManagerRouteRefusesWhenNothingIsStaged(t *testing.T) {
 	stubPairingRestorePending(t, false)
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairingRestart(t, rmux, "/api/sync/pairing-restart")
 	if rec.Code != http.StatusConflict {

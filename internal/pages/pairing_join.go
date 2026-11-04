@@ -2,6 +2,7 @@ package pages
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -97,6 +99,12 @@ type pendingJoinState struct {
 	// re-checks for sales before completeJoin — the first sale can land
 	// while the main till's manager is still deciding.
 	replaceLocalData bool
+
+	// ut-docs#5330 (pending link, joiner side).
+	secretHeader    bool              // pair-request answered pending_link: secret only in the header
+	link            *pendingLinkWatch // nil: no link this attempt (no pending_link, or unpinned)
+	lastUpstream    time.Time         // last per-id GET; starts = requestedAt. Mutated in place under rp.mu.
+	lastApprovedTry time.Time         // last per-id GET after the link said approved; zero = none yet
 }
 
 // code is the verification code this attempt shows: over the pin the
@@ -156,12 +164,25 @@ func sendPairRequest(req *http.Request, plain *http.Client, baseURL string, body
 type replicaPairing struct {
 	mu     sync.Mutex
 	active *pendingJoinState
+	links  *pendingLinkRunner
 }
 
+// set makes s the active attempt and stops the previous one's link.
 func (p *replicaPairing) set(s *pendingJoinState) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	old := p.active
 	p.active = s
+	p.mu.Unlock()
+	if old != nil {
+		old.link.stop()
+	}
+}
+
+// finish records next as the active attempt's final (or error) state and
+// stops its link. Called with mu held; stop is bounded (a cancel).
+func (p *replicaPairing) finish(next *pendingJoinState) {
+	p.active = next
+	next.link.stop()
 }
 
 // pairWaitView renders the waiting/terminal partial for a given state. Only
@@ -198,7 +219,27 @@ func pairWaitView(w http.ResponseWriter, r *http.Request, statusURL, status, cod
 //     new "waiting"/"joined" state started from another tab or device
 //     against this till's single replicaPairing.
 func pairWaitViewPolling(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string, polling bool) {
+	pairWaitRender(w, r, statusURL, status, code, shopName, errMsg, polling, pairPollSlow, "")
+}
+
+// pairWaitWaiting renders a state's waiting screen with its poll interval.
+// fromPoll: a pair-status poll whose "have" key still matches gets 204 (no
+// swap, so a screen reader hears nothing) — never from pair-start.
+func pairWaitWaiting(w http.ResponseWriter, r *http.Request, statusURL string, s *pendingJoinState, fromPoll bool) {
+	key := s.renderKey()
+	if fromPoll && r.URL.Query().Get("have") == key {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	pairWaitRender(w, r, statusURL, "waiting", s.code(), "", "", true, s.pollEvery(), key)
+}
+
+// pairWaitRender: pollEvery is only ever pairPollFast or pairPollSlow, never
+// input; have is the render key echoed back by the poll ("" = none).
+func pairWaitRender(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string, polling bool, pollEvery, have string) {
 	httpx.RenderPartial("ui/partials/pairing_wait.html", map[string]any{
+		"pollEvery": pollEvery,
+		"have":      have,
 		"statusURL": statusURL,
 		"status":    status,
 		"code":      code,
@@ -237,8 +278,11 @@ func validPrimaryBaseURL(raw string) bool {
 // attempt in flight (see replicaPairing's doc comment), and first boot is
 // monotonic, so in practice only one route group is reachable at a time
 // anyway — two disconnected states would be the bug, not the fix.
-func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
-	rp := &replicaPairing{}
+//
+// bgCtx/wg are Init's: pending-link watches run on bgCtx and are joined on wg
+// (app.Run cancels only bgCtx before wg.Wait).
+func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps, bgCtx context.Context, wg *sync.WaitGroup) {
+	rp := &replicaPairing{links: newPendingLinkRunner(bgCtx, wg)}
 	client := netaccess.NewClient(pairJoinHTTPTimeout)
 
 	mux.HandleFunc("POST /api/sync/pair-start", pairStartHandler(d, rp, client, managerGate(d), "/api/sync/pair-status"))
@@ -434,7 +478,8 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		}
 		var out struct {
 			Data struct {
-				ID string `json:"id"`
+				ID          string `json:"id"`
+				PendingLink bool   `json:"pending_link"`
 			} `json:"data"`
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.ID == "" {
@@ -455,14 +500,19 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			requestedAt:      pairingJoinNow(),
 			status:           "waiting",
 			replaceLocalData: replaceConfirmed,
+			secretHeader:     out.Data.PendingLink,
+		}
+		state.lastUpstream = state.requestedAt
+		if out.Data.PendingLink && pin != "" {
+			state.link = rp.links.start(attemptOf(state)) // nil after shutdown: plain polling
 		}
 		rp.set(state)
-		pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
+		pairWaitWaiting(w, r, statusURL, state, false)
 	}
 }
 
 // pairStatusHandler is polled by the waiting fragment itself
-// (hx-trigger="every 15s", pointing back at this handler's own statusURL)
+// (hx-trigger="every 1s" with a live pending link, else 15s, pointing back at this handler's own statusURL)
 // until it renders a terminal state. No request id/params — reads whatever
 // the single active attempt is. Holds rp.mu for its whole body — see
 // replicaPairing's own doc comment for why.
@@ -491,33 +541,59 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			pairWaitViewPolling(w, r, statusURL, state.status, "", state.shopName, state.errMsg, state.status == "error")
 			return
 		}
-		if pairingJoinNow().Sub(state.requestedAt) > pairingRequestTTL {
+		now := pairingJoinNow()
+		if now.Sub(state.requestedAt) > pairingRequestTTL {
 			next := *state
 			next.status = "expired"
-			rp.active = &next
+			rp.finish(&next)
 			pairWaitView(w, r, statusURL, "expired", "", "", "")
 			return
 		}
+		// The link reported denied/expired: genuine, it came over the
+		// pinned, main-till-authenticated link.
+		if state.linkTerminal() {
+			next := *state
+			next.status = "expired"
+			rp.finish(&next)
+			pairWaitView(w, r, statusURL, "expired", "", "", "")
+			return
+		}
+		if !state.upstreamDue(now) {
+			pairWaitWaiting(w, r, statusURL, state, true)
+			return
+		}
+		state.lastUpstream = now
+		if state.link != nil && state.link.approved.Load() {
+			state.lastApprovedTry = now
+		}
 
-		// The request_secret travels in this URL, so a pinned attempt sends
-		// it only to the certificate it pinned: any other fails the
-		// handshake before a byte of the request is sent (ut-docs#4091).
-		url := state.dialURL + "/api/sync/pair-requests/" + state.id + "?request_secret=" + state.requestSecret
+		// A pinned attempt sends the secret only to the certificate it
+		// pinned: any other fails the handshake before a byte of the request
+		// is sent (ut-docs#4091). Once the main till answered pending_link
+		// the secret rides only in a header, never a URL (ADR-0114
+		// amendment); an older main till gets today's query form.
+		reqURL := state.dialURL + "/api/sync/pair-requests/" + url.PathEscape(state.id)
+		if !state.secretHeader {
+			reqURL += "?request_secret=" + state.requestSecret
+		}
 		pollClient := client
 		if state.pin != "" {
 			pollClient = newPairPinnedClient(state.pin).Client
 		}
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, reqURL, nil)
 		if err != nil {
-			pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
+			pairWaitWaiting(w, r, statusURL, state, true)
 			return
+		}
+		if state.secretHeader {
+			req.Header.Set(fleetlink.HeaderPairRequestSecret, state.requestSecret)
 		}
 		resp, err := pollClient.Do(req)
 		if err != nil {
 			// Transient network hiccup — stay waiting, the next tick retries.
 			// So does a certificate that isn't the pinned one: no secret
 			// was sent, and the manager's codes never matched anyway.
-			pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
+			pairWaitWaiting(w, r, statusURL, state, true)
 			return
 		}
 		defer resp.Body.Close()
@@ -528,13 +604,13 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		// the shared pair-request rate limiter (registerPairingAPI) — an
 		// expected steady-state outcome at this poll cadence, not fatal.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusTooManyRequests {
-			pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
+			pairWaitWaiting(w, r, statusURL, state, true)
 			return
 		}
 		if resp.StatusCode != http.StatusOK {
 			next := *state
 			next.status, next.errMsg = "error", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unexpected_response_status"), resp.Status)
-			rp.active = &next
+			rp.finish(&next)
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
@@ -546,7 +622,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Token == "" {
 			next := *state
 			next.status, next.errMsg = "error", httpx.T(locale, "tills.pairing.error.unexpected_response")
-			rp.active = &next
+			rp.finish(&next)
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
@@ -561,7 +637,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		if !state.replaceLocalData && hasSalesHistory(r.Context(), d) {
 			next := *state
 			next.status, next.errMsg = "error", httpx.T(locale, "tills.discovery.ambient.has_sales_warning")
-			rp.active = &next
+			rp.finish(&next)
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			renderReplaceSlot(w, r, false)
 			return
@@ -573,7 +649,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			// now a *joinError (ut-docs#36) whose raw Error() is a locale
 			// key, not English prose — this must go through httpx.T.
 			next.status, next.errMsg = "error", friendlyJoinError(locale, err)
-			rp.active = &next
+			rp.finish(&next)
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			if isJoinErrKind(err, joinErrHasSales) {
 				renderReplaceSlot(w, r, false)
@@ -582,7 +658,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		next := *state
 		next.status, next.shopName = "joined", shopName
-		rp.active = &next
+		rp.finish(&next)
 		pairWaitView(w, r, statusURL, "joined", "", shopName, "")
 	}
 }
