@@ -279,6 +279,9 @@ func TestCloseShift_HTMLSummaryIsCurrencyAwareAndTranslated(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpx.InitCurrency("IRT")
+	// ut-docs#5410: these pin the symbol (word) form; auto shows the code.
+	httpx.InitCurrencyDisplay("symbol")
+	t.Cleanup(func() { httpx.InitCurrencyDisplay("") })
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 
 	openAndGetID := func() string {

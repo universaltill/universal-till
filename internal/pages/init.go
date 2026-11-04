@@ -842,6 +842,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 // leaves the published value as it was rather than resetting it.
 func publishCachedSettings(ctx context.Context, store *settings.Store, st common.RuntimeState, authDisabled bool) {
 	httpx.InitCurrency(st.Currency)
+	httpx.InitCurrencyDisplay(st.CurrencyDisplay) // ut-docs#5410
 	// ut-docs#2362: RenderError's cached theme — a themed till must render
 	// its error pages themed from the first request and after a theme sync.
 	httpx.InitTheme(st.Theme)

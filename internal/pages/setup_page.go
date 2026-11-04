@@ -739,7 +739,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if cloudHeld != nil {
 			persistCloudShopCurrency(r, d, cloudHeld)
 		}
-		httpx.InitCurrency(st.Currency)
+		common.InitCurrencyFromState(st)
 		// ut-docs#1027: live-apply the just-derived locale, same posture as
 		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
 		// this is safe even when no country matched (st.Locale left at

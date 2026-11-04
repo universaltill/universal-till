@@ -8,6 +8,9 @@ import (
 )
 
 func TestFormatMoney(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	cases := []struct {
 		code, locale string
 		minor        int64
@@ -61,6 +64,9 @@ func TestFormatMoney(t *testing.T) {
 // FormatMoney itself stays free of bidi controls: it also feeds the ESC/POS
 // invoice raster, which has no bidi handling.
 func TestFormatMoneyDisplay(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	const lri, pdi = "\u2066", "\u2069"
 	cases := []struct {
 		code, locale string
@@ -329,18 +335,21 @@ func TestFormatMoney_LocaleGrouping(t *testing.T) {
 	InitCurrency("GBP")
 }
 
-// FormatMoneyLatin: same grouping convention as FormatMoney, but digit
+// FormatMoneyPrint: same grouping convention as FormatMoney, but digit
 // shape is always Latin — the ESC/POS receipt path (buildReceiptDoc) needs
 // this because non-Latin numeral glyphs need bitmap mode to print (spec).
-func TestFormatMoneyLatin(t *testing.T) {
+func TestFormatMoneyPrint_LatinDigitsAndGrouping(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	InitCurrency("EUR")
-	if got := FormatMoneyLatin(123456, "de-DE"); got != "€1.234,56" {
-		t.Errorf("FormatMoneyLatin de-DE = %q", got)
+	if got := FormatMoneyPrint(123456, "de-DE", "utf8"); got != "€1.234,56" {
+		t.Errorf("FormatMoneyPrint de-DE = %q", got)
 	}
-	// fa would digit-substitute under FormatMoney; Latin variant must not.
+	// fa would digit-substitute under FormatMoney; the print variant must not.
 	InitCurrency("IRR")
-	if got := FormatMoneyLatin(12345, "fa"); got != "12,345 ریال" {
-		t.Errorf("FormatMoneyLatin fa = %q, want Latin digits", got)
+	if got := FormatMoneyPrint(12345, "fa", "utf8"); got != "IRR 12,345" {
+		t.Errorf("FormatMoneyPrint fa = %q, want Latin digits and the code (no Arabic glyphs on a thermal head)", got)
 	}
 	InitCurrency("GBP")
 }
@@ -372,6 +381,9 @@ func TestFormatQty(t *testing.T) {
 // covering that the two mechanisms compose correctly, same as the
 // existing fa/ar regression checks above.
 func TestFormatMoney_IndianGrouping(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	InitCurrency("INR")
 	cases := []struct {
 		locale string

@@ -356,8 +356,11 @@ func (d *Deps) WaitForAsyncWork() {
 type RuntimeState struct {
 	Theme    string
 	Currency string
-	Country  string
-	Region   string
+	// CurrencyDisplay is store.currency_display (auto|symbol|code,
+	// ut-docs#5410); always valid after LoadState/SaveState (clamped).
+	CurrencyDisplay string
+	Country         string
+	Region          string
 	// Locale is the shop's default locale (ut-docs#861) — settable live via
 	// Settings' Language card, distinct from a manager's own per-browser
 	// ?lang=/ut_lang cookie preference. Empty means "use the compiled-in/

@@ -31,3 +31,13 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirba
 - Kendi ülkenizin sizden neleri saklamanızı istediğinden emin değilseniz, burada gösterilen herhangi bir sayıyı bir uyumluluk garantisi saymadan önce mali müşavirinize danışın — bu sayfa hiçbir ülkenin kayıt tutma yasasına uyumu belgelemez.
 - Dükkânınızın ülke ayarı bu sayfadaki hiçbir şeyle eşleşmiyorsa (nadir bir durum — normalde bu olmamalıdır), sayfa neden olduğunu açıklayan bir notla birlikte tüm ülkeleri gösterir, alışılmış tek ülke görünümü yerine.
 - **Gölge modunda müşteri belgeleri** yalnızca gösterilir: değer kasayla birlikte gelir ve burada düzenlenemez. **Verilmez**, bu ülkede gölge modunda çalışan bir kasanın (dükkanın yasal kayıt olmaya devam eden mevcut kasasının yanında) her satışı kaydettiği ancak müşterilere fiş veya fatura vermediği anlamına gelir: otomatik ya da elle fiş yazdırma yok, ödemeden sonra ekranda fiş yok ve satış ekranında bunu belirten bir bildirim var. Bugün bu Portekiz için geçerlidir. Bu, kasanın ne yaptığını anlatır; hukuki tavsiye değildir.
+
+## Para birimi gösterimi
+
+Tutarlar dükkânınızın para birimini simge (₺12,50), üç harfli kod (TRY 12,50) olarak gösterebilir ya da seçimi kasaya bırakabilirsiniz. **Ayarlar → Para birimi** bölümünü açın ve **Para birimi gösterimi** alanını kullanın (yönetici veya admin; tüm dükkân ve her kasa için geçerlidir).
+
+- **Otomatik**, simgesi zor okunan veya başka para birimleriyle ortak olan para birimleri için kodu (AED, SAR, IQD, AFN, IRR, IRT), diğerleri için simgeyi (GBP, USD, EUR, JPY) yazar. **Simge** ve **Kod** her zaman o biçimi kullanır. Listedeki her seçenek kendi para biriminizle bir örnek gösterir.
+- Basılı fişler ve Z raporları aynı seçimi izler. Yazıcı simgeyi basamıyorsa fiş simge yerine kodu basar; böylece para biriminin yerinde soru işareti çıkmaz.
+- Seçim yalnızca tutarların nasıl yazıldığını değiştirir. Kayıtlı tutarlar, ondalıklar ve toplamlar olduğu gibi kalır, hiçbir şey çevrilmez — başka bir para birimi yine yukarıdaki Para birimi kartından seçilir.
+- Zaten açık olan sayfalar yeniden yüklenene kadar eski gösterimi korur. Birden fazla para biriminde tutar gösteren bir ekran her iki biçimi de gösterebilir.
+- Faturalar ekrandaki seçimi ve rakamlarını izler; basılı fiş her zaman Latin rakamları kullanır.

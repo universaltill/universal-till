@@ -45,7 +45,7 @@ func FormatDate(t time.Time, locale string) string {
 
 // FormatDateLatin is FormatDate without digit-shape substitution — for
 // contexts (ESC/POS receipt printing) that need Latin digits only in text
-// mode, same reasoning as FormatMoneyLatin.
+// mode, same reasoning as FormatMoneyPrint.
 func FormatDateLatin(t time.Time, locale string) string {
 	return t.Format(dateLayout(locale))
 }
