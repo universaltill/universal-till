@@ -851,8 +851,18 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// under its own prefix, whatever the commit's result (the old
 			// till is already replaced once /pair answered). First boot: no
 			// sale exists yet, so no number is repeated or skipped.
+			// ut-docs#5332: the same prefix after "Remove, then add" - the
+			// cloud's store.had_main_till says the shop had a main till
+			// before, so an ordinary code must not restart at 000000001.
+			// No old device id is known there, so none is passed.
+			prefix := ""
 			if rp := cloudHeld.p.Replaced; rp != nil {
-				if err := d.Settings.Set(r.Context(), "sync.receipt_prefix", data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, rp.DeviceID)); err != nil {
+				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, rp.DeviceID)
+			} else if st := cloudHeld.p.Store; st != nil && st.HadMainTill {
+				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, "")
+			}
+			if prefix != "" {
+				if err := d.Settings.Set(r.Context(), "sync.receipt_prefix", prefix); err != nil {
 					logging.L().Warnf("setup wizard: set the replacement till's receipt prefix: %v", err)
 				}
 			}
