@@ -45,9 +45,10 @@ const (
 // RegistryMinTillVersion is the first till release whose set_till_setting
 // honours `expect` (compare-and-set); an older till ignores the field and
 // writes unconditionally, so the cloud must not rely on it below this. The
-// next release after v0.35.3; release.yml decides the final number, change
-// this constant if it differs.
-const RegistryMinTillVersion = "0.36.0"
+// next release after v0.35.3: release.yml defaults to a patch bump, so
+// 0.35.4; if the release is cut with another bump, change this constant and
+// regenerate the artefact.
+const RegistryMinTillVersion = "0.35.4"
 
 // ValidSettingTier reports whether t is one of the four tiers.
 func ValidSettingTier(t string) bool {

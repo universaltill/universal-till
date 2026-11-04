@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "expect_min_till_version": "0.36.0",
+  "expect_min_till_version": "0.35.4",
   "entries": [
     {
       "key": "pos.allow_negative_inventory",
@@ -480,7 +480,7 @@
     {
       "key": "receipt.header1",
       "type": "text",
-      "tier": "normal",
+      "tier": "sensitive",
       "secret": false,
       "default": "",
       "on": "",
@@ -499,7 +499,7 @@
     {
       "key": "receipt.header2",
       "type": "text",
-      "tier": "normal",
+      "tier": "sensitive",
       "secret": false,
       "default": "",
       "on": "",
@@ -518,7 +518,7 @@
     {
       "key": "receipt.header3",
       "type": "text",
-      "tier": "normal",
+      "tier": "sensitive",
       "secret": false,
       "default": "",
       "on": "",
@@ -537,7 +537,7 @@
     {
       "key": "receipt.footer",
       "type": "text",
-      "tier": "normal",
+      "tier": "sensitive",
       "secret": false,
       "default": "",
       "on": "",

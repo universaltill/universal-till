@@ -12,7 +12,7 @@ architect, dev (TDD), tester, reviewer.
 - `cloudSetTillSetting` validates bool/int/enum from the registry; special rules (receipt-policy country plugin,
   browsing mode, order type, barcode set, locales) stay in code; an entry type without a rule is refused.
 - `set_till_setting` accepts optional `expect` (compare-and-set; "changed since ..." refusal, nothing written;
-  absent = old behaviour). Needs a till >= `RegistryMinTillVersion` (0.36.0, assumed next release) to honour it.
+  absent = old behaviour). Needs a till >= `RegistryMinTillVersion` (0.35.4: release.yml defaults to a patch bump) to honour it.
 - Heartbeat report built from the registry: secret tier only "set"/"not set", never/tierless invisible.
 - Generator `make gen-settings-registry` -> `docs/till-settings-registry.json`; a data test fails when stale.
 - Tests: tiers present, registry-only keys listed, every `settings.html` card has an entry or a shrink-only
@@ -29,7 +29,7 @@ architect, dev (TDD), tester, reviewer.
 | 6 | minor | tautological tests | Strengthened (literal bounds/defaults pins); secret-report test uses synthetic secret entries |
 | 7 | minor | check and write not atomic | Accepted, documented (directives run serially) |
 | 8 | minor | 200-byte cut could split UTF-8; Secret+never | Fixed + tests |
-| 9 | minor | receipt header/footer tier normal | Kept normal per ADR-0175 amendment 13.3 (receipt text); owner may raise to sensitive |
+| 9 | minor | receipt header/footer tier normal | Changed to sensitive (owner default relayed 2026-11-04): header/footer lines carry seller identity |
 | 10 | nit | generator relative path | Fixed: refuses to run without go.mod |
 
 ## Verified beyond automated tests

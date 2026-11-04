@@ -104,3 +104,11 @@ func TestSettingsRegistry_NegativeInventoryUnchanged(t *testing.T) {
 		t.Fatalf("pos.allow_negative_inventory entry changed: %+v", s)
 	}
 }
+
+func TestReceiptTextIsSensitive(t *testing.T) {
+	for _, k := range []string{"receipt.header1", "receipt.header2", "receipt.header3", "receipt.footer"} {
+		if s, ok := LookupAgentSetting(k); !ok || s.Tier != SettingTierSensitive {
+			t.Errorf("%s must be sensitive (it carries seller identity): %+v", k, s)
+		}
+	}
+}

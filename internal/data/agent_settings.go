@@ -180,23 +180,25 @@ var AgentSettings = []AgentSetting{
 		Type: SettingTypeText, Tier: SettingTierSensitive}, // drives tax/fiscal defaults (ut-docs#3390)
 
 	// Not on the /settings page: receipt text lives on the receipt designer,
-	// the receipt policy on the printer card.
+	// the receipt policy on the printer card. Receipt header/footer lines
+	// are sensitive: they usually carry the seller's name, address and VAT
+	// number (owner default, ut-docs#5349).
 	{Key: "printer.receipt_policy", Region: "settings-printer",
 		LabelKey: "settings.printer.receipt_policy.title", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeEnum, Tier: SettingTierNormal, RemoteWritable: true,
 		Options: []string{"always", "ask", "never"}}, // plus the country plugin's allowed subset, checked at write
 	{Key: "receipt.header1", Region: "receipt-designer", Page: "/receipt-designer",
 		LabelKey: "designer.receipt.header", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeText, Tier: SettingTierNormal, RemoteWritable: true},
+		Type: SettingTypeText, Tier: SettingTierSensitive, RemoteWritable: true},
 	{Key: "receipt.header2", Region: "receipt-designer", Page: "/receipt-designer",
 		LabelKey: "designer.receipt.header", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeText, Tier: SettingTierNormal, RemoteWritable: true},
+		Type: SettingTypeText, Tier: SettingTierSensitive, RemoteWritable: true},
 	{Key: "receipt.header3", Region: "receipt-designer", Page: "/receipt-designer",
 		LabelKey: "designer.receipt.header", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeText, Tier: SettingTierNormal, RemoteWritable: true},
+		Type: SettingTypeText, Tier: SettingTierSensitive, RemoteWritable: true},
 	{Key: "receipt.footer", Region: "receipt-designer", Page: "/receipt-designer",
 		LabelKey: "designer.receipt.footer", Kind: AgentSettingText, ReadValue: true,
-		Type: SettingTypeText, Tier: SettingTierNormal, RemoteWritable: true},
+		Type: SettingTypeText, Tier: SettingTierSensitive, RemoteWritable: true},
 }
 
 // AssistantVisible reports whether an assistant (the on-till agent or the
