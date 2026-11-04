@@ -69,7 +69,7 @@ func parseSettingsSet(raw []byte) (any, error) {
 	seen := map[string]bool{}
 	for i, c := range a.Changes {
 		s, ok := data.LookupAgentSetting(c.Key)
-		if !ok || !s.Writable || s.Kind != data.AgentSettingBool || s.Audit == "" || seen[c.Key] {
+		if !ok || !s.Writable || !s.AssistantVisible() || s.Kind != data.AgentSettingBool || s.Audit == "" || seen[c.Key] {
 			return nil, fmt.Errorf("%w: changes[%d].key", ErrInvalid, i)
 		}
 		seen[c.Key] = true

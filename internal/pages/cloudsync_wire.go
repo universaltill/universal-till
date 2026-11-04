@@ -86,74 +86,46 @@ func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 
 // allowedRemoteTillSettingKeys is the till-side whitelist for the
 // set_till_setting directive (ut-docs#2289; Decision 1 of the shared
-// portal-till configuration design in universaltill/ut-docs#2306, proposed
-// as ADR-0095 — that PR is still open, so every citation in this slice
-// names the issue rather than an ADR number not yet accepted on ut-docs'
-// main; swap them for "ADR-0095" once it merges): the safe,
-// non-device-bound shop-config keys the cloud panel may write. It MUST match
-// ut-cloud's claims.AllowedTillSettingKeys byte-for-byte — the portal
-// filters too, but this list is the one that holds when the portal is
-// stale or wrong, which is exactly why it's re-checked here rather than
-// trusted. Built from the same constants the till's own settings pages
-// write (print_api.go, common.KeyKioskIdleReset), never re-typed strings,
-// so it can't drift from what those pages store.
+// portal-till configuration design in universaltill/ut-docs#2306). Since
+// ut-docs#5349 it is DERIVED from the typed settings registry
+// (data.AgentSettings, internal/data/settings_registry.go): the entries that
+// are RemoteWritable and tier normal or sensitive. There is no second list --
+// a key is remote-writable by adding a registry entry with a tier AND a
+// validation rule in cloudSetTillSetting (a registry type that needs a
+// special rule and has none is refused, fail closed). ut-cloud's
+// AllowedTillSettingKeys derives from the artefact the registry generates
+// (docs/till-settings-registry.json); this set is the one that holds when the
+// portal is stale or wrong, so it is re-checked here rather than trusted.
 //
-// Never on this list, by decision: printer addresses/device paths,
-// payment-terminal pairing, fiscal/TSE credentials or posture, PINs, network
-// or sync topology, store.country (its fiscal side-effects are
-// SetSetting's job). order-type prompt placement, the sell-screen browsing
-// mode and the order-number scheme (ut-docs#2473) round out the
-// ut-docs#2289 slice — every setting that design named is now on this
-// list. ut-docs#2499: common.KeyBrowsingMode took the slot the retired
-// Categories-tab toggle (sell_screen_categories_tab_enabled) held — the
-// portal side (ut-cloud's claims.AllowedTillSettingKeys) needs the same
-// swap in its own PR; until it lands, the portal can neither queue the new
-// key (its own filter drops it) nor the old one (refused here), which is
-// the fail-closed direction.
-var allowedRemoteTillSettingKeys = map[string]bool{
-	keyPrinterReceiptPolicy:     true,
-	keyReceiptHeader1:           true,
-	keyReceiptHeader2:           true,
-	keyReceiptHeader3:           true,
-	keyReceiptFooter:            true,
-	common.KeyKioskIdleReset:    true,
-	data.OrderTypePromptModeKey: true,
-	common.KeyBrowsingMode:      true,
-	data.SaleDisplayNoSchemeKey: true,
-	// ut-docs#3390 (BA/Architect decision table on the card): the rest of
-	// the till's Settings cards a shop owner may change from my. Each is
-	// shop-wide (refuseShopWideDirectiveOnAdditionalTill) and validated
-	// below exactly as its own Settings form validates it.
-	data.BarcodeEnabledSymbologiesKey:          true, // settings-barcode
-	data.CatalogImportBarcodeFromSKUDefaultKey: true, // settings-catalog-import-barcode-default
-	data.CatalogPrePackUnitPriceEnabledKey:     true, // settings-catalog-pre-pack-unit-price
-	common.KeyAllowNegativeInventory:           true, // settings-stock-tracking
-	keyInvoiceSellerName:                       true, // settings-invoice
-	keyInvoiceSellerAddress:                    true, // settings-invoice
-	keyInvoiceSellerVATNo:                      true, // settings-invoice
-	common.KeyIdleLock:                         true, // settings-idle-lock
-	common.KeyKioskPaymentMode:                 true, // settings-kiosk-payment-mode
-	common.KeyLocale:                           true, // settings-language
-	common.KeyStaffLocales:                     true, // settings-staff-languages
-}
+// Never in it, by decision: printer addresses/device paths, payment-terminal
+// pairing, fiscal/TSE credentials or posture, PINs, network or sync topology,
+// store.country (its fiscal side-effects are SetSetting's job), anything
+// tier secret or never. The read-only decisions of ut-docs#3390 (retention,
+// currency, shop type) are registry entries without RemoteWritable.
+var allowedRemoteTillSettingKeys = data.RemoteWritableKeys()
 
 // reportedReadOnlyTillSettingKeys are reported to the cloud so my. can show
 // them, but are never remote-writable (ut-docs#3390): shortening retention
 // deletes records (the legal minimums and the confirm live at the till), the
 // currency changes the meaning of every price and report, and the shop type
-// drives tax/fiscal defaults. Never add one of these to
-// allowedRemoteTillSettingKeys without superseding that decision.
+// drives tax/fiscal defaults. Derived from the registry: reportable
+// (ReadValue, tier normal|sensitive) and not remote-writable.
 //
 // The one gated cloud-driven currency write is not a directive: ADR-0163
-// amendment 2026-10-16 (ut-docs#4539) — the main till adopts the shop
+// amendment 2026-10-16 (ut-docs#4539) -- the main till adopts the shop
 // currency from the cached entitlement block before its first sale, once
 // per shop value and never mid-sale (reconcileShopCurrency,
 // shop_currency.go).
-var reportedReadOnlyTillSettingKeys = []string{
-	common.KeyReportRetentionMode, // settings-retention
-	common.KeyCurrency,            // settings-currency
-	common.KeyShopType,            // settings-shop-type
-}
+var reportedReadOnlyTillSettingKeys = func() []string {
+	var out []string
+	for _, s := range data.AgentSettings {
+		if !allowedRemoteTillSettingKeys[s.Key] && s.ReadValue && !s.Secret &&
+			(s.Tier == data.SettingTierNormal || s.Tier == data.SettingTierSensitive) {
+			out = append(out, s.Key)
+		}
+	}
+	return out
+}()
 
 // cloudSetTillSetting is the set_till_setting hook: whitelist check, then the
 // SAME value validation the local settings form for that key applies
@@ -163,133 +135,95 @@ var reportedReadOnlyTillSettingKeys = []string{
 // lives in the derived State, so without it the new window wouldn't apply
 // until a restart). A refused key or value writes nothing and re-derives
 // nothing.
-func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(context.Context), key, value string) (string, error) {
+//
+// expect (ut-docs#5349, ADR-0175 amendment 13.4) is the compare-and-set: nil
+// = no check; otherwise the stored value the proposer saw ("" = unset) must
+// still be what the till holds -- the raw stored value, the entry's default
+// where nothing is stored, or the value the heartbeat report shows for it --
+// or the write is refused with a "changed since"
+// message and nothing is written.
+func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(context.Context), key, value string, expect *string) (string, error) {
 	if !allowedRemoteTillSettingKeys[key] {
 		return "", fmt.Errorf("%s is not a remote-configurable till setting", key)
 	}
 	if err := refuseShopWideDirectiveOnAdditionalTill(ctx, d, key); err != nil {
 		return "", err
 	}
+	entry, _ := data.LookupAgentSetting(key)
+	if expect != nil {
+		if err := checkExpectedTillSetting(ctx, d, entry, *expect); err != nil {
+			return "", err
+		}
+	}
 	// The prior value, for the audit row an applied change writes (review
 	// of ut-docs#3390: a remote setting change has no operator at the till,
 	// so — like rename_till and the quick-button layout — it is audited).
 	oldValue, _, _ := d.Settings.Get(ctx, key)
 	value = strings.TrimSpace(value)
+	// Registry-driven validation (ut-docs#5349): bool, int and enum entries
+	// are checked from their type, bounds and options, and stored in the
+	// entry's own spelling. Free text needs nothing. A key whose type needs
+	// a special rule is handled below; one that has none is refused.
+	switch entry.Type {
+	case data.SettingTypeBool:
+		// Mirrors the local handlers: strconv.ParseBool, stored as the
+		// entry's On/Off spelling.
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", fmt.Errorf("%s must be true or false", key)
+		}
+		value = entry.Stored(b)
+	case data.SettingTypeInt:
+		n, err := strconv.Atoi(value)
+		if err != nil || n < entry.Min || n > entry.Max {
+			return "", fmt.Errorf("%s must be between %d and %d %s", key, entry.Min, entry.Max, entry.Unit)
+		}
+		value = strconv.Itoa(n)
+	case data.SettingTypeEnum:
+		if len(entry.Options) > 0 {
+			if key == keyPrinterReceiptPolicy {
+				value = strings.ToLower(value) // the local form case-folds
+			}
+			if !slices.Contains(entry.Options, value) {
+				return "", fmt.Errorf("%s must be one of %s", key, strings.Join(entry.Options, ", "))
+			}
+		}
+	}
+	// Keys with a rule the type alone cannot express.
 	switch key {
 	case keyPrinterReceiptPolicy:
-		// Mirrors /api/settings/printer (print_api.go): case-folded, must be
-		// one of the three values, permitted by the installed country plugin
-		// (ADR-0089 Decision 2). The former DE-only lock (Decision 3) was
-		// removed core-wide by ut-docs#2286/universal-till#1188 — German
-		// shops now choose freely like every other country, so this hook has
-		// no country-specific branch left to mirror. Unlike the local form,
-		// an unknown value is refused rather than silently defaulted — a
-		// remote result column should say why nothing changed.
-		value = strings.ToLower(value)
-		if !isReceiptPolicy(value) {
-			return "", fmt.Errorf("%s must be one of always, ask, never", key)
-		}
+		// Permitted by the installed country plugin (ADR-0089 Decision 2).
+		// The former DE-only lock (Decision 3) was removed core-wide by
+		// ut-docs#2286/universal-till#1188. Unlike the local form, an
+		// unknown value is refused rather than silently defaulted.
 		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(ctx); !receiptPolicyPermitted(value, allowed, ok) {
 			return "", fmt.Errorf("%s is not permitted by the installed country plugin (allowed: %s)", key, strings.Join(allowed, ", "))
 		}
-	case common.KeyKioskIdleReset:
-		// Mirrors /api/settings/kiosk-idle-reset (settings_page.go): 0..600.
-		n, err := strconv.Atoi(value)
-		if err != nil || n < 0 || n > 600 {
-			return "", fmt.Errorf("%s must be between 0 and 600 seconds", key)
-		}
-		value = strconv.Itoa(n)
-	case keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3, keyReceiptFooter:
-		// Receipt header/footer lines: free text, trimmed, blank clears —
-		// exactly what receipt_designer.go's save does.
-	case data.OrderTypePromptModeKey:
-		// Mirrors /api/settings/order-type-prompt (settings_page.go): must be
-		// one of the four modes. Unlike that generic /api/settings door's
-		// OWN OrderTypePromptModeKey case (which leans on
-		// InitOrderTypePromptMode's own fallback-to-"top" and skips
-		// validation), this hook fails closed like every other case here —
-		// a remote result column should say why nothing changed, not silently
-		// coerce an unrecognised value to "top". The prompt mode lives
-		// OUTSIDE RuntimeState; the generic `rederive` below republishes it
-		// too since ut-docs#2790 (publishCachedSettings), and the explicit
-		// live-republish after the Set stays so a nil rederive still takes
-		// effect.
-		if !validOrderTypePromptMode(value) {
-			return "", fmt.Errorf("%s must be one of top, before_item, at_pay, off", key)
-		}
 	case common.KeyBrowsingMode:
-		// Mirrors /api/settings/browsing-mode (settings_page.go): must be
-		// one of the three modes, refused (not clamped) otherwise — a remote
-		// result column should say why nothing changed. The mode lives in
-		// RuntimeState (internal/ui reads d.CurrentState() on every
-		// /ui/buttons render), so the generic `rederive` below is what makes
-		// the sell screen's next paint pick it up — same reason
-		// kiosk.idle_reset_seconds needs it.
+		// The mode lives in RuntimeState (internal/ui reads d.CurrentState()
+		// on every /ui/buttons render), so the generic rederive below is what
+		// makes the sell screen's next paint pick it up.
 		if common.ClampBrowsingMode(value) != value {
 			return "", fmt.Errorf("%s must be one of category_tabs, all_filter_chips, strip_overflow", key)
 		}
-	case data.SaleDisplayNoSchemeKey:
-		// Mirrors /api/settings/order-no-scheme: must be one of the two
-		// schemes. NextDisplayNo (pos_repo.go) reads this key fresh from the
-		// DB on every call, so no live re-derive is needed here either.
-		if value != data.DisplayNoSchemeTradingPeriodReset && value != data.DisplayNoSchemeLifetimeNoReset {
-			return "", fmt.Errorf("%s must be one of trading_period_reset, lifetime_no_reset", key)
+	case data.OrderTypePromptModeKey:
+		// Fails closed, unlike the generic /api/settings door whose own case
+		// leans on InitOrderTypePromptMode's fallback.
+		if !validOrderTypePromptMode(value) {
+			return "", fmt.Errorf("%s must be one of top, before_item, at_pay, off", key)
 		}
 	case data.BarcodeEnabledSymbologiesKey:
 		// settings-barcode (ut-docs#3390): the whole set at once, as the JSON
-		// id list the checklist stores. Mirrors POST
-		// /api/settings/barcode-symbology per id: every id must be in the
-		// registry, and the set may never be empty
-		// (ErrEmptyBarcodeSymbologySet). The write goes through
-		// SettingsRepo.Set, which drops the scan path's cached set.
+		// id list the checklist stores; every id in the registry, never
+		// empty (ErrEmptyBarcodeSymbologySet).
 		v, err := remoteBarcodeSymbologySet(value)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", key, err)
 		}
 		value = v
-	case data.CatalogImportBarcodeFromSKUDefaultKey, data.CatalogPrePackUnitPriceEnabledKey:
-		// settings-catalog-import-barcode-default / -pre-pack-unit-price:
-		// mirrors their handlers — strconv.ParseBool, stored "1"/"0".
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return "", fmt.Errorf("%s must be true or false", key)
-		}
-		value = "0"
-		if b {
-			value = "1"
-		}
-	case common.KeyAllowNegativeInventory:
-		// settings-stock-tracking: mirrors /api/settings/allow-negative-
-		// inventory — strconv.ParseBool, stored as SaveState writes it. It
-		// lives in RuntimeState: the re-derive below makes CompleteSale's
-		// stock guard see it.
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return "", fmt.Errorf("%s must be true or false", key)
-		}
-		value = strconv.FormatBool(b)
-	case keyInvoiceSellerName, keyInvoiceSellerAddress, keyInvoiceSellerVATNo:
-		// settings-invoice: mirrors POST /api/settings/invoice — free text,
-		// trimmed, blank clears (a blank seller name turns invoices off).
-	case common.KeyIdleLock:
-		// settings-idle-lock: mirrors /api/settings/idle-lock, 0..480. The
-		// re-derive below applies it to the auth service and the client
-		// idle timer, as that handler does.
-		n, err := strconv.Atoi(value)
-		if err != nil || n < 0 || n > 480 {
-			return "", fmt.Errorf("%s must be between 0 and 480 minutes", key)
-		}
-		value = strconv.Itoa(n)
-	case common.KeyKioskPaymentMode:
-		// settings-kiosk-payment-mode: mirrors /api/settings/kiosk-payment-
-		// mode — kiosk or counter, refused otherwise.
-		if value != common.KioskPaymentModeKiosk && value != common.KioskPaymentModeCounter {
-			return "", fmt.Errorf("%s must be kiosk or counter", key)
-		}
 	case common.KeyLocale:
-		// settings-language: mirrors the Language card on /api/settings/save
-		// — the locale must be installed on this till. That handler drops an
-		// unknown one silently; a remote result says why nothing changed.
+		// The locale must be installed on this till. The local handler drops
+		// an unknown one silently; a remote result says why nothing changed.
 		if !slices.Contains(httpx.AvailableLocales(), value) {
 			return "", fmt.Errorf("%s: language %q is not installed on this till", key, value)
 		}
@@ -299,8 +233,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		}
 		return msg, err
 	case common.KeyStaffLocales:
-		// settings-staff-languages: mirrors /api/settings/staff-languages —
-		// a comma-separated list, each matched to an installed locale, not
+		// A comma-separated list, each matched to an installed locale, not
 		// empty, the shop default always in it, stored in installed order.
 		v, err := remoteStaffLocales(value)
 		if err != nil {
@@ -308,15 +241,18 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		}
 		value = v
 	default:
-		// Unreachable while this switch covers every whitelisted key — and
-		// that is exactly the point (review of ut-docs#2289). A key added
-		// to allowedRemoteTillSettingKeys without a decision about what its
-		// local form validates lands here and is refused, instead of
-		// silently inheriting the free-text treatment above. Fail closed:
-		// the whitelist says which keys are remote-settable, this switch
-		// says how each one is checked, and neither may grow without the
-		// other.
-		return "", fmt.Errorf("%s has no remote validation rule on this till", key)
+		// Fail closed: a list/enum entry with no rule above, or an unknown
+		// type, has no remote validation on this till. Bool, int, plain enum
+		// and text entries were fully checked by their type.
+		switch entry.Type {
+		case data.SettingTypeBool, data.SettingTypeInt, data.SettingTypeText:
+		case data.SettingTypeEnum:
+			if len(entry.Options) == 0 {
+				return "", fmt.Errorf("%s has no remote validation rule on this till", key)
+			}
+		default:
+			return "", fmt.Errorf("%s has no remote validation rule on this till", key)
+		}
 	}
 	// settings-write:allow a cloud set_till_setting directive: a shop-wide key reaches this only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998); a per-till key is local by definition
 	if err := d.Settings.Set(ctx, key, value); err != nil {
@@ -330,6 +266,30 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		rederive(ctx)
 	}
 	return key + " = " + value, nil
+}
+
+// checkExpectedTillSetting is the compare-and-set of set_till_setting's
+// `expect`. Unchanged means the raw stored value equals expect, or the value
+// the heartbeat reports for the key does (a proposer saw the report, which
+// shows the applied default where nothing is stored).
+//
+// The check and the write are separate steps: a local Settings save landing
+// between them is overwritten. Directives run one at a time on the cloud
+// sync loop and the window is a few microseconds; a conditional UPDATE in
+// the settings repo would close it if that ever matters.
+func checkExpectedTillSetting(ctx context.Context, d *common.Deps, entry data.AgentSetting, expect string) error {
+	expect = strings.TrimSpace(expect)
+	raw, found, _ := d.Settings.Get(ctx, entry.Key)
+	if strings.TrimSpace(raw) == expect {
+		return nil
+	}
+	if (!found || strings.TrimSpace(raw) == "") && entry.Default != "" && expect == entry.Default {
+		return nil // unset reads as the entry's default
+	}
+	if reported, ok := tillSettingsReportFor(ctx, d, []data.AgentSetting{entry})[entry.Key]; ok && reported == expect {
+		return nil
+	}
+	return fmt.Errorf("changed since the proposal: %s is not %q any more, nothing was written", entry.Key, expect)
 }
 
 // auditRemoteTillSetting records an applied set_till_setting under the
@@ -498,33 +458,74 @@ func cloudRenameTill(ctx context.Context, d *common.Deps, raw string) (string, e
 // applies — the default where nothing is stored — since my. renders them
 // as checkboxes and checklists, where "" would read as "off".
 func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]string {
-	out := make(map[string]string, len(allowedRemoteTillSettingKeys)+len(reportedReadOnlyTillSettingKeys))
-	for key := range allowedRemoteTillSettingKeys {
-		v, _, _ := d.Settings.Get(ctx, key)
-		out[key] = v
+	return tillSettingsReportFor(ctx, d, data.AgentSettings)
+}
+
+// tillSettingsReportMaxReadOnlyValue bounds a read-only text value in the
+// report. Writable values are never truncated: they are the baseline a
+// proposal's `expect` is compared against.
+const tillSettingsReportMaxReadOnlyValue = 200
+
+// tillSettingsReportFor builds the report from registry entries
+// (ut-docs#5349): every normal/sensitive entry that is remote-writable or
+// readable, with its value; a secret entry only as "set" / "not set"; a
+// never entry, an entry without a valid tier and anything unreadable not at
+// all. The key set is bounded by the registry, and only registry keys are
+// ever reported.
+func tillSettingsReportFor(ctx context.Context, d *common.Deps, entries []data.AgentSetting) map[string]string {
+	out := make(map[string]string, len(entries))
+	secret := map[string]bool{}
+	writable := data.RemoteWritableKeysOf(entries)
+	for _, s := range entries {
+		v, found, _ := d.Settings.Get(ctx, s.Key)
+		switch {
+		case s.Tier == data.SettingTierNever || !data.ValidSettingTier(s.Tier):
+			// invisible (fail closed), whatever the Secret flag says
+		case s.Secret || s.Tier == data.SettingTierSecret:
+			secret[s.Key] = true
+			out[s.Key] = data.SettingSecretNotSet
+			if found && strings.TrimSpace(v) != "" {
+				out[s.Key] = data.SettingSecretSet
+			}
+		case writable[s.Key]:
+			out[s.Key] = v
+		case s.ReadValue:
+			if len(v) > tillSettingsReportMaxReadOnlyValue {
+				cut := tillSettingsReportMaxReadOnlyValue
+				for cut > 0 && !utf8.RuneStart(v[cut]) {
+					cut-- // never split a multi-byte character
+				}
+				v = v[:cut]
+			}
+			out[s.Key] = v
+		}
 	}
-	for _, key := range reportedReadOnlyTillSettingKeys {
-		v, _, _ := d.Settings.Get(ctx, key)
-		out[key] = v
+	// Keys whose applied value is not the raw row.
+	set := func(key, v string) {
+		if _, ok := out[key]; ok && !secret[key] {
+			out[key] = v
+		}
 	}
 	st := d.CurrentState()
 	if ids, err := data.NewSettingsRepo(d.Db).EnabledBarcodeSymbologies(ctx); err == nil {
 		if b, err := json.Marshal(ids); err == nil {
-			out[data.BarcodeEnabledSymbologiesKey] = string(b)
+			set(data.BarcodeEnabledSymbologiesKey, string(b))
 		}
 	}
 	for _, key := range []string{data.CatalogImportBarcodeFromSKUDefaultKey, data.CatalogPrePackUnitPriceEnabledKey} {
-		if out[key] != "1" {
+		if _, ok := out[key]; ok && !secret[key] && out[key] != "1" {
 			out[key] = "0" // absent reads as off (data/barcode_settings.go)
 		}
 	}
-	out[common.KeyAllowNegativeInventory] = strconv.FormatBool(st.AllowNegativeInventory)
-	out[common.KeyIdleLock] = strconv.Itoa(st.IdleLockMinutes)
-	out[common.KeyKioskPaymentMode] = common.ClampKioskPaymentMode(st.KioskPaymentMode)
-	out[common.KeyLocale] = httpx.DefaultLocale()
-	out[common.KeyStaffLocales] = strings.Join(httpx.StaffLocalesFor(out[common.KeyStaffLocales], httpx.DefaultLocale(), httpx.AvailableLocales()), ",")
-	out[common.KeyCurrency] = st.Currency
-	if out[common.KeyReportRetentionMode] == "" {
+	set(common.KeyAllowNegativeInventory, strconv.FormatBool(st.AllowNegativeInventory))
+	set(common.KeyIdleLock, strconv.Itoa(st.IdleLockMinutes))
+	set(common.KeyKioskPaymentMode, common.ClampKioskPaymentMode(st.KioskPaymentMode))
+	set(common.KeyLocale, httpx.DefaultLocale())
+	if _, ok := out[common.KeyStaffLocales]; ok && !secret[common.KeyStaffLocales] {
+		out[common.KeyStaffLocales] = strings.Join(httpx.StaffLocalesFor(out[common.KeyStaffLocales], httpx.DefaultLocale(), httpx.AvailableLocales()), ",")
+	}
+	set(common.KeyCurrency, st.Currency)
+	if v, ok := out[common.KeyReportRetentionMode]; ok && v == "" && !secret[common.KeyReportRetentionMode] {
 		out[common.KeyReportRetentionMode] = common.ReportRetentionModeTill // unset means "till"
 	}
 	return out
@@ -1243,8 +1244,8 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// set_till_setting (ut-docs#2289, design in ut-docs#2306): the
 		// whitelisted, value-validated sibling of SetSetting above — see
 		// cloudSetTillSetting for the list and the checks.
-		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
-			return cloudSetTillSetting(ctx, d, rederive, key, value)
+		SetTillSetting: func(ctx context.Context, key, value string, expect *string) (string, error) {
+			return cloudSetTillSetting(ctx, d, rederive, key, value, expect)
 		},
 		// rename_till (ut-docs#3272): the owner renamed this till in the
 		// cloud; Tick already checked it names this device. See

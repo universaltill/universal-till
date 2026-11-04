@@ -110,7 +110,14 @@ type Hooks struct {
 	// portal can never push a printer address, a TSE credential, a PIN or a
 	// network setting through. Deliberately a separate hook from SetSetting:
 	// that one stays the generic, unrestricted channel and is untouched.
-	SetTillSetting func(ctx context.Context, key, value string) (string, error)
+	//
+	// expect (ut-docs#5349) is the optional compare-and-set: the value the
+	// proposer saw, in the till's stored spelling; nil = the field was
+	// absent (an older cloud: unconditional write, as before), a pointer to
+	// "" = the proposer saw it unset. A till older than the release that
+	// added it ignores the field and writes unconditionally, so the cloud
+	// must not rely on it below the registry's RegistryMinTillVersion.
+	SetTillSetting func(ctx context.Context, key, value string, expect *string) (string, error)
 	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
 	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
@@ -832,7 +839,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if key == "" {
 			return "failed", "missing setting key"
 		}
-		msg, err = hooks.SetTillSetting(ctx, key, str("value"))
+		var expect *string
+		if raw, present := d.Payload["expect"]; present && raw != nil {
+			e, ok := raw.(string)
+			if !ok {
+				return "failed", "expect must be a string"
+			}
+			expect = &e
+		}
+		msg, err = hooks.SetTillSetting(ctx, key, str("value"), expect)
 	case "install_plugin":
 		if hooks.InstallPlugin == nil {
 			return "failed", "install_plugin is not supported on this till"

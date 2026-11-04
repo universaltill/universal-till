@@ -255,6 +255,14 @@ make run          # or: ./bin/unitill-pos
 
 Open http://localhost:8080
 
+**Till settings registry.** `internal/data/agent_settings.go` is the one typed
+list of till settings (type, bounds, risk tier, stored spelling, whether the
+cloud may write it). The cloud's `set_till_setting` whitelist and the
+heartbeat report derive from it, and `docs/till-settings-registry.json` is
+generated from it for ut-cloud: after changing an entry run
+`make gen-settings-registry` and commit the result (a test fails when stale).
+A new Settings card needs an entry with a tier.
+
 ### Option 3: Docker
 
 ```bash
