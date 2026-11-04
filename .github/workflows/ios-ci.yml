@@ -11,6 +11,8 @@ name: ios-ci
 # and the TestFlight upload are ios-testflight.yml (ut-docs#3069), which
 # only a maintainer's dispatch or a published release can start.
 # universal-till is public, so the macOS runner minutes are free.
+# A run whose macOS job GitHub never gave a runner (hosted capacity
+# starvation) is re-run by ci-runner-retry.yml (ut-docs#5490).
 on:
   push:
     branches: [main]

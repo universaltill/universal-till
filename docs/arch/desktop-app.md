@@ -163,6 +163,11 @@ release is dispatched. `release-runner-retry_test.sh` pins the rule and the
 `release-macos-nonblocking_test.sh`), so a starved macOS pool can only delay
 the .dmg, never the release.
 
+The macOS PR jobs `ios-ci` and `desktop-darwin` get the same treatment from
+`.github/workflows/ci-runner-retry.yml` (`scripts/ci/ci-runner-retry.sh`,
+ut-docs#5490): a runner-starved run is re-run once in practice; real failures
+and fork PRs' runs are not.
+
 A starved `goreleaser` or `android-app` (cancelled, ut-docs#5209) no longer
 cascades: `windows-installer`, `macos-app`, `android-app` and `verify-versions`
 skip when `goreleaser` was cancelled, and `verify-versions` also when
