@@ -158,12 +158,6 @@ jobs:
         run: npx playwright test -c playwright.webkit.config.ts
         env:
           CI: "1"
-      - name: TEMP ut-docs#5483 repeat loop (revert before merge)
-        if: steps.filter.outputs.match == 'true'
-        working-directory: e2e
-        run: npx playwright test -c playwright.webkit.config.ts tests/phone-sell-3059.spec.ts -g "search and edit" --repeat-each 20 --retries 0 --workers 2
-        env:
-          CI: "1"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
