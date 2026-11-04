@@ -156,6 +156,10 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     ut-docs ADRs (needs `DOCS_READ_TOKEN`; skips with a warning without it).
     Merge the ut-docs ADR-0002 PR first. Historical counts in an ADR:
     `<!-- taxonomy-count:historical -->` (#2134, #2159).
+  - `webkit-phone` job in `e2e.yml`: runs `playwright.webkit.config.ts`
+    (phone-named specs in WebKit) when a PR touches `web/**`/`e2e/**`/`e2e.yml`, always
+    on push to main; skips green otherwise via in-job git diff, never a
+    required check (ut-docs#3734).
   - `docs-shots-determinism.yml` for docs-shots harness changes (paths in
     its `on:` block; + weekly cron, `workflow_dispatch`): two runs must
     produce byte-identical PNGs and `manifest.json` (#2184).
