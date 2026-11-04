@@ -162,6 +162,34 @@ signing key unlisted.
 A refused release shows on the till as `Update failed (signature)`. It is not
 retried within the same run; "Update now" retries.
 
+## Android update: signer pin (ADR-0179)
+
+The Android shell's in-app update installs an APK only if it is this app's
+package, has a higher versionCode, and has exactly one signing certificate whose
+SHA-256 digest is listed in `android/app/apk-signer-sha256.txt` (1 to 4 lowercase
+hex digests; `#` comments). Gradle stamps it into `BuildConfig.APK_SIGNER_SHA256S`.
+The digest is public; there is no secret or repository variable.
+
+- **The release checks it.** The "Verify each APK" step runs
+  `scripts/ci/check-apk-signer-pin.sh` per flavor and fails the release if the
+  APK's signer is not in the file.
+- **Fork / new key.** Put the SHA-256 of your own signing certificate
+  (`apksigner verify --print-certs app.apk`) in the file. The release fails until you do.
+- **Rotation** (needs an APK Signature Scheme v3 lineage old to new).
+  1) Add the new digest next to the old one in the file. 2) Sign with the new
+  key plus the lineage, and keep the v1/v2 signature by the old key while any API
+  24 to 27 till exists: those platforms ignore v3, see the old signer and keep
+  updating only while the old digest stays pinned. API 28+ tills accept the
+  release because the new key is pinned or, on a till that has only the old pin,
+  because the old key is in the APK's platform-verified rotation lineage, so no
+  overlap release is needed. 3) Remove the old digest only when no API below 28
+  till remains; doing so strands them permanently. **Never tell an operator to
+  uninstall:** that deletes local data including unsynced offline sales. Install
+  the new APK over the existing app (Android honours the lineage on API 28+).
+- **Local tests with a test key:** `-PutApkSignerPins=<sha256 of the test cert>`;
+  an empty `-PutApkSignerPins=` builds dormant (no signer check, logged as
+  `not pinned`). Never use the override in `release.yml`.
+
 ## Nightly builds (testing `main`, not a release)
 
 `.github/workflows/nightly.yml` runs daily (03:00 UTC) plus on manual
