@@ -148,6 +148,13 @@ type ChannelOrder struct {
 	CreatedAt        string
 	LineCount        int
 	Lines            []ChannelOrderLine
+	// FulfilmentRank is the furthest step reached (new 0 .. shipped 4); it
+	// survives a partial refund. PendingAction is the newest queued action not
+	// yet answered ("" when none) and RefusedAction says an answered refusal
+	// is waiting to be dismissed (ut-docs#4768 slice D).
+	FulfilmentRank int
+	PendingAction  string
+	RefusedAction  bool
 }
 
 // ChannelOrdersRepo owns the channel_orders and channel_order_lines tables.
@@ -512,7 +519,10 @@ const channelOrderSelect = `
 SELECT o.id, o.connection_id, o.plugin_key, o.external_order_id, o.external_version, o.revision, o.order_number, o.placed_at,
   o.currency, o.status, o.payment_state, o.shipping_minor, o.order_discount_minor, o.tax_added_minor, o.refund_total_minor,
   o.total_minor, o.customer_country, o.currency_mismatch, o.total_mismatch, o.created_at,
-  (SELECT COUNT(*) FROM channel_order_lines l WHERE l.order_id = o.id)
+  (SELECT COUNT(*) FROM channel_order_lines l WHERE l.order_id = o.id),
+  o.fulfilment_rank,
+  COALESCE((SELECT a.action FROM channel_order_actions a WHERE a.order_id = o.id AND a.state = 'pending' ORDER BY a.seq DESC LIMIT 1), ''),
+  EXISTS(SELECT 1 FROM channel_order_actions a WHERE a.order_id = o.id AND a.state = 'refused')
 FROM channel_orders o`
 
 // Get returns one order with its lines.
@@ -552,15 +562,16 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanChannelOrder(s rowScanner) (ChannelOrder, error) {
 	var o ChannelOrder
 	var ship, disc, tax, refund, total int64
-	var mismatch, totalMismatch int
+	var mismatch, totalMismatch, refused int
 	if err := s.Scan(&o.ID, &o.ConnectionID, &o.PluginKey, &o.ExternalOrderID, &o.ExternalVersion, &o.Revision,
 		&o.OrderNumber, &o.PlacedAt, &o.Currency, &o.Status, &o.PaymentState, &ship, &disc, &tax, &refund, &total,
-		&o.CustomerCountry, &mismatch, &totalMismatch, &o.CreatedAt, &o.LineCount); err != nil {
+		&o.CustomerCountry, &mismatch, &totalMismatch, &o.CreatedAt, &o.LineCount, &o.FulfilmentRank, &o.PendingAction, &refused); err != nil {
 		return o, err
 	}
 	o.Shipping, o.OrderDiscount, o.TaxAdded = money.FromMinor(ship), money.FromMinor(disc), money.FromMinor(tax)
 	o.RefundTotal, o.Total, o.CurrencyMismatch = money.FromMinor(refund), money.FromMinor(total), mismatch != 0
 	o.TotalMismatch = totalMismatch != 0
+	o.RefusedAction = refused != 0
 	return o, nil
 }
 

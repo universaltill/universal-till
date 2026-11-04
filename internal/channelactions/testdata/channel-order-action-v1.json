@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.universaltill.com/contracts/channel-order-action-v1.json",
+  "title": "Channel order action request, v1",
+  "description": "Body of POST /api/v1/stores/channel/orders/actions (reference/contracts/channel-order-action.md). Till to cloud, main till only. Validators MUST enable format checking (`uuid`, `date-time`, `uri`); the patterns make the shape hold even where they do not. Cross-field rules the schema cannot express (the status machine, base_revision for cancel, store ownership of the connection) are enforced by the cloud and answered per action. No customer data appears anywhere in this body.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "store_id",
+    "actions"
+  ],
+  "properties": {
+    "store_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2069\\ufeff]+$",
+      "description": "Printable text: no control (C0, DEL, C1), line/paragraph separator, bidi or zero-width format characters."
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "connection_id",
+        "external_order_id",
+        "base_revision",
+        "action",
+        "created_at",
+        "staff_id"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "The till's outbox id; the idempotency key, never reused."
+        },
+        "connection_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "external_order_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "base_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The order revision the till had applied when the staff member acted. Guards `cancel` only."
+        },
+        "action": {
+          "enum": [
+            "accept",
+            "pick",
+            "pack",
+            "ship",
+            "cancel"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+          "description": "UTC with a `Z` suffix; the till's clock; stored, never compared."
+        },
+        "staff_id": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Opaque till staff id, empty when unknown. Never a name."
+        },
+        "shipment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "carrier"
+          ],
+          "properties": {
+            "carrier": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/text"
+                },
+                {
+                  "maxLength": 64
+                }
+              ]
+            },
+            "tracking_number": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/text"
+                },
+                {
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9 ._/-]+$"
+                }
+              ]
+            },
+            "tracking_url": {
+              "type": "string",
+              "maxLength": 512,
+              "format": "uri",
+              "pattern": "^https://(?!localhost([:/]|$)|[^/:]*\\.localhost([:/]|$)|[^/]*@)(?![0-9.]+([:/]|$)|\\[)[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+(:[0-9]+)?(/([A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*(\\?([A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?(#([A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?)?$"
+            }
+          }
+        },
+        "cancel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason",
+            "restock"
+          ],
+          "properties": {
+            "reason": {
+              "enum": [
+                "customer_request",
+                "out_of_stock",
+                "fraud",
+                "other"
+              ]
+            },
+            "restock": {
+              "type": "boolean"
+            }
+          }
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Set by the till on an action older than 30 days by its own clock; the cloud refuses it as stale."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "ship"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "shipment"
+            ],
+            "not": {
+              "required": [
+                "cancel"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "cancel"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "cancel"
+            ],
+            "not": {
+              "required": [
+                "shipment"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "accept",
+                  "pick",
+                  "pack"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "shipment"
+                  ]
+                },
+                {
+                  "required": [
+                    "cancel"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

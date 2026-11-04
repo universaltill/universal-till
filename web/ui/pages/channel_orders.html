@@ -1,7 +1,9 @@
 {{ define "content" }}
-{{/* Online orders (ADR-0169 §9, ut-docs#4768): read-only list of the orders
-     the cloud's channel host recorded on this till. Not till sales: not in the
-     drawer, the Z report or the fiscal journal. */}}
+{{/* Online orders (ADR-0169 §9, ut-docs#4768): the list of the orders the
+     cloud's channel host recorded on this till. Not till sales: not in the
+     drawer, the Z report or the fiscal journal. Actions are taken on the order's
+     page; here a queued one shows as a dashed "not sent yet" chip next to the
+     (unchanged) status, and an undismissed refusal as "Not accepted". */}}
 <div class="page-head">
   <h1>{{ T "channel_orders.title" }} {{ helpLink "channel-orders" }}</h1>
 </div>
@@ -26,7 +28,9 @@
         <td><a class="channel-order-link" href="/channel-orders/{{ .ID }}">{{ .OrderNumber }}</a></td>
         <td class="muted">{{ datetime .PlacedAt }}</td>
         <td class="muted"><code class="channel-order-key">{{ .PluginKey }}</code></td>
-        <td><span class="channel-order-status" data-status="{{ .Status }}">{{ T (printf "channel_orders.status.%s" .Status) }}</span></td>
+        <td><span class="channel-order-status" data-status="{{ .Status }}">{{ T (printf "channel_orders.status.%s" .Status) }}</span>
+          {{ if .PendingAction }} <span class="channel-order-status" data-status="pending">{{ T (printf "channel_orders.pending_short.%s" .PendingAction) }}</span>{{ end }}
+          {{ if .RefusedAction }} <span class="channel-order-status" data-status="refused">{{ T "channel_orders.refused_short" }}</span>{{ end }}</td>
         <td class="channel-orders-num">{{ qty .LineCount }}</td>
         <td class="channel-orders-num">{{ moneyIn .Total .Currency }}</td>
       </tr>

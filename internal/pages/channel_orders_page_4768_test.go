@@ -11,8 +11,8 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 )
 
-// The Online orders page (ADR-0169 §9, ut-docs#4768): read-only, Reports-gated,
-// customer country only, no action buttons until the action payload exists.
+// The Online orders page (ADR-0169 §9, ut-docs#4768): Reports-gated, customer
+// country only; actions need the main till linked to the cloud.
 func TestChannelOrdersPage_ListAndDetailRender(t *testing.T) {
 	dp := newDesignerTestDeps(t)
 	t.Setenv("UT_AUTH", "on")
@@ -53,16 +53,21 @@ func TestChannelOrdersPage_ListAndDetailRender(t *testing.T) {
 	if detail.Code != 200 || !strings.Contains(body, "Shirt") {
 		t.Fatalf("detail %d:\n%.1500s", detail.Code, body)
 	}
-	for _, want := range []string{"Gift wrap", "Not matched to an item", "GB", "my.universaltill.com"} {
+	for _, want := range []string{"Gift wrap", "Not matched to an item", "GB"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail lacks %q", want)
 		}
 	}
-	// Read-only: no form, no action button for accept/pick/pack/ship.
-	for _, bad := range []string{"<form", "Accept</", "Ship</", "<button type=\"submit\""} {
+	// This test till is not linked to the cloud, and the order is shipped: no
+	// action form or button, and the note says where actions are taken
+	// (slice D, ut-docs#4768; the buttons themselves are channel_order_actions_4768_test.go).
+	for _, bad := range []string{"<form", "Accept order</", "<button type=\"submit\""} {
 		if strings.Contains(body, bad) {
-			t.Errorf("detail must be read-only, found %q", bad)
+			t.Errorf("detail must offer no action here, found %q", bad)
 		}
+	}
+	if !strings.Contains(body, "can only be changed on the main till") {
+		t.Errorf("detail lacks the no-actions note")
 	}
 	// A cashier gets 403 on both and the launcher hides the tile.
 	cashier := auth.User{ID: "c1", Role: "cashier"}

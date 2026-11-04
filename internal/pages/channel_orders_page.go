@@ -10,9 +10,10 @@ import (
 
 // registerChannelOrdersPage serves "Online orders" (ADR-0169 §9,
 // ut-docs#4768): orders taken at a web shop or marketplace and recorded on
-// this (main) till by a channel_order directive. READ-ONLY: the cloud owns the
-// order status and the accept/pick/pack/ship actions are taken in my. until
-// the till-to-cloud action payload is designed (sales-channel-v1.md §5.1).
+// this (main) till by a channel_order directive. The cloud owns the order
+// status: the page shows what was recorded here, and staff on the main till
+// queue accept/pick/pack/ship/cancel actions (channel_order_actions.go) that
+// the sync tick uploads. A queued action is a chip, never a status change.
 //
 // These are not till sales: they are in no drawer, Z report or fiscal journal.
 // Gated on the "reports" action like Reports (a cashier is sale-only,
@@ -50,11 +51,13 @@ func registerChannelOrdersPage(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusNotFound, "channel_orders.error.not_found", nil)
 			return
 		}
-		httpx.Render("ui/pages/channel_order_detail.html", map[string]any{
-			"title":     httpx.T(httpx.RequestLocale(r), "page.title.channel_orders"),
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"Order":     o,
-		})(w, r)
+		view, err := channelOrderDetailData(r.Context(), d, r, o, "", "", "", channelFormValues{})
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "channel_orders.error.load_failed", err)
+			return
+		}
+		httpx.Render("ui/pages/channel_order_detail.html", view)(w, r)
 	})
+
+	registerChannelOrderActions(mux, d, repo)
 }
