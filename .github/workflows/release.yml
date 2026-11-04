@@ -749,6 +749,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          # ut-docs#5271: optional non-GitHub mirror; unset = this repository's releases.
+          UT_ANDROID_UPDATE_APK_URL_BASE: ${{ vars.UT_ANDROID_UPDATE_APK_URL_BASE }}
         run: |
           set -euo pipefail
           # versionCode must strictly increase across releases for Android's
@@ -769,9 +771,24 @@ jobs:
           # (android/app/build.gradle.kts), still above every earlier release.
           IFS=. read -r MA MI PA <<< "$VERSION"
           VERSION_CODE=$((MA * 1000000 + MI * 1000 + PA))
+          # ut-docs#5271: the in-app update downloads from the repository this
+          # job uploads the *-latest.apk names to, so a GitHub fork's APKs
+          # update from the fork with no configuration; for us this equals
+          # the Gradle default byte-for-byte. UT_ANDROID_UPDATE_APK_URL_BASE
+          # is only for a non-GitHub mirror. Gradle validates the value.
+          UPDATE_APK_URL_BASE="${UT_ANDROID_UPDATE_APK_URL_BASE:-https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/}"
+          # One line, no whitespace, before it reaches GITHUB_ENV (a newline
+          # in the variable would add env lines); Gradle does the full check.
+          [[ "$UPDATE_APK_URL_BASE" =~ ^https://[^[:space:]]+/$ ]] || {
+            echo "::error::UT_ANDROID_UPDATE_APK_URL_BASE must be one https URL ending in / (ut-docs#5271)"
+            exit 1
+          }
+          echo "UPDATE_APK_URL_BASE=${UPDATE_APK_URL_BASE}" >> "$GITHUB_ENV"
+          echo "in-app update base: ${UPDATE_APK_URL_BASE}"
           cd android
           ./gradlew assembleArm64Release assembleArmv7Release assembleUniversalRelease \
-            -PversionName="$VERSION" -PversionCode="$VERSION_CODE"
+            -PversionName="$VERSION" -PversionCode="$VERSION_CODE" \
+            -PupdateApkUrlBase="$UPDATE_APK_URL_BASE"
       - name: Verify each APK is signed with our key and carries only its own ABI
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -799,6 +816,14 @@ jobs:
               exit 1
             }
             bash scripts/ci/check-apk-signer-pin.sh android/app/apk-signer-sha256.txt "$flavor" "$FINGERPRINT" "$APK"
+            # ut-docs#5271: the APK must carry the update base it was built
+            # with (BuildConfig string in its dex). grep -c, not -q: same
+            # SIGPIPE reason as check-apk-signer-pin.sh.
+            hits="$(unzip -p "$APK" 'classes*.dex' | grep -acF "$UPDATE_APK_URL_BASE" || true)"
+            [ "${hits:-0}" -ge 1 ] || {
+              echo "::error::${flavor} APK does not carry update base ${UPDATE_APK_URL_BASE} (ut-docs#5271)"
+              exit 1
+            }
             # The ABI split is the whole point of #1541: fail rather than
             # publish an "arm64" APK that still carries the 32-bit library.
             got_abis="$(unzip -Z1 "$APK" | sed -n 's|^lib/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
@@ -866,7 +891,7 @@ jobs:
         run: |
           set -euo pipefail
           # ut-docs#1541: the installed app's in-app updater downloads these
-          # stable names too (BuildConfig.UPDATE_APK_URL per flavor). The
+          # stable names too (BuildConfig.UPDATE_APK_URL per flavor; base = -PupdateApkUrlBase). The
           # universal one keeps the legacy name every older till fetches.
           cp "unitill-pos_${VERSION}_android.apk" unitill-pos-android-latest.apk
           cp "unitill-pos_${VERSION}_android-arm64.apk" unitill-pos-android-arm64-latest.apk
