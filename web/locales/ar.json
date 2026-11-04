@@ -813,6 +813,7 @@
   "elevation.summary.user_pin_set": "تعيين رمز سري جديد لـ %s.",
   "elevation.summary.user_role_change": "تغيير دور %s من %s إلى %s.",
   "elevation.summary.void_comp_waste": "إزالة هذا الصنف بصفته %s.",
+  "elevation.summary.reduce_line_qty": "تخفيض كمية %s من %s إلى %s بصفتها %s.",
   "elevation.summary.window_mode": "تعيين وضع النافذة إلى %s.",
   "eod.err.archive_export_failed": "تعذّر تصدير أرشيف التقارير.",
   "eod.err.check_failed": "تعذّر التحقق من التقرير المؤرشف.",
