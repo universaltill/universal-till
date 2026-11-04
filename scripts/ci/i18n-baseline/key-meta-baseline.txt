@@ -2405,7 +2405,6 @@ settings.enrol.not_registered
 settings.enrol.pair_btn
 settings.enrol.pair_busy
 settings.enrol.pair_failed
-settings.enrol.pair_help
 settings.enrol.pair_placeholder
 settings.enrol.pair_replica_no_store
 settings.enrol.pair_store_mismatch
