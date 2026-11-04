@@ -22,8 +22,8 @@ import (
 
 // Pairing a till with a shop (ADR-0116 D5/D6, ut-docs#3523).
 //
-// The owner's my. "Add or re-pair a till" mints a short, single-use pairing
-// code bound to the store. On the till, Settings → Cloud → "Pair with a
+// The owner's my. "Pair a till" / "Pair again" mints a short, single-use pairing
+// code bound to the store. On the till, Settings → Till registration → "Pair with a
 // shop" (Pair) clears exactly this till's cloud identity — the credential
 // and device keys of db.TillCloudIdentityPrefixes (its own wipe list below;
 // the unpaid check-in markers stay, and Pair's own check-in re-records

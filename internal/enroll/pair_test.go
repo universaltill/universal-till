@@ -16,7 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/discovery"
 )
 
-// ut-docs#3523, ADR-0116 D5/D6: Settings → Cloud → "Pair with a shop". The
+// ut-docs#3523, ADR-0116 D5/D6: Settings → Till registration → "Pair with a shop". The
 // owner's my. mints a short pairing code; the till clears exactly its own
 // cloud identity, mints a fresh device id and posts the code to
 // POST /v1/stores/pair (unauthenticated — the code is the credential). The

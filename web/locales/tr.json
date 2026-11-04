@@ -2605,7 +2605,6 @@
   "settings.enrol.pair_btn": "Eşleştir",
   "settings.enrol.pair_busy": "Eşleştiriliyor…",
   "settings.enrol.pair_failed": "Eşleştirme başarısız — kodu ve internet bağlantısını kontrol edip yeniden deneyin",
-  "settings.enrol.pair_help": "Mağazanızın bulut hesabından («Kasa ekle veya yeniden eşleştir») bir eşleştirme kodu aldınız mı? Bu kasayı o mağazaya eklemek ya da kaldırılmış veya yeniden eşleştirilmesi gereken bir kasayı tekrar bağlamak için kodu buraya girin. Bu işlem yalnızca bu kasanın bulut bağlantısını değiştirir; satışları, ürünleri ve ayarları korunur.",
   "settings.enrol.pair_identity_pinned": "Bu kasanın bulut bağlantısı kurulumu yapan kişi tarafından ayarlanmış; bu yüzden burada eşleştirilemez. O kişiden bu ayarı kaldırmasını isteyip yeniden deneyin.",
   "settings.enrol.pair_placeholder": "Eşleştirme kodu",
   "settings.enrol.pair_replace_body": "Bu kasa %s mağazasına bağlı. %s koduyla eşleştirmek bu bağlantıyı değiştirir. Kod yanlışsa, süresi dolmuşsa ya da başka bir mağazaya aitse, bu kasa yeni bir kodla eşleştirilene kadar buluttan bağlantısız kalır. Satışlar, ürünler ve ayarlar bu kasada kalır; satış çevrimdışı da çalışmaya devam eder.",
