@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"go/scanner"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -93,6 +95,156 @@ var (
 
 const pairingRestartMarker = `/\/pairing-restart$/.test(path)`
 
+// unboundedPrefixes returns the single-quoted entries of
+// `var UT_UNBOUNDED_PATHS = [...];` in js (already comment-stripped);
+// found is false when the list itself is missing.
+func unboundedPrefixes(js string) (prefixes []string, found bool) {
+	m := unboundedListRe.FindStringSubmatch(js)
+	if m == nil {
+		return nil, false
+	}
+	for _, q := range singleQuotedRe.FindAllStringSubmatch(m[1], -1) {
+		prefixes = append(prefixes, q[1])
+	}
+	return prefixes, true
+}
+
+// registeredPatterns returns the Handle/HandleFunc pattern strings in one Go
+// source file, ignoring any that sit in a comment (ut-docs#5465).
+func registeredPatterns(src []byte) []string {
+	var out []string
+	for _, r := range registeredRe.FindAllSubmatch(stripGoComments(src), -1) {
+		out = append(out, string(r[1]))
+	}
+	return out
+}
+
+// blankRange overwrites b[i:j] with spaces, keeping newlines so offsets and
+// line numbers stay put.
+func blankRange(b []byte, i, j int) {
+	for k := i; k < j && k < len(b); k++ {
+		if b[k] != '\n' {
+			b[k] = ' '
+		}
+	}
+}
+
+// commentEnd returns the offset just past the comment starting at src[i]
+// ("//" up to the newline, "/*" through "*/", or EOF if unterminated).
+func commentEnd(src []byte, i int) int {
+	if src[i+1] == '/' {
+		for j := i; j < len(src); j++ {
+			if src[j] == '\n' {
+				return j
+			}
+		}
+		return len(src)
+	}
+	for j := i + 2; j+1 < len(src); j++ {
+		if src[j] == '*' && src[j+1] == '/' {
+			return j + 2
+		}
+	}
+	return len(src)
+}
+
+// stripGoComments blanks every Go comment, using go/scanner so "//" inside
+// a string literal is left alone.
+func stripGoComments(src []byte) []byte {
+	out := append([]byte(nil), src...)
+	fset := token.NewFileSet()
+	file := fset.AddFile("", fset.Base(), len(src))
+	var s scanner.Scanner
+	s.Init(file, src, nil, scanner.ScanComments)
+	for {
+		pos, tok, _ := s.Scan()
+		if tok == token.EOF {
+			return out
+		}
+		if tok == token.COMMENT {
+			off := file.Offset(pos)
+			blankRange(out, off, commentEnd(src, off))
+		}
+	}
+}
+
+// jsRegexKeywords: after these words a "/" opens a regex literal, not a
+// division.
+var jsRegexKeywords = map[string]bool{
+	"return": true, "typeof": true, "case": true, "do": true, "else": true,
+	"in": true, "of": true, "new": true, "delete": true, "void": true,
+	"throw": true, "instanceof": true, "yield": true, "await": true,
+}
+
+func isJSIdent(c byte) bool {
+	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// stripJSComments blanks // and /* */ comments in JavaScript source. It
+// skips string, template and regex literals so their "//" survives. It is
+// a small lexer, enough for app.js, not a full parser: a "/" opens a regex
+// when the previous token cannot end an expression. A misread fails open:
+// a comment stays visible (the pre-#5465 behaviour), code is never blanked.
+func stripJSComments(src string) string {
+	b := []byte(src)
+	out := append([]byte(nil), b...)
+	var prev byte  // last significant character outside comments
+	prevWord := "" // identifier ending at prev, if any
+	for i := 0; i < len(b); {
+		c := b[i]
+		switch {
+		case c == '/' && i+1 < len(b) && (b[i+1] == '/' || b[i+1] == '*'):
+			j := commentEnd(b, i)
+			blankRange(out, i, j)
+			i = j
+			continue
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			// a quote string ends at a newline even unterminated; only a
+			// template spans lines (review of ut-docs#5465).
+			for j < len(b) && b[j] != c && (c == '`' || b[j] != '\n') {
+				if b[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			i, prev, prevWord = j+1, c, ""
+			continue
+		case c == '/' && (prev == 0 || strings.IndexByte("(,=:[!&|?{};+-*%<>~^", prev) >= 0 || jsRegexKeywords[prevWord]):
+			j, inClass := i+1, false
+			for j < len(b) && b[j] != '\n' {
+				if b[j] == '\\' {
+					j += 2
+					continue
+				}
+				if b[j] == '[' {
+					inClass = true
+				} else if b[j] == ']' {
+					inClass = false
+				} else if b[j] == '/' && !inClass {
+					break
+				}
+				j++
+			}
+			i, prev, prevWord = j+1, '/', ""
+			continue
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			i++
+			continue
+		case isJSIdent(c):
+			j := i
+			for j < len(b) && isJSIdent(b[j]) {
+				j++
+			}
+			prevWord, prev, i = src[i:j], b[j-1], j
+			continue
+		}
+		prev, prevWord = c, ""
+		i++
+	}
+	return string(out)
+}
+
 func routePath(pattern string) string {
 	if i := strings.Index(pattern, " "); i >= 0 {
 		return pattern[i+1:]
@@ -121,14 +273,12 @@ func TestUnboundedRoutesMatchAppJS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", jsFile, err)
 	}
-	js := string(src)
-	m := unboundedListRe.FindStringSubmatch(js)
-	if m == nil {
+	// ut-docs#5465: match code only, so a copy of the list or the marker in
+	// a comment cannot stand in for the real check.
+	js := stripJSComments(string(src))
+	prefixes, found := unboundedPrefixes(js)
+	if !found {
 		t.Fatalf("`var UT_UNBOUNDED_PATHS = [...];` not found in %s: keep this test pointed at the list (internal/pages/unbounded_routes_test.go)", jsFile)
-	}
-	var prefixes []string
-	for _, q := range singleQuotedRe.FindAllStringSubmatch(m[1], -1) {
-		prefixes = append(prefixes, q[1])
 	}
 	if len(prefixes) == 0 {
 		t.Fatalf("UT_UNBOUNDED_PATHS in %s has no single-quoted entries: keep this test pointed at the list", jsFile)
@@ -166,8 +316,8 @@ func TestUnboundedRoutesMatchAppJS(t *testing.T) {
 		if rerr != nil {
 			return rerr
 		}
-		for _, r := range registeredRe.FindAllStringSubmatch(string(b), -1) {
-			registered[r[1]] = true
+		for _, r := range registeredPatterns(b) {
+			registered[r] = true
 		}
 		return nil
 	})
@@ -260,4 +410,73 @@ func TestUnboundedRoutesMatchAppJS(t *testing.T) {
 			t.Errorf("stale alsoExempted entry %q: no such route is registered; delete it from internal/pages/unbounded_routes_test.go", pat)
 		}
 	}
+}
+
+// ut-docs#5465: the checks above match code only. A copy of the
+// pairing-restart rule, a list entry or a route in a comment must not count.
+func TestUnboundedRoutesIgnoreComments(t *testing.T) {
+	t.Run("pairing-restart marker only in a comment", func(t *testing.T) {
+		for _, js := range []string{
+			"function f(path) {\n  // if (" + pairingRestartMarker + ") return true;\n  return false;\n}\n",
+			"function f(path) {\n  /* if (" + pairingRestartMarker + ") return true; */\n  return false;\n}\n",
+			"function f(path) {\n  /*\n   * if (" + pairingRestartMarker + ") return true;\n   */\n  return false;\n}\n",
+		} {
+			if strings.Contains(stripJSComments(js), pairingRestartMarker) {
+				t.Errorf("marker in a comment still counted:\n%s", js)
+			}
+		}
+	})
+	t.Run("pairing-restart marker in code", func(t *testing.T) {
+		js := "function f(path) {\n  if (" + pairingRestartMarker + ") return true; // till restarts\n  return false;\n}\n"
+		if !strings.Contains(stripJSComments(js), pairingRestartMarker) {
+			t.Errorf("real marker lost by stripJSComments:\n%s", stripJSComments(js))
+		}
+	})
+	t.Run("commented-out list entry", func(t *testing.T) {
+		js := "var UT_UNBOUNDED_PATHS = ['/api/a', // '/api/old',\n  /* '/api/older', */ '/api/b'];\n"
+		got, found := unboundedPrefixes(stripJSComments(js))
+		if !found || strings.Join(got, ",") != "/api/a,/api/b" {
+			t.Errorf("prefixes = %q (found %v), want [/api/a /api/b]", got, found)
+		}
+	})
+	t.Run("list only in a comment", func(t *testing.T) {
+		js := "// var UT_UNBOUNDED_PATHS = ['/api/a'];\nvar other = 1;\n"
+		if _, found := unboundedPrefixes(stripJSComments(js)); found {
+			t.Errorf("a commented-out UT_UNBOUNDED_PATHS was found")
+		}
+	})
+	t.Run("JS literals keep their slashes", func(t *testing.T) {
+		js := "var u = 'http://x/y'; var v = \"a//b\"; var w = `c//d`;\n" +
+			"if (/\\/\\//.test(p)) x = a / b / c; var r = /[/]/; // gone\n" +
+			"function g() { return /\\/pairing-restart$/.test(p); }\n"
+		got := stripJSComments(js)
+		for _, keep := range []string{"'http://x/y'", "\"a//b\"", "`c//d`", "/\\/\\//.test(p)", "a / b / c", "/[/]/", "return /\\/pairing-restart$/"} {
+			if !strings.Contains(got, keep) {
+				t.Errorf("stripJSComments dropped %s:\n%s", keep, got)
+			}
+		}
+		if strings.Contains(got, "gone") {
+			t.Errorf("trailing comment survived:\n%s", got)
+		}
+		if strings.Count(got, "\n") != strings.Count(js, "\n") {
+			t.Errorf("line count changed")
+		}
+	})
+	t.Run("stray quote does not hide a later comment", func(t *testing.T) {
+		js := "var s = 'unterminated;\n// if (" + pairingRestartMarker + ") return true;\n"
+		if strings.Contains(stripJSComments(js), pairingRestartMarker) {
+			t.Errorf("comment after an unterminated string still counted")
+		}
+	})
+	t.Run("Go routes in comments", func(t *testing.T) {
+		src := []byte("package x\n\n" +
+			"// mux.HandleFunc(\"POST /api/commented\", h)\n" +
+			"/* mux.Handle(\"POST /api/block\", h) */\n" +
+			"func reg() {\n\tmux.HandleFunc(\"POST /api/real\", h) // mux.Handle(\"/api/trailing\", h)\n" +
+			"\tmux.Handle(\"/api/url//path\", h)\n}\n")
+		got := strings.Join(registeredPatterns(src), ",")
+		if got != "POST /api/real,/api/url//path" {
+			t.Errorf("registeredPatterns = %q, want only the two live routes", got)
+		}
+	})
 }
