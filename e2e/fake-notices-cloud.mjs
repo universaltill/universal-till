@@ -63,6 +63,7 @@ const json = (res, code, body) => {
 http
   .createServer((req, res) => {
     let raw = '';
+    req.setEncoding('utf8'); // a multi-byte character split across chunks must not become U+FFFD
     req.on('data', (c) => (raw += c));
     req.on('end', () => {
       const path = (req.url ?? '').split('?')[0];
