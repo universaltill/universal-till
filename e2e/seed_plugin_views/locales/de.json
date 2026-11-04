@@ -1,0 +1,20 @@
+{
+  "e2eviews.chat.title": "Beispiel-Chat",
+  "e2eviews.chat.placeholder": "Frag das Beispiel-Plugin…",
+  "e2eviews.chat.tool": "Beispielabfrage",
+  "e2eviews.wizard.title": "Beispiel-Einrichtung",
+  "e2eviews.wizard.step1": "Verbinden",
+  "e2eviews.wizard.step2": "Konfigurieren",
+  "e2eviews.wizard.step3": "Abschließen",
+  "e2eviews.wizard.body1": "Code scannen, um zu verbinden.",
+  "e2eviews.wizard.body2": "Optionen wählen.",
+  "e2eviews.wizard.body3": "Fertig.",
+  "e2eviews.wizard.qr_label": "Kopplungscode",
+  "e2eviews.wizard.next": "Weiter",
+  "e2eviews.wizard.back": "Zurück",
+  "e2eviews.job.title": "Beispielaufgabe",
+  "e2eviews.job.intro": "Eine lange Beispielaufgabe starten.",
+  "e2eviews.job.run": "Aufgabe starten",
+  "e2eviews.job.progress": "Beispielaufgabe zur Hälfte",
+  "e2eviews.job.done": "Beispielaufgabe erledigt"
+}

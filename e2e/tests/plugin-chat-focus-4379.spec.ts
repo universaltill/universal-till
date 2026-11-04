@@ -10,10 +10,13 @@ import { watchConsole } from './helpers';
 // and only if they haven't moved to another control meanwhile. On a phone
 // the transcript gets a shorter cap so the question row stays on screen.
 //
-// No e2e till carries a plugin with a chat view yet (ut-docs#4378), so this
-// mounts the component's markup on a real till page (real htmx, real
-// app.js, real app.css) and answers its requests with page.route, in the
-// shapes the template draws: the thinking bubble polls the same target.
+// The real-plugin chat (thinking -> answer -> focus, RTL alignment) is now
+// driven against a real WASM guest in plugin-views-4378.spec.ts (ut-docs#4378).
+// This file keeps its page.route cases because it needs held or failed
+// responses, which a real guest cannot produce on demand: it mounts the
+// component's markup on a real till page (real htmx, real app.js, real
+// app.css) and answers its requests with page.route, in the shapes the
+// template draws: the thinking bubble polls the same target.
 
 const ROUTE = '/__chat-4379';
 const TARGET = 'pv-chat-4379';
