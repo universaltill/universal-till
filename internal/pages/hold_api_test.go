@@ -1454,3 +1454,34 @@ func TestResumeReparkResume_PreservesOrderType(t *testing.T) {
 		t.Fatalf("second resume must re-record the same origin id, got %+v", got)
 	}
 }
+
+// TestHeldSaleIsAllTakeaway (ut-docs#1387): the chip predicate is the
+// positive twin of heldSaleMayHaveTable, except that an undecodable payload
+// is NOT takeaway (no chip) even though it also may not have a table.
+func TestHeldSaleIsAllTakeaway(t *testing.T) {
+	cases := []struct {
+		name         string
+		payload      string
+		wantTakeaway bool
+		wantTable    bool
+	}{
+		{"header takeaway no lines", `{"order_type":"takeaway"}`, true, false},
+		{"all lines takeaway", `{"lines":[{"order_type":"takeaway"}]}`, true, false},
+		{"legacy header untyped lines", `{"order_type":"takeaway","lines":[{}]}`, true, false},
+		{"empty snapshot", `{}`, false, true},
+		{"dine-in line", `{"lines":[{"order_type":"dine_in"}]}`, false, true},
+		{"mixed", `{"order_type":"mixed","lines":[{"order_type":"takeaway"},{"order_type":"dine_in"}]}`, false, true},
+		{"corrupt", `not json`, false, false},
+		{"empty string", ``, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := heldSaleIsAllTakeaway(tc.payload); got != tc.wantTakeaway {
+				t.Errorf("heldSaleIsAllTakeaway = %v, want %v", got, tc.wantTakeaway)
+			}
+			if got := heldSaleMayHaveTable(tc.payload); got != tc.wantTable {
+				t.Errorf("heldSaleMayHaveTable = %v, want %v (behaviour must be unchanged)", got, tc.wantTable)
+			}
+		})
+	}
+}

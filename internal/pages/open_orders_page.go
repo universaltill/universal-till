@@ -20,8 +20,11 @@ type openOrderRow struct {
 	ID         string
 	Label      string
 	TableLabel string
-	LineCount  int
-	Total      money.Money
+	// Takeaway marks an all-takeaway held order (ut-docs#1387); false for
+	// Legacy rows and undecodable payloads.
+	Takeaway  bool
+	LineCount int
+	Total     money.Money
 	// MoveTargets (ut-docs#2702 review) are the free tables the sale
 	// screen's popup offers under "Move table" -- filled only by
 	// renderParkedOrdersPopup, never for the /open-orders page, so that page
@@ -307,6 +310,7 @@ func listOpenOrders(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 			AgeText:   openOrderAgeText(age, locale),
 			tableID:   h.TableID,
 			payload:   h.Payload,
+			Takeaway:  heldSaleIsAllTakeaway(h.Payload),
 			counter:   heldPayloadIsCounterOrder(h.Payload),
 		}
 		if h.TableID != "" {

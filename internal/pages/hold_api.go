@@ -137,13 +137,31 @@ func crossTillHotPathNetCtx(ctx context.Context) (context.Context, context.Cance
 // line was takeaway). Replaces the header-only `!= Takeaway` check, which
 // would have been only accidentally right for a "mixed" header.
 func heldSaleMayHaveTable(payload string) bool {
+	may, _ := heldSaleTableEligibility(payload)
+	return may
+}
+
+// heldSaleIsAllTakeaway (ut-docs#1387) is the positive twin of
+// heldSaleMayHaveTable that drives the "Takeaway" chip: true only for a
+// DECODABLE payload with no dine-in line. An undecodable payload is false
+// (no chip) -- unlike heldSaleMayHaveTable, whose fail-closed false would
+// otherwise read as "takeaway". A mixed order may still have a table, so it
+// gets no chip either.
+func heldSaleIsAllTakeaway(payload string) bool {
+	may, ok := heldSaleTableEligibility(payload)
+	return ok && !may
+}
+
+// heldSaleTableEligibility is the one decode+logic behind both predicates
+// above: (mayHaveTable, ok), ok=false when the payload cannot be decoded.
+func heldSaleTableEligibility(payload string) (may bool, ok bool) {
 	var snap pos.BasketSnapshot
 	if err := json.Unmarshal([]byte(payload), &snap); err != nil {
 		log.Printf("heldSaleMayHaveTable: decode held sale payload: %v", err)
-		return false // fail closed, same as the direct-endpoint gate below
+		return false, false // fail closed, same as the direct-endpoint gate below
 	}
 	if len(snap.Lines) == 0 {
-		return snap.OrderType != pos.OrderTypeTakeaway
+		return snap.OrderType != pos.OrderTypeTakeaway, true
 	}
 	anyTyped := false
 	for _, l := range snap.Lines {
@@ -158,10 +176,10 @@ func heldSaleMayHaveTable(payload string) bool {
 			mode = pos.OrderTypeTakeaway
 		}
 		if mode != pos.OrderTypeTakeaway {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }
 
 func truncateRunes(s string, max int) string {

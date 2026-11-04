@@ -109,6 +109,7 @@
       <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
       <span class="parked-order-label">{{ .Label }}</span>
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
+      {{ if .Takeaway }}<span class="held-chip-takeaway">{{ T "basket.order_type.takeaway" }}</span>{{ end }}
       <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ .AgeText }}</span>
     </button>
     {{ end }}
