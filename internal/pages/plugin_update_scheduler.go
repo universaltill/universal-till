@@ -114,6 +114,10 @@ func pluginUpdateCheckTick(ctx context.Context, d *common.Deps) {
 	mainTillURL := d.SyncPrimaryURL(ctx)
 	isReplica := mainTillURL != ""
 
+	if !isReplica && d.Settings != nil {
+		installBuiltinLocaleBundle(ctx, d, time.Now()) // ut-docs#5479
+	}
+
 	locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
 	checker := plugins.NewUpdateChecker(d.Db, d.CatalogRepo, locale, deviceArch)
 	found, err := checker.CheckForUpdates(ctx)
