@@ -19,18 +19,22 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 )
 
-// Limits from ADR-0176 §3/§4.
+// Limits from ADR-0176 §3/§4/§6.
 const (
 	MaxTitle      = 80
 	MaxBody       = 1000
 	MaxSenderName = 80
 	MaxLabel      = 40
 	MaxLifetime   = 90 * 24 * time.Hour
+	// MaxStartAhead: starts_at may be at most 30 days ahead (§6); the cloud
+	// only lists started items, so anything further out is a bad cloud.
+	MaxStartAhead = 30 * 24 * time.Hour
 	// MaxItems is the cloud's cap per pull; the till refuses more.
 	MaxItems = 20
 	// MaxItemBytes bounds one serialised item (ADR-0176 §4).
@@ -117,12 +121,18 @@ func Validate(it Item, now time.Time) error {
 	if n := utf8.RuneCountInString(it.Sender.Name); n == 0 || n > MaxSenderName {
 		return errors.New("bad sender name")
 	}
+	if !controlFree(it.Sender.Name, false) {
+		return errors.New("control characters in sender name")
+	}
 	// D4: a critical message can only come from the platform.
 	if it.Sender.Kind == SenderPartner && it.Severity == Critical {
 		return errors.New("partner critical")
 	}
 	if !it.ExpiresAt.After(it.StartsAt) || it.ExpiresAt.Sub(it.StartsAt) > MaxLifetime {
 		return errors.New("bad lifetime")
+	}
+	if it.StartsAt.Sub(now) > MaxStartAhead {
+		return errors.New("starts too far ahead")
 	}
 	if len(it.Texts) == 0 {
 		return errors.New("no texts")
@@ -168,7 +178,32 @@ var (
 	linkMD   = regexp.MustCompile(`\[([^\]\n]{1,80})\]\(([^)\s]{1,300})\)`)
 )
 
+// controlFree refuses control and invisible formatting characters (Cc, Cf,
+// Zl, Zp): a bidi override (U+202E) can reverse displayed text or disguise
+// link text, a zero-width space can split a title or slip past a word
+// filter. The joiners and marks real text needs stay allowed: ZWNJ/ZWJ
+// (Persian, Arabic, emoji sequences) and LRM/RLM/ALM (mixed-direction text).
+// Mirrors the cloud's check (ut-cloud, ADR-0176 §6); the till never trusts it.
+func controlFree(s string, allowNewline bool) bool {
+	for _, r := range s {
+		if r == '\n' && allowNewline {
+			continue
+		}
+		switch r {
+		case 0x200C, 0x200D, 0x200E, 0x200F, 0x061C:
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return false
+		}
+	}
+	return true
+}
+
 func checkContent(s string, markdown, partner bool) error {
+	if !controlFree(s, markdown) {
+		return errors.New("control characters not allowed")
+	}
 	if htmlish.MatchString(s) {
 		return errors.New("html not allowed")
 	}
@@ -192,6 +227,9 @@ func checkContent(s string, markdown, partner bool) error {
 func checkLink(l Link) error {
 	if utf8.RuneCountInString(l.Label) > MaxLabel {
 		return errors.New("link label too long")
+	}
+	if !controlFree(l.Label, false) {
+		return errors.New("control characters in link label")
 	}
 	switch l.Kind {
 	case "route":
@@ -317,6 +355,37 @@ func RenderBody(body string) template.HTML {
 
 // Describe is a short log-safe label for a dropped item (ids only, never text).
 func Describe(it Item) string { return fmt.Sprintf("%s:%d", it.ID, it.Rev) }
+
+// SeverityRank orders severities as the cloud lists them (ADR-0176 §4):
+// critical 0, important 1, info 2; anything else last.
+func SeverityRank(sev string) int {
+	switch sev {
+	case Critical:
+		return 0
+	case Important:
+		return 1
+	case Info:
+		return 2
+	}
+	return 3
+}
+
+// SortForCap orders items severity-first, then newest first, then by id, so
+// that when a response carries more than MaxItems the till's truncation keeps
+// every critical before any info (ADR-0176 §4 order), whatever order the
+// cloud sent them in. Deterministic for the same input.
+func SortForCap(items []Item) {
+	sort.SliceStable(items, func(i, j int) bool {
+		ri, rj := SeverityRank(items[i].Severity), SeverityRank(items[j].Severity)
+		if ri != rj {
+			return ri < rj
+		}
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		}
+		return items[i].ID < items[j].ID
+	})
+}
 
 // Settings keys (ADR-0176 §11, §12). SettingEnabled is the per-till flag,
 // default off; the other two are the client's small cursor: the opaque rev of

@@ -59,6 +59,23 @@ func TestValidate_RefusesBadItems(t *testing.T) {
 			i.Sender.Name = "Acme"
 			i.Link = &Link{Kind: "https", Target: "https://a.example"}
 		},
+		// Invisible formatting characters (Cf/Zl/Zp) and controls: a bidi
+		// override reverses what the operator reads, a zero-width space
+		// splits a title. Mirrors the cloud's rule; the till checks itself.
+		"bidi override in title": func(i *Item) { i.Texts["en-gb"] = Text{Title: "Update ‮gnp.exe", Body: "b"} },
+		"bidi isolate in body":   func(i *Item) { i.Texts["en-gb"] = Text{Title: "t", Body: "see ⁧evil⁩"} },
+		"zero-width space":       func(i *Item) { i.Texts["en-gb"] = Text{Title: "Up​date", Body: "b"} },
+		"line separator":         func(i *Item) { i.Texts["en-gb"] = Text{Title: "t", Body: "a b"} },
+		"soft hyphen":            func(i *Item) { i.Texts["en-gb"] = Text{Title: "t", Body: "a­b"} },
+		"control in body":        func(i *Item) { i.Texts["en-gb"] = Text{Title: "t", Body: "a\x07b"} },
+		"newline in title":       func(i *Item) { i.Texts["en-gb"] = Text{Title: "a\nb", Body: "b"} },
+		"bidi in sender name":    func(i *Item) { i.Sender.Name = "Universal ‮Till" },
+		"bidi in link label":     func(i *Item) { i.Link = &Link{Kind: "route", Target: "/settings", Label: "Open‮"} },
+		"starts 31 days ahead": func(i *Item) {
+			i.StartsAt = time.Now().Add(31 * 24 * time.Hour)
+			i.ExpiresAt = i.StartsAt.Add(time.Hour)
+		},
+		"bidi in non-en language": func(i *Item) { i.Texts["de-de"] = Text{Title: "Titel ‮", Body: "b"} },
 	}
 	for name, mut := range cases {
 		it := validItem()
@@ -66,6 +83,37 @@ func TestValidate_RefusesBadItems(t *testing.T) {
 		if err := Validate(it, time.Now()); err == nil {
 			t.Errorf("%s: accepted, want refused", name)
 		}
+	}
+}
+
+func TestValidate_KeepsTheJoinersAndMarksRealTextNeeds(t *testing.T) {
+	// ZWNJ (Persian), ZWJ (emoji sequences), LRM/RLM/ALM (mixed direction)
+	// and a newline in the body are ordinary text, never refused.
+	it := validItem()
+	it.Texts["fa-ir"] = Text{Title: "می‌خواهم ‏", Body: "خط اول\nخط دوم ؜ 👨‍👩‍👧 ‎"}
+	it.Texts["en-gb"] = Text{Title: "Plain", Body: "line one\nline two"}
+	if err := Validate(it, time.Now()); err != nil {
+		t.Fatalf("real text refused: %v", err)
+	}
+}
+
+func TestSortForCap_CriticalFirstThenNewest(t *testing.T) {
+	base := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	items := []Item{
+		{ID: "i-old", Severity: Info, CreatedAt: base.Add(-2 * time.Hour)},
+		{ID: "i-new", Severity: Info, CreatedAt: base},
+		{ID: "imp", Severity: Important, CreatedAt: base.Add(-3 * time.Hour)},
+		{ID: "crit", Severity: Critical, CreatedAt: base.Add(-9 * time.Hour)},
+		{ID: "weird", Severity: "zzz", CreatedAt: base},
+	}
+	SortForCap(items)
+	got := make([]string, len(items))
+	for i, it := range items {
+		got[i] = it.ID
+	}
+	want := "crit imp i-new i-old weird"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("order = %q, want %q", strings.Join(got, " "), want)
 	}
 }
 
