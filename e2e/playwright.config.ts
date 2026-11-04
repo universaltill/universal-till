@@ -122,17 +122,17 @@ export const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
 // server + project.
 export const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
 
-// Every spec set that needs its own till; the `default` project ignores all
-// of them (and playwright.webkit.config.ts reuses the list). Order is the
-// order the project used before it was extracted.
-export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS];
-
 // ut-docs#5366 / ADR-0176: the notices spec drives a till registered with a fake
 // cloud (run-till-notices.sh, fake-notices-cloud.mjs on 8104, the till on 8103)
 // that checks in every second and pulls notices through the real cloudsync
 // path. That would change what every tick does on the shared default till, so
 // it gets its own server + project.
-const NOTICES_ONLY_SPECS = /notices-5366\.spec\.ts$/;
+export const NOTICES_ONLY_SPECS = /notices-5366\.spec\.ts$/;
+
+// Every spec set that needs its own till; the `default` project ignores all
+// of them (and playwright.webkit.config.ts reuses the list). Order is the
+// order the project used before it was extracted.
+export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS, NOTICES_ONLY_SPECS];
 
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
@@ -254,11 +254,7 @@ export default defineConfig<{}, WorkerOptions>({
   projects: [
     {
       name: 'default',
-<<<<<<< HEAD
       testIgnore: EXCLUSIVE_SPECS,
-=======
-      testIgnore: [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS, NOTICES_ONLY_SPECS],
->>>>>>> 8ee4e82c0 (feat(notices): help topic, docs, e2e (fake cloud), poller/demo/sync classification, fixes)
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
