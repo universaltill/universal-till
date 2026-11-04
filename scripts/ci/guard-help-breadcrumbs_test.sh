@@ -36,7 +36,7 @@ fi
 # Plant: tr Updates topic, item 1, uses a different section name.
 TOPIC="web/help/tr/updates.md"
 # The line is computed, not pinned: front-matter keys (e.g. `public:`) shift it (ut-docs#5351).
-PLANT_LINE="$(grep -nF 'Ayarlar → Yazılım güncellemesi →' "${TOPIC}" | head -1 | cut -d: -f1)"
+PLANT_LINE="$(awk -v p='Ayarlar → Yazılım güncellemesi →' 'index($0, p) { print NR; exit }' "${TOPIC}")"
 sed -i '0,/Ayarlar → Yazılım güncellemesi →/s//Ayarlar → Yazılım güncelleme →/' "${TOPIC}"
 run
 if [ "${RC}" -ne 0 ] && has "${OUT}" "${TOPIC}:${PLANT_LINE}:" && has "${OUT}" 'expected "Yazılım güncellemesi"'; then
