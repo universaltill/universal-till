@@ -579,6 +579,11 @@ func exemptRequest(r *http.Request, svc *Service) bool {
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt(r.URL.Path) || exemptRequest(r, svc) {
+			// ut-docs#5338: no session means no trust, so bound the body here,
+			// in the one place that decides "no session needed".
+			if !limitExemptBody(w, r) {
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
