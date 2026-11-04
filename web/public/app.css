@@ -7435,17 +7435,22 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .pos-notice .notice-toast-body { display: -webkit-box; -webkit-line-clamp: 2;
   -webkit-box-orient: vertical; overflow: hidden; font-weight: 500; }
 .pos-notice .notice-strip-acts { display: flex; gap: .3rem; flex: none; align-items: center; }
+/* The 44px targets overlap the toast's .55rem (8.8px) padding by at most 8px
+   so nothing pokes past its overflow: hidden edge. */
 .pos-notice .notice-link { color: inherit; font-weight: 700; text-decoration: underline;
-  min-block-size: 44px; display: inline-flex; align-items: center; margin-block: -11px;
+  min-block-size: 44px; display: inline-flex; align-items: center; margin-block: -8px;
   padding-inline: .3rem; }
-.pos-notice .strip-ack, .pos-notice.strip .btn { min-block-size: 44px; margin-block: -8px; }
+/* The strip sits at the very top of the viewport: no negative margins there,
+   or the Acknowledge button's top edge and focus ring are clipped off-screen. */
+.pos-notice.strip .btn { min-block-size: 44px; }
+.pos-notice.strip .btn, .pos-notice.strip .notice-link { margin-block: 0; }
 /* The critical strip: one line at the top of the main region, full width; a
    long title keeps to two lines on a phone (the inbox has the full text). */
 .pos-notice.strip .notice-text b { display: -webkit-box; -webkit-line-clamp: 2;
   -webkit-box-orient: vertical; overflow: hidden; }
 .notices-strip-mount:empty { display: none; }
 .pos-notice.strip { border-radius: 0; border-inline-width: 0; border-block-start-width: 0;
-  margin: 0; padding-block: .35rem; }
+  margin: 0; padding-block: .25rem; }
 .notices-toast-mount:empty { display: none; }
 .notices-toast-mount { grid-column: 1 / -1; }
 @media (prefers-reduced-motion: reduce) { .pos-notice { transition: none; } }

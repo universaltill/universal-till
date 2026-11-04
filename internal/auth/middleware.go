@@ -387,7 +387,7 @@ func exempt(path string) bool {
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
 	"/notices/bell":            true, // ADR-0176 (ut-docs#5366): the bell's local unread count, every 30 s
-	"/notices/strip":           true, // the critical strip, every 15 s
+	"/notices/strip":           true, // the critical strip, every 30 s
 	"/notices/toast":           true, // the one important-toast slot, every 15 s
 	"/ui/join-sync":            true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
 	"/ui/main-till-status":     true,
