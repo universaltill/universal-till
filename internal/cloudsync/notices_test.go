@@ -169,6 +169,20 @@ func TestNotices_BadItemsAreDroppedGoodOnesKept(t *testing.T) {
 	}
 }
 
+func TestNotices_GoodLinkIsStored(t *testing.T) {
+	d, repo, _ := noticeSetup(t, true)
+	it := noticeItem("lk", 1, "important")
+	it["link"] = map[string]any{"kind": "route", "target": "/settings", "label": "Open settings"}
+	c := &fakeCloud{notices: block("r1", it)}
+	srv := httptest.NewServer(c.handler())
+	defer srv.Close()
+	runTick(t, srv.URL, d, "en")
+	got, found, err := repo.Get(context.Background(), "lk")
+	if err != nil || !found || !strings.Contains(got.LinkJSON, `"/settings"`) {
+		t.Fatalf("lk = %+v found=%v err=%v, want the link stored", got, found, err)
+	}
+}
+
 func TestNotices_CriticalWithBadLinkStillShowsOnTheStrip(t *testing.T) {
 	d, repo, _ := noticeSetup(t, true)
 	crit := noticeItem("crit", 1, "critical")

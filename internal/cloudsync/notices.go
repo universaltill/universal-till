@@ -209,7 +209,7 @@ func (n *noticeClient) apply(ctx context.Context, raw json.RawMessage, lang stri
 		if it.Link != nil && clean.Link == nil {
 			logging.L().Warnf("cloudsync: dropped the link of notice %s (not a safe link); the notice is kept", cloudnotice.Describe(it))
 		}
-		it = clean
+		it = clean // the cleaned item (a bad link already stripped) is what is stored
 		picked, tx, ok := cloudnotice.PickText(it.Texts, lang)
 		if !ok {
 			continue

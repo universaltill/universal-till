@@ -283,3 +283,20 @@ func TestClean_DoesNotMutateTheInput(t *testing.T) {
 		t.Fatal("Clean changed its argument")
 	}
 }
+
+// The till's https target limit is exactly 300 bytes (ADR-0176 §6; the cloud's
+// own 500 is looser): 300 keeps the link, 301 drops only the link.
+func TestClean_LinkTargetBoundaryIs300Bytes(t *testing.T) {
+	const prefix = "https://universaltill.com/"
+	for n, wantKept := range map[int]bool{300: true, 301: false} {
+		it := validItem()
+		it.Link = &Link{Kind: "https", Target: prefix + strings.Repeat("a", n-len(prefix))}
+		got, err := Clean(it, time.Now())
+		if err != nil {
+			t.Fatalf("%d bytes: notice dropped: %v", n, err)
+		}
+		if (got.Link != nil) != wantKept {
+			t.Errorf("%d bytes: link kept = %v, want %v", n, got.Link != nil, wantKept)
+		}
+	}
+}
