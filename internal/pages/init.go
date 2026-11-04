@@ -565,6 +565,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// accepts requests; the revoke handler and every NudgeLink change point
 	// read dp.Link at request time.
 	dp.Link = newSyncLinkHub(dp, fleetlink.DefaultConfig(), syncAdminRepo)
+	// Always built: a till becomes a main till without restarting (a replica
+	// refuses the pending-link route before it is used).
+	dp.PendingLinks = fleetlink.NewPendingHub(fleetlink.DefaultConfig())
 	registerSyncLink(mux, dp)
 	registerSyncCloudDevice(mux, dp) // replica's own cloud device identity, main-till side (ut-docs#2730)
 	registerSyncAssets(mux, dp)
