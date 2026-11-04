@@ -73,7 +73,7 @@ Ein Plugin kann der Scanzeile außerdem „Per Kamera erkennen“ hinzufügen (d
 
 Mehrere kleine Chips unten im linken Menü zeigen Ihnen auf einen Blick, was mit der Kasse los ist — keiner davon blockiert den Verkaufsbildschirm:
 
-- Ihr eigener Name (👤) ist die aktuell angemeldete Person; ein Tipp darauf öffnet „PIN ändern“, und die Schaltfläche **Sperren** daneben meldet zum PIN-Feld ab. Siehe **Benutzer, PINs & Schichten** dafür und für die Manager-exklusiven Abkürzungen, die daneben erscheinen (Benutzer, Aktionen, Übersetzungen).
+- Ihr eigener Name (Personen-Symbol) ist die aktuell angemeldete Person; ein Tipp darauf öffnet „PIN ändern“, und die Schaltfläche **Sperren** daneben meldet zum PIN-Feld ab. Siehe **Benutzer, PINs & Schichten** dafür und für die Manager-exklusiven Abkürzungen, die daneben erscheinen (Benutzer, Aktionen, Übersetzungen).
 - Synchronisiert diese Kasse mit anderen, zeigt ein Chip den Namen dieser Kasse und ihren Sync-Status (auf dem aktuellen Stand, oder zurück/offline mit einer Anzahl wartender Elemente) — siehe **Mehrere Kassen (ein Geschäft)** für genau das, was er zeigt. Eine einzelne Kasse ohne Beitritte zeigt gar keinen Sync-Chip.
 - Hat Ihr Geschäft eine TSE konfiguriert, zeigt ein Fiskalsignatur-Chip deren Zustand — siehe „Deutsche Geschäfte: TSE und echte Verkäufe“ unten.
 - Ein Fehlerberichts-Chip ist ebenfalls vorhanden, wenn diese Funktion aktiviert ist — siehe „Ein Problem melden“.

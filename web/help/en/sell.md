@@ -84,10 +84,10 @@ A plugin can also add "Identify by camera" to the scan row (the camera icon). Ta
 
 Several small chips near the bottom of the left-hand menu tell you, at a glance, what's going on with the till — none of them block the sale screen:
 
-- Your own name (👤) is who's currently signed in; tapping it opens Change PIN, and the **Lock** button next to it signs out to the PIN pad. See **Users, PINs & shifts** for that and for the manager-only shortcuts that show up next to it (Users, Promotions, Translations).
+- Your own name (person icon) is who's currently signed in; tapping it opens Change PIN, and the **Lock** button next to it signs out to the PIN pad. See **Users, PINs & shifts** for that and for the manager-only shortcuts that show up next to it (Users, Promotions, Translations).
 - If this till syncs with others, a chip shows this till's name and its sync state (caught up, or behind/offline with a queued count) — see **Multiple tills (one shop)** for exactly what it shows. A single till with nothing joined shows no sync chip at all.
 - If your shop has a TSE configured, a fiscal signing chip shows its health — see **German shops: TSE and real sales** below.
-- A bug-report chip is also there if that feature is enabled — see **Reporting a bug**.
+- A bug-report chip is also there if that feature is enabled — see **Reporting a problem**.
 
 ## Selling on a phone
 
