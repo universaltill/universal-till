@@ -772,6 +772,9 @@ var PerTillSettingPrefixes = []string{
 	// ut-docs#2783: this till's own theme. A full key used as a prefix, like
 	// the two above; no other settings key starts with "theme".
 	ThemeSettingsKey,
+	// ut-docs#5479: when THIS till last looked for its built-in language's
+	// first-party bundle (a throttle; a replica takes the language from its main till).
+	"i18n.builtin_bundle_checked",
 	// The same three entries as db.TillCloudIdentityPrefixes (the join
 	// snapshot's redaction; internal/db can't import this package) —
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
