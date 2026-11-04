@@ -127,6 +127,49 @@ func TestEnrolPair_ElevatedPairsAndAuditsStoreOnly(t *testing.T) {
 	}
 }
 
+// ut-docs#5333 (design-5058 N5): a Settings pair keeps the till's staff/PINs,
+// devices, stock and products, so it never creates the Next steps card and
+// never resets a "done". The one exception: a card the wizard deferred
+// ("deferred:<master>", its cloud commit failed on a brand-new till) is
+// promoted to "pending:<master>" by the pair the failure message asks for.
+// (Settings Pair ignores the answer's data.store block today, so the shop's
+// catalog_master plays no part here.)
+func TestEnrolPair_NextStepsOnlyPromotesDeferred(t *testing.T) {
+	for pre, want := range map[string]string{
+		"":              "", // absent stays absent
+		"done":          "done",
+		"pending:cloud": "pending:cloud",
+		"deferred:till": "pending:till",
+		"deferred:":     "pending:",
+	} {
+		t.Run("pre="+pre, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			_, cashierID := seedElevationUsers(t, d)
+			calls := pairDeps(t, d)
+			if pre != "" {
+				if err := d.Settings.Set(t.Context(), nextStepsKey, pre); err != nil { // settings-write:allow test
+					t.Fatal(err)
+				}
+			}
+			cashier := auth.User{ID: cashierID, Role: "cashier"}
+			rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}, "override_pin": {"555222"}}, &cashier)
+			if !strings.Contains(rec.Body.String(), "✅") || calls.Load() != 1 {
+				t.Fatalf("pair did not succeed: %d %s (cloud calls %d)", rec.Code, rec.Body.String(), calls.Load())
+			}
+			got, ok, err := d.Settings.Get(t.Context(), nextStepsKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want == "" && ok {
+				t.Fatalf("%s = %q after a Settings pair, want absent", nextStepsKey, got)
+			}
+			if want != "" && (!ok || got != want) {
+				t.Fatalf("%s = %q (present %v) after a Settings pair, want %q", nextStepsKey, got, ok, want)
+			}
+		})
+	}
+}
+
 func TestEnrolPair_RefusedCodeShowsFailure(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	pairDeps(t, d)

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
@@ -72,18 +74,43 @@ func TestCloudSetupMarksNextSteps(t *testing.T) {
 	}
 }
 
-func TestCloudSetupWithFailedCommitWritesNoNextSteps(t *testing.T) {
-	mux, d, _, nonce := cloudWizard(t)
-	doCloudPair(mux, nonce, nil)
-	prev := commitCloudPairing
-	commitCloudPairing = func(context.Context, *common.Deps, *enroll.FirstTillPairing) error { return errors.New("boom") }
-	t.Cleanup(func() { commitCloudPairing = prev })
-	rec := finalCloudPost(mux, nonce, nil)
-	if !strings.Contains(rec.Header().Get("Location"), "pairfail=1") {
-		t.Fatalf("expected pairfail redirect, got %d %q", rec.Code, rec.Header().Get("Location"))
+// ut-docs#5333: a wizard whose cloud commit failed is still a brand-new till;
+// the card is parked as deferred:<master> until the owner pairs again from
+// Settings.
+func TestCloudSetupWithFailedCommitDefersNextSteps(t *testing.T) {
+	for master, want := range map[string]string{"till": "deferred:till", "cloud": "deferred:cloud", "weird": "deferred:"} {
+		t.Run(master, func(t *testing.T) {
+			mux, d, stub, nonce := cloudWizard(t)
+			stub.set(200, strings.Replace(cloudStoreAnswer, `"catalog_master":"cloud"`, `"catalog_master":"`+master+`"`, 1))
+			doCloudPair(mux, nonce, nil)
+			prev := commitCloudPairing
+			commitCloudPairing = func(context.Context, *common.Deps, *enroll.FirstTillPairing) error { return errors.New("boom") }
+			t.Cleanup(func() { commitCloudPairing = prev })
+			rec := finalCloudPost(mux, nonce, nil)
+			if !strings.Contains(rec.Header().Get("Location"), "pairfail=1") {
+				t.Fatalf("expected pairfail redirect, got %d %q", rec.Code, rec.Header().Get("Location"))
+			}
+			if got := nextStepsValue(t, d); got != want {
+				t.Fatalf("a failed pairing left %s=%q, want %q", nextStepsKey, got, want)
+			}
+		})
 	}
-	if got := nextStepsValue(t, d); got != "" {
-		t.Fatalf("a failed pairing left %s=%q", nextStepsKey, got)
+}
+
+// A deferred row is invisible: only "pending:" shows the card.
+func TestNextStepsDeferredShowsNoCard(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	for _, v := range []string{"deferred:till", "deferred:cloud", "deferred:"} {
+		if err := d.Settings.Set(t.Context(), nextStepsKey, v); err != nil { // settings-write:allow test
+			t.Fatal(err)
+		}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/", nil), mgrUser)
+		if c := nextStepsView(req, d); c != nil {
+			t.Fatalf("%q showed a card: %+v", v, c)
+		}
+		if strings.Contains(nextStepsIndex(t, d, "manager"), `data-testid="next-steps-card"`) {
+			t.Fatalf("%q rendered the card on the sale screen", v)
+		}
 	}
 }
 
