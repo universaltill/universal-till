@@ -1746,7 +1746,7 @@ func TestWorkerAllocationDateRange_MapsThroughBusinessDayBoundary(t *testing.T) 
 		{"month at midnight", "?period=month&anchor=2026-08-25", "", "2026-08-01", "2026-08-31"},
 		{"month at 06:00", "?period=month&anchor=2026-08-25", "06:00", "2026-08-01", "2026-08-31"},
 		{"week at 06:00", "?period=week&anchor=2026-08-25", "06:00", "2026-08-24", "2026-08-30"},
-		{"year at 06:00", "?period=year&anchor=2026-08-25", "06:00", "2026-01-01", "2026-12-31"},
+		{"year at 06:00", "?period=year&anchor=2026-08-25", "06:00", "2026-01-01", "2026-12-31"}, // fixed-date:ok expected window for fixed anchor 2026-08-25, no clock
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

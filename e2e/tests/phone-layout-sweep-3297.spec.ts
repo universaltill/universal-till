@@ -77,7 +77,7 @@ async function sideScrollers(page: Page) {
 // 200 — a drifted field name must fail here, not quietly sweep an empty list.
 test.beforeAll(async ({ request }) => {
   const seeds: [string, Record<string, string>, string][] = [
-    ['/api/promotions', { code: 'SWEEP3653', type: 'percent', value_percent: '10', description: 'Phone sweep row', starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '' }, '/promotions'],
+    ['/api/promotions', { code: 'SWEEP3653', type: 'percent', value_percent: '10', description: 'Phone sweep row', starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '' }, '/promotions'], // fixed-date:ok layout seed; /promotions lists by is_active, not dates
     ['/api/kitchen-stations', { name: 'Sweep station 3653', destination_type: 'printer', printer_address: '192.0.2.10:9100' }, '/kitchen-stations'],
   ];
   for (const [url, form, back] of seeds) {

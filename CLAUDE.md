@@ -121,6 +121,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `PersistManifest`, both installers and `WasmRuntime.Sync`. The `channel`
   block stays in `manifest.go` (ut-cloud's signing mirror reads it there).
 
+## Test fixtures (ut-docs#5467, `scripts/ci/guard-fixed-dates.sh`)
+- A fixed date within 60 days of today in a `*_test.go` / `*.spec.ts`
+  line fails CI: derive it from `time.Now()`, move it out of range, or mark a
+  value no real-clock check reads with same-line `fixed-date:ok <reason>`.
+
 ## Agent worktree hygiene
 - `.claude/worktrees/` accumulates stale agent worktrees that pollute
   repo-wide greps (#1567). Run `make prune-worktrees` periodically or when a
@@ -153,6 +158,10 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   - `docs-shots-determinism.yml` for docs-shots harness changes (paths in
     its `on:` block; + weekly cron, `workflow_dispatch`): two runs must
     produce byte-identical PNGs and `manifest.json` (#2184).
+  - `fixed-date-window.yml` (daily cron + `workflow_dispatch`, no PR
+    trigger, never gates): runs `guard-fixed-dates.sh` on `main` so a
+    fixture date entering the 60-day window is flagged before an unrelated
+    PR turns red (#5467).
   - `docs-shots-locale-drift.yml` (weekly cron + `workflow_dispatch`, no
     PR trigger, never gates): regenerates docs-shots on `main` and keeps one
     `docs-shots-drift` issue listing screenshots stale through

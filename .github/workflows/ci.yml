@@ -111,6 +111,10 @@ jobs:
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped_test.sh
+      - name: Fixed-date fixture guard (ut-docs#5467)
+        run: bash scripts/ci/guard-fixed-dates.sh
+      - name: Fixed-date fixture guard regression test (ut-docs#5467)
+        run: bash scripts/ci/guard-fixed-dates_test.sh
       - name: Release signing keys resolution self-test (ADR-0178)
         run: bash scripts/ci/resolve-release-keys_test.sh
       - name: check-apk-signer-pin self-test (ut-docs#5436)

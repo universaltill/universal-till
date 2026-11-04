@@ -111,7 +111,7 @@ func newFakeMoveCloud(t *testing.T) *fakeMoveCloud {
 		defer c.mu.Unlock()
 		if c.approvalCode != http.StatusOK {
 			w.WriteHeader(c.approvalCode)
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"usable_from": "2026-11-05T10:00:00Z"}, "error": map[string]string{"code": c.approvalErr}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"usable_from": "2026-11-05T10:00:00Z"}, "error": map[string]string{"code": c.approvalErr}}) // fixed-date:ok usable_from echoed verbatim, never clock-compared
 			return
 		}
 		// Rebuild the bytes from the cloud's own record (design §3).
@@ -379,7 +379,7 @@ func TestDecisionRefusalsAreTyped(t *testing.T) {
 			if !errors.As(err, &ref) || ref.Code != tc.code {
 				t.Fatalf("err = %v", err)
 			}
-			if tc.code == "move_key_quarantined" && ref.UsableFrom != "2026-11-05T10:00:00Z" {
+			if tc.code == "move_key_quarantined" && ref.UsableFrom != "2026-11-05T10:00:00Z" { // fixed-date:ok usable_from echoed verbatim, never clock-compared
 				t.Fatalf("usable_from = %q", ref.UsableFrom)
 			}
 			if got := len(list()) == 0; got != tc.terminal {

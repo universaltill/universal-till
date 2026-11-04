@@ -154,7 +154,7 @@ func TestUpdatePromotion_ChangesFieldsNotCode(t *testing.T) {
 		Value:       500,
 		Description: "updated",
 		StartsAt:    "2026-01-01T00:00:00Z",
-		EndsAt:      "2026-12-31T00:00:00Z",
+		EndsAt:      "2026-12-31T00:00:00Z", // fixed-date:ok admin list has no date filter
 		CustomerID:  "cust-1",
 	}); err != nil {
 		t.Fatalf("update: %v", err)
