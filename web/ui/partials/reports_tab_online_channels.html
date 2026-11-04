@@ -1,0 +1,56 @@
+{{/* Reports → Online channels (ADR-0169 §9, ut-docs#5427): totals of the
+     orders recorded from web shops and marketplaces, per channel and
+     currency. Not till sales. Never a total across currencies. */}}
+<div class="card online-channels" data-testid="online-channels">
+  <h2>{{ T "reports.online_channels.title" }}</h2>
+  <p class="muted online-channels-notice" data-testid="online-channels-notice">{{ T "reports.online_channels.notice" }}
+    <a class="online-channels-link" href="/channel-orders">{{ T "reports.online_channels.link" }}</a></p>
+  {{ if .LoadFailed }}
+  <p class="muted" data-testid="online-channels-error">{{ T "channel_orders.error.load_failed" }}</p>
+  {{ else }}
+  {{ if .Summary.Groups }}
+  <div class="channel-order-scroll">
+  <table class="table" id="online-channels-table" data-cards-collapse="off">
+    <thead><tr>
+      <th>{{ T "channel_orders.col.channel" }}</th>
+      <th>{{ T "reports.online_channels.col.currency" }}</th>
+      <th class="channel-orders-num">{{ T "reports.online_channels.col.orders" }}</th>
+      <th class="channel-orders-num">{{ T "reports.online_channels.col.gross" }}</th>
+      <th class="channel-orders-num">{{ T "reports.online_channels.col.refunds" }}</th>
+      <th class="channel-orders-num">{{ T "reports.online_channels.col.net" }}</th>
+    </tr></thead>
+    <tbody>
+    {{ range .Summary.Groups }}
+      {{ range .Rows }}
+      <tr data-testid="online-channels-row">
+        <td><code class="channel-order-key">{{ .PluginKey }}</code></td>
+        <td>{{ .Currency }}</td>
+        <td class="channel-orders-num">{{ qty .Orders }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Gross .Currency }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Refunds .Currency }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Net .Currency }}</td>
+      </tr>
+      {{ end }}
+      {{ with .Total }}
+      <tr class="online-channels-total" data-testid="online-channels-total">
+        <th scope="row">{{ T "reports.online_channels.currency_total" }}</th>
+        <td>{{ .Currency }}</td>
+        <td class="channel-orders-num">{{ qty .Orders }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Gross .Currency }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Refunds .Currency }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Net .Currency }}</td>
+      </tr>
+      {{ end }}
+    {{ end }}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted online-channels-note">{{ T "reports.online_channels.refunds_note" }}</p>
+  {{ else }}
+  <p class="muted" data-testid="online-channels-empty">{{ T "reports.online_channels.empty" }}</p>
+  {{ end }}
+  {{ if .Summary.CancelledUnpaid }}
+  <p class="muted online-channels-note" data-testid="online-channels-cancelled">{{ TM "reports.online_channels.cancelled_unpaid_plural" "count" .Summary.CancelledUnpaid }}</p>
+  {{ end }}
+  {{ end }}
+</div>
