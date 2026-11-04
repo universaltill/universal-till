@@ -17,7 +17,7 @@ func TestExemptBodyLimitOverridesAreRoutes(t *testing.T) {
 	for _, p := range registeredRoutePatterns(t) {
 		registered[p] = true
 	}
-	paths := auth.ExemptBodyOverridePaths()
+	paths := auth.ExemptBodyOverridePaths
 	if len(paths) == 0 {
 		t.Fatal("no overrides: the accessor has gone blind")
 	}

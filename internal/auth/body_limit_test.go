@@ -32,8 +32,8 @@ func TestExemptBodyLimit(t *testing.T) {
 			t.Errorf("%s: limit %d, want %d", p, got, w)
 		}
 	}
-	if len(ExemptBodyOverridePaths()) != len(want) {
-		t.Errorf("override paths = %v", ExemptBodyOverridePaths())
+	if len(ExemptBodyOverridePaths) != len(want) {
+		t.Errorf("override paths = %v", ExemptBodyOverridePaths)
 	}
 }
 

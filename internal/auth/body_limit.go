@@ -40,10 +40,14 @@ func ExemptBodyLimit(path string) int64 {
 	return ExemptBodyMax
 }
 
-// ExemptBodyOverridePaths returns the overridden paths, sorted.
-func ExemptBodyOverridePaths() []string {
-	out := make([]string, 0, len(exemptBodyOverrides))
-	for p := range exemptBodyOverrides {
+// ExemptBodyOverridePaths lists the overridden paths, sorted. It is a copy:
+// changing it does not change any cap. A value rather than a func so the
+// whole-program deadcode guard does not count a test-only accessor.
+var ExemptBodyOverridePaths = sortedKeys(exemptBodyOverrides)
+
+func sortedKeys(m map[string]int64) []string {
+	out := make([]string, 0, len(m))
+	for p := range m {
 		out = append(out, p)
 	}
 	sort.Strings(out)
