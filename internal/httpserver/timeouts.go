@@ -22,24 +22,41 @@ const (
 	// till does; browsers and the mobile apps retry a socket closed under
 	// them. It never applies to a request that is in flight.
 	IdleTimeout = 120 * time.Second
+
+	// MaxHeaderBytes caps request line + headers (net/http answers 431 over
+	// it). LAN headers are a few KB (session cookie, bearer, HX-Current-URL);
+	// the net/http default is 1 MiB per connection.
+	MaxHeaderBytes = 64 << 10
+
+	// BodyReadGrace is how long a request body may take before any rate
+	// applies (ut-docs#5338).
+	BodyReadGrace = 15 * time.Second
+
+	// BodyMinRate is the slowest sustained body upload accepted (64 kbit/s):
+	// far under any LAN/Wi-Fi link, so a 10 MB catalogue import gets
+	// 15s + 1280s, yet a trickler is cut at the grace.
+	BodyMinRate = 8 << 10 // bytes per second
 )
 
-// New returns a server for h with ReadHeaderTimeout and IdleTimeout set.
+// New returns a server for h with ReadHeaderTimeout, IdleTimeout and
+// MaxHeaderBytes set, and h wrapped so a request body must arrive at
+// BodyMinRate after BodyReadGrace (boundBodies, ut-docs#5338).
 //
-// ReadTimeout and WriteTimeout are deliberately left zero: with ReadTimeout
-// unset net/http clears the read deadline once headers are in, so bodies
-// (10MB catalogue uploads, backup/restore, plugin upload) are not capped, and
-// a WriteTimeout would sever SSE streams, the replica websocket and the 25s
+// ReadTimeout and WriteTimeout are deliberately left zero: a flat ReadTimeout
+// would cap 10MB catalogue uploads, backup/restore and plugin upload (the
+// body deadline is a min-rate one, so those still complete), and a
+// WriteTimeout would sever SSE streams, the replica websocket and the 25s
 // shell long-poll (pages.ShellPollMaxWait).
 func New(h http.Handler) *http.Server {
-	return newWith(h, ReadHeaderTimeout, IdleTimeout)
+	return newWith(h, ReadHeaderTimeout, IdleTimeout, BodyReadGrace, BodyMinRate)
 }
 
 // newWith lets tests shorten the timeouts; production uses New.
-func newWith(h http.Handler, hdr, idle time.Duration) *http.Server {
+func newWith(h http.Handler, hdr, idle, grace time.Duration, rate int64) *http.Server {
 	return &http.Server{
-		Handler:           h,
+		Handler:           boundBodies(h, grace, rate),
 		ReadHeaderTimeout: hdr,
 		IdleTimeout:       idle,
+		MaxHeaderBytes:    MaxHeaderBytes,
 	}
 }
