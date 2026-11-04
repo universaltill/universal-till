@@ -100,43 +100,22 @@ Findings:
   restore and reports/archive/export rely on that; already tracked on
   ut-docs#5445/#5454, so no new card.
 
-## Addendum: main's move-approval time bomb, fixed in this PR
+## Addendum: rebased onto main after #2343 (sweep, 2026-11-04)
 
-CI on this PR went red on `pages-shuffle (seed 22)` with every
-`internal/pages/move_approval_5127_test.go` test failing ("the pending move
-is not held", "This move is no longer waiting for approval"). It isn't the
-new guard (it runs later in that order) and it isn't test order:
+CI on this PR first went red because `main` itself broke at
+2026-11-04T09:30Z: the #5127 move-test fixtures hard-coded an expiry of
+`2026-11-03T09:30:00Z`, and the code under test reads the real clock. This
+branch carried its own fixture fix. `main` then fixed the same three files
+independently in #2343 (ut-docs#5471), so the PR conflicted.
 
-- The fixture's `mvExp` was the fixed `2026-11-03T09:30:00Z`.
-- The pages handlers read the real clock (`enroll.moveNow = time.Now`), and
-  `PendingMoves` drops a move 24 h after it expires (`pendingMoveGrace`).
-- So from 2026-11-04T09:30Z every move test fails on `main` too.
+The lane:cloud-54 PR sweep rebuilt the branch on `main`. It keeps only the
+guard commit and the docs-shots hash refresh, and drops this branch's
+fixture commits in favour of `main`'s. The docs-shots surface hash was
+recomputed with `scripts/ci/update-docs-shots-surface-hash.sh`; the change
+still touches only a test file and a JS comment
+(`Docs-Shots-Unchanged: true`).
 
-The fix makes `mvExp` a package var, now + 6 h at second precision in
-RFC3339. All three uses (the signed approval, the stub cloud's reply,
-`ApplySyncMoves`) read the same string once. CI then showed
-`enroll/move_5127_test.go`'s fixed `moveExp` has the same bomb: only the
-MoveCapable TTL test stubs `moveNow`, and 11 tests failed on `main`. It got
-the same fix (approved by the same reviewer), and `go test -race
-./internal/enroll/` passes.
-A local full `go test ./...` then found the same fixed date in
-`internal/cloudsync/pending_moves_5127_test.go`
-(`TestPushSyncCarriesPendingMovesOn200And402`). It got the same fix, and
-`go test ./internal/cloudsync/` passes. `internal/plugins` hit the local
-10 m default timeout only (that CI leg is green).
-
-The docs-shots surface hash was refreshed with
-`update-docs-shots-surface-hash.sh`, because every surface change here is
-a test file or a JS comment (`Docs-Shots-Unchanged: true`).
-
-- **Author:** Opus.
-- **Review:** independent, Sonnet, read-only. Approved, with no upper bound
-  on `expires_at` anywhere (`parsePendingMove`).
-- **Verified:** the move tests pass, and the full package passes with
-  `-shuffle=22`. The failure reproduced locally before the fix.
-- **Deferred:** other fixed dates feed real-clock checks:
-  - `subscription_check_test.go:52`: 2026-11-14
-  - `entitlement_api_test.go:91,99`: 2026-12-31
-  - `enroll/replica_test.go:514,535`: 2026-12-31
-
-  They're filed as a follow-up card.
+- **Deferred:** other fixed dates that feed real-clock checks
+  (`subscription_check_test.go:52` 2026-11-14,
+  `entitlement_api_test.go:91,99` and `enroll/replica_test.go:514,535`
+  2026-12-31) are tracked on ut-docs#5467.

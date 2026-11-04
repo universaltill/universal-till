@@ -44,11 +44,9 @@ const (
 	mvName   = "Corner Café"
 )
 
-// mvExp is relative to the run, never a fixed date: the pages handlers read
-// the real clock (enroll's moveNow is only stubbed inside enroll), so a
-// fixed expiry silently failed every move test once it was 24 h old
-// (pendingMoveGrace) — main went red at 2026-11-04T09:30Z (ut-docs#5456).
-var mvExp = time.Now().UTC().Add(6 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
+// mvExp is the move offer's expiry, always in the future: a fixed date here
+// broke main once it passed (ut-docs#5471).
+var mvExp = time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type moveStubCloud struct {
 	srv     *httptest.Server

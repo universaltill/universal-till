@@ -31,11 +31,9 @@ const (
 	moveToken  = "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e"
 )
 
-// moveExp is relative to the run, never a fixed date: most tests here use
-// the real moveNow, and PendingMoves drops a move 24 h past its expiry
-// (pendingMoveGrace), so a fixed date turned main red at 2026-11-04T09:30Z
-// (ut-docs#5456).
-var moveExp = time.Now().UTC().Add(6 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
+// moveExp is the move offer's expiry, always in the future: a fixed date here
+// broke main once it passed (ut-docs#5471).
+var moveExp = time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type fakeMoveCloud struct {
 	srv *httptest.Server
@@ -539,7 +537,7 @@ func TestPendingMoveRecordIsImmutablePerID(t *testing.T) {
 	swapped := pendingBlock(pairOldStore)
 	swapped["target_store"] = "store-attacker"
 	swapped["nonce"] = "b3RoZXItbm9uY2U"
-	swapped["expires_at"] = "2026-11-09T09:30:00Z"
+	swapped["expires_at"] = time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 	swapped["target_name"] = "Totally Legit Shop"
 	ApplySyncMoves(raw([]any{swapped}), nil)
 	p, ok = PendingMoveByID(cfg, moveID)

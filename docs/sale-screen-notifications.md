@@ -55,20 +55,21 @@ It is the pattern for any admin page's message spot from here on — see
    hide it and a later generic network alert does not overwrite it; only ✕,
    a server error or an explicit new message clears it.
    Prompt forms and, since ut-docs#5404, every user-initiated htmx request
-   (click/submit/change/input/key events) get a client timeout
+   (click/submit/change/input/key events) get a client timeout, except on the never-timed paths below
    (`utRequestTimeoutMs()`, 30 s, alias `utPromptTimeoutMs()`, set on
    `htmx:configRequest`); `htmx:timeout` on a GET shows the network text, on
    any other verb (or a prompt) the sticky outcome text. Never timed:
    `load`/`every`/custom-event refreshes, `htmx.ajax`, boosted navigation,
    multipart uploads, the backup/import/update/pairing-restart paths, the
-   tender/refund/kiosk-checkout paths (a card terminal can take the server's
-   whole 30 s payment-gate deadline) and the till-join paths, and
+   tender/refund/kiosk-checkout paths (the server bounds them; its
+   payment-gate deadline is a 30 s floor) and the till-join paths, and
    anything under `data-ut-no-timeout` (put it on a new long-running action).
    A new long-running POST route goes in `UT_UNBOUNDED_PATHS` and in
    `unboundedRoutes` (`internal/pages/unbounded_routes_test.go`), which
    `TestUnboundedRoutesMatchAppJS` keeps paired.
    `htmx.config.timeout` stays 0.
-   `utPostWithElevation` aborts each leg the same way after the same time.
+   `utPostWithElevation` aborts each leg the same way after the same time,
+   except on those listed paths (ut-docs#5454).
    Before #213 a failed request surfaced nothing at all.
 3. **A response fragment that IS a notice** (ut-docs#238):
    `httpx.RenderNotice(w, locale, level, key, extra...)` writes the markup

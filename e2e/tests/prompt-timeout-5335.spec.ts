@@ -182,6 +182,70 @@ test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
     expect(await page.evaluate(() => (window as any).__r.done)).toBe(0);
   });
 
+  // ut-docs#5454: a listed (server-bounded) path is never aborted on either leg.
+  test('T9 held first send to a listed path is not aborted; late reply reaches onDone', async ({ page }) => {
+    await shortTimeout(page);
+    const h = await holdSecondPost(page, '**/api/refund', false);
+    await page.goto('/');
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__r = { done: 0, cancelled: 0, rejected: false, resolved: false };
+      w.utPostWithElevation('/api/refund', {}, () => { w.__r.done++; }, () => { w.__r.cancelled++; })
+        .then(() => { w.__r.resolved = true; }, () => { w.__r.rejected = true; });
+    });
+    await h.inFlight;
+    await page.waitForTimeout(OVERRIDE_MS * 2.5);
+    expect(await page.evaluate(() => (window as any).__r)).toMatchObject({ done: 0, rejected: false, resolved: false });
+    await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(OUTCOME);
+    h.release({ status: 200, contentType: 'text/plain', body: 'ok' });
+    await expect.poll(() => page.evaluate(() => (window as any).__r.resolved), { timeout: 5000 }).toBe(true);
+    expect(await page.evaluate(() => (window as any).__r)).toMatchObject({ done: 1, cancelled: 0, rejected: false });
+    await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(OUTCOME);
+  });
+
+  test('T10 held PIN retry to a listed path is not aborted; late reply reaches onDone', async ({ page }) => {
+    await shortTimeout(page);
+    let posts = 0;
+    let fulfilled = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    pendingReleases.push(() => release());
+    let held!: () => void;
+    const retryInFlight = new Promise<void>((r) => { held = r; });
+    await page.route('**/api/refund', async (route: Route) => {
+      posts++;
+      if (posts === 1) {
+        await route.fulfill({
+          status: 200, contentType: 'text/html',
+          body: '<dialog id="elevation-modal"><form><input name="pin"><button type="submit">ok</button></form></dialog>',
+        });
+        return;
+      }
+      held();
+      await gate;
+      try { await route.fulfill({ status: 200, contentType: 'text/plain', body: 'ok' }); fulfilled++; } catch { /* aborted */ }
+    });
+    await page.goto('/');
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__r = { done: 0, cancelled: 0, rejected: false, resolved: false };
+      w.utPostWithElevation('/api/refund', {}, () => { w.__r.done++; }, () => { w.__r.cancelled++; })
+        .then(() => { w.__r.resolved = true; }, () => { w.__r.rejected = true; });
+    });
+    await page.locator('#elevation-modal input[name=pin]').fill('1234');
+    await page.locator('#elevation-modal button[type=submit]').click();
+    await retryInFlight;
+    await page.waitForTimeout(OVERRIDE_MS * 2.5);
+    expect(await page.evaluate(() => (window as any).__r)).toMatchObject({ done: 0, rejected: false, resolved: false });
+    await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(OUTCOME);
+    release();
+    await expect.poll(() => page.evaluate(() => (window as any).__r.resolved), { timeout: 5000 }).toBe(true);
+    expect(fulfilled).toBe(1);
+    expect(await page.evaluate(() => (window as any).__r)).toMatchObject({ done: 1, cancelled: 0, rejected: false });
+    await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(OUTCOME);
+    await expect(page.locator('#elevation-modal')).not.toHaveJSProperty('open', true);
+  });
+
   test('T5 a download whose body outlasts the timeout is not truncated', async ({ page }) => {
     await shortTimeout(page);
     await page.route('**/__ut5335/dl', (route) => route.fulfill({

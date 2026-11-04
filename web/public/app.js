@@ -1449,6 +1449,8 @@ document.addEventListener('click', function(e){
   // htmx request (see utIsTimedRequest) is abandoned after this long with no
   // response and handled like a network failure (#5298: outcome unknown, no
   // replay). Per request only -- htmx.config.timeout stays 0.
+  // Listed paths (UT_UNBOUNDED_PATHS) are exempt on every leg, prompts
+  // included (ut-docs#5454): the server owns their deadline.
   var UT_REQUEST_TIMEOUT_MS = 30000;
   // Test-only override: e2e sets window.__utPromptTimeoutMs via
   // page.addInitScript so specs don't wait 30 s. Read at request time.
@@ -1464,9 +1466,9 @@ document.addEventListener('click', function(e){
   // (`x-changed from:body`, `revealed`) are background refreshes: unbounded.
   var UT_USER_EVENTS = { click: 1, dblclick: 1, submit: 1, change: 1, input: 1, keyup: 1, keydown: 1, search: 1 };
   // Legitimately long or restarting endpoints: never timed. Tender, refund
-  // and kiosk checkout wait on a card terminal / fiscal device (the server's
-  // own payment-gate deadline is already 30 s, wasm_runtime.go
-  // paymentGateTimeout); a join backs up and replaces this till's data
+  // and kiosk checkout wait on a card terminal / fiscal device (the server
+  // bounds them: paymentGateTimeout is a 30 s floor and a plugin's timeout
+  // can be longer, wasm_runtime.go); a join backs up and replaces this till's data
   // behind a 60 s LAN client. A client abort there would show "may not have
   // been done" while the sale or join is still completing.
   // Keep paired with `unboundedRoutes` in internal/pages/unbounded_routes_test.go
@@ -1487,6 +1489,7 @@ document.addEventListener('click', function(e){
     }
     return false;
   }
+  window.utIsUnboundedPath = utIsUnboundedPath; // #5454: utPostWithElevation (outside this IIFE)
   // True when this ordinary request should be bounded. Opt out a new
   // long-running action with data-ut-no-timeout on it or an ancestor.
   function utIsTimedRequest(d, el) {
@@ -1496,7 +1499,6 @@ document.addEventListener('click', function(e){
     if (!te || !UT_USER_EVENTS[te.type]) return false; // load/every/intersect/htmx.ajax/custom
     if (d.boosted) return false;                       // page navigation, not an action
     if (el.closest('[hx-encoding="multipart/form-data"],form[enctype="multipart/form-data"]')) return false;
-    if (utIsUnboundedPath(d.path)) return false;
     return true;
   }
   // htmx 1.9.12 reads detail.timeout back into xhr.timeout after this event.
@@ -1505,6 +1507,7 @@ document.addEventListener('click', function(e){
     if (!d) return;
     var el = d.elt || ev.target;
     if (d.timeout > 0) return; // hx-request / etc already set one
+    if (utIsUnboundedPath(d.path)) return; // #5404/#5454: server owns the deadline, prompt forms too
     if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
   });
   document.body.addEventListener('htmx:sendError', function(ev){
@@ -3073,7 +3076,8 @@ utSellCamera(function(){
 //    (untagged) if onDone throws or rejects.
 //  - The operator cancels: onCancel() runs, the promise resolves undefined.
 //  - A NETWORK failure on either leg (fetch itself rejected, or no response
-//    within window.utPromptTimeoutMs(), default 30 s, ut-docs#5335; the timer
+//    within window.utPromptTimeoutMs(), default 30 s, ut-docs#5335, unless the URL
+//    is a utIsUnboundedPath path, ut-docs#5454; the timer
 //    is cleared before onDone so body reads are unbounded): neither
 //    callback runs, any open dialog is closed, and the promise rejects with
 //    the fetch error tagged e.utNetworkError = true. The action may or may
@@ -3191,7 +3195,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       n.utNetworkError = true;
       throw n;
     }
-    if (ctl) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
+    if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
