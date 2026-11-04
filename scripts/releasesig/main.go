@@ -1,5 +1,5 @@
 // Command releasesig signs and verifies a till release's checksums.txt in CI
-// (ADR-0178), using internal/releasesig so CI and the till agree byte for byte.
+// (ADR-0178), verifying with internal/releasesig so CI and the till agree byte for byte.
 //
 //	go run ./scripts/releasesig keygen
 //	go run ./scripts/releasesig sign   --checksums F [--existing-sig S] --out O
@@ -84,15 +84,15 @@ func run(args []string, out io.Writer, env func(string) string) error {
 				return err
 			}
 		}
-		line := releasesig.Sign(seed, data)
+		line := sign(seed, data)
 		if *keep == "" {
-			return os.WriteFile(*outPath, releasesig.Append(old, line), 0o644)
+			return os.WriteFile(*outPath, appendLine(old, line), 0o644)
 		}
 		prev, err := os.ReadFile(*keep)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(*outPath, releasesig.AppendPruned(old, line, pub, prev), 0o644)
+		return os.WriteFile(*outPath, appendPruned(old, line, pub, prev), 0o644)
 	case "verify":
 		if *checksums == "" || *sigPath == "" {
 			return errors.New("verify needs --checksums and --sig")
