@@ -116,11 +116,15 @@ func Validate(it Item, now time.Time) error {
 // any link from a partner) drops only the LINK. The message, above all a
 // critical one, still reaches the shop. The input is not modified.
 func Clean(it Item, now time.Time) (Item, error) {
-	if err := validateCore(it, now); err != nil {
+	err := Validate(it, now)
+	if err == nil || it.Link == nil {
 		return it, err
 	}
-	if it.Link != nil && validateLink(it) != nil {
-		it.Link = nil
+	// Retry without the link: if the notice is fine then, the link was the
+	// only defect and only it goes.
+	it.Link = nil
+	if err := Validate(it, now); err != nil {
+		return it, err
 	}
 	return it, nil
 }
