@@ -307,6 +307,14 @@ env var or the lazily fetched key; with no key at all it refuses every plugin.
 Unsigned plugins (sideloading your own builds) need a `go build -tags devplugins`
 till; no setting turns that on in a normal build.
 
+**Release builds can also compile the release-signing keys in** (ADR-0178):
+`-X …/internal/buildinfo.ReleasePublicKeys=<hex>[,<hex>]`, resolved from the
+`UT_RELEASE_PUBLIC_KEYS` repository variable by
+`scripts/ci/resolve-release-keys.sh`. With keys compiled in, the self-updater
+installs a release only if its `checksums.txt.sig` verifies; with none (source
+builds, or release signing not yet armed) it checks SHA-256 only. See
+`RELEASING.md`.
+
 ---
 
 ## ⚙️ Configuration

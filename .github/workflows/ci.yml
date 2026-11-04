@@ -111,6 +111,14 @@ jobs:
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped_test.sh
+      - name: Release signing keys resolution self-test (ADR-0178)
+        run: bash scripts/ci/resolve-release-keys_test.sh
+      - name: check-apk-signer-pin self-test (ut-docs#5436)
+        run: bash scripts/ci/check-apk-signer-pin_test.sh
+      - name: Every marketplace-key stamp also stamps the release keys (ADR-0178)
+        run: bash scripts/ci/guard-release-key-stamped.sh
+      - name: Release-key stamp guard regression test (ADR-0178)
+        run: bash scripts/ci/guard-release-key-stamped_test.sh
       - name: iOS app shell locks page zoom — wiring test (ut-docs#3350)
         run: bash scripts/ci/ios-webview-zoom_test.sh
       - name: iOS bug-report screenshot bridge — wiring test (ut-docs#3355)

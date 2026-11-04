@@ -60,10 +60,11 @@ sha256_of() {
 }
 
 # The actual published assets that must each have their own checksums line —
-# checksums.txt is never checksummed against itself. None at all means a
+# checksums.txt is never checksummed against itself, nor is its signature
+# checksums.txt.sig (ADR-0178). None at all means a
 # release-download step upstream got nothing (a dir holding only
 # checksums.txt counts as empty too).
-mapfile -d '' -t assets < <(find "$ASSETS_DIR" -mindepth 1 -maxdepth 1 -type f ! -name checksums.txt -print0)
+mapfile -d '' -t assets < <(find "$ASSETS_DIR" -mindepth 1 -maxdepth 1 -type f ! -name checksums.txt ! -name checksums.txt.sig -print0)
 if [ "${#assets[@]}" -eq 0 ]; then
   problem "assets dir has no assets besides checksums.txt: ${ASSETS_DIR} — a release-download step upstream likely got nothing"
 fi

@@ -300,6 +300,11 @@ type PairProfile struct {
 	// shoptype.List, else "" (old cloud, unknown or mistyped value).
 	// Validated on parse by UnmarshalJSON, never taken raw.
 	ShopType string `json:"-"`
+	// HadMainTill is the cloud's had_main_till (ADR-0166 amendment
+	// 2026-11-04, ut-docs#5332): the shop had a main till before this
+	// pairing. Only a JSON true counts; absent (older cloud) or a non-bool
+	// is false. Set by UnmarshalJSON, never taken raw.
+	HadMainTill bool `json:"-"`
 }
 
 // UnmarshalJSON reads the store block and keeps shop_type only when it is a
@@ -308,7 +313,8 @@ func (p *PairProfile) UnmarshalJSON(b []byte) error {
 	type plain PairProfile
 	aux := struct {
 		*plain
-		ShopType json.RawMessage `json:"shop_type"`
+		ShopType    json.RawMessage `json:"shop_type"`
+		HadMainTill json.RawMessage `json:"had_main_till"`
 	}{plain: (*plain)(p)}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
@@ -318,6 +324,8 @@ func (p *PairProfile) UnmarshalJSON(b []byte) error {
 	if json.Unmarshal(aux.ShopType, &st) == nil && shoptype.IsKnown(st) {
 		p.ShopType = st
 	}
+	var h bool
+	p.HadMainTill = json.Unmarshal(aux.HadMainTill, &h) == nil && h
 	return nil
 }
 
