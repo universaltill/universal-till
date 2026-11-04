@@ -35,3 +35,12 @@ Safe to merge. Not verified: real thermal print and on-device RTL rendering (scr
 
 ## Deferred
 Receipt designer sample symbol (9); English-only 400 bodies (10); ar help-drift reason (13); ut-cloud/ut-my-shop/ut-admin-app and language-pack follow-ups listed in the design.
+
+## English-only follow-up (ADR-0160 §2, #2349)
+
+`TestLocalePlaceholderCountsMatchEnglish` failed this PR for fa/ar/tr keys it
+deliberately does not carry (Weblate supplies them). The "missing key present
+in en.json" failure is now a `t.Logf`; the `%s`/`%d` count check for keys a
+locale HAS still fails the test. Proven: a locale lacking keys passes
+(`TestLocalePlaceholderProblems_MissingKeyIsNotAFailure_WrongCountIs`), and
+breaking a real tr value's `%s` still fails the test.

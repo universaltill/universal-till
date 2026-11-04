@@ -375,20 +375,48 @@ func TestLocalePlaceholderCountsMatchEnglish(t *testing.T) {
 	chdirRoot(t)
 	en := loadLocale(t, "en")
 	for _, locale := range []string{"fa", "ar", "tr"} {
-		other := loadLocale(t, locale)
-		for key, enVal := range en {
-			got, ok := other[key]
-			if !ok {
-				t.Errorf("%s is missing key %q present in en.json", locale, key)
-				continue
-			}
-			for _, verb := range []string{"%s", "%d"} {
-				if a, b := strings.Count(enVal, verb), strings.Count(got, verb); a != b {
-					t.Errorf("%s[%q] has %d %s placeholder(s), en has %d (%q vs %q)",
-						locale, key, b, verb, a, got, enVal)
-				}
+		missing, bad := localePlaceholderProblems(en, loadLocale(t, locale))
+		// Code PRs carry English only (ADR-0160 §2, ut-docs#2349): other
+		// languages arrive from Weblate, so a key a locale lacks yet is not a
+		// failure. A key it HAS must still take the same placeholders.
+		if len(missing) > 0 {
+			t.Logf("%s lacks %d key(s) present in en.json (Weblate fills them): %v", locale, len(missing), missing)
+		}
+		for _, msg := range bad {
+			t.Errorf("%s: %s", locale, msg)
+		}
+	}
+}
+
+// localePlaceholderProblems returns the en keys other lacks (sorted) and a
+// message per key other has whose %s/%d count differs from English.
+func localePlaceholderProblems(en, other map[string]string) (missing, bad []string) {
+	for key, enVal := range en {
+		got, ok := other[key]
+		if !ok {
+			missing = append(missing, key)
+			continue
+		}
+		for _, verb := range []string{"%s", "%d"} {
+			if a, b := strings.Count(enVal, verb), strings.Count(got, verb); a != b {
+				bad = append(bad, fmt.Sprintf("[%q] has %d %s placeholder(s), en has %d (%q vs %q)", key, b, verb, a, got, enVal))
 			}
 		}
+	}
+	sort.Strings(missing)
+	sort.Strings(bad)
+	return missing, bad
+}
+
+func TestLocalePlaceholderProblems_MissingKeyIsNotAFailure_WrongCountIs(t *testing.T) {
+	en := map[string]string{"a": "Paid %s", "b": "Hello", "c": "%d of %d"}
+	missing, bad := localePlaceholderProblems(en, map[string]string{"a": "Bezahlt %s"})
+	if len(bad) != 0 || len(missing) != 2 {
+		t.Fatalf("a locale lacking keys must yield missing only: missing=%v bad=%v", missing, bad)
+	}
+	_, bad = localePlaceholderProblems(en, map[string]string{"a": "Bezahlt", "c": "%d von %d"})
+	if len(bad) != 1 || !strings.Contains(bad[0], `"a"`) {
+		t.Fatalf("a dropped %%s placeholder must be reported: %v", bad)
 	}
 }
 
