@@ -4,7 +4,7 @@ title: Software-Updates
 section: Verbinden & erweitern
 order: 350
 summary: Die Kasse prüft auf neue Versionen und teilt mit, wenn eine verfügbar ist; auf den meisten Plattformen aktualisiert sie sich mit einem Klick selbst.
-keywords: [update, version, aktualisierung, zeitplan]
+keywords: [update, version, aktualisierung, zeitplan, usb, offline, datei]
 ---
 
 # Software-Updates
@@ -15,7 +15,7 @@ Die Kasse prüft auf neue Versionen und teilt mit, wenn eine verfügbar ist; auf
 
 1. Einstellungen → Software-Update → Jetzt prüfen zeigt, ob Sie auf dem neuesten Stand sind.
 2. Wird ein Update angeboten, klicken Sie auf „Jetzt aktualisieren“ — die App startet mit der neuen Version neu. Auf einem Linux-Rechner startet sich die Desktop-App außerdem innerhalb etwa einer Minute selbst neu, wenn ein System-Upgrade (apt) eine neue Version installiert, und wird die Seite der Kasse in ihrem Fenster nicht mehr angezeigt, lädt die App sie von selbst neu, bis die Kasse wieder antwortet.
-3. Der Update-Chip in der Statusleiste spiegelt dies wider. Wo die Kasse ein Update nicht selbst installieren kann (ein portables Windows-ZIP oder ein Intel-Mac), führt er stattdessen zur Download-Seite. Auf einem Kiosk ohne App-internes Update ist er einfach reiner Text ohne etwas zum Antippen. Auf einer Linux-Kasse mit automatischen Updates, die ihren eigenen Installationsordner nicht beschreiben kann, sagt der Chip, dass die Kasse das Update nicht selbst installieren kann, und führt zu dieser Seite: Installieren Sie das neueste .deb-Paket erneut — damit ist der Ordner wieder beschreibbar (bei jeder anderen Installationsart geben Sie dem Benutzer der Kasse Schreibrechte für ihren Ordner) — und das Update in der nächsten Nacht läuft wie gewohnt.
+3. Der Update-Chip in der Statusleiste spiegelt dies wider. Wo die Kasse ein Update nicht selbst installieren kann (ein portables Windows-ZIP oder ein Intel-Mac), führt er stattdessen zur Download-Seite. Auf einem Kiosk ohne App-internes Update ist er einfach reiner Text ohne etwas zum Antippen. Auf einer Linux-Kasse mit automatischen Updates, die ihren eigenen Installationsordner nicht beschreiben kann, sagt der Chip, dass die Kasse das Update nicht selbst installieren kann, und führt zu dieser Seite: Installieren Sie das neueste .deb-Paket erneut — damit ist der Ordner wieder beschreibbar (bei jeder anderen Installationsart geben Sie dem Benutzer der Kasse Schreibrechte für ihren Ordner) — und das Update in der nächsten Nacht läuft wie gewohnt. Auf einer Kasse ohne Internet installieren Sie stattdessen eine Version von einem USB-Stick (siehe unten „Ein Update vom USB-Stick installieren“).
 
 ## Automatische Updates
 
@@ -36,6 +36,16 @@ Nach einem Update zeigt Ihnen die Kasse, was sich geändert hat – in einfachen
 3. Kassierer sehen diesen Hinweis nie, Kunden an einem Selbstbedienungs-Kiosk ebenfalls nicht. Auch eine neu installierte Kasse zeigt ihn nicht.
 4. Die Hinweise sind in die Kasse eingebaut und funktionieren daher ohne Internetverbindung. Ist ein Hinweis noch nicht in Ihre Sprache übersetzt, wird er auf Englisch angezeigt.
 5. Bevor Sie ein Update installieren, zeigt Einstellungen → Software-Update einem Manager oder Admin, was die neue Version bringt: die Hinweise zu jeder Version, die das Update enthält, die neueste zuerst – in der Sprache der Kasse, sofern übersetzt, sonst auf Englisch. Diese Hinweise werden erst heruntergeladen, wenn Sie diese Seite öffnen. Können sie nicht geladen werden, zeigt die Kasse „Versionshinweise nicht verfügbar“ – unter Windows und auf dem Mac mit einem Link zur Release-Seite – und Sie können das Update trotzdem wie gewohnt installieren.
+
+## Ein Update vom USB-Stick installieren
+
+Für eine Kasse ohne Internet. Sie bringen die Version auf einem USB-Stick mit, und die Kasse prüft die Signatur der Version, bevor sie etwas installiert.
+
+1. Öffnen Sie auf einem Computer mit Internet die Release-Seite und laden Sie drei Dateien herunter: das Update-Archiv (Einstellungen → Software-Update → „Aus Datei installieren“ zeigt, wie sein Name enden muss, zum Beispiel `_linux_arm64.tar.gz`), `checksums.txt` und `checksums.txt.sig`. Benennen Sie sie nicht um.
+2. Kopieren Sie die drei Dateien auf einen USB-Stick und stecken Sie ihn in die Kasse.
+3. Gehen Sie zu Einstellungen → Software-Update → „Aus Datei installieren“. Wählen Sie die Prüfsummenliste, die Signatur und das Update-Archiv in den drei Feldern aus und klicken Sie dann auf „Prüfen und installieren“. Lassen Sie den Stick stecken, bis die Seite neu lädt.
+4. Die Kasse prüft die Signatur, dann das Archiv, installiert das Update und startet neu; diese Seite lädt von selbst neu, und ein Verkauf wird nie durch das fehlende Netz unterbrochen, weil keines benutzt wird. Nur ein Manager oder Admin sieht diesen Abschnitt, und die Kasse muss mit Release-Signierung gebaut sein — andernfalls steht dort, dass die Funktion aus ist: Aktualisieren Sie diese Kasse über das Internet oder installieren Sie sie mit dem neuesten Installationsprogramm neu.
+5. Wird etwas abgelehnt, wird nichts installiert und die Kasse behält ihre Version; die Meldung unter der Schaltfläche nennt den Grund. Eine Meldung zu Signatur oder Prüfsumme bedeutet, dass eine Datei beschädigt, umbenannt oder aus einer anderen Version ist. Kopieren Sie dann alle drei Dateien erneut von derselben Release-Seite. Eine Meldung zum Namen bedeutet, dass das Archiv nicht das für diese Kasse ist oder nicht neuer ist als die laufende Version. Windows-Installationen mit Installationsprogramm und die Mac-App können noch nicht aus einer Datei installieren: Nutzen Sie das neueste Installationsprogramm von der Release-Seite.
 
 ## Auf einer Android-Kasse
 

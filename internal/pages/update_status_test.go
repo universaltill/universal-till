@@ -88,16 +88,25 @@ func TestUpdateStatusPollReloadsOnlyOnTargetVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	i := strings.Index(src, "fetch('/api/update/status'")
-	if i < 0 {
-		t.Fatal("base.html no longer polls /api/update/status after Update now")
+	// ut-docs#5438: the poll moved out of base.html into the shared
+	// web/public/update-restart.js (the status chip and Install from a file).
+	js, err := os.ReadFile("web/public/update-restart.js")
+	if err != nil {
+		t.Fatal(err)
 	}
-	poll := src[i:]
+	i := strings.Index(string(js), "fetch('/api/update/status'")
+	if i < 0 {
+		t.Fatal("update-restart.js no longer polls /api/update/status after Update now")
+	}
+	poll := string(js)[i:]
 	if j := strings.Index(poll, "}, 2000);"); j > 0 {
 		poll = poll[:j]
 	}
 	if !strings.Contains(poll, "st.running_version === target") {
 		t.Error("the update poll does not compare running_version with the version being installed")
+	}
+	if !strings.Contains(src, "utUpdateRestart.watch(target") {
+		t.Error("the status bar chip no longer starts the shared restart poll")
 	}
 	if !strings.Contains(src, "data.version") {
 		t.Error("the status bar ignores the version the apply response names")

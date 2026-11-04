@@ -1461,6 +1461,7 @@
          window.utAndroidUpdate progress callback the native shell calls — a
          no-op on any till without window.AndroidKiosk, same pattern as above. -->
     <script defer src="/public/android-update.js?v={{ assetv "public/android-update.js" }}"></script>
+    <script defer src="/public/update-restart.js?v={{ assetv "public/update-restart.js" }}"></script>
     <!-- ut-docs#3325 (CSP slice 2): every former inline event handler and
          htmx attribute handler as delegated, capture-phase
          listeners driven by data-action / data-* / data-fallback. LAST on
@@ -2150,40 +2151,52 @@
               // back to the old "it answers" rule; 5xx/network errors mean
               // "still restarting".
               var target = (data && data.version) || latest;
-              var tries = 0, pending = false;
-              var iv = setInterval(function () {
-                tries++;
-                fetch('/api/update/status', { cache: 'no-store' }).then(function (r) {
-                  if (r.redirected || (r.status >= 400 && r.status < 500)) {
-                    clearInterval(iv); UT.reload('update-restarted');
-                    return null;
-                  }
-                  return r.ok ? r.json() : null;
-                }).then(function (res) {
-                  var st = res && res.data;
-                  if (!st) return;
-                  if (st.running_version === target) { clearInterval(iv); UT.reload('update-restarted'); return; }
-                  pending = true;
-                }).catch(function () {});
-                if (tries > 90) {
-                  clearInterval(iv);
-                  // The swap itself already happened server-side before this
-                  // loop started (Apply() returns after staging it, not after
-                  // it's live) — a timeout here means the reconnect/reload
-                  // never observed it come back (a slow restart, a background
-                  // tab throttled by the browser, or a one-off blip), not that
-                  // the update failed. Leaving the button stuck on
-                  // "Restarting…" forever with no way out is what previously
-                  // read as "the update doesn't work" — offer a manual retry
-                  // instead of a silent, permanent dead end.
-                  btn.disabled = false;
-                  // Still the old version after ~3 minutes: say so plainly
-                  // (the server has also raised a Problem), don't imply done.
-                  btn.textContent = pending ? T.restartPending : T.installedReload;
-                  btn.onclick = function () { UT.reload('update-manual-retry'); };
-                }
-              }, 2000);
+              window.utUpdateRestart.watch(target, { onGiveUp: function (pending) {
+                // The swap itself already happened server-side before this
+                // watch started (Apply() returns after staging it, not after
+                // it's live) - a timeout means the reconnect/reload never
+                // observed it come back, not that the update failed. Offer a
+                // manual retry instead of a permanent "Restarting...".
+                btn.disabled = false;
+                // Still the old version after ~3 minutes: say so plainly
+                // (the server has also raised a Problem), don't imply done.
+                btn.textContent = pending ? T.restartPending : T.installedReload;
+                btn.onclick = function () { UT.reload('update-manual-retry'); };
+              } });
             });
+        });
+      })();
+      // ut-docs#5438: "Install from a file" (Settings) answers with an
+      // HX-Trigger ut:update-installing {version}. An offline till never has
+      // the update chip above, so this listener owns the restart wait for it.
+      (function () {
+        var T = {
+          installedReload: "{{ T "status.update_installed_reload" }}",
+          restartPending: "{{ T "status.update_restart_pending" }}"
+        };
+        document.body.addEventListener('ut:update-installing', function (e) {
+          var d = e.detail || {};
+          if (!d.version || !window.utUpdateRestart) return;
+          window.utUpdateRestart.watch(d.version, { onGiveUp: function (pending) {
+            var box = document.getElementById('update-upload-msg');
+            if (!box) return;
+            box.textContent = '';
+            if (pending) {
+              var p = document.createElement('p');
+              p.setAttribute('role', 'status');
+              p.setAttribute('dir', 'auto');
+              p.textContent = T.restartPending;
+              box.appendChild(p);
+              return;
+            }
+            // A real control: there is nothing to click in plain text.
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn btn-touch';
+            b.textContent = T.installedReload;
+            b.addEventListener('click', function () { UT.reload('update-manual-retry'); });
+            box.appendChild(b);
+          } });
         });
       })();
     </script>

@@ -99,6 +99,10 @@ func SetBeforeRestart(fn func(context.Context)) {
 	beforeRestart = fn
 }
 
+// ErrBusy means another update (online or from a file) already holds applyMu.
+// The text is matched by followErrorCode, so it must not change.
+var ErrBusy = errors.New("an update is already being applied")
+
 // ErrUnsupported means this install type updates via a native mechanism.
 var ErrUnsupported = errors.New("in-app update isn't available for this install; run the installer (a portable Windows zip) or reinstall (this install's directory isn't self-update-writable)")
 
@@ -351,11 +355,10 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	// windowsHandover: a Windows update already handed to the installer
 	// helper outlives applyMu (wininstaller.go).
 	if windowsHandover.Load() || !applyMu.TryLock() {
-		return errors.New("an update is already being applied")
+		return ErrBusy
 	}
 	defer applyMu.Unlock()
 
-	log := logging.L()
 	if !Supported() {
 		return ErrUnsupported
 	}
@@ -374,19 +377,7 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 			return applyMacApp(ctx, app, version, idle)
 		}
 	}
-	installDir := filepath.Dir(exe)
-	// The server resolves its on-disk web/ override relative to its working
-	// directory (registerStatic → filepath.Join("web","public")), which is NOT
-	// necessarily the binary's directory: the Pi kiosk runs
-	// /opt/unitill/bin/unitill-pos with WorkingDirectory=/opt/unitill and web
-	// at /opt/unitill/web. Swap web/ where the server actually reads it, or a
-	// self-update silently serves stale /public assets over the freshly-swapped
-	// binary's newer embedded ones (ut-docs#148). For a flat portable install
-	// cwd == installDir, so this is unchanged there.
-	webBase := installDir
-	if cwd, err := os.Getwd(); err == nil {
-		webBase = cwd
-	}
+	webBase := serverWebBase(filepath.Dir(exe))
 
 	rel, err := fetchRelease(ctx, version)
 	if err != nil {
@@ -429,6 +420,33 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 		return err
 	}
 
+	return installArchive(ctx, exe, webBase, tmp, archivePath, version, idle)
+}
+
+// serverWebBase is where the server reads its on-disk web/ override: its
+// working directory, falling back to the install dir.
+func serverWebBase(installDir string) string {
+	// The server resolves its on-disk web/ override relative to its working
+	// directory (registerStatic → filepath.Join("web","public")), which is NOT
+	// necessarily the binary's directory: the Pi kiosk runs
+	// /opt/unitill/bin/unitill-pos with WorkingDirectory=/opt/unitill and web
+	// at /opt/unitill/web. Swap web/ where the server actually reads it, or a
+	// self-update silently serves stale /public assets over the freshly-swapped
+	// binary's newer embedded ones (ut-docs#148). For a flat portable install
+	// cwd == installDir, so this is unchanged there.
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd
+	}
+	return installDir
+}
+
+// installArchive extracts a VERIFIED archive and runs the swap -> smoke-run ->
+// rollback -> pending marker -> restart sequence. The caller holds applyMu,
+// has checked the archive's SHA-256 against signed (or, online-dormant,
+// co-hosted) sums, and owns tmp (removes it after return). ut-docs#5438.
+func installArchive(ctx context.Context, exe, webBase, tmp, archivePath, version string, idle func() bool) error {
+	log := logging.L()
+	installDir := filepath.Dir(exe)
 	// Extract to a staging dir (contains the new binary + web/).
 	stage := filepath.Join(tmp, "stage")
 	if err := extractTarGz(archivePath, stage); err != nil {
@@ -491,7 +509,7 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 		}
 		msg := cannotStartMsg(version, buildinfo.Version, serr)
 		log.WarnProblemf(ProblemKeyUpdateFailed, "%s", msg)
-		return fmt.Errorf("update v%s could not start on this till; kept version v%s: %w", version, buildinfo.Version, serr)
+		return fmt.Errorf("update v%s could not start on this till; kept version v%s: %w", version, buildinfo.Version, cannotStartError{serr})
 	}
 
 	// Record what was swapped in, so the new image can confirm it is running

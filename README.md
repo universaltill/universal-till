@@ -312,7 +312,9 @@ till; no setting turns that on in a normal build.
 `UT_RELEASE_PUBLIC_KEYS` repository variable by
 `scripts/ci/resolve-release-keys.sh`. With keys compiled in, the self-updater
 installs a release only if its `checksums.txt.sig` verifies; with none (source
-builds, or release signing not yet armed) it checks SHA-256 only. See
+builds, or release signing not yet armed) it checks SHA-256 only. A till with
+no internet can also install a release from a USB stick (Settings → Software
+update → Install from a file); that path refuses unless the build is armed. See
 `RELEASING.md`.
 
 ---

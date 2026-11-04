@@ -14,7 +14,7 @@ Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda
 
 1. Ayarlar → Yazılım güncellemesi → Şimdi denetle güncel olup olmadığınızı gösterir.
 2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar. Linux bilgisayarda masaüstü uygulaması, bir sistem yükseltmesi (apt) yeni bir sürüm kurduğunda yaklaşık bir dakika içinde kendini de yeniden başlatır; kasanın sayfası penceresinde görünmez olursa, kasa yeniden yanıt verene kadar sayfayı kendiliğinden yeniden yükler.
-3. Durum çubuğundaki güncelleme rozeti de aynısını gösterir. Kasanın güncellemeyi kendisi kuramadığı durumlarda (taşınabilir Windows zip'i veya Intel Mac) bunun yerine indirme sayfasını açar. Uygulama içi güncellemesi olmayan bir kioskta sadece bağlantısız bilgilendirme metni gösterilir. Otomatik güncellenen ama kendi kurulum klasörüne yazamayan bir Linux kasada rozet, kasanın güncellemeyi kendisi kuramadığını söyler ve bu sayfaya bağlantı verir: en son .deb paketini yeniden kurun — bu klasörü yeniden yazılabilir yapar (başka türlü bir kurulumda kasanın kullanıcısına klasörüne yazma izni verin) — ve ertesi gecenin güncellemesi her zamanki gibi çalışır.
+3. Durum çubuğundaki güncelleme rozeti de aynısını gösterir. Kasanın güncellemeyi kendisi kuramadığı durumlarda (taşınabilir Windows zip'i veya Intel Mac) bunun yerine indirme sayfasını açar. Uygulama içi güncellemesi olmayan bir kioskta sadece bağlantısız bilgilendirme metni gösterilir. Otomatik güncellenen ama kendi kurulum klasörüne yazamayan bir Linux kasada rozet, kasanın güncellemeyi kendisi kuramadığını söyler ve bu sayfaya bağlantı verir: en son .deb paketini yeniden kurun — bu klasörü yeniden yazılabilir yapar (başka türlü bir kurulumda kasanın kullanıcısına klasörüne yazma izni verin) — ve ertesi gecenin güncellemesi her zamanki gibi çalışır. İnternetsiz bir kasada bunun yerine sürümü bir USB bellekten kurun (aşağıdaki “USB bellekten güncelleme kurma” bölümüne bakın).
 
 ## Otomatik güncellemeler
 
@@ -35,6 +35,16 @@ Bir güncellemeden sonra kasa neyin değiştiğini size anlatır — sade bir di
 3. Kasiyerler bu notu hiç görmez, self-servis kioskundaki müşteriler de görmez. Yeni kurulmuş bir kasa da bu notu göstermez.
 4. Notlar kasanın içinde yerleşiktir, bu yüzden internet bağlantısı olmadan da çalışır. Bir not henüz dilinize çevrilmediyse İngilizce gösterilir.
 5. Bir güncellemeyi kurmadan önce Ayarlar → Yazılım güncellemesi, yönetici veya admin'e yeni sürümün neler getirdiğini gösterir: güncellemenin içerdiği her sürümün notları, en yenisi önce; çevrildiyse kasanın dilinde, değilse İngilizce. Bu notlar yalnızca o sayfayı açtığınızda indirilir. Yüklenemezlerse kasa "Sürüm notları kullanılamıyor" der — Windows ve Mac'te sürüm sayfasına bir bağlantıyla birlikte — ve güncellemeyi yine her zamanki gibi kurabilirsiniz.
+
+## USB bellekten güncelleme kurma
+
+İnternetsiz bir kasa için. Sürümü USB bellekle getirirsiniz; kasa, herhangi bir şey kurmadan önce sürümün imzasını denetler.
+
+1. İnternet olan bir bilgisayarda sürüm sayfasını açın ve üç dosyayı indirin: güncelleme arşivi (Ayarlar → Yazılım güncellemesi → Dosyadan kur, adının nasıl bitmesi gerektiğini gösterir, örneğin `_linux_arm64.tar.gz`), `checksums.txt` ve `checksums.txt.sig`. Adlarını değiştirmeyin.
+2. Üç dosyayı bir USB belleğe kopyalayın ve kasaya takın.
+3. Ayarlar → Yazılım güncellemesi → Dosyadan kur bölümüne gidin. Sağlama toplamı listesini, imzayı ve güncelleme arşivini üç kutudan seçin, sonra Denetle ve kur'a tıklayın. Sayfa yenilenene kadar belleği takılı tutun.
+4. Kasa önce imzayı, sonra arşivi denetler, güncellemeyi kurar ve yeniden başlar; bu sayfa kendiliğinden yenilenir ve ağ kullanılmadığı için ağın olmaması hiçbir satışı kesintiye uğratmaz. Bu bölümü yalnızca yönetici (Manager) ya da admin görür ve kasanın sürüm imzalamayla derlenmiş olması gerekir — değilse bölüm kapalı olduğunu söyler: o kasayı internet üzerinden güncelleyin ya da en son yükleyiciyle yeniden kurun.
+5. Bir şey reddedilirse hiçbir şey kurulmaz ve kasa sürümünü korur; düğmenin altındaki mesaj nedenini söyler. İmza ya da sağlama toplamı mesajı, bir dosyanın hasarlı, adı değiştirilmiş ya da başka bir sürümden olduğu anlamına gelir; üç dosyayı da aynı sürüm sayfasından yeniden kopyalayın. Ada ilişkin bir mesaj, arşivin bu kasaya ait olmadığı ya da çalışan sürümden yeni olmadığı anlamına gelir. Yükleyiciyle kurulan Windows kasalar ve Mac uygulaması henüz dosyadan kuramaz: sürüm sayfasındaki en son yükleyiciyi kullanın.
 
 ## Android kasalarda
 

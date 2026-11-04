@@ -890,6 +890,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payFees":               feeRows,
 			"exportEntries":         exportEntries,
 			"autoUpdateFollowsMain": autoUpdateFollowsMain,
+			"fileUpdate":            fileUpdateView(), // ut-docs#5438
 			"autoUpdateFollowLine":  autoUpdateFollowLine,
 			"autoUpdateMainVersion": autoUpdateMainVersion,
 			"autoUpdateEnabled":     autoUpdateEnabled,

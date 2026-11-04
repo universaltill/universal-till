@@ -4,7 +4,7 @@ title: Software updates
 section: Connecting & extending
 order: 350
 summary: The till checks for new versions and tells you when one is available; on most platforms it updates itself with one click.
-keywords: [update, version, upgrade, schedule]
+keywords: [update, version, upgrade, schedule, usb, offline, file]
 ---
 
 # Software updates
@@ -15,7 +15,7 @@ The till checks for new versions and tells you when one is available; on most pl
 
 1. Settings → Software update → Check now shows whether you are up to date.
 2. When an update is offered, click Update now — the app restarts on the new version. On a Linux computer, the desktop app also restarts itself within about a minute when a system upgrade (apt) installs a new version, and if the till's page stops showing in its window, the app reloads it by itself until the till answers again.
-3. The status bar's update chip mirrors this. Where the till can't install an update itself — a portable Windows zip, or an Intel Mac — it links to the download page instead. On a kiosk without in-app update it's just plain text with nothing to tap. On a Linux till that updates automatically but can't write to its own install folder, the chip says the till can't install the update by itself and links to this page: reinstall the latest .deb package — that makes the folder writable again (for any other kind of install, give the till's user write access to its folder) — and the next night's update runs as usual.
+3. The status bar's update chip mirrors this. Where the till can't install an update itself — a portable Windows zip, or an Intel Mac — it links to the download page instead. On a kiosk without in-app update it's just plain text with nothing to tap. On a Linux till that updates automatically but can't write to its own install folder, the chip says the till can't install the update by itself and links to this page: reinstall the latest .deb package — that makes the folder writable again (for any other kind of install, give the till's user write access to its folder) — and the next night's update runs as usual. On a till with no internet, install a release from a USB stick instead (see Installing an update from a USB stick below).
 
 ## Automatic updates
 
@@ -36,6 +36,16 @@ After an update, the till tells you what changed — in plain words, in the till
 3. Cashiers never see this note, and neither do customers at a self-order kiosk. A newly installed till doesn't show it either.
 4. The notes are built into the till, so they work without an internet connection. If a note isn't translated into your language yet, it's shown in English.
 5. Before you install an update, Settings → Software update shows a manager or admin what the new version brings: the notes for every version the update includes, newest first, in the till's language where translated and in English otherwise. These notes are downloaded only when you open that page. If they can't be loaded, the till says "Release notes unavailable" — on Windows and Mac with a link to the release page — and you can still install the update as usual.
+
+## Installing an update from a USB stick
+
+For a till with no internet. You bring the release on a USB stick, and the till checks the release signature before it installs anything.
+
+1. On a computer with internet, open the release page and download three files: the update archive (Settings → Software update → Install from a file shows how its name must end, for example `_linux_arm64.tar.gz`), `checksums.txt` and `checksums.txt.sig`. Do not rename them.
+2. Copy the three files to a USB stick and plug it into the till.
+3. Go to Settings → Software update → Install from a file. Choose the checksum list, the signature and the update archive in their three boxes, then click Check and install. Keep the stick in until the page reloads.
+4. The till checks the signature, then the archive, installs the update and restarts; this page reloads by itself, and a sale is never interrupted by the missing network because none is used. Only a manager or admin sees this section, and the till must have been built with release signing — until it was, the section says it is off: update that till over the internet or reinstall it with the latest installer.
+5. If something is refused, nothing is installed and the till keeps its version; the message under the button says why. A signature or checksum message means a file is damaged, renamed or from another release, so copy all three files again from the same release page. A message about the name means the archive is not the one for this till, or is not newer than the version it runs. Windows installer installs and the Mac app can't install from a file yet: use the latest installer from the release page.
 
 ## On an Android till
 

@@ -419,6 +419,47 @@
             hx-indicator="#update-check-msg">{{ T "settings.update.check_btn" }}</button>
     <span id="update-check-msg" aria-live="polite"></span>
   </div>
+  {{/* ut-docs#5438: Install from a file - a release brought on a USB stick,
+       for a till with no internet. Same shape as Restore from a file (#5070).
+       Manager only here AND refused on the server. Three single-file inputs,
+       not one multiple (a kiosk file chooser has no Ctrl-click). No accept=
+       (Android/kiosk pickers hide unknown types; the server checks). The
+       file names sit in <bdi dir="ltr"> outside the translated text. Hidden
+       on Android/iOS, which have their own install path above. */}}
+  {{ if not .fileUpdate.hidden }}
+  <div class="update-upload" id="settings-update-file" data-testid="update-upload">
+    <h3>{{ T "settings.update.file.title" }}</h3>
+    {{ if .fileUpdate.available }}
+    <p class="muted" dir="auto">{{ T "settings.update.file.help" }}</p>
+    <form class="set-gap update-upload-form" hx-post="/api/update/upload" hx-encoding="multipart/form-data"
+          hx-target="#update-upload-msg" hx-swap="innerHTML" hx-disabled-elt="find button"
+          hx-indicator="#update-upload-busy">
+      <div class="update-upload-field">
+        <label for="update-upload-checksums">{{ T "settings.update.file.checksums_label" }}
+          <bdi class="update-upload-name" dir="ltr">checksums.txt</bdi></label>
+        <input id="update-upload-checksums" type="file" name="checksums" required>
+      </div>
+      <div class="update-upload-field">
+        <label for="update-upload-signature">{{ T "settings.update.file.signature_label" }}
+          <bdi class="update-upload-name" dir="ltr">checksums.txt.sig</bdi></label>
+        <input id="update-upload-signature" type="file" name="signature" required>
+      </div>
+      <div class="update-upload-field">
+        <label for="update-upload-archive">{{ T "settings.update.file.archive_label" }}
+          <bdi class="update-upload-name" dir="ltr">unitill-pos_&hellip;{{ .fileUpdate.suffix }}</bdi></label>
+        <input id="update-upload-archive" type="file" name="archive" required>
+      </div>
+      <div class="set-row">
+        <button class="btn secondary btn-touch" type="submit">{{ T "settings.update.file.action" }}</button>
+        <span id="update-upload-busy" class="htmx-indicator muted" aria-live="polite">{{ T "settings.update.file.checking" }}</span>
+      </div>
+    </form>
+    <div id="update-upload-msg" aria-live="polite"></div>
+    {{ else }}
+    <p class="muted" dir="auto" data-testid="update-upload-unavailable" data-reason="{{ .fileUpdate.reason }}">{{ if eq .fileUpdate.reason "not_armed" }}{{ T "settings.update.file.error.not_armed" }}{{ else if eq .fileUpdate.reason "unsupported" }}{{ T "settings.update.file.error.unsupported" }}{{ else }}{{ T "settings.update.file.error.unsupported_install" }}{{ end }}</p>
+    {{ end }}
+  </div>
+  {{ end }}
   {{/* ut-docs#2949: an additional till follows its main till's version, so it
        says so instead of the schedule box (whose value is the main till's). */}}
   {{ if .autoUpdateFollowsMain }}

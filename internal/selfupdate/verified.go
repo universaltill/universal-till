@@ -86,17 +86,13 @@ func verifiedChecksums(ctx context.Context, rel *ghRelease) (sums, error) {
 		return nil, err
 	}
 
-	if buildinfo.ReleasePublicKeys == "" {
+	keys, armed, err := compiledReleaseKeys()
+	if err != nil {
+		return nil, err
+	}
+	if !armed {
 		log.Infof("self-update: release metadata not signature-checked (no release key compiled in)")
 		return parseSums(body), nil
-	}
-	keys, err := releasesig.ParseKeys(buildinfo.ReleasePublicKeys)
-	if err != nil || len(keys) == 0 {
-		if err == nil {
-			err = errors.New("no keys")
-		}
-		log.Errorf("[selfupdate] compiled release key list is unusable: %v", err)
-		return nil, fmt.Errorf("%w: compiled release key unusable: %v", ErrSignature, err)
 	}
 	if sigURL == "" {
 		return nil, fmt.Errorf("%w: release v%s has no %s", ErrSignature, version, releasesig.SigAsset)
@@ -115,12 +111,38 @@ func verifiedChecksums(ctx context.Context, rel *ghRelease) (sums, error) {
 		}
 		return nil, err
 	}
+	s, _, err := verifySums(keys, version, body, sig)
+	return s, err
+}
+
+// compiledReleaseKeys parses buildinfo.ReleasePublicKeys.
+// armed=false, err=nil: dormant (nothing stamped).
+// armed=true, err!=nil: stamped but unusable (wraps ErrSignature) - fail closed.
+func compiledReleaseKeys() (keys []releasesig.Key, armed bool, err error) {
+	if buildinfo.ReleasePublicKeys == "" {
+		return nil, false, nil
+	}
+	keys, perr := releasesig.ParseKeys(buildinfo.ReleasePublicKeys)
+	if perr != nil || len(keys) == 0 {
+		if perr == nil {
+			perr = errors.New("no keys")
+		}
+		logging.L().Errorf("[selfupdate] compiled release key list is unusable: %v", perr)
+		return nil, true, fmt.Errorf("%w: compiled release key unusable: %v", ErrSignature, perr)
+	}
+	return keys, true, nil
+}
+
+// verifySums is THE release-signature check (ADR-0178 section 7): sig must be
+// a valid signature by any compiled key over these exact checksums.txt bytes.
+// Every failure wraps ErrSignature. version is used only for the log line.
+func verifySums(keys []releasesig.Key, version string, body, sig []byte) (sums, string, error) {
 	id, err := releasesig.Verify(keys, body, sig)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSignature, err)
+		return nil, "", fmt.Errorf("%w: %v", ErrSignature, err)
 	}
-	log.Infof("[selfupdate] release v%s signature verified (key %s)", version, id)
-	return parseSums(body), nil
+	logging.L().Infof("[selfupdate] release v%s signature verified (key %s)", version, id)
+	return parseSums(body), id, nil
 }
 
 func parseSums(body []byte) sums {

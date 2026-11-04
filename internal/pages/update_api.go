@@ -478,6 +478,7 @@ func respondUpdateApplyInstalled(w http.ResponseWriter, version string) {
 }
 
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
+	registerUpdateFileAPI(mux, d) // ut-docs#5438: Install from a file
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)

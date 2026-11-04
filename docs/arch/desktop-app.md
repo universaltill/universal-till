@@ -210,3 +210,8 @@ instead (no certificate secret — `packaging/windows/sign-exe.sh`, ut-docs#2480
 - **Intel (amd64)** macs are not built (arm64 only), matching the tar/deb.
 - The same `webview_go` shell can produce a Windows app later; the pure-Go
   server + NSIS installer already covers Windows.
+- **Install from a file** (ut-docs#5438) covers tar.gz installs only. The macOS
+  `.app`/`.dmg` and the Windows setup answer "not available on this kind of
+  install yet"; each needs its own card (verify the `.dmg` against the signed
+  sums, mount, replace the bundle, relaunch / verify Authenticode and hand over
+  to the installer helper).

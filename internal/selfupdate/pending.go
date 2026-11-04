@@ -250,6 +250,18 @@ func rollbackSwap(exe, webDir string) error {
 	return errors.Join(errs...)
 }
 
+// ErrCannotStart marks an update whose new binary failed its smoke run, so the
+// previous version was restored. Use errors.Is; the message text is unchanged.
+var ErrCannotStart = errors.New("update could not start on this till")
+
+// cannotStartError carries the smoke-run cause with its own text and matches
+// ErrCannotStart.
+type cannotStartError struct{ cause error }
+
+func (e cannotStartError) Error() string        { return e.cause.Error() }
+func (e cannotStartError) Unwrap() error        { return e.cause }
+func (e cannotStartError) Is(target error) bool { return target == ErrCannotStart }
+
 // cannotStartMsg is the Problem text for an update whose binary could not
 // start (the till stays on, or goes back to, the running version).
 func cannotStartMsg(version, running string, cause error) string {

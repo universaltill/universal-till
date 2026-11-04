@@ -387,6 +387,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/update/android-install":   true,
 	"POST /api/update/apply":             true,
 	"POST /api/update/check":             true,
+	"POST /api/update/upload":            true,
 	// Printers (set-up and every print), kitchen-station create/edit (they
 	// carry a printer host), printer discovery and the "No sale" drawer kick
 	// (ut-docs#2558 — it drives the printer's drawer connector).

@@ -32,6 +32,7 @@ var HeadAssets = []string{
 	"public/sell-screen-watch.js",  // ut-docs#2765: open sale screen live catalog refresh
 	"public/tour.js",               // ut-docs#3710: sale-screen guided tour
 	"public/android-update.js",     // ut-docs#4312: the shared Android in-app update flow
+	"public/update-restart.js",     // ut-docs#5438: the shared wait-for-restart poll (update chip, Install from a file)
 	"public/inline-actions.js",     // ut-docs#3325: delegated data-action/data-* hooks (no inline handlers, CSP)
 	"public/translate-mode.js",     // ut-docs#4370: translate mode only (the shell signature also marks the mode)
 	"public/pairing-stream.js",     // ut-docs#2743: pairing-queue push (one EventSource, opened by a server-rendered marker)

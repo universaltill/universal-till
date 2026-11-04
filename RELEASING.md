@@ -162,6 +162,16 @@ signing key unlisted.
 A refused release shows on the till as `Update failed (signature)`. It is not
 retried within the same run; "Update now" retries.
 
+**Offline file install** (ut-docs#5438, ADR-0178 amendment of 2026-11-04). A till
+with no internet installs a release from a USB stick (Settings -> Software update
+-> Install from a file). The three files the operator needs are already published
+on every release: the `unitill-pos_<version>_<os>_<arch>.tar.gz` archive,
+`checksums.txt` and `checksums.txt.sig`; no new asset is produced. The till
+verifies the signature with the same `verifySums` as the online path and, unlike
+the online path, **refuses when it is not armed**. Linux, Pi and portable macOS
+tar.gz installs only; the Windows setup and the macOS app answer "not available
+on this kind of install yet".
+
 ## Android update: signer pin (ADR-0179)
 
 The Android shell's in-app update installs an APK only if it is this app's
@@ -213,6 +223,10 @@ setting, and full platform parity — all tracked as separate follow-ups.
 
 ## Notes / gaps
 
+- **Offline file install needs an armed till.** A till built without
+  `UT_RELEASE_PUBLIC_KEYS` cannot be file-updated (the section says it is off),
+  and the first armed build is still installed online or by reinstall, because a
+  till that carries no key cannot verify anything (ut-docs#5438).
 - **macOS is Apple-Silicon only and unsigned** — Gatekeeper warns on first run.
   See the desktop app work for the friendlier `.app` path. No Intel (amd64)
   mac build is produced.
