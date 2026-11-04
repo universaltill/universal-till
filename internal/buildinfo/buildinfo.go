@@ -22,6 +22,19 @@ var Version = "dev"
 // scripts/ci/resolve-marketplace-key.sh.
 var MarketplacePublicKey = ""
 
+// ReleasePublicKeys is the comma list (1..4, lowercase 64-hex Ed25519 public
+// keys) the till trusts to sign a release's checksums.txt (ADR-0178 section
+// 5), compiled into release builds:
+//
+//	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=<hex>[,<hex>]"
+//
+// When set, the self-updater refuses any release whose checksums.txt.sig is
+// missing or not signed by one of these keys. Empty (source builds, or CI
+// with no release key configured) keeps the SHA-256-only check. Nothing
+// reads the environment: only the build stamp can arm it. CI resolves the
+// value with scripts/ci/resolve-release-keys.sh.
+var ReleasePublicKeys = ""
+
 // BuildDate is when this binary's built-in strings were frozen: the source
 // commit's time in RFC 3339 (`git show -s --format=%cI HEAD`), so a rebuild
 // of the same commit stamps the same value. Stamped beside Version:

@@ -122,6 +122,12 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       - name: Bind the Go till server (gomobile bind -target=ios)
         run: |
           set -euo pipefail
@@ -129,7 +135,7 @@ jobs:
           # it buildinfo.Version stays "dev" (ut-docs#3221). BuildDate: ADR-0160 §6.
           BUILD_DATE="$(bash scripts/ci/build-date.sh)"
           gomobile bind -target=ios \
-            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
+            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}" \
             -o ios/build/Mobile.xcframework ./mobile
       - name: Generate the app icon asset catalog
         run: bash ios/scripts/make-app-icon.sh

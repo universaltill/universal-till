@@ -172,11 +172,17 @@ val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0
 // build (env/lazy-fetch key). verify-versions in release.yml fails a release
 // whose .so lacks it.
 val marketplaceKeyHex = System.getenv("UT_MARKETPLACE_KEY_HEX").orEmpty()
+// ADR-0178: the release-signing public keys (comma list, scripts/ci/
+// resolve-release-keys.sh); empty keeps the SHA-256-only updater check.
+val releaseKeysHex = System.getenv("UT_RELEASE_KEYS_HEX").orEmpty()
+require(Regex("^([0-9a-f]{64}(,[0-9a-f]{64}){0,3})?$").matches(releaseKeysHex)) {
+    "UT_RELEASE_KEYS_HEX must be empty or 1-4 comma-separated 64-hex keys"
+}
 val marketplaceKeyLdflag = if (marketplaceKeyHex.isEmpty()) "" else {
     require(Regex("^[0-9a-f]{64}$").matches(marketplaceKeyHex)) {
         "UT_MARKETPLACE_KEY_HEX must be 64 lowercase hex characters"
     }
-    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex"
+    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$releaseKeysHex"
 }
 
 // ADR-0160 §6: internal/buildinfo.BuildDate is the source commit's time, so a
