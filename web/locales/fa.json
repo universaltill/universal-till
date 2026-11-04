@@ -813,6 +813,7 @@
   "elevation.summary.user_pin_set": "تنظیم پین جدید برای %s.",
   "elevation.summary.user_role_change": "تغییر نقش %s از %s به %s.",
   "elevation.summary.void_comp_waste": "حذف این قلم به‌عنوان %s.",
+  "elevation.summary.reduce_line_qty": "کاهش تعداد %s از %s به %s به‌عنوان %s.",
   "elevation.summary.window_mode": "تنظیم حالت پنجره روی %s.",
   "eod.err.archive_export_failed": "خروجی‌گیری از بایگانی گزارش‌ها ممکن نشد.",
   "eod.err.check_failed": "بررسی گزارش بایگانی‌شده ممکن نشد.",

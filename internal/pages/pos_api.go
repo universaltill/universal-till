@@ -1566,44 +1566,135 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "key or code required", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#2217: the +/- stepper buttons post a relative `delta`
+		// (key-addressed only) so the template needs no client-side
+		// arithmetic; delta wins over qty. An unparseable or non-finite
+		// delta/qty (ut-docs#2383: ParseFloat accepts NaN/Inf) is a 400.
+		//
+		// ut-docs#5411 (universal-till#2191): the line being changed. A qty
+		// that is absent or unparseable keeps the line's current qty (it
+		// used to fall through to 0 and silently void the line), and any
+		// REDUCTION of a priced line is a partial/full void that clears the
+		// same void_comp_waste gate as /api/pos/remove, below.
+		var cur *pos.BasketLine
+		matches := 0
+		for _, l := range d.Engine.Basket().Lines {
+			if (key != "" && l.LineKey == key) || (key == "" && (l.SKU == code || l.ItemID == code || l.VariantID == code)) {
+				matches++
+				if cur == nil {
+					l := l
+					cur = &l
+				}
+			}
+		}
+		// A code (no key) that several lines share would make UpdateLine act
+		// on one while qty 0 removes them all by SKU: refuse, key is required.
+		if key == "" && matches > 1 {
+			http.Error(w, "key required: several lines share this code", http.StatusBadRequest)
+			return
+		}
 		qty := 0.0
-		// ut-docs#2217: the basket's +/- stepper buttons post a relative
-		// delta (key-addressed only, same as /api/self-order/line already
-		// does — self_order_shop.go) rather than an absolute qty, so the
-		// template needs no client-side arithmetic. delta wins over qty
-		// when both are somehow present, but only on the key-addressed
-		// path — a code-only request with a stray delta param falls
-		// through to the absolute-qty branch below unchanged, same as
-		// before this card; the shipped buttons always send key. An
-		// unparseable OR non-finite delta (NaN/±Inf — ut-docs#2383:
-		// strconv.ParseFloat accepts those literal strings with no error,
-		// and NaN/Inf then rendered the whole basket total as £0.00) is a
-		// real 400, mirroring the self-order twin (not reachable from the
-		// UI: this endpoint is authenticated, unlike /api/self-order/line).
+		if cur != nil {
+			qty = cur.Qty
+		}
 		if v := strings.TrimSpace(r.Form.Get("delta")); v != "" && key != "" {
 			delta, err := strconv.ParseFloat(v, 64)
 			if err != nil || math.IsNaN(delta) || math.IsInf(delta, 0) {
 				http.Error(w, "invalid delta", http.StatusBadRequest)
 				return
 			}
-			for _, l := range d.Engine.Basket().Lines {
-				if l.LineKey == key {
-					qty = l.Qty + delta
-					break
-				}
+			if cur != nil {
+				qty = cur.Qty + delta
 			}
 			if qty < 0 {
 				qty = 0
 			}
-		} else if v := r.Form.Get("qty"); v != "" {
-			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && !math.IsInf(f, 0) {
-				qty = f
+		} else if v := strings.TrimSpace(r.Form.Get("qty")); v != "" {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+				http.Error(w, "invalid qty", http.StatusBadRequest)
+				return
 			}
+			qty = f
 		}
 		discount := int64(0)
 		if v := r.Form.Get("discount"); v != "" {
 			if dVal, err := strconv.ParseInt(v, 10, 64); err == nil && dVal >= 0 {
 				discount = dVal
+			}
+		}
+		// ut-docs#5411: lowering a priced line's quantity (the − stepper, the
+		// qty field, qty=0) takes value off the sale exactly like removing
+		// it, so it goes through the same void_comp_waste gate, reason
+		// (default "void": the steppers send none), shrinkage event and
+		// audit row as /api/pos/remove. Raising a qty, or re-posting the same
+		// qty with a changed discount, is not a reduction and stays free.
+		// A zero-value line and a gift voucher line carry no loss: ungated.
+		//
+		// Gated on the UNIT price (not the rounded extended value): a
+		// sub-half-minor-unit step must not slip through, and the recorded
+		// loss is the line-total delta so micro-steps sum to the real loss.
+		// A discount the engine will refuse (LineDiscountTooLargeError)
+		// changes nothing, so it is neither gated nor recorded.
+		if cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
+			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount))) {
+			reducedBy := cur.Qty - qty
+			{
+				lost := pos.AmountForQuantity(cur.PriceCents, cur.Qty).Sub(pos.AmountForQuantity(cur.PriceCents, qty))
+				locale := httpx.ResolveLocale(w, r)
+				reason := r.Form.Get("reason")
+				if reason == "" {
+					reason = pos.ShrinkageReasonVoid
+				}
+				if !pos.ValidShrinkageReason(reason) {
+					http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
+					return
+				}
+				elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+				if elev.Outcome == needsElevation {
+					// Replay the ABSOLUTE target qty (not delta): the approver
+					// confirms the exact result shown in the summary.
+					hidden := []elevationHiddenField{
+						{Name: "reason", Value: reason},
+						{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
+						{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+					}
+					if key != "" {
+						hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+					} else {
+						hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+					}
+					// The stepper/qty field target #basket (outerHTML); the
+					// prompt's hint must land in the small hint slot instead,
+					// or it would replace the whole basket (as /api/pos/remove).
+					w.Header().Set("HX-Retarget", "#shrinkage-hint")
+					w.Header().Set("HX-Reswap", "innerHTML")
+					w.Header().Set("HX-Trigger", "ut-basket-resync")
+					renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint",
+						fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
+							strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
+							httpx.T(locale, "shrinkage.reason."+reason)),
+						hidden, elev)
+					return
+				}
+				now := time.Now().UTC().Format(time.RFC3339)
+				registerID := tillRegisterIDBestEffort(r.Context(), d)
+				if err := repo.InsertShrinkageEvent(r.Context(), nil, reason, cur.ItemID, cur.Name, cur.SKU, reducedBy,
+					cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
+					logging.L().Errorf("insert shrinkage event: %v", err)
+				}
+				detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
+				if elev.Outcome == elevated {
+					if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
+						logging.L().Errorf("insert elevated line-reduction audit: %v", err)
+					}
+				} else if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
+					logging.L().Errorf("insert line-reduction audit: %v", err)
+				}
+				// The elevation dialog's retry may have landed in the hint
+				// slot; put the result back on the basket.
+				w.Header().Set("HX-Retarget", "#basket")
+				w.Header().Set("HX-Reswap", "outerHTML")
 			}
 		}
 		var updateErr error

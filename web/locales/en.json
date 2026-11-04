@@ -813,6 +813,7 @@
   "elevation.summary.user_pin_set": "Set a new PIN for %s.",
   "elevation.summary.user_role_change": "Change %s's role from %s to %s.",
   "elevation.summary.void_comp_waste": "Remove this line as %s.",
+  "elevation.summary.reduce_line_qty": "Reduce %s from %s to %s as %s.",
   "elevation.summary.window_mode": "Set the window mode to %s.",
   "eod.err.archive_export_failed": "Could not export the report archive.",
   "eod.err.check_failed": "Could not check for the archived report.",

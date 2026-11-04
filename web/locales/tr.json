@@ -813,6 +813,7 @@
   "elevation.summary.user_pin_set": "%s için yeni bir PIN belirle.",
   "elevation.summary.user_role_change": "%s kullanıcısının rolünü %s'den %s'e değiştir.",
   "elevation.summary.void_comp_waste": "Bu satırı %s olarak kaldır.",
+  "elevation.summary.reduce_line_qty": "%s miktarını %s adetten %s adede %s olarak düşür.",
   "elevation.summary.window_mode": "Pencere modunu %s olarak ayarla.",
   "eod.err.archive_export_failed": "Rapor arşivi dışa aktarılamadı.",
   "eod.err.check_failed": "Arşivlenmiş rapor kontrol edilemedi.",
