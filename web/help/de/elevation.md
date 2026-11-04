@@ -35,7 +35,8 @@ eine kleine PIN-Abfrage.
    innerhalb von 30 Sekunden, schließt sich der Dialog mit dem
    Hinweis, dass die Aktion möglicherweise ausgeführt wurde oder auch nicht:
    Prüfen Sie das, bevor Sie es erneut versuchen. Es wird nichts automatisch
-   wiederholt.
+   wiederholt. Eine Sicherung oder Wiederherstellung, die Sie hier freigeben,
+   wird so nie abgebrochen: Sie wartet auf die Antwort der Kasse.
 
 ## Was aufgezeichnet wird
 

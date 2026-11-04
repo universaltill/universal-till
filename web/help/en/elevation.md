@@ -33,7 +33,8 @@ PIN prompt right there.
    If the connection drops while it's being checked, or the till doesn't
    answer within 30 seconds, the dialog closes with a
    message that the action may or may not have been done: check before you try
-   it again. Nothing is retried for you.
+   it again. Nothing is retried for you. A backup or restore you approve
+   here is never cut off this way: it waits for the till's answer.
 
 ## What gets recorded
 

@@ -211,6 +211,29 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
     await expect.poll(() => xt(page, '/api/pos/scan')).toBe(OVERRIDE_MS);
   });
 
+  // ut-docs#5454: a prompt form (data-after-request="elevation-done") that
+  // posts to a listed path is exempt too -- one predicate for every leg. A
+  // prompt form to a sibling path is still timed (#5335).
+  test('A9 prompt forms to payment and join paths stay unbounded; a sibling prompt is timed', async ({ page }) => {
+    await shortTimeout(page);
+    await page.route('**/api/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<span>ok</span>' }));
+    await page.goto('/');
+    await recordTimeouts(page);
+    const cases = ['/api/pos/tender?x=1', '/api/refund', '/api/self-order/checkout', '/api/sync/join', 'api/setup/join'];
+    let html = '<div id="t5454"></div>'
+      + '<form id="fsib" hx-post="/api/pos/remove" hx-target="#t5454" data-after-request="elevation-done"><button id="bsib">s</button></form>';
+    cases.forEach((url, i) => {
+      html += `<form id="f${i}" hx-post="${url}" hx-target="#t5454" data-after-request="elevation-done"><button id="b${i}">s</button></form>`;
+    });
+    await probe(page, html);
+    for (let i = 0; i < cases.length; i++) await page.locator('#b' + i).click();
+    await page.locator('#bsib').click();
+    for (const reqPath of cases) {
+      await expect.poll(() => xt(page, reqPath), { message: reqPath }).toBe(0);
+    }
+    await expect.poll(() => xt(page, '/api/pos/remove')).toBe(OVERRIDE_MS);
+  });
+
   test('A7 default timeout is 30000 and the getters agree', async ({ page }) => {
     await page.route('**/__ut5404/def', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: 'ok' }));
     await page.goto('/');
