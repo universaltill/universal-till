@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // setSetting writes one settings row on d.
@@ -303,5 +305,53 @@ func TestApplyPendingRestoreOverUnreadableLiveDBKeepsBackupIdentity(t *testing.T
 	// sales copy's epoch is dropped and re-minted; every copy re-syncs.
 	if v, ok := getSetting(t, restored.DB, "sales_mirror.epoch"); ok {
 		t.Errorf("sales copy epoch %q kept across a restore", v)
+	}
+}
+
+// ut-docs#5058 review F1: a replacement main till's receipt prefix is its
+// own (the old till's backup carries none); restoring that backup must not
+// put the till back on the dead till's numbering. Other prefixes keep the
+// backup's value.
+func TestApplyPendingRestoreKeepsReplacementMainReceiptPrefix(t *testing.T) {
+	for _, tc := range []struct{ name, live, want string }{
+		{"replacement main prefix survives", "M3f2a9c1e-", "M3f2a9c1e-"},
+		{"empty live prefix: backup wins", "", ""},
+		{"replica prefix: backup wins", "T2-", ""},
+		{"short M prefix is not a replacement prefix", "M3f2a-", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := testDBPath(t)
+			live, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setSetting(t, live.DB, "marketplace.device_id", "till-new-device")
+			if tc.live != "" {
+				setSetting(t, live.DB, "sync.receipt_prefix", tc.live)
+			}
+			live.Close()
+			name := deadTillBackup(t, path)
+			if err := StageRestore(path, name); err != nil {
+				t.Fatal(err)
+			}
+			if applied, err := ApplyPendingRestore(path); err != nil || !applied {
+				t.Fatalf("apply: %v %v", applied, err)
+			}
+			restored := openTest(t, path)
+			defer restored.Close()
+			got, _ := getSetting(t, restored.DB, "sync.receipt_prefix")
+			if got != tc.want {
+				t.Errorf("sync.receipt_prefix = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The matcher mirrors data.IsReplacementMainTillPrefix (db cannot import data).
+func TestReplacementPrefixMatcherMirrorsData(t *testing.T) {
+	for _, p := range []string{"", "T2-", "R1a2b-", "M3f2a-", "M3f2a9c1e-", "M3F2A9C1E-", "M3f2a9c1e", "Mzzzzzzzz-", "M3f2a9c1e-1"} {
+		if got, want := isReplacementMainTillPrefix(p), data.IsReplacementMainTillPrefix(p); got != want {
+			t.Errorf("%q: db=%v data=%v", p, got, want)
+		}
 	}
 }

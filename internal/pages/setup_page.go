@@ -847,11 +847,25 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// first-boot gate closes this wizard. The code is spent; the
 			// welcome page says so and Settings -> Tills pairs again with
 			// a new code.
+			// ut-docs#5058 T4: a replacement main till numbers its receipts
+			// under its own prefix, whatever the commit's result (the old
+			// till is already replaced once /pair answered). First boot: no
+			// sale exists yet, so no number is repeated or skipped.
+			if rp := cloudHeld.p.Replaced; rp != nil {
+				if err := d.Settings.Set(r.Context(), "sync.receipt_prefix", data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, rp.DeviceID)); err != nil {
+					logging.L().Warnf("setup wizard: set the replacement till's receipt prefix: %v", err)
+				}
+			}
 			if err := commitCloudPairing(r.Context(), d, cloudHeld.p); err != nil {
 				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
 				cloudPairFailed = true
 			} else {
 				markJoinedShop(r.Context(), d)
+				master := ""
+				if cloudHeld.p.Store != nil {
+					master = cloudHeld.p.Store.CatalogMaster
+				}
+				markNextSteps(r.Context(), d, master)
 				requestOperatorCheckin(d, operatorCheckinWindow)
 				cloudSyncing = true
 			}

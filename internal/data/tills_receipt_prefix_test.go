@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"testing"
 )
@@ -229,5 +230,67 @@ func TestEnrolTill_ProvisionalRestorePrefixGetsANewTillNo(t *testing.T) {
 			t.Fatalf("requested %q = %d, %v; want a fresh T<n>- (n >= 3)", p, n, err)
 		}
 		_ = id
+	}
+}
+
+// ut-docs#5058 T4: a replacement main till must not reuse the dead till's
+// receipt (and invoice) numbers.
+func TestReplacementMainTillPrefix_NeverEqualsTheReplacedTill(t *testing.T) {
+	shape := regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+	restored := regexp.MustCompile(`^R[0-9a-f]{4}-$`)
+	for _, tc := range []struct{ newID, oldID string }{
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-aaaaaaaa-0000-4000-8000-000000000001"},
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a0000-1111-4000-8000-000000000002"}, // same first 4 hex
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a9c1e-0000-4000-8000-000000000002"}, // same first 8 hex
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "main-till"},                                 // legacy / non-uuid old id
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", ""},
+	} {
+		got := ReplacementMainTillPrefix(tc.newID, tc.oldID)
+		if !shape.MatchString(got) {
+			t.Errorf("(%q,%q) = %q, want M<8 hex>-", tc.newID, tc.oldID, got)
+		}
+		if got == "" || restored.MatchString(got) || tillNoOf(got) != 0 {
+			t.Errorf("(%q,%q) = %q collides with the main/restored/T<n> prefixes", tc.newID, tc.oldID, got)
+		}
+		// The old till's own prefix, if it was itself a replacement.
+		if got == ReplacementMainTillPrefix(tc.oldID, "") {
+			t.Errorf("(%q,%q) = %q equals the old till's own prefix", tc.newID, tc.oldID, got)
+		}
+		if again := ReplacementMainTillPrefix(tc.newID, tc.oldID); again != got {
+			t.Errorf("not deterministic: %q vs %q", got, again)
+		}
+	}
+}
+
+// ut-docs#5058 review F2: always 8 hex, and the matcher agrees.
+func TestReplacementMainTillPrefix_AlwaysEightHex(t *testing.T) {
+	got := ReplacementMainTillPrefix("till-3f2a9c1e-0000-4000-8000-000000000001", "till-aaaaaaaa-0000-4000-8000-000000000001")
+	if got != "M3f2a9c1e-" {
+		t.Errorf("got %q, want M3f2a9c1e-", got)
+	}
+	// Same first 8 hex as the replaced till: next 8 hex chars.
+	got = ReplacementMainTillPrefix("till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a9c1e-0000-4000-8000-000000000002")
+	if got != "M00004000-" {
+		t.Errorf("fallback got %q, want M00004000-", got)
+	}
+	for _, p := range []string{got, "M3f2a9c1e-"} {
+		if !IsReplacementMainTillPrefix(p) {
+			t.Errorf("IsReplacementMainTillPrefix(%q) = false", p)
+		}
+	}
+	for _, p := range []string{"", "T2-", "R1a2b-", "M3f2a-", "M3F2A9C1E-", "M3f2a9c1e", "M3f2a9c1e-1", "Mzzzzzzzz-"} {
+		if IsReplacementMainTillPrefix(p) {
+			t.Errorf("IsReplacementMainTillPrefix(%q) = true", p)
+		}
+	}
+}
+
+// Documents the collision T4 fixes: a fresh install has no sync.* rows, so
+// its first receipt is the same 000000001 a replaced original main till had.
+func TestNextReceiptNo_FreshInstallHasNoPrefix(t *testing.T) {
+	d := openMigratedDB(t, "fresh-receipt.db")
+	got, err := NewPOSRepo(d.DB).NextReceiptNo(context.Background(), nil)
+	if err != nil || got != "000000001" {
+		t.Fatalf("NextReceiptNo = %q, %v; want 000000001", got, err)
 	}
 }
