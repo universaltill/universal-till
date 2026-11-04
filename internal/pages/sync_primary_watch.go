@@ -241,6 +241,7 @@ func linkPairingRevoked(_ context.Context, _ *common.Deps) {
 func resolveReplicaSyncProblems() {
 	n := logging.ResolveProblems(discovery.MainTillProblemKey)
 	n += logging.ResolveProblems(LinkPairingRevokedProblemKey)
+	n += logging.ResolveProblems(SalePushTooLargeProblemKey)
 	n += logging.ResolveProblemsWhere(func(key string) bool {
 		return strings.HasPrefix(key, pluginSyncBrokenKeyPrefix) ||
 			strings.HasPrefix(key, pluginSyncInstallKeyPrefix) ||

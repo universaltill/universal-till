@@ -143,10 +143,16 @@ func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Clien
 			}
 			batch = append(batch, j)
 		}
-		if err := postJournal(ctx, client, base+"/api/sync/sales", bearer, batch); err != nil {
+		sent, _, big, err := postSalesHalving(batch, len(batch), 0, func(sub []journalSale) error {
+			return postJournal(ctx, client, base+"/api/sync/sales", bearer, sub)
+		}, nil)
+		out.Sales += sent
+		if big != nil {
+			return out, fmt.Errorf("sale receipt %s is too large for the main till to accept (HTTP 413)", big.Sale.ReceiptNo)
+		}
+		if err != nil {
 			return out, err
 		}
-		out.Sales += len(batch)
 	}
 
 	// No-sale opens and cleared baskets page by (created_at, id), exactly
@@ -232,6 +238,9 @@ func postJournal(ctx context.Context, client *http.Client, url, bearer string, b
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		return fmt.Errorf("%w: %s answered %s", errPayloadTooLarge, url, resp.Status)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s answered %s", url, resp.Status)
 	}
