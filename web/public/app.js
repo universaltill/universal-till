@@ -1444,9 +1444,31 @@ document.addEventListener('click', function(e){
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
   // data-after-request="elevation-done") failing at network level means the
   // confirmed action may or may not have run (ut-docs#5298).
+  // ut-docs#5335: a prompt's own request (htmx form or utPostWithElevation
+  // leg) is abandoned after this long with no response, and handled exactly
+  // like a network failure (#5298: outcome unknown, no replay). Prompt
+  // requests only -- never htmx.config.timeout.
+  var UT_PROMPT_TIMEOUT_MS = 30000;
+  // Test-only override: e2e sets window.__utPromptTimeoutMs via
+  // page.addInitScript so specs don't wait 30 s. Read at request time.
+  window.utPromptTimeoutMs = function () {
+    var o = window.__utPromptTimeoutMs;
+    return (typeof o === 'number' && isFinite(o) && o > 0) ? o : UT_PROMPT_TIMEOUT_MS;
+  };
+  function utIsPromptElt(el) {
+    return !!(el && el.closest && el.closest('[data-after-request~="elevation-done"]'));
+  }
+  // htmx 1.9.12 reads detail.timeout back into xhr.timeout after this event.
+  document.body.addEventListener('htmx:configRequest', function(ev){
+    var d = ev.detail;
+    if (d && utIsPromptElt(d.elt || ev.target)) d.timeout = window.utPromptTimeoutMs();
+  });
   document.body.addEventListener('htmx:sendError', function(ev){
-    var el = ev.detail && ev.detail.elt;
-    showAlert(el && el.closest && el.closest('[data-after-request~="elevation-done"]') ? 'outcome' : 'network');
+    showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
+  });
+  // htmx fires afterRequest (elevation-done closes the dialog) then this.
+  document.body.addEventListener('htmx:timeout', function(ev){
+    if (utIsPromptElt(ev.detail && ev.detail.elt)) showAlert('outcome');
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
@@ -3001,7 +3023,9 @@ utSellCamera(function(){
 //  - onDone(r) runs: the promise resolves with onDone's result, or rejects
 //    (untagged) if onDone throws or rejects.
 //  - The operator cancels: onCancel() runs, the promise resolves undefined.
-//  - A NETWORK failure on either leg (fetch itself rejected): neither
+//  - A NETWORK failure on either leg (fetch itself rejected, or no response
+//    within window.utPromptTimeoutMs(), default 30 s, ut-docs#5335; the timer
+//    is cleared before onDone so body reads are unbounded): neither
 //    callback runs, any open dialog is closed, and the promise rejects with
 //    the fetch error tagged e.utNetworkError = true. The action may or may
 //    not have run, so it is never reported as a cancel; callers show
@@ -3106,17 +3130,30 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     } else {
       Object.keys(bodyParams || {}).forEach(function (k) { body.append(k, bodyParams[k]); });
     }
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
-    }).catch(function (e) {
-      // ut-docs#5298: only fetch()'s own rejection is a network failure.
+    // ut-docs#5335: per-leg timer, started here so the PIN retry's clock
+    // starts at the PIN submit. No AbortController (old WebView): no timeout.
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = null, timedOut = false;
+    function stopTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
+    function tagNet(e) {
+      stopTimer();
       if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
       var n = new Error(String(e));
       n.utNetworkError = true;
       throw n;
+    }
+    if (ctl) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      signal: ctl ? ctl.signal : undefined
+    }).catch(function (e) {
+      // ut-docs#5298: only fetch()'s own rejection is a network failure
+      // (an abort from the #5335 timer included).
+      tagNet(e);
     }).then(function (r) {
+      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; throw t; }
       // Clear the busy state before every outcome (close, re-prompt,
       // redirect) — on the re-prompt branch only once its body is read, so
       // a second tap can't start a parallel retry in the gap (#5291 review).
@@ -3132,14 +3169,16 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // renders its {code,message} error OBJECT directly, showing the
       // literal string "[object Object]" instead of a way back to sign in.
       // One fix here covers every utPostWithElevation caller.
-      if (r.status === 401) { close(); ended = true; resolveAll(); window.location.href = '/login'; return; }
+      if (r.status === 401) { stopTimer(); close(); ended = true; resolveAll(); window.location.href = '/login'; return; }
       var cd = r.headers.get('Content-Disposition') || '';
       var ct = r.headers.get('Content-Type') || '';
       if (cd.indexOf('attachment') === -1 && ct.indexOf('text/html') !== -1) {
         // Read the body ONLY here, and only decide what to do with it
         // afterward — never also hand `r` to onDone from this branch (its
         // body is already consumed by the time showDialog resolves).
-        return r.text().then(function (html) {
+        // The timer keeps running across this small body read (#5335).
+        return r.text().catch(tagNet).then(function (html) {
+          stopTimer();
           if (settle) settle();
           // A re-prompt means the action was NOT done. If the operator's
           // dialog was closed — or removed/replaced by another prompt — by
@@ -3157,6 +3196,9 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
           }
         });
       }
+      // Cleared BEFORE onDone: a caller's own body read (export blob) must
+      // never be aborted by the prompt timeout (#5335).
+      stopTimer();
       close();
       doneOnce(r);
     });

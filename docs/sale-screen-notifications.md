@@ -54,6 +54,10 @@ It is the pattern for any admin page's message spot from here on — see
    the action may or may not have run). It is sticky: the self-heal does not
    hide it and a later generic network alert does not overwrite it; only ✕,
    a server error or an explicit new message clears it.
+   A prompt form's request gets a client timeout (`utPromptTimeoutMs()`,
+   30 s, set on `htmx:configRequest`); its `htmx:timeout` is handled as
+   `htmx:sendError` (ut-docs#5335). No other htmx request has a timeout.
+   `utPostWithElevation` aborts each leg the same way after the same time.
    Before #213 a failed request surfaced nothing at all.
 3. **A response fragment that IS a notice** (ut-docs#238):
    `httpx.RenderNotice(w, locale, level, key, extra...)` writes the markup
