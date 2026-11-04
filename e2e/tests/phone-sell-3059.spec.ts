@@ -208,12 +208,8 @@ test.describe('phone sale screen (ut-docs#3059)', () => {
     const logo = (await page.locator('.nav .logo').boundingBox())!;
     const search = (await page.locator('.products-strip-search').boundingBox())!;
     expect(logo.x + logo.width).toBeLessThanOrEqual(search.x);
-    const input = page.locator('#products-search');
-    // ut-docs#5483: the search button is visible before Alpine (loaded with
-    // `defer`) binds its @click, so a tap in that gap is lost. Alpine drops
-    // x-cloak from the field when it initialises the component: wait for it.
-    await expect(input).not.toHaveAttribute('x-cloak', /.*/);
     await page.locator('.products-strip-search').click();
+    const input = page.locator('#products-search');
     await expect(input).toBeFocused();
     const ib = (await input.boundingBox())!;
     expect(ib.y, 'the field is under the bar, not over it').toBeGreaterThanOrEqual(nav.y + nav.height);
