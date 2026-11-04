@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -17,6 +18,11 @@ import (
 
 const pmMoveID = "0b1c7e52-6a58-4f0e-9d3e-2f5f1f6a7b01"
 
+// pmExpires is relative to the run: enroll drops a pending move 24 h past
+// its expiry on the real clock, so a fixed date turned main red at
+// 2026-11-04T09:30Z (ut-docs#5456).
+var pmExpires = time.Now().UTC().Add(6 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
+
 func pendingMovesCloud(t *testing.T, status int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +30,7 @@ func pendingMovesCloud(t *testing.T, status int) *httptest.Server {
 			"directives": []any{},
 			"pending_moves": []any{map[string]any{
 				"move_id": pmMoveID, "source_store": "store-1", "target_store": "store-t",
-				"target_name": "Corner Café", "nonce": "bm9uY2U", "expires_at": "2026-11-03T09:30:00Z",
+				"target_name": "Corner Café", "nonce": "bm9uY2U", "expires_at": pmExpires,
 			}},
 		}
 		if status == http.StatusPaymentRequired {

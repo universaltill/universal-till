@@ -119,6 +119,11 @@ RFC3339. All three uses (the signed approval, the stub cloud's reply,
 MoveCapable TTL test stubs `moveNow`, and 11 tests failed on `main`. It got
 the same fix (approved by the same reviewer), and `go test -race
 ./internal/enroll/` passes.
+A local full `go test ./...` then found the same fixed date in
+`internal/cloudsync/pending_moves_5127_test.go`
+(`TestPushSyncCarriesPendingMovesOn200And402`). It got the same fix, and
+`go test ./internal/cloudsync/` passes. `internal/plugins` hit the local
+10 m default timeout only (that CI leg is green).
 
 The docs-shots surface hash was refreshed with
 `update-docs-shots-surface-hash.sh`, because every surface change here is
