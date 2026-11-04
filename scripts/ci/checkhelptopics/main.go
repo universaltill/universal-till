@@ -48,22 +48,8 @@ func main() {
 	}
 
 	fail := false
-	for _, locale := range locales {
-		// MissingTranslations reports every topic id as missing for a
-		// locale it has never even seen a file for (a nil map lookup),
-		// which is exactly what we want here: a locale whose whole
-		// web/help/<locale>/ directory got deleted must fail this check,
-		// not just one that's merely incomplete. The locale set itself
-		// therefore has to come from the product's real shipped-locale
-		// registry (web/locales/*.json — the same one guard-i18n.sh
-		// enforces web/locales parity against), NOT from lib.Locales(),
-		// which only lists locales that already have at least one topic
-		// file loaded and so is blind to a locale with zero.
-		missing := lib.MissingTranslations(locale)
-		if len(missing) > 0 {
-			fail = true
-			fmt.Fprintf(os.Stderr, "guard-help-topics: locale %q is missing manual topics: %v\n", locale, missing)
-		}
+	for _, w := range translationWarnings(lib, locales) {
+		fmt.Fprintln(os.Stderr, w)
 	}
 
 	// Page-route coverage: every user-facing page must have a claiming topic
@@ -96,7 +82,7 @@ func main() {
 	if fail {
 		os.Exit(1)
 	}
-	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete, every page route has a claiming topic, every helpLink id is a real topic")
+	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, English is the required locale, every page route has a claiming topic, every helpLink id is a real topic")
 }
 
 // manualOnlyLocales are locales whose USER MANUAL (web/help/<locale>) is
@@ -137,4 +123,19 @@ func shippedLocales() ([]string, error) {
 	}
 	sort.Strings(locales)
 	return locales, nil
+}
+
+// translationWarnings reports, per locale, the topics English has that the
+// locale lacks. Warning only, never a failure (ADR-0160 section 2: code merges
+// with English only; other locales arrive via Weblate/signed bundles).
+// MissingTranslations reports every topic as missing for a locale with no
+// files at all, so the locale set comes from shippedLocales(), not the library.
+func translationWarnings(lib *manual.Library, locales []string) []string {
+	var out []string
+	for _, locale := range locales {
+		if missing := lib.MissingTranslations(locale); len(missing) > 0 {
+			out = append(out, fmt.Sprintf("guard-help-topics: warning (non-blocking): locale %q is missing manual topics: %v", locale, missing))
+		}
+	}
+	return out
 }

@@ -127,7 +127,7 @@ jobs:
           cat "$RUN_OUTPUT"
           cat "$RUN_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          if [ "$status" -ne 0 ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+          if [ "$status" -ne 0 ] && grep -q "have drifted from core" "$RUN_OUTPUT"; then
             # Pull the "pack(s) needing a follow-up PR" block the script
             # prints on failure (see check-lang-pack-drift.sh) into the
             # annotation text itself, so the author sees exactly which
@@ -158,13 +158,12 @@ jobs:
             # changed tab (where the author is already looking, having just
             # touched en.json) with zero extra permissions -- keeps
             # `contents: read` intact, no `pull-requests: write` needed.
-            echo "::warning file=web/locales/en.json::${MSG} -- see the job summary for the exact keys. Advisory on this PR; this WILL block main after merge."
+            echo "::warning file=web/locales/en.json::${MSG} -- see the job summary for the exact keys. Advisory everywhere (ADR-0160 section 2: code merges with English only; packs catch up via Weblate)."
             # Advisory means advisory: force the check itself green on a PR
             # run regardless of what the script found. This is the actual
             # non-blocking mechanism (see the `on:` comment above for why
-            # `continue-on-error` alone doesn't do this) -- push/
-            # workflow_dispatch never reach this branch, so main stays
-            # blocking, unchanged.
+            # `continue-on-error` alone doesn't do this) -- on push too (ADR-0160 section 2). Only the script's drift
+            # verdict is downgraded; a script/bash error still fails.
             status=0
           fi
           rm -f "$RUN_OUTPUT"

@@ -56,7 +56,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
 ## API, formats, i18n
 - Responses `{ "data": …, "error": null }`; JSON snake_case; ISO-8601 dates.
 - No hardcoded user-facing strings: templates use `{{ T "key" }}`, and every
-  key exists in every `web/locales/*.json` (en.json is the base) —
+  key exists in `web/locales/en.json` (the only required locale; code PRs
+  add English only, other languages come from Weblate, ADR-0160 §2) —
   `scripts/ci/guard-i18n.sh`. Go-side menu labels are `nav.*` keys.
 - Every `en.json` key has metadata in `web/i18n-meta/en.meta.json`:
   `description` and `review` (`legal`|`standard`) required, `placeholders`
@@ -174,7 +175,7 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     of `internal/db` only `lock_unix.go` triggers it; ut-docs#5279).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
-    real on PRs; exceptions in `e2e/tests-i18n-audit/allowlist.json`;
+    real on PRs (push: report only, ADR-0160); exceptions in `e2e/tests-i18n-audit/allowlist.json`;
     `UT_LOCALE_AUDIT_STRICT=1` (`scripts/ci/audit-locale-render.sh`) makes a
     missing pack checkout a hard failure, not a skip (#2300).
 - Feature branch; review record in `docs/code-reviews/<date>-<topic>.md`;
@@ -195,9 +196,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   new page needs a topic claiming its `routes:` and a `?` link; a section
   inside a claimed page uses `{{ helpLink "topic-id" }}`.
   `guard-help-topics.sh` checks route coverage and topic consistency;
-  `guard-help-drift.sh` fails when a translation's structure drifts from
-  English unless recorded in
-  `scripts/ci/i18n-baseline/help-drift-baseline.json` (#1962).
+  `guard-help-drift.sh` only warns when a translation drifts from English
+  (English-only help topics merge; translations come via Weblate, ADR-0160).
   `guard-help-breadcrumbs.sh`: a translated `Settings → X` breadcrumb must use
   the locale's own label for that section; shrink-only baseline
   `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696).
