@@ -144,3 +144,19 @@ func TestRenderBody_RTLAndLongUnicode(t *testing.T) {
 		t.Errorf("RTL bold lost: %q", got)
 	}
 }
+
+func TestParseLink_OnlySafeLinksSurviveTheStore(t *testing.T) {
+	if l := ParseLink(`{"kind":"route","target":"/settings"}`); l == nil || l.Target != "/settings" {
+		t.Fatalf("route link = %v", l)
+	}
+	if l := ParseLink(`{"kind":"https","target":"https://universaltill.com/x","label":"More"}`); l == nil {
+		t.Fatal("https link to the allow-listed host must survive")
+	}
+	for _, bad := range []string{"", "{", `{"kind":"https","target":"http://universaltill.com/x"}`,
+		`{"kind":"https","target":"javascript:alert(1)"}`, `{"kind":"route","target":"//evil.example"}`,
+		`{"kind":"https","target":"https://evil.example/"}`, `{"kind":"https","target":"https://u:p@universaltill.com/"}`} {
+		if l := ParseLink(bad); l != nil {
+			t.Errorf("ParseLink(%q) = %v, want nil", bad, l)
+		}
+	}
+}

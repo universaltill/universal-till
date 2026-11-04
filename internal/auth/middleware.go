@@ -511,6 +511,9 @@ var shellGetPaths = map[string]bool{
 	"/ui/theme-sync":           true,
 	"/ui/session-chip":         true,
 	"/ui/bugreport-chip":       true,
+	"/notices/bell":            true, // ADR-0176, ut-docs#5366
+	"/notices/strip":           true,
+	"/notices/toast":           true,
 	"/ui/cloud-auth-chip":      true,
 	"/ui/report-archive-chip":  true,
 	"/ui/disk-space-chip":      true,

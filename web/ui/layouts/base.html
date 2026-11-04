@@ -1620,6 +1620,13 @@
          fallback for whatever isn't caught by a more specific handler
          first. -->
     {{ template "pos_alert" . }}
+    {{/* ADR-0176 (ut-docs#5366): the critical-notice strip. In flow at the top
+         of the main region on every page, never an overlay, never blocks
+         checkout. The mount is a persistent polite live region (so the strip
+         is announced when it appears) and is empty unless the flag is on and
+         a critical platform notice is unacknowledged; GET /notices/strip
+         reads local data only. Cashiers see it read-only. */}}
+    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
     <main class="container">{{ template "content" . }}</main>
     <!-- Screen readers hear a CHANGE of link state, not every poll: the
          script below copies the chip's text here only when its

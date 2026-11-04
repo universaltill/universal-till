@@ -8,6 +8,7 @@ package cloudnotice
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -340,4 +341,21 @@ func WireLang(l string) string {
 		return "en-gb"
 	}
 	return l
+}
+
+// SafeLink re-checks a link at render time (defence in depth: the stored
+// JSON is only ever turned into an <a> through this).
+func SafeLink(l Link) bool { return checkLink(l) == nil }
+
+// ParseLink decodes a stored link_json; nil for none or one that is no
+// longer safe.
+func ParseLink(raw string) *Link {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var l Link
+	if err := json.Unmarshal([]byte(raw), &l); err != nil || !SafeLink(l) {
+		return nil
+	}
+	return &l
 }

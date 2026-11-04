@@ -21,6 +21,12 @@
   <button type="button" class="nav-drawer-toggle" aria-expanded="false" aria-controls="nav-drawer"
           aria-label="{{ T "nav.drawer.open" }}" data-label-open="{{ T "nav.drawer.open" }}" data-label-close="{{ T "nav.drawer.close" }}">
     <span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span>
+    {{/* ADR-0176 (ut-docs#5366): the unread-notices badge on the phone's ☰
+         (the bell itself is a row of #nav-drawer below). Filled out of band by
+         GET /notices/bell; hidden and empty unless there is something unread
+         and the operator may see notices. Decorative: the count is spoken via
+         the button's label (app.js notices block). */}}
+    <span id="notices-burger-badge" class="notices-badge notices-badge-burger" aria-hidden="true" hidden></span>
   </button>
   {{/* ut-docs#3352 / ADR-0137: one shell Back, on every page but Sell (the
        root). Outside #nav-drawer so the phone bar always shows it; on the
@@ -105,6 +111,14 @@
     {{- end }}
   </div>
   <div class="nav-right">
+    {{/* Notices bell (ADR-0176, ut-docs#5366; UX spec: bell in the status
+         group, above Help and Sync). Same htmx-after-render mount as the chips
+         below: nav.html has no per-request data, GET /notices/bell does the
+         flag and notices.view gating and answers an empty body for anyone who
+         may not see it. Local data only; refreshed when the inbox changes. Not hx-preserve:
+         it re-loads on every page so the phone burger badge (out of band) is
+         always current. */}}
+    <span id="notices-bell" hx-get="/notices/bell" hx-trigger="load, every 30s, notices-changed from:body"></span>
     <!-- Contextual help: resolves to the manual topic documenting THIS page
          (route → topic comes from the topics' own front matter), falling back
          to the manual's index when nothing claims the route yet.
