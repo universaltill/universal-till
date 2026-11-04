@@ -400,8 +400,9 @@ var adminTables = []adminTable{
 // reviewer of a future migration, and several tables share one.
 var nonAdminTables = map[string]string{
 	// Already named in this var's own top comment above.
-	"sessions":    "till-local login sessions — meaningless off the issuing till",
-	"item_images": "item photos — files don't travel over this bundle (D2 limit)",
+	"cloud_notices": "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
+	"sessions":      "till-local login sessions — meaningless off the issuing till",
+	"item_images":   "item photos — files don't travel over this bundle (D2 limit)",
 
 	// Migration runner's own bookkeeping (created by internal/db's migrator,
 	// not a numbered migration file itself) — which migrations have applied
@@ -768,6 +769,9 @@ const BackupRetentionDaysSettingsKey = "backup.retention_days"
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
 	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey, BackupRetentionDaysSettingsKey,
+	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
+	// this till's own (each device pulls and tracks read state for itself).
+	"notices.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is

@@ -161,7 +161,6 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
-		unread, _, _ := repo().UnreadCount(r.Context(), now)
 		canAck := noticesCanAcknowledge(d, r)
 		rows := make([]noticeRowView, 0, len(list))
 		for _, n := range list {
@@ -172,6 +171,8 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 			}
 			rows = append(rows, newNoticeRow(n, open, canAck, tabName))
 		}
+		// After the open-by-link above, so the tab's count matches the bell.
+		unread, _, _ := repo().UnreadCount(r.Context(), now)
 		httpx.Render("ui/pages/notices.html", map[string]any{
 			"title":     httpx.T(locale(r), "page.title.notices"),
 			"theme":     d.CurrentState().Theme,

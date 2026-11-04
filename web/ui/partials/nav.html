@@ -118,7 +118,7 @@
          may not see it. Local data only; refreshed when the inbox changes. Not hx-preserve:
          it re-loads on every page so the phone burger badge (out of band) is
          always current. */}}
-    <span id="notices-bell" hx-get="/notices/bell" hx-trigger="load, every 30s, notices-changed from:body"></span>
+    <span id="notices-bell" hx-swap="innerHTML" hx-get="/notices/bell" hx-trigger="load, every 30s, notices-changed from:body"></span>
     <!-- Contextual help: resolves to the manual topic documenting THIS page
          (route → topic comes from the topics' own front matter), falling back
          to the manual's index when nothing claims the route yet.

@@ -1626,7 +1626,7 @@
          is announced when it appears) and is empty unless the flag is on and
          a critical platform notice is unacknowledged; GET /notices/strip
          reads local data only. Cashiers see it read-only. */}}
-    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
+    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
     <main class="container">{{ template "content" . }}</main>
     <!-- Screen readers hear a CHANGE of link state, not every poll: the
          script below copies the chip's text here only when its

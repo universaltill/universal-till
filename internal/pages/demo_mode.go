@@ -172,6 +172,18 @@ var demoDeniedRoutes = map[string]bool{
 	// channel; the pages are shop data a public visitor has no use for.
 	"GET /channel-orders":      true,
 	"GET /channel-orders/{id}": true,
+	// Notices from Universal Till and partners (ADR-0176, ut-docs#5366): a
+	// demo till is not registered with the cloud and has nothing to receive;
+	// the switch and every route stay out of a public demo.
+	"GET /notices":               true,
+	"GET /notices/bell":          true,
+	"GET /notices/strip":         true,
+	"GET /notices/toast":         true,
+	"GET /notices/{id}/row":      true,
+	"POST /notices/{id}/read":    true,
+	"POST /notices/{id}/dismiss": true,
+	"POST /notices/{id}/ack":     true,
+	"POST /api/settings/notices": true,
 	// Plugins: install, update, side-load, rollback, enable/disable, trust and
 	// permission grants, the plugin store, plugin-owned
 	// pages/settings/actions (plugin settings can take endpoints) and the

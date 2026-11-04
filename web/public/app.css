@@ -7439,7 +7439,10 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
   min-block-size: 44px; display: inline-flex; align-items: center; margin-block: -11px;
   padding-inline: .3rem; }
 .pos-notice .strip-ack, .pos-notice.strip .btn { min-block-size: 44px; margin-block: -8px; }
-/* The critical strip: one line at the top of the main region, full width. */
+/* The critical strip: one line at the top of the main region, full width; a
+   long title keeps to two lines on a phone (the inbox has the full text). */
+.pos-notice.strip .notice-text b { display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
 .notices-strip-mount:empty { display: none; }
 .pos-notice.strip { border-radius: 0; border-inline-width: 0; border-block-start-width: 0;
   margin: 0; padding-block: .35rem; }
@@ -7458,7 +7461,7 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
 
 /* Bell + unread badge. */
 #notices-bell:empty { display: none; }
-.notices-badge { position: absolute; inset-block-start: -.35rem; inset-inline-end: -.5rem;
+.notices-badge { position: absolute; inset-block-start: -.5rem; inset-inline-end: -.85rem;
   min-inline-size: 22px; block-size: 22px; padding: 0 5px; border-radius: 11px;
   background: #fff; color: #0f172a; border: 2px solid var(--brand);
   font-size: .78rem; font-weight: 800; line-height: 1;

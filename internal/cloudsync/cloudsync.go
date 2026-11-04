@@ -67,6 +67,14 @@ func init() {
 	// later; the poll stays as the NAT-safe fallback.
 	tickIntervalNS.Store(int64(2 * time.Minute))
 	firstDelayNS.Store(int64(15 * time.Second))
+	// UT_TEST_CLOUDSYNC_TICK_MS (e2e harness only -- never set on a real
+	// till, like UT_TEST_I18N_OVERLAY_DIR): a throwaway till that talks to a
+	// fake cloud checks in every N ms (200 minimum) so a spec can watch a
+	// notice arrive without waiting two minutes (ut-docs#5366).
+	if ms, err := strconv.Atoi(os.Getenv("UT_TEST_CLOUDSYNC_TICK_MS")); err == nil && ms >= 200 {
+		tickIntervalNS.Store(int64(ms) * int64(time.Millisecond))
+		firstDelayNS.Store(int64(ms) * int64(time.Millisecond))
+	}
 }
 
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }

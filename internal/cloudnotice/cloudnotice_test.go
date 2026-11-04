@@ -54,7 +54,11 @@ func TestValidate_RefusesBadItems(t *testing.T) {
 		"link unknown route":  func(i *Item) { i.Link = &Link{Kind: "route", Target: "/api/danger"} },
 		"link route external": func(i *Item) { i.Link = &Link{Kind: "route", Target: "//evil.example"} },
 		"link unknown kind":   func(i *Item) { i.Link = &Link{Kind: "tel", Target: "123"} },
-		"partner link":        func(i *Item) { i.Sender.Kind = "partner"; i.Sender.Name = "Acme"; i.Link = &Link{Kind: "https", Target: "https://a.example"} },
+		"partner link": func(i *Item) {
+			i.Sender.Kind = "partner"
+			i.Sender.Name = "Acme"
+			i.Link = &Link{Kind: "https", Target: "https://a.example"}
+		},
 	}
 	for name, mut := range cases {
 		it := validItem()
