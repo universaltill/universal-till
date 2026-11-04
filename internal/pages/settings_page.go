@@ -1479,6 +1479,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "paired", map[string]any{"store_id": status.StoreID})
+		// No new Next steps card here (ut-docs#5333, design-5058 N5): a till with
+		// its own history keeps its staff/PINs, devices, stock and products, so
+		// every line would be false. Only a card the wizard deferred (its cloud
+		// commit failed on a brand-new till) is promoted.
+		promoteDeferredNextSteps(r.Context(), d)
 		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
 		fmt.Fprintf(w, `<span>✅ %s <code>%s</code></span>`,
 			html.EscapeString(httpx.T(locale, "settings.enrol.pair_success")), html.EscapeString(status.StoreID))
