@@ -75,7 +75,7 @@ func TestCloudSetTillSetting_3390_ValidValuesApply(t *testing.T) {
 		{common.KeyLocale, "tr", "tr"},
 	}
 	for _, c := range cases {
-		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value)
+		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value, nil)
 		if err != nil {
 			t.Fatalf("%s=%q: %v", c.key, c.value, err)
 		}
@@ -106,8 +106,8 @@ func TestCloudSetTillSetting_3390_InvalidValuesRefusedWithReason(t *testing.T) {
 		{common.KeyIdleLock, "-1", "0 and 480"},
 		{common.KeyIdleLock, "481", "0 and 480"},
 		{common.KeyIdleLock, "ten", "0 and 480"},
-		{common.KeyKioskPaymentMode, "card", "kiosk or counter"},
-		{common.KeyKioskPaymentMode, "", "kiosk or counter"},
+		{common.KeyKioskPaymentMode, "card", "one of kiosk, counter"},
+		{common.KeyKioskPaymentMode, "", "one of kiosk, counter"},
 		{common.KeyLocale, "xx", "not installed"},
 		{common.KeyLocale, "", "not installed"},
 		{common.KeyStaffLocales, "", "at least one"},
@@ -117,7 +117,7 @@ func TestCloudSetTillSetting_3390_InvalidValuesRefusedWithReason(t *testing.T) {
 	}
 	for _, c := range cases {
 		before, beforeOK, _ := dp.Settings.Get(ctx, c.key)
-		_, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value)
+		_, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value, nil)
 		if err == nil {
 			t.Fatalf("%s=%q: want a refusal, got nil", c.key, c.value)
 		}
@@ -140,7 +140,7 @@ func TestCloudSetTillSetting_3390_ReadOnlyKeysRefused(t *testing.T) {
 		if allowedRemoteTillSettingKeys[key] {
 			t.Fatalf("%s is read-only from my. (ut-docs#3390) but whitelisted", key)
 		}
-		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x"); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x", nil); err == nil {
 			t.Fatalf("%s: want a refusal", key)
 		}
 	}
@@ -171,7 +171,7 @@ func TestCloudSetTillSetting_3390_AdditionalTillRefuses(t *testing.T) {
 			t.Fatalf("%s: expected shop-wide", key)
 		}
 		before, _, _ := dp.Settings.Get(ctx, key)
-		if _, err := cloudSetTillSetting(ctx, dp, nil, key, v); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, key, v, nil); err == nil {
 			t.Fatalf("%s on an additional till: want a refusal", key)
 		}
 		if after, _, _ := dp.Settings.Get(ctx, key); after != before {
@@ -193,7 +193,7 @@ func TestCloudSetTillSetting_3390_SideEffects(t *testing.T) {
 	if _, err := repo.EnabledBarcodeSymbologies(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, rederive, data.BarcodeEnabledSymbologiesKey, `["CODE39"]`); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, rederive, data.BarcodeEnabledSymbologiesKey, `["CODE39"]`, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := repo.EnabledBarcodeSymbologies(ctx); !slices.Equal(got, []string{"CODE39"}) {
@@ -206,7 +206,7 @@ func TestCloudSetTillSetting_3390_SideEffects(t *testing.T) {
 	if err := dp.Settings.Set(ctx, common.KeyLocaleGeneration, "4"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, rederive, common.KeyLocale, "fa"); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, rederive, common.KeyLocale, "fa", nil); err != nil {
 		t.Fatal(err)
 	}
 	if v, _, _ := dp.Settings.Get(ctx, common.KeyLocaleConfirmed); v != "true" {
@@ -236,7 +236,7 @@ func TestCloudSetTillSetting_3390_StateKeysTakeLiveEffect(t *testing.T) {
 		common.KeyAllowNegativeInventory: "true",
 		common.KeyKioskPaymentMode:       "counter",
 	} {
-		if _, err := cloudSetTillSetting(ctx, d, rederive, key, v); err != nil {
+		if _, err := cloudSetTillSetting(ctx, d, rederive, key, v, nil); err != nil {
 			t.Fatalf("%s: %v", key, err)
 		}
 	}
@@ -362,7 +362,7 @@ func TestCloudSetTillSetting_3390_AppliedIsAuditedRefusedIsNot(t *testing.T) {
 		{common.KeyLocale, "xx"},
 	}
 	for _, r := range refused {
-		if _, err := cloudSetTillSetting(ctx, dp, nil, r.key, r.value); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, r.key, r.value, nil); err == nil {
 			t.Fatalf("%s=%q: want refusal", r.key, r.value)
 		}
 	}
@@ -377,7 +377,7 @@ func TestCloudSetTillSetting_3390_AppliedIsAuditedRefusedIsNot(t *testing.T) {
 		{common.KeyLocale, "tr", "", "tr"},
 	}
 	for _, a := range applied {
-		if _, err := cloudSetTillSetting(ctx, dp, nil, a.key, a.value); err != nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, a.key, a.value, nil); err != nil {
 			t.Fatalf("%s=%q: %v", a.key, a.value, err)
 		}
 	}

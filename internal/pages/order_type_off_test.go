@@ -56,7 +56,7 @@ func TestOrderTypePromptSettingsEndpoint_AcceptsOff(t *testing.T) {
 func TestCloudSetTillSetting_AcceptsOrderTypeOff(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	setOrderTypeMode(t, "top")
-	if _, err := cloudSetTillSetting(t.Context(), dp, nil, data.OrderTypePromptModeKey, data.OrderTypePromptModeOff); err != nil {
+	if _, err := cloudSetTillSetting(t.Context(), dp, nil, data.OrderTypePromptModeKey, data.OrderTypePromptModeOff, nil); err != nil {
 		t.Fatalf("cloud set %s=off: %v", data.OrderTypePromptModeKey, err)
 	}
 	if v, _, _ := dp.Settings.Get(t.Context(), data.OrderTypePromptModeKey); v != data.OrderTypePromptModeOff {

@@ -29,7 +29,7 @@ ifneq ($(UT_MARKETPLACE_KEY_HEX),)
 LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX)
 endif
 
-.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees
+.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees gen-settings-registry
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -39,6 +39,11 @@ run: build
 
 test:
 	go test ./...
+
+# The till settings registry artefact ut-cloud pins (ut-docs#5349). A data
+# test fails when the committed file is stale.
+gen-settings-registry:
+	go run ./cmd/gen-settings-registry
 
 # internal/pages' own -race runtime sits with no margin against (or past)
 # the plain `go test` 600s per-package default (ut-docs#648) — this package

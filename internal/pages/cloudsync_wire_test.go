@@ -826,7 +826,7 @@ func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
 	withRealLocales(t)
 	covered := map[string]bool{}
 	for _, c := range cases {
-		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value)
+		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value, nil)
 		if err != nil {
 			t.Fatalf("%s=%q: %v", c.key, c.value, err)
 		}
@@ -866,7 +866,7 @@ func TestCloudSetTillSetting_RejectsNonWhitelistedKeysWithoutWriting(t *testing.
 		"",                                 // blank
 		" " + keyReceiptFooter,             // exact names only, no trimming games
 	} {
-		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x"); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x", nil); err == nil {
 			t.Fatalf("key %q: want a refusal, got nil", key)
 		}
 		if v, ok, _ := dp.Settings.Get(ctx, key); ok && v == "x" {
@@ -897,7 +897,7 @@ func TestCloudSetTillSetting_ValidatesValuesLikeTheLocalForms(t *testing.T) {
 		{data.SaleDisplayNoSchemeKey, "monthly"},
 		{data.SaleDisplayNoSchemeKey, ""},
 	} {
-		if _, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value, nil); err == nil {
 			t.Fatalf("%s=%q: want a validation error, got nil", c.key, c.value)
 		}
 		if v, ok, _ := dp.Settings.Get(ctx, c.key); ok && v == c.value {
@@ -906,7 +906,7 @@ func TestCloudSetTillSetting_ValidatesValuesLikeTheLocalForms(t *testing.T) {
 	}
 	// Boundary values the local form accepts.
 	for _, v := range []string{"0", "600"} {
-		if _, err := cloudSetTillSetting(ctx, dp, nil, common.KeyKioskIdleReset, v); err != nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, common.KeyKioskIdleReset, v, nil); err != nil {
 			t.Fatalf("%s=%q: %v", common.KeyKioskIdleReset, v, err)
 		}
 	}
@@ -922,13 +922,13 @@ func TestCloudSetTillSetting_ReceiptPolicyFreeForGermany(t *testing.T) {
 	if err := dp.Settings.Set(ctx, keyStoreCountry, "DE"); err != nil {
 		t.Fatalf("set country: %v", err)
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask"); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask", nil); err != nil {
 		t.Fatalf("DE shop: 'ask' must save now the lock is removed: %v", err)
 	}
 	if v, ok, _ := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); !ok || v != "ask" {
 		t.Fatalf("DE shop: 'ask' must actually be written, got %q (ok=%v)", v, ok)
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "always"); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "always", nil); err != nil {
 		t.Fatalf("DE shop: 'always' must still save: %v", err)
 	}
 }
@@ -941,14 +941,14 @@ func TestCloudSetTillSetting_RederivesState(t *testing.T) {
 	ctx := t.Context()
 	rederived := 0
 	rederive := func(context.Context) { rederived++ }
-	if _, err := cloudSetTillSetting(ctx, dp, rederive, common.KeyKioskIdleReset, "75"); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, rederive, common.KeyKioskIdleReset, "75", nil); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	if rederived != 1 {
 		t.Fatalf("rederive called %d times, want 1", rederived)
 	}
 	// A refused write must NOT re-derive (nothing changed).
-	if _, err := cloudSetTillSetting(ctx, dp, rederive, keyPrinterAddress, "x"); err == nil {
+	if _, err := cloudSetTillSetting(ctx, dp, rederive, keyPrinterAddress, "x", nil); err == nil {
 		t.Fatalf("want refusal")
 	}
 	if rederived != 1 {
@@ -990,7 +990,7 @@ func TestCloudSetTillSetting_OrderTypePromptModeLiveRepublishes(t *testing.T) {
 		return rec.Body.String()
 	}
 
-	if _, err := cloudSetTillSetting(t.Context(), dp, nil, data.OrderTypePromptModeKey, data.OrderTypePromptModeAtPay); err != nil {
+	if _, err := cloudSetTillSetting(t.Context(), dp, nil, data.OrderTypePromptModeKey, data.OrderTypePromptModeAtPay, nil); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 	if !strings.Contains(get(), `data-order-type-prompt-mode="at_pay"`) {
@@ -1068,10 +1068,10 @@ func TestBuildCloudHooks_WiresTillSettings(t *testing.T) {
 	if hooks.SetTillSetting == nil {
 		t.Fatalf("SetTillSetting hook not wired")
 	}
-	if _, err := hooks.SetTillSetting(ctx, keyPrinterAddress, "x"); err == nil {
+	if _, err := hooks.SetTillSetting(ctx, keyPrinterAddress, "x", nil); err == nil {
 		t.Fatalf("wired SetTillSetting must enforce the whitelist")
 	}
-	if _, err := hooks.SetTillSetting(ctx, keyReceiptFooter, "Thanks"); err != nil {
+	if _, err := hooks.SetTillSetting(ctx, keyReceiptFooter, "Thanks", nil); err != nil {
 		t.Fatalf("wired SetTillSetting: %v", err)
 	}
 	if v, _, _ := dp.Settings.Get(ctx, keyReceiptFooter); v != "Thanks" {
