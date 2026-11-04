@@ -1,5 +1,16 @@
 package com.universaltill.pos
 
+/** ut-docs#5436 / ADR-0179: the verdict on an APK about to go to the installer. */
+sealed interface ApkCheck {
+    /** Pinned signer matched. */
+    data class Accept(val digest: String) : ApkCheck
+
+    /** Dormant: no pin compiled in (package and version checks still passed). */
+    object AcceptUnpinned : ApkCheck
+
+    data class Refuse(val reason: String) : ApkCheck
+}
+
 /**
  * The pure decisions behind the in-app Android update (ut-docs#1541,
  * ut-docs#4312). No Android types on purpose: [MainActivity] supplies the
@@ -118,6 +129,47 @@ object UpdateLogic {
     ): Long {
         if (enqueuedWallMs == null || enqueuedWallMs > nowWallMs) return nowElapsedMs
         return nowElapsedMs - (nowWallMs - enqueuedWallMs)
+    }
+
+    /** ut-docs#5436: the pin set compiled into BuildConfig.APK_SIGNER_SHA256S ("" = dormant). */
+    fun parsePinSet(raw: String): Set<String> =
+        raw.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+
+    /** Lowercase hex SHA-256 of [der] (a certificate's DER bytes = Signature.toByteArray()). */
+    fun sha256Hex(der: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(der).joinToString("") { "%02x".format(it) }
+
+    /**
+     * ut-docs#5436 / ADR-0179: whether the APK about to go to the installer
+     * may go. The first failing rule wins; its reason is logged and passed to
+     * failUpdate. Package and version are checked even when dormant.
+     * [signerHistory] (API 28+, single signer only) is the rotation lineage.
+     */
+    fun checkUpdateApk(
+        archivePackage: String?,
+        ownPackage: String,
+        archiveVersionCode: Long?,
+        installedVersionCode: Long,
+        signerDigests: List<String>?,
+        pins: Set<String>,
+        signerHistory: List<String>? = null,
+    ): ApkCheck {
+        if (archivePackage == null) return ApkCheck.Refuse("not a readable APK")
+        if (archivePackage != ownPackage) return ApkCheck.Refuse("package $archivePackage, expected $ownPackage")
+        if (archiveVersionCode == null || archiveVersionCode <= installedVersionCode) {
+            return ApkCheck.Refuse("versionCode $archiveVersionCode not newer than $installedVersionCode")
+        }
+        if (pins.isEmpty()) return ApkCheck.AcceptUnpinned
+        if (signerDigests.isNullOrEmpty()) return ApkCheck.Refuse("signer unreadable")
+        if (signerDigests.size > 1) return ApkCheck.Refuse("multiple signers")
+        val d = signerDigests[0].lowercase()
+        if (d in pins) return ApkCheck.Accept(d)
+        // API 28+ key rotation: the platform-verified proof-of-rotation lineage
+        // (signingCertificateHistory) containing a pinned key means the pinned
+        // key vouched for this signer. Only reached for a single signer.
+        val ancestor = signerHistory?.map { it.lowercase() }?.firstOrNull { it in pins }
+        if (ancestor != null) return ApkCheck.Accept(ancestor)
+        return ApkCheck.Refuse("signer $d not pinned")
     }
 
     /** Whole percent of [done] over [total], or null when the total is unknown. */

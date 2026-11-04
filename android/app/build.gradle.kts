@@ -39,6 +39,29 @@ val updateApkUrlUniversal = updateApkUrlBase + "unitill-pos-android-latest.apk"
 // 32-bit package of the same release.
 val baseVersionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
 
+// ut-docs#5436 / ADR-0179: the APK signer certificates the in-app updater
+// accepts. From the committed apk-signer-sha256.txt; a build may override
+// with -PutApkSignerPins=<comma list> (driven tests with a test key; an
+// EMPTY value builds dormant). release.yml never overrides and checks each
+// built APK against the file (scripts/ci/check-apk-signer-pin.sh).
+val apkSignerPinsOverride = project.findProperty("utApkSignerPins") as String?
+val apkSignerPins: List<String> =
+    (
+        apkSignerPinsOverride?.split(',')
+            ?: file("apk-signer-sha256.txt").readLines().map { it.substringBefore('#') }
+    ).map { it.trim() }
+        .filter { it.isNotEmpty() }
+require(
+    apkSignerPins.size <= 4 &&
+        apkSignerPins.all { Regex("^[0-9a-f]{64}$").matches(it) } &&
+        apkSignerPins.toSet().size == apkSignerPins.size,
+) {
+    "APK signer pins (apk-signer-sha256.txt or -PutApkSignerPins) must be 0-4 distinct 64-lowercase-hex digests"
+}
+require(apkSignerPinsOverride != null || apkSignerPins.isNotEmpty()) {
+    "apk-signer-sha256.txt must list at least one digest (an empty pin set needs an explicit -PutApkSignerPins=)"
+}
+
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
@@ -65,6 +88,8 @@ android {
         // picks from by Build.SUPPORTED_ABIS[0]. Compile-time, never page input.
         buildConfigField("String", "UPDATE_APK_URL_ARM64", "\"$updateApkUrlArm64\"")
         buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
+        // ut-docs#5436 / ADR-0179: pinned APK signer certificate digests ("" = dormant).
+        buildConfigField("String", "APK_SIGNER_SHA256S", "\"${apkSignerPins.joinToString(",")}\"")
     }
 
     // ut-docs#1541: tasks are assemble{Arm64,Armv7,Universal}{Debug,Release}.
@@ -172,11 +197,17 @@ val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0
 // build (env/lazy-fetch key). verify-versions in release.yml fails a release
 // whose .so lacks it.
 val marketplaceKeyHex = System.getenv("UT_MARKETPLACE_KEY_HEX").orEmpty()
+// ADR-0178: the release-signing public keys (comma list, scripts/ci/
+// resolve-release-keys.sh); empty keeps the SHA-256-only updater check.
+val releaseKeysHex = System.getenv("UT_RELEASE_KEYS_HEX").orEmpty()
+require(Regex("^([0-9a-f]{64}(,[0-9a-f]{64}){0,3})?$").matches(releaseKeysHex)) {
+    "UT_RELEASE_KEYS_HEX must be empty or 1-4 comma-separated 64-hex keys"
+}
 val marketplaceKeyLdflag = if (marketplaceKeyHex.isEmpty()) "" else {
     require(Regex("^[0-9a-f]{64}$").matches(marketplaceKeyHex)) {
         "UT_MARKETPLACE_KEY_HEX must be 64 lowercase hex characters"
     }
-    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex"
+    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$releaseKeysHex"
 }
 
 // ADR-0160 §6: internal/buildinfo.BuildDate is the source commit's time, so a

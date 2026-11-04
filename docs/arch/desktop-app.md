@@ -130,7 +130,9 @@ without `--wait`, writes the submission id to the job summary (check it with
 (`NOTARY_TIMEOUT`, 45m in CI; job `timeout-minutes: 90`). Only status
 `Accepted` passes. `publish-release` does not need `macos-app`: Linux, Windows
 and Android go live first, and `macos-dmg-attach` attaches the `.dmg` (and
-folds its `checksums.txt` line, then re-verifies every asset) after publish,
+folds its `checksums.txt` line, re-signs it when release signing is armed
+(ADR-0178: `checksums.txt.sig` keeps its line, the new bytes get a second),
+then re-verifies every asset) after publish,
 only if `macos-app` succeeded. On a timeout or rejection `macos-app` fails
 loudly and nothing is attached — never an un-notarized `.dmg`. Recover with
 "Re-run failed jobs" on that run (never cancel a release); that builds and
