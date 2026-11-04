@@ -1,10 +1,5 @@
 package data
 
-import (
-	"encoding/json"
-	"slices"
-)
-
 // The typed till settings registry (ut-docs#5349, ADR-0175 amendment 13).
 // It is the AgentSettings catalogue (agent_settings.go) extended with
 // everything a remote caller needs to know about a key: its type and bounds,
@@ -13,7 +8,7 @@ import (
 // set_till_setting whitelist (RemoteWritableKeys), the heartbeat report
 // (pages.remoteTillSettingsReport) and the committed artefact
 // docs/till-settings-registry.json that ut-cloud consumes
-// (SettingsRegistryJSON; `make gen-settings-registry`). An entry with no valid
+// (cmd/gen-settings-registry; `make gen-settings-registry`). An entry with no valid
 // tier fails TestSettingsRegistry_EveryEntryHasATierAndType, so a key cannot
 // be added without a risk decision.
 
@@ -54,10 +49,6 @@ const (
 // this constant if it differs.
 const RegistryMinTillVersion = "0.36.0"
 
-// SettingsRegistryJSONPath is the committed artefact, relative to the repo
-// root.
-const SettingsRegistryJSONPath = "docs/till-settings-registry.json"
-
 // ValidSettingTier reports whether t is one of the four tiers.
 func ValidSettingTier(t string) bool {
 	switch t {
@@ -82,56 +73,3 @@ func RemoteWritableKeysOf(entries []AgentSetting) map[string]bool {
 
 // RemoteWritableKeys is RemoteWritableKeysOf the till's own registry.
 func RemoteWritableKeys() map[string]bool { return RemoteWritableKeysOf(AgentSettings) }
-
-// registryEntryJSON is one artefact row. No values, ever: the artefact is
-// the schema of the till's settings, not a shop's data.
-type registryEntryJSON struct {
-	Key                 string   `json:"key"`
-	Type                string   `json:"type"`
-	Tier                string   `json:"tier"`
-	Secret              bool     `json:"secret"`
-	Default             string   `json:"default"`
-	On                  string   `json:"on"`
-	Off                 string   `json:"off"`
-	Min                 *int     `json:"min"`
-	Max                 *int     `json:"max"`
-	Options             []string `json:"options"`
-	LabelKey            string   `json:"label_key"`
-	DescriptionKey      string   `json:"description_key"`
-	Region              string   `json:"region"`
-	MinTillVersion      string   `json:"min_till_version"`
-	Audit               string   `json:"audit"`
-	WritableByTillAgent bool     `json:"writable_by_till_agent"`
-	RemoteWritable      bool     `json:"remote_writable"`
-}
-
-// SettingsRegistryJSON renders the registry as the committed artefact:
-// {"schema":1,"entries":[...]} in registry order, two-space indent, trailing
-// newline. remote_writable is true only for what RemoteWritableKeys allows.
-func SettingsRegistryJSON() ([]byte, error) {
-	remote := RemoteWritableKeys()
-	rows := make([]registryEntryJSON, 0, len(AgentSettings))
-	for _, s := range AgentSettings {
-		r := registryEntryJSON{
-			Key: s.Key, Type: s.Type, Tier: s.Tier, Secret: s.Secret, Default: s.Default,
-			On: s.On, Off: s.Off, Options: slices.Clone(s.Options),
-			LabelKey: s.LabelKey, DescriptionKey: s.HintKey, Region: s.Region,
-			MinTillVersion: s.MinTillVersion, Audit: s.Audit,
-			WritableByTillAgent: s.Writable, RemoteWritable: remote[s.Key],
-		}
-		if s.Type == SettingTypeInt {
-			mn, mx := s.Min, s.Max
-			r.Min, r.Max = &mn, &mx
-		}
-		rows = append(rows, r)
-	}
-	b, err := json.MarshalIndent(struct {
-		Schema               int                 `json:"schema"`
-		ExpectMinTillVersion string              `json:"expect_min_till_version"`
-		Entries              []registryEntryJSON `json:"entries"`
-	}{1, RegistryMinTillVersion, rows}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(b, '\n'), nil
-}

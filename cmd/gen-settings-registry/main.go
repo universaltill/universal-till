@@ -9,19 +9,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/universaltill/universal-till/internal/data"
 )
 
 func main() {
-	out := data.SettingsRegistryJSONPath
+	out := settingsRegistryJSONPath
 	if len(os.Args) > 1 {
 		out = os.Args[1]
 	} else if _, err := os.Stat("go.mod"); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-settings-registry: run from the repo root (make gen-settings-registry) or pass an output path")
 		os.Exit(1)
 	}
-	b, err := data.SettingsRegistryJSON()
+	b, err := settingsRegistryJSON()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen-settings-registry:", err)
 		os.Exit(1)
