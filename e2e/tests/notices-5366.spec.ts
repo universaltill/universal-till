@@ -190,4 +190,45 @@ test.describe('notices on the till (ut-docs#5366)', () => {
     await page.request.post('/api/pos/reset');
     assertClean();
   });
+
+  test('hostile items never land; an expired or withdrawn notice disappears on its own', async ({ page, request }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const ID_HTML = '5366a000-0000-4000-8000-00000000000a';
+    const ID_BIDI = '5366a000-0000-4000-8000-00000000000b';
+    const ID_SHORT = '5366a000-0000-4000-8000-00000000000c';
+    const ID_GOOD = '5366a000-0000-4000-8000-00000000000d';
+    const html = item(ID_HTML, 'critical', '<script>window.__pwned=1</script>', '[x](javascript:alert(1))');
+    const bidi = item(ID_BIDI, 'important', 'Update ‮gnp.exe', 'see ​this');
+    const short = item(ID_SHORT, 'info', 'Gone in seconds', 'Expires almost at once.');
+    short.expires_at = new Date(Date.now() + 8_000).toISOString();
+    const good = item(ID_GOOD, 'info', 'Stays until withdrawn', 'A plain notice.');
+    await setNotices(request, [html, bidi, short, good]);
+
+    // Only the two valid items count; the hostile ones were dropped on pull.
+    const badge = async () => {
+      await gotoSettled(page, '/');
+      return (await page.locator('[data-testid="notices-badge"]').textContent({ timeout: 2000 }).catch(() => '')) ?? '';
+    };
+    await expect.poll(badge, { timeout: 30_000, intervals: [1000] }).toBe('2');
+    await expect(page.locator('[data-testid="notices-strip"]')).toHaveCount(0); // the hostile "critical" never stripped
+    await page.goto('/notices?tab=all');
+    await expect(page.locator('[data-testid="notice-row"]')).toHaveCount(2);
+    await expect(page.locator(`[data-notice-id="${ID_HTML}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-notice-id="${ID_BIDI}"]`)).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+
+    // Expiry: the till erases the row itself (no cloud change needed).
+    await expect.poll(badge, { timeout: 40_000, intervals: [1000] }).toBe('1');
+    await page.goto('/notices?tab=all');
+    await expect(page.locator(`[data-notice-id="${ID_SHORT}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-notice-id="${ID_GOOD}"]`)).toHaveCount(1);
+
+    // Withdrawn (killed) on the cloud: the mirror drops it at the next pull.
+    await setNotices(request, []);
+    await expect.poll(badge, { timeout: 30_000, intervals: [1000] }).toBe('');
+    await page.goto('/notices?tab=all');
+    await expect(page.locator('[data-testid="notices-empty"]')).toBeVisible();
+    assertClean();
+  });
 });
