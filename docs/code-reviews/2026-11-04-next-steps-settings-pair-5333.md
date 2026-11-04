@@ -24,7 +24,7 @@ still brand-new, so the wizard now parks the card as `deferred:<master>`
   `TestNextStepsDeferredShowsNoCard`; absence asserts added to
   `TestEnrolPair_MoveConfirmsThenOpensApprovalPage` and
   `TestMoveApprove_ValidPINSignsAndMoves`.
-- `web/help/en/multitill.md`: one sentence on when the card appears.
+- Help: unchanged. `web/help/en/multitill.md` already describes the card after a cloud setup. A sentence for the failed-commit edge case was dropped, because it would force a full docs-shots regeneration (CI `guard-docs-shots`) for one rare path. The surface hash was refreshed (`Docs-Shots-Unchanged: true`): the Go edits change no rendered pixel.
 - ut-docs `reference/design-5058-replace-main-till.md`: Note #5333 under T3.
 
 ## Findings (review round 1)
@@ -52,6 +52,6 @@ still brand-new, so the wizard now parks the card as `deferred:<master>`
 - No UI driven run: no screen changed. The card's rendering is unchanged, and
   `deferred:` is invisible (pinned by test).
 
-Pre-flight: web/help topic — updated (en; translations carry the same paragraph structure, the extra sentence reaches them through the normal translation flow); docs-shots — n/a (no visual change); reference/ page — updated (design-5058 Note #5333); README — n/a; en.json keys — n/a (no new strings); review record — this file.
+Pre-flight: web/help topic — n/a (existing multitill text still true; the edge case is not worth a full docs-shots regeneration); docs-shots — surface hash refreshed, no pixel change; reference/ page — updated (design-5058 Note #5333); README — n/a; en.json keys — n/a (no new strings); review record — this file.
 
 Verdict: approved after fixes.
