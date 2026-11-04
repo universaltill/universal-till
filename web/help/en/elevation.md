@@ -30,7 +30,8 @@ PIN prompt right there.
    tap Cancel or press Esc: nothing is done, and you're back on the field
    or button you started from. While the PIN is being checked, the buttons are
    greyed out, a spinner shows, and Cancel waits for the answer.
-   If the connection drops while it's being checked, the dialog closes with a
+   If the connection drops while it's being checked, or the till doesn't
+   answer within 30 seconds, the dialog closes with a
    message that the action may or may not have been done: check before you try
    it again. Nothing is retried for you.
 
