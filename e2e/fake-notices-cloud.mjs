@@ -16,17 +16,42 @@
 //   GET  /__acks      -> {acks: every ack the till has sent, asks: count of
 //                     sync requests that carried a notices object}
 //
-// Usage: node fake-notices-cloud.mjs <port>
+// Usage: node fake-notices-cloud.mjs <port> [docs]
+//   "docs" preloads the fixed set the manual's Notices screenshot shows (fixed
+//   dates around the docs-shots clock, UT_DOCS_SHOTS_NOW, so the PNG is
+//   byte-stable); the e2e spec starts empty and pushes its own.
 import http from 'node:http';
 
-const [port] = process.argv.slice(2);
+const [port, fixture] = process.argv.slice(2);
 if (!port) {
-  console.error('usage: fake-notices-cloud.mjs <port>');
+  console.error('usage: fake-notices-cloud.mjs <port> [docs]');
   process.exit(2);
 }
 
-let items = [];
-let rev = 0;
+const DOCS_ITEMS = [
+  {
+    id: '5366d000-0000-4000-8000-000000000001', rev: 1, severity: 'critical',
+    sender: { kind: 'platform', name: 'Universal Till' },
+    texts: { 'en-gb': { title: 'Update the till before Friday: security fix', body: 'A security fix is available for this till. Open **Settings**, Updates, and install version 1.42.3. It takes about 2 minutes, and you can keep selling while it downloads.' } },
+    link: { kind: 'route', target: '/settings', label: 'Open Settings' },
+    starts_at: '2026-01-01T09:00:00Z', expires_at: '2026-01-16T09:00:00Z', created_at: '2026-01-02T14:30:00Z',
+  },
+  {
+    id: '5366d000-0000-4000-8000-000000000002', rev: 1, severity: 'important',
+    sender: { kind: 'partner', name: 'Acme Partners' },
+    texts: { 'en-gb': { title: 'Your on-site training is booked for Tuesday', body: 'Hi, this is Acme Partners. Your two-hour session starts at 10:00. Please have one cashier and one manager free.' } },
+    starts_at: '2026-01-01T09:00:00Z', expires_at: '2026-01-10T09:00:00Z', created_at: '2026-01-02T13:00:00Z',
+  },
+  {
+    id: '5366d000-0000-4000-8000-000000000003', rev: 1, severity: 'info',
+    sender: { kind: 'platform', name: 'Universal Till' },
+    texts: { 'en-gb': { title: 'New: split a bill by seat', body: 'Version 1.42 lets you split a table bill by seat. Find it under Pay, Split.' } },
+    starts_at: '2026-01-01T09:00:00Z', expires_at: '2026-02-01T09:00:00Z', created_at: '2026-01-02T12:00:00Z',
+  },
+];
+
+let items = fixture === 'docs' ? DOCS_ITEMS : [];
+let rev = fixture === 'docs' ? 1 : 0;
 const acks = [];
 let asks = 0;
 

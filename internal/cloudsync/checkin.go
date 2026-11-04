@@ -95,15 +95,11 @@ type checkinPlan struct {
 // error is the tick's failure (401, 429/503, transport).
 // hashFailed (the body didn't marshal) means the state can't be compared,
 // so a 304 still POSTs.
-func planCheckin(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, stateSum [sha256.Size]byte, hashFailed bool, linkVersion func() int64) (checkinPlan, error) {
-	return planCheckinN(ctx, cfg, settings, stateSum, hashFailed, linkVersion, nil)
-}
-
-// planCheckinN is planCheckin with the notices client (ADR-0176 §1.5): the
+// With the notices client (ADR-0176 §1.5): the
 // GET also carries notices=<rev> so a changed notice set answers 200 even
 // when link_version matches, and a 304 still POSTs while acks are waiting
 // to be reported. nc may be nil (notices off).
-func planCheckinN(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, stateSum [sha256.Size]byte, hashFailed bool, linkVersion func() int64, nc *noticeClient) (checkinPlan, error) {
+func planCheckin(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, stateSum [sha256.Size]byte, hashFailed bool, linkVersion func() int64, nc *noticeClient) (checkinPlan, error) {
 	if settings != nil {
 		enroll.RetryUnsavedCredential(ctx, settings)
 	}
@@ -134,7 +130,7 @@ func planCheckinN(ctx context.Context, cfg *config.Config, settings *data.Settin
 	if nc != nil && nc.enabled(ctx) {
 		extra = url.Values{"notices": {nc.rev(ctx)}}
 	}
-	status, newVersion, err := getCheckinWith(ctx, m.EndpointURL, m.StoreID, m.MerchantToken, known, version, extra)
+	status, newVersion, err := getCheckin(ctx, m.EndpointURL, m.StoreID, m.MerchantToken, known, version, extra)
 	switch {
 	case err != nil:
 		cachePlanRequired(ctx, settings, err)
@@ -195,12 +191,8 @@ func (p checkinPlan) done(cfg *config.Config) {
 // (ut-docs#3624) carries the body's entitlement block for planCheckin to
 // cache. A 200 without a readable
 // link_version comes back as status 0 (treated like an old cloud).
-func getCheckin(ctx context.Context, endpoint, storeID, token string, known bool, version int64) (status int, linkVersion int64, err error) {
-	return getCheckinWith(ctx, endpoint, storeID, token, known, version, nil)
-}
-
-// getCheckinWith is getCheckin with extra query values (notices=<rev>).
-func getCheckinWith(ctx context.Context, endpoint, storeID, token string, known bool, version int64, extra url.Values) (status int, linkVersion int64, err error) {
+// extra carries optional query values (notices=<rev>, ADR-0176 §1.5).
+func getCheckin(ctx context.Context, endpoint, storeID, token string, known bool, version int64, extra url.Values) (status int, linkVersion int64, err error) {
 	const path = "/v1/stores/checkin"
 	u := strings.TrimRight(endpoint, "/") + path + "?store_id=" + url.QueryEscape(storeID)
 	for k, vs := range extra {

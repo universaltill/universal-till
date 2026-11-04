@@ -553,7 +553,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	var plan checkinPlan
 	if unpaid {
 		plan = planUnpaidCheckin(ctx, settings, sum)
-	} else if plan, err = planCheckinN(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion, nc); err != nil {
+	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion, nc); err != nil {
 		if _, ok := planRequired(err); ok {
 			// A lapse learned from the GET is this start's contact: no
 			// start-up check-in follows it (amendment §4).

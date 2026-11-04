@@ -37,6 +37,10 @@ const (
 	MaxItemBytes = 4 << 10
 )
 
+// FallbackLang is the language every notice must carry and the last fallback
+// (ADR-0176 §3/§4). A wire language tag, not a country.
+const FallbackLang = "en-gb" // core-neutral:allow a language tag from the ADR-0176 wire contract, not a country rule
+
 // Severity values.
 const (
 	Info      = "info"
@@ -123,7 +127,7 @@ func Validate(it Item, now time.Time) error {
 	if len(it.Texts) == 0 {
 		return errors.New("no texts")
 	}
-	if _, ok := it.Texts["en-gb"]; !ok {
+	if _, ok := it.Texts[FallbackLang]; !ok {
 		return errors.New("no en-gb text")
 	}
 	partner := it.Sender.Kind == SenderPartner
@@ -246,8 +250,8 @@ func PickText(texts map[string]Text, lang string) (string, Text, bool) {
 			}
 		}
 	}
-	if t, ok := texts["en-gb"]; ok {
-		return "en-gb", t, true
+	if t, ok := texts[FallbackLang]; ok {
+		return FallbackLang, t, true
 	}
 	keys := make([]string, 0, len(texts))
 	for k := range texts {
@@ -338,7 +342,7 @@ func Truthy(v string) bool {
 func WireLang(l string) string {
 	l = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(l), "_", "-"))
 	if l == "" || l == "en" {
-		return "en-gb"
+		return FallbackLang
 	}
 	return l
 }

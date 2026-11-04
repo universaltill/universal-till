@@ -158,7 +158,8 @@ func TestParseLink_OnlySafeLinksSurviveTheStore(t *testing.T) {
 	}
 	for _, bad := range []string{"", "{", `{"kind":"https","target":"http://universaltill.com/x"}`,
 		`{"kind":"https","target":"javascript:alert(1)"}`, `{"kind":"route","target":"//evil.example"}`,
-		`{"kind":"https","target":"https://evil.example/"}`, `{"kind":"https","target":"https://u:p@universaltill.com/"}`} {
+		`{"kind":"https","target":"https://evil.example/"}`, `{"kind":"https","target":"https://u:p@universaltill.com/"}`, // mail-address:allow URL credentials test input, not a mail address
+	} {
 		if l := ParseLink(bad); l != nil {
 			t.Errorf("ParseLink(%q) = %v, want nil", bad, l)
 		}

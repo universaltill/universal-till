@@ -14,8 +14,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudnotice"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -50,8 +50,9 @@ var noticeMemAvailable = func() (uint64, bool) {
 	return 0, false
 }
 
-// noticeNow is the client's clock; tests pin it.
-var noticeNow = time.Now
+// noticeNow is the client's clock (internal/clock: pinned by the docs-shots run
+// so the manual's screenshots are byte-stable); tests pin it.
+var noticeNow = clock.Now
 
 type noticeClient struct {
 	repo     *data.CloudNoticeRepo

@@ -21,9 +21,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudnotice"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -35,8 +35,9 @@ import (
 // notice writes (migration 096).
 const noticesViewAction = "notices.view"
 
-// noticesNow is the page layer's clock; tests pin it.
-var noticesNow = time.Now
+// noticesNow is the page layer's clock (pinned by the docs-shots run); tests
+// pin it.
+var noticesNow = clock.Now
 
 // noticesToastMS is how long an important toast stays (ADR-0176 §6: at least
 // 8 s; the UX notes choose 10 s, paused while hovered, focused or touched).
@@ -108,7 +109,7 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 		if page {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 		} else {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow htmx fragment/POST routes: 4xx is not swapped, base.html #pos-alert reports it; the page route renders the rail error above
 		}
 		return false
 	}

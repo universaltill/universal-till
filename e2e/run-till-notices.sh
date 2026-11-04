@@ -12,7 +12,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_DIR="$(mktemp -d)"
-FAKE_PORT=8104
+# The e2e spec uses 8103 (till) / 8104 (fake cloud). The manual's docs-shots run
+# (playwright.docs.config.ts) sets NOTICES_TILL_PORT / NOTICES_FAKE_PORT to its own
+# pair and NOTICES_FIXTURE=docs, which preloads the fixed screenshot set.
+TILL_PORT="${NOTICES_TILL_PORT:-8103}"
+FAKE_PORT="${NOTICES_FAKE_PORT:-8104}"
+FIXTURE="${NOTICES_FIXTURE:-}"
 FAKE_PID=""
 TILL_PID=""
 cleanup() {
@@ -22,7 +27,7 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 143' INT TERM
-export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8103
+export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR="127.0.0.1:${TILL_PORT}"
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
 : "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
 : "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
@@ -33,7 +38,7 @@ export UT_MARKETPLACE_DEVICE_ID=notices-device
 export UT_MARKETPLACE_MERCHANT_TOKEN=notices-token
 
 cd "$ROOT"
-node "$ROOT/e2e/fake-notices-cloud.mjs" "$FAKE_PORT" &
+node "$ROOT/e2e/fake-notices-cloud.mjs" "$FAKE_PORT" "$FIXTURE" &
 FAKE_PID=$!
 
 go run ./e2e/seed_demo
