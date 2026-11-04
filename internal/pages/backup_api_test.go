@@ -100,6 +100,8 @@ func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 		{http.MethodGet, "/api/backup/download/whatever.db"},
 		{http.MethodPost, "/api/backup/save-copy/whatever.db"},
 		{http.MethodPost, "/api/backup/restore"},
+		{http.MethodPost, "/api/backup/delete"},
+		{http.MethodPost, "/api/backup/retention"},
 		{http.MethodPost, "/api/backup/restart-now"},
 		{http.MethodPost, "/api/backup/upload"},
 	}

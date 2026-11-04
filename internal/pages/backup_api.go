@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +41,9 @@ type backupUIRow struct {
 	Name string
 	Size string
 	Date string
+	// Newest is the latest snapshot: it has no Delete button and the server
+	// refuses to delete it (ut-docs#3092).
+	Newest bool
 }
 
 // listBackupsForUI formats the snapshot list for the settings card. Date is
@@ -51,11 +56,13 @@ func listBackupsForUI(d *common.Deps, locale string) []backupUIRow {
 		return nil
 	}
 	var out []backupUIRow
+	newest := db.NewestOwnBackup(list)
 	for _, b := range list {
 		out = append(out, backupUIRow{
-			Name: b.Name,
-			Size: fmt.Sprintf("%.1f MB", float64(b.Size)/(1<<20)),
-			Date: httpx.FormatDateTime(b.ModTime.Local(), locale),
+			Newest: b.Name == newest,
+			Name:   b.Name,
+			Size:   fmt.Sprintf("%.1f MB", float64(b.Size)/(1<<20)),
+			Date:   httpx.FormatDateTime(b.ModTime.Local(), locale),
 		})
 	}
 	return out
@@ -93,6 +100,20 @@ func copyBackupTo(dstDir, src, name string) (string, error) {
 		return "", err
 	}
 	return dst, nil
+}
+
+// pruneBackupsByAge removes the snapshots older than this till's retention
+// days (setting backup.retention_days, default 7), never the newest
+// (ut-docs#3092).
+// keepNames are kept whatever their age (the restore source just staged).
+// An unreadable setting skips the prune: fail toward retaining.
+func pruneBackupsByAge(ctx context.Context, d *common.Deps, keepNames ...string) {
+	days, err := data.BackupRetentionDaysChecked(ctx, d.Db)
+	if err != nil {
+		logging.L().Warnf("backups: not pruning, retention setting unreadable: %v", err)
+		return
+	}
+	_, _ = db.PruneBackupsOlderThan(d.Cfg.DBPath, days, time.Now(), keepNames...)
 }
 
 // snapshotWithAssets is a package var so tests can inject a photos failure.
@@ -156,7 +177,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, template.HTMLEscapeString(httpx.T(locale, "settings.backup.failed")))
 			return
 		}
-		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
+		pruneBackupsByAge(r.Context(), d)
 		created := map[string]any{"file": filepath.Base(path)}
 		if err != nil {
 			// The DB snapshot is written and kept; only its photos are
@@ -178,6 +199,63 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, template.HTMLEscapeString(httpx.T(locale, "settings.backup.done")))
+	})
+
+	// ut-docs#3092: Delete one backup from the list. deny() first -- a cashier
+	// is refused on the server, not only by the hidden button
+	// (cashier-is-sale-only). The newest backup is never deleted.
+	mux.HandleFunc("POST /api/backup/delete", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		_ = r.ParseForm()
+		name := strings.TrimSpace(r.Form.Get("name"))
+		locale := httpx.ResolveLocale(w, r)
+		switch err := db.DeleteBackup(dbPath, name); {
+		case err == nil:
+		case errors.Is(err, db.ErrInvalidBackupName):
+			httpx.RefuseText(w, httpx.T(locale, "settings.backup.delete_invalid"), http.StatusBadRequest)
+			return
+		case errors.Is(err, db.ErrNewestBackup):
+			httpx.RefuseText(w, httpx.T(locale, "settings.backup.delete_newest"), http.StatusConflict)
+			return
+		case errors.Is(err, db.ErrBackupNotFound):
+			httpx.RefuseText(w, httpx.T(locale, "settings.backup.delete_missing"), http.StatusNotFound)
+			return
+		default:
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.backup.delete_failed", "backup_delete", err)
+			return
+		}
+		audit(r, "backup_deleted", map[string]any{"file": name})
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-UT-Response", "ok")
+		fmt.Fprintf(w, `<span>✓ %s</span>`, template.HTMLEscapeString(httpx.T(locale, "settings.backup.deleted")))
+	})
+
+	// ut-docs#3092: how many days of backups this till keeps (1-365,
+	// default 7). Per till: each till prunes its own disk.
+	mux.HandleFunc("POST /api/backup/retention", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		_ = r.ParseForm()
+		locale := httpx.ResolveLocale(w, r)
+		days, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("days")))
+		if err != nil || days < 1 || days > data.MaxBackupRetentionDays {
+			httpx.RefuseText(w, fmt.Sprintf(httpx.T(locale, "settings.backup.retention_invalid"), data.MaxBackupRetentionDays), http.StatusBadRequest)
+			return
+		}
+		before := data.BackupRetentionDays(r.Context(), d.Db)
+		if err := data.NewSettingsRepo(d.Db).Set(r.Context(), data.BackupRetentionDaysSettingsKey, strconv.Itoa(days)); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.backup.retention_failed", "backup_retention", err)
+			return
+		}
+		// No prune here: a smaller number takes effect with the next backup
+		// (or the daily clean-up), so a typo cannot delete history at once.
+		audit(r, "backup_retention_changed", map[string]any{"from_days": before, "to_days": days})
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-UT-Response", "ok")
+		fmt.Fprintf(w, `<span>✓ %s</span>`, template.HTMLEscapeString(httpx.T(locale, "settings.backup.retention_saved")))
 	})
 
 	mux.HandleFunc("GET /api/backup/download/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +389,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		auditElev("restore_staged", map[string]any{"file": name, "safety_backup": filepath.Base(safety)})
 		// After staging, never before: pruning first could remove the very
 		// (oldest) backup being restored.
-		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
+		pruneBackupsByAge(r.Context(), d, name)
 		// ut-docs#1613: the old flat "restart the till to finish" text was a
 		// dead end identical to pairing_wait.html's pre-#1550 "joined"
 		// screen — this reuses the same internal/procrestart mechanism via

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/housekeeping"
@@ -1095,7 +1096,7 @@ func housekeepingLayout(t *testing.T, now time.Time, n, size int) (string, []str
 	}
 	var snaps []string
 	for i := 0; i < n; i++ {
-		at := now.Add(-time.Duration(i) * 24 * time.Hour)
+		at := now.Add(-time.Duration(i) * 12 * time.Hour) // all inside the 7-day window
 		p := filepath.Join(dir, "unitill-pos-"+at.Format("20060102-150405")+".db")
 		// Sparse: the snapshots' size is what counts, not their bytes.
 		if err := os.WriteFile(p, nil, 0o644); err != nil {
@@ -1254,5 +1255,90 @@ func TestRunDailyBackup_UploadedFileIsNotAFreshBackup(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Fatalf("%d backups, want the uploaded file plus today's snapshot: %v", len(list), list)
+	}
+}
+
+// ut-docs#3092 (reopened): a new daily backup prunes every backup older than
+// the retention days (default 7, setting backup.retention_days), never the
+// new one.
+func TestRunDailyBackup_PrunesBackupsOlderThanRetentionDays(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	backupDir, err := appdb.BackupDir(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now() // one clock reading: names must not drift between seeds
+	seed := func() {
+		for i := 2; i <= 15; i++ { // 14 daily backups, 2..15 days old
+			at := base.Add(-time.Duration(i) * 24 * time.Hour)
+			p := filepath.Join(backupDir, "unitill-pos-"+at.UTC().Format("20060102-150405")+".db")
+			if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(p, at, at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seed()
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	list, _ := appdb.ListBackups(dbPath)
+	// the new snapshot + backups 2..6 days old (<= 7 days)
+	if len(list) != 6 {
+		t.Fatalf("default 7 days: %d backups left, want 6", len(list))
+	}
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('backup.retention_days', '30')`); err != nil {
+		t.Fatal(err)
+	}
+	seed()
+	// A fresh backup exists now, so force the snapshot path by removing it.
+	for _, b := range list {
+		if time.Since(b.ModTime) < time.Hour {
+			_ = os.Remove(filepath.Join(backupDir, b.Name))
+		}
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	list, _ = appdb.ListBackups(dbPath)
+	if len(list) != 15 {
+		t.Fatalf("30 days: %d backups left, want 15 (new + 14 seeded)", len(list))
+	}
+}
+
+// housekeeping cannot import data (it never touches the database), so the
+// default is written twice; this keeps the two equal.
+func TestBackupRetentionDefaultsAgree(t *testing.T) {
+	if housekeeping.DefaultBackupRetentionDays != data.DefaultBackupRetentionDays {
+		t.Fatalf("housekeeping default %d != data default %d", housekeeping.DefaultBackupRetentionDays, data.DefaultBackupRetentionDays)
+	}
+}
+
+// A retention setting that cannot be used must not make the daily backup prune
+// by a guessed window (review of ut-docs#3092: fail toward retaining).
+func TestRunDailyBackup_UnusableRetentionSettingPrunesNothing(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('backup.retention_days', 'abc')`); err != nil {
+		t.Fatal(err)
+	}
+	backupDir, _ := appdb.BackupDir(dbPath)
+	old := filepath.Join(backupDir, "unitill-pos-20200101-000000.db")
+	if err := os.WriteFile(old, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-400 * 24 * time.Hour)
+	_ = os.Chtimes(old, at, at)
+	runDailyBackup(d.DB, dbPath, filepath.Join(t.TempDir(), "assets"))
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("an old backup was pruned although the setting was unusable: %v", err)
 	}
 }
