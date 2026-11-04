@@ -65,6 +65,19 @@ It is the pattern for any admin page's message spot from here on — see
    payment-gate deadline is a 30 s floor) and the till-join paths, and
    anything under `data-ut-no-timeout` (put it on a new long-running action).
    `htmx.config.timeout` stays 0.
+   Re-sync (ut-docs#5458): when that sticky outcome text follows a
+   non-GET, non-prompt request under `/api/pos/` on the sale screen, the
+   action may have applied, so `utBasketResync()` re-fetches `GET /ui/basket`
+   into `#basket` (a background refresh: untimed, `X-UT-Resync` header). Its
+   xhr is issued with `source: #basket`, so a newer `hx-sync="#basket:replace"`
+   tap aborts it and the newer result wins (a generation counter in
+   `htmx:beforeSwap` covers a non-synced mutation). It fails silently (no
+   second alert, the sticky text stays) and never clears the alert. The
+   `ut-basket-resync` event (ut-docs#5411) uses the same helper. A tapped
+   `.btn-tile` whose request is still pending gets `aria-busy="true"` after
+   300 ms (cleared on afterRequest/abort/timeout/error); `app.css` draws it as
+   an inset outline (no text, no layout shift, static under reduced motion and
+   `fx-light`).
    `utPostWithElevation` aborts each leg the same way after the same time,
    except on those listed paths (ut-docs#5454).
    Before #213 a failed request surfaced nothing at all.

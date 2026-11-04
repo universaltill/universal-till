@@ -2636,6 +2636,30 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .btn-tile.tile-colored .tile-name,
 .btn-tile.tile-colored .tile-price,
 .btn-tile.tile-colored .muted { color: #fff; }
+/* ut-docs#5458: tapped tile whose request is still pending (app.js sets
+   aria-busy after 300 ms). Outline only: inside the border box so no layout
+   shift, not stripped by fx-light (which drops box-shadow), logical/RTL
+   neutral. Plain tiles use the focus token (3:1 non-text floor); coloured
+   tiles keep the fixed white their labels use (the button's own colour is
+   the dark text colour, near-invisible on the swatch). The pulse only dips to
+   a 45% mix, never transparent, so the cue is always visible; the static
+   outline is the floor for reduced motion and fx-light. */
+.btn-tile[aria-busy="true"] {
+  outline: 3px solid var(--focus-border, var(--accent)); outline-offset: -3px; cursor: progress;
+}
+.btn-tile.tile-colored[aria-busy="true"] { outline-color: #fff; }
+@media (prefers-reduced-motion: no-preference) {
+  html:not(.fx-light) .btn-tile[aria-busy="true"] { animation: ut-tile-busy 1s ease-in-out infinite alternate; }
+  html:not(.fx-light) .btn-tile.tile-colored[aria-busy="true"] { animation-name: ut-tile-busy-c; }
+}
+@keyframes ut-tile-busy {
+  from { outline-color: var(--focus-border, var(--accent)); }
+  to { outline-color: color-mix(in srgb, var(--focus-border, var(--accent)) 45%, transparent); }
+}
+@keyframes ut-tile-busy-c {
+  from { outline-color: #fff; }
+  to { outline-color: color-mix(in srgb, #fff 45%, transparent); }
+}
 .tile-name {
   font-weight: 600; font-size: .9rem; line-height: 1.2; white-space: normal;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -7092,6 +7116,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   .pos-container .btn-tile .tile-price,
   .pos-container .btn-tile.tile-colored .tile-price { color: var(--muted); font-size: .85rem; }
+  /* ut-docs#5458: this tile has no swatch behind it here, so the busy
+     outline uses the plain-tile token, not the coloured tile's white. */
+  .pos-container .btn-tile.tile-colored[aria-busy="true"] { outline-color: var(--focus-border, var(--accent)); }
+  @media (prefers-reduced-motion: no-preference) {
+    html:not(.fx-light) .pos-container .btn-tile.tile-colored[aria-busy="true"] { animation-name: ut-tile-busy; }
+  }
 }
 
 /* ---------- Guided tour (ut-docs#3710, web/public/tour.js) ----------
