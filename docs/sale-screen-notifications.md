@@ -54,9 +54,15 @@ It is the pattern for any admin page's message spot from here on — see
    the action may or may not have run). It is sticky: the self-heal does not
    hide it and a later generic network alert does not overwrite it; only ✕,
    a server error or an explicit new message clears it.
-   A prompt form's request gets a client timeout (`utPromptTimeoutMs()`,
-   30 s, set on `htmx:configRequest`); its `htmx:timeout` is handled as
-   `htmx:sendError` (ut-docs#5335). No other htmx request has a timeout.
+   Prompt forms and, since ut-docs#5404, every user-initiated htmx request
+   (click/submit/change/input/key events) get a client timeout
+   (`utRequestTimeoutMs()`, 30 s, alias `utPromptTimeoutMs()`, set on
+   `htmx:configRequest`); `htmx:timeout` on a GET shows the network text, on
+   any other verb (or a prompt) the sticky outcome text. Never timed:
+   `load`/`every`/custom-event refreshes, `htmx.ajax`, boosted navigation,
+   multipart uploads, the backup/import/update/pairing-restart paths, and
+   anything under `data-ut-no-timeout` (put it on a new long-running action).
+   `htmx.config.timeout` stays 0.
    `utPostWithElevation` aborts each leg the same way after the same time.
    Before #213 a failed request surfaced nothing at all.
 3. **A response fragment that IS a notice** (ut-docs#238):
