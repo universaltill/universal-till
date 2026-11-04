@@ -211,7 +211,8 @@ class UpdateLogicTest {
         versionCode: Long? = 20L,
         signers: List<String>? = listOf(a),
         pins: Set<String> = setOf(a),
-    ) = UpdateLogic.checkUpdateApk(pkg, own, versionCode, 10L, signers, pins)
+        history: List<String>? = null,
+    ) = UpdateLogic.checkUpdateApk(pkg, own, versionCode, 10L, signers, pins, history)
 
     private fun reason(c: ApkCheck): String = (c as ApkCheck.Refuse).reason
 
@@ -281,4 +282,29 @@ class UpdateLogicTest {
     fun packageReasonWinsOverSignerReason() {
         assertTrue(reason(check(pkg = "com.evil.app", signers = listOf(b))).contains("package"))
     }
+
+    @Test
+    fun rotatedSignerWithPinnedAncestorInHistoryIsAccepted() {
+        // New key b is not pinned, but the platform-verified lineage contains pinned a.
+        assertEquals(ApkCheck.Accept(a), check(signers = listOf(b), history = listOf(a, b)))
+    }
+
+    @Test
+    fun historyWithoutAnyPinnedKeyIsRefused() {
+        val c = "c".repeat(64)
+        assertTrue(reason(check(signers = listOf(b), history = listOf(c, b))).contains("not pinned"))
+    }
+
+    @Test
+    fun historyNeverOverridesMultipleSigners() {
+        assertTrue(reason(check(signers = listOf(b, c64()), history = listOf(a))).contains("multiple"))
+    }
+
+    @Test
+    fun historyIsIgnoredWhenDormantAndMatchedCaseInsensitively() {
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet(), history = listOf(a)))
+        assertEquals(ApkCheck.Accept(a), check(signers = listOf(b), history = listOf(a.uppercase())))
+    }
+
+    private fun c64() = "c".repeat(64)
 }

@@ -175,11 +175,17 @@ The digest is public; there is no secret or repository variable.
   APK's signer is not in the file.
 - **Fork / new key.** Put the SHA-256 of your own signing certificate
   (`apksigner verify --print-certs app.apk`) in the file. The release fails until you do.
-- **Rotation** (only with an APK Signature Scheme v3 lineage; API 24 to 27 tills
-  can never follow). 1) Add the new digest next to the old one and release,
-  still signed with the old key. 2) Once tills have moved, sign with the new key.
-  3) After the overlap, remove the old digest. A till that skipped the overlap
-  must be reinstalled.
+- **Rotation** (needs an APK Signature Scheme v3 lineage old to new).
+  1) Add the new digest next to the old one in the file. 2) Sign with the new
+  key plus the lineage, and keep the v1/v2 signature by the old key while any API
+  24 to 27 till exists: those platforms ignore v3, see the old signer and keep
+  updating only while the old digest stays pinned. API 28+ tills accept the
+  release because the new key is pinned or, on a till that has only the old pin,
+  because the old key is in the APK's platform-verified rotation lineage, so no
+  overlap release is needed. 3) Remove the old digest only when no API below 28
+  till remains; doing so strands them permanently. **Never tell an operator to
+  uninstall:** that deletes local data including unsynced offline sales. Install
+  the new APK over the existing app (Android honours the lineage on API 28+).
 - **Local tests with a test key:** `-PutApkSignerPins=<sha256 of the test cert>`;
   an empty `-PutApkSignerPins=` builds dormant (no signer check, logged as
   `not pinned`). Never use the override in `release.yml`.

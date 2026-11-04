@@ -166,8 +166,13 @@ GitHub Releases API mechanism the other platforms already use).
   malformed or missing file). `-PutApkSignerPins=<comma list>` overrides it for
   driven tests with a test key; an empty value builds dormant (package and
   version checks only, logged `not pinned`). `release.yml` fails when a built
-  APK's signer is not in the file. A fork replaces the file with its own
-  digest; see `RELEASING.md`.
+  APK's signer is not in the file, or when the APK does not carry the digest in
+  its dex (built dormant). The check runs on a private copy in `filesDir/updates/`
+  that is also what the installer reads (no swap between check and install). On
+  API 28+ a signer whose rotation lineage contains a pinned key is accepted; API
+  24 to 27 see the old key, so keep the old digest while they exist. Never
+  advise uninstalling to recover: it deletes local data. A fork replaces the file
+  with its own digest; see `RELEASING.md`.
 - Live-verified: a real signed release APK installed and launched on the
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.

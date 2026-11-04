@@ -863,8 +863,10 @@ class MainActivity : AppCompatActivity() {
      *   (web/public/android-update.js), so the chip shows a % and a failure.
      *
      * Downloads into the app's own external files dir: no storage permission,
-     * it is what [FileProvider] exposes (res/xml/file_paths.xml), and a
-     * half-written APK never appears in the operator's Files app. Never
+     * and a half-written APK never appears in the operator's Files app. That
+     * dir is readable by other apps on API 29 and below, so the installer is
+     * never given this file: [verifyThenInstall] copies it into app-private
+     * storage first and installs the verified copy (ut-docs#5436). Never
      * crashes the till — a failure leaves the operator able to retry.
      */
     private fun downloadAndInstallUpdate() {
@@ -1177,6 +1179,8 @@ class MainActivity : AppCompatActivity() {
         val packageName: String,
         val versionCode: Long,
         val signerDigests: List<String>?,
+        /** API 28+: digests in signingInfo.signingCertificateHistory (rotation lineage). */
+        val signerHistory: List<String>? = null,
     )
 
     /**
@@ -1213,7 +1217,13 @@ class MainActivity : AppCompatActivity() {
                             ?: info.signatures
                     sigs?.takeIf { it.isNotEmpty() }?.map { UpdateLogic.sha256Hex(it.toByteArray()) }
                 }
-            ArchiveFacts(info.packageName, PackageInfoCompat.getLongVersionCode(info), digests)
+            val history =
+                if (withSigners && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.signingInfo?.hasMultipleSigners() == false) {
+                    info.signingInfo?.signingCertificateHistory?.map { UpdateLogic.sha256Hex(it.toByteArray()) }
+                } else {
+                    null
+                }
+            ArchiveFacts(info.packageName, PackageInfoCompat.getLongVersionCode(info), digests, history)
         }.getOrNull()
 
     /**
@@ -1225,15 +1235,20 @@ class MainActivity : AppCompatActivity() {
      * never touched ([launchPackageInstaller] is what releases them).
      */
     private fun verifyThenInstall(
-        apk: File,
+        downloaded: File,
         downloadId: Long,
     ) {
         updateVerifyingApk = true
         Thread {
             var facts: ArchiveFacts? = null
+            // TOCTOU (M1): other apps can write the external Download/ dir on
+            // API 29 and below, so verify and install a private COPY.
+            val apk = File(File(filesDir, UPDATE_COPY_DIR).apply { mkdirs() }, UPDATE_APK_NAME)
             val pins = UpdateLogic.parsePinSet(BuildConfig.APK_SIGNER_SHA256S)
             val verdict =
                 try {
+                    apk.delete()
+                    downloaded.copyTo(apk, overwrite = true)
                     facts = inspectArchive(apk, true)
                     UpdateLogic.checkUpdateApk(
                         facts?.packageName,
@@ -1242,12 +1257,28 @@ class MainActivity : AppCompatActivity() {
                         installedVersionCode(),
                         facts?.signerDigests,
                         pins,
+                        facts?.signerHistory,
                     )
                 } catch (e: Exception) {
                     ApkCheck.Refuse("signer check failed: ${e.message}")
                 }
             runOnUiThread {
                 updateVerifyingApk = false
+                if (verdict is ApkCheck.Refuse) {
+                    // Cleanup runs even if the Activity is gone (L2).
+                    Log.w(
+                        TAG,
+                        "update: refused: ${verdict.reason}; signers ${facts?.signerDigests}, history ${facts?.signerHistory}, pinned $pins, package ${facts?.packageName}",
+                    )
+                    runCatching {
+                        if (downloadId >= 0) (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(downloadId)
+                    }
+                    apk.delete()
+                    downloaded.delete()
+                    clearUpdateId()
+                    if (!isDestroyed) failUpdate("refused: ${verdict.reason}")
+                    return@runOnUiThread
+                }
                 if (isDestroyed) return@runOnUiThread
                 when (verdict) {
                     is ApkCheck.Accept -> {
@@ -1258,24 +1289,26 @@ class MainActivity : AppCompatActivity() {
                         Log.i(TAG, "update: APK signer not pinned (no certificate digest compiled in)")
                         launchPackageInstaller(apk)
                     }
-                    is ApkCheck.Refuse -> {
-                        Log.w(
-                            TAG,
-                            "update: refused: ${verdict.reason}; signers ${facts?.signerDigests}, pinned $pins, package ${facts?.packageName}",
-                        )
-                        runCatching {
-                            if (downloadId >= 0) (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(downloadId)
-                        }
-                        apk.delete()
-                        clearUpdateId()
-                        failUpdate("refused: ${verdict.reason}")
-                    }
+                    is ApkCheck.Refuse -> Unit // handled above
                 }
             }
         }.apply {
             name = "update-signer-check"
             isDaemon = true
         }.start()
+    }
+
+    /**
+     * ut-docs#5436: the verified copy is only needed while the system
+     * installer reads it. A copy older than a day (an abandoned or finished
+     * install) is removed at start; a fresh one is kept because an Activity
+     * recreated mid-install must not pull the file from under the installer.
+     */
+    private fun pruneStaleUpdateCopy() {
+        runCatching {
+            val f = File(File(filesDir, UPDATE_COPY_DIR), UPDATE_APK_NAME)
+            if (f.exists() && System.currentTimeMillis() - f.lastModified() > 24L * 3600 * 1000) f.delete()
+        }
     }
 
     private fun installedVersionCode(): Long =
@@ -1860,6 +1893,7 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "reload: activity recreated (savedInstanceState present)")
         }
         setContentView(R.layout.activity_main)
+        pruneStaleUpdateCopy()
 
         webView = findViewById(R.id.webview)
         statusView = findViewById(R.id.status)
@@ -2521,6 +2555,9 @@ class MainActivity : AppCompatActivity() {
         // on purpose: installUpdate() takes no argument, so page content can
         // never redirect an install.
         private const val UPDATE_APK_NAME = "unitill-pos-update.apk"
+
+        /** App-private (filesDir) dir holding the verified copy handed to the installer (res/xml/file_paths.xml). */
+        private const val UPDATE_COPY_DIR = "updates"
         private const val APK_MIME = "application/vnd.android.package-archive"
 
         // ut-docs#4312: the old fixed limit (~5 minutes at 750ms) failed a

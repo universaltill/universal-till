@@ -24,7 +24,7 @@ run() {
   local file="$1" digest="$2"
   shift 2
   set +e
-  OUT="$(env "$@" bash "$SCRIPT" "$file" arm64 "$digest" 2>"$T/err")"
+  OUT="$(env "$@" bash "$SCRIPT" "$file" arm64 "$digest" ${APK:+"$APK"} 2>"$T/err")"
   RC=$?
   set -e
   ERR="$(cat "$T/err")"
@@ -38,6 +38,21 @@ bad_case() { # name file digest [env...]
   shift 3
   run "$file" "$digest" "$@"
   if [ "$RC" != 0 ] && grep -q '::error::' <<<"$ERR"; then pass "$name"; else fail "$name (rc=$RC out=$OUT err=$ERR)"; fi
+}
+
+bad_msg() { # name want-regex file digest [env...]
+  local name="$1" want="$2"
+  shift 2
+  bad_case "$name" "$@"
+  if grep -qE "$want" <<<"$ERR"; then pass "$name: reason"; else fail "$name: wrong reason (want /$want/, err=$ERR)"; fi
+}
+# mkapk <path> <dex-content>: a zip with classes.dex and classes2.dex
+mkapk() {
+  local dir="$T/apk.$RANDOM"
+  mkdir -p "$dir"
+  printf 'dex\n035\0%s\0tail\n' "$2" >"$dir/classes2.dex"
+  printf 'dex\n035\0nothing\0\n' >"$dir/classes.dex"
+  (cd "$dir" && zip -q "$1" classes.dex classes2.dex)
 }
 
 printf '# comment\n%s  # trailing\n\n' "$A" >"$T/one"
@@ -55,17 +70,28 @@ UPPER_COLON="$(printf 'AA:%.0s' $(seq 31))AA"
 ok_case "uppercase colon digest normalises" "$T/one" "$UPPER_COLON"
 bad_case "unlisted digest fails" "$T/one" "$B"
 if grep -q "does not pin" <<<"$ERR" && grep -q "$B" <<<"$ERR"; then pass "unlisted: message names the digest"; else fail "unlisted message ($ERR)"; fi
-bad_case "malformed entry fails" "$T/malformed" "$A"
-bad_case "uppercase entry in file fails" "$T/upper" "$A"
-bad_case "duplicate entries fail" "$T/dup" "$A"
-bad_case "five entries fail" "$T/five" "$A"
-bad_case "comment-only file fails" "$T/comments" "$A"
-bad_case "empty file fails" "$T/empty" "$A"
-bad_case "missing file fails" "$T/nope" "$A"
-bad_case "empty digest fails" "$T/one" ""
-bad_case "multi-line digest fails" "$T/one" "$(printf '%s\n%s' "$A" "$A")"
-bad_case "override env set fails" "$T/one" "$A" ORG_GRADLE_PROJECT_utApkSignerPins="$A"
-bad_case "override env set but empty also fails" "$T/one" "$A" ORG_GRADLE_PROJECT_utApkSignerPins=
+bad_msg "malformed entry fails" "not 64 lowercase hex" "$T/malformed" "$A"
+bad_msg "uppercase entry in file fails" "not 64 lowercase hex" "$T/upper" "$A"
+bad_msg "duplicate entries fail" "twice" "$T/dup" "$A"
+bad_msg "five entries fail" "at most 4" "$T/five" "$A"
+bad_msg "comment-only file fails" "lists no digest" "$T/comments" "$A"
+bad_msg "empty file fails" "lists no digest" "$T/empty" "$A"
+bad_msg "missing file fails" "is missing" "$T/nope" "$A"
+bad_msg "empty digest fails" "not a SHA-256 digest" "$T/one" ""
+bad_msg "multi-line digest fails" "more than one signer" "$T/one" "$(printf '%s\n%s' "$A" "$A")"
+bad_msg "override env set fails" "utApkSignerPins is set" "$T/one" "$A" ORG_GRADLE_PROJECT_utApkSignerPins="$A"
+bad_msg "override env set but empty also fails" "utApkSignerPins is set" "$T/one" "$A" ORG_GRADLE_PROJECT_utApkSignerPins=
+
+# L1: the APK itself must carry the digest (built armed, not with an empty pin override).
+mkapk "$T/armed.apk" "x,$A,y"
+mkapk "$T/dormant.apk" "no pin here"
+APK="$T/armed.apk"
+ok_case "armed APK (digest in classes2.dex) passes" "$T/one" "$A"
+APK="$T/dormant.apk"
+bad_msg "dormant APK (digest absent from dex) fails" "not armed" "$T/one" "$A"
+APK="$T/missing.apk"
+bad_msg "missing APK file fails" "not armed|cannot read" "$T/one" "$A"
+APK=""
 
 if [ "$fails" -ne 0 ]; then
   echo "$fails case(s) failed" >&2

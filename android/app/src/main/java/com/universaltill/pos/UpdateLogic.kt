@@ -143,6 +143,7 @@ object UpdateLogic {
      * ut-docs#5436 / ADR-0179: whether the APK about to go to the installer
      * may go. The first failing rule wins; its reason is logged and passed to
      * failUpdate. Package and version are checked even when dormant.
+     * [signerHistory] (API 28+, single signer only) is the rotation lineage.
      */
     fun checkUpdateApk(
         archivePackage: String?,
@@ -151,6 +152,7 @@ object UpdateLogic {
         installedVersionCode: Long,
         signerDigests: List<String>?,
         pins: Set<String>,
+        signerHistory: List<String>? = null,
     ): ApkCheck {
         if (archivePackage == null) return ApkCheck.Refuse("not a readable APK")
         if (archivePackage != ownPackage) return ApkCheck.Refuse("package $archivePackage, expected $ownPackage")
@@ -161,8 +163,13 @@ object UpdateLogic {
         if (signerDigests.isNullOrEmpty()) return ApkCheck.Refuse("signer unreadable")
         if (signerDigests.size > 1) return ApkCheck.Refuse("multiple signers")
         val d = signerDigests[0].lowercase()
-        if (d !in pins) return ApkCheck.Refuse("signer $d not pinned")
-        return ApkCheck.Accept(d)
+        if (d in pins) return ApkCheck.Accept(d)
+        // API 28+ key rotation: the platform-verified proof-of-rotation lineage
+        // (signingCertificateHistory) containing a pinned key means the pinned
+        // key vouched for this signer. Only reached for a single signer.
+        val ancestor = signerHistory?.map { it.lowercase() }?.firstOrNull { it in pins }
+        if (ancestor != null) return ApkCheck.Accept(ancestor)
+        return ApkCheck.Refuse("signer $d not pinned")
     }
 
     /** Whole percent of [done] over [total], or null when the total is unknown. */
