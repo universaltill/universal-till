@@ -30,7 +30,8 @@ reddetmez: hemen orada küçük bir PIN penceresi açar.
    ve «İptal» yanıtı bekler.
    Bu sırada bağlantı koparsa ya da kasa 30 saniye içinde yanıt vermezse pencere kapanır ve işlemin yapılmış olabileceğini
    ya da yapılmamış olabileceğini belirten bir ileti görünür: tekrar denemeden
-   önce kontrol edin. Sizin yerinize hiçbir şey yeniden denenmez.
+   önce kontrol edin. Sizin yerinize hiçbir şey yeniden denenmez. Burada onayladığınız bir yedekleme
+   veya geri yükleme bu şekilde asla yarıda kesilmez: kasanın yanıtını bekler.
 
 ## Neler kaydedilir
 
