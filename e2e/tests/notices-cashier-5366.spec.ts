@@ -12,7 +12,9 @@ import { ensureOperator, markTourDone } from './helpers';
 
 const RUN = Date.now().toString(36).toUpperCase();
 const CASHIER_USERNAME = `cashier5366${RUN}`;
-const CASHIER_PIN = '135792';
+// Not 135792: that is the seeded kiosk user's PIN in session-kiosk-pin-mode-3136,
+// and a PIN identifies the user, so a shared one signs that spec in as this cashier.
+const CASHIER_PIN = '908172';
 
 async function createCashier(page: Page): Promise<void> {
   const createResp = await page.request.post('/api/users', {
