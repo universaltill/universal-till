@@ -811,7 +811,8 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	repo := data.NewPOSRepo(d.Db)
 	cur, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
 	afterAt, afterID := parseSalesPushCursor(cur)
-	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, 50)
+	size := salesPushBatchSize(ctx, d)
+	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, size)
 	if err != nil || len(receipts) == 0 {
 		return
 	}
@@ -829,32 +830,77 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	// tick. RFC3339 UTC strings compare chronologically.
 	pushedAt := salesPushNow().UTC()
 	cutoff := pushedAt.Add(-salesPushSettle).Format(time.RFC3339)
-	newCursor := ""
-	for _, j := range batch {
-		if j.Sale.CreatedAt <= cutoff {
-			newCursor = j.Sale.CreatedAt + "|" + j.Sale.ID
+	url := strings.TrimSuffix(primary, "/") + "/api/sync/sales"
+	post := func(sub []journalSale) error {
+		raw, _ := json.Marshal(sub)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+		if err != nil {
+			return err
 		}
-	}
-	raw, _ := json.Marshal(batch)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimSuffix(primary, "/")+"/api/sync/sales", bytes.NewReader(raw))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	resp, err := client.Do(req)
-	if err != nil {
-		logging.L().Infof("sync push: primary unreachable (%v) — will retry", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := client.Do(req)
+		if err != nil {
+			logging.L().Infof("sync push: primary unreachable (%v) — will retry", err)
+			return err
+		}
+		defer resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+			return nil
+		case http.StatusRequestEntityTooLarge:
+			return fmt.Errorf("%w: %s at %d sale(s)", errPayloadTooLarge, resp.Status, len(sub))
+		}
 		logging.L().Errorf("sync push rejected: %s", resp.Status)
+		return fmt.Errorf("sync push rejected: %s", resp.Status)
+	}
+	// The cursor moves per accepted sub-batch, to its last settled sale, and
+	// never past a sale that sat inside the settle window (ut-docs#5428).
+	held, _, _ := d.Settings.Get(ctx, salesPushHeldKey)
+	held = strings.TrimSpace(held)
+	contacted := false
+	onAccepted := func(sub []journalSale) error {
+		if !contacted {
+			contacted = true
+			now := recordMainContact(ctx, d, time.Now())
+			_ = d.Settings.Set(ctx, "sync.last_push_at", now)
+		}
+		// The batch is ordered by (created_at, id), so the settled sales are
+		// a prefix of it: once one is past the cutoff, every later one is.
+		newCursor := ""
+		for _, j := range sub {
+			if j.Sale.CreatedAt <= cutoff {
+				newCursor = j.Sale.CreatedAt + "|" + j.Sale.ID
+			}
+		}
+		if newCursor != "" {
+			_ = d.Settings.Set(ctx, "sync.push_cursor", newCursor)
+		}
+		if held != "" {
+			for _, j := range sub {
+				if j.Sale.ID == held {
+					_ = d.Settings.Set(ctx, salesPushHeldKey, "")
+					logging.ResolveProblems(SalePushTooLargeProblemKey)
+					held = ""
+					break
+				}
+			}
+		}
+		return nil
+	}
+	sent, finalSize, big, err := postSalesHalving(batch, size, salesPushMaxRequests, post, onAccepted)
+	if big != nil {
+		holdOversizedSale(ctx, d, repo, big.Sale.ID, big.Sale.ReceiptNo)
+	}
+	// A 413 earlier in the tick still shrinks the learned size when a later
+	// request fails otherwise (review O2), so the next tick does not re-send
+	// the refused body; only a fully accepted tick grows it.
+	storeSalesPushBatchSize(ctx, d, size, finalSize, err == nil && sent == len(batch) && big == nil)
+	if err != nil {
 		return
 	}
-	if newCursor != "" {
-		_ = d.Settings.Set(ctx, "sync.push_cursor", newCursor)
+	if big != nil || sent < len(batch) {
+		return // held or capped: the normal tick retries; no rekick on a 413
 	}
 	// A sale held inside the settle window is already on the primary but
 	// still counts as queued; wake the push loop once the window has passed
@@ -863,10 +909,9 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	// (the clock stepped back): it won't settle in 6s, so kicking would
 	// re-send the batch every 6s; the normal tick picks it up.
 	lastSale := batch[len(batch)-1].Sale
-	if newCursor != lastSale.CreatedAt+"|"+lastSale.ID && lastSale.CreatedAt <= pushedAt.Format(time.RFC3339) {
+	cur2, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
+	if cur2 != lastSale.CreatedAt+"|"+lastSale.ID && lastSale.CreatedAt <= pushedAt.Format(time.RFC3339) {
 		salesPushRekick(d, salesPushSettle+time.Second)
 	}
-	now := recordMainContact(ctx, d, time.Now())
-	_ = d.Settings.Set(ctx, "sync.last_push_at", now)
-	logging.L().Infof("sync push: %d sale(s) journaled to the primary", len(batch))
+	logging.L().Infof("sync push: %d sale(s) journaled to the primary", sent)
 }

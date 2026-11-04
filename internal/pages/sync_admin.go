@@ -262,8 +262,11 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 			fresh := withinLast(get("sync.last_contact_at"), 90*time.Second)
 			// A restored copy has no bearer or till id (ut-docs#5162).
 			rejoin := replicaUnpaired(r.Context(), d)
+			// A sale the main till refuses as too large holds the queue
+			// (ut-docs#5428): same warn hook, no separate text.
+			held := get(salesPushHeldKey) != ""
 			class := "ok"
-			if !fresh || rejoin {
+			if !fresh || rejoin || held {
 				class = "warn"
 			}
 			label := get("sync.till_name")
