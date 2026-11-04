@@ -36,7 +36,7 @@ The joining-till side is ut-docs#5330.
 | 2 | minor | The expiry timer sent `expired` blind, but an approve in the last second (second-precision `expires_at`) still succeeds, so B2 would show "declined/expired" for an approved request. | **Fixed:** on expiry the link re-reads the request first. `TestPending_ExpiryRechecksBeforeSayingExpired`: red without the fix (got "expired", want "approved"), green with it, both re-run by the orchestrator. The amendment is updated. |
 | 3 | minor | Replica/replaced settings reads ran before the TLS check and the limiter, so they were unlimited, the state was disclosed before credentials, and the comment and T13 overstated the order. | **Fixed:** the order is now TLS/no-query → limiter → replica/replaced → credentials. T13 renamed: a rate-limited request on a replica gets 429, not 409, and reads no pairing row (red first with 409). |
 | 4 | minor | The 8-link cap is global, so one LAN host can hold every slot. | **Accepted:** joiners then fall back to today's 15 s poll, never a block (offline-first holds), and the bogus requests show on the Tills page. |
-| 5 | minor, pre-existing | The till's `http.Server` has no `ReadHeaderTimeout`/`IdleTimeout`. | Out of scope → ut-docs#5337 (Backlog). |
+| 5 | minor, pre-existing | The till's `http.Server` has no `ReadHeaderTimeout`/`IdleTimeout`. | Out of scope → ut-docs#5337 (since fixed on `main` by universal-till#2315). |
 | 6 | nit | A panic in `recheck` leaked the id's slot. | **Fixed:** unregister is deferred. `TestPending_PanicInRecheckFreesTheSlot`: red without the fix, re-run by the orchestrator. |
 | 7 | nit | The 500 was logged under tag `pairing_api`. | **Fixed:** `sync_link`. |
 
@@ -73,6 +73,6 @@ Pre-flight:
 - `reference/`: the ADR-0114 amendment and `architecture/lan-sync.md` are in ut-docs#5336.
 - README n/a; en.json keys n/a (none added).
 - Review record: this file.
-- Follow-ups: ut-docs#5330 (joining-till side), ut-docs#5337 (server timeouts).
+- Follow-ups: ut-docs#5330 (joining-till side), ut-docs#5337 (server timeouts, fixed by #2315).
 
 Verdict: approve.
