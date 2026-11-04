@@ -4144,6 +4144,10 @@ body.osk-padded #table-add-modal .modifier-actions {
    order, same reasoning as /open-orders' own label floor); under pressure
    the merchant-named table chip is what truncates. */
 .parked-order .held-chip-table { flex: 0 1 auto; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ut-docs#1387: the Takeaway tag is short, fixed and translated -- it is the
+   point of the card, so it never shrinks or ellipsizes (it collapsed to an
+   empty pill at 360px sharing the table chip's rule). */
+.parked-order .held-chip-takeaway { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 40rem) {
   /* Three columns cannot share 360-390px: the order takes the row's whole
      first line and Move table + Cancel sit on a second line, still in their
@@ -4153,6 +4157,8 @@ body.osk-padded #table-add-modal .modifier-actions {
   .parked-orders-list > li:last-child { border-block-end: none; padding-block-end: 0; }
   .parked-orders-list > li > .parked-order,
   .parked-orders-list > li > .parked-order-form { grid-column: 1 / -1; }
+  /* Label + chip stay readable: the meta wraps to its own line. */
+  .parked-orders-list > li > .parked-order { flex-wrap: wrap; row-gap: .25rem; }
   .parked-orders-list > li > .parked-move,
   .parked-orders-list > li > .parked-move-placeholder,
   .parked-orders-list > li > .parked-order-cancel,
@@ -4164,7 +4170,9 @@ body.osk-padded #table-add-modal .modifier-actions {
    on the strip too). It now also appears here, so give it the quiet chip
    look its name promises rather than leaving it indistinguishable from the
    order label beside it. */
-.held-chip-table { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
+/* ut-docs#1387: the Takeaway tag on an all-takeaway held order is the same
+   pill (it never sits beside a table chip: a takeaway order has no table). */
+.held-chip-table, .held-chip-takeaway { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
 
 /* ut-docs#2138: /open-orders' own rows are real buttons, not <tr> click
    handlers (ut-docs#826's accessibility gate: tap-only with no keyboard
