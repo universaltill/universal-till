@@ -1192,6 +1192,8 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 	// opened by the user directive hooks.
 	directiveKeys := directivekey.New()
 	return cloudsync.Hooks{
+		// ADR-0176: the notices pull asks for the till's default UI language.
+		NoticeLang: httpx.DefaultLocale,
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			// First, so a refused store.country never reaches the fiscal
 			// posture reset below.

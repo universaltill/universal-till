@@ -420,6 +420,9 @@ type Hooks struct {
 	// Never on a failed tick, a block-less 402 or a gated (skipped) tick.
 	// Best-effort: it logs, it never fails the tick. Nil = unsupported.
 	ShopCurrency func(ctx context.Context)
+	// NoticeLang, when non-nil, returns the till's UI locale for the notices
+	// pull (ADR-0176 §4 "lang"). Nil = "en".
+	NoticeLang func() string
 
 	// fetchCatalogImage is set by tick (it needs the cloud endpoint and
 	// credential from cfg) and bound into each set_catalog_image's
@@ -536,11 +539,13 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// till-state part is what the hash covers. An unpaid check-in skips the
 	// GET and POSTs (planUnpaidCheckin).
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
+	nc := newNoticeClient(db, settings, hooks)
+	nc.attach(ctx, &req)
 	sum, hashErr := stateHash(req.devices)
 	var plan checkinPlan
 	if unpaid {
 		plan = planUnpaidCheckin(ctx, settings, sum)
-	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion); err != nil {
+	} else if plan, err = planCheckinN(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion, nc); err != nil {
 		if _, ok := planRequired(err); ok {
 			// A lapse learned from the GET is this start's contact: no
 			// start-up check-in follows it (amendment §4).
@@ -1466,6 +1471,10 @@ type syncRequest struct {
 	storeID string
 	devices []map[string]any
 	hasStop bool // a diagnostics stop report rides the device record
+	// notices is the optional ADR-0176 request object (nil = feature off) and
+	// onNotices receives the response's raw notices block when it has one.
+	notices   map[string]any
+	onNotices func(json.RawMessage)
 }
 
 // buildSyncRequest assembles this device's report for the sync POST.
@@ -1561,10 +1570,14 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 // pushSync sends the device report and returns the store's pending
 // directives.
 func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, req syncRequest) ([]directive, error) {
-	payload, _ := json.Marshal(map[string]any{
+	pl := map[string]any{
 		"store_id": req.storeID,
 		"devices":  req.devices,
-	})
+	}
+	if req.notices != nil {
+		pl["notices"] = req.notices
+	}
+	payload, _ := json.Marshal(pl)
 	body, err := postBody(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
 		if _, ok := planRequired(err); ok {
@@ -1601,10 +1614,16 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// ServerTime: the cloud's clock (RFC 3339), for stock count
 			// mode's clock conversion (ut-docs#4749). Optional.
 			ServerTime string `json:"server_time"`
+			// Notices is ADR-0176's optional block; raw so a malformed one
+			// can never fail the decode of the directives beside it.
+			Notices json.RawMessage `json:"notices"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
+	}
+	if req.onNotices != nil && len(resp.Data.Notices) > 0 && string(resp.Data.Notices) != "null" {
+		req.onNotices(resp.Data.Notices)
 	}
 	cacheEntitlement(ctx, settings, resp.Data.Entitlement, time.Now())
 	if st, err := time.Parse(time.RFC3339, resp.Data.ServerTime); err == nil {

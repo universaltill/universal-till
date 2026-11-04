@@ -312,3 +312,32 @@ func RenderBody(body string) template.HTML {
 
 // Describe is a short log-safe label for a dropped item (ids only, never text).
 func Describe(it Item) string { return fmt.Sprintf("%s:%d", it.ID, it.Rev) }
+
+// Settings keys (ADR-0176 §11, §12). SettingEnabled is the per-till flag,
+// default off; the other two are the client's small cursor: the opaque rev of
+// the last pull and the language the held texts were fetched in.
+const (
+	SettingEnabled = "notices.enabled"
+	SettingRev     = "notices.rev"
+	SettingLang    = "notices.lang"
+)
+
+// Truthy reports whether a stored setting value means "on".
+func Truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "on", "yes":
+		return true
+	}
+	return false
+}
+
+// WireLang normalises a UI locale ("de", "pt_BR", "en") to the wire tag
+// ("de", "pt-br", "en-gb"): lower case, dash separated; bare "en" is en-gb,
+// the language every notice must carry.
+func WireLang(l string) string {
+	l = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(l), "_", "-"))
+	if l == "" || l == "en" {
+		return "en-gb"
+	}
+	return l
+}

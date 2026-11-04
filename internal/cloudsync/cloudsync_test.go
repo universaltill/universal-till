@@ -72,6 +72,11 @@ type fakeCloud struct {
 	// entitlement, when non-nil, is sent verbatim as the sync response's
 	// data.entitlement (ADR-0060 §3); nil = an old cloud that omits it.
 	entitlement json.RawMessage
+	// notices, when non-nil, is sent as the sync response's data.notices
+	// (ADR-0176) — only to a request that carried a notices object, as the
+	// real cloud does. noticesFn, when set, builds it from that object.
+	notices   json.RawMessage
+	noticesFn func(req map[string]any) json.RawMessage
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -88,8 +93,17 @@ func (f *fakeCloud) handler() http.Handler {
 		dirs := f.directives
 		f.directives = nil // deliver once, like the real cloud resolves them
 		ent := f.entitlement
+		nb := f.notices
+		if f.noticesFn != nil {
+			if rq, ok := body["notices"].(map[string]any); ok {
+				nb = f.noticesFn(rq)
+			}
+		}
 		f.mu.Unlock()
 		respData := map[string]any{"directives": dirs}
+		if _, asked := body["notices"]; asked && nb != nil {
+			respData["notices"] = nb
+		}
 		if ent != nil {
 			respData["entitlement"] = ent
 		}
