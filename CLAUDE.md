@@ -205,7 +205,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   (English-only help topics merge; translations come via Weblate, ADR-0160).
   `guard-help-breadcrumbs.sh`: a translated `Settings → X` breadcrumb must use
   the locale's own label for that section; shrink-only baseline
-  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696).
+  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696). It also
+  fails any `→` in a help topic of an `httpx.IsRTL` locale: write `←`
+  (ut-docs#5644).
   `guard-help-terms.sh`: a translated topic uses the locale UI's own word for
   a role or thing (de: "Manager", never "Führungskraft"); entries in
   `scripts/ci/help-terms.txt`; exception `help-term:allow <reason>` (#5243).
