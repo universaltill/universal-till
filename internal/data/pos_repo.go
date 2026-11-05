@@ -6586,7 +6586,12 @@ ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 
 // EraseCustomer removes a customer's personal data (GDPR right to erasure):
 // it unlinks the customer from sales (live AND archived) and promotions
-// (keeping the sales, which are financial records, but anonymous), strips
+// (keeping the sales, which are financial records, but anonymous), and
+// DEACTIVATES every promotion bound to them in the same statement as the
+// unlink: a NULL customer_id means "any customer", so unlinking alone would
+// widen a customer-only discount to everyone (ut-docs#5591; same rule as
+// migration 097 / ut-docs#5590). The 023 trigger bumps sync_admin_version
+// on that row change, so replicas follow. Strips
 // the customer from parked baskets (live AND archived, ut-docs#3253 —
 // stripCustomerFromHeldSales) and deletes the customer row. Audited.
 // Returns false if no such customer. LAN replicas follow on their next
@@ -6644,7 +6649,9 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 	for _, q := range []string{
 		`UPDATE sales SET customer_id = NULL WHERE customer_id = ?`,
 		`UPDATE sales_archive SET customer_id = NULL WHERE customer_id = ?`,
-		`UPDATE promotions SET customer_id = NULL WHERE customer_id = ?`,
+		// ut-docs#5591: NULL customer_id means "any customer", so unlink AND
+		// deactivate in one statement (same rule as migration 097).
+		`UPDATE promotions SET is_active = 0, customer_id = NULL WHERE customer_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return false, fmt.Errorf("erase customer unlink: %w", err)
