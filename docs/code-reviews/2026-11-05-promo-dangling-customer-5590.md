@@ -10,7 +10,7 @@ Reviewer: Opus 5.5 (independent, read-only), one round. Tester: separate Sonnet 
   - `internal/db/migration_097_promotions_dangling_customer_test.go` covers dangling, valid, global and already-inactive rows, a customers row with a NULL id, the sync generation bump (and no bump on a clean till), idempotence using the real file, `foreign_key_check` and a fresh boot.
   - `internal/data/promo_dangling_sync_5590_test.go`: an old main till sends an orphan to a repaired satellite, which the satellite clamps; a valid customer is not clamped.
   - `internal/data/promo_dangling_customer_5590_test.go` pins checkout behaviour. A repaired promo never resolves. A contrast test shows an active promo with a NULL customer applying to everyone.
-- `web/help/en/promotions.md`: step 6 describes the one-time switch-off on update.
+- `web/help/en/promotions.md`: step 6 describes the one-time switch-off on update and says to choose the intended customer before activating the code again (since #5574 lets a manager change the customer on edit). The docs-shots manifest hash is refreshed; the screenshot itself is unchanged.
 
 ## Findings
 | # | Sev | Finding | Outcome |
