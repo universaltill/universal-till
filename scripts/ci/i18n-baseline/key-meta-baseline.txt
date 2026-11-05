@@ -1779,7 +1779,6 @@ promotions.col.value
 promotions.customer.any
 promotions.customer.search_ph
 promotions.deactivate
-promotions.edit
 promotions.error.code_exists
 promotions.error.create
 promotions.error.dates_invalid
@@ -1791,8 +1790,6 @@ promotions.field.description
 promotions.field.ends_at
 promotions.field.starts_at
 promotions.inactive
-promotions.list_empty
-promotions.new.submit
 promotions.new.title
 promotions.title
 promotions.type.amount
