@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -44,9 +45,14 @@ type Meta struct {
 	// cloud-side transcription can request it from Whisper (ut-docs#397).
 	// Empty when it was never captured (bundles saved before this field
 	// existed, or the JS-less path) — the cloud treats that as auto-detect.
-	Locale    string            `json:"locale"`
-	CreatedAt time.Time         `json:"created_at"`
-	Logs      []logging.Problem `json:"logs"`
+	Locale string `json:"locale"`
+	// AppVersion is the till build (buildinfo.Version) at capture time, not
+	// upload time: a till can self-update while a report waits offline
+	// (ut-docs#2605). Empty for bundles saved before this field existed;
+	// never back-filled.
+	AppVersion string            `json:"app_version,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	Logs       []logging.Problem `json:"logs"`
 	// SentFailCount counts how many times this bundle uploaded to the cloud
 	// successfully but its local issue_reports_sent retention record
 	// (ut-docs#348) failed to save — e.g. disk full, DB briefly read-only.
@@ -202,7 +208,7 @@ func saveBundleFiles(dir, id, note, locale string, audio, video []byte, images [
 			return fmt.Errorf("issuereport: write %s: %w", name, err)
 		}
 	}
-	meta := Meta{ID: id, Note: note, Locale: locale, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
+	meta := Meta{ID: id, Note: note, Locale: locale, AppVersion: buildinfo.Version, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
 	// The ring already holds redacted text; redacting again (a no-op on it)
 	// keeps meta.json clean whatever reached the ring (ut-docs#3145).
 	for i := range meta.Logs {
