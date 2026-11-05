@@ -226,15 +226,21 @@
     used: "{{ T "kitchenstations.discover.used" }}"
   };
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  // Bumped on every open: a scan still in flight (up to 25s) when the
+  // dialog is closed and reopened for another station drops its answer
+  // instead of showing stale candidates there.
+  var scanGen = 0;
   // Every open of the dialog (create or edit) starts clean: candidates from
   // an earlier open must never show next to another station's address.
   document.body.addEventListener('record-dialog:open', function (ev) {
     if (!ev.target || ev.target.id !== 'kitchen-station-dialog') return;
+    scanGen++;
     out.innerHTML = '';
     msg.textContent = '';
     btn.disabled = false;
   });
   btn.addEventListener('click', function () {
+    var gen = scanGen;
     btn.disabled = true;
     msg.textContent = T.searching;
     out.innerHTML = '';
@@ -247,6 +253,7 @@
       // shows the error message (ut-docs#1556 review follow-up).
       .then(function (r) { if (!r.ok) throw new Error('discover-printers HTTP ' + r.status); return r.json(); })
       .then(function (j) {
+        if (gen !== scanGen) return;
         btn.disabled = false;
         var list = (j.data && j.data.printers) || [];
         if (!list.length) { msg.textContent = T.noneFound; return; }
@@ -275,6 +282,7 @@
         out.appendChild(ul);
       })
       .catch(function () {
+        if (gen !== scanGen) return;
         btn.disabled = false;
         msg.textContent = T.error;
       });
