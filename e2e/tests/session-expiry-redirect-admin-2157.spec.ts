@@ -138,6 +138,8 @@ test.describe('admin pages redirect to /login on a session-expired 401 instead o
   test('promotions.html customer search redirects', async ({ page }) => {
     await ensureOperator(page);
     await page.goto('/promotions');
+    // ut-docs#3661: the customer picker sits in the record dialog.
+    await page.locator('#promotions-new').click();
     await revokeSessionThenAssertRedirect(page, async () => {
       await page.locator('#promo-cust-q').fill('anything', { timeout: 2000 });
     });

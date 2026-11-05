@@ -506,5 +506,10 @@
   "settings.move.refused_source_unavailable": {"description": "Move refused: the till's current shop is unavailable (deleted or merging).", "review": "standard"},
   "settings.move.refused_pending": {"description": "Move refused: another move is already pending for this till.", "review": "standard"},
   "settings.move.refused_declined_recently": {"description": "Move refused: a recent decline blocks this requester for a day.", "review": "standard"},
-  "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"}
+  "settings.move.refused_rate_limited": {"description": "Move refused: rate limited.", "review": "standard"},
+  "promotions.col.dates": {"description": "Column header on the Promotions list: the promotion's start and end dates, shown as two stacked lines in one column. An open side shows a dash.", "review": "standard"},
+  "promotions.deactivate_confirm": {"description": "Confirmation shown before a promotion is deactivated from its edit dialog: says it stops working at checkout and can be reactivated.", "review": "standard"},
+  "promotions.edit_title": {"description": "Title of the Promotions record dialog when an existing promotion is opened for editing.", "review": "standard"},
+  "promotions.empty": {"description": "Empty state on the Promotions page when no promotion exists yet; points at the + button next to the search field.", "review": "standard"},
+  "promotions.search_placeholder": {"description": "Label and placeholder of the search field above the Promotions list (filters rows by code, description or customer).", "review": "standard"}
 }

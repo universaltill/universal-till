@@ -44,7 +44,11 @@ test.describe('admin pages reachable under UT_AUTH=off (ut-docs#902)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/promotions');
     await expect(page.locator('h1')).toBeVisible();
-    await expect(page.locator('table.table').first()).toBeVisible();
+    // Since ut-docs#3661 /promotions is a list-and-dialog page: a till with
+    // no promotions shows the list card's empty line, not an empty table
+    // (as /locations does). The list card and the New button render either way.
+    await expect(page.locator('.card.list-card')).toBeVisible();
+    await expect(page.locator('#promotions-new')).toBeVisible();
     assertClean();
   });
 
