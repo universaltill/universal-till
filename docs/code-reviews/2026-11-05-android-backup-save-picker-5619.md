@@ -27,3 +27,12 @@
   partial document. Left: (5) Windows disk-full codes map to the generic
   message (desktop path, not this card); process death while the picker is
   open drops the result.
+
+## Docs screenshots
+`web/help/img/manifest.json` re-pinned (surface hash + backups topic hash) after
+the `en/backups` topic and settings template changed. `make docs-shots` run in
+the linux/amd64 Ubuntu 24.04 container with the pinned fonts: all PNGs came out
+byte-identical to main except `claim`/`notices` (emulation artefacts, as in
+#2386) and `{ar,fa,tr}/alerts` (embeds a wall-clock log time), all discarded.
+The affected backups screen shows no visible change, so only the manifest is
+committed. `guard-docs-shots.sh` passes.
