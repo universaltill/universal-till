@@ -147,13 +147,17 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		if startsAt != "" && endsAt != "" && endsAt < startsAt {
 			return data.PromotionInput{}, "promotions.error.dates_invalid", false
 		}
+		// ut-docs#5574: an absent customer_id means "unchanged"; a present
+		// empty value is an explicit clear; an id is validated in the repo.
+		_, present := r.PostForm["customer_id"]
 		return data.PromotionInput{
-			Type:        typ,
-			Value:       value,
-			Description: strings.TrimSpace(r.PostFormValue("description")),
-			StartsAt:    startsAt,
-			EndsAt:      endsAtInclusive(endsAt),
-			CustomerID:  strings.TrimSpace(r.PostFormValue("customer_id")),
+			KeepCustomer: !present,
+			Type:         typ,
+			Value:        value,
+			Description:  strings.TrimSpace(r.PostFormValue("description")),
+			StartsAt:     startsAt,
+			EndsAt:       endsAtInclusive(endsAt),
+			CustomerID:   strings.TrimSpace(r.PostFormValue("customer_id")),
 		}, "", true
 	}
 
@@ -185,6 +189,10 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 				renderPromotionsDialogError(w, r, "promotions.error.code_exists")
 				return
 			}
+			if errors.Is(err, data.ErrPromotionCustomerUnknown) {
+				renderPromotionsDialogError(w, r, "promotions.error.customer_unknown")
+				return
+			}
 			renderPromotionsDialogError(w, r, "promotions.error.create")
 			return
 		}
@@ -205,6 +213,10 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := posRepo.UpdatePromotion(r.Context(), code, in); err != nil {
+			if errors.Is(err, data.ErrPromotionCustomerUnknown) {
+				renderPromotionsDialogError(w, r, "promotions.error.customer_unknown")
+				return
+			}
 			renderPromotionsDialogError(w, r, "promotions.error.update")
 			return
 		}
@@ -300,6 +312,9 @@ type promotionView struct {
 	ValuePercent     string // prefill for the percent-type edit input; "" if type is amount
 	StartsAtDate     string // calendar date only, for the <input type="date"> prefill
 	EndsAtDate       string // ditto; strips endsAtInclusive's end-of-day time
+	// CustomerLabel is what the dialog's customer field shows on edit: ""
+	// (unbound), "Deleted customer", or the customer's name (ut-docs#5574).
+	CustomerLabel string
 }
 
 // ut-docs#4097 (#4086 precedent, buildTaxOverrideRows): the percent strings are
@@ -309,6 +324,12 @@ func newPromotionView(p data.PromotionAdmin, locale string) promotionView {
 	v := promotionView{PromotionAdmin: p, PathCode: url.PathEscape(p.Code)}
 	v.StartsAtDate = promoDateOnly(p.StartsAt)
 	v.EndsAtDate = promoDateOnly(p.EndsAt)
+	switch {
+	case p.CustomerMissing:
+		v.CustomerLabel = httpx.T(locale, "promotions.customer.deleted")
+	case p.CustomerID != "":
+		v.CustomerLabel = p.CustomerName
+	}
 	if p.Type == "percent" {
 		pct := float64(p.Value) / 100
 		v.ValuePercent = httpx.LocalizeMajor(fmt.Sprintf("%.2f", pct), locale)
