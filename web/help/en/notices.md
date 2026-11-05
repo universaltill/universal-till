@@ -3,6 +3,7 @@ id: notices
 title: Notices
 section: Connecting & extending
 order: 365
+public: true
 summary: "Messages from Universal Till and your partners arrive in a bell in the left-hand menu. They never get in the way of a sale."
 routes: [/notices, /notices/bell, /notices/strip, /notices/toast, "/notices/{id}/row"]
 keywords: [notices, messages, bell, announcement, critical, acknowledge, partner]
