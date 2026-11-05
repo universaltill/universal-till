@@ -675,6 +675,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSelfOrderShop(mux, dp)       // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
 	registerAuditPage(mux, dp)           // manager-only audit-trail browse/filter page
 	registerChannelOrdersPage(mux, dp)   // manager-only read-only Online orders list (ADR-0169 §9, ut-docs#4768)
+	registerNoticesPages(mux, dp)        // notices from Universal Till/partners: bell, inbox, toast, critical strip (ADR-0176, ut-docs#5366)
 	registerIssueReportPage(mux, dp)     // manager-only "report an issue" capture (ADR-0022)
 	registerMyReportsPage(mux, dp)       // manager-only sent-report tracking list (ut-docs#348)
 	registerDiagnosticsSettings(mux, dp) // diagnostic mode: nav chip, code redemption, local stop (ADR-0092, ut-docs#2169)

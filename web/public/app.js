@@ -1042,8 +1042,14 @@ function renderNotice(el, level, text){
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
-    if (toast.classList.contains('error')) return; // errors persist until dismissed
+    // errors persist until dismissed; a critical notice (ADR-0176) stays until
+    // a manager acknowledges it -- it never auto-expires.
+    if (toast.classList.contains('error') || toast.classList.contains('critical')) return;
     toast.dataset.dismissed = '1';
+    // ADR-0176: a notice toast carries its own duration (data-dismiss-ms) and
+    // pauses while hovered, focused or touched.
+    var ms = parseInt(toast.dataset.dismissMs, 10);
+    if (ms > 0) { utPausableDismiss(toast, ms); return; }
     setTimeout(function(){
       toast.classList.add('hide');
       setTimeout(function(){
@@ -1054,6 +1060,62 @@ function scheduleToastDismiss(){
     }, 2500);
   });
 }
+
+// utPausableDismiss removes a notice toast after ms, pausing the countdown
+// while the pointer, keyboard focus or a finger is on it (ut-docs#5366: an
+// operator reading it or reaching for Open must never lose it mid-tap).
+function utPausableDismiss(toast, ms) {
+  var left = ms, started = 0, timer = 0;
+  toast.style.setProperty('--notice-ms', ms + 'ms');
+  function gone() {
+    toast.classList.add('hide');
+    setTimeout(function(){ if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+  }
+  function run() { started = Date.now(); timer = setTimeout(gone, left); toast.classList.remove('paused'); }
+  function pause() {
+    if (!timer) return;
+    clearTimeout(timer); timer = 0;
+    left = Math.max(1000, left - (Date.now() - started));
+    toast.classList.add('paused');
+  }
+  ['mouseenter', 'focusin', 'touchstart'].forEach(function(ev){ toast.addEventListener(ev, pause, { passive: true }); });
+  ['mouseleave', 'focusout', 'touchend', 'touchcancel'].forEach(function(ev){
+    toast.addEventListener(ev, function(){ if (!timer) run(); }, { passive: true });
+  });
+  run();
+}
+
+// ADR-0176 (ut-docs#5366) notices glue. (1) A toast is never shown while the
+// payment overlay is open: the poll is cancelled, so the notice simply stays
+// queued on the server (it is only marked shown when it renders), and the
+// poll is re-run the moment the overlay closes. (2) The phone burger's label
+// is count-aware while something is unread.
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var el = evt.detail && evt.detail.elt;
+  if (!el || el.id !== 'notices-toast') return;
+  var po = document.getElementById('payment-overlay');
+  if (po && po.open) evt.preventDefault();
+});
+document.addEventListener('close', function (evt) {
+  if (evt.target && evt.target.id === 'payment-overlay' && window.htmx) htmx.trigger(document.body, 'notices-check');
+}, true);
+function utNoticesBurgerLabel() {
+  var badge = document.getElementById('notices-burger-badge');
+  var btn = document.querySelector('.nav-drawer-toggle');
+  if (!badge || !btn) return;
+  if (!btn.dataset.labelOpenBase) btn.dataset.labelOpenBase = btn.getAttribute('data-label-open') || '';
+  var label = badge.dataset.label || btn.dataset.labelOpenBase;
+  btn.setAttribute('data-label-open', label); // utNavDrawer reads it when the drawer closes
+  if (btn.getAttribute('aria-expanded') !== 'true') btn.setAttribute('aria-label', label);
+}
+document.addEventListener('htmx:oobAfterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (t && t.id === 'notices-burger-badge') utNoticesBurgerLabel();
+});
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (t && t.id === 'notices-bell') utNoticesBurgerLabel();
+});
 
 // ADR-0098: app.js loads once per document (defer) -- the readyState guard
 // covers the deferred-script case; boosted arrivals come through afterSwap.
