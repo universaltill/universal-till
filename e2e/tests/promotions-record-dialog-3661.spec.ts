@@ -398,4 +398,22 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(row(page, code)).toHaveAttribute('data-field-customer_id', shell);
     assertClean();
   });
+
+  // ut-docs#5574 (Tester D3, review): at the phone tier the collapsed card
+  // shows the Customer line without tapping More (data-card-keep), and only
+  // the name, never the id.
+  test('phone card shows the customer name collapsed at 360x740', async ({ page }) => {
+    const code = 'PC5574';
+    const cust = customerId();
+    await seed(page, code, { customer_id: cust });
+    await page.setViewportSize({ width: 360, height: 740 });
+    await page.goto('/promotions');
+    const r = row(page, code);
+    await expect(r).toHaveClass(/t-cards-row/);
+    await expect(r).not.toHaveClass(/t-cards-open/);
+    const cell = r.locator('td', { hasText: CUSTOMER_NAME });
+    await expect(cell).toBeVisible();
+    await expect(cell).not.toHaveClass(/t-cards-extra/);
+    await expect(cell).not.toContainText(cust);
+  });
 });
