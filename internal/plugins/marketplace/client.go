@@ -846,10 +846,11 @@ type GetRevocationsRequest struct {
 // snake_case API convention — same correction ut-docs#2380 made to
 // plugins.RevocationEntry, the live equivalent of this struct.
 type Revocation struct {
-	PluginID string `json:"pluginId"`
-	Version  string `json:"version,omitempty"` // Empty means all versions
-	Action   string `json:"action"`            // disable | delete
-	Reason   string `json:"reason"`
+	PluginID   string `json:"pluginId"` // marketplace listing UUID (ut-docs#5653)
+	ManifestID string `json:"manifestId,omitempty"`
+	Version    string `json:"version,omitempty"` // Empty means all versions
+	Action     string `json:"action"`            // disable | delete
+	Reason     string `json:"reason"`
 }
 
 // GetRevocationsResponse contains revocation feed.
