@@ -522,6 +522,27 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  <!-- ut-docs#5620: Android only. The shell keeps the display on while the
+       till is in front and lets the OS sleep it after this much idle time. The
+       row stays hidden on any till without window.AndroidKiosk (browser, Pi,
+       desktop); the choice is per device and lives in the app, not the shop
+       settings. -->
+  <form id="screen-awake-form" class="set-gap" hidden data-testid="screen-awake">
+    <label class="set-row">{{ T "settings.display.awake" }}
+      <select id="screen-awake-select" name="minutes">
+        <option value="0">{{ T "settings.display.awake_never" }}</option>
+        <option value="15">{{ printf (T "settings.display.awake_minutes") 15 }}</option>
+        <option value="30">{{ printf (T "settings.display.awake_minutes") 30 }}</option>
+        <option value="60">{{ printf (T "settings.display.awake_minutes") 60 }}</option>
+        <option value="120">{{ printf (T "settings.display.awake_hours") 2 }}</option>
+        <option value="240">{{ printf (T "settings.display.awake_hours") 4 }}</option>
+        <option value="480">{{ printf (T "settings.display.awake_hours") 8 }}</option>
+      </select>
+    </label>
+    <p class="muted">{{ T "settings.display.awake_help" }}</p>
+    <span id="screen-awake-msg" aria-live="polite" class="muted"></span>
+  </form>
+  <script src="/public/screen-awake.js?v={{ assetv "public/screen-awake.js" }}" defer></script>
   <!-- ut-docs#2308: the sell-screen basket/products divider's own reset --
        the drag itself lives on the sell screen (a live, no-reload
        fetch() POST, see index.html), so this is only the "I want the
