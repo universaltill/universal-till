@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -1226,11 +1227,31 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		// first, over the same recs slice, exactly as before; only the
 		// final write is batched.
 		toApply := recs
-		if t.name == "settings" || t.name == "country_settings" {
+		if t.name == "settings" || t.name == "country_settings" || t.name == "promotions" {
 			toApply = make([]map[string]any, 0, len(recs))
 			for _, rec := range recs {
 				if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
 					continue // defense in depth: never let a primary write per-till keys
+				}
+				if t.name == "promotions" {
+					// ut-docs#5590: an older main till can still send a promo
+					// whose customer_id names a customer that no longer exists
+					// (migration 097 repaired it here, and the customers table
+					// above no longer holds it). Raw, that fails the whole apply
+					// with FOREIGN KEY 787. Apply it the way 097 repairs it:
+					// unlinked AND inactive, never just unlinked (NULL means
+					// "any customer"). customers sync before promotions, so a
+					// customer arriving in this bundle is already present.
+					if cid, ok := rec["customer_id"]; ok && cid != nil {
+						var one int
+						err := tx.QueryRowContext(ctx, `SELECT 1 FROM customers WHERE id = ?`, fmt.Sprint(cid)).Scan(&one)
+						if errors.Is(err, sql.ErrNoRows) {
+							rec["customer_id"] = nil
+							rec["is_active"] = 0
+						} else if err != nil {
+							return fmt.Errorf("apply promotions: check customer: %w", err)
+						}
+					}
 				}
 				if t.name == "country_settings" {
 					// ut-docs#1669: upsertRows below writes archive_min_days
