@@ -95,3 +95,7 @@ fix is deferred (ut-docs, above) · README n/a (it does not describe
 /promotions) · new `en.json` keys → `en.meta.json` updated (5 keys, English
 only) · plan/price, platform claim, ADR, plugin type/host function, my. UI
 n/a · review record: this file; follow-ups listed above as cards.
+
+## CI follow-up (2026-11-05)
+
+On the PR, `playwright` failed in `admin-pages-auth-off-902.spec.ts` › `/promotions renders`. That smoke test expected `table.table`, but the CI till has no promotions, so the new page shows the list card's empty line instead of a table, as `/locations` does. The test now asserts the list card and the New button, which render in both states. Locally the spec passes 4/4. In the same run, `phone-sell-3059` was flaky and passed on retry; this diff doesn't touch it.
