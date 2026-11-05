@@ -29,8 +29,10 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -623,6 +625,19 @@ class MainActivity : AppCompatActivity() {
      * class would be a real bypass of the very lock it exists to release.
      */
     private inner class KioskBridge {
+        /** ut-docs#5620: minutes of idle before the till lets the screen sleep (0 = never). */
+        @JavascriptInterface
+        fun getScreenAwakeMinutes(): Int = screenAwakeMinutes()
+
+        /** ut-docs#5620: only the offered choices are accepted; anything else resets to the default. */
+        @JavascriptInterface
+        fun setScreenAwakeMinutes(minutes: Int): Int {
+            val m = ScreenAwakeLogic.normalize(minutes)
+            getSharedPreferences(SCREEN_PREFS, Context.MODE_PRIVATE).edit().putInt(SCREEN_PREF_MINUTES, m).apply()
+            runOnUiThread { startKeepAwake() }
+            return m
+        }
+
         @JavascriptInterface
         fun exitLockdown() {
             runOnUiThread {
@@ -1199,6 +1214,69 @@ class MainActivity : AppCompatActivity() {
     private fun stopUpdatePoll() {
         updatePollRunnable?.let { updateHandler.removeCallbacks(it) }
         updatePollRunnable = null
+    }
+
+    // ut-docs#5620: nothing ever set FLAG_KEEP_SCREEN_ON, so the till screen
+    // slept on the OS display timeout (a few seconds on the test tablet) in
+    // every mode, kiosk included. While this Activity is in front the window
+    // now keeps the display on until the operator has been idle for the
+    // chosen minutes (ScreenAwakeLogic; 0 = never), then the flag drops and
+    // the OS timeout takes over. A touch or key press re-arms it. The choice
+    // is per device (SharedPreferences), set from Settings -> Display.
+    private val awakeHandler = Handler(Looper.getMainLooper())
+    private var lastInteractionMs = 0L
+    private val awakeExpiry = Runnable { evaluateKeepAwake() }
+
+    private fun screenAwakeMinutes(): Int =
+        ScreenAwakeLogic.normalize(
+            getSharedPreferences(SCREEN_PREFS, Context.MODE_PRIVATE)
+                .getInt(SCREEN_PREF_MINUTES, ScreenAwakeLogic.DEFAULT_MINUTES),
+        )
+
+    private fun startKeepAwake() {
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        evaluateKeepAwake()
+    }
+
+    private fun stopKeepAwake() {
+        awakeHandler.removeCallbacks(awakeExpiry)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun evaluateKeepAwake() {
+        awakeHandler.removeCallbacks(awakeExpiry)
+        if (!activityResumed) return
+        val minutes = screenAwakeMinutes()
+        val now = SystemClock.elapsedRealtime()
+        if (ScreenAwakeLogic.keepAwake(minutes, lastInteractionMs, now)) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            ScreenAwakeLogic.remainingMs(minutes, lastInteractionMs, now)?.let {
+                awakeHandler.postDelayed(awakeExpiry, it + 1000L)
+            }
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    /** Touch anywhere in the window counts as use and re-arms a lapsed flag at once. */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            lastInteractionMs = SystemClock.elapsedRealtime()
+            // Only re-evaluate when the flag had lapsed; a live timer is re-armed lazily on expiry.
+            if (activityResumed && (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+                evaluateKeepAwake()
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        // a key press (HID scanner, keyboard) also wakes a lapsed flag
+        if (activityResumed && (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+            evaluateKeepAwake()
+        }
     }
 
     private fun updatePrefs() = getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
@@ -2444,6 +2522,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         activityResumed = false
+        stopKeepAwake()
         cancelPendingPinCheck()
         // ut-docs#3466 (ADR-0142 D3): a backgrounded Activity cannot answer
         // a remote unlock; Go reports no_shell until onResume registers the
@@ -2457,6 +2536,8 @@ class MainActivity : AppCompatActivity() {
         // are what re-arms the pin poll, and [schedulePinCheck] refuses
         // while this is false.
         activityResumed = true
+        // ut-docs#5620: the till window keeps the display on while in front.
+        startKeepAwake()
         // ut-docs#3466 (ADR-0142 D3): only the foreground Activity answers
         // a remote kiosk_unlock; cleared again in onPause.
         Mobile.setKioskBridge(remoteUnlockBridge)
@@ -2654,6 +2735,8 @@ class MainActivity : AppCompatActivity() {
 
         // ut-docs#4312: where the in-flight DownloadManager id lives, so a
         // recreated Activity or a later tap finds the same download.
+        private const val SCREEN_PREFS = "screen_awake"
+        private const val SCREEN_PREF_MINUTES = "idle_minutes"
         private const val UPDATE_PREFS = "in_app_update"
         private const val UPDATE_PREF_ID = "download_id"
         private const val UPDATE_PREF_ENQUEUED_AT = "download_enqueued_at_wall_ms"
