@@ -35,3 +35,12 @@ re-run of the same dumpsys check.
 Unit tests and compile only;
 no screenshot of the new row; first red run of the Kotlin test was skipped
 (logic and test written together).
+
+## Docs screenshots
+`web/help/img/manifest.json` re-pinned (surface hash + display topic hash) after
+the `en/display` topic and settings template changed. `make docs-shots` run in
+the linux/amd64 Ubuntu 24.04 container with the pinned fonts: every PNG came out
+byte-identical to main (no pixel change; the new row is Android-only and not on
+the captured screen), so only the manifest is committed. `claim.png` and
+`notices.png` differ under emulation and were discarded, as in #2386.
+`guard-docs-shots.sh` passes.
