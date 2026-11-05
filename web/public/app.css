@@ -6342,7 +6342,13 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    buttons vertically, tripling the row height and clipping them at the card
    edge (seen in this card's own 360px screenshot). One row, and the table
    scrolls sideways inside the card instead. */
-.list-actions { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+.list-actions:not(td) { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+/* flex only on a non-cell container (designer category list, buttons.html);
+   on a <td> flex replaced display:table-cell, so the cell stopped stretching
+   to the row and its border-bottom sat above the row's on a wrapped row
+   (ut-docs#5576). The cell stays a real table cell, nowrap + end-aligned. */
+td.list-actions { white-space: nowrap; text-align: end; vertical-align: middle; }
+td.list-actions > * + * { margin-inline-start: .5rem; }
 .list-empty-row td { text-align: center; color: var(--muted); }
 [data-record-open] { cursor: pointer; }
 [data-record-open]:hover > td { background: var(--surface-2); }
@@ -6391,10 +6397,9 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
 /* ut-docs#2099 (coding-standards.md §10, ut-docs#1999's other half): status/
    lock/exit-to-OS, withheld outright in self-order kiosk mode (see
    record_dialog.html — the whole row is absent then, not just hidden).
-   Deliberately its own thin line, NOT full-height .btn/.btn-icon controls
-   (those are 3rem/48px touch targets, sized for a primary action) — this
-   is a secondary affordance and the ut-docs#2000 head-height budget has no
-   room to repeat that size a third time in the same pinned head. Measured
+   Secondary row, but its controls meet the 44px touch floor (ut-docs#5576;
+   was 1.9rem ≈ 33x32): 44px literal so it holds at any --ui-scale. Still
+   thinner than full 3rem .btn/.btn-icon, the ut-docs#2000 head budget. Measured
    height cost at 360px is recorded in
    ut-docs/reference/list-and-dialog-pattern.md's "The nav rail is
    covered" section. The connection chip reuses .sb-dot / .is-offline
@@ -6413,8 +6418,8 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    override to the existing --danger token (~4.8:1 on white) rather than a
    new literal; .sb-dot's own background/glow is unaffected. */
 .record-dialog-status-row .sb-conn.is-offline { color: var(--danger); }
-.record-dialog-status-row .btn { min-block-size: 1.9rem; padding: .2rem .5rem; }
-.record-dialog-status-row .btn-icon { min-inline-size: 1.9rem; padding-inline: .4rem; }
+.record-dialog-status-row .btn { min-block-size: 44px; padding: .2rem .5rem; }
+.record-dialog-status-row .btn-icon { min-inline-size: 44px; padding-inline: .4rem; }
 .record-dialog-status-row .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
 .record-dialog-lock { margin: 0; display: inline-flex; }
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
