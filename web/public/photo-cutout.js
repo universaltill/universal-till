@@ -247,7 +247,9 @@
 
   function paintChoice(panel, choice) {
     panel.querySelectorAll('[data-cutout-bg-choice]').forEach(function (b) {
-      b.setAttribute('aria-pressed', b.getAttribute('data-cutout-bg-choice') === choice ? 'true' : 'false');
+      var on = b.getAttribute('data-cutout-bg-choice') === choice;
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      b.setAttribute('tabindex', on ? '0' : '-1');
     });
   }
 
@@ -429,6 +431,10 @@
     var seq = st.seq;
     var removeBtn = btn(panel, 'remove');
     var hadFocus = panel.contains(document.activeElement) ? document.activeElement : null;
+    // ut-docs#5553: radiogroup.js clicks then focuses the next tile, but this
+    // click disables every button (setBusy) so that focus() is a no-op and
+    // hadFocus is the tile arrowed AWAY from: re-focus the chosen tile after.
+    var bgFocus = !!(hadFocus && hadFocus.hasAttribute && hadFocus.hasAttribute('data-cutout-bg-choice'));
     setBusy(panel, true);
     paintChoice(panel, choice);
     paintSwatch(panel);
@@ -452,13 +458,17 @@
       // Keep the keyboard user where the action now is, not on a button
       // that just disappeared.
       if (hadFocus === removeBtn) btn(panel, 'accept').focus();
+      else if (bgFocus) { var t = q(panel, '[data-cutout-bg-choice="' + choice + '"]'); if (t) t.focus(); }
       else if (hadFocus && hadFocus.focus) hadFocus.focus();
     }, function (err) {
       if (states.get(panel) !== st || st.seq !== seq) return;
       setBusy(panel, false);
       paintChoice(panel, st.current ? st.choice : choice);
       setStatus(panel, 'error', err && err.status === 422 ? panel.dataset.msgNoSubject : panel.dataset.msgUnavailable);
-      if (hadFocus && hadFocus.focus && !hadFocus.hidden) hadFocus.focus();
+      if (bgFocus) {
+        var back = q(panel, '[data-cutout-bg-choice="' + (st.current ? st.choice : choice) + '"]');
+        if (back) back.focus();
+      } else if (hadFocus && hadFocus.focus && !hadFocus.hidden) hadFocus.focus();
     });
   }
 

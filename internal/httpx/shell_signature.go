@@ -28,6 +28,7 @@ var HeadAssets = []string{
 	"public/category-filter.js",
 	"public/icon-picker-filter.js", // ut-docs#2506: built-in icon picker search
 	"public/photo-cutout.js",       // ut-docs#3127: "Remove background" in the photo pickers
+	"public/radiogroup.js",         // ut-docs#5553: radiogroup arrow keys
 	"public/bugreport-draft.js",    // ut-docs#2342: the bug-report draft store
 	"public/sell-screen-watch.js",  // ut-docs#2765: open sale screen live catalog refresh
 	"public/tour.js",               // ut-docs#3710: sale-screen guided tour

@@ -2162,7 +2162,7 @@ input, select, textarea {
   min-block-size: 46px;
 }
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border);
+  outline: 2px solid var(--focus-border); outline-offset: 1px; border-color: var(--focus-border);
 }
 .form-row input { padding: .55rem; }
 label { font-size: .85rem; color: var(--text); }
@@ -3430,6 +3430,11 @@ body.osk-padded #table-add-modal .modifier-actions {
   transition: background .15s ease, color .15s ease;
 }
 .order-type-option.is-active { background: var(--accent); color: #fff; }
+/* ut-docs#5553: visible >=3:1 focus inside the pill (the group clips outside outlines). */
+.order-type-option:focus-visible { outline: 2px solid var(--focus-border); outline-offset: -4px; }
+/* Two-tone: the white ring alone is 1.8-2.8:1 on the accent fill in some themes,
+   so a black ring sits flush inside it (black vs accent >= 3:1 everywhere). */
+.order-type-option.is-active:focus-visible { outline-color: #fff; box-shadow: inset 0 0 0 4px #000; }
 /* ut-docs#2282/#2309: the per-line dine-in/takeaway segments (ADR-0073
    Decision 2) and the mixed-basket status chip that used to live here were
    REMOVED with the cashier-facing per-line control (product-owner scope
@@ -6664,7 +6669,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-colors .item-color-tile { flex-direction: row; gap: .4rem; min-block-size: 2.6rem; min-inline-size: 6rem; padding: .35rem .6rem; }
 .designer-cat-colors .item-color-tile input[type="radio"] { margin: 0; flex: none; }
 .designer-cat-colors .item-color-tile:has(input:checked) { border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent); }
-.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; }
+.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 .designer-cat-new { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
 .designer-cat-new .designer-cat-form { inline-size: 100%; border-block-start: 0; padding-block-start: 0; }
 
@@ -7535,3 +7540,28 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   flex-direction: column; gap: .5rem; align-items: center; }
 .notices-empty-ico svg { inline-size: 56px; block-size: 56px; color: var(--muted); }
 .notices-empty p { margin: 0; color: var(--muted); }
+
+/* ut-docs#5553: Windows High Contrast / forced colors. The normal selected
+   look (accent border + inset box-shadow + tinted fill) is erased in this
+   mode, so selection is re-drawn with system colours and a thicker border;
+   focus keeps its own outline, separate from the selection fill. */
+@media (forced-colors: active) {
+  .picker-tile[aria-pressed="true"],
+  .picker-tile[aria-checked="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText;
+    border-color: Highlight;
+    box-shadow: inset 0 0 0 2px Highlight;
+  }
+  .picker-tile:focus-visible { outline: 3px solid CanvasText; outline-offset: 2px; }
+  .order-type-option { border: 1px solid ButtonText; }
+  .order-type-option[aria-checked="true"],
+  body:not(.pos-sheet-open) .basket .order-type-option[aria-checked="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText;
+    border: 3px solid Highlight;
+    box-shadow: none;
+  }
+  .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
+  .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
+}
