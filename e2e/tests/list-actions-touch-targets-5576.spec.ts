@@ -43,7 +43,6 @@ async function cellGeometry(page: Page, rowSel: string) {
       displays: tds.map((td) => getComputedStyle(td).display),
       actBottom: act ? act.getBoundingClientRect().bottom : null,
       hasActions: !!act,
-      btnWrapped: btn ? btn.getBoundingClientRect().height > 60 : false,
     };
   });
 }
@@ -90,9 +89,10 @@ test.describe('list-actions borders + status-row touch targets (ut-docs#5576)', 
     test(`record dialog exit + lock are >=44x44 at ${vp.width}x${vp.height}`, async ({ page }) => {
       const assertClean = watchConsole(page);
       await page.setViewportSize(vp);
-      await seedPromo(page, `T5576${vp.width}`);
+      const code = `T5576${vp.width}x${Date.now()}`;
+      await seedPromo(page, code);
       await page.goto('/promotions');
-      await page.locator('#promotions-table .promotion-row', { hasText: `T5576${vp.width}` }).first().locator('td').first().click();
+      await page.locator('#promotions-table .promotion-row', { hasText: code }).first().locator('td').first().click();
       const DIALOG = '#promotion-dialog';
       await expect(page.locator(DIALOG)).toBeVisible();
       const exit = page.locator(`${DIALOG} [data-record-dialog-exit]`);
@@ -108,8 +108,6 @@ test.describe('list-actions borders + status-row touch targets (ut-docs#5576)', 
       }
       expect(await exit.getAttribute('href')).toBe('/settings#settings-display');
       expect(await page.locator(`${DIALOG} [data-record-dialog-lock]`).getAttribute('action')).toBe('/api/auth/logout');
-      const row = (await page.locator(`${DIALOG} [data-record-dialog-status-row]`).boundingBox())!;
-      console.log(`MEASURE ${vp.width}x${vp.height} statusRow h=${row.height} exit=${JSON.stringify(await exit.boundingBox())}`);
       assertClean();
     });
   }
