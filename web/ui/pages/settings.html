@@ -2245,6 +2245,19 @@
   </fieldset>
   </div>
 </div>
+<!-- ADR-0176 (ut-docs#5366): notices from Universal Till and partners. A
+     per-till switch, off by default; off means no bell, no inbox and no extra
+     cloud request, and the held notices are erased. -->
+<div class="card" id="settings-notices">
+  <h2>{{ T "settings.notices.title" }}</h2>
+  <p class="muted">{{ T "settings.notices.help" }}</p>
+  <form hx-post="/api/settings/notices" hx-swap="none" data-after-request="ok reload:settings-notices; fail save-error:settings-save-error">
+    <label><input type="checkbox" name="enabled" data-testid="notices-enabled" {{ if eq (index .settingsMap "notices.enabled") "true" }}checked{{ end }}> {{ T "settings.notices.enable" }}</label>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "settings.notices.save" }}</button>
+    </div>
+  </form>
+</div>
 <!-- ut-docs#3115: the shop's name (store.name), editable after setup.
      Elevation-wired like Shop type below, so it renders for every session.
      A plain text input: osk.js's guardSweep gives it inputmode="none" when

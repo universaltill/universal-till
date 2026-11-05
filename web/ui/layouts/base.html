@@ -1496,6 +1496,16 @@
          onsubmit guards and turns a POST error into a re-GET.
          `hx-history-elt` + `hx-history="false"`: htmx snapshots nothing. -->
     <div id="ut-page" hx-boost="true" hx-history-elt hx-history="false">
+    {{/* ADR-0176 (ut-docs#5366): the critical-notice strip. In flow at the top
+         of the main region on every page, never an overlay, never blocks
+         checkout. The mount is a persistent polite live region (so the strip
+         is announced when it appears) and is empty unless the flag is on and
+         a critical platform notice is unacknowledged; GET /notices/strip
+         reads local data only. Cashiers see it read-only. It sits BEFORE the
+         nav in the DOM so its Open/Acknowledge are the first keyboard stops,
+         as they are the first thing on screen (the rail is position: fixed,
+         so the visual placement is the same either way). */}}
+    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
     {{ template "nav" . }}
     <!-- ut-docs#1551: nav-level dismissible notice for a pending pairing
          request -- a sibling of <nav>/<main>, not squeezed into the icon

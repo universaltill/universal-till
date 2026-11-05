@@ -29,7 +29,8 @@
         "osk",
         "suggest",
         "filter",
-        "ai"
+        "ai",
+        "notices"
       ]
     },
     "catalog": {

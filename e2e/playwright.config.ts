@@ -64,7 +64,7 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // ut-docs#5288: the manager-PIN dialog's in-flight Cancel/Escape spec raises the
 // real prompt for a cashier, so it needs a real session (it sorts after login).
 export const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304|notices-cashier-5366)\.spec\.ts$/;
 
 // ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
 // real plugins/layout-salon installed, which HIDES /tables and
@@ -122,10 +122,17 @@ export const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
 // server + project.
 export const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
 
+// ut-docs#5366 / ADR-0176: the notices spec drives a till registered with a fake
+// cloud (run-till-notices.sh, fake-notices-cloud.mjs on 8104, the till on 8103)
+// that checks in every second and pulls notices through the real cloudsync
+// path. That would change what every tick does on the shared default till, so
+// it gets its own server + project.
+export const NOTICES_ONLY_SPECS = /notices-5366\.spec\.ts$/;
+
 // Every spec set that needs its own till; the `default` project ignores all
 // of them (and playwright.webkit.config.ts reuses the list). Order is the
 // order the project used before it was extracted.
-export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS];
+export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS, NOTICES_ONLY_SPECS];
 
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
@@ -237,6 +244,12 @@ export default defineConfig<{}, WorkerOptions>({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-notices.sh',
+      url: 'http://127.0.0.1:8103/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
@@ -324,6 +337,17 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8101',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'notices',
+      testMatch: NOTICES_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: 'http://127.0.0.1:8103',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

@@ -70,6 +70,16 @@
        fragment and a page has no such header; sell-screen-watch.js seeds
        from it. The badge template sits first, outside #buttons-grid. */}}
   {{ if not .EditMode }}{{ template "tile-badges-template" . }}{{ end }}
+  {{/* ADR-0176 (ut-docs#5366): the one slot for an "important" notice toast,
+       in flow at the top of the PRODUCTS pane (never the basket column, never
+       over the total or Pay). Static markup, so the cached sell screen stays
+       shared; hx-preserve keeps it (and a toast showing in it) across this
+       grid's own re-fetches. GET /notices/toast is empty unless the flag is
+       on and the operator may see notices. hx-swap="innerHTML" is explicit: the
+       grid root above sets outerHTML and htmx inherits it, which would swap
+       this mount away with its own (empty) answer. app.js skips the poll while the
+       payment overlay is open, which is what queues a toast during tender. */}}
+  {{ if not .EditMode }}<div id="notices-toast" class="notices-toast-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/toast" hx-trigger="load, every 15s, notices-check from:body"></div>{{ end }}
   {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
        one, ut-docs#2294 gave it its own grid of every active item, and
        both are retired here) -- it shows only category tabs plus the

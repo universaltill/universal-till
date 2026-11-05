@@ -355,7 +355,17 @@ const MOVE_BASE = 'http://127.0.0.1:8093';
 const MOVE_ID = '5127d0c5-0000-4000-8000-000000000001';
 const MOVE_TILL_TOPICS = ['claim'];
 
-for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id))) {
+// ut-docs#5366 (ADR-0176): the `notices` topic's first route is the inbox. It is
+// captured on its own till (8105, run-till-notices.sh with the "docs" fixture),
+// which pulls three fixed notices (a critical strip, a partner message, an
+// info) from a fake cloud, so the screenshot shows the bell, the strip and the
+// inbox with one row open. A critical strip shows on every page of a till that
+// holds one, so no other topic may use that till.
+const NOTICES_BASE = 'http://127.0.0.1:8105';
+const NOTICES_OPEN_ID = '5366d000-0000-4000-8000-000000000002';
+const NOTICES_TILL_TOPICS = ['notices'];
+
+for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id) && !NOTICES_TILL_TOPICS.includes(t.id))) {
   for (const locale of LOCALES as string[]) {
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
       // The basket is server-side state shared across the run — staged once,
@@ -400,6 +410,30 @@ test.describe('move approval (move till)', () => {
         await ensureFullEffects(page);
         await capture(page, topic!.id, locale, route);
         await expect(page.getByTestId('move-approval')).toBeVisible();
+      });
+    }
+  }
+});
+
+test.describe('notices (notices till)', () => {
+  test.use({ baseURL: NOTICES_BASE });
+  for (const id of NOTICES_TILL_TOPICS) {
+    const topic = topics.find((t) => t.id === id);
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${id} (${locale})`, async ({ page }) => {
+        test.skip(!topic, `${id} topic no longer declares routes`);
+        // Turn the (default-off) setting on, as a shop owner does in Settings.
+        expect((await page.request.post('/api/settings/notices', { form: { enabled: 'on' } })).status()).toBe(204);
+        const route = `${topic!.route}?tab=all&open=${NOTICES_OPEN_ID}`;
+        // The notices arrive with the till's first check-ins: wait for them.
+        await expect(async () => {
+          await page.goto(`${route}&lang=${locale}`);
+          await expect(page.getByTestId('notice-row')).toHaveCount(3, { timeout: 1000 });
+        }).toPass({ timeout: 60_000 });
+        await expect(page.getByTestId('notices-strip')).toBeVisible();
+        await ensureFullEffects(page);
+        await capture(page, topic!.id, locale, route);
+        await expect(page.getByTestId('notices-strip')).toBeVisible();
       });
     }
   }

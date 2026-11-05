@@ -1,0 +1,92 @@
+{{/* Notices from Universal Till and partners (ADR-0176, ut-docs#5366; spec:
+     ut-docs docs/design/5366-till-notices). One file, five blocks: the inbox
+     page ("content"), one row ("notice_row", also served alone for the
+     expand/collapse/dismiss swaps), and the three nav/sell-screen fragments
+     ("notices_bell", "notices_strip", "notices_toast"). Titles and sender
+     names are escaped by html/template; bodies come from
+     cloudnotice.RenderBody (escape first, then a tiny allow-list) and are the
+     only template.HTML here. Every notice surface is the one .pos-notice
+     component (docs/sale-screen-notifications.md), never an overlay. */}}
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "notices.title" }} {{ helpLink "notices" }}</h1>
+</div>
+
+<nav class="notices-tabs" aria-label="{{ T "notices.title" }}">
+  <a class="notices-tab" href="/notices?tab=unread" data-testid="notices-tab-unread"{{ if eq .Tab "unread" }} aria-current="page"{{ end }}>{{ T "notices.tab.unread" }} <span class="notices-cnt">{{ .Unread }}</span></a>
+  <a class="notices-tab" href="/notices?tab=all" data-testid="notices-tab-all"{{ if eq .Tab "all" }} aria-current="page"{{ end }}>{{ T "notices.tab.all" }}</a>
+</nav>
+
+{{ if .Rows }}
+<ul class="notices-list" data-testid="notices-list">
+  {{ range .Rows }}{{ template "notice_row" . }}{{ end }}
+</ul>
+{{ else }}
+<div class="notices-empty" data-testid="notices-empty">
+  <span class="notices-empty-ico" aria-hidden="true">{{ icon "notice-empty" }}</span>
+  <b>{{ T "notices.empty.title" }}</b>
+  <p>{{ T "notices.empty.body" }}</p>
+</div>
+{{ end }}
+{{ end }}
+
+{{ define "notice_row" }}
+<li id="notice-{{ .N.ID }}" class="notice-msg s-{{ .N.Severity }}{{ if .Unread }} unread{{ end }}" data-testid="notice-row" data-notice-id="{{ .N.ID }}" data-severity="{{ .N.Severity }}">
+  <button type="button" class="notice-hd" aria-expanded="{{ if .Open }}true{{ else }}false{{ end }}" aria-controls="notice-body-{{ .N.ID }}"
+          {{ if .Open }}hx-get="/notices/{{ .N.ID }}/row?tab={{ .Tab }}"{{ else }}hx-post="/notices/{{ .N.ID }}/read?tab={{ .Tab }}"{{ end }}
+          hx-target="#notice-{{ .N.ID }}" hx-swap="outerHTML">
+    {{ if .Unread }}<span class="notice-unrd" aria-hidden="true"></span>{{ end }}
+    <span class="notice-sev-ico" aria-hidden="true">{{ if eq .N.Severity "critical" }}{{ icon "notice-critical" }}{{ else if eq .N.Severity "important" }}{{ icon "notice-important" }}{{ else }}{{ icon "notice-info" }}{{ end }}</span>
+    <span class="notice-main">
+      <span class="notice-ttl">{{ if .Unread }}<span class="visually-hidden">{{ T "notices.unread.sr" }}: </span>{{ end }}{{ .N.Title }}</span>
+      <span class="notice-meta">
+        <span class="notice-sevtag">{{ if eq .N.Severity "critical" }}{{ T "notices.sev.critical" }}{{ else if eq .N.Severity "important" }}{{ T "notices.sev.important" }}{{ else }}{{ T "notices.sev.info" }}{{ end }}</span>
+        <span class="notice-sender{{ if .Partner }} partner{{ end }}" data-testid="notice-sender"><span class="visually-hidden">{{ T "notices.sender.sr" }} </span>{{ if .Partner }}<span class="notice-sender-ico" aria-hidden="true">{{ icon "notice-building" }}</span>{{ printf (T "notices.sender.partner") .N.SenderName }}{{ else }}<span class="notice-sender-ico" aria-hidden="true">{{ icon "notice-ut" }}</span>{{ T "notices.sender.platform" }}{{ end }}</span>
+        <span>{{ printf (T "notices.expires") (date .N.ExpiresAt) }}</span>
+      </span>
+    </span>
+  </button>
+  {{ if .Open }}
+  <div class="notice-body" id="notice-body-{{ .N.ID }}">
+    <p>{{ .Body }}</p>
+    <div class="notice-acts">
+      {{ with .Link }}<a class="btn primary" href="{{ .Target }}"{{ if $.LinkExternal }} target="_blank" rel="noopener noreferrer" hx-boost="false"{{ end }}>{{ if $.LinkLabelKey }}{{ T "notices.open" }}{{ else }}{{ .Label }}{{ end }}</a>{{ end }}
+      {{ if .CanAck }}<button type="button" class="btn" data-testid="notice-ack" hx-post="/notices/{{ .N.ID }}/ack?tab={{ .Tab }}" hx-target="#notice-{{ .N.ID }}" hx-swap="outerHTML">{{ T "notices.critical.ack" }}</button>
+      {{ else if and (ne .N.Severity "critical") (not .N.DismissedAt) }}<button type="button" class="btn" data-testid="notice-dismiss" hx-post="/notices/{{ .N.ID }}/dismiss?tab={{ .Tab }}" hx-target="#notice-{{ .N.ID }}" hx-swap="outerHTML">{{ T "notices.dismiss" }}</button>{{ end }}
+    </div>
+  </div>
+  {{ end }}
+</li>
+{{ end }}
+
+{{ define "notices_bell" }}
+<a class="nav-toggle notices-bell" href="/notices" data-testid="notices-bell"
+   aria-label="{{ if .Unread }}{{ printf (T "notices.nav.unread") .Unread }}{{ else }}{{ T "notices.nav" }}{{ end }}">
+  <span class="nav-toggle-ico" aria-hidden="true">{{ icon "notice-bell" }}{{ if .Unread }}<span class="notices-badge{{ if .Critical }} crit{{ end }}" data-testid="notices-badge">{{ if .Critical }}<span class="notices-badge-ico">{{ icon "notice-important" }}</span>{{ end }}{{ .Count }}</span>{{ end }}</span>
+  <span class="nav-toggle-label">{{ T "notices.nav" }}</span>
+</a>
+<span id="notices-burger-badge" hx-swap-oob="true" class="notices-badge notices-badge-burger{{ if .Critical }} crit{{ end }}" aria-hidden="true"{{ if not .Unread }} hidden{{ end }}
+      data-unread="{{ .Unread }}" data-label="{{ if .Unread }}{{ printf (T "notices.drawer.open_unread") .Unread }}{{ end }}">{{ .Count }}</span>
+{{ end }}
+
+{{ define "notices_strip" }}
+<div class="pos-notice critical strip" data-testid="notices-strip" data-notice-id="{{ .N.ID }}">
+  <span class="notice-sev-ico" aria-hidden="true">{{ icon "notice-critical" }}</span>
+  <div class="notice-text"><b>{{ T "notices.sev.critical" }}: {{ .N.Title }}</b>{{ if not .CanView }}<span>{{ T "notices.critical.cashier" }}</span>{{ end }}</div>
+  {{ if .CanView }}<div class="notice-strip-acts">
+    <a class="notice-link" href="/notices?tab=all&amp;open={{ .N.ID }}" data-testid="notices-strip-open">{{ T "notices.open" }}</a>
+    {{ if .CanAck }}<button type="button" class="btn" data-testid="notices-strip-ack" hx-post="/notices/{{ .N.ID }}/ack?from=strip" hx-target="#notices-strip" hx-swap="innerHTML">{{ T "notices.critical.ack" }}</button>{{ end }}
+  </div>{{ end }}
+</div>
+{{ end }}
+
+{{ define "notices_toast" }}
+<div class="pos-notice important" data-testid="notices-toast" data-dismiss-ms="{{ .DismissMS }}">
+  <span class="notice-sev-ico" aria-hidden="true">{{ icon "notice-important" }}</span>
+  <div class="notice-text"><b>{{ .N.Title }}</b><span class="notice-toast-body">{{ .Body }}</span></div>
+  <div class="notice-strip-acts">
+    <a class="notice-link" href="/notices?tab=all&amp;open={{ .N.ID }}" data-testid="notices-toast-open">{{ T "notices.open" }}</a>
+    <button type="button" class="notice-dismiss" aria-label="{{ printf (T "notices.dismiss.aria") .N.Title }}">✕</button>
+  </div>
+</div>
+{{ end }}
