@@ -2051,7 +2051,6 @@ reports.tips.tip_received
 reports.tips.type_service_charge
 reports.tips.type_tip
 reports.title
-reports.today
 reports.top_items
 reports.uncategorized
 reports.wd_fri
