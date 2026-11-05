@@ -7351,34 +7351,77 @@ VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
 	return nil
 }
 
+// PromotionFieldChange is one edited column's stored value before and after
+// (ut-docs#5588). Values are the stored forms: string, or int64 for value
+// (minor units for type=amount, basis points for type=percent).
+type PromotionFieldChange struct {
+	From any `json:"from"`
+	To   any `json:"to"`
+}
+
+// PromotionChanges maps a promotions column name (type, value, description,
+// starts_at, ends_at, customer_id) to its change. Empty (non-nil) = no-op edit.
+type PromotionChanges map[string]PromotionFieldChange
+
+// promotionDiff compares the stored row with the edit input. customer_id is
+// only considered when the edit rewrites it (!keep). NULL and "" are equal.
+func promotionDiff(old, in PromotionInput, keep bool) PromotionChanges {
+	ch := PromotionChanges{}
+	if old.Type != in.Type {
+		ch["type"] = PromotionFieldChange{From: old.Type, To: in.Type}
+	}
+	if old.Value != in.Value {
+		ch["value"] = PromotionFieldChange{From: old.Value, To: in.Value}
+	}
+	if old.Description != in.Description {
+		ch["description"] = PromotionFieldChange{From: old.Description, To: in.Description}
+	}
+	if old.StartsAt != in.StartsAt {
+		ch["starts_at"] = PromotionFieldChange{From: old.StartsAt, To: in.StartsAt}
+	}
+	if old.EndsAt != in.EndsAt {
+		ch["ends_at"] = PromotionFieldChange{From: old.EndsAt, To: in.EndsAt}
+	}
+	if !keep && old.CustomerID != in.CustomerID {
+		ch["customer_id"] = PromotionFieldChange{From: old.CustomerID, To: in.CustomerID}
+	}
+	return ch
+}
+
 // UpdatePromotion edits an existing promotion's type/value/description/
 // dates/customer target. The code (PRIMARY KEY) is the promo's identity and
 // is never rewritten here. When the customer binding is unchanged (or
 // KeepCustomer) customer_id is left OUT of the SET list: SQLite FK-checks a
 // child column named in SET even when the value is identical, so a legacy
 // dangling id would otherwise make every edit fail (ut-docs#5574).
-func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) error {
+//
+// On success it returns the stored-before/after diff of the edited columns,
+// computed from the row read inside the same tx (ut-docs#5588); a no-op edit
+// returns an empty, non-nil map. On any error the changes are nil.
+func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) (PromotionChanges, error) {
 	code = strings.TrimSpace(code)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("update promotion: %w", err)
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var stored string
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(customer_id,'') FROM promotions WHERE code = ?`, code).Scan(&stored); err != nil {
+	var old PromotionInput
+	if err := tx.QueryRowContext(ctx, `
+SELECT type, value, COALESCE(description,''), COALESCE(starts_at,''), COALESCE(ends_at,''), COALESCE(customer_id,'')
+FROM promotions WHERE code = ?`, code).Scan(&old.Type, &old.Value, &old.Description, &old.StartsAt, &old.EndsAt, &old.CustomerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrPromotionNotFound
+			return nil, ErrPromotionNotFound
 		}
-		return fmt.Errorf("update promotion: %w", err)
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
-	keep := in.KeepCustomer || in.CustomerID == stored
+	keep := in.KeepCustomer || in.CustomerID == old.CustomerID
 	if !keep && in.CustomerID != "" {
 		ok, err := liveCustomerExists(ctx, tx, in.CustomerID)
 		if err != nil {
-			return fmt.Errorf("update promotion: %w", err)
+			return nil, fmt.Errorf("update promotion: %w", err)
 		}
 		if !ok {
-			return ErrPromotionCustomerUnknown
+			return nil, ErrPromotionCustomerUnknown
 		}
 	}
 	if keep {
@@ -7395,12 +7438,13 @@ WHERE code = ?`,
 			nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID), code)
 	}
 	if err != nil {
-		return fmt.Errorf("update promotion: %w", err)
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
+	changes := promotionDiff(old, in, keep)
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("update promotion: %w", err)
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
-	return nil
+	return changes, nil
 }
 
 // SetPromotionActive soft-deactivates/reactivates a promo code -- mirrors

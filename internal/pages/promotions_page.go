@@ -72,9 +72,9 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		return u, true
 	}
 
-	audit := func(r *http.Request, actorID, code, action string) {
+	audit := func(r *http.Request, actorID, code, action string, payload any) {
 		now := time.Now().UTC().Format(time.RFC3339)
-		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "promotion", code, action, nil, now, "")
+		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "promotion", code, action, payload, now, "")
 	}
 
 	renderPromotions := func(w http.ResponseWriter, r *http.Request, errKey string) {
@@ -196,7 +196,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			renderPromotionsDialogError(w, r, "promotions.error.create")
 			return
 		}
-		audit(r, actor.ID, code, "promotion_create")
+		audit(r, actor.ID, code, "promotion_create", nil)
 		redirectPromotions(w, r, "/promotions")
 	})
 
@@ -212,7 +212,8 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			renderPromotionsDialogError(w, r, errKey)
 			return
 		}
-		if err := posRepo.UpdatePromotion(r.Context(), code, in); err != nil {
+		changes, err := posRepo.UpdatePromotion(r.Context(), code, in)
+		if err != nil {
 			if errors.Is(err, data.ErrPromotionCustomerUnknown) {
 				renderPromotionsDialogError(w, r, "promotions.error.customer_unknown")
 				return
@@ -220,7 +221,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			renderPromotionsDialogError(w, r, "promotions.error.update")
 			return
 		}
-		audit(r, actor.ID, code, "promotion_edit")
+		audit(r, actor.ID, code, "promotion_edit", map[string]any{"changes": changes})
 		redirectPromotions(w, r, "/promotions")
 	})
 
@@ -240,7 +241,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		if activate {
 			action = "promotion_activate"
 		}
-		audit(r, actor.ID, code, action)
+		audit(r, actor.ID, code, action, nil)
 		redirectPromotions(w, r, "/promotions")
 	})
 }
