@@ -56,7 +56,7 @@ func (b *syncBuffer) String() string {
 func TestNewBackgroundJobs_RevocationCheckerGatedOnEndpoint(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
 
-	noEndpoint := NewBackgroundJobs(nil, nil, &config.Config{}, logger)
+	noEndpoint := NewBackgroundJobs(nil, nil, &config.Config{}, logger, nil)
 	if noEndpoint.revocationChecker != nil {
 		t.Fatal("revocation checker created without a marketplace endpoint")
 	}
@@ -66,7 +66,7 @@ func TestNewBackgroundJobs_RevocationCheckerGatedOnEndpoint(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Marketplace.EndpointURL = "http://127.0.0.1:1"
-	withEndpoint := NewBackgroundJobs(nil, nil, cfg, logger)
+	withEndpoint := NewBackgroundJobs(nil, nil, cfg, logger, nil)
 	if withEndpoint.revocationChecker == nil {
 		t.Fatal("revocation checker missing despite a configured endpoint")
 	}
@@ -237,7 +237,7 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
-	go func() { errCh <- Start(ctx, cfg, handler, nil, nil, nil, &wg) }()
+	go func() { errCh <- Start(ctx, cfg, handler, nil, nil, nil, nil, &wg) }()
 
 	var url string
 	select {
@@ -317,7 +317,7 @@ func TestStart_DoesNotWriteSharedConfigWhileOthersReadIt(t *testing.T) {
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	go func() {
-		errCh <- Start(ctx, cfg, http.NotFoundHandler(), nil, nil, nil, &wg)
+		errCh <- Start(ctx, cfg, http.NotFoundHandler(), nil, nil, nil, nil, &wg)
 	}()
 	time.Sleep(200 * time.Millisecond)
 	cancel()
@@ -336,7 +336,7 @@ func TestStart_DoesNotWriteSharedConfigWhileOthersReadIt(t *testing.T) {
 func TestStart_ReturnsErrorOnBadAddr(t *testing.T) {
 	t.Setenv("UT_OPEN_BROWSER", "false")
 	cfg := &config.Config{ListenAddr: "not-a-listen-addr"}
-	err := Start(context.Background(), cfg, http.NewServeMux(), nil, nil, nil, &sync.WaitGroup{})
+	err := Start(context.Background(), cfg, http.NewServeMux(), nil, nil, nil, nil, &sync.WaitGroup{})
 	if err == nil {
 		t.Fatal("Start succeeded on an unbindable address")
 	}
@@ -377,7 +377,7 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
-	go func() { errCh <- Start(ctx, cfg, http.NewServeMux(), nil, d.DB, nil, &wg) }()
+	go func() { errCh <- Start(ctx, cfg, http.NewServeMux(), nil, d.DB, nil, nil, &wg) }()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {

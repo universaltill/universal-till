@@ -1088,9 +1088,15 @@ data/plugins/
 - Includes version, URL, checksum, signature, trust tier
 
 **Revocation Endpoint**
-- `GET /v1/revocations`
-- Returns list of revoked plugin IDs and versions
-- Includes revocation reason and timestamp
+- `GET /v1/revocations` (relative to the marketplace endpoint URL)
+- Returns the revoked releases: `pluginId` is the marketplace **listing
+  UUID**, `manifestId` the plugin manifest id (cloud contract 0.0.11+),
+  plus `version`, `action` and `reason`
+- The till resolves the installed plugin via `manifestId`, then the
+  `plugin_install_status` row for the listing, then `pluginId` directly,
+  and disables it only on an exact version match; a sync that disabled
+  anything reloads the plugin manager so WASM modules unload (ut-docs#5653,
+  contract: ut-docs `reference/contracts/plugin-revocation-feed.md`)
 
 **Telemetry Endpoint**
 - `POST /v1/telemetry/report` with `Authorization: Bearer <device credential>`

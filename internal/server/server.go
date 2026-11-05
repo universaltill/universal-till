@@ -46,10 +46,13 @@ type BackgroundJobs struct {
 }
 
 // NewBackgroundJobs creates a background job scheduler
-func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger, onRevoked func(context.Context) error) *BackgroundJobs {
 	var revocationChecker *plugins.RevocationChecker
 	if cfg.Marketplace.EndpointURL != "" {
 		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
+		if onRevoked != nil {
+			revocationChecker.SetOnRevoked(onRevoked)
+		}
 	}
 
 	telemetryClient := plugins.NewTelemetryClient(db, func() plugins.TelemetryIdentity {
@@ -143,14 +146,14 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 // that both waits on wg AND waits for Start to return (as app.Run does) can
 // safely assume nothing Start ever spawned is still touching db/supervisor
 // once both have happened. wg must not be nil.
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, onPluginsRevoked func(context.Context) error, wg *sync.WaitGroup) error {
 	// Start background jobs if a marketplace (catalog repository) is
 	// configured. Start() itself only launches goroutines and returns
 	// immediately, so it doesn't need its own wrapping goroutine — jobs' own 2
 	// goroutines register with wg directly.
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
-		jobs := NewBackgroundJobs(db, supervisor, cfg, logger)
+		jobs := NewBackgroundJobs(db, supervisor, cfg, logger, onPluginsRevoked)
 		jobs.Start(ctx, wg)
 	}
 
