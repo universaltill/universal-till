@@ -53,4 +53,4 @@ The reviewer also confirmed: `:not(td)` touches only `buttons.html:1190`; no
 
 Pre-flight: review record updated; help prose n/a (layout fix only, no behaviour or text change); `make docs-shots` regenerated (country-settings ×4 locales changed; dialog-open shots don't exist yet → #5581); en.json n/a (no strings); reference updated (`list-and-dialog-pattern.md`, ut-docs PR); README n/a.
 
-Verdict: **approve**. Deferred: in fa the dialog title "Edit promotion" stays English (seen by the Tester, outside this card) → Backlog card.
+Verdict: **approve**. Not a finding: in fa the dialog title "Edit promotion" stays English — `promotions.edit_title` was added today by #3661 and other languages arrive via Weblate (ADR-0160), so no card.
