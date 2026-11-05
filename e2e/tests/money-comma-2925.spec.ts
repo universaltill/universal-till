@@ -13,19 +13,22 @@ test.describe('Money inputs: decimal comma on the remaining fields (ut-docs#2925
     const assertClean = watchConsole(page);
     const code = `K2925${Date.now() % 100000}`;
     await page.goto('/promotions?lang=de');
-    const form = page.locator('form[action="/api/promotions"]');
+    // ut-docs#3661: the form lives in the record dialog now.
+    await page.locator('#promotions-new').click();
+    const form = page.locator('#promotion-form');
+    await expect(form).toBeVisible();
     await form.locator('input[name="code"]').fill(code);
     const value = form.locator('input[name="value_amount"]');
     await value.fill('3,50');
     expect(await value.evaluate((el: HTMLInputElement) => el.checkValidity())).toBe(true);
-    // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
-    await clickThenReload(page, () => form.locator('button[type="submit"]').click());
-    // The inline edit row prefills FormatMajorPlain(stored minor) in the
-    // session's German decimal comma (ut-docs#2818): "3,50" only if the
+    // HX-Redirect back to /promotions: wait for the new document (ut-docs#4440).
+    await clickThenReload(page, () => page.locator('#promotion-dialog .record-dialog-save').click());
+    // The row's data-field-value_amount is FormatMajorPlain(stored minor) in
+    // the session's German decimal comma (ut-docs#2818): "3,50" only if the
     // server stored 350.
     const html = await (await page.request.get('/promotions')).text();
-    const row = html.slice(html.indexOf(`action="/api/promotions/${code}/edit"`));
-    expect(row).toMatch(/name="value_amount"[^>]*value="3,50"/);
+    const row = html.slice(html.indexOf(`data-field-code="${code}"`));
+    expect(row).toMatch(/data-field-value_amount="3,50"/);
     assertClean();
   });
 
