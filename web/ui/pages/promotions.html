@@ -52,13 +52,14 @@
           data-field-starts_at="{{ .StartsAtDate }}"
           data-field-ends_at="{{ .EndsAtDate }}"
           data-field-customer_id="{{ .CustomerID }}"
+          data-promo-customer-label="{{ .CustomerLabel }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
         <td><bdi dir="ltr">{{ .Code }}</bdi></td>
         <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
         <td>{{ .ValueDisplay }}</td>
         <td class="promo-wrap"><bdi dir="auto">{{ .Description }}</bdi></td>
         <td class="promo-dates"><span class="promo-date">{{ or .StartsAtDate "–" }}</span><span class="promo-date">{{ or .EndsAtDate "–" }}</span></td>
-        <td class="promo-wrap">{{ if .CustomerID }}<bdi dir="ltr">{{ .CustomerID }}</bdi>{{ else }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ end }}</td>
+        <td class="promo-wrap" data-card-keep>{{ if not .CustomerID }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ else if .CustomerMissing }}<span class="muted">{{ T "promotions.customer.deleted" }}</span>{{ else }}<bdi dir="auto">{{ .CustomerName }}</bdi>{{ end }}</td>
         <td data-card-keep>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
         <td class="list-actions">
           <button type="button" class="btn secondary btn-icon" data-record-edit
@@ -111,32 +112,37 @@
     var edit = ev.detail && ev.detail.mode === 'edit';
     var code = document.getElementById('promo-code');
     var q = document.getElementById('promo-cust-q');
-    var hid = document.getElementById('promo-cust-id');
     var res = document.getElementById('promo-cust-results');
-    var wrap = dlg.querySelector('[data-promo-customer]');
     syncType();
-    if (res) { res.innerHTML = ''; res.hidden = edit; }
+    // Results stay visible in edit mode too: the customer can be searched
+    // and changed (ut-docs#5574). Only the code is fixed once created.
+    if (res) { res.innerHTML = ''; res.hidden = false; }
+    q.removeAttribute('aria-invalid');
+    q.removeAttribute('aria-describedby');
     if (edit) {
-      // The code and the customer are fixed once created; the customer stays
-      // visible (read-only) so a manager can see who the code targets.
       code.setAttribute('readonly', '');
-      q.setAttribute('readonly', '');
-      q.setAttribute('dir', 'ltr');
-      q.value = hid.value || (wrap ? wrap.getAttribute('data-any') : '') || '';
+      // The name (or "Deleted customer") of the stored binding; empty shows
+      // the "Search customers…" placeholder. The hidden id was already
+      // prefilled from data-field-customer_id.
+      var row = ev.detail && ev.detail.row;
+      q.value = (row && row.getAttribute('data-promo-customer-label')) || '';
     } else {
       code.removeAttribute('readonly');
-      q.removeAttribute('readonly');
-      q.removeAttribute('dir');
       q.value = '';
     }
+    if (typeof window.promoCustSync === 'function') window.promoCustSync();
   });
 })();
 
 (function () {
   var q = document.getElementById('promo-cust-q');
   if (!q) return;
+  var T = { unpicked: "{{ T "promotions.customer.unpicked" }}" };
   var out = document.getElementById('promo-cust-results');
   var hidden = document.getElementById('promo-cust-id');
+  var clear = document.getElementById('promo-cust-clear');
+  var form = document.getElementById('promotion-form');
+  var msg = document.getElementById('promotion-dialog-msg');
   // Text-node escaping alone leaves quotes intact, which is fine between
   // tags but breaks out of a double-quoted attribute -- and a customer's
   // name is free text they chose. Escape the quotes too, so esc() is safe
@@ -146,10 +152,22 @@
     d.textContent = s || '';
     return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
+  function clearInvalid() {
+    q.removeAttribute('aria-invalid');
+    q.removeAttribute('aria-describedby');
+  }
+  // The x button shows whenever there is a binding or typed text, and is
+  // hidden (never just invisible) otherwise so it is never tabbable.
+  function syncClear() {
+    if (clear) clear.hidden = !(hidden.value || q.value.trim());
+  }
+  window.promoCustSync = syncClear;
   var timer;
   q.addEventListener('input', function () {
     clearTimeout(timer);
     hidden.value = '';
+    clearInvalid();
+    syncClear();
     var term = q.value.trim();
     if (!term) { out.innerHTML = ''; return; }
     timer = setTimeout(function () {
@@ -181,10 +199,44 @@
   out.addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-cust-pick]');
     if (!b) return;
+    clearTimeout(timer);
     hidden.value = b.getAttribute('data-cust-pick');
     q.value = b.getAttribute('data-cust-name');
     out.innerHTML = '';
+    clearInvalid();
+    syncClear();
+    // The picked button just left the DOM; keep keyboard focus in the dialog.
+    q.focus();
   });
+  if (clear) clear.addEventListener('click', function () {
+    clearTimeout(timer);
+    hidden.value = '';
+    q.value = '';
+    out.innerHTML = '';
+    clearInvalid();
+    syncClear();
+    // The button just hid itself; focus must land somewhere.
+    q.focus();
+  });
+  // Typed text with no picked result must neither clear nor rebind silently:
+  // refuse the save and say why. Nothing is posted.
+  function refuseUnpicked(ev) {
+    if (q.value.trim() === '' || hidden.value !== '') return false;
+    ev.preventDefault();
+    if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    q.setAttribute('aria-invalid', 'true');
+    q.setAttribute('aria-describedby', 'promotion-dialog-msg');
+    renderNotice(msg, 'error', T.unpicked);
+    // The customer field is the last one, so the body is scrolled down: bring
+    // the message (top of the body) into view or Save looks like a no-op.
+    if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+  if (form) {
+    form.addEventListener('htmx:beforeRequest', refuseUnpicked);
+    form.addEventListener('submit', refuseUnpicked, true);
+  }
+  syncClear();
 })();
 
 </script>
@@ -220,10 +272,18 @@
   <label>{{ T "promotions.field.ends_at" }}
     <input type="date" name="ends_at" />
   </label>
-  <div data-promo-customer data-any="{{ T "promotions.customer.any" }}">
-    <label>{{ T "promotions.field.customer" }}
-      <input type="text" id="promo-cust-q" placeholder="{{ T "promotions.customer.search_ph" }}" autocomplete="off" />
-    </label>
+  <div data-promo-customer>
+    <label for="promo-cust-q">{{ T "promotions.field.customer" }}</label>
+    {{/* The x sits OUTSIDE the label so a tap on it can never be retargeted
+         to focus the input and pop the OSK. */}}
+    <div class="promo-cust-row">
+      <input type="text" id="promo-cust-q" dir="auto" placeholder="{{ T "promotions.customer.search_ph" }}" autocomplete="off" />
+      <button type="button" id="promo-cust-clear" class="btn secondary btn-icon" hidden
+              aria-controls="promo-cust-q"
+              aria-label="{{ T "promotions.customer.clear" }}" title="{{ T "promotions.customer.clear" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+      </button>
+    </div>
     <div id="promo-cust-results" class="set-gap-s"></div>
   </div>
   <input type="hidden" name="customer_id" id="promo-cust-id" value="" />

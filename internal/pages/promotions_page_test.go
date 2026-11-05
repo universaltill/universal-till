@@ -764,3 +764,247 @@ func TestPromotionsPageList_RowActionsPathEscapeTheCode(t *testing.T) {
 		}
 	}
 }
+
+// ---- ut-docs#5574: customer name in the list; change/clear on edit ----
+
+func seedPromoCust(t *testing.T, d *common.Deps) {
+	t.Helper()
+	if _, err := d.Db.Exec(`INSERT INTO customers (id, name) VALUES
+		('cust-live-uuid', 'A <b>&amp; Co'), ('cust-other-uuid', 'Other Person'), ('cust-shell-uuid', '')`); err != nil {
+		t.Fatalf("seed customers: %v", err)
+	}
+}
+
+func promoCustomerID(t *testing.T, d *common.Deps, code string) (string, bool) {
+	t.Helper()
+	var id *string
+	if err := d.Db.QueryRow(`SELECT customer_id FROM promotions WHERE code = ?`, code).Scan(&id); err != nil {
+		t.Fatalf("lookup %s: %v", code, err)
+	}
+	if id == nil {
+		return "", false
+	}
+	return *id, true
+}
+
+func promoEditAudits(t *testing.T, d *common.Deps, code string) (n int, actor string) {
+	t.Helper()
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='promotion' AND entity_id=? AND action='promotion_edit'`, code).Scan(&n); err != nil {
+		t.Fatalf("audit count: %v", err)
+	}
+	if n > 0 {
+		_ = d.Db.QueryRow(`SELECT actor_id FROM audit_log WHERE entity_type='promotion' AND entity_id=? AND action='promotion_edit'`, code).Scan(&actor)
+	}
+	return n, actor
+}
+
+func getPromotionsBody(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /promotions = %d", rec.Code)
+	}
+	return rec.Body.String()
+}
+
+var promoTDRe = regexp.MustCompile(`(?s)<td[^>]*>.*?</td>`)
+
+func TestPromotionsPageList_ShowsCustomerNameNotID(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"NAMED"}, "type": {"amount"}, "value_amount": {"5.00"}, "customer_id": {"cust-live-uuid"},
+	}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d", rec.Code)
+	}
+	body := getPromotionsBody(t, mux)
+	if !strings.Contains(body, `<bdi dir="auto">A &lt;b&gt;&amp;amp; Co</bdi>`) {
+		t.Fatalf("escaped name in bdi dir=auto missing:\n%s", body)
+	}
+	if strings.Contains(body, "<b>&amp; Co") {
+		t.Fatalf("customer name rendered unescaped")
+	}
+	for _, td := range promoTDRe.FindAllString(body, -1) {
+		if strings.Contains(td, "cust-live-uuid") {
+			t.Fatalf("UUID visible in a cell: %s", td)
+		}
+	}
+	if !strings.Contains(body, `data-field-customer_id="cust-live-uuid"`) {
+		t.Fatalf("row lost data-field-customer_id")
+	}
+	if !strings.Contains(body, `data-promo-customer-label="A &lt;b&gt;&amp;amp; Co"`) {
+		t.Fatalf("row lacks the escaped customer label attribute")
+	}
+}
+
+func TestPromotionsPageList_DeletedCustomerLabel(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	// Shell (name '') and a legacy dangling id (FKs off on one conn only).
+	if _, err := d.Db.Exec(`INSERT INTO promotions (code,type,value,customer_id,is_active) VALUES ('SHELLP','amount',100,'cust-shell-uuid',1)`); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := d.Db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`)
+	_, err = conn.ExecContext(t.Context(), `INSERT INTO promotions (code,type,value,customer_id,is_active) VALUES ('GONEP','amount',100,'cust-gone-uuid',1)`)
+	_, _ = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = ON`)
+	conn.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := getPromotionsBody(t, mux)
+	if n := strings.Count(body, `<span class="muted">Deleted customer</span>`); n != 2 {
+		t.Fatalf("Deleted customer label count = %d, want 2", n)
+	}
+	for _, td := range promoTDRe.FindAllString(body, -1) {
+		if strings.Contains(td, "cust-shell-uuid") || strings.Contains(td, "cust-gone-uuid") {
+			t.Fatalf("UUID visible in a cell: %s", td)
+		}
+	}
+}
+
+func TestPromotionsPageEdit_ChangesCustomer_AuditedOnce(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"CHG"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/CHG/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-other-uuid"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("edit: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if id, _ := promoCustomerID(t, d, "CHG"); id != "cust-other-uuid" {
+		t.Fatalf("customer_id = %q", id)
+	}
+	if n, actor := promoEditAudits(t, d, "CHG"); n != 1 || actor != "m1" {
+		t.Fatalf("audit rows=%d actor=%q", n, actor)
+	}
+}
+
+func TestPromotionsPageEdit_ClearsCustomer_AuditedOnce(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"CLR"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/CLR/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {""},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: %d", rec.Code)
+	}
+	if _, bound := promoCustomerID(t, d, "CLR"); bound {
+		t.Fatal("customer_id should be NULL after clear")
+	}
+	if n, actor := promoEditAudits(t, d, "CLR"); n != 1 || actor != "m1" {
+		t.Fatalf("audit rows=%d actor=%q", n, actor)
+	}
+	if !strings.Contains(getPromotionsBody(t, mux), `<span class="muted">Any customer</span>`) {
+		t.Fatal("list should show Any customer")
+	}
+}
+
+func TestPromotionsPageEdit_OmittedCustomerIDKeepsBinding(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"KEEP"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/KEEP/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"2.00"}, "description": {"d"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: %d", rec.Code)
+	}
+	if id, _ := promoCustomerID(t, d, "KEEP"); id != "cust-live-uuid" {
+		t.Fatalf("binding lost: %q", id)
+	}
+}
+
+func TestPromotionsPageEdit_UnknownCustomerRefused(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"REF"}, "type": {"amount"}, "value_amount": {"1.00"}, "description": {"orig"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	form := url.Values{"type": {"amount"}, "value_amount": {"9.00"}, "description": {"changed"}, "customer_id": {"nope"}}
+
+	rec := postFormHtmx(mux, "/api/promotions/REF/edit", form, &manager)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "That customer no longer exists on this till") {
+		t.Fatalf("htmx: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "foreign key") {
+		t.Fatal("raw FK text leaked")
+	}
+	rec = postForm(mux, "/api/promotions/REF/edit", form, &manager)
+	if rec.Header().Get("Location") != "/promotions?err=promotions.error.customer_unknown" {
+		t.Fatalf("non-htmx loc=%q", rec.Header().Get("Location"))
+	}
+	var desc string
+	_ = d.Db.QueryRow(`SELECT description FROM promotions WHERE code='REF'`).Scan(&desc)
+	if id, _ := promoCustomerID(t, d, "REF"); id != "cust-live-uuid" || desc != "orig" {
+		t.Fatalf("DB changed: id=%q desc=%q", id, desc)
+	}
+	if n, _ := promoEditAudits(t, d, "REF"); n != 0 {
+		t.Fatalf("audit rows = %d, want 0", n)
+	}
+}
+
+func TestPromotionsPageEdit_DeletedCustomerBindingSurvivesEdit(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions (code,type,value,customer_id,is_active) VALUES ('SHELLK','amount',100,'cust-shell-uuid',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/promotions/SHELLK/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "description": {"x"}, "customer_id": {"cust-shell-uuid"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit of deleted-customer promo: %d", rec.Code)
+	}
+	if id, _ := promoCustomerID(t, d, "SHELLK"); id != "cust-shell-uuid" {
+		t.Fatalf("binding changed: %q", id)
+	}
+}
+
+func TestPromotionsPageCreate_UnknownCustomerRefused(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	form := url.Values{"code": {"NEWX"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"nope"}}
+	rec := postFormHtmx(mux, "/api/promotions", form, &manager)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "That customer no longer exists on this till") {
+		t.Fatalf("htmx: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = postForm(mux, "/api/promotions", form, &manager)
+	if rec.Header().Get("Location") != "/promotions?err=promotions.error.customer_unknown" {
+		t.Fatalf("loc=%q", rec.Header().Get("Location"))
+	}
+	var n int
+	_ = d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code='NEWX'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("promotion created")
+	}
+}
+
+func TestPromotionsPagePermissions_CustomerChangeForbidden(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"PERM"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/PERM/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-other-uuid"},
+	}, &cashier)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier edit = %d", rec.Code)
+	}
+	if id, _ := promoCustomerID(t, d, "PERM"); id != "cust-live-uuid" {
+		t.Fatalf("binding changed: %q", id)
+	}
+}
