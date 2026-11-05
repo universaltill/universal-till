@@ -140,8 +140,8 @@ func TestPromotionsPage_ValueAmountPatternIsCurrencyAware(t *testing.T) {
 	// row per amount-type promotion already seeded (seedForPages seeds one,
 	// SWEEP1530 above adds a second) -- so at least 2, exact count left
 	// loose rather than pinned to seedForPages' fixture contents.
-	if len(tags) < 2 {
-		t.Fatalf("expected at least 2 value_amount fields (dialog + inline row(s)), got %d: %v", len(tags), tags)
+	if len(tags) != 1 {
+		t.Fatalf("expected exactly 1 value_amount field (the record dialog's; ut-docs#3661 removed the inline row copies), got %d: %v", len(tags), tags)
 	}
 	for _, tag := range tags {
 		if !strings.Contains(tag, gbpLocalPattern) {
@@ -153,8 +153,8 @@ func TestPromotionsPage_ValueAmountPatternIsCurrencyAware(t *testing.T) {
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body := get()
 	tags = valueAmountTags(body)
-	if len(tags) < 2 {
-		t.Fatalf("expected at least 2 value_amount fields (dialog + inline row(s)), got %d: %v", len(tags), tags)
+	if len(tags) != 1 {
+		t.Fatalf("expected exactly 1 value_amount field (the record dialog's; ut-docs#3661 removed the inline row copies), got %d: %v", len(tags), tags)
 	}
 	for _, tag := range tags {
 		if !strings.Contains(tag, `pattern="[0-9]+"`) {

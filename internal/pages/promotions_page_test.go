@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -405,17 +406,17 @@ func TestPromotionsPageList_ValueAmountMajorIsCurrencyAware(t *testing.T) {
 
 	httpx.InitCurrency("GBP")
 	body := get()
-	if !strings.Contains(body, `value="5.00"`) {
+	if !strings.Contains(body, `data-field-value_amount="5.00"`) {
 		t.Fatalf("expected the 2-decimal prefill for GBP, got:\n%s", body)
 	}
 
 	httpx.InitCurrency("IRT")
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body = get()
-	if !strings.Contains(body, `value="500"`) {
+	if !strings.Contains(body, `data-field-value_amount="500"`) {
 		t.Fatalf("expected the 0-decimal prefill \"500\" (no /100) for IRT, got:\n%s", body)
 	}
-	if strings.Contains(body, `value="5.00"`) {
+	if strings.Contains(body, `data-field-value_amount="5.00"`) {
 		t.Fatalf("expected NO 2-decimal prefill left over once currency is 0-decimal, got:\n%s", body)
 	}
 }
@@ -441,15 +442,15 @@ func TestPromotionsPageList_ValuePercentIsLocaleAware(t *testing.T) {
 	}
 
 	de := get("/promotions?lang=de")
-	if !strings.Contains(de, `value="7,50"`) || !strings.Contains(de, "7,50%") {
+	if !strings.Contains(de, `data-field-value_percent="7,50"`) || !strings.Contains(de, "7,50%") {
 		t.Fatalf("lang=de: expected value=\"7,50\" and 7,50%%, got:\n%s", de)
 	}
-	if strings.Contains(de, `value="7.50"`) {
+	if strings.Contains(de, `data-field-value_percent="7.50"`) {
 		t.Fatalf("lang=de: unexpected dot-decimal prefill")
 	}
 	for _, path := range []string{"/promotions?lang=en", "/promotions"} {
 		en := get(path)
-		if !strings.Contains(en, `value="7.50"`) || !strings.Contains(en, "7.50%") {
+		if !strings.Contains(en, `data-field-value_percent="7.50"`) || !strings.Contains(en, "7.50%") {
 			t.Fatalf("%s: expected value=\"7.50\" and 7.50%%, got:\n%s", path, en)
 		}
 	}
@@ -516,10 +517,11 @@ func TestPromotionsPageDeactivateReactivate(t *testing.T) {
 	}
 }
 
-// ut-docs#3662: the row-edit form's controls are placeholder-only or bare, so
-// on the phone card nothing says which date is Starts and which is Ends. Each
-// control carries an accessible name from the existing promotions.* keys.
-func TestPromotionsPageList_RowEditControlsHaveAccessibleNames(t *testing.T) {
+// ut-docs#3661: the inline row-edit form is gone; every control now lives in
+// the record dialog (#promotion-form), each inside a <label> that names it
+// (the #3662 accessible-name contract moved here), and the row carries the
+// data-record-* hooks record-dialog.js reads.
+func TestPromotionsPageList_DialogSlotContract(t *testing.T) {
 	mux, _ := newPromotionsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 	rec := postForm(mux, "/api/promotions", url.Values{
@@ -532,30 +534,233 @@ func TestPromotionsPageList_RowEditControlsHaveAccessibleNames(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	i := strings.Index(body, `<form method="post" action="/api/promotions/NAMED/edit"`)
+
+	for _, bad := range []string{"users-inline", `<form method="post" action="/api/promotions/NAMED/edit"`, "x-data"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("page still carries the old inline-form markup %q", bad)
+		}
+	}
+	for _, want := range []string{
+		`data-record-open="promotion-dialog"`,
+		`data-record-action="/api/promotions/NAMED/edit"`,
+		`data-record-destructive-action="/api/promotions/NAMED/active"`,
+		`id="promotion-dialog-msg"`, `id="promotions-new"`, `id="promotions-no-results"`,
+		`data-field-code="NAMED"`, `data-field-type="percent"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	// The pencil is icon-only: aria-label + title.
+	if !regexp.MustCompile(`(?s)data-record-edit[^>]*aria-label="Edit"[^>]*title="Edit"`).MatchString(body) {
+		t.Errorf("row pencil lacks aria-label+title")
+	}
+
+	i := strings.Index(body, `<form id="promotion-form"`)
 	if i < 0 {
-		t.Fatalf("row edit form missing")
+		t.Fatalf("#promotion-form missing")
 	}
 	end := strings.Index(body[i:], "</form>")
 	if end < 0 {
-		t.Fatalf("row edit form not closed")
+		t.Fatalf("#promotion-form not closed")
 	}
 	form := body[i : i+end]
+	// Every named control sits inside a <label> whose text names it.
 	want := map[string]string{
-		"starts_at": "Starts", "ends_at": "Ends", "description": "Description",
-		"type": "Type", "value_amount": "Value", "value_percent": "Value",
+		"code": "Code", "type": "Type", "value_amount": "Value", "value_percent": "Value",
+		"description": "Description", "starts_at": "Starts", "ends_at": "Ends",
 	}
 	for name, label := range want {
 		j := strings.Index(form, `name="`+name+`"`)
 		if j < 0 {
-			t.Fatalf("control %s missing", name)
+			t.Fatalf("control %s missing from the dialog form", name)
 		}
-		tag := form[strings.LastIndex(form[:j], "<") : j+strings.Index(form[j:], ">")]
-		if !strings.Contains(tag, `aria-label="`+label+`"`) {
-			t.Errorf("control %s: want aria-label=%q in %s", name, label, tag)
+		open := strings.LastIndex(form[:j], "<label")
+		closed := strings.LastIndex(form[:j], "</label>")
+		if open < 0 || open < closed {
+			t.Errorf("control %s is not inside a <label>", name)
+			continue
 		}
-		if (name == "starts_at" || name == "ends_at") && !strings.Contains(tag, `title="`+label+`"`) {
-			t.Errorf("control %s: want title=%q in %s", name, label, tag)
+		if !strings.Contains(form[open:j], label) {
+			t.Errorf("control %s: label text does not contain %q: %s", name, label, form[open:j])
+		}
+	}
+	if !strings.Contains(form, `type="date"`) || strings.Count(form, `type="date"`) != 2 {
+		t.Errorf("want exactly two date inputs in the dialog form")
+	}
+	if !strings.Contains(form, `type="hidden" name="customer_id"`) {
+		t.Errorf("hidden customer_id missing")
+	}
+	if !strings.Contains(form, `id="promo-cust-q"`) || !strings.Contains(form, `data-promo-customer`) {
+		t.Errorf("customer picker missing / not wrapped in data-promo-customer")
+	}
+	if strings.Contains(form, "width:5rem") {
+		t.Errorf("inline width style must be gone")
+	}
+}
+
+// ut-docs#3661 (UX A1): Starts/Ends merge into one "Valid" column, so the
+// table is 8 columns wide and an empty side renders an en dash.
+func TestPromotionsPageList_ValidColumnMergesDates(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions(code, type, value, starts_at, is_active) VALUES('VALID1', 'percent', 500, '2031-03-04', 1)`); err != nil { // fixed-date:ok no real-clock check reads it
+		t.Fatal(err)
+	}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "<th>Valid</th>") {
+		t.Errorf("want a single Valid header")
+	}
+	if strings.Contains(body, "<th>Starts</th>") || strings.Contains(body, "<th>Ends</th>") {
+		t.Errorf("separate Starts/Ends headers must be gone")
+	}
+	// Scoped to VALID1's own Valid cell: a page-wide en dash check passed
+	// with the dash rendering removed (ut-docs#3661 review).
+	cell := regexp.MustCompile(`(?s)data-id="VALID1".*?<td class="promo-dates">(.*?)</td>`).FindStringSubmatch(body)
+	if cell == nil {
+		t.Fatalf("VALID1 row has no promo-dates cell:\n%s", body)
+	}
+	if want := `<span class="promo-date">2031-03-04</span><span class="promo-date">–</span>`; cell[1] != want { // fixed-date:ok no real-clock check reads it
+		t.Errorf("Valid cell = %q, want %q (start, then an en dash for the open end)", cell[1], want)
+	}
+	if !strings.Contains(body, "data-card-keep") {
+		t.Errorf("status cell should carry data-card-keep")
+	}
+	if !strings.Contains(body, `<bdi dir="ltr">VALID1</bdi>`) {
+		t.Errorf("code should be wrapped in a ltr bdi")
+	}
+}
+
+// ut-docs#3661: refusals from the dialog's hx-boosted forms render in the
+// dialog's message region (400 text/html fragment), never a redirect.
+func TestPromotionsPage_RefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, _ := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	check := func(name string, rec *httptest.ResponseRecorder, wantText string) {
+		t.Helper()
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: htmx refusal must not redirect", name)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: Content-Type = %q, want text/html", name, ct)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, wantText) {
+			t.Errorf("%s: body %q lacks %q", name, body, wantText)
+		}
+		if strings.Contains(body, "id=") || strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+			t.Errorf("%s: response must be only the message text: %s", name, body)
+		}
+	}
+
+	check("bad value", postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"HX1"}, "type": {"amount"}, "value_amount": {"nope"},
+	}, &manager), "Enter a valid value")
+	check("empty code", postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"  "}, "type": {"amount"}, "value_amount": {"5"},
+	}, &manager), "Code is required")
+
+	if rec := postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"HXDUP"}, "type": {"amount"}, "value_amount": {"5"},
+	}, &manager); rec.Code != http.StatusOK {
+		t.Fatalf("first create: %d %s", rec.Code, rec.Body.String())
+	}
+	check("duplicate", postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"HXDUP"}, "type": {"amount"}, "value_amount": {"5"},
+	}, &manager), "That code already exists")
+
+	check("edit bad date", postFormHtmx(mux, "/api/promotions/HXDUP/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"5"}, "starts_at": {"2031-02-02"}, "ends_at": {"2031-01-01"}, // fixed-date:ok
+	}, &manager), "End date can")
+	check("edit bad value", postFormHtmx(mux, "/api/promotions/HXDUP/edit", url.Values{
+		"type": {"percent"}, "value_percent": {"500"},
+	}, &manager), "Enter a valid value")
+}
+
+func TestPromotionsPage_HtmxSuccessSendsHXRedirect(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	for _, c := range []struct {
+		name, path string
+		form       url.Values
+		action     string
+	}{
+		{"create", "/api/promotions", url.Values{"code": {"HXOK"}, "type": {"amount"}, "value_amount": {"5"}}, "promotion_create"},
+		{"edit", "/api/promotions/HXOK/edit", url.Values{"type": {"amount"}, "value_amount": {"6"}}, "promotion_edit"},
+		{"deactivate", "/api/promotions/HXOK/active", url.Values{"active": {"0"}}, "promotion_deactivate"},
+		{"activate", "/api/promotions/HXOK/active", url.Values{"active": {"1"}}, "promotion_activate"},
+	} {
+		rec := postFormHtmx(mux, c.path, c.form, &manager)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code=%d body=%s", c.name, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("HX-Redirect"); got != "/promotions" {
+			t.Fatalf("%s: HX-Redirect = %q, want /promotions", c.name, got)
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: a bare Location must not accompany HX-Redirect", c.name)
+		}
+		var n int
+		if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id='HXOK' AND action=?`, c.action).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%s: audit rows = %d err=%v", c.name, n, err)
+		}
+	}
+}
+
+// ut-docs#3661 review: the code is free text and is the row's URL path
+// segment. The row's data-record-action is not URL context to html/template
+// (the old inline form's action was), so it must arrive path-escaped: a raw
+// "10%OFF" is an invalid escape the server answers 400, and "#", "?" or "/"
+// would cut the path short. The escaped path must reach the right row.
+func TestPromotionsPageList_RowActionsPathEscapeTheCode(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	for _, c := range []struct{ code, seg string }{
+		{"10%OFF", "10%25OFF"},
+		{"A#B", "A%23B"},
+		{"A?B", "A%3FB"},
+		{"A/B", "A%2FB"},
+		{"SUMMER 10", "SUMMER%2010"},
+	} {
+		if rec := postForm(mux, "/api/promotions", url.Values{
+			"code": {c.code}, "type": {"amount"}, "value_amount": {"5"},
+		}, &manager); rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s: create %d", c.code, rec.Code)
+		}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		for _, want := range []string{
+			`data-record-action="/api/promotions/` + c.seg + `/edit"`,
+			`data-record-destructive-action="/api/promotions/` + c.seg + `/active"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: page lacks %s", c.code, want)
+			}
+		}
+		if rec := postFormHtmx(mux, "/api/promotions/"+c.seg+"/edit", url.Values{
+			"type": {"amount"}, "value_amount": {"7"},
+		}, &manager); rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/promotions" {
+			t.Errorf("%s: edit via escaped path: %d %q %s", c.code, rec.Code, rec.Header().Get("HX-Redirect"), rec.Body.String())
+		}
+		if rec := postFormHtmx(mux, "/api/promotions/"+c.seg+"/active", url.Values{"active": {"0"}}, &manager); rec.Code != http.StatusOK {
+			t.Errorf("%s: deactivate via escaped path: %d %s", c.code, rec.Code, rec.Body.String())
+		}
+		var value, active int
+		if err := d.Db.QueryRow(`SELECT value, is_active FROM promotions WHERE code = ?`, c.code).Scan(&value, &active); err != nil {
+			t.Fatalf("%s: %v", c.code, err)
+		}
+		if value != 700 || active != 0 {
+			t.Errorf("%s: value=%d active=%d, want 700/0", c.code, value, active)
 		}
 	}
 }

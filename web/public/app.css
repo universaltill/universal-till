@@ -7395,3 +7395,13 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 
 /* ut-docs#5410: Currency display select (Settings -> Currency). */
 .currency-display-select { min-block-size: 44px; }
+
+/* ut-docs#3661: /promotions on the list-and-dialog pattern. A 36-char
+   customer UUID or a long description wraps instead of widening the table;
+   the Valid column keeps each date on one line, stacked. */
+#promotions-table td.promo-wrap { overflow-wrap: anywhere; min-inline-size: 6rem; }
+#promotions-table td.promo-dates { white-space: nowrap; }
+#promotions-table td.promo-dates .promo-date { display: block; }
+/* A readonly field (promotion code and customer on edit, country code) must
+   not look editable: a tap on it summons no keyboard, which reads as broken. */
+.record-dialog-body input[readonly] { background: var(--surface-2); cursor: default; }

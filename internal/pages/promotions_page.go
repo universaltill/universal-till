@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,6 +14,36 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// redirectPromotions answers a promotions mutation's SUCCESS with a
+// navigation back to GET /promotions. Mirrors locations_page.go's
+// redirectLocations (ut-docs#3661 adopting ut-docs#2010's pattern): the
+// dialog's forms are hx-boosted, so a bare 303 would be followed by the
+// boosted form's own fetch and land the page's HTML in the message region;
+// HX-Redirect forces a real navigation. A non-htmx caller gets the plain 303.
+func redirectPromotions(w http.ResponseWriter, r *http.Request, target string) {
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// renderPromotionsDialogError answers a REFUSED promotions mutation: a 400
+// text/html message fragment for the dialog's aria-live region (htmx), or the
+// pre-#3661 redirect-with-?err= for a non-htmx caller. See
+// renderLocationsDialogError for the full reasoning.
+func renderPromotionsDialogError(w http.ResponseWriter, r *http.Request, errKey string) {
+	if !isHtmxDialogRequest(r) {
+		redirectPromotions(w, r, "/promotions?err="+errKey)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
+}
 
 // registerPromotions wires the promo-code admin page (ut-docs#634): create/
 // edit/deactivate/list promo codes (the promotions table itself already has
@@ -141,24 +172,24 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		code := strings.TrimSpace(r.PostFormValue("code"))
 		if code == "" {
-			http.Redirect(w, r, "/promotions?err=promotions.error.required", http.StatusSeeOther)
+			renderPromotionsDialogError(w, r, "promotions.error.required")
 			return
 		}
 		in, errKey, ok := parsePromotionForm(r)
 		if !ok {
-			http.Redirect(w, r, "/promotions?err="+errKey, http.StatusSeeOther)
+			renderPromotionsDialogError(w, r, errKey)
 			return
 		}
 		if err := posRepo.CreatePromotion(r.Context(), code, in); err != nil {
 			if errors.Is(err, data.ErrPromotionCodeExists) {
-				http.Redirect(w, r, "/promotions?err=promotions.error.code_exists", http.StatusSeeOther)
+				renderPromotionsDialogError(w, r, "promotions.error.code_exists")
 				return
 			}
-			http.Redirect(w, r, "/promotions?err=promotions.error.create", http.StatusSeeOther)
+			renderPromotionsDialogError(w, r, "promotions.error.create")
 			return
 		}
 		audit(r, actor.ID, code, "promotion_create")
-		http.Redirect(w, r, "/promotions", http.StatusSeeOther)
+		redirectPromotions(w, r, "/promotions")
 	})
 
 	mux.HandleFunc("POST /api/promotions/{code}/edit", func(w http.ResponseWriter, r *http.Request) {
@@ -170,15 +201,15 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		in, errKey, ok := parsePromotionForm(r)
 		if !ok {
-			http.Redirect(w, r, "/promotions?err="+errKey, http.StatusSeeOther)
+			renderPromotionsDialogError(w, r, errKey)
 			return
 		}
 		if err := posRepo.UpdatePromotion(r.Context(), code, in); err != nil {
-			http.Redirect(w, r, "/promotions?err=promotions.error.update", http.StatusSeeOther)
+			renderPromotionsDialogError(w, r, "promotions.error.update")
 			return
 		}
 		audit(r, actor.ID, code, "promotion_edit")
-		http.Redirect(w, r, "/promotions", http.StatusSeeOther)
+		redirectPromotions(w, r, "/promotions")
 	})
 
 	mux.HandleFunc("POST /api/promotions/{code}/active", func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +221,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		activate := r.PostFormValue("active") == "1"
 		if err := posRepo.SetPromotionActive(r.Context(), code, activate); err != nil {
-			http.Redirect(w, r, "/promotions?err=promotions.error.update", http.StatusSeeOther)
+			renderPromotionsDialogError(w, r, "promotions.error.update")
 			return
 		}
 		action := "promotion_deactivate"
@@ -198,7 +229,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			action = "promotion_activate"
 		}
 		audit(r, actor.ID, code, action)
-		http.Redirect(w, r, "/promotions", http.StatusSeeOther)
+		redirectPromotions(w, r, "/promotions")
 	})
 }
 
@@ -258,6 +289,12 @@ func promoDateOnly(stored string) string {
 // a raw int64, per the promotions table's own established convention).
 type promotionView struct {
 	data.PromotionAdmin
+	// PathCode is the code as one escaped URL path segment, for the row's
+	// data-record-action / data-record-destructive-action. Those data-*
+	// attributes are not URL context to html/template (a plain form action
+	// was), so a raw "10%OFF" there reached the server as an invalid escape
+	// (400) and a "#"/"?"/"/" cut the path short (ut-docs#3661 review).
+	PathCode         string
 	ValueDisplay     string // "£5.00" or "10.00%" ("10,00%" on comma locales), for the read-only list column
 	ValueAmountMajor string // prefill for the amount-type edit input; "" if type is percent
 	ValuePercent     string // prefill for the percent-type edit input; "" if type is amount
@@ -269,7 +306,7 @@ type promotionView struct {
 // localized so a comma-locale till shows/prefills "7,50"; the save path
 // already accepts either separator (#2954).
 func newPromotionView(p data.PromotionAdmin, locale string) promotionView {
-	v := promotionView{PromotionAdmin: p}
+	v := promotionView{PromotionAdmin: p, PathCode: url.PathEscape(p.Code)}
 	v.StartsAtDate = promoDateOnly(p.StartsAt)
 	v.EndsAtDate = promoDateOnly(p.EndsAt)
 	if p.Type == "percent" {
