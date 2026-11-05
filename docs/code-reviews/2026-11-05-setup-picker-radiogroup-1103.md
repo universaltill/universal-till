@@ -69,7 +69,7 @@ Built by a Sonnet subagent. Reviewed independently by an Opus subagent. Tester w
 - **Guards:** i18n, rtl-logical-css, no-inline-handlers, no-showmodal,
   fixed-dates and help-topics all pass.
 
-Pre-flight: Till user-visible behaviour: `web/help/` n/a (quickstart doesn't describe the pickers; there is no pixel change except the keyboard-only focus ring, so docs-shots don't need regenerating); `reference/` n/a; README n/a. en.json keys: n/a (none added). ADR: n/a (existing patterns, ADR-0008 HTMX/Alpine unchanged). Review record: this file. Follow-ups: deferred → Backlog card "picker-tile a11y follow-ups" (filed with this change).
+Pre-flight: Till user-visible behaviour: `web/help/` prose n/a (quickstart doesn't describe the pickers); `make docs-shots` re-run after CI flagged the surface hash: 128 shots, no PNG changed, only `web/help/img/manifest.json`'s surface hash; `reference/` n/a; README n/a. en.json keys: n/a (none added). ADR: n/a (existing patterns, ADR-0008 HTMX/Alpine unchanged). Review record: this file. Follow-ups: deferred → Backlog card "picker-tile a11y follow-ups" (filed with this change).
 
 ## Deferred
 
