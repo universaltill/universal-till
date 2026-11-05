@@ -390,7 +390,7 @@
           </div>
           <!-- ut-docs#1901: fixed swatch palette for a photo-less item's
                sale-screen tile color — SAME .picker-grid/.picker-tile pattern
-               and aria-pressed toggle convention as #builtin-icon-grid below,
+               as #builtin-icon-grid below but a radiogroup (ut-docs#5553),
                not a free color picker (validated server-side against
                catalogtypes.ItemColors() in validateLookups; a raw value would
                otherwise flow straight into a CSS custom property). #item-color
@@ -398,14 +398,14 @@
                clears it (stored empty). -->
           <div style="margin-bottom:.55rem">
             <div style="font-size:.82rem; margin-bottom:.25rem">{{ T "catalog.color" }}</div>
-            <div id="item-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+            <div id="item-color-grid" class="picker-grid item-color-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "catalog.color" }}">
               {{ range .ItemColors }}
-              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" role="radio" aria-checked="false" tabindex="-1" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
                 <span class="swatch-dot" aria-hidden="true"></span>
                 <span>{{ T .I18nKey }}</span>
               </button>
               {{ end }}
-              <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+              <button type="button" class="picker-tile item-color-tile" data-color="" role="radio" aria-checked="true" tabindex="0">{{ T "catalog.color.none" }}</button>
             </div>
             <input type="hidden" name="color" id="item-color">
           </div>
@@ -1163,19 +1163,26 @@
     });
   }
 
-  // Fixed swatch palette (ut-docs#1901) — same .picker-grid/aria-pressed
-  // toggle convention as the built-in icon grid below. #item-color is the
+  // Fixed swatch palette (ut-docs#1901) — a single-select radiogroup
+  // (ut-docs#5553: role=radio/aria-checked, roving tabindex, arrows via
+  // radiogroup.js, which clicks the target tile). #item-color is the
   // one hidden field actually submitted; clicking a tile (including the
   // "none" tile, whose data-color is "") sets it and repaints which tile
-  // reads pressed.
+  // reads checked.
   var colorGrid = document.getElementById('item-color-grid');
   var colorInput = document.getElementById('item-color');
   function setColorTiles(hex) {
     if (!colorGrid) return;
-    colorGrid.querySelectorAll('.item-color-tile').forEach(function (btn) {
-      var pressed = (btn.dataset.color || '') === (hex || '');
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    var tiles = colorGrid.querySelectorAll('.item-color-tile');
+    var any = false;
+    tiles.forEach(function (btn) {
+      var on = (btn.dataset.color || '') === (hex || '');
+      if (on) any = true;
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.setAttribute('tabindex', on ? '0' : '-1');
     });
+    // A legacy off-palette value checks nothing: keep the grid reachable.
+    if (!any && tiles.length) tiles[0].setAttribute('tabindex', '0');
   }
   if (colorGrid) {
     colorGrid.addEventListener('click', function (ev) {

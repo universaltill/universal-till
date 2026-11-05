@@ -151,12 +151,12 @@
   // ut-docs#2284: the category dialog's three pickers. record-dialog.js
   // owns open/close/prefill of ordinary fields (the name input and the
   // hidden colour input, via data-field-*); this script only paints what
-  // that generic prefill can't express — which colour TILE is pressed, and
+  // that generic prefill can't express — which colour TILE is checked, and
   // which of the group/station checkboxes are ticked — inside the
   // record-dialog:open hook, which fires synchronously BEFORE record-
   // dialog.js snapshots the form for its discard guard, so a freshly
   // opened row never reads as "dirty". Colour tiles reuse catalog.html's
-  // #item-color-grid contract exactly (data-color, aria-pressed, one hidden
+  // #item-color-grid contract exactly (data-color, aria-checked, one hidden
   // input actually submitted, the "none" tile clears it).
   var dialog = document.getElementById('category-dialog');
   if (!dialog) return;
@@ -164,8 +164,10 @@
   var grid = document.getElementById('category-color-grid');
   var colorInput = document.getElementById('category-color');
 
-  // Roving tabindex (WAI-ARIA toolbar/radio-group pattern): the grid is ONE
-  // Tab stop — the pressed tile — and the arrow keys walk the tiles, so a
+  // Roving tabindex (WAI-ARIA radio-group pattern): the grid is ONE
+  // Tab stop — the checked tile — and the arrow keys SELECT via
+  // radiogroup.js (ut-docs#5553; no page-local keydown here, it would
+  // preventDefault first and radiogroup.js would ignore the key), so a
   // keyboard user isn't made to Tab through nine swatches to reach the
   // checkboxes and Save (found by the ut-docs#2010 (c4) focus-trap e2e the
   // moment the picker landed in this dialog). Enter/Space press natively.
@@ -177,7 +179,7 @@
     tiles.forEach(function (btn) {
       var pressed = (btn.dataset.color || '') === hex;
       if (pressed) anyPressed = true;
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      btn.setAttribute('aria-checked', pressed ? 'true' : 'false');
       btn.setAttribute('tabindex', pressed ? '0' : '-1');
     });
     // A colour that matches no tile (a future palette change leaving an
@@ -203,24 +205,6 @@
       colorInput.value = btn.dataset.color || '';
       paintColor();
       btn.focus();
-    });
-    grid.addEventListener('keydown', function (ev) {
-      // RTL (fa/ar): the grid's own tile ORDER in the DOM doesn't change,
-      // but "next" must still mean "the tile visually to the left" —
-      // logical-CSS rule, same reasoning as this repo's CSS (never
-      // left/right) applied to a keyboard direction instead of a style.
-      var rtl = document.documentElement.getAttribute('dir') === 'rtl';
-      var horizontalStep = rtl ? -1 : 1;
-      var step = (ev.key === 'ArrowRight') ? horizontalStep
-               : (ev.key === 'ArrowLeft') ? -horizontalStep
-               : (ev.key === 'ArrowDown') ? 1
-               : (ev.key === 'ArrowUp') ? -1 : 0;
-      if (!step) return;
-      var tiles = Array.prototype.slice.call(grid.querySelectorAll('.item-color-tile'));
-      var i = tiles.indexOf(document.activeElement);
-      if (i < 0) return;
-      ev.preventDefault();
-      tiles[(i + step + tiles.length) % tiles.length].focus();
     });
   }
 
@@ -523,14 +507,14 @@
        #category-dialog-msg — hints below are plain text on purpose. */}}
   <div class="category-dialog-section">
     <div class="category-dialog-label">{{ T "catalog.color" }}</div>
-    <div id="category-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+    <div id="category-color-grid" class="picker-grid item-color-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "catalog.color" }}">
       {{ range .root.itemColors }}
-      <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+      <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" role="radio" aria-checked="false" tabindex="-1" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
         <span class="swatch-dot" aria-hidden="true"></span>
         <span>{{ T .I18nKey }}</span>
       </button>
       {{ end }}
-      <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+      <button type="button" class="picker-tile item-color-tile" data-color="" role="radio" aria-checked="true" tabindex="0">{{ T "catalog.color.none" }}</button>
     </div>
     <input type="hidden" name="color" id="category-color">
   </div>
