@@ -4991,24 +4991,24 @@ body.login-screen {
    this selector can't touch it. */
 @media (max-width: 480px) {
   .fiscal-register-group .users-inline { flex-wrap: wrap; }
-  /* ut-docs#3653: the same overflow inside a phone card's actions cell.
-     That cell is flex-end, so a non-wrapping inline edit form wider than
-     the card (promotions: type, value, description, two dates, Save
-     ≈ 715px) spilled past the card's inline-START edge and its first
-     controls were cut off by the table's overflow:hidden. /kitchen-stations
-     had the same defect. table-cards.js puts .t-cards on tables at every
-     width, but this block is ≤480px only, so the desktop /users row
-     (#898) is untouched. */
+  /* Phone card actions cell: let a row's inline edit form wrap inside the
+     card. Still used by /tables and /users (row edit forms); delete when
+     they adopt the record dialog (epic ut-docs#2012). min-inline-size, not
+     width: it outranks the templates' inline style="width:…". */
   table.t-cards .t-cards-actions .users-inline {
     flex-wrap: wrap; justify-content: flex-end; min-inline-size: 0; max-inline-size: 100%;
   }
-  /* Once wrapped, let the fields fill their line, and keep a date wide
-     enough to show its year (7.5rem cut it off at "31/12/202").
-     min-inline-size, not width: it outranks the templates' inline
-     style="width:…" without !important. */
   table.t-cards .t-cards-actions .users-inline :is(input, select) { flex: 1 1 auto; }
-  table.t-cards .t-cards-actions .users-inline input[type="date"] { min-inline-size: 9.75rem; }
 }
+
+/* Kitchen stations (ut-docs#5575): the View display link sits inside a
+   tappable row, so give it a >=44px-tall hit area; discovery results sit
+   in the station dialog. */
+.kitchen-view-display { display: inline-block; padding-block: .6rem; }
+.kitchen-discover-btn { inline-size: 100%; }
+.kitchen-discover-msg { min-block-size: 1.2rem; }
+.kitchen-discover-list { list-style: none; padding-inline-start: 0; margin: .4rem 0; }
+.kitchen-discover-list li { padding-block: .3rem; overflow-wrap: anywhere; }
 
 /* Camera identify overlay (opened on demand from the scan row). The overlay
    reserves the measured status row (--phone-sb-h, app.js measureBar; 4rem =

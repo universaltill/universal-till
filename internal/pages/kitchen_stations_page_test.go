@@ -417,3 +417,189 @@ func TestDiscoverPrintersAPI_ScanFailureReturns500WithoutLeakingRawError(t *test
 		t.Fatalf("raw network error leaked into the response body: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#5575: the dialog's hx-boosted forms get HX-Redirect on success,
+// never a bare 303 (the boosted fetch would follow it into the msg region).
+func TestKitchenStationsPage_HtmxSuccessSendsHXRedirect(t *testing.T) {
+	mux, d := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// audit_log.actor_id has a real FK to users(id).
+	if _, err := d.Db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('m1','m1','Manager','x','manager')`); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("HX-Redirect"); got != "/kitchen-stations" {
+			t.Fatalf("%s: HX-Redirect = %q", name, got)
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: a bare Location must not accompany HX-Redirect", name)
+		}
+	}
+	rec := postFormHtmx(mux, "/api/kitchen-stations", url.Values{"name": {"Hx Grill"}, "printer_address": {"g:9100"}}, &manager)
+	check("create", rec)
+	var id string
+	if err := d.Db.QueryRow(`SELECT id FROM kitchen_stations WHERE name='Hx Grill'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	countAudit := func(action string) int {
+		var n int
+		if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id=? AND action=?`, id, action).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if countAudit("kitchen_station_create") != 1 {
+		t.Error("create audit row missing")
+	}
+	check("update", postFormHtmx(mux, "/api/kitchen-stations/"+id, url.Values{"name": {"Hx Grill 2"}, "destination_type": {"both"}, "printer_address": {"g:9100"}}, &manager))
+	if countAudit("kitchen_station_update") != 1 {
+		t.Error("update audit row missing")
+	}
+	check("deactivate", postFormHtmx(mux, "/api/kitchen-stations/"+id+"/active", url.Values{"active": {"0"}}, &manager))
+	if countAudit("kitchen_station_deactivate") != 1 {
+		t.Error("deactivate audit row missing")
+	}
+	check("activate", postFormHtmx(mux, "/api/kitchen-stations/"+id+"/active", url.Values{"active": {"1"}}, &manager))
+	// display + blank address is accepted.
+	check("display no address", postFormHtmx(mux, "/api/kitchen-stations", url.Values{"name": {"Screen"}, "destination_type": {"display"}}, &manager))
+}
+
+func TestKitchenStationsPage_RefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, _ := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	for _, c := range []struct {
+		name, path string
+		form       url.Values
+		want       string
+	}{
+		{"required", "/api/kitchen-stations", url.Values{"name": {"  "}, "printer_address": {"g:9100"}}, "required"},
+		{"address required", "/api/kitchen-stations", url.Values{"name": {"X"}, "destination_type": {"printer"}}, "address"},
+		{"bogus destination", "/api/kitchen-stations", url.Values{"name": {"X"}, "destination_type": {"bogus"}, "printer_address": {"a"}}, "choose printer"},
+		{"unknown id", "/api/kitchen-stations/nope", url.Values{"name": {"X"}, "destination_type": {"printer"}, "printer_address": {"a"}}, "not found"},
+	} {
+		rec := postFormHtmx(mux, c.path, c.form, &manager)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code=%d body=%s", c.name, rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: htmx refusal must not redirect", c.name)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: Content-Type = %q", c.name, ct)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(strings.ToLower(body), c.want) {
+			t.Errorf("%s: body %q lacks %q", c.name, body, c.want)
+		}
+		if strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+			t.Errorf("%s: response must be only the message text: %s", c.name, body)
+		}
+	}
+}
+
+func TestKitchenStationsPage_ReplicaRefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, d := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	const stationID = "station-existing"
+	if _, err := d.Db.Exec(`INSERT INTO kitchen_stations (id, name, destination_type, printer_address, enabled, created_at, updated_at) VALUES (?, 'Existing', 'printer', 'g:9100', 1, datetime('now'), datetime('now'))`, stationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	wantText := "main till"
+	refused := func(name string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: must not redirect", name)
+		}
+		if !strings.Contains(strings.ToLower(rec.Body.String()), wantText) && !strings.Contains(strings.ToLower(rec.Body.String()), "primary") {
+			t.Errorf("%s: body lacks replica text: %q", name, rec.Body.String())
+		}
+	}
+	refused("create", postFormHtmx(mux, "/api/kitchen-stations", url.Values{"name": {"S"}, "printer_address": {"s:9100"}}, &manager))
+	refused("active", postFormHtmx(mux, "/api/kitchen-stations/"+stationID+"/active", url.Values{"active": {"0"}}, &manager))
+	refused("rename", postFormHtmx(mux, "/api/kitchen-stations/"+stationID, url.Values{"name": {"Renamed"}, "destination_type": {"printer"}, "printer_address": {"g:9100"}}, &manager))
+
+	rec := postFormHtmx(mux, "/api/kitchen-stations/"+stationID, url.Values{"name": {"Existing"}, "destination_type": {"printer"}, "printer_address": {"new:9100"}}, &manager)
+	if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/kitchen-stations" {
+		t.Fatalf("address-only: code=%d hx=%q", rec.Code, rec.Header().Get("HX-Redirect"))
+	}
+	var name, addr string
+	if err := d.Db.QueryRow(`SELECT name, printer_address FROM kitchen_stations WHERE id=?`, stationID).Scan(&name, &addr); err != nil || name != "Existing" || addr != "new:9100" {
+		t.Fatalf("name=%q addr=%q err=%v", name, addr, err)
+	}
+	// Routing forms are plain (hx-boost=false): no HX-Request, still a 303.
+	r2 := postForm(mux, "/api/kitchen-stations/routes/categories/cat-food", url.Values{"station_id": {stationID}}, &manager)
+	if r2.Code != http.StatusSeeOther || !strings.Contains(r2.Header().Get("Location"), "replica_use_primary") {
+		t.Fatalf("routing on replica: code=%d loc=%q", r2.Code, r2.Header().Get("Location"))
+	}
+}
+
+func TestKitchenStationsPage_RendersListHeaderAndRecordDialog(t *testing.T) {
+	mux, _ := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/kitchen-stations", url.Values{"name": {"Pass"}, "destination_type": {"both"}, "printer_address": {"tcp://10.0.0.5:9100"}}, &manager)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/kitchen-stations", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="list-header"`,
+		`data-list-filter="#kitchen-stations-table .kitchen-station-row"`,
+		`data-record-dialog-open="kitchen-station-dialog"`,
+		`id="kitchen-stations-no-results"`,
+		`data-record-open="kitchen-station-dialog"`,
+		`data-record-action="/api/kitchen-stations/`,
+		`data-record-destructive-action="/api/kitchen-stations/`,
+		`data-field-name="Pass"`,
+		`data-field-destination_type="both"`,
+		`data-field-printer_address="tcp://10.0.0.5:9100"`,
+		`data-field-active="1"`,
+		`data-record-edit`,
+		`data-record-when="active=1"`,
+		`data-record-when="active=0"`,
+		`<dialog id="kitchen-station-dialog"`,
+		`id="kitchen-station-form"`,
+		`name="name"`, `name="destination_type"`, `name="printer_address"`,
+		`value="printer"`, `value="display"`, `value="both"`,
+		`id="discover-printers-btn"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+	for _, gone := range []string{`users-layout`, `users-form`, `new-station-address`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still renders %q", gone)
+		}
+	}
+	ts := strings.Index(body, `id="kitchen-stations-table"`)
+	tb := strings.Index(body[ts:], `<tbody>`)
+	te := strings.Index(body[ts:], `</tbody>`)
+	if ts < 0 || tb < 0 || te < 0 {
+		t.Fatal("stations table not found")
+	}
+	rows := body[ts+tb : ts+te]
+	for _, bad := range []string{"<form", "<input", "<select"} {
+		if strings.Contains(rows, bad) {
+			t.Errorf("stations table rows must hold no %s", bad)
+		}
+	}
+	if !strings.Contains(body, `<bdi dir="ltr">tcp://10.0.0.5:9100</bdi>`) || !strings.Contains(body, `<bdi dir="auto">Pass</bdi>`) {
+		t.Error("address/name cells must be wrapped in bdi")
+	}
+}
