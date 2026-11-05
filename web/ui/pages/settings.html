@@ -1093,7 +1093,7 @@
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
         <td style="display:flex; gap:.3rem; flex-wrap:wrap">
-          <button class="btn secondary" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+          <button class="btn secondary" data-backup-save="{{ .Name }}" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
                the old typed RESTORE word — the elevation dialog's own OOB
                swap (elevation_prompt.html) handles the rest via this same
@@ -1131,6 +1131,40 @@
   <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
   {{ end }}
   </div>
+  <script>
+  // ut-docs#5619: in the Android app the till process cannot write Downloads
+  // (scoped storage; the storage may be a USB drive), so Save to Downloads
+  // opens the system save picker through the app's bridge instead of the
+  // server-side copy. It sits outside the refreshable backup region (a region
+  // refresh does not run scripts). Anywhere else the htmx button above does the copy.
+  (function () {
+    var K = window.AndroidKiosk;
+    if (!K || typeof K.saveBackupCopy !== 'function' || window.utBackupSaveResult) return;
+    var T = {
+      saved: "{{ T "settings.backup.picker_saved" }}",
+      cancelled: "{{ T "settings.backup.picker_cancelled" }}",
+      failed: "{{ T "settings.backup.picker_failed" }}",
+      no_space: "{{ T "settings.backup.picker_no_space" }}"
+    };
+    function say(text, ok) {
+      var el = document.getElementById('backup-dl-msg');
+      if (el) el.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
+    }
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-backup-save]');
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();
+      K.saveBackupCopy(b.getAttribute('data-backup-save'));
+    }, true);
+    window.utBackupSaveResult = function (code, name) {
+      say(T[code] || T.failed, code === 'saved');
+      if (code === 'saved' && window.htmx) {
+        window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
+      }
+    };
+  })();
+  </script>
   {{ if .isManager }}
   {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
        stick, another computer or the Downloads folder (a new or

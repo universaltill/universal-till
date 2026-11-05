@@ -241,6 +241,60 @@ class MainActivity : AppCompatActivity() {
             callback.onReceiveValue(uris)
         }
 
+    // ut-docs#5619: Settings -> Backups -> Save to Downloads. The till process
+    // cannot write the shared Downloads folder (scoped storage; the device's
+    // storage may be a USB-C drive), so the page asks this bridge to open the
+    // system "save as" picker, which reaches Downloads, a USB drive or any
+    // storage provider, and streams the backup into the place chosen.
+    private var pendingBackupName: String? = null
+    private val backupSaveLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val name = pendingBackupName
+            pendingBackupName = null
+            if (name == null) return@registerForActivityResult
+            if (uri == null) {
+                reportBackupSave(name, "cancelled")
+            } else {
+                writeBackupTo(name, uri)
+            }
+        }
+
+    private fun writeBackupTo(name: String, uri: Uri) {
+        val host = allowedHost
+        val cookie = host?.let { CookieManager.getInstance().getCookie("http://$it/") }
+        Thread {
+            var code = "saved"
+            try {
+                if (host == null) throw java.io.IOException("till address unknown")
+                val conn = java.net.URL(BackupSaveLogic.downloadUrl(host, name)).openConnection() as java.net.HttpURLConnection
+                try {
+                    conn.connectTimeout = 10_000
+                    conn.readTimeout = 60_000
+                    if (!cookie.isNullOrEmpty()) conn.setRequestProperty("Cookie", cookie)
+                    if (conn.responseCode != 200) throw java.io.IOException("backup download HTTP ${conn.responseCode}")
+                    val out = contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("no output stream")
+                    out.use { o -> conn.inputStream.use { it.copyTo(o) } }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "backup save to picked location failed", e)
+                // Do not leave an empty/partial file in the place the operator chose.
+                runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) }
+                code = BackupSaveLogic.reasonFor(e)
+            }
+            reportBackupSave(name, code)
+        }.start()
+    }
+
+    /** Tells the Settings page how the save went; the page owns the translated wording. */
+    private fun reportBackupSave(name: String, code: String) {
+        if (code !in BackupSaveLogic.RESULT_CODES) return
+        runOnUiThread {
+            webView.evaluateJavascript("window.utBackupSaveResult&&window.utBackupSaveResult('$code','$name')", null)
+        }
+    }
+
     // ut-docs#5190: a file input with capture (the item photo's "Take a
     // photo") opens the SYSTEM camera — focus, flash, full resolution, retake —
     // as on iPhone/iPad, not the document picker (WebView's createIntent()
@@ -813,6 +867,26 @@ class MainActivity : AppCompatActivity() {
                     // till down with it.
                     Log.w(TAG, "ACTION_REQUEST_ENABLE refused", e)
                     openBluetoothSettings()
+                }
+            }
+        }
+
+        /**
+         * ut-docs#5619: saves backup [name] through the system file picker.
+         * The name is validated here (a plain unitill-pos-*.db file name) and
+         * the bytes come from this till's own loopback download, so the page
+         * cannot make the app write anything else.
+         */
+        @JavascriptInterface
+        fun saveBackupCopy(name: String) {
+            runOnUiThread {
+                if (!BackupSaveLogic.isValidName(name)) return@runOnUiThread
+                pendingBackupName = name
+                try {
+                    backupSaveLauncher.launch(name)
+                } catch (e: ActivityNotFoundException) {
+                    pendingBackupName = null
+                    reportBackupSave(name, "failed")
                 }
             }
         }
