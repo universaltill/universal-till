@@ -5,9 +5,15 @@
  * script (ut-docs#3325) - no inline eval'd code. Opt in with
  * data-roving-radiogroup on the role="radiogroup" element; tiles are
  * role="radio" with their own :tabindex/:aria-checked bindings.
+ * Also drives the colour pickers, the photo-cutout background and the basket
+ * order type (ut-docs#5553).
  * No user-facing strings here (guard-i18n scans web/public/**\/*.js). */
 (function () {
   'use strict';
+  // ut-docs#5553: loaded globally from base.html now; bind the delegated
+  // listener once even if the script is ever evaluated twice.
+  if (window.__utRadiogroupBound) return;
+  window.__utRadiogroupBound = true;
   document.addEventListener('keydown', function (e) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return;
     var cur = e.target.closest && e.target.closest('[role="radio"]');
