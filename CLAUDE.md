@@ -179,7 +179,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     of `internal/db` only `lock_unix.go` triggers it; ut-docs#5279).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
-    real on PRs (push: report only, ADR-0160); exceptions in `e2e/tests-i18n-audit/allowlist.json`;
+    real on PRs (push: report only, ADR-0160; PR defers keys new in the PR and
+    pre-existing keys the de pack merely lags on, #2805/#5583); exceptions in `e2e/tests-i18n-audit/allowlist.json`;
     `UT_LOCALE_AUDIT_STRICT=1` (`scripts/ci/audit-locale-render.sh`) makes a
     missing pack checkout a hard failure, not a skip (#2300).
 - Feature branch; review record in `docs/code-reviews/<date>-<topic>.md`;
