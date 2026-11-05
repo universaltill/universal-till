@@ -44,3 +44,13 @@ byte-identical to main (no pixel change; the new row is Android-only and not on
 the captured screen), so only the manifest is committed. `claim.png` and
 `notices.png` differ under emulation and were discarded, as in #2386.
 `guard-docs-shots.sh` passes.
+
+## CI follow-up: layout spec and the hidden setting
+
+`tests/form-label-layout-300.spec.ts` ("deliberately horizontal Settings rows stay
+horizontal") failed on the new `screen-awake-select`: the form is `hidden` outside the
+Android shell, so in the desktop browser it measures zero-size and `control.top <
+text.bottom` is `0 < 0`. The spec's existing comment already warns that hidden labels
+measure as zero. Fix: the spec skips rows with `label.width === 0` (not rendered), so
+it only asserts layout of rows that are actually shown. The Android shell shows the row;
+its layout is the same `.set-row` markup the other three rows use.
