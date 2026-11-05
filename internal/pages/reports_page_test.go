@@ -2238,3 +2238,35 @@ func TestReportsPage_RunningOutChipHiddenWhenStockUntracked(t *testing.T) {
 		t.Fatal("untracked shop must not show the running-out chip")
 	}
 }
+
+// ut-docs#2672: the Custom range's rolling "1 day" option must not read
+// "Today" — that word belongs to the business-day chip alone.
+func TestReportsPage_CustomDaysSelect_NoSecondToday_2672(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+
+	for _, query := range []string{"", "?days=1"} {
+		body := getReportsPage(t, mux, query).Body.String()
+		start := strings.Index(body, `<select name="days"`)
+		if start < 0 {
+			t.Fatalf("%q: expected the days select, got: %s", query, body)
+		}
+		end := strings.Index(body[start:], "</select>")
+		sel := body[start : start+end]
+		if !regexp.MustCompile(`<option value="1"[^>]*>Last 24 hours</option>`).MatchString(sel) {
+			t.Fatalf("%q: expected a 'Last 24 hours' option for value 1, got: %s", query, sel)
+		}
+		if strings.Contains(sel, "Today") {
+			t.Fatalf("%q: days select must not say Today, got: %s", query, sel)
+		}
+		if query == "?days=1" && !regexp.MustCompile(`<option value="1"\s+selected>Last 24 hours</option>`).MatchString(sel) {
+			t.Fatalf("%q: expected the 24-hour option selected, got: %s", query, sel)
+		}
+	}
+
+	// Exactly one control says Today: the chip.
+	body := getReportsPage(t, mux, "?period=day").Body.String()
+	if n := strings.Count(body, "Today</a>"); n != 1 {
+		t.Fatalf("expected exactly one Today chip, got %d: %s", n, body)
+	}
+}
