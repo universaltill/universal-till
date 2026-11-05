@@ -14,10 +14,31 @@ echo "Universal Till — uninstall"
 echo
 
 # 1) Stop a running till so nothing is holding the database open.
-if pgrep -x unitill-pos >/dev/null 2>&1; then
+# Wait for it to really exit (ut-docs#5049): deleting the data folder under a
+# live server leaves it running against a deleted database. Delete nothing
+# until it is gone.
+if pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1; then
   echo "Stopping the running till…"
-  pkill -x unitill-pos 2>/dev/null || true
+fi
+pkill -u "$(id -u)" -x unitill-pos 2>/dev/null || true
+n=0
+while pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1 && [ "$n" -lt 15 ]; do
   sleep 1
+  n=$((n + 1))
+done
+if pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1; then
+  pkill -9 -u "$(id -u)" -x unitill-pos 2>/dev/null || true
+  n=0
+  while pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1 && [ "$n" -lt 5 ]; do
+    sleep 1
+    n=$((n + 1))
+  done
+fi
+if pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1; then
+  echo "The till is still running and could not be stopped."
+  echo "Stop the unitill-pos process, then run this uninstaller again."
+  echo "Nothing was deleted."
+  exit 1
 fi
 
 # 2) Shop data is precious (sales history, receipts) — never delete it silently.
