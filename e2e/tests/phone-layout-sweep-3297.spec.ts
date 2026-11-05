@@ -70,9 +70,9 @@ async function sideScrollers(page: Page) {
 }
 
 // ut-docs#3653: a list page swept empty proves nothing about its rows.
-// /promotions and /kitchen-stations have no demo data, and both carry a
-// per-row inline edit form that ran off the phone card's start edge, so
-// give each one row to lay out. The handlers answer every outcome with a
+// /promotions and /kitchen-stations have no demo data (both now edit in a
+// record dialog; their old per-row inline forms ran off the phone card's
+// start edge), so give each one row to lay out. The handlers answer every outcome with a
 // 303 (errors as ?err=…), so check the redirect itself, not the followed
 // 200 — a drifted field name must fail here, not quietly sweep an empty list.
 test.beforeAll(async ({ request }) => {

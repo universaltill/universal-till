@@ -1192,9 +1192,7 @@ kitchenstations.items.remove
 kitchenstations.items.search
 kitchenstations.items.set
 kitchenstations.items.title
-kitchenstations.new.submit
 kitchenstations.new.title
-kitchenstations.none
 kitchenstations.save
 kitchenstations.title
 kitchenstations.view_display
