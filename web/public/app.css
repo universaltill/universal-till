@@ -6436,6 +6436,8 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    failure the server response never covered — makes it non-empty and
    this rule takes over. */
 .record-dialog-msg:empty { display: none; }
+.record-dialog-body [aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 1px; }
+.record-dialog-msg { scroll-margin-block-start: .5rem; }
 .record-dialog-msg { color: var(--danger); font-weight: 600;
                       margin-block: 0 .7rem; max-inline-size: 40rem; }
 .record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }

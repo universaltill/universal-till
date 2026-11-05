@@ -59,7 +59,7 @@
         <td>{{ .ValueDisplay }}</td>
         <td class="promo-wrap"><bdi dir="auto">{{ .Description }}</bdi></td>
         <td class="promo-dates"><span class="promo-date">{{ or .StartsAtDate "–" }}</span><span class="promo-date">{{ or .EndsAtDate "–" }}</span></td>
-        <td class="promo-wrap">{{ if not .CustomerID }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ else if .CustomerMissing }}<span class="muted">{{ T "promotions.customer.deleted" }}</span>{{ else }}<bdi dir="auto">{{ .CustomerName }}</bdi>{{ end }}</td>
+        <td class="promo-wrap" data-card-keep>{{ if not .CustomerID }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ else if .CustomerMissing }}<span class="muted">{{ T "promotions.customer.deleted" }}</span>{{ else }}<bdi dir="auto">{{ .CustomerName }}</bdi>{{ end }}</td>
         <td data-card-keep>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
         <td class="list-actions">
           <button type="button" class="btn secondary btn-icon" data-record-edit
@@ -205,6 +205,8 @@
     out.innerHTML = '';
     clearInvalid();
     syncClear();
+    // The picked button just left the DOM; keep keyboard focus in the dialog.
+    q.focus();
   });
   if (clear) clear.addEventListener('click', function () {
     clearTimeout(timer);
@@ -225,6 +227,9 @@
     q.setAttribute('aria-invalid', 'true');
     q.setAttribute('aria-describedby', 'promotion-dialog-msg');
     renderNotice(msg, 'error', T.unpicked);
+    // The customer field is the last one, so the body is scrolled down: bring
+    // the message (top of the body) into view or Save looks like a no-op.
+    if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
     return true;
   }
   if (form) {

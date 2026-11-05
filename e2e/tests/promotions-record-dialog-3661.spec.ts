@@ -307,6 +307,8 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(pick).toBeVisible();
     await pick.click();
     await expect(page.locator('#promo-cust-q')).toHaveValue(OTHER_NAME);
+    // ut-docs#5574: the picked button left the DOM; focus must not fall to BODY.
+    await expect(page.locator('#promo-cust-q')).toBeFocused();
     await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, code)).toContainText(OTHER_NAME);
     await expect(row(page, code)).toHaveAttribute('data-field-customer_id', other);
@@ -351,6 +353,30 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(row(page, code)).toContainText(CUSTOMER_NAME);
     assertClean();
   });
+
+  // ut-docs#5574 (Tester): the unpicked refusal must be SEEN, not only be in
+  // the DOM. The customer field is the last field, so at the 1024x600 tablet
+  // floor (and on a phone) the body is scrolled down when Save is pressed;
+  // the message region at the top of the body must end up in view, below
+  // the pinned dialog head, not hidden above the scroll position.
+  for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 740 }]) {
+    test(`unpicked refusal message is visible at ${vp.width}x${vp.height}`, async ({ page }) => {
+      const code = `UV${vp.width}`;
+      await seed(page, code, { customer_id: customerId() });
+      await page.setViewportSize(vp);
+      await page.goto('/promotions');
+      await row(page, code).locator('[data-record-edit]').click();
+      await page.locator('#promo-cust-q').scrollIntoViewIfNeeded();
+      await page.locator('#promo-cust-q').fill('zzz');
+      await page.locator(`${DIALOG} .record-dialog-save`).click();
+      const msg = page.locator('#promotion-dialog-msg');
+      await expect(msg).toContainText('Choose a customer from the search results');
+      const m = (await msg.boundingBox())!;
+      const head = (await page.locator(`${DIALOG} .record-dialog-head`).boundingBox())!;
+      expect(m.y, 'message is below the pinned dialog head').toBeGreaterThanOrEqual(head.y + head.height - 1);
+      expect(m.y + m.height, 'message is inside the viewport').toBeLessThanOrEqual(vp.height);
+    });
+  }
 
   // ut-docs#5574: a promotion bound to a retired shell shows "Deleted customer",
   // never the id, and keeps that binding through an unrelated edit.
