@@ -30,6 +30,9 @@
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
     <!-- ut-docs#3325: data-action / data-* hooks (see base.html). -->
     <script defer src="/public/inline-actions.js?v={{ assetv "public/inline-actions.js" }}"></script>
+    <!-- ut-docs#1103: arrow-key navigation for the radiogroup tile pickers
+         (opt-in via data-roving-radiogroup). -->
+    <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <!-- ut-docs#590: country/currency/tax start pre-filled from the OS locale
@@ -171,12 +174,15 @@
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
           <input type="hidden" name="country" :value="country">
-          <div class="picker-grid" role="group" aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
-            {{ range .countries }}
-            <button type="button" class="picker-tile" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-pressed="country === '{{ .Code }}'" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
+          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
+            {{ range $i, $c := .countries }}
+            <button type="button" class="picker-tile" role="radio" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-checked="country === '{{ .Code }}' ? 'true' : 'false'" :tabindex="country === '{{ .Code }}' || (!country && {{ $i }} === 0) ? 0 : -1" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
             {{ end }}
           </div>
-          <!-- Review finding (Should-fix 2): expanding used to leave focus
+          <!-- ut-docs#1103: the tiles above are a WAI-ARIA radiogroup (role=radio +
+               aria-checked, roving tabindex: the checked tile, else the first,
+               is the single tab stop; arrows/Home/End via radiogroup.js).
+               Review finding (Should-fix 2): expanding used to leave focus
                on this now-hidden button (dropped to <body>), so a keyboard/
                switch-access operator had to tab from the top of the
                document to reach the 13 tiles that just appeared, with no
@@ -184,9 +190,9 @@
                $nextTick waits for the newly-shown tiles to actually be in
                the DOM (x-show removes display:none synchronously, but
                .focus() on a still-transitioning element is unreliable)
-               before moving focus onto the selected tile, or the first
-               tile if nothing's picked yet. -->
-          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-pressed=true]') || $refs.countryGrid.querySelector('button')).focus())">{{ T "setup.country.show_all" }}</button>
+               before moving focus onto the aria-checked tile, or the first
+               radio if nothing's picked yet. -->
+          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-checked=true]') || $refs.countryGrid.querySelector('[role=radio]')).focus())">{{ T "setup.country.show_all" }}</button>
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
@@ -364,9 +370,9 @@
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
           <input type="hidden" name="shop_type" :value="shopType">
-          <div class="picker-grid" role="group" aria-label="{{ T "setup.shop_type.title" }}">
-            {{ range .shopTypes }}
-            <button type="button" class="picker-tile" data-value="{{ . }}" :aria-pressed="shopType === '{{ . }}'" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
+          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.shop_type.title" }}">
+            {{ range $i, $t := .shopTypes }}
+            <button type="button" class="picker-tile" role="radio" data-value="{{ . }}" :aria-checked="shopType === '{{ . }}' ? 'true' : 'false'" :tabindex="shopType === '{{ . }}' || (!shopType && {{ $i }} === 0) ? 0 : -1" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
             {{ end }}
           </div>
           <div class="setup-nav">
