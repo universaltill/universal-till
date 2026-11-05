@@ -91,6 +91,8 @@ jobs:
         run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: Every release job is time-bounded — wiring test (ut-docs#4059)
         run: bash scripts/ci/release-job-timeouts_test.sh
+      - name: Release assets carry verified build provenance, and only the attesting jobs hold the OIDC token — wiring + behaviour test (ADR-0181, ut-docs#5437)
+        run: bash scripts/ci/release-provenance_test.sh
       - name: A macOS release job starved of a runner is re-run (at most once in practice) — behaviour test (ut-docs#5175)
         run: bash scripts/ci/release-runner-retry_test.sh
       - name: A starved ios-ci / desktop-darwin macOS job is re-run (at most once in practice) — behaviour + wiring test (ut-docs#5490)

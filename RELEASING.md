@@ -92,6 +92,10 @@ refused too — use the nightly pre-release for test builds.
      goreleaser job to have succeeded — a GitHub API blip that fails
      goreleaser after publishing (the v0.2.9/v0.2.10 outage: 503 → retry →
      double-upload → 422) no longer costs the `.exe`/`.dmg`.
+   - The `provenance` job attests every asset before publish (build
+     provenance, ADR-0181). A release that cannot be attested and verified
+     stays a draft. After publish, `provenance-dmg` attests the `.dmg` and the
+     rewritten `checksums.txt`, then verifies the whole published set.
    - The tag stamps `internal/buildinfo.Version`, so the running till shows the
      right version in its status bar.
 
@@ -162,6 +166,67 @@ signing key unlisted.
 A refused release shows on the till as `Update failed (signature)`. It is not
 retried within the same run; "Update now" retries.
 
+## Build provenance (ADR-0181)
+
+Every release asset has a signed build-provenance attestation (SLSA Build L2).
+It covers each file in `checksums.txt`, `checksums.txt` itself and
+`checksums.txt.sig`. It is made by GitHub artifact attestations and the
+public Sigstore service. No key of ours is involved. Nothing to set up.
+Before attesting, the jobs compare the SHA-256 of `checksums.txt` and of
+`checksums.txt.sig` with the values the signing job exported, so a file
+re-uploaded in between is refused.
+
+The `provenance` job runs after `checksums` and before the release is
+published. `provenance-dmg` runs after `macos-dmg-attach` for the `.dmg` and
+the rewritten `checksums.txt`. Both then run
+`scripts/ci/verify-release-provenance.sh`, which also checks that a modified
+file and a wrong workflow name fail. Neither job joins the `release-signing`
+environment, so no job holds both the signing seed and a Sigstore token.
+
+**Verify a release** (needs the GitHub CLI, any machine, no secrets):
+
+```sh
+gh attestation verify unitill-pos_X.Y.Z_linux_amd64.tar.gz \
+  --repo universaltill/universal-till \
+  --signer-workflow universaltill/universal-till/.github/workflows/release.yml \
+  --source-digest "$(git rev-parse vX.Y.Z^{commit})"
+git fetch origin main
+git merge-base --is-ancestor "$(git rev-parse vX.Y.Z^{commit})" origin/main
+```
+
+The last command must succeed: the attested commit has to be on `main`.
+Tag creation is not restricted, so a `v*` tag on any commit can run a release
+workflow edited at that commit and get a valid attestation. The ancestry check
+in `prepare` is part of that workflow and does not hold in that case. Only
+this verifier-side check does (ADR-0181 section 7).
+
+Run it for `checksums.txt` too. A fork uses its own `--repo` and workflow path.
+
+**What this proves:** which commit and which workflow built the file. **It does
+not prove the commit is safe.** A malicious change merged to `main` and then
+released gets a valid attestation. Do not describe attestations as protection
+against that. The control for it is merge review (ADR-0181 section 7).
+
+If Sigstore or the attestation service is down, `provenance` fails and the
+release stays a draft. On the one-click path the tag is removed, so start the
+release again. A failure in `provenance-dmg` turns the run red, but the release
+is already public. If `macos-dmg-attach` fails after it has uploaded (for
+example in its re-verify step), the public `.dmg` and the rewritten
+`checksums.txt` have no attestation yet and `provenance-dmg` is skipped:
+re-run the failed jobs so `macos-dmg-attach` finishes and `provenance-dmg`
+attests them.
+
+**Start the one-click release from `main`.** The verifier accepts the
+attestation's ref only as `refs/tags/<tag>` (a tag push) or `refs/heads/main`
+(the one-click dispatch). A dispatch from another branch or an old tag gets a
+different ref, so `provenance` fails, the release stays a draft and the tag is
+removed. This is a documented rule rather than a new refusal in `prepare`:
+the check there is ADR-0180's ancestor rule, and tightening it is a separate
+decision for that ADR, not a side effect of this one.
+
+The till does not check attestations. It still checks `checksums.txt.sig`
+offline (ADR-0178).
+
 ## Android update: signer pin (ADR-0179)
 
 The Android shell's in-app update installs an APK only if it is this app's
@@ -218,6 +283,10 @@ setting, and full platform parity — all tracked as separate follow-ups.
 
 ## Notes / gaps
 
+- **Merge control is an open gap** (ADR-0181 section 7). `main` needs a pull
+  request but no approval, so a malicious change could be merged, tagged and
+  signed. Provenance does not close this. The owner decisions are open on
+  ut-docs#5437.
 - **macOS is Apple-Silicon only and unsigned** — Gatekeeper warns on first run.
   See the desktop app work for the friendlier `.app` path. No Intel (amd64)
   mac build is produced.
