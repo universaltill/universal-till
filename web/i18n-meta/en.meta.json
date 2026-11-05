@@ -517,6 +517,8 @@
   "promotions.empty": {"description": "Empty state on the Promotions page when no promotion exists yet; points at the + button next to the search field.", "review": "standard"},
   "promotions.search_placeholder": {"description": "Label and placeholder of the search field above the Promotions list (filters rows by code, description or customer).", "review": "standard"},
   "kitchenstations.search_placeholder": {"description": "Label and placeholder of the search field above the Kitchen stations list (filters rows by name, destination or printer address).", "review": "standard"},
+  "kitchenstations.joined.hint": {"description": "Page-level note shown under the Kitchen stations header on a joined till, explaining why New is disabled.", "review": "standard"},
+  "kitchenstations.joined.dialog_hint": {"description": "Note at the top of the station dialog on a joined till, explaining the read-only Name and Destination.", "review": "standard"},
   "kitchenstations.edit": {"description": "Title of the Kitchen stations record dialog when an existing station is opened for editing.", "review": "standard"},
   "kitchenstations.empty": {"description": "Empty state on the Kitchen stations page when no station exists yet; points at the + button and says where tickets go meanwhile.", "review": "standard"},
   "kitchenstations.deactivate_confirm": {"description": "Confirmation shown before a station is deactivated from its dialog; says orders stop and station-only routes fall back to the default kitchen printer.", "review": "standard"},

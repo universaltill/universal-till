@@ -603,3 +603,66 @@ func TestKitchenStationsPage_RendersListHeaderAndRecordDialog(t *testing.T) {
 		t.Error("address/name cells must be wrapped in bdi")
 	}
 }
+
+// ut-docs#5607: on a joined till (sync.primary_url set) the page explains
+// that stations are managed on the main till, disables New and the dialog
+// carries the joined marker; a main till renders none of it.
+func getKitchenStationsBody(t *testing.T, mux *http.ServeMux, manager auth.User) string {
+	t.Helper()
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/kitchen-stations", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d", rec.Code)
+	}
+	return rec.Body.String()
+}
+
+func TestKitchenStationsPage_JoinedShowsHintAndDisablesNew(t *testing.T) {
+	mux, d := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO kitchen_stations (id, name, destination_type, printer_address, enabled, created_at, updated_at) VALUES ('s1', 'Pass', 'printer', 'g:9100', 1, datetime('now'), datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	body := getKitchenStationsBody(t, mux, manager)
+	for _, want := range []string{`id="kitchen-stations-joined-hint"`, `data-joined="1"`, `id="kitchen-station-joined-note"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("joined page lacks %s", want)
+		}
+	}
+	i := strings.Index(body, `id="kitchen-stations-new"`)
+	if i < 0 {
+		t.Fatal("New button missing")
+	}
+	btn := body[i : i+strings.Index(body[i:], `>`)]
+	if !strings.Contains(btn, "disabled") {
+		t.Errorf("New must be disabled on a joined till: %s", btn)
+	}
+	if strings.Contains(body, `data-record-destructive-form`) {
+		t.Error("Deactivate/Activate must not be offered on a joined till")
+	}
+}
+
+func TestKitchenStationsPage_MainTillUnchanged(t *testing.T) {
+	mux, d := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO kitchen_stations (id, name, destination_type, printer_address, enabled, created_at, updated_at) VALUES ('s1', 'Pass', 'printer', 'g:9100', 1, datetime('now'), datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	body := getKitchenStationsBody(t, mux, manager)
+	for _, bad := range []string{`id="kitchen-stations-joined-hint"`, `data-joined="1"`, `id="kitchen-station-joined-note"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("main till must not render %s", bad)
+		}
+	}
+	i := strings.Index(body, `id="kitchen-stations-new"`)
+	if btn := body[i : i+strings.Index(body[i:], `>`)]; strings.Contains(btn, "disabled") {
+		t.Errorf("New must be enabled on a main till: %s", btn)
+	}
+	if !strings.Contains(body, `data-record-destructive-form`) {
+		t.Error("destructive form must be present on a main till")
+	}
+}

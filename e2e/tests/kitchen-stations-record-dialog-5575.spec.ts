@@ -47,6 +47,23 @@ async function overflow(page: Page) {
 }
 
 test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
+  // ut-docs#5607 regression: a main till keeps everything editable, no joined hint.
+  test('main till: fields editable, no joined hint, New opens an empty dialog', async ({ page }) => {
+    const name = `Main ${Date.now().toString(36)}`;
+    await seed(page, name);
+    await page.goto('/kitchen-stations');
+    await expect(page.locator('#kitchen-stations-joined-hint')).toHaveCount(0);
+    await expect(page.locator('#kitchen-stations-new')).toBeEnabled();
+    await row(page, name).locator('[data-record-edit]').click();
+    await expect(page.locator('#kitchen-station-name')).toBeEditable();
+    await expect(page.locator('#kitchen-station-destination')).toBeEnabled();
+    await expect(page.locator('#kitchen-station-joined-note')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.locator('#kitchen-stations-new').click();
+    await expect(page.locator(DIALOG)).toHaveJSProperty('open', true);
+    await expect(page.locator('#kitchen-station-name')).toHaveValue('');
+  });
+
   // AC3: realistic fixture, no sideways scroll, every pencil inside the viewport.
   for (const vp of [{ width: 1024, height: 600 }, { width: 1920, height: 1080 }]) {
     for (const lang of ['en', 'de', 'fa']) {

@@ -18,7 +18,9 @@
      "emptyTarget"    "#kitchen-stations-no-results"
      "newID"          "kitchen-stations-new"
      "newLabelKey"    "kitchenstations.new.title"
-     "dialogID"       "kitchen-station-dialog") }}
+     "dialogID"       "kitchen-station-dialog"
+     "newDisabled"    .SyncPrimary) }}
+{{ if .SyncPrimary }}<p class="muted" id="kitchen-stations-joined-hint" role="note">{{ T "kitchenstations.joined.hint" }}</p>{{ end }}
 
 <div class="card list-card">
   {{ if not .stations }}
@@ -238,6 +240,26 @@
     out.innerHTML = '';
     msg.textContent = '';
     btn.disabled = false;
+    // ut-docs#5607: joined till — Name/Destination are managed on the main
+    // till. Name is readonly (still submits); the select is disabled (a
+    // <select> ignores readonly) and mirrored by a hidden input so the
+    // address-only save still carries the unchanged destination.
+    var f = ev.target.querySelector('#kitchen-station-form');
+    if (!f || !f.hasAttribute('data-joined')) return;
+    var nm = f.querySelector('#kitchen-station-name');
+    var sel = f.querySelector('#kitchen-station-destination');
+    if (nm) nm.readOnly = true;
+    if (sel) {
+      sel.disabled = true;
+      var mirror = f.querySelector('input[type=hidden][name=destination_type]');
+      if (!mirror) {
+        mirror = document.createElement('input');
+        mirror.type = 'hidden';
+        mirror.name = 'destination_type';
+        f.appendChild(mirror);
+      }
+      mirror.value = sel.value;
+    }
   });
   btn.addEventListener('click', function () {
     var gen = scanGen;
@@ -295,13 +317,14 @@
      Save lives in the dialog head. */}}
 {{ define "record_dialog_fields" }}
 <form id="kitchen-station-form" method="post" action="/api/kitchen-stations" autocomplete="off"
-      hx-boost="true" hx-target="#kitchen-station-dialog-msg" hx-swap="innerHTML">
-  <label>{{ T "kitchenstations.col.name" }} <input type="text" name="name" required dir="auto" /></label>
+      {{ if .root.SyncPrimary }}data-joined="1" {{ end }}hx-boost="true" hx-target="#kitchen-station-dialog-msg" hx-swap="innerHTML">
+  {{ if .root.SyncPrimary }}<p class="muted" id="kitchen-station-joined-note" role="note">{{ T "kitchenstations.joined.dialog_hint" }}</p>{{ end }}
+  <label>{{ T "kitchenstations.col.name" }} <input type="text" id="kitchen-station-name" name="name" required dir="auto" /></label>
   {{/* Destination (ut-docs#544): printer (a ticket), display (a kitchen
        screen — no address needed), or both. The address rule is enforced
        server-side per type. Prefill sets the selection on edit. */}}
   <label>{{ T "kitchenstations.col.destination" }}
-    <select name="destination_type">
+    <select id="kitchen-station-destination" name="destination_type">
       <option value="printer">{{ T "kitchenstations.destination.printer" }}</option>
       <option value="display">{{ T "kitchenstations.destination.display" }}</option>
       <option value="both">{{ T "kitchenstations.destination.both" }}</option>
@@ -326,6 +349,7 @@
      station gets Activate instead (record-dialog.js shows whichever
      data-record-when="active=…" matches the opened row). */}}
 {{ define "record_dialog_destructive" }}
+{{ if not .root.SyncPrimary }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
       hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}"
       hx-boost="true" hx-target="#kitchen-station-dialog-msg" hx-swap="innerHTML">
@@ -340,4 +364,5 @@
   <input type="hidden" name="active" value="1" />
   <button type="submit" class="btn secondary">{{ T "kitchenstations.activate" }}</button>
 </form>
+{{ end }}
 {{ end }}
