@@ -52,7 +52,7 @@ Where the till keeps its backups (the last 7 days by default):
 - macOS: `~/Library/Application Support/UniversalTill/backups`
 - Windows: `%LOCALAPPDATA%\UniversalTill\backups`
 - Linux: `~/.local/share/universal-till/backups` by default (installed from the `.deb` package: `/opt/unitill/data/backups`)
-- Android and iOS: inside the app, out of reach — use **Save to Downloads**.
+- Android and iOS: inside the app, out of reach — use **Save to Downloads**. On Android this opens the device's save screen: choose Downloads, or a USB drive if that is where your storage is.
 
 1. If the old till still starts: Settings → Backups → **Back up now**, then **Save to Downloads** next to the new backup, and copy the file to a USB stick or another computer.
 2. If it does not start but its disk can be read, take the newest file from its `backups` folder.
