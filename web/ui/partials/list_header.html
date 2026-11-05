@@ -25,7 +25,8 @@
      creates travel to the main till) + "mainTillLocked" (the page's
      SyncUnreachable): New then sits in a fieldset[data-main-till-lock],
      disabled while the main till can't be reached and followed live by
-     base.html's chip handler. */}}
+     base.html's chip handler. "newDisabled" (optional, ut-docs#5607) renders
+     the New button disabled; the page must say why in visible text. */}}
 {{ define "list_header" }}
 {{ $_ := req . "searchID" "searchLabelKey" "filterTarget" "newID" "newLabelKey" "dialogID" }}
 <div class="list-header">
@@ -38,7 +39,7 @@
   {{ if .mainTillLock }}<fieldset data-main-till-lock{{ if .mainTillLocked }} disabled{{ end }}>{{ end }}
   <button type="button" id="{{ .newID }}" class="btn primary btn-icon list-header-new"
           aria-label="{{ T .newLabelKey }}" title="{{ T .newLabelKey }}"
-          data-record-dialog-open="{{ .dialogID }}">
+          data-record-dialog-open="{{ .dialogID }}"{{ if .newDisabled }} disabled{{ end }}>
     <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
   </button>
   {{ if .mainTillLock }}</fieldset>{{ end }}
