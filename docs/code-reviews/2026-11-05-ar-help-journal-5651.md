@@ -25,8 +25,8 @@
 ## Findings
 | # | Sev | Finding | Outcome |
 |---|---|---|---|
-| 1 | low | `web/help/fa/sell.md:23` uses a bare English `Journal` as the nav label (fa UI: `دفتر فروش`). | Deferred and listed on #5651. Open PR universal-till#2385 (ut-docs#5644, another lane) rewrites this exact line, so editing it here would conflict. Follow-up card filed. |
+| 1 | low | `web/help/fa/sell.md:23` uses a bare English `Journal` as the nav label (fa UI: `دفتر فروش`). | Already covered: ut-docs#5644 ("fa help: … an English 'Journal'"), and its open PR universal-till#2385 removes the word from this line. It is not edited here, which would conflict. No new card. |
 
-Pre-flight: help topic — updated (ar text only; no screenshots affected); reference/README — n/a (no behaviour change); en.json/meta — n/a; review record — this file; follow-up — fa `Journal` line deferred to a Backlog card.
+Pre-flight: help topic — updated (ar text only; no screenshots affected); reference/README — n/a (no behaviour change); en.json/meta — n/a; review record — this file; follow-up — fa `Journal` already tracked on ut-docs#5644 (PR #2385).
 
 **Verdict:** approve.
