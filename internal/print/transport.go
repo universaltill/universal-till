@@ -43,6 +43,9 @@ type Config struct {
 	// network host[:port] or a device path. Empty means kitchen printing is
 	// off (see arch/restaurant-phone-orders.md). Charset is shared.
 	KitchenAddress string
+	// VoucherSlip prints a separate slip per gift voucher a sale issued, after
+	// its receipt (printer.voucher_slip, ut-docs#4247). Default off.
+	VoucherSlip bool
 }
 
 // KitchenEnabled reports whether a kitchen printer is configured.

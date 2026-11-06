@@ -19,9 +19,21 @@ import (
 // This is the single entry point callers should use so every receipt/report
 // respects the printer type.
 func PrintDoc(ctx context.Context, c Config, doc Doc) error {
+	return PrintDocWithSlips(ctx, c, doc, nil)
+}
+
+// PrintDocWithSlips prints doc followed by each voucher slip (ut-docs#4247)
+// as ONE job: the slips can't be split from their receipt by another print,
+// and the result is one success or one failure. With nil slips the output is
+// byte-identical to PrintDoc.
+func PrintDocWithSlips(ctx context.Context, c Config, doc Doc, slips []VoucherSlip) error {
 	switch c.Mode {
 	case "system":
-		return systemPrint(ctx, c, RenderText(doc))
+		text := RenderText(doc)
+		for _, s := range slips {
+			text += "\f" + RenderVoucherSlipText(s)
+		}
+		return systemPrint(ctx, c, text)
 	case "off", "":
 		return nil
 	default:
@@ -32,7 +44,11 @@ func PrintDoc(ctx context.Context, c Config, doc Doc) error {
 		if tr == nil {
 			return nil
 		}
-		return tr.Print(ctx, Render(doc))
+		job := Render(doc)
+		for _, s := range slips {
+			job = append(job, RenderVoucherSlip(s)...)
+		}
+		return tr.Print(ctx, job)
 	}
 }
 
