@@ -211,8 +211,17 @@ func (rc *RevocationChecker) processRevocation(ctx context.Context, entry Revoca
 		return false, nil
 	}
 
+	// ut-docs#5660: a plugin the merchant had already turned off is still
+	// marked revoked and recorded (so a later re-enable is not silent), but
+	// nothing is stopped or reloaded and it is not counted as a disable.
 	if !pluginRow.IsActive {
-		// Already disabled
+		if pluginRow.InstallState == data.PluginStateRevoked {
+			return false, nil // already recorded; no new audit row every poll
+		}
+		if err := repo.SetPluginState(ctx, pluginID, pluginRow.Version, data.PluginStateRevoked, false); err != nil {
+			return false, fmt.Errorf("failed to mark plugin revoked: %w", err)
+		}
+		rc.recordRevocation(ctx, pluginID, pluginRow, entry, matchedBy, false)
 		return false, nil
 	}
 
@@ -225,28 +234,30 @@ func (rc *RevocationChecker) processRevocation(ctx context.Context, entry Revoca
 	}
 
 	// Disable the plugin in database
-	if err := repo.SetPluginState(ctx, pluginID, pluginRow.Version, "revoked", false); err != nil {
+	if err := repo.SetPluginState(ctx, pluginID, pluginRow.Version, data.PluginStateRevoked, false); err != nil {
 		return false, fmt.Errorf("failed to disable plugin: %w", err)
 	}
+	rc.recordRevocation(ctx, pluginID, pluginRow, entry, matchedBy, true)
 
-	// Add audit log entry. No developer_id: the real feed never carries
-	// one (see RevocationEntry's own comment) — recording an always-empty
-	// field would be worse than not recording it at all.
-	// "requested_action", not "action": the row's own action COLUMN is
-	// already the literal string "disable_revoked" (this call's own first
-	// arg) — a bare "action" key in the details map next to that reads as
-	// if it were describing the same thing, when it's actually the feed
-	// entry's requested action ("disable"|"delete"), which this handler
-	// currently treats identically either way (see RevocationEntry.Action).
-	_ = repo.InsertAuditRaw(ctx, nil, "disable_revoked", "plugin", pluginID, map[string]any{
-		"reason":           entry.Reason,
-		"version":          pluginRow.Version,
+	log.Infof("[RevocationChecker] Disabled revoked plugin: %s v%s (reason: %s)", pluginID, pluginRow.Version, data.CapRevocationReason(entry.Reason))
+	return true, nil
+}
+
+// recordRevocation writes the disable_revoked audit row the /plugins notice
+// reads back (ut-docs#5660). The reason is feed text, so it is capped here.
+//
+// Add audit log entry. No developer_id: the real feed never carries
+// one (see RevocationEntry's own comment). "requested_action", not
+// "action": the row's own action COLUMN is already "disable_revoked", and
+// this is the feed entry's requested action ("disable"|"delete").
+func (rc *RevocationChecker) recordRevocation(ctx context.Context, pluginID string, row data.PluginInfoRow, entry RevocationEntry, matchedBy string, wasActive bool) {
+	_ = data.NewPluginRepo(rc.db).InsertAuditRaw(ctx, nil, "disable_revoked", "plugin", pluginID, map[string]any{
+		"reason":           data.CapRevocationReason(entry.Reason),
+		"version":          row.Version,
 		"listing_id":       entry.PluginID,
 		"matched_by":       matchedBy,
 		"requested_action": entry.Action,
 		"actor":            "system:revocation",
+		"was_active":       wasActive,
 	}, time.Now())
-
-	log.Infof("[RevocationChecker] Disabled revoked plugin: %s v%s (reason: %s)", pluginID, pluginRow.Version, entry.Reason)
-	return true, nil
 }

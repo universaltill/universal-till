@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -61,6 +63,9 @@ var pluginObs = newRepoObservability("plugin")
 const (
 	PluginStateInstalled = "installed"
 	PluginStateBroken    = "broken"
+	// PluginStateRevoked: the marketplace revocation check turned this
+	// version off (ut-docs#5660). Re-enabling leaves it set.
+	PluginStateRevoked = "revoked"
 )
 
 // InstallPlugin seeds a bare plugin row (id + default install_state) with no
@@ -2927,4 +2932,81 @@ func (r *PluginRepo) executor(tx *sql.Tx) executor {
 		return tx
 	}
 	return r.db
+}
+
+// RevocationNotice is why the marketplace revocation check turned a plugin off (ut-docs#5660).
+type RevocationNotice struct {
+	Version   string    // the plugins row version, which is the version the check disabled
+	Reason    string    // feed text, untrusted; passed through CapRevocationReason
+	RevokedAt time.Time // audit created_at; zero when no audit row exists (legacy)
+}
+
+// maxRevocationReasonRunes caps the stored/shown feed reason.
+const maxRevocationReasonRunes = 200
+
+// CapRevocationReason trims, collapses whitespace and control characters to
+// single spaces and caps at 200 runes (199 + "…"). Used on write
+// (processRevocation) and again on read, for rows written before the cap.
+func CapRevocationReason(s string) string {
+	var b strings.Builder
+	pendingSpace := false
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			pendingSpace = b.Len() > 0
+			continue
+		}
+		if pendingSpace {
+			b.WriteByte(' ')
+			pendingSpace = false
+		}
+		b.WriteRune(r)
+	}
+	out := b.String()
+	if utf8.RuneCountInString(out) <= maxRevocationReasonRunes {
+		return out
+	}
+	return string([]rune(out)[:maxRevocationReasonRunes-1]) + "…"
+}
+
+// RevocationNotices returns one notice per plugin whose install_state is
+// 'revoked', keyed by plugin id. The audit row used is the latest
+// disable_revoked row whose version equals the plugin row's version (the last
+// one processed wins). With no matching row the notice still appears, with an
+// empty Reason and a zero RevokedAt.
+func (r *PluginRepo) RevocationNotices(ctx context.Context) (map[string]RevocationNotice, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT p.id, p.version,
+       COALESCE(json_extract(a.data_json, '$.reason'), ''),
+       COALESCE(a.created_at, '')
+FROM plugins p
+LEFT JOIN audit_log a ON a.rowid = (
+    SELECT x.rowid FROM audit_log x
+    WHERE x.entity_type = 'plugin' AND x.entity_id = p.id
+      AND x.action = 'disable_revoked'
+      AND json_extract(x.data_json, '$.version') = p.version
+    ORDER BY x.created_at DESC, x.rowid DESC LIMIT 1)
+WHERE p.install_state = ?
+`, PluginStateRevoked)
+	if err != nil {
+		return nil, pluginObs.wrap("revocation_notices", err)
+	}
+	defer rows.Close()
+	out := map[string]RevocationNotice{}
+	for rows.Next() {
+		var id, ver, reason, at string
+		if err := rows.Scan(&id, &ver, &reason, &at); err != nil {
+			return nil, pluginObs.wrap("revocation_notices_scan", err)
+		}
+		n := RevocationNotice{Version: ver, Reason: CapRevocationReason(reason)}
+		if at != "" {
+			if ts, perr := time.Parse(time.RFC3339, at); perr == nil {
+				n.RevokedAt = ts
+			}
+		}
+		out[id] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, pluginObs.wrap("revocation_notices_rows", err)
+	}
+	return out, nil
 }

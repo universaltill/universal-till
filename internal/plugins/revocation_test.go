@@ -253,14 +253,20 @@ func TestSyncRevocations_VersionMismatchLeavesPluginActive(t *testing.T) {
 	}
 }
 
-func TestSyncRevocations_AlreadyInactiveIsNoop(t *testing.T) {
+// ut-docs#5660 (AC6): an already-disabled plugin is no longer a pure no-op.
+// It is marked revoked and recorded once so the card can say why, but it is
+// not counted as a disable (no stop, no reload).
+func TestSyncRevocations_AlreadyInactiveIsRecordedNotCounted(t *testing.T) {
 	db := managerTestDB(t)
 	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", false)
 	seedInstallStatus(t, db, testListingUUID, "com.x.y")
 
 	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
-	if n != 0 || auditCountFor(t, db, "com.x.y") != 0 {
-		t.Fatalf("n=%d audit=%d, want 0/0", n, auditCountFor(t, db, "com.x.y"))
+	if n != 0 || auditCountFor(t, db, "com.x.y") != 1 {
+		t.Fatalf("n=%d audit=%d, want 0/1", n, auditCountFor(t, db, "com.x.y"))
+	}
+	if active, state := pluginState(t, db, "com.x.y"); active != 0 || state != "revoked" {
+		t.Fatalf("active=%v state=%v, want 0/revoked", active, state)
 	}
 }
 
