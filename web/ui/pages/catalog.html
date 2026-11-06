@@ -558,22 +558,26 @@
                  (web/public/icon-picker-filter.js) and a scroll box; "No
                  image" sits first so it never scrolls out of reach. -->
             <input type="search" class="builtin-icon-search" data-icon-filter="builtin-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">
-            <div id="builtin-icon-grid" class="picker-grid builtin-icon-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-              <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
-              {{ range .BuiltinIconGroups }}
-              <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
-              {{ range .Icons }}
+            <div id="builtin-icon-grid" class="picker-grid builtin-icon-grid" role="listbox" data-roving-listbox aria-label="{{ T "catalog.builtin_icon.hint" }}">
+              <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="none" aria-selected="false" tabindex="0">{{ T "catalog.builtin_icon.none" }}</button>
+              {{ range $i, $g := .BuiltinIconGroups }}
+              <div class="builtin-icon-group" role="group" aria-labelledby="builtin-icon-grid-g{{ $i }}">
+              <div class="builtin-icon-group-label" id="builtin-icon-grid-g{{ $i }}">{{ T $g.I18nKey }}</div>
+              {{ range $g.Icons }}
               <!-- Review finding F6 (ut-docs#1844): the label is visible text,
                    not a hover-only title — this is a touchscreen till
                    (reference/ux-guidelines.md), nothing here can depend on
                    hover to be understood. `title` stays as a bonus tooltip for
                    a mouse/desktop session; the alt text and this span carry
-                   the same identical string so neither is the "real" one. -->
-              <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
+                   the same identical string so neither is the "real" one.
+                   ut-docs#5601: a focus-only listbox (radiogroup.js) — arrows
+                   move focus, Enter/Space/click (this handler) chooses. -->
+              <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-keywords="{{ .Keywords }}" aria-selected="false" tabindex="-1" title="{{ T .I18nKey }}">
                 <img src="{{ .Path }}" alt="" width="28" height="28">
                 <span>{{ T .I18nKey }}</span>
               </button>
               {{ end }}
+              </div>
               {{ end }}
             </div>
             <div class="muted" data-icon-filter-empty="builtin-icon-grid" hidden>{{ T "catalog.builtin_icon.no_match" }}</div>
@@ -1958,12 +1962,14 @@
     }
     builtinIconGrid.querySelectorAll('.builtin-icon-tile').forEach(function (btn) {
       var icon = btn.dataset.icon;
-      var pressed = isCustom ? false : (icon === 'none' ? hasNoImage : icon === selectedKey);
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      var selected = isCustom ? false : (icon === 'none' ? hasNoImage : icon === selectedKey);
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
       var suggested = hasNoImage && icon !== 'none' && icon === suggestedKey;
       btn.classList.toggle('builtin-icon-suggested', suggested);
       btn.title = suggested ? (btn.dataset.baseTitle || btn.title) + ' — ' + NOTICE_MSG.builtinIconSuggestedTitleSuffix : (btn.dataset.baseTitle || btn.title);
     });
+    // ut-docs#5601: one Tab stop on the selected option (else the first visible).
+    if (window.utRovingListbox) window.utRovingListbox.sync(builtinIconGrid);
   }
 
   // Remembers each tile's own translated label before the suggestion

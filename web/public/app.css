@@ -533,7 +533,8 @@ html.fx-light #refresh-indicator, html.fx-light .animate-spin { animation: spin 
 html.fx-light .osk-caps { box-shadow: inset 0 0 0 2px var(--accent-contrast) !important; }
 html.fx-light .category-overflow-tile.active { box-shadow: 0 0 0 2px var(--cat-color, var(--accent)) inset !important; }
 html.fx-light .picker-tile[aria-pressed="true"],
-html.fx-light .picker-tile[aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
+html.fx-light .picker-tile[aria-checked="true"],
+html.fx-light .picker-tile[aria-selected="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
 /* Its own rule: an engine without :has() drops only this one. */
 html.fx-light .designer-cat-colors .item-color-tile:has(input:checked) { box-shadow: inset 0 0 0 2px var(--accent) !important; }
 html.fx-light .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent) !important; }
@@ -5437,7 +5438,8 @@ body.login-screen {
 /* ut-docs#1103 UX1: >=3:1 ring (WCAG 1.4.11); the gap keeps it distinct from the checked inset ring. */
 .picker-tile:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; border-color: var(--focus-border); }
 .picker-tile[aria-pressed="true"],
-.picker-tile[aria-checked="true"] {
+.picker-tile[aria-checked="true"],
+.picker-tile[aria-selected="true"] {
   border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent);
 }
 [x-cloak] { display: none !important; }
@@ -5475,12 +5477,24 @@ body.login-screen {
   /* ut-docs#1103: room for the 2px+2px .picker-tile focus ring, which the
      scroll box would otherwise clip on edge tiles. */
   padding: .3rem;
+  /* ut-docs#5601: arrowing to an edge tile scrolls it clear of the box edge,
+     so its focus ring isn't clipped. */
+  scroll-padding: 5px;
 }
 .builtin-icon-group-label {
   grid-column: 1 / -1; margin-block-start: .35rem;
   font-size: .8rem; font-weight: 600; color: var(--muted); text-align: start;
 }
 .builtin-icon-group-label[hidden], .builtin-icon-tile[hidden] { display: none; }
+/* ut-docs#5601: each section is a role="group" wrapper inside the listbox.
+   It spans the whole row and repeats the grid's own column template, so the
+   tiles lay out in the same columns as before; no subgrid/display:contents
+   (both have had accessibility-tree bugs on older WebKit/Chromium). */
+.builtin-icon-group {
+  grid-column: 1 / -1; display: grid; gap: inherit;
+  grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
+}
+.builtin-icon-group[hidden] { display: none; }
 .builtin-icon-search { display: block; inline-size: 100%; margin-block: .35rem; }
 /* Review finding F5: .picker-tile:focus-visible's own outline (above) and
    a plain `outline` here have identical specificity, so whichever rule
@@ -5493,8 +5507,8 @@ body.login-screen {
 .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
 
 /* Item color swatch picker (ut-docs#1901): same .picker-grid/.picker-tile
-   pattern and aria-pressed convention as the built-in icon grid just
-   above, one small dot + translated name per tile rather than an image.
+   pattern as the built-in icon grid just above (whose selected tile is
+   aria-selected since ut-docs#5601, a listbox; this one is aria-pressed), one small dot + translated name per tile rather than an image.
    --swatch (set inline per tile, catalog.html) feeds .swatch-dot's
    background — the one place a raw hex from catalogtypes.ItemColors()
    reaches CSS on the PICKER side; the tile's own selected/pressed state
@@ -7547,7 +7561,8 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
    focus keeps its own outline, separate from the selection fill. */
 @media (forced-colors: active) {
   .picker-tile[aria-pressed="true"],
-  .picker-tile[aria-checked="true"] {
+  .picker-tile[aria-checked="true"],
+  .picker-tile[aria-selected="true"] {
     forced-color-adjust: none;
     background: Highlight; color: HighlightText;
     border-color: Highlight;
