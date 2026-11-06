@@ -872,9 +872,9 @@ type GetRevocationsResponse struct {
 // BackgroundJobs runs it on a 30-minute ticker whenever a marketplace
 // endpoint is configured, and it fetches GET /v1/revocations over its own
 // http.Client and disables each revoked plugin directly. That
-// implementation never adopted this client method (or its since_version
-// cursor — it re-reads the full feed every tick), so this remains only a
-// typed accessor over the same endpoint, exercised by TestGetRevocations
+// implementation does not call this client method (it builds its own
+// since_version request and persists the cursor itself, ut-docs#5659), so
+// this remains only a typed accessor over the same endpoint, exercised by TestGetRevocations
 // and TestGetRevocationsServerError. Left in place rather than deleted
 // because the two implementations of the same feed are a consolidation
 // question, not a mechanical cleanup.

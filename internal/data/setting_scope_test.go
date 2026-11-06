@@ -383,6 +383,8 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"marketplace.store_id", SettingShopWide},
 		{"marketplace.telemetry_opt_in", SettingShopWide},
 		{"sync.bearer", SettingPerTill},
+		{"plugins.revocation_cursor", SettingPerTill}, // ut-docs#5659
+		{"plugins.revocation_full_at", SettingPerTill},
 		{"printer.host", SettingPerTill},
 		{"display.mode", SettingPerTill},
 		{"theme", SettingPerTill},

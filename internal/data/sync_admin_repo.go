@@ -849,6 +849,9 @@ var PerTillSettingPrefixes = []string{
 	// own back-fill; synced, the main till's marker would tell a replica its
 	// rows were already computed for a new country when they were not.
 	CustomerPhoneE164RegionSettingsKey,
+	// ut-docs#5659: this till's revocation-feed cursor and last full-pass
+	// time (plugins.RevocationChecker); each till polls and tracks its own.
+	"plugins.revocation_",
 }
 
 func perTillSetting(key string) bool {
