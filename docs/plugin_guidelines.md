@@ -937,11 +937,6 @@ Once approved:
 - 20% commission on recurring revenue
 - Automatic renewal handling
 
-**Freemium:**
-- Basic version free
-- Premium features require payment
-- Upgrade path in-app
-
 ### Example Pricing Models
 
 **Payment Processor Plugin:**
@@ -1001,7 +996,7 @@ Universal Till handles:
 - **Responsive**: Answer user questions quickly
 - **Changelogs**: Document what changed in each version
 - **Issue tracking**: Use GitHub issues or similar
-- **Community**: Be active in Discord/forums
+- **Community**: Answer questions in your plugin's issue tracker
 
 ---
 
@@ -1034,33 +1029,18 @@ Follow [Semantic Versioning](https://semver.org/):
 
 ### Documentation
 
-- **Plugin SDK Docs**: https://docs.universaltill.com/plugins
-- **API Reference**: https://api.universaltill.com/docs
-- **Examples**: https://github.com/universaltill/plugin-examples
-
-### Community
-
-- **Discord**: https://discord.gg/universaltill (#plugin-dev channel)
-- **Forums**: https://forum.universaltill.com
-- **Stack Overflow**: Tag `universal-till`
+- **Plugin SDK and examples**: https://github.com/universaltill/universal-till/tree/main/sdk/plugin
 
 ### Direct Support
 
-- **Email**: plugins@universaltill.com
-- **GitHub Issues**: https://github.com/universaltill/plugin-sdk/issues
+- **Email**: support@universaltill.com
+- **GitHub Issues**: https://github.com/universaltill/universal-till/issues
 
 ---
 
 ## Examples
 
-### Official Example Plugins
-
-Check out these open source examples:
-
-- **[Stripe Payment](https://github.com/universaltill/plugin-stripe)** - Payment processing
-- **[CSV Export](https://github.com/universaltill/plugin-csv-export)** - Data export
-- **[Shopify Sync](https://github.com/universaltill/plugin-shopify)** - Marketplace integration
-- **[Receipt Printer](https://github.com/universaltill/plugin-escpos)** - Hardware integration
+The SDK's own README walks through a complete plugin: https://github.com/universaltill/universal-till/tree/main/sdk/plugin
 
 ---
 
@@ -1085,14 +1065,14 @@ A: Upload new version to store. Users can auto-update or update manually.
 A: Yes! Choose any license you want. Open source is encouraged but not required.
 
 **Q: What about support obligations?**  
-A: You're responsible for supporting your plugin. We recommend Discord/GitHub issues.
+A: You're responsible for supporting your plugin. We recommend GitHub issues.
 
 ---
 
 ## Next Steps
 
-1. **Join Discord**: https://discord.gg/universaltill (#plugin-dev)
-2. **Clone example**: `git clone https://github.com/universaltill/plugin-examples`
+1. **Read the SDK**: https://github.com/universaltill/universal-till/tree/main/sdk/plugin
+2. **Clone the repository**: `git clone https://github.com/universaltill/universal-till` (the SDK is in `sdk/plugin`)
 3. **Build something awesome**!
 4. **Submit to store**: Make money while helping merchants
 
@@ -1100,4 +1080,4 @@ A: You're responsible for supporting your plugin. We recommend Discord/GitHub is
 
 **Happy coding! 🚀**
 
-*Questions? Email plugins@universaltill.com or ask in Discord.*
+*Questions? Email support@universaltill.com.*

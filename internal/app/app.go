@@ -531,7 +531,13 @@ func Run(ctx context.Context) error {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	// A revocation disables rows in the DB; ReloadPlugins makes the WASM
+	// runtime drop them in the same pass (ut-docs#5653).
+	var onRevoked func(context.Context) error
+	if deps != nil {
+		onRevoked = deps.ReloadPlugins
+	}
+	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, onRevoked, &wg)
 }
 
 // pluginShutdowner is the minimal internal/plugins.Supervisor surface

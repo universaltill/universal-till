@@ -705,6 +705,18 @@ till log. A `reload: activity recreated` with no `config change handled`
 line before it points at a configuration change the manifest still
 doesn't declare.
 
+## Screen stays on (ut-docs#5620)
+
+Nothing used to set `FLAG_KEEP_SCREEN_ON`, so the till followed the tablet's
+OS display timeout (seconds) in every mode. `MainActivity` now holds the flag
+from `onResume` to `onPause`, and drops it after an idle window
+(`ScreenAwakeLogic`: 0/15/30/60/120/240/480 minutes, default 120, touch
+re-arms it) so the OS can sleep an abandoned till. The choice is per device
+(SharedPreferences `screen_awake`), set from Settings -> Display via the
+`AndroidKiosk.get/setScreenAwakeMinutes` bridge (`web/public/screen-awake.js`).
+Kiosk lock-task mode does not change it. Not covered: a screen turned off with
+the power button, or Doze while the app is backgrounded.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)

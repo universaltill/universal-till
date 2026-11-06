@@ -99,6 +99,7 @@ func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 	cases := []struct{ method, path string }{
 		{http.MethodGet, "/api/backup/download/whatever.db"},
 		{http.MethodPost, "/api/backup/save-copy/whatever.db"},
+		{http.MethodPost, "/api/backup/copied/whatever.db"},
 		{http.MethodPost, "/api/backup/restore"},
 		{http.MethodPost, "/api/backup/delete"},
 		{http.MethodPost, "/api/backup/retention"},

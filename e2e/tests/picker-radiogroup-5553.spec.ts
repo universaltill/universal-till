@@ -8,7 +8,8 @@ import { watchConsole, openNewItemForm, closeItemForm, setOrderTypePromptMode } 
 // the global text-input focus ring is opaque (>= 3:1, WCAG 1.4.11). The
 // forced-colors half lives in picker-forced-colors-5553.spec.ts; the
 // photo-cutout background group is covered in photo-cutout-3127.spec.ts
-// (it needs the fake rembg till). Icon grids keep aria-pressed (deferred).
+// (it needs the fake rembg till). Icon grids are focus-only listboxes
+// (icon-grid-listbox-5601.spec.ts).
 
 const ITEM_GRID = '#item-color-grid';
 const CAT_GRID = '#category-color-grid';

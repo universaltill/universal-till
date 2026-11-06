@@ -522,6 +522,27 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  <!-- ut-docs#5620: Android only. The shell keeps the display on while the
+       till is in front and lets the OS sleep it after this much idle time. The
+       row stays hidden on any till without window.AndroidKiosk (browser, Pi,
+       desktop); the choice is per device and lives in the app, not the shop
+       settings. -->
+  <form id="screen-awake-form" class="set-gap" hidden data-testid="screen-awake">
+    <label class="set-row">{{ T "settings.display.awake" }}
+      <select id="screen-awake-select" name="minutes">
+        <option value="0">{{ T "settings.display.awake_never" }}</option>
+        <option value="15">{{ printf (T "settings.display.awake_minutes") 15 }}</option>
+        <option value="30">{{ printf (T "settings.display.awake_minutes") 30 }}</option>
+        <option value="60">{{ printf (T "settings.display.awake_minutes") 60 }}</option>
+        <option value="120">{{ printf (T "settings.display.awake_hours") 2 }}</option>
+        <option value="240">{{ printf (T "settings.display.awake_hours") 4 }}</option>
+        <option value="480">{{ printf (T "settings.display.awake_hours") 8 }}</option>
+      </select>
+    </label>
+    <p class="muted">{{ T "settings.display.awake_help" }}</p>
+    <span id="screen-awake-msg" aria-live="polite" class="muted"></span>
+  </form>
+  <script src="/public/screen-awake.js?v={{ assetv "public/screen-awake.js" }}" defer></script>
   <!-- ut-docs#2308: the sell-screen basket/products divider's own reset --
        the drag itself lives on the sell screen (a live, no-reload
        fetch() POST, see index.html), so this is only the "I want the
@@ -1093,7 +1114,7 @@
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
         <td style="display:flex; gap:.3rem; flex-wrap:wrap">
-          <button class="btn secondary" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+          <button class="btn secondary" data-backup-save="{{ .Name }}" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
                the old typed RESTORE word — the elevation dialog's own OOB
                swap (elevation_prompt.html) handles the rest via this same
@@ -1131,6 +1152,40 @@
   <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
   {{ end }}
   </div>
+  <script>
+  // ut-docs#5619: in the Android app the till process cannot write Downloads
+  // (scoped storage; the storage may be a USB drive), so Save to Downloads
+  // opens the system save picker through the app's bridge instead of the
+  // server-side copy. It sits outside the refreshable backup region (a region
+  // refresh does not run scripts). Anywhere else the htmx button above does the copy.
+  (function () {
+    var K = window.AndroidKiosk;
+    if (!K || typeof K.saveBackupCopy !== 'function' || window.utBackupSaveResult) return;
+    var T = {
+      saved: "{{ T "settings.backup.picker_saved" }}",
+      cancelled: "{{ T "settings.backup.picker_cancelled" }}",
+      failed: "{{ T "settings.backup.picker_failed" }}",
+      no_space: "{{ T "settings.backup.picker_no_space" }}"
+    };
+    function say(text, ok) {
+      var el = document.getElementById('backup-dl-msg');
+      if (el) el.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
+    }
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-backup-save]');
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();
+      K.saveBackupCopy(b.getAttribute('data-backup-save'));
+    }, true);
+    window.utBackupSaveResult = function (code, name) {
+      say(T[code] || T.failed, code === 'saved');
+      if (code === 'saved' && window.htmx) {
+        window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
+      }
+    };
+  })();
+  </script>
   {{ if .isManager }}
   {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
        stick, another computer or the Downloads folder (a new or
