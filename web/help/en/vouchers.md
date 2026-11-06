@@ -128,6 +128,26 @@ What can go wrong:
 - On an additional till, the main till must be reachable (and up to date) when you add the top-up; if it isn't, the page says so and nothing is added to the sale.
 - On an additional till, a sale that sold or topped up a voucher can't be voided: the till says so and nothing changes, and the voucher keeps its value.
 
+## Printing a voucher's slip again
+
+A customer who lost the gift slip they were handed can have it printed again, without printing the sale's receipt. A manager or admin does this from the voucher's page.
+
+1. Open **Menu → Gift vouchers** and tap the voucher's card number.
+2. Tap **Print voucher slip**. The slip comes out on this till's receipt printer, and the page shows "Slip sent to the printer."
+
+The button shows for an **Active** voucher with a balance when a receipt printer is set up — whether or not **Print each gift voucher on its own slip** is on. The slip carries the shop name and the receipt's header lines (and logo, if your receipt shows one), **Gift voucher** and its value, **For …** when a name was entered, the barcode (on a Regular printer the number prints as text instead), and a line **Reprinted** with today's date, so it can be told from the slip handed over at the sale. No receipt prints and the cash drawer doesn't open.
+
+The slip shows the voucher's **original value**, not what is left on it. When the two differ, the page says so above the button — check the current balance on the voucher's page before you hand the slip over.
+
+What can go wrong:
+
+- Only a manager or admin can print a slip.
+- With no receipt printer set up, the page shows a link to **Receipt printer** in Settings instead of the button.
+- If **Print failed** appears, see "Nothing is printing" in [Receipts & printing](/help/printing).
+- A voided or used-up voucher has no button; if it was voided or used up after you opened the page, the till says so and prints nothing.
+- On an additional till the slip prints on that till's own printer. It decides on the main till's status when the main till is reachable, and on this till's own record when it isn't.
+- Every slip printed this way is recorded in the audit log.
+
 ## Day-end reports and other tills
 
 The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused, and not on an additional till, which refuses that void) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).

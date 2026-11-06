@@ -413,6 +413,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/print/labels":                       true,
 	"POST /api/print/receipt/{receiptNo}":          true,
 	"POST /api/print/test":                         true,
+	"POST /vouchers/{id}/print-slip":               true, // ut-docs#5740: prints a voucher slip
 	"POST /api/receipt-designer/test":              true,
 	"POST /api/reports/eod/print/{period}":         true,
 	"POST /api/settings/printer":                   true,
