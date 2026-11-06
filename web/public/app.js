@@ -3517,16 +3517,13 @@ window.utTabBarFade = function (el) {
     var box = el.getBoundingClientRect();
     if (!box.width || !box.height) return;
     var vw = window.innerWidth, vh = window.innerHeight;
-    // ut-docs#2988: scale is still about the element's own centre (no
-    // inline transform-origin -- CSS default stays 50%/50% of `box`), but
-    // Catalog (a real item list) and Inventory (several cards) routinely
-    // make the pane far taller than the viewport, so `box`'s centre sits
-    // well below the fold. Anchoring the "grow from" maths to that centre
-    // made the visible top of the pane slide in from off-screen instead of
-    // reading as a zoom out of the tapped row. `vis` is `box` clipped to
-    // the viewport -- what a shop owner can actually see growing. (The
-    // window only: a pane inside its own clipping scroller would need that
-    // ancestor's box here too; none of the three panes is one today.)
+    // ut-docs#2988: Catalog (a real item list) and Inventory (several
+    // cards) routinely make the pane far taller than the viewport, so
+    // `box`'s centre sits below the fold. `vis` is `box` clipped to the
+    // viewport -- what a shop owner can actually see growing -- and the
+    // zoom is anchored on ITS centre V. (The window only: a pane inside
+    // its own clipping scroller would need that ancestor's box too; none
+    // of the three panes is one today.)
     var visLeft = Math.max(box.left, 0);
     var visTop = Math.max(box.top, 0);
     var visRight = Math.min(box.right, vw);
@@ -3541,25 +3538,34 @@ window.utTabBarFade = function (el) {
       r = { left: vw / 2, top: vh, width: 0, height: 0 };
     }
     var s = Math.min(1, Math.max(0.1, r.width / visW));
-    // With `transform: translate(dx,dy) scale(s)` about the element's
-    // centre C, a point P maps to C + d + s(P - C). Solving that for the
-    // ON-SCREEN centre V to land exactly on the origin's centre O gives
-    // dx/dy below (ut-docs#2988) -- for a pane that's fully on screen,
-    // V === C and this reduces to the plain "origin centre minus pane
-    // centre" this had before.
-    var Cx = box.left + box.width / 2, Cy = box.top + box.height / 2;
+    // ut-docs#3010: transform-origin is pinned inline, in px, at V (set
+    // once, static -- ADR-0122's transform+opacity rule holds), so a pane
+    // that grows or shrinks mid-zoom (Inventory's hx-trigger=load cards)
+    // cannot move the anchor, as the default 50%/50% origin would. With
+    // `translate(d) scale(s)` about V a point P maps to V + d + s(P - V),
+    // so V itself lands on the origin centre O when d = O - V.
     var Vx = visLeft + visW / 2, Vy = visTop + visH / 2;
     var Ox = r.left + r.width / 2, Oy = r.top + r.height / 2;
-    var dx = Ox - Cx - s * (Vx - Cx);
-    var dy = Oy - Cy - s * (Vy - Cy);
+    var dx = Ox - Vx;
+    var dy = Oy - Vy;
     var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms')) || 300;
+    var anim = null;
+    // Only the latest zoom on this pane clears the origin: an earlier zoom
+    // finished by htmx:beforeSwap dispatches its 'finish' event a frame
+    // later, after this call has set the new origin (ut-docs#3010 review).
+    var clear = function () { if (el.utZoomAnim === anim) { el.style.transformOrigin = ''; el.utZoomAnim = null; } };
     try {
-      var anim = el.animate([
+      el.style.transformOrigin = (Vx - box.left) + 'px ' + (Vy - box.top) + 'px';
+      anim = el.animate([
         { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')', opacity: 0.4 },
         { transform: 'none', opacity: 1 }
       ], { duration: ms, easing: 'cubic-bezier(.32, .72, 0, 1)', fill: 'none' });
+      // Cleared on finish AND cancel (finishZooms/cancel paths); nothing persists.
+      el.utZoomAnim = anim;
+      anim.addEventListener('finish', clear);
+      anim.addEventListener('cancel', clear);
       UT.trackZoom(anim);
-    } catch (e) { /* motion only -- the pane is already in place */ }
+    } catch (e) { el.utZoomAnim = null; el.style.transformOrigin = ''; /* motion only -- the pane is already in place */ }
   }
 })();
 
