@@ -1338,6 +1338,13 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 
 	now := time.Now().UTC()
 
+	// 0-. A release the marketplace revoked is never persisted, whichever
+	// install path got here (ut-docs#5658). Nothing is written: the tx is
+	// rolled back. A different version of the same id passes.
+	if err := CheckNotRevoked(ctx, repo, tx, m.ID, m.Version); err != nil {
+		return err
+	}
+
 	// 0. Payment-entry keys become payment_methods ids verbatim — a key
 	// colliding with a built-in tender or another plugin's method must be
 	// rejected here, loudly, instead of silently never materializing
