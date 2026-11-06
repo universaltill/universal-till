@@ -58,3 +58,30 @@ test('forced colors: checked order-type option is distinct from the other', asyn
   });
   assertClean();
 });
+
+// ut-docs#5601: the icon grids are listboxes now, so the selected option
+// carries aria-selected (not aria-pressed/aria-checked) and needs the same
+// forced-colors redraw.
+test('forced colors: selected icon tile is distinct from unselected', async ({ page }, testInfo) => {
+  const assertClean = watchConsole(page);
+  await page.goto('/categories');
+  expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
+  await page.locator('#categories-new').click();
+  await expect(page.locator('#category-dialog')).toBeVisible();
+  const grid = page.locator('#category-icon-grid');
+  const on = grid.locator('[data-icon="coffee"]');
+  const off = grid.locator('[data-icon="tea"]');
+  await on.click();
+  await expect(on).toHaveAttribute('aria-selected', 'true');
+  const onLook = await on.evaluate(look);
+  const offLook = await off.evaluate(look);
+  expect(onLook.bw).toBe(offLook.bw);
+  expect(onLook.bs).not.toBe('none');
+  expect(offLook.bs).toBe('none');
+  expect(onLook.bg).not.toBe(offLook.bg);
+  await testInfo.attach('icon-tile-forced-colors.png', {
+    body: await grid.screenshot(),
+    contentType: 'image/png',
+  });
+  assertClean();
+});

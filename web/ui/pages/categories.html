@@ -208,10 +208,11 @@
     });
   }
 
-  // ut-docs#2500: the image picker. The pressed icon tile shows what the
+  // ut-docs#2500: the image picker. The selected icon tile shows what the
   // category has NOW (from the row's data-image), or what the operator
-  // just picked; an uploaded photo presses no tile and shows its preview
-  // instead. Roving tabindex like the colour grid (one Tab stop).
+  // just picked; an uploaded photo selects no tile and shows its preview
+  // instead. One Tab stop, focus-only arrows: radiogroup.js's listbox
+  // branch (ut-docs#5601), unlike the colour grid's radiogroup.
   var iconGrid = document.getElementById('category-icon-grid');
   var iconInput = document.getElementById('category-icon');
   var imageFile = document.getElementById('category-image-file');
@@ -234,17 +235,15 @@
     existingCutoutBtn.hidden = !savedUploadURL || pending || iconPicked;
   }
 
-  function paintIcons(pressedKey) {
+  // ut-docs#5601: the grid is a focus-only listbox (radiogroup.js), so the
+  // chosen tile is aria-selected and the helper owns the one Tab stop.
+  function paintIcons(selectedKey) {
     if (!iconGrid) return;
-    var tiles = iconGrid.querySelectorAll('.builtin-icon-tile');
-    var anyPressed = false;
-    tiles.forEach(function (btn) {
-      var pressed = pressedKey !== null && btn.dataset.icon === pressedKey;
-      if (pressed) anyPressed = true;
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
-      btn.setAttribute('tabindex', pressed ? '0' : '-1');
+    iconGrid.querySelectorAll('.builtin-icon-tile').forEach(function (btn) {
+      var selected = selectedKey !== null && btn.dataset.icon === selectedKey;
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
     });
-    if (!anyPressed && tiles.length) tiles[0].setAttribute('tabindex', '0');
+    if (window.utRovingListbox) window.utRovingListbox.sync(iconGrid);
   }
 
   // Which tile a stored picture corresponds to (ut-docs#2717: the same
@@ -305,20 +304,6 @@
       paintIcons(btn.dataset.icon);
       paintExistingCutout();
       btn.focus();
-    });
-    iconGrid.addEventListener('keydown', function (ev) {
-      var rtl = document.documentElement.getAttribute('dir') === 'rtl';
-      var horizontalStep = rtl ? -1 : 1;
-      var step = (ev.key === 'ArrowRight') ? horizontalStep
-               : (ev.key === 'ArrowLeft') ? -horizontalStep
-               : (ev.key === 'ArrowDown') ? 1
-               : (ev.key === 'ArrowUp') ? -1 : 0;
-      if (!step) return;
-      var tiles = Array.prototype.slice.call(iconGrid.querySelectorAll('.builtin-icon-tile:not([hidden])'));
-      var i = tiles.indexOf(document.activeElement);
-      if (i < 0) return;
-      ev.preventDefault();
-      tiles[(i + step + tiles.length) % tiles.length].focus();
     });
   }
   var chooseBtn = document.getElementById('category-image-choose-btn');
@@ -557,16 +542,18 @@
     {{/* ut-docs#2506: ~70 icons in sections — search box
          (web/public/icon-picker-filter.js), scroll box, "No image" first. */}}
     <input type="search" class="builtin-icon-search" data-icon-filter="category-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">
-    <div id="category-icon-grid" class="picker-grid builtin-icon-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
-      {{ range .root.builtinIconGroups }}
-      <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
-      {{ range .Icons }}
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-id="{{ .ID }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
+    <div id="category-icon-grid" class="picker-grid builtin-icon-grid" role="listbox" data-roving-listbox aria-label="{{ T "catalog.builtin_icon.hint" }}">
+      <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="none" aria-selected="false" tabindex="0">{{ T "catalog.builtin_icon.none" }}</button>
+      {{ range $i, $g := .root.builtinIconGroups }}
+      <div class="builtin-icon-group" role="group" aria-labelledby="category-icon-grid-g{{ $i }}">
+      <div class="builtin-icon-group-label" id="category-icon-grid-g{{ $i }}">{{ T $g.I18nKey }}</div>
+      {{ range $g.Icons }}
+      <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-id="{{ .ID }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-selected="false" tabindex="-1" title="{{ T .I18nKey }}">
         <img src="{{ .Path }}" alt="" width="28" height="28">
         <span>{{ T .I18nKey }}</span>
       </button>
       {{ end }}
+      </div>
       {{ end }}
     </div>
     <div class="muted" data-icon-filter-empty="category-icon-grid" hidden>{{ T "catalog.builtin_icon.no_match" }}</div>
