@@ -66,14 +66,10 @@ function parse(first: string) {
   return { dx: Number(m![1]), dy: Number(m![2]), s: Number(m![3]) };
 }
 
-// ut-docs#2988: mirrors app.js's zoomPane() maths exactly -- scale about
-// the pane's own centre C, but measured/anchored against the part of the
-// pane clipped to the viewport (`vis`), since a tall pane's full centre can
-// sit off screen. With `translate(dx,dy) scale(s)` about C, a point P maps
-// to C + d + s(P - C); solving that for the visible centre V to land on the
-// origin centre O gives dx/dy below. For a pane that's fully on screen,
-// V === C and this is just "origin centre minus pane centre", same as
-// before ut-docs#2988.
+// ut-docs#2988 / #3010: mirrors app.js's zoomPane() maths -- the origin is
+// pinned at the visible (viewport-clipped) centre V, so the start transform
+// is just translate(O - V) scale(s). (The independent geometric check is the
+// t=0 matrix test below.)
 function expectedZoom(
   pane: { l: number; t: number; w: number; h: number },
   vw: number, vh: number,
@@ -88,10 +84,9 @@ function expectedZoom(
   expect(visW, 'pane has a non-empty on-screen intersection').toBeGreaterThan(0);
   expect(visH, 'pane has a non-empty on-screen intersection').toBeGreaterThan(0);
   const s = Math.min(1, Math.max(0.1, origin.w / visW));
-  const cx = pane.l + pane.w / 2, cy = pane.t + pane.h / 2;
   const vx = visLeft + visW / 2, vy = visTop + visH / 2;
   const ox = origin.x + origin.w / 2, oy = origin.y + origin.h / 2;
-  return { dx: ox - cx - s * (vx - cx), dy: oy - cy - s * (vy - cy), s };
+  return { dx: ox - vx, dy: oy - vy, s };
 }
 
 test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
@@ -128,9 +123,10 @@ test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
     // Transient: once it ends, nothing is left on the pane.
     await page.waitForTimeout(450);
     const after = await page.locator('#items-panel').evaluate((el) => ({
-      running: el.getAnimations().length, transform: getComputedStyle(el).transform,
+      running: el.getAnimations().length, transform: getComputedStyle(el).transform, origin: (el as HTMLElement).style.transformOrigin,
     }));
     expect(after.running).toBe(0);
+    expect(after.origin, 'inline transform-origin cleared (ut-docs#3010)').toBe('');
     expect(after.transform).toBe('none');
     assertClean();
   });
@@ -187,6 +183,59 @@ test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
       expect(s, `${href}: scale`).toBeCloseTo(exp.s, 3);
     }
     assertClean();
+  });
+
+  // ut-docs#3010: formula-independent check. Does NOT reuse expectedZoom:
+  // pause the pane's running zoom at t=0, then push the pane's on-screen
+  // (viewport-clipped) centre through the browser's own computed transform
+  // matrix about the computed transform-origin, and require it to land on
+  // the tapped row's centre. Holds even if the pane resizes mid-zoom
+  // (/inventory fills #low-stock-list on load).
+  test('t=0 the visible pane centre sits on the tapped row centre, via the computed matrix (ut-docs#3010)', async ({ page }) => {
+    await openItems(page, 'full');
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '3000ms'));
+    const rows: Array<{ href: string; other: string }> = [
+      { href: '/catalog', other: '/categories' },
+      { href: '/categories', other: '/catalog' },
+      { href: '/inventory', other: '/categories' },
+      { href: '/modifiers', other: '/categories' },
+      { href: '/catalog/option-sets', other: '/categories' },
+    ];
+    for (const { href, other } of rows) {
+      await page.locator(`#items-rail a[href="${other}"]`).click();
+      await expect(page).toHaveURL(new RegExp(`${other.replace(/\//g, '\\/')}$`));
+      const link = page.locator(`#items-rail a[href="${href}"]`);
+      await expect(link, `${href}: rail row is visible`).toBeVisible();
+      await page.waitForTimeout(150);
+      await page.evaluate(() => { document.getAnimations().forEach((a) => a.finish()); });
+      const src = await link.boundingBox();
+      expect(src, `${href}: rail row has a box`).not.toBeNull();
+      await link.click();
+      await expect(page).toHaveURL(new RegExp(`${href.replace(/\//g, '\\/')}$`));
+      const got = await page.evaluate(() => {
+        const el = document.getElementById('items-panel')!;
+        const anim = el.getAnimations().find((a) => a.playState === 'running');
+        if (!anim) return null;
+        anim.pause();
+        // Untransformed box: jump to the end (fill none => no transform).
+        anim.currentTime = Number(anim.effect!.getComputedTiming().endTime);
+        const b = el.getBoundingClientRect();
+        anim.currentTime = 0;
+        const cs = getComputedStyle(el);
+        const m = new DOMMatrix(cs.transform);
+        const [ox, oy] = cs.transformOrigin.split(' ').map(parseFloat);
+        const ax = b.left + ox, ay = b.top + oy;
+        const l = Math.max(b.left, 0), t = Math.max(b.top, 0);
+        const r = Math.min(b.right, window.innerWidth), bt = Math.min(b.bottom, window.innerHeight);
+        const p = new DOMPoint((l + r) / 2 - ax, (t + bt) / 2 - ay).matrixTransform(m);
+        anim.finish();
+        return { x: ax + p.x, y: ay + p.y };
+      });
+      expect(got, `${href}: a running zoom was found`).not.toBeNull();
+      expect(Math.abs(got!.x - (src!.x + src!.width / 2)), `${href}: x`).toBeLessThan(1.5);
+      expect(Math.abs(got!.y - (src!.y + src!.height / 2)), `${href}: y`).toBeLessThan(1.5);
+    }
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
   });
 
   test('Balanced: the same zoom at 200 ms', async ({ page }) => {
@@ -299,5 +348,30 @@ test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
     });
     expect(state.open).toBe(true);
     expect(state.running).toBe(0);
+  });
+
+  // ut-docs#3010 review: two pane swaps back to back with no pointerdown in
+  // between (keyboard/switch activation, a JS click) -- the second swap's
+  // htmx:beforeSwap -> UT.finishZooms() finishes the first zoom, whose
+  // 'finish' event lands a frame AFTER the second zoomPane() set its own
+  // inline origin. Only the latest zoom may clear it.
+  test('back-to-back pane swaps keep the new zoom pinned origin', async ({ page }) => {
+    await openItems(page, 'full');
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '3000ms'));
+    await page.evaluate(() => (document.querySelector('#items-rail a[href="/categories"]') as HTMLElement).click());
+    await expect(page).toHaveURL(/\/categories$/);
+    await expect.poll(() => page.evaluate(() => document.getElementById('items-panel')!.getAnimations()
+      .filter((a) => a.playState === 'running').length)).toBe(1);
+    await page.evaluate(() => (document.querySelector('#items-rail a[href="/modifiers"]') as HTMLElement).click());
+    await expect(page).toHaveURL(/\/modifiers$/);
+    const got = await page.evaluate(async () => {
+      const el = document.getElementById('items-panel')!;
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise((r) => setTimeout(r, 50));
+      return { origin: el.style.transformOrigin, running: el.getAnimations().filter((a) => a.playState === 'running').length };
+    });
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    expect(got.running, 'the second zoom is still running').toBe(1);
+    expect(got.origin, 'the second zoom keeps its inline px origin').toMatch(/px .*px/);
   });
 });
