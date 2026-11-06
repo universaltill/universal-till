@@ -15,6 +15,8 @@
   "reports.eod.x_report_link": {"description": "Reports, End of day tab: a link under the heading to the X report on the Shifts page.", "review": "standard"},
   "reports.zpaper.no_sale_title": {"description": "Printed end-of-day (Z) report on the receipt printer: heading of the section counting cash-drawer opens with no sale (no money moved, not in revenue). A section heading, printed in capitals where the language has them.", "review": "standard", "max_length": 42},
   "reports.zpaper.no_sale_total": {"description": "Printed end-of-day (Z) report on the receipt printer: row label before the total number of no-sale drawer opens. A longer label is cut short on paper. Also printed on the X report (Shifts page).", "review": "standard", "max_length": 30},
+  "plugins.install.error.revoked": {"description": "Install-status message when installing or updating a plugin version the marketplace has withdrawn (revoked). Shown on the Plugins page.", "review": "standard"},
+  "plugins.manage.error.revoked": {"description": "Inline message on the Plugins page when turning on, or rolling back to, a plugin version the marketplace has withdrawn (revoked).", "review": "standard"},
   "settings.display.awake_hours": {"description": "Option in the keep-screen-on dropdown: the screen may sleep after this many idle hours.", "review": "standard", "placeholders": ["number of hours"]},
   "settings.display.awake": {"description": "Label of the Android-only Settings > Display dropdown that sets how long the till keeps the tablet screen on without a touch.", "review": "standard"},
   "settings.display.awake_help": {"description": "Help line under the Android-only keep-screen-on dropdown.", "review": "standard"},
