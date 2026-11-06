@@ -2762,7 +2762,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		var topUps map[string]data.VoucherTopUp
 		for _, v := range voucherIssues {
 			if !v.TopUp {
-				issuedVouchers = append(issuedVouchers, receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor(), Holder: v.HolderLabel})
+				issuedVouchers = append(issuedVouchers, newReceiptVoucherIssue(v))
 				continue
 			}
 			// ut-docs#4252: a top-up shows the voucher's new balance, read
@@ -2926,6 +2926,28 @@ type receiptVoucherIssue struct {
 	TopUp      bool
 	Balance    int64
 	HasBalance bool
+	// SinglePurpose (ut-docs#5739): taxed into the subtotal, so NOT part of
+	// the "Vouchers issued" liability row.
+	SinglePurpose bool
+}
+
+// newReceiptVoucherIssue maps a non-top-up voucher issue of the sale being
+// tendered to its receipt entry. SinglePurpose (ut-docs#5739) keeps a taxed
+// single-purpose voucher out of the "Vouchers issued" liability row.
+func newReceiptVoucherIssue(v pos.VoucherIssueInput) receiptVoucherIssue {
+	return receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor(), Holder: v.HolderLabel, SinglePurpose: v.Purpose == data.VoucherPurposeSingle}
+}
+
+// receiptVoucherIssueTotal is the on-screen "Vouchers issued" amount: the
+// multi-purpose face value (top-ups included), mirroring computeSaleTotals.
+func receiptVoucherIssueTotal(issued []receiptVoucherIssue) int64 {
+	var total int64
+	for _, iv := range issued {
+		if !iv.SinglePurpose {
+			total += iv.Amount
+		}
+	}
+	return total
 }
 
 type receiptLegalBlock struct {
@@ -3150,9 +3172,13 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			}
 		}
 	}
+	// ut-docs#5739: the multi-purpose face value in Total but in neither
+	// Subtotal nor TaxTotal (same rule as pos computeSaleTotals).
+	voucherIssueTotal := receiptVoucherIssueTotal(issuedVouchers)
 	data := map[string]any{
-		"ReceiptNo": receiptNo,
-		"Lines":     rlines,
+		"ReceiptNo":         receiptNo,
+		"Lines":             rlines,
+		"VoucherIssueTotal": voucherIssueTotal,
 		// ADR-0073 Decision 7: a mixed sale shows a Mixed header line and a
 		// per-line marker; uniform sales render exactly as before.
 		"MixedOrder":         mixed,
