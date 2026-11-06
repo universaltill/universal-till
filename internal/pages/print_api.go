@@ -456,6 +456,14 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 	if detail.ServiceCharge != 0 {
 		doc.Totals = append(doc.Totals, print.KV{Label: T("journal.detail.service_charge"), Amount: money(detail.ServiceCharge)})
 	}
+	// ut-docs#5739: multi-purpose vouchers issued by this sale are in TOTAL
+	// but deliberately in neither Subtotal nor Tax (a liability, not revenue),
+	// so without this row the rows above do not add up to TOTAL. Same row the
+	// journal detail page shows (ut-docs#4256). Gated like the Subtotal/Tax
+	// rows it reconciles.
+	if rd.ShowTax && detail.VoucherIssueTotal != 0 {
+		doc.Totals = append(doc.Totals, print.KV{Label: T("receipt.vouchers.issued"), Amount: money(detail.VoucherIssueTotal)})
+	}
 	doc.Totals = append(doc.Totals, print.KV{Label: T("receipt.paper.total"), Amount: money(detail.Total), Strong: true})
 	// ut-docs#3337: the per-rate breakdown (gross charged at each VAT rate)
 	// a VAT-registered seller's receipt needs. Deliberately NOT gated by

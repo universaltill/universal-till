@@ -162,6 +162,7 @@
   <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
   {{ end }}
   {{ if gt .SaleDiscount 0 }}<div>{{ T "basket.discount" }}{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
+  {{ if and .ShowTax .VoucherIssueTotal }}<div data-testid="receipt-voucher-total">{{ T "receipt.vouchers.issued" }}: {{ money .VoucherIssueTotal }}</div>{{ end }}
   <div><strong>{{ T "basket.total" }}: {{ money .Total }}</strong></div>
 </div>
 {{ if .Payments }}
