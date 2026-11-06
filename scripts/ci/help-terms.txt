@@ -14,3 +14,8 @@ de|führungskr(aft|äfte)|Manager
 
 # The till's German UI says "Kassierer" (users.role.cashier, shifts.cashier), never "Kassenkraft".
 de|kassenkr(aft|äfte)|Kassierer
+
+# The till's Arabic / Persian UI names the journal "سجل المبيعات" / "دفتر فروش"
+# (nav.journal); an English "(Journal)" next to it is noise (ut-docs#5651).
+ar|\(\s*journal\s*\)|سجل المبيعات
+fa|\(\s*journal\s*\)|دفتر فروش

@@ -98,7 +98,7 @@ func TestUpdatePromotion_KeepsDanglingCustomerOnUnchangedEdit(t *testing.T) {
 	seedDanglingPromo(t, repo, "P-GONE", "c-gone")
 
 	// Same id re-sent: SQLite would FK-check customer_id if it were in SET.
-	if err := repo.UpdatePromotion(ctx, "P-GONE", PromotionInput{Type: "amount", Value: 200, Description: "edited", CustomerID: "c-gone"}); err != nil {
+	if _, err := repo.UpdatePromotion(ctx, "P-GONE", PromotionInput{Type: "amount", Value: 200, Description: "edited", CustomerID: "c-gone"}); err != nil {
 		t.Fatalf("unchanged dangling edit: %v", err)
 	}
 	p := promoByCode(t, repo, "P-GONE")
@@ -106,7 +106,7 @@ func TestUpdatePromotion_KeepsDanglingCustomerOnUnchangedEdit(t *testing.T) {
 		t.Fatalf("after edit: %+v", p)
 	}
 	// KeepCustomer variant ignores CustomerID entirely.
-	if err := repo.UpdatePromotion(ctx, "P-GONE", PromotionInput{Type: "amount", Value: 300, KeepCustomer: true, CustomerID: "ignored"}); err != nil {
+	if _, err := repo.UpdatePromotion(ctx, "P-GONE", PromotionInput{Type: "amount", Value: 300, KeepCustomer: true, CustomerID: "ignored"}); err != nil {
 		t.Fatalf("keep edit: %v", err)
 	}
 	if p := promoByCode(t, repo, "P-GONE"); p.Value != 300 || p.CustomerID != "c-gone" {
@@ -121,13 +121,13 @@ func TestUpdatePromotion_RebindsAndClears(t *testing.T) {
 	if err := repo.CreatePromotion(ctx, "P1", PromotionInput{Type: "amount", Value: 100, CustomerID: "c-live"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.UpdatePromotion(ctx, "P1", PromotionInput{Type: "amount", Value: 100, CustomerID: "c-other"}); err != nil {
+	if _, err := repo.UpdatePromotion(ctx, "P1", PromotionInput{Type: "amount", Value: 100, CustomerID: "c-other"}); err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
 	if p := promoByCode(t, repo, "P1"); p.CustomerID != "c-other" || p.CustomerName != "Other Person" {
 		t.Fatalf("rebind: %+v", p)
 	}
-	if err := repo.UpdatePromotion(ctx, "P1", PromotionInput{Type: "amount", Value: 100, CustomerID: ""}); err != nil {
+	if _, err := repo.UpdatePromotion(ctx, "P1", PromotionInput{Type: "amount", Value: 100, CustomerID: ""}); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	var isNull bool
@@ -144,7 +144,7 @@ func TestUpdatePromotion_RejectsUnknownAndShellCustomer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"nope", "c-shell"} {
-		err := repo.UpdatePromotion(ctx, "P1", PromotionInput{Type: "percent", Value: 500, Description: "changed", CustomerID: id})
+		_, err := repo.UpdatePromotion(ctx, "P1", PromotionInput{Type: "percent", Value: 500, Description: "changed", CustomerID: id})
 		if !errors.Is(err, ErrPromotionCustomerUnknown) {
 			t.Fatalf("%s: err=%v, want ErrPromotionCustomerUnknown", id, err)
 		}
@@ -153,7 +153,7 @@ func TestUpdatePromotion_RejectsUnknownAndShellCustomer(t *testing.T) {
 			t.Fatalf("%s: row changed: %+v", id, p)
 		}
 	}
-	if err := repo.UpdatePromotion(ctx, "MISSING", PromotionInput{Type: "amount", Value: 1}); !errors.Is(err, ErrPromotionNotFound) {
+	if _, err := repo.UpdatePromotion(ctx, "MISSING", PromotionInput{Type: "amount", Value: 1}); !errors.Is(err, ErrPromotionNotFound) {
 		t.Fatalf("missing code: %v", err)
 	}
 }

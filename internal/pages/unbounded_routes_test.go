@@ -83,9 +83,10 @@ var timedOnPurpose = map[string]string{
 // effect although they are not long-running (check c2). Keep it tiny; a new
 // entry means the JS prefix is broader than it should be.
 var alsoExempted = map[string]string{
-	"POST /api/refund/preview":   "read-only total recompute on qty input; harmless untimed (BA, ut-docs#5456)",
-	"POST /api/backup/delete":    "removes one file; instant, harmless untimed (ut-docs#3092)",
-	"POST /api/backup/retention": "saves one setting and deletes old files; instant, harmless untimed (ut-docs#3092)",
+	"POST /api/refund/preview":       "read-only total recompute on qty input; harmless untimed (BA, ut-docs#5456)",
+	"POST /api/backup/delete":        "removes one file; instant, harmless untimed (ut-docs#3092)",
+	"POST /api/backup/retention":     "saves one setting and deletes old files; instant, harmless untimed (ut-docs#3092)",
+	"POST /api/backup/copied/{name}": "records that a backup was copied out to the device; one small write, instant, harmless untimed (ut-docs#5619)",
 }
 
 var (

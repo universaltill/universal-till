@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -72,11 +75,39 @@ func listBackupsForUI(d *common.Deps, locale string) []backupUIRow {
 // and returns the destination path. Used by the desktop app, whose WebView
 // can't download an HTTP attachment.
 func saveBackupToDownloads(src, name string) (string, error) {
+	if hostIsAndroid {
+		return "", errUseNativePicker
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	return copyBackupTo(filepath.Join(home, "Downloads"), src, name)
+}
+
+// hostIsAndroid is a var so tests can drive the Android branch.
+var hostIsAndroid = runtime.GOOS == "android"
+
+// errUseNativePicker: on Android the till process cannot write the shared
+// Downloads folder (scoped storage; the storage may even be a USB drive), so
+// the Settings page saves through the app's own file picker instead
+// (ut-docs#5619). A direct save is refused with a reason, never attempted.
+var errUseNativePicker = errors.New("backups: on Android save through the file picker")
+
+// backupSaveFailureKey maps why a copy failed to the translated message that
+// tells the operator what to do (ut-docs#5619).
+func backupSaveFailureKey(err error) string {
+	switch {
+	case errors.Is(err, errUseNativePicker):
+		return "settings.backup.save_failed_use_picker"
+	case errors.Is(err, syscall.ENOSPC):
+		return "settings.backup.save_failed_space"
+	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EROFS):
+		return "settings.backup.save_failed_permission"
+	case errors.Is(err, fs.ErrNotExist):
+		return "settings.backup.save_failed_unreachable"
+	}
+	return "settings.backup.save_failed"
 }
 
 // copyBackupTo copies src into dstDir/name (creating dstDir). Split out so it's
@@ -278,7 +309,9 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		audit(r, "backup_downloaded", map[string]any{"file": name})
-		if r.Method == http.MethodGet { // not a HEAD probe (ut-docs#5071)
+		// Not a HEAD probe (ut-docs#5071), and not the Android picker's fetch:
+		// that records via /copied only once the write succeeded (ut-docs#5619).
+		if r.Method == http.MethodGet && r.URL.Query().Get("via") != "picker" {
 			recordBackupCopied(r.Context(), d)
 		}
 		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
@@ -312,12 +345,35 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		dst, err := saveBackupToDownloads(filepath.Join(dir, name), name)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.save_failed"))
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, backupSaveFailureKey(err)))
 			return
 		}
 		audit(r, "backup_saved_copy", map[string]any{"file": name, "dest": dst})
 		recordBackupCopied(r.Context(), d) // ut-docs#5071
 		fmt.Fprintf(w, `<span>✓ %s <code>%s</code></span>`, httpx.T(locale, "settings.backup.saved_to"), dst)
+	})
+
+	// The Android shell saved a copy through the system file picker
+	// (ut-docs#5619); it tells the till so the "no copy off this till"
+	// reminder clears. A name that is not one of this till's backups records
+	// nothing.
+	mux.HandleFunc("POST /api/backup/copied/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		name := r.PathValue("name")
+		dir, err := db.BackupDir(dbPath)
+		if !db.ValidBackupName(name) || err != nil {
+			http.Error(w, "invalid backup name", http.StatusBadRequest)
+			return
+		}
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			http.Error(w, "unknown backup", http.StatusNotFound)
+			return
+		}
+		audit(r, "backup_saved_copy", map[string]any{"file": name, "dest": "file picker"})
+		recordBackupCopied(r.Context(), d)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("POST /api/backup/restore", func(w http.ResponseWriter, r *http.Request) {

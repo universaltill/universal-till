@@ -1443,6 +1443,10 @@
          background-removal service is configured), a no-op on any page
          without that markup, same pattern as above. -->
     <script defer src="/public/photo-cutout.js?v={{ assetv "public/photo-cutout.js" }}"></script>
+    <!-- ut-docs#1103/#5553: roving-tabindex arrow keys for WAI-ARIA radio groups
+         (opt-in via data-roving-radiogroup) — colour pickers, photo-cutout
+         background, basket order type; a no-op on any page without that markup. -->
+    <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
     <!-- ut-docs#2342: the bug-report panel's draft store (sessionStorage +
          IndexedDB) so an open report survives a full document load. Deferred
          like the rest; the panel reads it from UT.ready on. -->

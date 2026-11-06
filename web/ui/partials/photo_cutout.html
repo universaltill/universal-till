@@ -52,12 +52,12 @@
       <figcaption>{{ T "catalog.image.without_background" }}</figcaption>
     </figure>
   </div>
-  <div class="photo-cutout-bg" role="group" aria-label="{{ T "catalog.image.background" }}" data-cutout-bg hidden>
+  <div class="photo-cutout-bg" role="radiogroup" data-roving-radiogroup aria-label="{{ T "catalog.image.background" }}" data-cutout-bg hidden>
     <span class="photo-cutout-label">{{ T "catalog.image.background" }}</span>
     <div class="photo-cutout-bg-choices">
-      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="tile" aria-pressed="true"><span class="photo-cutout-swatch photo-cutout-swatch-tile" aria-hidden="true"></span>{{ T "catalog.image.bg_tile_colour" }}</button>
-      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="white" aria-pressed="false"><span class="photo-cutout-swatch photo-cutout-swatch-white" aria-hidden="true"></span>{{ T "catalog.image.bg_white" }}</button>
-      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="transparent" aria-pressed="false"><span class="photo-cutout-swatch photo-cutout-swatch-none" aria-hidden="true"></span>{{ T "catalog.image.bg_transparent" }}</button>
+      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="tile" role="radio" aria-checked="true" tabindex="0"><span class="photo-cutout-swatch photo-cutout-swatch-tile" aria-hidden="true"></span>{{ T "catalog.image.bg_tile_colour" }}</button>
+      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="white" role="radio" aria-checked="false" tabindex="-1"><span class="photo-cutout-swatch photo-cutout-swatch-white" aria-hidden="true"></span>{{ T "catalog.image.bg_white" }}</button>
+      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="transparent" role="radio" aria-checked="false" tabindex="-1"><span class="photo-cutout-swatch photo-cutout-swatch-none" aria-hidden="true"></span>{{ T "catalog.image.bg_transparent" }}</button>
     </div>
   </div>
   <div class="photo-cutout-status" role="status" aria-live="polite" data-cutout-status></div>
