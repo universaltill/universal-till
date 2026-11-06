@@ -159,10 +159,8 @@ test.describe('icon grids are focus-only listboxes (ut-docs#5601)', () => {
     await expect(firstOfSecond).toBeFocused();
     await page.keyboard.press('ArrowLeft');
     await expect(lastOfFirst).toBeFocused();
-    await page.keyboard.press('ArrowDown'); // linear: same as Right
-    await expect(firstOfSecond).toBeFocused();
-    await page.keyboard.press('ArrowUp');
-    await expect(lastOfFirst).toBeFocused();
+    // ArrowDown/ArrowUp are no longer linear: visual-row movement is covered
+    // by icon-grid-2d-nav-5663.spec.ts (ut-docs#5663).
     await page.keyboard.press('Home');
     await expect(none).toBeFocused();
     await page.keyboard.press('End');
