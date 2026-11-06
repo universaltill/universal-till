@@ -874,7 +874,7 @@
        own label (caught by actually screenshotting this section — see
        settings.telemetry.enable for the same plain-<label> precedent this
        follows instead). -->
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <!-- ut-docs#935 review BLOCKER 1: a `js:` hx-vals expression is
          evaluated as a bare `Function(...)()` call (see htmx's own
          source) — it has no `this` binding, so `this` inside it is
@@ -928,7 +928,7 @@
   <h2>{{ T "settings.catalog_import_barcode_default.title" }} {{ helpLink "catalog" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-catalog-import-barcode-default"{{ if index $.lockedRegions "settings-catalog-import-barcode-default" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-catalog-import-barcode-default" }}{{ template "set-lock-note" }}{{ end }}
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
            hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-import-barcode-default-cb').checked}"
@@ -963,7 +963,7 @@
   <h2>{{ T "settings.catalog_pre_pack_unit_price.title" }} {{ helpLink "catalog" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-catalog-pre-pack-unit-price"{{ if index $.lockedRegions "settings-catalog-pre-pack-unit-price" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-catalog-pre-pack-unit-price" }}{{ template "set-lock-note" }}{{ end }}
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <input type="checkbox" id="catalog-pre-pack-unit-price-cb" name="enabled"
            hx-post="/api/settings/catalog-pre-pack-unit-price" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-pre-pack-unit-price-cb').checked}"
@@ -1056,7 +1056,7 @@
   <h2>{{ T "settings.stock_tracking.title" }} {{ helpLink "inventory" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-stock-tracking"{{ if index $.lockedRegions "settings-stock-tracking" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-stock-tracking" }}{{ template "set-lock-note" }}{{ end }}
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
            hx-post="/api/settings/allow-negative-inventory" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('allow-negative-inventory-cb').checked}"
