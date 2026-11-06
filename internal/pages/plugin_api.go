@@ -399,6 +399,31 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// skip the check and activate a possibly-second answerer.
 		if active {
 			pluginRepo := data.NewPluginRepo(d.Db)
+			// ut-docs#5658: a release the marketplace revoked stays off. Local
+			// read, no network; fail closed on a DB error.
+			if cur, found, getErr := pluginRepo.GetPlugin(ctx, pluginID, ""); getErr != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data":  nil,
+					"error": fmt.Sprintf("cannot enable %s: revoked-release lookup failed: %v", pluginID, getErr),
+				})
+				return
+			} else if found {
+				if revErr := plugins.CheckNotRevoked(ctx, pluginRepo, nil, pluginID, cur.Version); revErr != nil {
+					if errors.Is(revErr, plugins.ErrRevokedRelease) {
+						writeReplicaGuard(w, "plugins.manage.error.revoked")
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: %v", pluginID, revErr),
+					})
+					return
+				}
+			}
 			declared := ""
 			for _, ev := range plugins.FiscalSignExclusiveEvents {
 				declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
@@ -872,6 +897,10 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 		// TODO: Extract actual user from session
 		if err := rollbackMgr.Rollback(ctx, pluginID, req.Version, "system"); err != nil {
+			if errors.Is(err, plugins.ErrRevokedRelease) {
+				writeReplicaGuard(w, "plugins.manage.error.revoked")
+				return
+			}
 			http.Error(w, fmt.Sprintf("Rollback failed: %v", err), http.StatusInternalServerError)
 			return
 		}

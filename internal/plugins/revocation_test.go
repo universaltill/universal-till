@@ -362,3 +362,110 @@ func TestSyncRevocations_InvokesOnRevokedOnceOnlyWhenSomethingDisabled(t *testin
 		t.Fatalf("onRevoked calls on noop feed = %d, want 0", calls)
 	}
 }
+
+// ---- ut-docs#5658: durable record, delete = disable, lifting ----
+
+func revokedRecord(t *testing.T, db *sql.DB, id, version string) bool {
+	t.Helper()
+	_, ok, err := data.NewPluginRepo(db).RevokedRelease(context.Background(), nil, id, version)
+	if err != nil {
+		t.Fatalf("RevokedRelease: %v", err)
+	}
+	return ok
+}
+
+func TestSyncRevocations_RecordsEvenWhenNotInstalled(t *testing.T) {
+	db := managerTestDB(t)
+	syncFeed(t, db, revokeFeed("com.test.ghost", "com.test.ghost", "1.0.0"))
+	if !revokedRecord(t, db, "com.test.ghost", "1.0.0") {
+		t.Fatal("a revocation for a not-installed plugin must still be recorded")
+	}
+	if revokedRecord(t, db, "com.test.ghost", "2.0.0") {
+		t.Fatal("record is per version")
+	}
+}
+
+func TestSyncRevocations_RecordsViaInstallStatusWhenNoManifestID(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstallStatus(t, db, testListingUUID, "com.test.viastatus")
+	syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
+	if !revokedRecord(t, db, "com.test.viastatus", "1.2.0") {
+		t.Fatal("record must be keyed by the manifest id from plugin_install_status")
+	}
+}
+
+func TestSyncRevocations_DeleteActionDisablesOnly(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.test.del", "Del", "1.0.0", "none", true)
+	if _, err := db.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json) VALUES ('s1', 'com.test.del', 'k', '"v"')`); err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.test.del', 'k', 'v')`); err != nil {
+		t.Fatalf("seed storage: %v", err)
+	}
+	body := `{"revocations":[{"pluginId":"com.test.del","manifestId":"com.test.del","version":"1.0.0","action":"delete","reason":"gone"}],"latestVersion":"1"}`
+	n, _ := syncFeed(t, db, body)
+	if n != 1 {
+		t.Fatalf("disabled = %d, want 1", n)
+	}
+	active, state := pluginState(t, db, "com.test.del")
+	if active != 0 || state != "revoked" {
+		t.Fatalf("active=%d state=%q, want 0/revoked", active, state)
+	}
+	for _, tbl := range []string{"plugin_settings", "plugin_storage"} {
+		var c int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + tbl + ` WHERE plugin_id = 'com.test.del'`).Scan(&c); err != nil || c != 1 {
+			t.Fatalf("%s rows = %d err=%v, want 1 (delete must not wipe data)", tbl, c, err)
+		}
+	}
+	if !revokedRecord(t, db, "com.test.del", "1.0.0") {
+		t.Fatal("record must exist")
+	}
+	if got := revAuditDetails(t, db, "com.test.del")["requested_action"]; got != "delete" {
+		t.Fatalf("audit requested_action = %v, want delete", got)
+	}
+}
+
+func TestSyncRevocations_LiftsWhenAbsent_StaysDisabled(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.test.lift", "Lift", "1.0.0", "none", true)
+	syncFeed(t, db, revokeFeed("com.test.lift", "com.test.lift", "1.0.0"))
+	if !revokedRecord(t, db, "com.test.lift", "1.0.0") {
+		t.Fatal("record missing after revoke")
+	}
+	syncFeed(t, db, `{"revocations":[],"latestVersion":"2"}`)
+	if revokedRecord(t, db, "com.test.lift", "1.0.0") {
+		t.Fatal("record must be lifted when the feed no longer lists it")
+	}
+	if active, state := pluginState(t, db, "com.test.lift"); active != 0 || state != "revoked" {
+		t.Fatalf("lifting must not re-enable: active=%d state=%q", active, state)
+	}
+}
+
+func TestSyncRevocations_FailedFetchKeepsRecords(t *testing.T) {
+	cases := map[string]func() string{
+		"500": func() string {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
+			t.Cleanup(s.Close)
+			return s.URL
+		},
+		"garbage": func() string {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("{nope")) }))
+			t.Cleanup(s.Close)
+			return s.URL
+		},
+		"closed": func() string { return "http://127.0.0.1:1" },
+	}
+	for name, mk := range cases {
+		t.Run(name, func(t *testing.T) {
+			db := managerTestDB(t)
+			syncFeed(t, db, revokeFeed("com.test.keep", "com.test.keep", "1.0.0"))
+			if _, err := NewRevocationChecker(db, mk(), nil).SyncRevocations(context.Background()); err == nil {
+				t.Fatal("expected an error")
+			}
+			if !revokedRecord(t, db, "com.test.keep", "1.0.0") {
+				t.Fatal("a failed fetch must keep the existing records")
+			}
+		})
+	}
+}
