@@ -1975,6 +1975,10 @@
     {{ if .receiptPolicyAdvisoryDE }}
     <p class="muted receipt-policy-advisory-de" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.advisory_de" }}</p>
     {{ end }}
+    <!-- ut-docs#4247: optional stand-alone slip per gift voucher a sale issued,
+         printed after the receipt in the same job. Default off. -->
+    <label><input type="checkbox" name="voucherSlip" value="true" data-testid="printer-voucher-slip" {{ if $p.VoucherSlip }}checked{{ end }}> {{ T "settings.printer.voucher_slip" }}</label>
+    <p class="muted" style="margin:.2rem 0 0">{{ T "settings.printer.voucher_slip_hint" }}</p>
     <!-- ut-docs#2168: kitchen printer moved into its own fieldset/legend,
          after every receipt-printer control (mode/charset/address/device/
          discovery/drawer pin/system hint/receipt policy — all under this

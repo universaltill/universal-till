@@ -561,5 +561,7 @@
   "settings.notices.title": {"description": "Heading of the Settings card that switches Notices on or off for this till.", "review": "standard"},
   "settings.notices.help": {"description": "Help text of the Notices settings card: what it shows, that a notice never blocks a sale, off by default, and that turning it off removes held notices.", "review": "standard"},
   "settings.notices.enable": {"description": "Checkbox label that switches Notices on for this till.", "review": "standard"},
-  "settings.notices.save": {"description": "Save button of the Notices settings card.", "review": "standard"}
+  "settings.notices.save": {"description": "Save button of the Notices settings card.", "review": "standard"},
+  "settings.printer.voucher_slip": {"description": "Checkbox label in Settings > Receipt printer: when ticked, every gift voucher sold in a sale also prints on its own separate slip after the receipt.", "review": "standard"},
+  "settings.printer.voucher_slip_hint": {"description": "Help line under the separate-gift-voucher-slip checkbox in Settings > Receipt printer: when it prints, what is on the slip, and that voided vouchers and top-ups get none.", "review": "standard"}
 }

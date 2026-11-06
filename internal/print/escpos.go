@@ -85,6 +85,10 @@ type VoucherBlock struct {
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
+	// Issued marks a voucher this sale issued (not a top-up, ut-docs#4252).
+	// Render/RenderText ignore it; callers use it to pick the vouchers that
+	// get a stand-alone slip (ut-docs#4247).
+	Issued bool
 }
 
 // Line is one sale line.
@@ -325,26 +329,7 @@ func Render(d Doc) []byte {
 			b.Write(cmdBoldOff)
 		}
 		for _, v := range d.Vouchers {
-			line("")
-			line(kvRow(v.Label, v.Amount))
-			if v.Holder != "" {
-				line(clip(v.Holder, Width))
-			}
-			if v.Balance != "" {
-				line(clip(v.Balance, Width))
-			}
-			b.Write(cmdAlignMid)
-			if v.Void != "" {
-				line(clip(v.Void, Width))
-			}
-			if v.Void == "" && barcodePrintable(v.Code) {
-				barcode(&b, v.Code) // HRI prints the code text under the bars
-			} else {
-				for _, row := range wrapRunes(v.Code, Width) {
-					line(row)
-				}
-			}
-			b.Write(cmdAlignLeft)
+			writeVoucherESC(&b, line, v)
 		}
 		line(strings.Repeat("-", Width))
 	}
@@ -386,6 +371,51 @@ func Render(d Doc) []byte {
 
 	b.Write(cmdFeedCut)
 	return b.Bytes()
+}
+
+// writeVoucherESC writes one voucher block: value row, holder, balance and
+// the centred CODE128 (or the code as text). Shared by the receipt and the
+// stand-alone slip (ut-docs#4247) so there is one voucher layout.
+func writeVoucherESC(b *bytes.Buffer, line func(string), v VoucherBlock) {
+	line("")
+	line(kvRow(v.Label, v.Amount))
+	if v.Holder != "" {
+		line(clip(v.Holder, Width))
+	}
+	if v.Balance != "" {
+		line(clip(v.Balance, Width))
+	}
+	b.Write(cmdAlignMid)
+	if v.Void != "" {
+		line(clip(v.Void, Width))
+	}
+	if v.Void == "" && barcodePrintable(v.Code) {
+		barcode(b, v.Code) // HRI prints the code text under the bars
+	} else {
+		for _, row := range wrapRunes(v.Code, Width) {
+			line(row)
+		}
+	}
+	b.Write(cmdAlignLeft)
+}
+
+// writeVoucherText is writeVoucherESC for the plain-text renderer.
+func writeVoucherText(b *strings.Builder, center func(string), v VoucherBlock) {
+	b.WriteString("\n" + kvRow(v.Label, v.Amount) + "\n")
+	if v.Holder != "" {
+		b.WriteString(clip(v.Holder, Width) + "\n")
+	}
+	if v.Balance != "" {
+		b.WriteString(clip(v.Balance, Width) + "\n")
+	}
+	if v.Void != "" {
+		center(v.Void)
+	}
+	// The code as text only: a plain-text printer can't draw the
+	// symbol, and placeholder bars would print on a real receipt.
+	for _, row := range wrapRunes(v.Code, Width) {
+		center(row)
+	}
 }
 
 // layoutLine renders one sale line: "qty x name" left, amount right; long
@@ -762,21 +792,7 @@ func RenderText(d Doc) string {
 			b.WriteString(clip(d.VoucherHeading, Width) + "\n")
 		}
 		for _, v := range d.Vouchers {
-			b.WriteString("\n" + kvRow(v.Label, v.Amount) + "\n")
-			if v.Holder != "" {
-				b.WriteString(clip(v.Holder, Width) + "\n")
-			}
-			if v.Balance != "" {
-				b.WriteString(clip(v.Balance, Width) + "\n")
-			}
-			if v.Void != "" {
-				center(v.Void)
-			}
-			// The code as text only: a plain-text printer can't draw the
-			// symbol, and placeholder bars would print on a real receipt.
-			for _, row := range wrapRunes(v.Code, Width) {
-				center(row)
-			}
+			writeVoucherText(&b, center, v)
 		}
 		b.WriteString(strings.Repeat("-", Width) + "\n")
 	}

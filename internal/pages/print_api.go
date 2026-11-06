@@ -38,6 +38,9 @@ const (
 	keyPrinterReceiptPolicy = "printer.receipt_policy"
 	keyPrinterKitchen       = "printer.kitchen_addr" // kitchen printer host[:port] or device path
 	keyPrinterDrawerPin     = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
+	// keyPrinterVoucherSlip: "true" prints a slip per issued gift voucher
+	// after the receipt; anything else is off (ut-docs#4247).
+	keyPrinterVoucherSlip = "printer.voucher_slip"
 
 	// Read-only here: the store identity the printer charset default is
 	// resolved from (ut-docs#1728). Owned by settings.SaveRuntimeConfig.
@@ -117,6 +120,7 @@ func resolvePrinterConfig(ctx context.Context, d *common.Deps, applyShadowGate b
 		ReceiptPolicy:  get(keyPrinterReceiptPolicy, ""),
 		KitchenAddress: get(keyPrinterKitchen, ""),
 		DrawerPin:      parseDrawerPin(get(keyPrinterDrawerPin, "2")),
+		VoucherSlip:    get(keyPrinterVoucherSlip, "false") == "true",
 	}
 	// ADR-0089 Decision 1: an unset (or unrecognized) printer.receipt_policy
 	// derives from the LEGACY printer.auto_print boolean, resolved on read
@@ -580,6 +584,7 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 				Label:  T("catalog.item_type.gift_voucher"),
 				Amount: money(v.OriginalAmountMinor),
 				Code:   v.ID,
+				Issued: true,
 			}
 			if v.HolderLabel != "" {
 				vb.Holder = Tf("basket.gift_voucher.for", v.HolderLabel)
@@ -740,9 +745,31 @@ func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLoca
 	if err != nil {
 		return err
 	}
-	// PrintDoc renders ESC/POS for a thermal printer or plain text via lp for a
-	// regular (system) printer, per the configured type.
-	return print.PrintDoc(ctx, cfg, doc)
+	// PrintDocWithSlips renders ESC/POS for a thermal printer or plain text
+	// via lp for a regular (system) printer, per the configured type. The
+	// voucher slips (ut-docs#4247) ride in the same job as the receipt.
+	var slips []print.VoucherSlip
+	if cfg.VoucherSlip {
+		slips = voucherSlips(doc)
+	}
+	return print.PrintDocWithSlips(ctx, cfg, doc, slips)
+}
+
+// voucherSlips derives the stand-alone slips (ut-docs#4247) from the receipt
+// doc itself, so they share its locale, charset and logo: one per voucher the
+// sale issued, none for a voided one or a top-up.
+func voucherSlips(doc print.Doc) []print.VoucherSlip {
+	var out []print.VoucherSlip
+	for _, v := range doc.Vouchers {
+		if !v.Issued || v.Void != "" {
+			continue
+		}
+		out = append(out, print.VoucherSlip{
+			StoreName: doc.StoreName, Header: doc.Header,
+			Logo: doc.Logo, Charset: doc.Charset, Voucher: v,
+		})
+	}
+	return out
 }
 
 // clampCopies bounds a requested label copy count to [1, 50] — never zero
@@ -811,6 +838,13 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "drawerPin must be 2 or 5", http.StatusBadRequest)
 			return
 		}
+		// voucherSlip (ut-docs#4247): a checkbox, value "true". Absent
+		// (unticked, or an older client) or any other value = off, never an
+		// error.
+		voucherSlip := "false"
+		if strings.TrimSpace(r.Form.Get("voucherSlip")) == "true" {
+			voucherSlip = "true"
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)
@@ -824,6 +858,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "kitchenAddr", Value: kitchenAddr},
 					{Name: "receiptPolicy", Value: receiptPolicy},
 					{Name: "drawerPin", Value: drawerPin},
+					{Name: "voucherSlip", Value: voucherSlip},
 				}, elev)
 			return
 		}
@@ -838,6 +873,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			keyPrinterKitchen:       kitchenAddr,
 			keyPrinterReceiptPolicy: receiptPolicy,
 			keyPrinterDrawerPin:     drawerPin,
+			keyPrinterVoucherSlip:   voucherSlip,
 		}); err != nil {
 			if respondSettingsSyncError(w, r, err) {
 				return
@@ -848,10 +884,11 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#866 review (N4): payload is deliberately partial — mode/
 		// charset/receipt_policy only, not address/device/kitchenAddr. Those
 		// are LAN network/device identifiers, not shop-config content worth
-		// journaling into the audit log's long-lived history. drawer_pin is
-		// shop-config content the same way mode/charset are, so it's included.
+		// journaling into the audit log's long-lived history. drawer_pin and
+		// voucher_slip are shop-config content the same way mode/charset are,
+		// so they're included.
 		settingsAudit(r, posRepo, elev, "settings", "printer", "printer_settings_changed",
-			map[string]any{"mode": mode, "charset": charset, "receipt_policy": receiptPolicy, "drawer_pin": drawerPin})
+			map[string]any{"mode": mode, "charset": charset, "receipt_policy": receiptPolicy, "drawer_pin": drawerPin, "voucher_slip": voucherSlip == "true"})
 		settingsRespondSaved(w, r, elev)
 	})
 
