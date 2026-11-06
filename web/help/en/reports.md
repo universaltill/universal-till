@@ -16,7 +16,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 ## How to use it
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in. Inside Custom, "Last 24 hours" is the rolling 24 hours up to now, not the business day — use the Today chip for that.
-2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), or (for a manager/admin) Shrinkage & Loss — and that report loads when you open it.
+2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), (for a manager/admin) Shrinkage & Loss, or Online channels (once this till has recorded an online order) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two timestamps side by side (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in your own local time. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
@@ -85,10 +85,21 @@ Next to the top row, pick how you want the period worked out:
   month, Year is a calendar year. A date picker appears next to the choice so
   you can look at a past period — e.g. pick Month and a date in July to see
   July's numbers, even if today is in August.
-- Sales trend, Items, Tax and Payments & channels use whichever period is
-  selected, so they always agree with the numbers at the top. Forecast and
+- Sales trend, Items, Tax and Payments & channels use
+  whichever period is selected, so they always agree with the numbers at the top. Forecast and
   Day-end's archive list don't — they show their own fixed windows regardless
-  of the period picker.
+  of the period picker. Online channels also follows the selected period, but its orders are
+  separate from the numbers at the top (see Online channels below).
+
+## Online channels
+
+The Online channels tab totals the orders from your web shop and marketplaces (the ones on Online orders) for the period you picked: one row per channel and currency. It appears once this till has recorded an online order; only the main till records them.
+
+- These orders are not till sales. They are not in the figures at the top of Reports, the drawer, the day-end (Z) report or the fiscal journal, and no sales figure on another tab changes because of them. They do lower stock, so stock warnings, Forecast and dead stock can change after a web order.
+- Order value is the order totals as the channel reported them, with shipping and any tax the channel added. After refunds is the order value minus refunds.
+- Refunds are what has been refunded so far on orders placed in the period, whatever day the refund was made: a refund given today on last month's order shows in last month.
+- An order cancelled before it was paid is not counted; the tab says how many there were. An order cancelled after it was paid is counted, and its refund takes it back out.
+- Amounts stay in each order's own currency and are never added across currencies. When two or more channels sell in the same currency, a Total row adds them up for that currency.
 
 ## Business day start
 
