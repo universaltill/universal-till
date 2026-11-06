@@ -6584,6 +6584,53 @@ ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 	return out, rows.Err()
 }
 
+// likeLiteral escapes LIKE's wildcards (and the escape char itself) for a
+// `LIKE ? ESCAPE '\'` pattern, so user input matches literally.
+var likeLiteral = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// CustomerPick is a promotion-dialog picker row (ut-docs#5589): only what the
+// picker renders. No email by construction.
+type CustomerPick struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
+// SearchCustomersForPicker finds customers by name (SearchFold) or phone for
+// the promotion dialog's customer picker (ut-docs#5589). Unlike
+// SearchCustomers (the GDPR erasure picker) it neither selects nor matches
+// email, so a role holding only "settings" cannot probe whether an email
+// belongs to a customer. A blank query returns an empty, non-nil slice, and
+// LIKE wildcards in q match themselves (likeLiteral), so q="%" or "_" cannot
+// slip past that guard and list every customer with a phone.
+func (r *POSRepo) SearchCustomersForPicker(ctx context.Context, q string, limit int) ([]CustomerPick, error) {
+	out := make([]CustomerPick, 0)
+	trimmed := strings.TrimSpace(q)
+	if trimmed == "" {
+		return out, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(phone,'')
+FROM customers
+WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? ESCAPE '\')
+ORDER BY name LIMIT ?`, SearchFold(q), "%"+likeLiteral.Replace(trimmed)+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("search customers for picker: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c CustomerPick
+		if err := rows.Scan(&c.ID, &c.Name, &c.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // EraseCustomer removes a customer's personal data (GDPR right to erasure):
 // it unlinks the customer from sales (live AND archived) and promotions
 // (keeping the sales, which are financial records, but anonymous), and
