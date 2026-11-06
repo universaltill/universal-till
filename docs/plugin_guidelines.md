@@ -937,11 +937,6 @@ Once approved:
 - 20% commission on recurring revenue
 - Automatic renewal handling
 
-**Freemium:**
-- Basic version free
-- Premium features require payment
-- Upgrade path in-app
-
 ### Example Pricing Models
 
 **Payment Processor Plugin:**
