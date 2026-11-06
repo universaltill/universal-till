@@ -5467,6 +5467,29 @@ body.login-screen {
   overflow-wrap: anywhere; min-inline-size: 0;
 }
 .builtin-icon-tile img { display: block; }
+/* ut-docs#5736: the chosen tile also carries a tick badge, a SHAPE cue (WCAG
+   1.4.1) so "chosen" no longer rests on the accent hue alone, which the
+   same-hue focus outline otherwise matches. ::after is the filled circle,
+   ::before the check (clip-path, so no left/right and no image); both sit
+   in the top inline-end corner over the tile padding, clear of the label.
+   background/clip-path only: html.fx-light wipes box-shadow/filter but not
+   these, so the badge survives it. Scoped to the icon grids; aria-selected
+   already tells assistive tech, so the badge is decorative (content: "").
+   The circle is --focus-border, not --accent: amber/fresh/monarch's raw
+   --accent is only ~2.5-2.8:1 under the white check; their darker
+   --focus-border (ut-docs#797) keeps the check >=3:1 (WCAG 1.4.11). */
+.builtin-icon-tile { position: relative; }
+.builtin-icon-tile[aria-selected="true"]::before,
+.builtin-icon-tile[aria-selected="true"]::after {
+  content: ""; position: absolute; box-sizing: border-box; pointer-events: none;
+  inset-block-start: 3px; inset-inline-end: 3px;
+  inline-size: 1.1rem; block-size: 1.1rem;
+}
+.builtin-icon-tile[aria-selected="true"]::after { border-radius: 50%; background: var(--focus-border); }
+.builtin-icon-tile[aria-selected="true"]::before {
+  z-index: 1; background: var(--accent-contrast);
+  clip-path: polygon(20% 52%, 30% 42%, 42% 55%, 70% 27%, 80% 37%, 42% 75%);
+}
 /* ut-docs#2506: ~70 icons in sections. The grid scrolls inside its own
    box (touch-scrollable, no nested page jump) so the dialog's Save stays
    reachable at the 1024×600 floor; the section headings span the whole
@@ -7569,6 +7592,9 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
     box-shadow: inset 0 0 0 2px Highlight;
   }
   .picker-tile:focus-visible { outline: 3px solid CanvasText; outline-offset: 2px; }
+  /* ut-docs#5736: the tile is Highlight here, so the badge inverts: HighlightText circle, Highlight check. */
+  .builtin-icon-tile[aria-selected="true"]::after { forced-color-adjust: none; background: HighlightText; }
+  .builtin-icon-tile[aria-selected="true"]::before { forced-color-adjust: none; background: Highlight; }
   .order-type-option { border: 1px solid ButtonText; }
   .order-type-option[aria-checked="true"],
   body:not(.pos-sheet-open) .basket .order-type-option[aria-checked="true"] {
