@@ -3,6 +3,7 @@ id: recovery
 title: Wiederherstellungsbildschirm
 section: Den Betrieb führen
 order: 255
+public: true
 summary: Was Sie sehen, wenn die Kasse nicht startet, und was jede Aktion auf diesem Bildschirm bewirkt.
 keywords: [wiederherstellung, fehler, startet nicht, absturz, erneut versuchen, sicherer modus, beschädigt, protokoll, logdatei, fehlersuche]
 ---

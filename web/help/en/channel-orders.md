@@ -3,6 +3,7 @@ id: channel-orders
 title: Online orders
 section: Everyday selling
 order: 16
+public: true
 summary: "Orders taken on your web shop or marketplaces and recorded on this till: what was ordered, how it is progressing and what it did to your stock."
 routes: [/channel-orders, /channel-orders/{id}]
 keywords: [online orders, web shop, webshop, marketplace, channel, shopify, order number, refund, restock, stock, not a sale]

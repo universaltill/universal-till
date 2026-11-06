@@ -3,6 +3,7 @@ id: multitill
 title: Mehrere Kassen (ein Geschäft)
 section: Verbinden & erweitern
 order: 310
+public: true
 summary: "Betreiben Sie mehrere Kassen im selben Geschäftsnetzwerk: eine ist die Hauptkasse, die anderen treten ihr bei und teilen sich automatisch Katalog, Preise, Einstellungen und Bestand."
 routes: [/tills, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 # /registers and /sync-quarantine are never screenshotted (docs-shots only

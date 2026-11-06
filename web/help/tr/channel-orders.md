@@ -3,6 +3,7 @@ id: channel-orders
 title: Çevrimiçi siparişler
 section: Günlük satış
 order: 16
+public: true
 summary: "Web mağazanızdan veya pazaryerlerinden gelip bu kasada kaydedilen siparişler: ne sipariş edildi, nasıl ilerliyor ve stokunuza ne yaptı."
 routes: [/channel-orders, /channel-orders/{id}]
 keywords: [çevrimiçi siparişler, web mağaza, pazaryeri, kanal, shopify, sipariş numarası, iade, stok, satış değil]

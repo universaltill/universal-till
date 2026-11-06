@@ -293,6 +293,13 @@ func taxSpecSatisfiedLocally(ctx context.Context, d *common.Deps, spec basePlugi
 // Bounded by setupBasePluginMaxPages so a malformed/hostile server can't
 // loop forever.
 func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) (err error) {
+	return resolveAndInstallBasePluginWith(ctx, d, spec, nil)
+}
+
+// resolveAndInstallBasePluginWith is resolveAndInstallBasePlugin with an
+// optional listing filter (nil = any listing); ut-docs#5479 passes the
+// official-tier filter for a built-in language's first-party bundle.
+func resolveAndInstallBasePluginWith(ctx context.Context, d *common.Deps, spec basePluginSpec, accept func(*marketplace.PluginSummary) bool) (err error) {
 	// ut-docs#3243: every attempt, from any caller, records whether it ended
 	// "not published" so the Settings chip can tell that apart from offline.
 	defer func() { recordBasePluginAttempt(ctx, d, spec, err) }()
@@ -330,7 +337,7 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	var best *marketplace.PluginSummary
 	for i := range all {
 		p := &all[i]
-		if p.CanonicalType != spec.CanonicalType || !localeInList(p.AvailableLocales, spec.Locale) {
+		if p.CanonicalType != spec.CanonicalType || !localeInList(p.AvailableLocales, spec.Locale) || (accept != nil && !accept(p)) {
 			continue
 		}
 		if best == nil || updates.Newer(p.Version, best.Version) {

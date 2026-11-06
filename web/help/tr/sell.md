@@ -3,6 +3,7 @@ id: sell
 title: Satış ve ödeme ekranı
 section: Günlük satış
 order: 10
+public: true
 summary: "Ana kasa ekranı: ürünleri okutun veya seçin, ödemeyi alın, fişi yazdırın ya da atlayın."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
 keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]
@@ -73,7 +74,7 @@ Bir eklenti, tarama satırına "Kamerayla tanı" seçeneğini de ekleyebilir (ka
 
 Yan menünün alt kısmına yakın birkaç küçük çip, kasayla ilgili durumları bir bakışta söyler — hiçbiri satış ekranını engellemez:
 
-- Kendi adınız (👤) şu an oturum açmış olan kimdir; dokunduğunuzda PIN değiştirme açılır, ve yanındaki **Kilitle** düğmesi PIN pad'ine çıkış yapar. Bunun için ve yanlarında görünen yöneticiye özel kısayollar için (**Kullanıcılar**, **Promosyonlar**, **Çeviriler**) **Kullanıcılar, PIN'ler ve vardiyalar**'a bakın.
+- Kendi adınız (kişi simgesi) şu an oturum açmış olan kimdir; dokunduğunuzda PIN değiştirme açılır, ve yanındaki **Kilitle** düğmesi PIN pad'ine çıkış yapar. Bunun için ve yanlarında görünen yöneticiye özel kısayollar için (**Kullanıcılar**, **Promosyonlar**, **Çeviriler**) **Kullanıcılar, PIN'ler ve vardiyalar**'a bakın.
 - Eğer bu kasa diğerleriyle senkronize oluyorsa, bir çip bu kasanın adını ve senkronizasyon durumunu gösterir (tamamlandı, veya geride/çevrimdışı kuyruk sayısıyla) — tam olarak ne gösterdiğini görmek için **Birden fazla kasa (bir dükkân)**'a bakın. Tek bir kasa hiçbir şeye bağlı değilse hiç senkronizasyon çipi göstermez.
 - Dükkanınızda yapılandırılmış bir TSE varsa, bir mali imzalama çipi sağlığını gösterir — aşağıda **Almanya'daki mağazalar: TSE ve gerçek satışlar**'a bakın.
 - Bu özellik etkinleştirilmişse bir hata raporu çipi de orada — **Bir sorun bildirme**'ye bakın.

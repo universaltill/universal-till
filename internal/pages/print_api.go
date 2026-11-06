@@ -355,7 +355,9 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 	// this function used to print, so an en receipt is unchanged.
 	// printLocale is the shop's except on a kiosk customer's own receipt
 	// (customerReceiptDoc, ut-docs#4705).
-	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	// ut-docs#5410: the shop's currency display mode, with the ISO code
+	// where the printer's charset cannot print the symbol.
+	money := func(minor int64) string { return httpx.FormatMoneyPrint(minor, printLocale, cfg.Charset) }
 	T := func(key string) string { return httpx.T(printLocale, key) }
 	Tf := func(key string, args ...any) string { return fmt.Sprintf(T(key), args...) }
 	// ut-docs#1632: FormatDateTimeLatin is FormatDateLatin plus the same
@@ -943,7 +945,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// Same Latin-digit ESC/POS constraint as buildReceiptDoc/buildEODDoc
 		// above, but the store's own separator/decimal convention rather
 		// than a hardcoded "en" (ut-docs#1130 review finding).
-		priceText := httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale())
+		priceText := httpx.FormatMoneyPrint(label.PriceMinor, httpx.DefaultLocale(), cfg.Charset)
 		// Price Marking Order 2004 (as amended, commencing 6 Apr 2026):
 		// a weighed item's shelf label must show its unit price, not just
 		// the bare price — ut-docs#3343. The suffix is always the fixed
@@ -965,7 +967,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// above. prePackUnitPriceText returns "" for a weighed item, so the
 		// two mechanisms never both fire for the same label.
 		one := print.RenderLabelWithUnitPrice(label.Name, priceText,
-			prePackUnitPriceText(r.Context(), d, label), label.Code, cfg.Charset)
+			prePackUnitPriceText(r.Context(), d, label, cfg.Charset), label.Code, cfg.Charset)
 		job := make([]byte, 0, len(one)*copies)
 		for range copies {
 			job = append(job, one...)
@@ -1082,7 +1084,7 @@ func headerContains(header []string, substr string) bool {
 // operator chrome. A variant label never carries a net quantity (variants
 // have no column of their own, and inheriting the parent's would print a
 // wrong unit price for a different pack size), so this returns "" there.
-func prePackUnitPriceText(ctx context.Context, d *common.Deps, label data.ItemLabel) string {
+func prePackUnitPriceText(ctx context.Context, d *common.Deps, label data.ItemLabel, charset string) string {
 	if label.IsWeighed || !label.NetQuantityValue.Valid || !label.NetQuantityUnit.Valid || label.NetQuantityValue.Int64 <= 0 {
 		return ""
 	}
@@ -1104,5 +1106,5 @@ func prePackUnitPriceText(ctx context.Context, d *common.Deps, label data.ItemLa
 		return ""
 	}
 	loc := httpx.DefaultLocale()
-	return fmt.Sprintf(httpx.T(loc, "catalog.labels.price_per_unit"), httpx.FormatMoneyLatin(unit.Minor(), loc), httpx.T(loc, unitKey))
+	return fmt.Sprintf(httpx.T(loc, "catalog.labels.price_per_unit"), httpx.FormatMoneyPrint(unit.Minor(), loc, charset), httpx.T(loc, unitKey))
 }

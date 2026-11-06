@@ -103,6 +103,8 @@ var AgentSettings = []AgentSetting{
 		LabelKey: "settings.store_name.title", HintKey: "settings.store_name.help", Kind: AgentSettingText, ReadValue: true},
 	{Key: "store.currency", Region: "settings-currency",
 		LabelKey: "settings.currency.title", HintKey: "settings.currency.help", Kind: AgentSettingText, ReadValue: true},
+	{Key: "store.currency_display", Region: "settings-currency-display",
+		LabelKey: "settings.currency_display.title", HintKey: "settings.currency_display.help", Kind: AgentSettingText, ReadValue: true},
 	{Key: "store.locale", Region: "settings-language",
 		LabelKey: "settings.language.title", HintKey: "settings.language.help", Kind: AgentSettingText, ReadValue: true},
 	{Key: "store.staff_locales", Region: "settings-staff-languages",

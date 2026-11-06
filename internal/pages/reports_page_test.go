@@ -1273,6 +1273,9 @@ func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
 	}
 
 	httpx.InitCurrency("IRT")
+	// ut-docs#5410: these pin the symbol (word) form; auto shows the code.
+	httpx.InitCurrencyDisplay("symbol")
+	t.Cleanup(func() { httpx.InitCurrencyDisplay("") })
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body = getReportsTab(t, mux, "tips", "?days=14").Body.String()
 	if !strings.Contains(body, "(تومان)") {
@@ -1746,7 +1749,7 @@ func TestWorkerAllocationDateRange_MapsThroughBusinessDayBoundary(t *testing.T) 
 		{"month at midnight", "?period=month&anchor=2026-08-25", "", "2026-08-01", "2026-08-31"},
 		{"month at 06:00", "?period=month&anchor=2026-08-25", "06:00", "2026-08-01", "2026-08-31"},
 		{"week at 06:00", "?period=week&anchor=2026-08-25", "06:00", "2026-08-24", "2026-08-30"},
-		{"year at 06:00", "?period=year&anchor=2026-08-25", "06:00", "2026-01-01", "2026-12-31"},
+		{"year at 06:00", "?period=year&anchor=2026-08-25", "06:00", "2026-01-01", "2026-12-31"}, // fixed-date:ok expected window for fixed anchor 2026-08-25, no clock
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -2233,5 +2236,37 @@ func TestReportsPage_RunningOutChipHiddenWhenStockUntracked(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "predicted to run out") {
 		t.Fatal("untracked shop must not show the running-out chip")
+	}
+}
+
+// ut-docs#2672: the Custom range's rolling "1 day" option must not read
+// "Today" — that word belongs to the business-day chip alone.
+func TestReportsPage_CustomDaysSelect_NoSecondToday_2672(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+
+	for _, query := range []string{"", "?days=1"} {
+		body := getReportsPage(t, mux, query).Body.String()
+		start := strings.Index(body, `<select name="days"`)
+		if start < 0 {
+			t.Fatalf("%q: expected the days select, got: %s", query, body)
+		}
+		end := strings.Index(body[start:], "</select>")
+		sel := body[start : start+end]
+		if !regexp.MustCompile(`<option value="1"[^>]*>Last 24 hours</option>`).MatchString(sel) {
+			t.Fatalf("%q: expected a 'Last 24 hours' option for value 1, got: %s", query, sel)
+		}
+		if strings.Contains(sel, "Today") {
+			t.Fatalf("%q: days select must not say Today, got: %s", query, sel)
+		}
+		if query == "?days=1" && !regexp.MustCompile(`<option value="1"\s+selected>Last 24 hours</option>`).MatchString(sel) {
+			t.Fatalf("%q: expected the 24-hour option selected, got: %s", query, sel)
+		}
+	}
+
+	// Exactly one control says Today: the chip.
+	body := getReportsPage(t, mux, "?period=day").Body.String()
+	if n := strings.Count(body, "Today</a>"); n != 1 {
+		t.Fatalf("expected exactly one Today chip, got %d: %s", n, body)
 	}
 }

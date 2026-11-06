@@ -698,7 +698,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
 					log.Printf("[import] audit currency switch: %v", aerr)
 				}
-				httpx.InitCurrency(st.Currency)
+				common.InitCurrencyFromState(st)
 			}
 			// Same currency: only the confirmation is written (through the
 			// main till on a till that follows one, as above). On a main

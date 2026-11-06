@@ -89,7 +89,7 @@ func TestCheckin401DecodesMachineCode(t *testing.T) {
 		_, _ = w.Write([]byte(unauthorizedBody("token_retired")))
 	}))
 	defer srv.Close()
-	status, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0)
+	status, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0, nil)
 	var se *statusError
 	if status != http.StatusUnauthorized || !errors.As(err, &se) || se.Code != "token_retired" {
 		t.Fatalf("status=%d err=%#v, want 401 with Code token_retired", status, err)
@@ -102,7 +102,7 @@ func TestCheckin503LeavesCodeEmpty(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"auth_unavailable","message":"x"}}`))
 	}))
 	defer srv.Close()
-	_, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0)
+	_, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0, nil)
 	var se *statusError
 	if !errors.As(err, &se) || se.StatusCode != http.StatusServiceUnavailable || se.Code != "" {
 		t.Fatalf("err = %#v, want a 503 statusError with Code empty", err)

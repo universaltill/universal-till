@@ -1443,6 +1443,10 @@
          background-removal service is configured), a no-op on any page
          without that markup, same pattern as above. -->
     <script defer src="/public/photo-cutout.js?v={{ assetv "public/photo-cutout.js" }}"></script>
+    <!-- ut-docs#1103/#5553: roving-tabindex arrow keys for WAI-ARIA radio groups
+         (opt-in via data-roving-radiogroup) — colour pickers, photo-cutout
+         background, basket order type; a no-op on any page without that markup. -->
+    <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
     <!-- ut-docs#2342: the bug-report panel's draft store (sessionStorage +
          IndexedDB) so an open report survives a full document load. Deferred
          like the rest; the panel reads it from UT.ready on. -->
@@ -1496,6 +1500,16 @@
          onsubmit guards and turns a POST error into a re-GET.
          `hx-history-elt` + `hx-history="false"`: htmx snapshots nothing. -->
     <div id="ut-page" hx-boost="true" hx-history-elt hx-history="false">
+    {{/* ADR-0176 (ut-docs#5366): the critical-notice strip. In flow at the top
+         of the main region on every page, never an overlay, never blocks
+         checkout. The mount is a persistent polite live region (so the strip
+         is announced when it appears) and is empty unless the flag is on and
+         a critical platform notice is unacknowledged; GET /notices/strip
+         reads local data only. Cashiers see it read-only. It sits BEFORE the
+         nav in the DOM so its Open/Acknowledge are the first keyboard stops,
+         as they are the first thing on screen (the rail is position: fixed,
+         so the visual placement is the same either way). */}}
+    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
     {{ template "nav" . }}
     <!-- ut-docs#1551: nav-level dismissible notice for a pending pairing
          request -- a sibling of <nav>/<main>, not squeezed into the icon

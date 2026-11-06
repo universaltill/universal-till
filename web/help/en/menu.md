@@ -3,6 +3,7 @@ id: menu
 title: The Menu screen
 section: Everyday selling
 order: 30
+public: true
 summary: One screen of big touch tiles that takes you to every part of the till.
 routes: [/menu, /settings/menu, /admin]
 keywords: [menu, navigation, tiles, administration]

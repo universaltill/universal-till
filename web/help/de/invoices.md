@@ -3,6 +3,7 @@ id: invoices
 title: Rechnungen & Steuerrechnungen
 section: Den Betrieb führen
 order: 220
+public: true
 summary: Stellen Sie für einen Verkauf eine ordentliche (Steuer-)Rechnung aus — für Geschäftskunden oder überall dort, wo eine titulierte Rechnung erforderlich ist.
 routes: [/invoices, /invoice/{display_no}]
 keywords: [rechnung, mwst, kunde, geschäftskunde]

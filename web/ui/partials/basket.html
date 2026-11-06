@@ -107,6 +107,8 @@
          role="radiogroup" + role="radio" + aria-checked (WAI-ARIA radio
          pattern, not aria-pressed): this is a single mutually-exclusive
          choice between two named states, not two independent toggles.
+         ut-docs#5553: roving tabindex + arrow keys (radiogroup.js); the ids
+         make htmx refocus the replacement button after the #basket swap.
          hx-sync="#basket:replace" (ut-docs#1337): every other
          #basket-targeting trigger already aborts an in-flight request to
          the same swap target the instant a newer one fires -- both
@@ -135,9 +137,10 @@
          switched off (sale.order_type_prompt = "off" -- no eat-in, e.g. an
          off-licence or a barber); the table button next to it stays. -->
     {{ if ne ordertypepromptmode "off" }}
-    <div class="order-type-toggle-group" role="radiogroup" aria-label="{{ T "basket.order_type.label" }}">
+    <div class="order-type-toggle-group" role="radiogroup" data-roving-radiogroup aria-label="{{ T "basket.order_type.label" }}">
       <button type="button" class="order-type-option{{ if eq .OrderType "" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "" }}true{{ else }}false{{ end }}"
+              id="order-type-dine-in" tabindex="{{ if or (eq .OrderType "") (eq .OrderType "mixed") }}0{{ else }}-1{{ end }}"
               data-testid="order-type-dine-in"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
@@ -145,6 +148,7 @@
       </button>
       <button type="button" class="order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+              id="order-type-takeaway" tabindex="{{ if eq .OrderType "takeaway" }}0{{ else }}-1{{ end }}"
               data-testid="order-type-takeaway"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">

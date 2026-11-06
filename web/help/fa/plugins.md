@@ -3,6 +3,7 @@ id: plugins
 title: فروشگاه افزونه
 section: اتصال و افزونه‌ها
 order: 330
+public: true
 summary: "بدون تغییر هسته برنامه قابلیت اضافه کنید: پرداخت، پوسته، بسته زبان، اتصال‌ها، ابزارهای هوش مصنوعی و بیشتر."
 routes: [/plugins, /plugins/store, /plugins/store/{listing_id}, /plugins/{section}/{listing_id}, /plugins/{id}/settings]
 ---

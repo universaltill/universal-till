@@ -3,6 +3,7 @@ id: users
 title: Users, PINs & shifts
 section: Connecting & extending
 order: 340
+public: true
 summary: Separate cashier and manager accounts with PIN login, and shift tracking so you know who sold what and when the drawer was counted.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 keywords: [pin, staff, roles, sign in, lock, permissions]
@@ -26,14 +27,14 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 10. The wizard's last screen also asks — once, and not ticked unless you tick it — whether to register this till with the Universal Till cloud right away. Tick it and, as soon as setup finishes, the till sends its device ID, your store name, shop country, region and software version to the Universal Till cloud marketplace, used for support, updates and licensing — your address is not sent. Leave it unticked and nothing is sent — the till registers only when you first use the plugin store or press Register now. Either way setup never waits on the internet: if you're offline when you tick it, setup still finishes and the till stays unregistered until you open the plugin store, press Register now, or come back online and check Settings → Till registration. You can change your answer any time from there; see [Store registration & claiming](/help/claim).
 11. The setup wizard signs you in as this till's first admin — it doesn't connect the till to YOUR account online. For the online back-office (My stores, fleet view) and paid features, see [Store registration & claiming](/help/claim).
 12. Creating a user, setting someone's PIN, or activating/deactivating an account needs a manager's or admin's role. Signed in as a cashier and try one of these anyway? The screen doesn't just refuse — it opens an in-place PIN prompt a manager or admin can approve right there, the same as [other manager-approval prompts](/help/elevation) elsewhere in the till.
-13. Your own name in the left-hand menu (👤) opens Change PIN; the Lock button next to it signs you straight out to the PIN pad.
+13. Your own name in the left-hand menu (person icon) opens Change PIN; the Lock button next to it signs you straight out to the PIN pad.
 14. Stuck at the sign-in screen on a fullscreen or kiosk till? The login screen has a collapsed "Locked out? Return to desktop" link: open it and enter a manager PIN to leave the till and return to the OS desktop — no sign-in needed first. It's the same manager-PIN-gated Exit to OS window action as in Settings → Display; see [Languages & display](/help/display) for what it does on each kind of till.
 
 ## Changing your own PIN
 
 Anyone can change their own PIN, no manager needed — a manager is only required to set or reset *someone else's* PIN from Users.
 
-1. Tap your name (👤) in the left-hand menu to open Change PIN.
+1. Tap your name (person icon) in the left-hand menu to open Change PIN.
 2. Enter your current PIN, then your new PIN twice.
 3. Submit: you're signed out and land back on the PIN pad — sign in again with the new PIN.
 

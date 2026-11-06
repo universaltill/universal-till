@@ -55,14 +55,19 @@ window.utCurrency = (function(){
     var num = groupDigits(major.toString());
     if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
     num = shapeDigits(num);
-    var out = suffix ? num + ' ' + display : display + num;
-    if (!neg) return out;
+    // ut-docs#5410: a word or code ("AED", "XYZ ") leads with one space,
+    // the twin of Go's formatMoneyCurrency; a one-rune symbol hugs the digits.
+    var word = display.trim();
+    var out = suffix ? num + ' ' + display : (Array.from(word).length > 1 ? word + ' ' + num : display + num);
+    var rtl = document.documentElement && document.documentElement.dir === 'rtl';
+    // ut-docs#5410: a positive word/code prefix ("AED 12.50") is isolated in
+    // RTL too, twin of Go's FormatMoneyDisplay; one-rune symbols stay bare.
+    if (!neg) return (rtl && !suffix && Array.from(word).length > 1) ? '\u2066' + out + '\u2069' : out;
     // ut-docs#3880, the twin of Go's formatMoney/FormatMoneyDisplay: the
     // sign leads the whole amount ("-£42.50", never "£-42.50"), and on an
     // RTL page a prefix-symbol negative is one left-to-right isolate so
     // the sign stays left of the symbol.
     out = '-' + out;
-    var rtl = document.documentElement && document.documentElement.dir === 'rtl';
     return rtl && !suffix ? '\u2066' + out + '\u2069' : out;
   }
   // ut-docs#2819: strict grammar, the client twin of Go's
@@ -1037,8 +1042,14 @@ function renderNotice(el, level, text){
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
-    if (toast.classList.contains('error')) return; // errors persist until dismissed
+    // errors persist until dismissed; a critical notice (ADR-0176) stays until
+    // a manager acknowledges it -- it never auto-expires.
+    if (toast.classList.contains('error') || toast.classList.contains('critical')) return;
     toast.dataset.dismissed = '1';
+    // ADR-0176: a notice toast carries its own duration (data-dismiss-ms) and
+    // pauses while hovered, focused or touched.
+    var ms = parseInt(toast.dataset.dismissMs, 10);
+    if (ms > 0) { utPausableDismiss(toast, ms); return; }
     setTimeout(function(){
       toast.classList.add('hide');
       setTimeout(function(){
@@ -1049,6 +1060,62 @@ function scheduleToastDismiss(){
     }, 2500);
   });
 }
+
+// utPausableDismiss removes a notice toast after ms, pausing the countdown
+// while the pointer, keyboard focus or a finger is on it (ut-docs#5366: an
+// operator reading it or reaching for Open must never lose it mid-tap).
+function utPausableDismiss(toast, ms) {
+  var left = ms, started = 0, timer = 0;
+  toast.style.setProperty('--notice-ms', ms + 'ms');
+  function gone() {
+    toast.classList.add('hide');
+    setTimeout(function(){ if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+  }
+  function run() { started = Date.now(); timer = setTimeout(gone, left); toast.classList.remove('paused'); }
+  function pause() {
+    if (!timer) return;
+    clearTimeout(timer); timer = 0;
+    left = Math.max(1000, left - (Date.now() - started));
+    toast.classList.add('paused');
+  }
+  ['mouseenter', 'focusin', 'touchstart'].forEach(function(ev){ toast.addEventListener(ev, pause, { passive: true }); });
+  ['mouseleave', 'focusout', 'touchend', 'touchcancel'].forEach(function(ev){
+    toast.addEventListener(ev, function(){ if (!timer) run(); }, { passive: true });
+  });
+  run();
+}
+
+// ADR-0176 (ut-docs#5366) notices glue. (1) A toast is never shown while the
+// payment overlay is open: the poll is cancelled, so the notice simply stays
+// queued on the server (it is only marked shown when it renders), and the
+// poll is re-run the moment the overlay closes. (2) The phone burger's label
+// is count-aware while something is unread.
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var el = evt.detail && evt.detail.elt;
+  if (!el || el.id !== 'notices-toast') return;
+  var po = document.getElementById('payment-overlay');
+  if (po && po.open) evt.preventDefault();
+});
+document.addEventListener('close', function (evt) {
+  if (evt.target && evt.target.id === 'payment-overlay' && window.htmx) htmx.trigger(document.body, 'notices-check');
+}, true);
+function utNoticesBurgerLabel() {
+  var badge = document.getElementById('notices-burger-badge');
+  var btn = document.querySelector('.nav-drawer-toggle');
+  if (!badge || !btn) return;
+  if (!btn.dataset.labelOpenBase) btn.dataset.labelOpenBase = btn.getAttribute('data-label-open') || '';
+  var label = badge.dataset.label || btn.dataset.labelOpenBase;
+  btn.setAttribute('data-label-open', label); // utNavDrawer reads it when the drawer closes
+  if (btn.getAttribute('aria-expanded') !== 'true') btn.setAttribute('aria-label', label);
+}
+document.addEventListener('htmx:oobAfterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (t && t.id === 'notices-burger-badge') utNoticesBurgerLabel();
+});
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (t && t.id === 'notices-bell') utNoticesBurgerLabel();
+});
 
 // ADR-0098: app.js loads once per document (defer) -- the readyState guard
 // covers the deferred-script case; boosted arrivals come through afterSwap.
@@ -1363,7 +1430,13 @@ document.addEventListener('click', function(e){
     // replace it; a server error or explicit new message still does.
     if (kind === 'network' && alertBox.dataset.sticky === '1' && !alertBox.hidden) return;
     var msg;
-    if (kind === 'outcome') { msg = alertBox.dataset.msgOutcomeUnknown; alertBox.dataset.sticky = '1'; }
+    if (kind === 'outcome' || kind === 'timeout') {
+      // ut-docs#5463: 'timeout' = the till answered too slowly (not a dropped link).
+      msg = kind === 'timeout'
+        ? (alertBox.dataset.msgOutcomeTimeout || alertBox.dataset.msgOutcomeUnknown)
+        : alertBox.dataset.msgOutcomeUnknown;
+      alertBox.dataset.sticky = '1';
+    }
     else {
       delete alertBox.dataset.sticky;
       msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
@@ -1374,7 +1447,7 @@ document.addEventListener('click', function(e){
     alertBox.querySelector('.notice-text').textContent = msg || '';
     // #pos-alert sits at the top of the document: on a scrolled page the
     // outcome message would be off-screen (ut-docs#5298). No smooth scroll.
-    if (kind === 'outcome') {
+    if (kind === 'outcome' || kind === 'timeout') {
       try { alertBox.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
     }
   }
@@ -1444,31 +1517,84 @@ document.addEventListener('click', function(e){
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
   // data-after-request="elevation-done") failing at network level means the
   // confirmed action may or may not have run (ut-docs#5298).
-  // ut-docs#5335: a prompt's own request (htmx form or utPostWithElevation
-  // leg) is abandoned after this long with no response, and handled exactly
-  // like a network failure (#5298: outcome unknown, no replay). Prompt
-  // requests only -- never htmx.config.timeout.
-  var UT_PROMPT_TIMEOUT_MS = 30000;
+  // ut-docs#5335 / #5404: a prompt's own request (htmx form or
+  // utPostWithElevation leg) and, since #5404, every ordinary user-initiated
+  // htmx request (see utIsTimedRequest) is abandoned after this long with no
+  // response and handled like a network failure (#5298: outcome unknown, no
+  // replay). Per request only -- htmx.config.timeout stays 0.
+  // Listed paths (UT_UNBOUNDED_PATHS) are exempt on every leg, prompts
+  // included (ut-docs#5454): the server owns their deadline.
+  var UT_REQUEST_TIMEOUT_MS = 30000;
   // Test-only override: e2e sets window.__utPromptTimeoutMs via
   // page.addInitScript so specs don't wait 30 s. Read at request time.
-  window.utPromptTimeoutMs = function () {
+  window.utRequestTimeoutMs = function () {
     var o = window.__utPromptTimeoutMs;
-    return (typeof o === 'number' && isFinite(o) && o > 0) ? o : UT_PROMPT_TIMEOUT_MS;
+    return (typeof o === 'number' && isFinite(o) && o > 0) ? o : UT_REQUEST_TIMEOUT_MS;
   };
+  window.utPromptTimeoutMs = window.utRequestTimeoutMs; // #5335 name, kept
   function utIsPromptElt(el) {
     return !!(el && el.closest && el.closest('[data-after-request~="elevation-done"]'));
+  }
+  // ut-docs#5404: user events whose request gets the timeout. Custom events
+  // (`x-changed from:body`, `revealed`) are background refreshes: unbounded.
+  var UT_USER_EVENTS = { click: 1, dblclick: 1, submit: 1, change: 1, input: 1, keyup: 1, keydown: 1, search: 1 };
+  // Legitimately long or restarting endpoints: never timed. Tender, refund
+  // and kiosk checkout wait on a card terminal / fiscal device (the server
+  // bounds them: paymentGateTimeout is a 30 s floor and a plugin's timeout
+  // can be longer, wasm_runtime.go); a join backs up and replaces this till's data
+  // behind a 60 s LAN client. A client abort there would show "may not have
+  // been done" while the sale or join is still completing.
+  // Keep paired with `unboundedRoutes` in internal/pages/unbounded_routes_test.go
+  // (TestUnboundedRoutesMatchAppJS reads this list): a new long-running POST
+  // route goes in both.
+  var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
+                            '/api/update/apply', '/api/setup/update-apply',
+                            '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
+                            '/api/sync/join', '/api/setup/join'];
+  function utPathOf(p) {
+    try { return new URL(p || '', window.location.href).pathname; } catch (e) { return String(p || ''); }
+  }
+  function utIsUnboundedPath(p) {
+    var path = utPathOf(p);
+    if (/\/pairing-restart$/.test(path)) return true; // till restarts itself
+    for (var i = 0; i < UT_UNBOUNDED_PATHS.length; i++) {
+      if (path.indexOf(UT_UNBOUNDED_PATHS[i]) === 0) return true;
+    }
+    return false;
+  }
+  window.utIsUnboundedPath = utIsUnboundedPath; // #5454: utPostWithElevation (outside this IIFE)
+  // True when this ordinary request should be bounded. Opt out a new
+  // long-running action with data-ut-no-timeout on it or an ancestor.
+  function utIsTimedRequest(d, el) {
+    if (!el || !el.closest) return false;
+    if (el.closest('[data-ut-no-timeout]')) return false;
+    var te = d.triggeringEvent;
+    if (!te || !UT_USER_EVENTS[te.type]) return false; // load/every/intersect/htmx.ajax/custom
+    if (d.boosted) return false;                       // page navigation, not an action
+    if (el.closest('[hx-encoding="multipart/form-data"],form[enctype="multipart/form-data"]')) return false;
+    return true;
   }
   // htmx 1.9.12 reads detail.timeout back into xhr.timeout after this event.
   document.body.addEventListener('htmx:configRequest', function(ev){
     var d = ev.detail;
-    if (d && utIsPromptElt(d.elt || ev.target)) d.timeout = window.utPromptTimeoutMs();
+    if (!d) return;
+    var el = d.elt || ev.target;
+    if (d.timeout > 0) return; // hx-request / etc already set one
+    if (utIsUnboundedPath(d.path)) return; // #5404/#5454: server owns the deadline, prompt forms too
+    if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
   });
   document.body.addEventListener('htmx:sendError', function(ev){
     showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
   });
-  // htmx fires afterRequest (elevation-done closes the dialog) then this.
+  // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
+  // then this. Only requests we bounded can reach ontimeout. A GET is safe to
+  // repeat (network text); anything else may have applied (sticky timeout text,
+  // ut-docs#5463: the till was slow, the link was fine).
   document.body.addEventListener('htmx:timeout', function(ev){
-    if (utIsPromptElt(ev.detail && ev.detail.elt)) showAlert('outcome');
+    var d = ev.detail || {};
+    var rc = d.requestConfig || {};
+    var verb = String(rc.verb || '').toLowerCase();
+    showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'timeout' : 'network');
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
@@ -3024,7 +3150,8 @@ utSellCamera(function(){
 //    (untagged) if onDone throws or rejects.
 //  - The operator cancels: onCancel() runs, the promise resolves undefined.
 //  - A NETWORK failure on either leg (fetch itself rejected, or no response
-//    within window.utPromptTimeoutMs(), default 30 s, ut-docs#5335; the timer
+//    within window.utPromptTimeoutMs(), default 30 s, ut-docs#5335, unless the URL
+//    is a utIsUnboundedPath path, ut-docs#5454; the timer
 //    is cleared before onDone so body reads are unbounded): neither
 //    callback runs, any open dialog is closed, and the promise rejects with
 //    the fetch error tagged e.utNetworkError = true. The action may or may
@@ -3142,7 +3269,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       n.utNetworkError = true;
       throw n;
     }
-    if (ctl) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
+    if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -3390,16 +3517,13 @@ window.utTabBarFade = function (el) {
     var box = el.getBoundingClientRect();
     if (!box.width || !box.height) return;
     var vw = window.innerWidth, vh = window.innerHeight;
-    // ut-docs#2988: scale is still about the element's own centre (no
-    // inline transform-origin -- CSS default stays 50%/50% of `box`), but
-    // Catalog (a real item list) and Inventory (several cards) routinely
-    // make the pane far taller than the viewport, so `box`'s centre sits
-    // well below the fold. Anchoring the "grow from" maths to that centre
-    // made the visible top of the pane slide in from off-screen instead of
-    // reading as a zoom out of the tapped row. `vis` is `box` clipped to
-    // the viewport -- what a shop owner can actually see growing. (The
-    // window only: a pane inside its own clipping scroller would need that
-    // ancestor's box here too; none of the three panes is one today.)
+    // ut-docs#2988: Catalog (a real item list) and Inventory (several
+    // cards) routinely make the pane far taller than the viewport, so
+    // `box`'s centre sits below the fold. `vis` is `box` clipped to the
+    // viewport -- what a shop owner can actually see growing -- and the
+    // zoom is anchored on ITS centre V. (The window only: a pane inside
+    // its own clipping scroller would need that ancestor's box too; none
+    // of the three panes is one today.)
     var visLeft = Math.max(box.left, 0);
     var visTop = Math.max(box.top, 0);
     var visRight = Math.min(box.right, vw);
@@ -3414,25 +3538,34 @@ window.utTabBarFade = function (el) {
       r = { left: vw / 2, top: vh, width: 0, height: 0 };
     }
     var s = Math.min(1, Math.max(0.1, r.width / visW));
-    // With `transform: translate(dx,dy) scale(s)` about the element's
-    // centre C, a point P maps to C + d + s(P - C). Solving that for the
-    // ON-SCREEN centre V to land exactly on the origin's centre O gives
-    // dx/dy below (ut-docs#2988) -- for a pane that's fully on screen,
-    // V === C and this reduces to the plain "origin centre minus pane
-    // centre" this had before.
-    var Cx = box.left + box.width / 2, Cy = box.top + box.height / 2;
+    // ut-docs#3010: transform-origin is pinned inline, in px, at V (set
+    // once, static -- ADR-0122's transform+opacity rule holds), so a pane
+    // that grows or shrinks mid-zoom (Inventory's hx-trigger=load cards)
+    // cannot move the anchor, as the default 50%/50% origin would. With
+    // `translate(d) scale(s)` about V a point P maps to V + d + s(P - V),
+    // so V itself lands on the origin centre O when d = O - V.
     var Vx = visLeft + visW / 2, Vy = visTop + visH / 2;
     var Ox = r.left + r.width / 2, Oy = r.top + r.height / 2;
-    var dx = Ox - Cx - s * (Vx - Cx);
-    var dy = Oy - Cy - s * (Vy - Cy);
+    var dx = Ox - Vx;
+    var dy = Oy - Vy;
     var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms')) || 300;
+    var anim = null;
+    // Only the latest zoom on this pane clears the origin: an earlier zoom
+    // finished by htmx:beforeSwap dispatches its 'finish' event a frame
+    // later, after this call has set the new origin (ut-docs#3010 review).
+    var clear = function () { if (el.utZoomAnim === anim) { el.style.transformOrigin = ''; el.utZoomAnim = null; } };
     try {
-      var anim = el.animate([
+      el.style.transformOrigin = (Vx - box.left) + 'px ' + (Vy - box.top) + 'px';
+      anim = el.animate([
         { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')', opacity: 0.4 },
         { transform: 'none', opacity: 1 }
       ], { duration: ms, easing: 'cubic-bezier(.32, .72, 0, 1)', fill: 'none' });
+      // Cleared on finish AND cancel (finishZooms/cancel paths); nothing persists.
+      el.utZoomAnim = anim;
+      anim.addEventListener('finish', clear);
+      anim.addEventListener('cancel', clear);
       UT.trackZoom(anim);
-    } catch (e) { /* motion only -- the pane is already in place */ }
+    } catch (e) { el.utZoomAnim = null; el.style.transformOrigin = ''; /* motion only -- the pane is already in place */ }
   }
 })();
 

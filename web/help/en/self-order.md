@@ -3,6 +3,7 @@ id: self-order
 title: Self-order
 section: Everyday selling
 order: 40
+public: true
 summary: A customer-facing mode where shoppers browse the catalog and build their own order.
 keywords: [self order, kiosk, customer]
 ---

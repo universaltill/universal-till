@@ -59,7 +59,7 @@ func TestMaxSyncSalesBatchFitsExemptLimit(t *testing.T) {
 	var s data.SaleDetail
 	s.ID, s.ReceiptNo, s.DisplayNo, s.Status, s.SaleType = id, long(24), long(12), "completed", "sale"
 	s.TenderType, s.OrderType, s.TableID, s.TableLabel = "card", "dine_in", id, long(40)
-	s.SyncStatus, s.Currency, s.CreatedAt, s.CashierID, s.RegisterID = "pending", "GBP", "2026-11-04T10:00:00Z", id, id
+	s.SyncStatus, s.Currency, s.CreatedAt, s.CashierID, s.RegisterID = "pending", "GBP", "2026-11-04T10:00:00Z", id, id // fixed-date:ok body-size fixture, never clock-compared
 	for i := 0; i < 200; i++ {
 		s.Lines = append(s.Lines, data.SaleDetailLine{
 			Name: long(200), SKU: long(64), ItemID: id, VariantID: id,
@@ -73,7 +73,7 @@ func TestMaxSyncSalesBatchFitsExemptLimit(t *testing.T) {
 		s.Payments = append(s.Payments, data.SaleDetailPayment{
 			Method: "card", Amount: 123456789, ChangeGiven: 1, TipAmount: 1, TipRecipient: "employee",
 			Reference: long(64), MaskedPAN: "************1234", AuthCode: long(12), TerminalID: long(16),
-			TraceID: long(36), VoucherID: id, PaidAt: "2026-11-04T10:00:00Z",
+			TraceID: long(36), VoucherID: id, PaidAt: "2026-11-04T10:00:00Z", // fixed-date:ok body-size fixture, never clock-compared
 		})
 	}
 	for i := 0; i < 10; i++ {

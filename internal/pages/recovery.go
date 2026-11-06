@@ -140,6 +140,10 @@ func (rw *recoveryResponseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer (FlushError,
+// deadlines), as the other ResponseWriter wrappers here do.
+func (rw *recoveryResponseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
 // Flush lets a streaming handler (SSE, chunked progress) push partial output
 // immediately, same as if this middleware weren't in the chain.
 func (rw *recoveryResponseWriter) Flush() {

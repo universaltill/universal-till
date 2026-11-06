@@ -16,24 +16,27 @@ test.describe('Percent inputs: decimal comma (ut-docs#2954)', () => {
     const assertClean = watchConsole(page);
     const code = `P2954${Date.now() % 100000}`;
     await page.goto('/promotions?lang=de');
-    const form = page.locator('form[action="/api/promotions"]');
+    // ut-docs#3661: the form lives in the record dialog now.
+    await page.locator('#promotions-new').click();
+    const form = page.locator('#promotion-form');
+    await expect(form).toBeVisible();
     await form.locator('input[name="code"]').fill(code);
     await form.locator('select[name="type"]').selectOption('percent');
     const value = form.locator('input[name="value_percent"]');
     await value.fill('1,5');
     expect(await value.evaluate((el: HTMLInputElement) => el.checkValidity())).toBe(true);
-    // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
-    await clickThenReload(page, () => form.locator('button[type="submit"]').click());
-    // The inline edit row prefills "%.2f" of the stored bp/100: "1.50"
-    // only if the server stored 150. The prefill follows the locale
+    // HX-Redirect back to /promotions: wait for the new document (ut-docs#4440).
+    await clickThenReload(page, () => page.locator('#promotion-dialog .record-dialog-save').click());
+    // The row's data-field-value_percent is "%.2f" of the stored bp/100:
+    // "1.50" only if the server stored 150. The prefill follows the locale
     // (ut-docs#4097) and ?lang=de left a de cookie, so read it back in en
     // explicitly, then check de shows the comma form.
     const rowOf = async (lang: string) => {
       const html = await (await page.request.get(`/promotions?lang=${lang}`)).text();
-      return html.slice(html.indexOf(`action="/api/promotions/${code}/edit"`));
+      return html.slice(html.indexOf(`data-field-code="${code}"`));
     };
-    expect(await rowOf('en')).toMatch(/name="value_percent"[^>]*value="1\.50"/);
-    expect(await rowOf('de')).toMatch(/name="value_percent"[^>]*value="1,50"/);
+    expect(await rowOf('en')).toMatch(/data-field-value_percent="1\.50"/);
+    expect(await rowOf('de')).toMatch(/data-field-value_percent="1,50"/);
     assertClean();
   });
 
@@ -47,6 +50,13 @@ test.describe('Percent inputs: decimal comma (ut-docs#2954)', () => {
     ];
     for (const c of cases) {
       await page.goto(`${c.url}?lang=de`);
+      // ut-docs#3661: the promotions field sits in the record dialog; open it
+      // (a hidden, unfocusable field is not what a manager types into).
+      if (c.url === '/promotions') {
+        await page.locator('#promotions-new').click();
+        // The percent input is disabled (so exempt from validation) until the type is percent.
+        await page.locator('#promo-type').selectOption('percent');
+      }
       const expected = await page.evaluate(() => document.body.dataset.percentInvalid || '');
       expect(expected, 'body carries the shop-language message').not.toBe('');
       const moneyMsg = await page.evaluate(() => document.body.dataset.moneyInvalid || '');

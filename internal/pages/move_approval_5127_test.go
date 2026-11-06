@@ -40,10 +40,13 @@ const (
 	mvToken  = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
 	mvNew    = "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"
 	mvNonce  = "bm9uY2Utbm9uY2Utbm9uY2U"
-	mvExp    = "2026-11-03T09:30:00Z"
 	mvPIN    = "135790"
 	mvName   = "Corner Café"
 )
+
+// mvExp is the move offer's expiry, always in the future: a fixed date here
+// broke main once it passed (ut-docs#5471).
+var mvExp = time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type moveStubCloud struct {
 	srv     *httptest.Server
@@ -297,6 +300,10 @@ func TestMoveApprove_ValidPINSignsAndMoves(t *testing.T) {
 	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'move_approved' AND entity_id = ?`, mvID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("audit rows = %d, %v", n, err)
 	}
+	// ut-docs#5333: an approved move keeps the till's history; no Next steps card.
+	if v, ok, err := d.Settings.Get(t.Context(), nextStepsKey); err != nil || ok {
+		t.Fatalf("%s = %q (err %v) after an approved move, want absent", nextStepsKey, v, err)
+	}
 }
 
 func TestMoveDecline_ValidPIN(t *testing.T) {
@@ -356,6 +363,10 @@ func TestEnrolPair_MoveConfirmsThenOpensApprovalPage(t *testing.T) {
 	}
 	if _, ok := enroll.PendingMoveByID(d.Cfg, mvPairID); !ok {
 		t.Fatal("the pending move is not held")
+	}
+	// ut-docs#5333: a move request is no new setup either; no Next steps card.
+	if v, ok, err := d.Settings.Get(t.Context(), nextStepsKey); err != nil || ok {
+		t.Fatalf("%s = %q (err %v) after a pending move, want absent", nextStepsKey, v, err)
 	}
 }
 

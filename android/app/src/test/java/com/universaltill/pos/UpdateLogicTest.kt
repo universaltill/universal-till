@@ -216,6 +216,8 @@ class UpdateLogicTest {
 
     private fun reason(c: ApkCheck): String = (c as ApkCheck.Refuse).reason
 
+    private fun cls(c: ApkCheck): RefuseClass = (c as ApkCheck.Refuse).cls
+
     @Test
     fun parsePinSetTrimsLowercasesAndDropsBlanks() {
         assertEquals(emptySet<String>(), UpdateLogic.parsePinSet(""))
@@ -238,6 +240,39 @@ class UpdateLogicTest {
     @Test
     fun unpinnedSignerIsRefused() {
         assertTrue(reason(check(signers = listOf(b))).contains("not pinned"))
+    }
+
+    // ut-docs#5446: each refusal rule maps to its documented fleet class.
+    @Test
+    fun refusalClassPerRule() {
+        assertEquals(RefuseClass.UNREADABLE_APK, cls(check(pkg = null)))
+        assertEquals(RefuseClass.WRONG_PACKAGE, cls(check(pkg = "com.evil.app")))
+        assertEquals(RefuseClass.NOT_NEWER, cls(check(versionCode = 10L)))
+        assertEquals(RefuseClass.NOT_NEWER, cls(check(versionCode = null)))
+        assertEquals(RefuseClass.SIGNER_UNREADABLE, cls(check(signers = null)))
+        assertEquals(RefuseClass.SIGNER_UNREADABLE, cls(check(signers = emptyList())))
+        assertEquals(RefuseClass.MULTIPLE_SIGNERS, cls(check(signers = listOf(a, b))))
+        assertEquals(RefuseClass.SIGNER_NOT_PINNED, cls(check(signers = listOf(b))))
+        assertEquals(RefuseClass.SIGNER_NOT_PINNED, cls(check(signers = listOf(b), history = listOf(b))))
+    }
+
+    @Test
+    fun acceptPathsCarryNoRefusalClass() {
+        assertTrue(check() is ApkCheck.Accept)
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet()))
+        assertTrue(check(signers = listOf(b), history = listOf(b, a)) is ApkCheck.Accept)
+    }
+
+    // The other half of the cross-language pin (Go: TestClassesAreTheKotlinSet).
+    @Test
+    fun refuseClassWireValuesAreTheGoSet() {
+        assertEquals(
+            listOf(
+                "unreadable_apk", "wrong_package", "not_newer", "signer_unreadable",
+                "multiple_signers", "signer_not_pinned", "check_error",
+            ),
+            RefuseClass.values().map { it.wire },
+        )
     }
 
     @Test

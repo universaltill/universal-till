@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -400,8 +401,9 @@ var adminTables = []adminTable{
 // reviewer of a future migration, and several tables share one.
 var nonAdminTables = map[string]string{
 	// Already named in this var's own top comment above.
-	"sessions":    "till-local login sessions — meaningless off the issuing till",
-	"item_images": "item photos — files don't travel over this bundle (D2 limit)",
+	"cloud_notices": "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
+	"sessions":      "till-local login sessions — meaningless off the issuing till",
+	"item_images":   "item photos — files don't travel over this bundle (D2 limit)",
 
 	// Migration runner's own bookkeeping (created by internal/db's migrator,
 	// not a numbered migration file itself) — which migrations have applied
@@ -736,6 +738,10 @@ const (
 	BackupCopySinceSettingsKey = "backup.copy_reminder_since"
 )
 
+// BackupRetentionDaysSettingsKey is how many days of backups this till keeps
+// (ut-docs#3092). Per till: each till prunes its own disk.
+const BackupRetentionDaysSettingsKey = "backup.retention_days"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -763,7 +769,10 @@ const (
 // registers each replica's own device (internal/enroll, POST
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
-	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey,
+	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey, BackupRetentionDaysSettingsKey,
+	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
+	// this till's own (each device pulls and tracks read state for itself).
+	"notices.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is
@@ -772,6 +781,9 @@ var PerTillSettingPrefixes = []string{
 	// ut-docs#2783: this till's own theme. A full key used as a prefix, like
 	// the two above; no other settings key starts with "theme".
 	ThemeSettingsKey,
+	// ut-docs#5479: when THIS till last looked for its built-in language's
+	// first-party bundle (a throttle; a replica takes the language from its main till).
+	"i18n.builtin_bundle_checked",
 	// The same three entries as db.TillCloudIdentityPrefixes (the join
 	// snapshot's redaction; internal/db can't import this package) —
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
@@ -1215,11 +1227,31 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		// first, over the same recs slice, exactly as before; only the
 		// final write is batched.
 		toApply := recs
-		if t.name == "settings" || t.name == "country_settings" {
+		if t.name == "settings" || t.name == "country_settings" || t.name == "promotions" {
 			toApply = make([]map[string]any, 0, len(recs))
 			for _, rec := range recs {
 				if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
 					continue // defense in depth: never let a primary write per-till keys
+				}
+				if t.name == "promotions" {
+					// ut-docs#5590: an older main till can still send a promo
+					// whose customer_id names a customer that no longer exists
+					// (migration 097 repaired it here, and the customers table
+					// above no longer holds it). Raw, that fails the whole apply
+					// with FOREIGN KEY 787. Apply it the way 097 repairs it:
+					// unlinked AND inactive, never just unlinked (NULL means
+					// "any customer"). customers sync before promotions, so a
+					// customer arriving in this bundle is already present.
+					if cid, ok := rec["customer_id"]; ok && cid != nil {
+						var one int
+						err := tx.QueryRowContext(ctx, `SELECT 1 FROM customers WHERE id = ?`, fmt.Sprint(cid)).Scan(&one)
+						if errors.Is(err, sql.ErrNoRows) {
+							rec["customer_id"] = nil
+							rec["is_active"] = 0
+						} else if err != nil {
+							return fmt.Errorf("apply promotions: check customer: %w", err)
+						}
+					}
 				}
 				if t.name == "country_settings" {
 					// ut-docs#1669: upsertRows below writes archive_min_days

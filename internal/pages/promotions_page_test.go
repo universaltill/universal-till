@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -128,7 +129,7 @@ func TestPromotionsPageCreate_DatesInvalidRejected(t *testing.T) {
 
 	rec := postForm(mux, "/api/promotions", url.Values{
 		"code": {"BADDATES"}, "type": {"amount"}, "value_amount": {"5.00"},
-		"starts_at": {"2026-12-31"}, "ends_at": {"2026-01-01"},
+		"starts_at": {"2026-12-31"}, "ends_at": {"2026-01-01"}, // fixed-date:ok start>end validation only, no clock
 	}, &manager)
 	if rec.Header().Get("Location") != "/promotions?err=promotions.error.dates_invalid" {
 		t.Fatalf("ends before starts: loc=%q", rec.Header().Get("Location"))
@@ -405,17 +406,17 @@ func TestPromotionsPageList_ValueAmountMajorIsCurrencyAware(t *testing.T) {
 
 	httpx.InitCurrency("GBP")
 	body := get()
-	if !strings.Contains(body, `value="5.00"`) {
+	if !strings.Contains(body, `data-field-value_amount="5.00"`) {
 		t.Fatalf("expected the 2-decimal prefill for GBP, got:\n%s", body)
 	}
 
 	httpx.InitCurrency("IRT")
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body = get()
-	if !strings.Contains(body, `value="500"`) {
+	if !strings.Contains(body, `data-field-value_amount="500"`) {
 		t.Fatalf("expected the 0-decimal prefill \"500\" (no /100) for IRT, got:\n%s", body)
 	}
-	if strings.Contains(body, `value="5.00"`) {
+	if strings.Contains(body, `data-field-value_amount="5.00"`) {
 		t.Fatalf("expected NO 2-decimal prefill left over once currency is 0-decimal, got:\n%s", body)
 	}
 }
@@ -441,15 +442,15 @@ func TestPromotionsPageList_ValuePercentIsLocaleAware(t *testing.T) {
 	}
 
 	de := get("/promotions?lang=de")
-	if !strings.Contains(de, `value="7,50"`) || !strings.Contains(de, "7,50%") {
+	if !strings.Contains(de, `data-field-value_percent="7,50"`) || !strings.Contains(de, "7,50%") {
 		t.Fatalf("lang=de: expected value=\"7,50\" and 7,50%%, got:\n%s", de)
 	}
-	if strings.Contains(de, `value="7.50"`) {
+	if strings.Contains(de, `data-field-value_percent="7.50"`) {
 		t.Fatalf("lang=de: unexpected dot-decimal prefill")
 	}
 	for _, path := range []string{"/promotions?lang=en", "/promotions"} {
 		en := get(path)
-		if !strings.Contains(en, `value="7.50"`) || !strings.Contains(en, "7.50%") {
+		if !strings.Contains(en, `data-field-value_percent="7.50"`) || !strings.Contains(en, "7.50%") {
 			t.Fatalf("%s: expected value=\"7.50\" and 7.50%%, got:\n%s", path, en)
 		}
 	}
@@ -516,10 +517,11 @@ func TestPromotionsPageDeactivateReactivate(t *testing.T) {
 	}
 }
 
-// ut-docs#3662: the row-edit form's controls are placeholder-only or bare, so
-// on the phone card nothing says which date is Starts and which is Ends. Each
-// control carries an accessible name from the existing promotions.* keys.
-func TestPromotionsPageList_RowEditControlsHaveAccessibleNames(t *testing.T) {
+// ut-docs#3661: the inline row-edit form is gone; every control now lives in
+// the record dialog (#promotion-form), each inside a <label> that names it
+// (the #3662 accessible-name contract moved here), and the row carries the
+// data-record-* hooks record-dialog.js reads.
+func TestPromotionsPageList_DialogSlotContract(t *testing.T) {
 	mux, _ := newPromotionsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 	rec := postForm(mux, "/api/promotions", url.Values{
@@ -532,30 +534,477 @@ func TestPromotionsPageList_RowEditControlsHaveAccessibleNames(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	i := strings.Index(body, `<form method="post" action="/api/promotions/NAMED/edit"`)
+
+	for _, bad := range []string{"users-inline", `<form method="post" action="/api/promotions/NAMED/edit"`, "x-data"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("page still carries the old inline-form markup %q", bad)
+		}
+	}
+	for _, want := range []string{
+		`data-record-open="promotion-dialog"`,
+		`data-record-action="/api/promotions/NAMED/edit"`,
+		`data-record-destructive-action="/api/promotions/NAMED/active"`,
+		`id="promotion-dialog-msg"`, `id="promotions-new"`, `id="promotions-no-results"`,
+		`data-field-code="NAMED"`, `data-field-type="percent"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	// The pencil is icon-only: aria-label + title.
+	if !regexp.MustCompile(`(?s)data-record-edit[^>]*aria-label="Edit"[^>]*title="Edit"`).MatchString(body) {
+		t.Errorf("row pencil lacks aria-label+title")
+	}
+
+	i := strings.Index(body, `<form id="promotion-form"`)
 	if i < 0 {
-		t.Fatalf("row edit form missing")
+		t.Fatalf("#promotion-form missing")
 	}
 	end := strings.Index(body[i:], "</form>")
 	if end < 0 {
-		t.Fatalf("row edit form not closed")
+		t.Fatalf("#promotion-form not closed")
 	}
 	form := body[i : i+end]
+	// Every named control sits inside a <label> whose text names it.
 	want := map[string]string{
-		"starts_at": "Starts", "ends_at": "Ends", "description": "Description",
-		"type": "Type", "value_amount": "Value", "value_percent": "Value",
+		"code": "Code", "type": "Type", "value_amount": "Value", "value_percent": "Value",
+		"description": "Description", "starts_at": "Starts", "ends_at": "Ends",
 	}
 	for name, label := range want {
 		j := strings.Index(form, `name="`+name+`"`)
 		if j < 0 {
-			t.Fatalf("control %s missing", name)
+			t.Fatalf("control %s missing from the dialog form", name)
 		}
-		tag := form[strings.LastIndex(form[:j], "<") : j+strings.Index(form[j:], ">")]
-		if !strings.Contains(tag, `aria-label="`+label+`"`) {
-			t.Errorf("control %s: want aria-label=%q in %s", name, label, tag)
+		open := strings.LastIndex(form[:j], "<label")
+		closed := strings.LastIndex(form[:j], "</label>")
+		if open < 0 || open < closed {
+			t.Errorf("control %s is not inside a <label>", name)
+			continue
 		}
-		if (name == "starts_at" || name == "ends_at") && !strings.Contains(tag, `title="`+label+`"`) {
-			t.Errorf("control %s: want title=%q in %s", name, label, tag)
+		if !strings.Contains(form[open:j], label) {
+			t.Errorf("control %s: label text does not contain %q: %s", name, label, form[open:j])
 		}
+	}
+	if !strings.Contains(form, `type="date"`) || strings.Count(form, `type="date"`) != 2 {
+		t.Errorf("want exactly two date inputs in the dialog form")
+	}
+	if !strings.Contains(form, `type="hidden" name="customer_id"`) {
+		t.Errorf("hidden customer_id missing")
+	}
+	if !strings.Contains(form, `id="promo-cust-q"`) || !strings.Contains(form, `data-promo-customer`) {
+		t.Errorf("customer picker missing / not wrapped in data-promo-customer")
+	}
+	if strings.Contains(form, "width:5rem") {
+		t.Errorf("inline width style must be gone")
+	}
+}
+
+// ut-docs#3661 (UX A1): Starts/Ends merge into one "Valid" column, so the
+// table is 8 columns wide and an empty side renders an en dash.
+func TestPromotionsPageList_ValidColumnMergesDates(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions(code, type, value, starts_at, is_active) VALUES('VALID1', 'percent', 500, '2031-03-04', 1)`); err != nil { // fixed-date:ok no real-clock check reads it
+		t.Fatal(err)
+	}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "<th>Valid</th>") {
+		t.Errorf("want a single Valid header")
+	}
+	if strings.Contains(body, "<th>Starts</th>") || strings.Contains(body, "<th>Ends</th>") {
+		t.Errorf("separate Starts/Ends headers must be gone")
+	}
+	// Scoped to VALID1's own Valid cell: a page-wide en dash check passed
+	// with the dash rendering removed (ut-docs#3661 review).
+	cell := regexp.MustCompile(`(?s)data-id="VALID1".*?<td class="promo-dates">(.*?)</td>`).FindStringSubmatch(body)
+	if cell == nil {
+		t.Fatalf("VALID1 row has no promo-dates cell:\n%s", body)
+	}
+	if want := `<span class="promo-date">2031-03-04</span><span class="promo-date">–</span>`; cell[1] != want { // fixed-date:ok no real-clock check reads it
+		t.Errorf("Valid cell = %q, want %q (start, then an en dash for the open end)", cell[1], want)
+	}
+	if !strings.Contains(body, "data-card-keep") {
+		t.Errorf("status cell should carry data-card-keep")
+	}
+	if !strings.Contains(body, `<bdi dir="ltr">VALID1</bdi>`) {
+		t.Errorf("code should be wrapped in a ltr bdi")
+	}
+}
+
+// ut-docs#3661: refusals from the dialog's hx-boosted forms render in the
+// dialog's message region (400 text/html fragment), never a redirect.
+func TestPromotionsPage_RefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, _ := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	check := func(name string, rec *httptest.ResponseRecorder, wantText string) {
+		t.Helper()
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: htmx refusal must not redirect", name)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: Content-Type = %q, want text/html", name, ct)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, wantText) {
+			t.Errorf("%s: body %q lacks %q", name, body, wantText)
+		}
+		if strings.Contains(body, "id=") || strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+			t.Errorf("%s: response must be only the message text: %s", name, body)
+		}
+	}
+
+	check("bad value", postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"HX1"}, "type": {"amount"}, "value_amount": {"nope"},
+	}, &manager), "Enter a valid value")
+	check("empty code", postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"  "}, "type": {"amount"}, "value_amount": {"5"},
+	}, &manager), "Code is required")
+
+	if rec := postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"HXDUP"}, "type": {"amount"}, "value_amount": {"5"},
+	}, &manager); rec.Code != http.StatusOK {
+		t.Fatalf("first create: %d %s", rec.Code, rec.Body.String())
+	}
+	check("duplicate", postFormHtmx(mux, "/api/promotions", url.Values{
+		"code": {"HXDUP"}, "type": {"amount"}, "value_amount": {"5"},
+	}, &manager), "That code already exists")
+
+	check("edit bad date", postFormHtmx(mux, "/api/promotions/HXDUP/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"5"}, "starts_at": {"2031-02-02"}, "ends_at": {"2031-01-01"}, // fixed-date:ok
+	}, &manager), "End date can")
+	check("edit bad value", postFormHtmx(mux, "/api/promotions/HXDUP/edit", url.Values{
+		"type": {"percent"}, "value_percent": {"500"},
+	}, &manager), "Enter a valid value")
+}
+
+func TestPromotionsPage_HtmxSuccessSendsHXRedirect(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	for _, c := range []struct {
+		name, path string
+		form       url.Values
+		action     string
+	}{
+		{"create", "/api/promotions", url.Values{"code": {"HXOK"}, "type": {"amount"}, "value_amount": {"5"}}, "promotion_create"},
+		{"edit", "/api/promotions/HXOK/edit", url.Values{"type": {"amount"}, "value_amount": {"6"}}, "promotion_edit"},
+		{"deactivate", "/api/promotions/HXOK/active", url.Values{"active": {"0"}}, "promotion_deactivate"},
+		{"activate", "/api/promotions/HXOK/active", url.Values{"active": {"1"}}, "promotion_activate"},
+	} {
+		rec := postFormHtmx(mux, c.path, c.form, &manager)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code=%d body=%s", c.name, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("HX-Redirect"); got != "/promotions" {
+			t.Fatalf("%s: HX-Redirect = %q, want /promotions", c.name, got)
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Errorf("%s: a bare Location must not accompany HX-Redirect", c.name)
+		}
+		var n int
+		if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id='HXOK' AND action=?`, c.action).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%s: audit rows = %d err=%v", c.name, n, err)
+		}
+	}
+}
+
+// ut-docs#3661 review: the code is free text and is the row's URL path
+// segment. The row's data-record-action is not URL context to html/template
+// (the old inline form's action was), so it must arrive path-escaped: a raw
+// "10%OFF" is an invalid escape the server answers 400, and "#", "?" or "/"
+// would cut the path short. The escaped path must reach the right row.
+func TestPromotionsPageList_RowActionsPathEscapeTheCode(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	for _, c := range []struct{ code, seg string }{
+		{"10%OFF", "10%25OFF"},
+		{"A#B", "A%23B"},
+		{"A?B", "A%3FB"},
+		{"A/B", "A%2FB"},
+		{"SUMMER 10", "SUMMER%2010"},
+	} {
+		if rec := postForm(mux, "/api/promotions", url.Values{
+			"code": {c.code}, "type": {"amount"}, "value_amount": {"5"},
+		}, &manager); rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s: create %d", c.code, rec.Code)
+		}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		for _, want := range []string{
+			`data-record-action="/api/promotions/` + c.seg + `/edit"`,
+			`data-record-destructive-action="/api/promotions/` + c.seg + `/active"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: page lacks %s", c.code, want)
+			}
+		}
+		if rec := postFormHtmx(mux, "/api/promotions/"+c.seg+"/edit", url.Values{
+			"type": {"amount"}, "value_amount": {"7"},
+		}, &manager); rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/promotions" {
+			t.Errorf("%s: edit via escaped path: %d %q %s", c.code, rec.Code, rec.Header().Get("HX-Redirect"), rec.Body.String())
+		}
+		if rec := postFormHtmx(mux, "/api/promotions/"+c.seg+"/active", url.Values{"active": {"0"}}, &manager); rec.Code != http.StatusOK {
+			t.Errorf("%s: deactivate via escaped path: %d %s", c.code, rec.Code, rec.Body.String())
+		}
+		var value, active int
+		if err := d.Db.QueryRow(`SELECT value, is_active FROM promotions WHERE code = ?`, c.code).Scan(&value, &active); err != nil {
+			t.Fatalf("%s: %v", c.code, err)
+		}
+		if value != 700 || active != 0 {
+			t.Errorf("%s: value=%d active=%d, want 700/0", c.code, value, active)
+		}
+	}
+}
+
+// ---- ut-docs#5574: customer name in the list; change/clear on edit ----
+
+func seedPromoCust(t *testing.T, d *common.Deps) {
+	t.Helper()
+	if _, err := d.Db.Exec(`INSERT INTO customers (id, name) VALUES
+		('cust-live-uuid', 'A <b>&amp; Co'), ('cust-other-uuid', 'Other Person'), ('cust-shell-uuid', '')`); err != nil {
+		t.Fatalf("seed customers: %v", err)
+	}
+}
+
+func promoCustomerID(t *testing.T, d *common.Deps, code string) (string, bool) {
+	t.Helper()
+	var id *string
+	if err := d.Db.QueryRow(`SELECT customer_id FROM promotions WHERE code = ?`, code).Scan(&id); err != nil {
+		t.Fatalf("lookup %s: %v", code, err)
+	}
+	if id == nil {
+		return "", false
+	}
+	return *id, true
+}
+
+func promoEditAudits(t *testing.T, d *common.Deps, code string) (n int, actor string) {
+	t.Helper()
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='promotion' AND entity_id=? AND action='promotion_edit'`, code).Scan(&n); err != nil {
+		t.Fatalf("audit count: %v", err)
+	}
+	if n > 0 {
+		_ = d.Db.QueryRow(`SELECT actor_id FROM audit_log WHERE entity_type='promotion' AND entity_id=? AND action='promotion_edit'`, code).Scan(&actor)
+	}
+	return n, actor
+}
+
+func getPromotionsBody(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /promotions = %d", rec.Code)
+	}
+	return rec.Body.String()
+}
+
+var promoTDRe = regexp.MustCompile(`(?s)<td[^>]*>.*?</td>`)
+
+func TestPromotionsPageList_ShowsCustomerNameNotID(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"NAMED"}, "type": {"amount"}, "value_amount": {"5.00"}, "customer_id": {"cust-live-uuid"},
+	}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d", rec.Code)
+	}
+	body := getPromotionsBody(t, mux)
+	if !strings.Contains(body, `<bdi dir="auto">A &lt;b&gt;&amp;amp; Co</bdi>`) {
+		t.Fatalf("escaped name in bdi dir=auto missing:\n%s", body)
+	}
+	if strings.Contains(body, "<b>&amp; Co") {
+		t.Fatalf("customer name rendered unescaped")
+	}
+	for _, td := range promoTDRe.FindAllString(body, -1) {
+		if strings.Contains(td, "cust-live-uuid") {
+			t.Fatalf("UUID visible in a cell: %s", td)
+		}
+	}
+	if !strings.Contains(body, `data-field-customer_id="cust-live-uuid"`) {
+		t.Fatalf("row lost data-field-customer_id")
+	}
+	if !strings.Contains(body, `data-promo-customer-label="A &lt;b&gt;&amp;amp; Co"`) {
+		t.Fatalf("row lacks the escaped customer label attribute")
+	}
+}
+
+func TestPromotionsPageList_DeletedCustomerLabel(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	// Shell (name '') and a legacy dangling id (FKs off on one conn only).
+	if _, err := d.Db.Exec(`INSERT INTO promotions (code,type,value,customer_id,is_active) VALUES ('SHELLP','amount',100,'cust-shell-uuid',1)`); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := d.Db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`)
+	_, err = conn.ExecContext(t.Context(), `INSERT INTO promotions (code,type,value,customer_id,is_active) VALUES ('GONEP','amount',100,'cust-gone-uuid',1)`)
+	_, _ = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = ON`)
+	conn.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := getPromotionsBody(t, mux)
+	if n := strings.Count(body, `<span class="muted">Deleted customer</span>`); n != 2 {
+		t.Fatalf("Deleted customer label count = %d, want 2", n)
+	}
+	for _, td := range promoTDRe.FindAllString(body, -1) {
+		if strings.Contains(td, "cust-shell-uuid") || strings.Contains(td, "cust-gone-uuid") {
+			t.Fatalf("UUID visible in a cell: %s", td)
+		}
+	}
+}
+
+func TestPromotionsPageEdit_ChangesCustomer_AuditedOnce(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"CHG"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/CHG/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-other-uuid"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("edit: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if id, _ := promoCustomerID(t, d, "CHG"); id != "cust-other-uuid" {
+		t.Fatalf("customer_id = %q", id)
+	}
+	if n, actor := promoEditAudits(t, d, "CHG"); n != 1 || actor != "m1" {
+		t.Fatalf("audit rows=%d actor=%q", n, actor)
+	}
+}
+
+func TestPromotionsPageEdit_ClearsCustomer_AuditedOnce(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"CLR"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/CLR/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {""},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: %d", rec.Code)
+	}
+	if _, bound := promoCustomerID(t, d, "CLR"); bound {
+		t.Fatal("customer_id should be NULL after clear")
+	}
+	if n, actor := promoEditAudits(t, d, "CLR"); n != 1 || actor != "m1" {
+		t.Fatalf("audit rows=%d actor=%q", n, actor)
+	}
+	if !strings.Contains(getPromotionsBody(t, mux), `<span class="muted">Any customer</span>`) {
+		t.Fatal("list should show Any customer")
+	}
+}
+
+func TestPromotionsPageEdit_OmittedCustomerIDKeepsBinding(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"KEEP"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/KEEP/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"2.00"}, "description": {"d"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: %d", rec.Code)
+	}
+	if id, _ := promoCustomerID(t, d, "KEEP"); id != "cust-live-uuid" {
+		t.Fatalf("binding lost: %q", id)
+	}
+}
+
+func TestPromotionsPageEdit_UnknownCustomerRefused(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"REF"}, "type": {"amount"}, "value_amount": {"1.00"}, "description": {"orig"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	form := url.Values{"type": {"amount"}, "value_amount": {"9.00"}, "description": {"changed"}, "customer_id": {"nope"}}
+
+	rec := postFormHtmx(mux, "/api/promotions/REF/edit", form, &manager)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "That customer no longer exists on this till") {
+		t.Fatalf("htmx: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "foreign key") {
+		t.Fatal("raw FK text leaked")
+	}
+	rec = postForm(mux, "/api/promotions/REF/edit", form, &manager)
+	if rec.Header().Get("Location") != "/promotions?err=promotions.error.customer_unknown" {
+		t.Fatalf("non-htmx loc=%q", rec.Header().Get("Location"))
+	}
+	var desc string
+	_ = d.Db.QueryRow(`SELECT description FROM promotions WHERE code='REF'`).Scan(&desc)
+	if id, _ := promoCustomerID(t, d, "REF"); id != "cust-live-uuid" || desc != "orig" {
+		t.Fatalf("DB changed: id=%q desc=%q", id, desc)
+	}
+	if n, _ := promoEditAudits(t, d, "REF"); n != 0 {
+		t.Fatalf("audit rows = %d, want 0", n)
+	}
+}
+
+func TestPromotionsPageEdit_DeletedCustomerBindingSurvivesEdit(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions (code,type,value,customer_id,is_active) VALUES ('SHELLK','amount',100,'cust-shell-uuid',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/promotions/SHELLK/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "description": {"x"}, "customer_id": {"cust-shell-uuid"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit of deleted-customer promo: %d", rec.Code)
+	}
+	if id, _ := promoCustomerID(t, d, "SHELLK"); id != "cust-shell-uuid" {
+		t.Fatalf("binding changed: %q", id)
+	}
+}
+
+func TestPromotionsPageCreate_UnknownCustomerRefused(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	form := url.Values{"code": {"NEWX"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"nope"}}
+	rec := postFormHtmx(mux, "/api/promotions", form, &manager)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "That customer no longer exists on this till") {
+		t.Fatalf("htmx: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = postForm(mux, "/api/promotions", form, &manager)
+	if rec.Header().Get("Location") != "/promotions?err=promotions.error.customer_unknown" {
+		t.Fatalf("loc=%q", rec.Header().Get("Location"))
+	}
+	var n int
+	_ = d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code='NEWX'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("promotion created")
+	}
+}
+
+func TestPromotionsPagePermissions_CustomerChangeForbidden(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	seedPromoCust(t, d)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	postForm(mux, "/api/promotions", url.Values{"code": {"PERM"}, "type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-live-uuid"}}, &manager)
+	rec := postForm(mux, "/api/promotions/PERM/edit", url.Values{
+		"type": {"amount"}, "value_amount": {"1.00"}, "customer_id": {"cust-other-uuid"},
+	}, &cashier)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier edit = %d", rec.Code)
+	}
+	if id, _ := promoCustomerID(t, d, "PERM"); id != "cust-live-uuid" {
+		t.Fatalf("binding changed: %q", id)
 	}
 }

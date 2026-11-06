@@ -13,6 +13,9 @@
 # internal/selfupdate/macapp_darwin_test.go never executed anywhere.
 #
 # Path-scoped, so most PRs get no run: never make it a required check.
+#
+# A run whose macOS job GitHub never gave a runner (hosted capacity
+# starvation) is re-run by ci-runner-retry.yml (ut-docs#5490).
 name: desktop-darwin
 on:
   pull_request:

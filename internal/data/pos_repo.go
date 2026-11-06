@@ -6586,7 +6586,12 @@ ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 
 // EraseCustomer removes a customer's personal data (GDPR right to erasure):
 // it unlinks the customer from sales (live AND archived) and promotions
-// (keeping the sales, which are financial records, but anonymous), strips
+// (keeping the sales, which are financial records, but anonymous), and
+// DEACTIVATES every promotion bound to them in the same statement as the
+// unlink: a NULL customer_id means "any customer", so unlinking alone would
+// widen a customer-only discount to everyone (ut-docs#5591; same rule as
+// migration 097 / ut-docs#5590). The 023 trigger bumps sync_admin_version
+// on that row change, so replicas follow. Strips
 // the customer from parked baskets (live AND archived, ut-docs#3253 —
 // stripCustomerFromHeldSales) and deletes the customer row. Audited.
 // Returns false if no such customer. LAN replicas follow on their next
@@ -6644,7 +6649,9 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 	for _, q := range []string{
 		`UPDATE sales SET customer_id = NULL WHERE customer_id = ?`,
 		`UPDATE sales_archive SET customer_id = NULL WHERE customer_id = ?`,
-		`UPDATE promotions SET customer_id = NULL WHERE customer_id = ?`,
+		// ut-docs#5591: NULL customer_id means "any customer", so unlink AND
+		// deactivate in one statement (same rule as migration 097).
+		`UPDATE promotions SET is_active = 0, customer_id = NULL WHERE customer_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return false, fmt.Errorf("erase customer unlink: %w", err)
@@ -7267,6 +7274,14 @@ func isUniqueViolation(err error) bool {
 // failure.
 var ErrPromotionCodeExists = errors.New("promotion code already exists")
 
+// ErrPromotionCustomerUnknown is returned by CreatePromotion/UpdatePromotion
+// when the chosen customer is not a live, named customer on this till
+// (ut-docs#5574): never surface the raw FK failure to the operator.
+var ErrPromotionCustomerUnknown = errors.New("promotion customer not found")
+
+// ErrPromotionNotFound is returned by UpdatePromotion for an unknown code.
+var ErrPromotionNotFound = errors.New("promotion not found")
+
 // PromotionInput is the editable shape of a promo code -- everything except
 // the code itself (the PRIMARY KEY, immutable once created). Value is a raw
 // int64 at rest: minor currency units when Type is "amount", basis points
@@ -7280,13 +7295,46 @@ type PromotionInput struct {
 	StartsAt    string
 	EndsAt      string
 	CustomerID  string
+	// KeepCustomer leaves promotions.customer_id untouched on update and
+	// ignores CustomerID (ut-docs#5574). Ignored on create.
+	KeepCustomer bool
+}
+
+// liveCustomerExists reports whether id names a live, named customer (exact
+// id only; a retired shell has name ”). ut-docs#5574.
+func liveCustomerExists(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, id string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM customers WHERE id = ? AND name <> '' LIMIT 1`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CreatePromotion adds a new, active promo code. Real merchant-created rows
 // are never sample data -- is_sample_data (migration 038) is left at its
 // column default (0) here, deliberately untouched.
 func (r *POSRepo) CreatePromotion(ctx context.Context, code string, in PromotionInput) error {
-	_, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("create promotion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if in.CustomerID != "" {
+		ok, err := liveCustomerExists(ctx, tx, in.CustomerID)
+		if err != nil {
+			return fmt.Errorf("create promotion: %w", err)
+		}
+		if !ok {
+			return ErrPromotionCustomerUnknown
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO promotions (code, type, value, description, starts_at, ends_at, customer_id, is_active)
 VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
 		strings.TrimSpace(code), in.Type, in.Value, nullIfEmpty(in.Description),
@@ -7297,25 +7345,106 @@ VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
 		}
 		return fmt.Errorf("create promotion: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("create promotion: %w", err)
+	}
 	return nil
+}
+
+// PromotionFieldChange is one edited column's stored value before and after
+// (ut-docs#5588). Values are the stored forms: string, or int64 for value
+// (minor units for type=amount, basis points for type=percent).
+type PromotionFieldChange struct {
+	From any `json:"from"`
+	To   any `json:"to"`
+}
+
+// PromotionChanges maps a promotions column name (type, value, description,
+// starts_at, ends_at, customer_id) to its change. Empty (non-nil) = no-op edit.
+type PromotionChanges map[string]PromotionFieldChange
+
+// promotionDiff compares the stored row with the edit input. customer_id is
+// only considered when the edit rewrites it (!keep). NULL and "" are equal.
+func promotionDiff(old, in PromotionInput, keep bool) PromotionChanges {
+	ch := PromotionChanges{}
+	if old.Type != in.Type {
+		ch["type"] = PromotionFieldChange{From: old.Type, To: in.Type}
+	}
+	if old.Value != in.Value {
+		ch["value"] = PromotionFieldChange{From: old.Value, To: in.Value}
+	}
+	if old.Description != in.Description {
+		ch["description"] = PromotionFieldChange{From: old.Description, To: in.Description}
+	}
+	if old.StartsAt != in.StartsAt {
+		ch["starts_at"] = PromotionFieldChange{From: old.StartsAt, To: in.StartsAt}
+	}
+	if old.EndsAt != in.EndsAt {
+		ch["ends_at"] = PromotionFieldChange{From: old.EndsAt, To: in.EndsAt}
+	}
+	if !keep && old.CustomerID != in.CustomerID {
+		ch["customer_id"] = PromotionFieldChange{From: old.CustomerID, To: in.CustomerID}
+	}
+	return ch
 }
 
 // UpdatePromotion edits an existing promotion's type/value/description/
 // dates/customer target. The code (PRIMARY KEY) is the promo's identity and
-// is never rewritten here.
-func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) error {
-	res, err := r.db.ExecContext(ctx, `
+// is never rewritten here. When the customer binding is unchanged (or
+// KeepCustomer) customer_id is left OUT of the SET list: SQLite FK-checks a
+// child column named in SET even when the value is identical, so a legacy
+// dangling id would otherwise make every edit fail (ut-docs#5574).
+//
+// On success it returns the stored-before/after diff of the edited columns,
+// computed from the row read inside the same tx (ut-docs#5588); a no-op edit
+// returns an empty, non-nil map. On any error the changes are nil.
+func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) (PromotionChanges, error) {
+	code = strings.TrimSpace(code)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("update promotion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var old PromotionInput
+	if err := tx.QueryRowContext(ctx, `
+SELECT type, value, COALESCE(description,''), COALESCE(starts_at,''), COALESCE(ends_at,''), COALESCE(customer_id,'')
+FROM promotions WHERE code = ?`, code).Scan(&old.Type, &old.Value, &old.Description, &old.StartsAt, &old.EndsAt, &old.CustomerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPromotionNotFound
+		}
+		return nil, fmt.Errorf("update promotion: %w", err)
+	}
+	keep := in.KeepCustomer || in.CustomerID == old.CustomerID
+	if !keep && in.CustomerID != "" {
+		ok, err := liveCustomerExists(ctx, tx, in.CustomerID)
+		if err != nil {
+			return nil, fmt.Errorf("update promotion: %w", err)
+		}
+		if !ok {
+			return nil, ErrPromotionCustomerUnknown
+		}
+	}
+	if keep {
+		_, err = tx.ExecContext(ctx, `
+UPDATE promotions SET type = ?, value = ?, description = ?, starts_at = ?, ends_at = ?
+WHERE code = ?`,
+			in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
+			nullIfEmpty(in.EndsAt), code)
+	} else {
+		_, err = tx.ExecContext(ctx, `
 UPDATE promotions SET type = ?, value = ?, description = ?, starts_at = ?, ends_at = ?, customer_id = ?
 WHERE code = ?`,
-		in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
-		nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID), strings.TrimSpace(code))
+			in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
+			nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID), code)
+	}
 	if err != nil {
-		return fmt.Errorf("update promotion: %w", err)
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("update promotion: %s not found", code)
+	changes := promotionDiff(old, in, keep)
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
-	return nil
+	return changes, nil
 }
 
 // SetPromotionActive soft-deactivates/reactivates a promo code -- mirrors
@@ -7349,6 +7478,11 @@ type PromotionAdmin struct {
 	EndsAt      string
 	CustomerID  string
 	IsActive    bool
+	// CustomerName is the bound customer's name ("" when unbound or missing).
+	CustomerName string
+	// CustomerMissing: bound, but no live named customer row (replica shell
+	// or legacy dangling id). ut-docs#5574.
+	CustomerMissing bool
 }
 
 // ListPromotionsForAdmin returns every promo code (active and inactive),
@@ -7356,9 +7490,11 @@ type PromotionAdmin struct {
 // FindActivePromo's own query is separate and untouched by this addition.
 func (r *POSRepo) ListPromotionsForAdmin(ctx context.Context) ([]PromotionAdmin, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT code, type, value, COALESCE(description,''), COALESCE(starts_at,''), COALESCE(ends_at,''), COALESCE(customer_id,''), is_active
-FROM promotions
-ORDER BY is_active DESC, code ASC`)
+SELECT p.code, p.type, p.value, COALESCE(p.description,''), COALESCE(p.starts_at,''), COALESCE(p.ends_at,''),
+       COALESCE(p.customer_id,''), COALESCE(c.name,''), p.is_active
+FROM promotions p
+LEFT JOIN customers c ON c.id = p.customer_id
+ORDER BY p.is_active DESC, p.code ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list promotions for admin: %w", err)
 	}
@@ -7367,9 +7503,10 @@ ORDER BY is_active DESC, code ASC`)
 	for rows.Next() {
 		var p PromotionAdmin
 		var active int
-		if err := rows.Scan(&p.Code, &p.Type, &p.Value, &p.Description, &p.StartsAt, &p.EndsAt, &p.CustomerID, &active); err != nil {
+		if err := rows.Scan(&p.Code, &p.Type, &p.Value, &p.Description, &p.StartsAt, &p.EndsAt, &p.CustomerID, &p.CustomerName, &active); err != nil {
 			return nil, fmt.Errorf("scan promotion admin: %w", err)
 		}
+		p.CustomerMissing = p.CustomerID != "" && p.CustomerName == ""
 		p.IsActive = active == 1
 		out = append(out, p)
 	}

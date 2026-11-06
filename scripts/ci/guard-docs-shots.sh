@@ -116,7 +116,10 @@ fi
 python3 - <<'PY'
 import glob, hashlib, json, os, re, sys
 
-LOCALES = ["en", "fa", "ar", "tr"]  # must match e2e/tests-docs/lib.js
+# en is the only REQUIRED locale (ADR-0160 section 2: code merges with English
+# only). make docs-shots may still capture fa/ar/tr (e2e/tests-docs/lib.js);
+# those shots and hashes are not checked here.
+LOCALES = ["en"]
 
 def sha256_file(path):
     with open(path, "rb") as f:

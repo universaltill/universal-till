@@ -532,7 +532,9 @@ html.fx-light #refresh-indicator, html.fx-light .animate-spin { animation: spin 
    suggested icon, the caps-lock key, a row being dragged. */
 html.fx-light .osk-caps { box-shadow: inset 0 0 0 2px var(--accent-contrast) !important; }
 html.fx-light .category-overflow-tile.active { box-shadow: 0 0 0 2px var(--cat-color, var(--accent)) inset !important; }
-html.fx-light .picker-tile[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
+html.fx-light .picker-tile[aria-pressed="true"],
+html.fx-light .picker-tile[aria-checked="true"],
+html.fx-light .picker-tile[aria-selected="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
 /* Its own rule: an engine without :has() drops only this one. */
 html.fx-light .designer-cat-colors .item-color-tile:has(input:checked) { box-shadow: inset 0 0 0 2px var(--accent) !important; }
 html.fx-light .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent) !important; }
@@ -2161,7 +2163,7 @@ input, select, textarea {
   min-block-size: 46px;
 }
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border);
+  outline: 2px solid var(--focus-border); outline-offset: 1px; border-color: var(--focus-border);
 }
 .form-row input { padding: .55rem; }
 label { font-size: .85rem; color: var(--text); }
@@ -3429,6 +3431,11 @@ body.osk-padded #table-add-modal .modifier-actions {
   transition: background .15s ease, color .15s ease;
 }
 .order-type-option.is-active { background: var(--accent); color: #fff; }
+/* ut-docs#5553: visible >=3:1 focus inside the pill (the group clips outside outlines). */
+.order-type-option:focus-visible { outline: 2px solid var(--focus-border); outline-offset: -4px; }
+/* Two-tone: the white ring alone is 1.8-2.8:1 on the accent fill in some themes,
+   so a black ring sits flush inside it (black vs accent >= 3:1 everywhere). */
+.order-type-option.is-active:focus-visible { outline-color: #fff; box-shadow: inset 0 0 0 4px #000; }
 /* ut-docs#2282/#2309: the per-line dine-in/takeaway segments (ADR-0073
    Decision 2) and the mixed-basket status chip that used to live here were
    REMOVED with the cashier-facing per-line control (product-owner scope
@@ -4990,24 +4997,24 @@ body.login-screen {
    this selector can't touch it. */
 @media (max-width: 480px) {
   .fiscal-register-group .users-inline { flex-wrap: wrap; }
-  /* ut-docs#3653: the same overflow inside a phone card's actions cell.
-     That cell is flex-end, so a non-wrapping inline edit form wider than
-     the card (promotions: type, value, description, two dates, Save
-     ≈ 715px) spilled past the card's inline-START edge and its first
-     controls were cut off by the table's overflow:hidden. /kitchen-stations
-     had the same defect. table-cards.js puts .t-cards on tables at every
-     width, but this block is ≤480px only, so the desktop /users row
-     (#898) is untouched. */
+  /* Phone card actions cell: let a row's inline edit form wrap inside the
+     card. Still used by /tables and /users (row edit forms); delete when
+     they adopt the record dialog (epic ut-docs#2012). min-inline-size, not
+     width: it outranks the templates' inline style="width:…". */
   table.t-cards .t-cards-actions .users-inline {
     flex-wrap: wrap; justify-content: flex-end; min-inline-size: 0; max-inline-size: 100%;
   }
-  /* Once wrapped, let the fields fill their line, and keep a date wide
-     enough to show its year (7.5rem cut it off at "31/12/202").
-     min-inline-size, not width: it outranks the templates' inline
-     style="width:…" without !important. */
   table.t-cards .t-cards-actions .users-inline :is(input, select) { flex: 1 1 auto; }
-  table.t-cards .t-cards-actions .users-inline input[type="date"] { min-inline-size: 9.75rem; }
 }
+
+/* Kitchen stations (ut-docs#5575): the View display link sits inside a
+   tappable row, so give it a >=44px-tall hit area; discovery results sit
+   in the station dialog. */
+.kitchen-view-display { display: inline-block; padding-block: .6rem; }
+.kitchen-discover-btn { inline-size: 100%; }
+.kitchen-discover-msg { min-block-size: 1.2rem; }
+.kitchen-discover-list { list-style: none; padding-inline-start: 0; margin: .4rem 0; }
+.kitchen-discover-list li { padding-block: .3rem; overflow-wrap: anywhere; }
 
 /* Camera identify overlay (opened on demand from the scan row). The overlay
    reserves the measured status row (--phone-sb-h, app.js measureBar; 4rem =
@@ -5428,8 +5435,11 @@ body.login-screen {
 }
 .picker-tile:hover { border-color: #cbd5e1; }
 .picker-tile:active { transform: scale(.97); }
-.picker-tile:focus-visible { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border); }
-.picker-tile[aria-pressed="true"] {
+/* ut-docs#1103 UX1: >=3:1 ring (WCAG 1.4.11); the gap keeps it distinct from the checked inset ring. */
+.picker-tile:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; border-color: var(--focus-border); }
+.picker-tile[aria-pressed="true"],
+.picker-tile[aria-checked="true"],
+.picker-tile[aria-selected="true"] {
   border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent);
 }
 [x-cloak] { display: none !important; }
@@ -5464,13 +5474,27 @@ body.login-screen {
 .builtin-icon-grid {
   grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
   max-block-size: 18rem; overflow-y: auto; overscroll-behavior: contain;
-  padding: .15rem;
+  /* ut-docs#1103: room for the 2px+2px .picker-tile focus ring, which the
+     scroll box would otherwise clip on edge tiles. */
+  padding: .3rem;
+  /* ut-docs#5601: arrowing to an edge tile scrolls it clear of the box edge,
+     so its focus ring isn't clipped. */
+  scroll-padding: 5px;
 }
 .builtin-icon-group-label {
   grid-column: 1 / -1; margin-block-start: .35rem;
   font-size: .8rem; font-weight: 600; color: var(--muted); text-align: start;
 }
 .builtin-icon-group-label[hidden], .builtin-icon-tile[hidden] { display: none; }
+/* ut-docs#5601: each section is a role="group" wrapper inside the listbox.
+   It spans the whole row and repeats the grid's own column template, so the
+   tiles lay out in the same columns as before; no subgrid/display:contents
+   (both have had accessibility-tree bugs on older WebKit/Chromium). */
+.builtin-icon-group {
+  grid-column: 1 / -1; display: grid; gap: inherit;
+  grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
+}
+.builtin-icon-group[hidden] { display: none; }
 .builtin-icon-search { display: block; inline-size: 100%; margin-block: .35rem; }
 /* Review finding F5: .picker-tile:focus-visible's own outline (above) and
    a plain `outline` here have identical specificity, so whichever rule
@@ -5483,8 +5507,8 @@ body.login-screen {
 .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
 
 /* Item color swatch picker (ut-docs#1901): same .picker-grid/.picker-tile
-   pattern and aria-pressed convention as the built-in icon grid just
-   above, one small dot + translated name per tile rather than an image.
+   pattern as the built-in icon grid just above (whose selected tile is
+   aria-selected since ut-docs#5601, a listbox; this one is aria-pressed), one small dot + translated name per tile rather than an image.
    --swatch (set inline per tile, catalog.html) feeds .swatch-dot's
    background — the one place a raw hex from catalogtypes.ItemColors()
    reaches CSS on the PICKER side; the tile's own selected/pressed state
@@ -6316,6 +6340,11 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
 .btn-icon .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
 .btn-icon:focus-visible { outline: 2px solid var(--focus-border, var(--accent)); outline-offset: 2px; }
 .btn-icon-danger, .btn-icon-danger:hover { color: var(--danger); }
+/* ut-docs#5574: promotion dialog customer field + its remove (x) button. */
+[data-promo-customer] { display: flex; flex-direction: column; gap: .2rem; }
+.promo-cust-row { display: flex; gap: .5rem; align-items: stretch; }
+.promo-cust-row > input { flex: 1 1 auto; min-inline-size: 0; }
+.promo-cust-row > .btn-icon { min-inline-size: 3rem; min-block-size: 3rem; }
 /* --- The list: a card whose wide table scrolls inside it (same escape
    hatch as .users-list / .settings-grid .card .table) and tap-to-edit rows
    that read as tappable. Attribute selectors, so no page has to carry an
@@ -6337,7 +6366,13 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    buttons vertically, tripling the row height and clipping them at the card
    edge (seen in this card's own 360px screenshot). One row, and the table
    scrolls sideways inside the card instead. */
-.list-actions { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+.list-actions:not(td) { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+/* flex only on a non-cell container (designer category list, buttons.html);
+   on a <td> flex replaced display:table-cell, so the cell stopped stretching
+   to the row and its border-bottom sat above the row's on a wrapped row
+   (ut-docs#5576). The cell stays a real table cell, nowrap + end-aligned. */
+td.list-actions { white-space: nowrap; text-align: end; vertical-align: middle; }
+td.list-actions > * + * { margin-inline-start: .5rem; }
 .list-empty-row td { text-align: center; color: var(--muted); }
 [data-record-open] { cursor: pointer; }
 [data-record-open]:hover > td { background: var(--surface-2); }
@@ -6386,10 +6421,9 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
 /* ut-docs#2099 (coding-standards.md §10, ut-docs#1999's other half): status/
    lock/exit-to-OS, withheld outright in self-order kiosk mode (see
    record_dialog.html — the whole row is absent then, not just hidden).
-   Deliberately its own thin line, NOT full-height .btn/.btn-icon controls
-   (those are 3rem/48px touch targets, sized for a primary action) — this
-   is a secondary affordance and the ut-docs#2000 head-height budget has no
-   room to repeat that size a third time in the same pinned head. Measured
+   Secondary row, but its controls meet the 44px touch floor (ut-docs#5576;
+   was 1.9rem ≈ 33x32): 44px literal so it holds at any --ui-scale. Still
+   thinner than full 3rem .btn/.btn-icon, the ut-docs#2000 head budget. Measured
    height cost at 360px is recorded in
    ut-docs/reference/list-and-dialog-pattern.md's "The nav rail is
    covered" section. The connection chip reuses .sb-dot / .is-offline
@@ -6408,8 +6442,8 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    override to the existing --danger token (~4.8:1 on white) rather than a
    new literal; .sb-dot's own background/glow is unaffected. */
 .record-dialog-status-row .sb-conn.is-offline { color: var(--danger); }
-.record-dialog-status-row .btn { min-block-size: 1.9rem; padding: .2rem .5rem; }
-.record-dialog-status-row .btn-icon { min-inline-size: 1.9rem; padding-inline: .4rem; }
+.record-dialog-status-row .btn { min-block-size: 44px; padding: .2rem .5rem; }
+.record-dialog-status-row .btn-icon { min-inline-size: 44px; padding-inline: .4rem; }
 .record-dialog-status-row .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
 .record-dialog-lock { margin: 0; display: inline-flex; }
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
@@ -6426,6 +6460,8 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    failure the server response never covered — makes it non-empty and
    this rule takes over. */
 .record-dialog-msg:empty { display: none; }
+.record-dialog-body [aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 1px; }
+.record-dialog-msg { scroll-margin-block-start: .5rem; }
 .record-dialog-msg { color: var(--danger); font-weight: 600;
                       margin-block: 0 .7rem; max-inline-size: 40rem; }
 .record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
@@ -6647,7 +6683,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-colors .item-color-tile { flex-direction: row; gap: .4rem; min-block-size: 2.6rem; min-inline-size: 6rem; padding: .35rem .6rem; }
 .designer-cat-colors .item-color-tile input[type="radio"] { margin: 0; flex: none; }
 .designer-cat-colors .item-color-tile:has(input:checked) { border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent); }
-.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; }
+.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 .designer-cat-new { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
 .designer-cat-new .designer-cat-form { inline-size: 100%; border-block-start: 0; padding-block-start: 0; }
 
@@ -7403,3 +7439,160 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .move-approve input[type="text"] { flex: 1 1 12rem; margin: 0; }
 .move-decline { margin: 0; }
 #move-approval-notice-mount:empty { display: none; }
+
+/* ut-docs#5410: Currency display select (Settings -> Currency). */
+.currency-display-select { min-block-size: 44px; }
+
+/* ut-docs#3661: /promotions on the list-and-dialog pattern. A 36-char
+   customer UUID or a long description wraps instead of widening the table;
+   the Valid column keeps each date on one line, stacked. */
+#promotions-table td.promo-wrap { overflow-wrap: anywhere; min-inline-size: 6rem; }
+#promotions-table td.promo-dates { white-space: nowrap; }
+#promotions-table td.promo-dates .promo-date { display: block; }
+/* A readonly field (promotion code and customer on edit, country code) must
+   not look editable: a tap on it summons no keyboard, which reads as broken. */
+.record-dialog-body input[readonly] { background: var(--surface-2); cursor: default; }
+
+/* ---------- Notices from Universal Till and partners (ADR-0176, ut-docs#5366) ----------
+   Spec: ut-docs docs/design/5366-till-notices. ONE notification surface
+   (.pos-notice) with two new modifiers; the bell sits in the rail's status
+   group; severity is a glyph SHAPE (circle / triangle / octagon) plus a word,
+   never colour alone. Logical properties only (RTL). Light-theme border tints
+   are the measured >=3:1 values (WCAG 1.4.11); themes/dark.css redefines them. */
+:root {
+  --notice-info-bg: #e6edfc;      --notice-info-bd: #4f74c4;      --notice-info-fg: #0f172a;
+  --notice-imp-bg: #fdf0d5;       --notice-imp-bd: #a16207;       --notice-imp-fg: #7a3a05;
+  --notice-crit-bg: #fde4e4;      --notice-crit-bd: #b91c1c;      --notice-crit-fg: #8f1515;
+}
+/* .important / .critical join .info/.success/.error on the one component. */
+.pos-notice.important { background: var(--notice-imp-bg); color: var(--notice-imp-fg);
+  border-color: var(--notice-imp-bd); position: relative; overflow: hidden; }
+.pos-notice.critical { background: var(--notice-crit-bg); color: var(--notice-crit-fg);
+  border-color: var(--notice-crit-bd); border-width: 2px; }
+.pos-notice .notice-sev-ico { flex: none; display: inline-flex; }
+.pos-notice .notice-sev-ico svg { inline-size: 22px; block-size: 22px; }
+.pos-notice .notice-text b { display: block; }
+.pos-notice .notice-text > span { display: block; }
+/* The toast body keeps to two lines; the full text is one tap away. */
+.pos-notice .notice-toast-body { display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; font-weight: 500; }
+.pos-notice .notice-strip-acts { display: flex; gap: .3rem; flex: none; align-items: center; }
+/* The 44px targets overlap the toast's .55rem (8.8px) padding by at most 8px
+   so nothing pokes past its overflow: hidden edge. */
+.pos-notice .notice-link { color: inherit; font-weight: 700; text-decoration: underline;
+  min-block-size: 44px; display: inline-flex; align-items: center; margin-block: -8px;
+  padding-inline: .3rem; }
+/* The strip sits at the very top of the viewport: no negative margins there,
+   or the Acknowledge button's top edge and focus ring are clipped off-screen. */
+.pos-notice.strip .btn { min-block-size: 44px; }
+.pos-notice.strip .btn, .pos-notice.strip .notice-link { margin-block: 0; }
+/* The critical strip: one line at the top of the main region, full width; a
+   long title keeps to two lines on a phone (the inbox has the full text). */
+.pos-notice.strip .notice-text b { display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.notices-strip-mount:empty { display: none; }
+.pos-notice.strip { border-radius: 0; border-inline-width: 0; border-block-start-width: 0;
+  margin: 0; padding-block: .25rem; }
+.notices-toast-mount:empty { display: none; }
+.notices-toast-mount { grid-column: 1 / -1; }
+@media (prefers-reduced-motion: reduce) { .pos-notice { transition: none; } }
+.pos-notice.important::after { content: ""; position: absolute; inset-inline: 0; inset-block-end: 0;
+  block-size: 3px; background: currentColor; opacity: .5; transform-origin: left center;
+  animation: notice-timer var(--notice-ms, 10s) linear forwards; }
+html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
+.pos-notice.important.paused::after { animation-play-state: paused; }
+@keyframes notice-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .pos-notice.important::after { animation: none; transform: scaleX(.6); }
+}
+
+/* Bell + unread badge. */
+#notices-bell:empty { display: none; }
+.notices-badge { position: absolute; inset-block-start: -.5rem; inset-inline-end: -.85rem;
+  min-inline-size: 22px; block-size: 22px; padding: 0 5px; border-radius: 11px;
+  background: #fff; color: #0f172a; border: 2px solid var(--brand);
+  font-size: .78rem; font-weight: 800; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px; }
+/* A critical unread: the badge changes SHAPE (square) and carries a triangle. */
+.notices-badge.crit { background: #b91c1c; color: #fff; border-color: #fff; border-radius: 6px; }
+.notices-badge .notices-badge-ico svg { inline-size: 11px; block-size: 11px; display: block; }
+.notices-badge[hidden] { display: none; }
+.notices-badge-burger { display: none; }
+@media (max-width: 480px) {
+  .nav-drawer-toggle { position: relative; }
+  .notices-badge-burger:not([hidden]) { display: inline-flex; inset-block-start: 2px; inset-inline-end: -4px; }
+  .notices-bell .notices-badge { position: static; margin-inline-start: auto; }
+}
+
+/* The inbox. */
+.notices-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-block-end: .7rem; }
+.notices-tab { min-block-size: 44px; padding: .4rem 1rem; border-radius: 22px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; text-decoration: none; }
+.notices-tab[aria-current="page"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.notices-cnt { font-size: .8rem; font-weight: 800; border: 1px solid currentColor;
+  border-radius: 10px; padding: 0 .4rem; }
+.notices-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.notice-msg { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  border-inline-start-width: 6px; overflow: hidden; }
+.notice-msg.s-info { border-inline-start-color: var(--notice-info-bd); }
+.notice-msg.s-important { border-inline-start-color: var(--notice-imp-bd); }
+.notice-msg.s-critical { border-inline-start-color: var(--notice-crit-bd); }
+.notice-hd { display: flex; gap: .7rem; align-items: flex-start; padding: .6rem .8rem;
+  min-block-size: 64px; inline-size: 100%; text-align: start; background: transparent;
+  border: 0; color: inherit; font: inherit; cursor: pointer; }
+.notice-sev-ico svg { inline-size: 26px; block-size: 26px; display: block; }
+.notice-msg .notice-sev-ico { flex: none; margin-block-start: 2px; }
+.notice-msg.s-important .notice-sev-ico { color: var(--notice-imp-fg); }
+.notice-msg.s-critical .notice-sev-ico { color: var(--notice-crit-fg); }
+.notice-main { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; }
+.notice-ttl { font-weight: 500; overflow-wrap: anywhere; }
+.notice-msg.unread .notice-ttl { font-weight: 800; }
+.notice-unrd { inline-size: 10px; block-size: 10px; border-radius: 50%; background: var(--accent);
+  flex: none; margin-block-start: 8px; }
+.notice-meta { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: center;
+  font-size: .82rem; color: var(--muted); margin-block-start: .15rem; }
+.notice-sevtag { font-weight: 700; color: var(--text); border: 1px solid currentColor;
+  border-radius: 4px; padding: 0 .35rem; }
+.notice-msg.s-important .notice-sevtag { color: var(--notice-imp-fg); }
+.notice-msg.s-critical .notice-sevtag { color: var(--notice-crit-fg); background: var(--notice-crit-bg); }
+.notice-sender { display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; color: var(--text); }
+.notice-sender.partner { border: 1.5px dashed var(--muted); border-radius: 6px; padding: 0 .4rem; }
+.notice-sender-ico svg { inline-size: 14px; block-size: 14px; display: block; }
+.notice-body { padding: 0 .8rem .7rem; padding-inline-start: calc(.8rem + 26px + .7rem); }
+.notice-body p { margin: .2rem 0 .6rem; overflow-wrap: anywhere; }
+.notice-acts { display: flex; flex-wrap: wrap; gap: .5rem; }
+@media (max-width: 480px) {
+  .notice-hd { min-block-size: 68px; }
+  .notice-body { padding-inline-start: .8rem; }
+}
+.notices-empty { margin: 2rem auto; text-align: center; max-inline-size: 34ch; display: flex;
+  flex-direction: column; gap: .5rem; align-items: center; }
+.notices-empty-ico svg { inline-size: 56px; block-size: 56px; color: var(--muted); }
+.notices-empty p { margin: 0; color: var(--muted); }
+
+/* ut-docs#5553: Windows High Contrast / forced colors. The normal selected
+   look (accent border + inset box-shadow + tinted fill) is erased in this
+   mode, so selection is re-drawn with system colours and a thicker border;
+   focus keeps its own outline, separate from the selection fill. */
+@media (forced-colors: active) {
+  .picker-tile[aria-pressed="true"],
+  .picker-tile[aria-checked="true"],
+  .picker-tile[aria-selected="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText;
+    border-color: Highlight;
+    box-shadow: inset 0 0 0 2px Highlight;
+  }
+  .picker-tile:focus-visible { outline: 3px solid CanvasText; outline-offset: 2px; }
+  .order-type-option { border: 1px solid ButtonText; }
+  .order-type-option[aria-checked="true"],
+  body:not(.pos-sheet-open) .basket .order-type-option[aria-checked="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText;
+    border: 3px solid Highlight;
+    box-shadow: none;
+  }
+  .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
+  .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
+}

@@ -63,17 +63,20 @@ export async function isHealthy(baseURL: string, timeoutMs = 1_000): Promise<boo
 // setting's real default (category_tabs) renders category tiles on /, with
 // no product tile until one is tapped, so without this every spec that
 // clicks a .btn-tile on the sale screen would break at once. Set through
-// the till's own endpoint, after boot (UT_AUTH=off, so no elevation), not
+// the till's own endpoint, after boot (UT_AUTH=off, so no elevation; an
+// `auth` till sends its first-boot session cookie instead), not
 // baked into seed_demo: run-till.sh / docs-shots reuse that seed and the
 // manual's screenshots should show the real default. Specs that want
 // another mode switch it explicitly (helpers.ts's setBrowsingMode) and
 // restore this one afterwards.
 export const WORKER_TILL_BROWSING_MODE = 'strip_overflow';
 export const WORKER_TILL_EFFECTS_LEVEL = 'full';
-async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
+async function applyWorkerTillDefaults(baseURL: string, cookie?: string): Promise<void> {
+  // ut-docs#5466: an auth-on till needs the first-boot session on these POSTs.
+  const authHeaders = cookie ? { Cookie: cookie } : {};
   const res = await fetch(`${baseURL}/api/settings/browsing-mode`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...authHeaders },
     body: new URLSearchParams({ mode: WORKER_TILL_BROWSING_MODE }),
     signal: AbortSignal.timeout(5_000),
   });
@@ -89,7 +92,7 @@ async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
   // this one.
   const fx = await fetch(`${baseURL}/api/settings/effects-level`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...authHeaders },
     body: new URLSearchParams({ level: WORKER_TILL_EFFECTS_LEVEL }),
     signal: AbortSignal.timeout(5_000),
   });
@@ -100,6 +103,10 @@ async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
 
 export type WorkerTill = {
   url: string;
+  // ut-docs#5466: set only for an `auth: true` till. A test PIN, not a secret.
+  // The session cookie from first boot is NOT exposed: a spec signs in
+  // through /login like a real operator.
+  adminPin?: string;
   // The till's own throwaway data dir (ut-docs#2717: a spec that must
   // change the database out of band, the way a cloud directive lands,
   // runs a Go helper against it). Undefined for a reused server — the
@@ -143,16 +150,55 @@ export const FRESH_PORT_OFFSET = 50;
 // till already listening there.
 export const EXTRA_SEEDS_PORT_OFFSET = 100;
 
-export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boolean; extraSeeds?: string[] } = {}): Promise<WorkerTill> {
+// ut-docs#5466: `auth` boots a till WITHOUT UT_AUTH=off (the variable is
+// removed, not inherited), for a spec that needs a real signed-in operator,
+// e.g. the plugin-view `confirm` component: core stamps an agent operator
+// only from an auth session, so with auth off every action_propose is
+// refused (ut-docs#4168). First boot goes through the real
+// POST /api/auth/setup with WORKER_TILL_ADMIN_PIN, so no seed writes a PIN
+// hash. Own port band (worker port + AUTH_PORT_OFFSET), never reuses a
+// listening till. Keep UT_E2E_WORKER_PORT_BASE values more than
+// AUTH_PORT_OFFSET + workers apart too.
+export const AUTH_PORT_OFFSET = 150;
+// Same value as helpers.ts ADMIN_PIN (not imported: helpers pulls in Playwright).
+export const WORKER_TILL_ADMIN_PIN = '482913';
+
+async function completeFirstBoot(baseURL: string): Promise<string> {
+  const tag = `worker till ${baseURL}`;
+  const res = await fetch(`${baseURL}/api/auth/setup`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ pin: WORKER_TILL_ADMIN_PIN, pin_confirm: WORKER_TILL_ADMIN_PIN, store_name: 'E2E Agent Shop' }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  // 303 -> '/' is success; a refusal re-renders with 200 or redirects to /login.
+  if (res.status !== 303 || res.headers.get('location') !== '/') {
+    throw new Error(`${tag}: first boot via /api/auth/setup failed: HTTP ${res.status} -> ${res.headers.get('location')}`);
+  }
+  const c = res.headers.getSetCookie().find((h) => h.startsWith('ut_session='));
+  if (!c) throw new Error(`${tag}: first boot set no ut_session cookie`);
+  // AC1: prove auth is really on -- an anonymous "/" must go to /login.
+  const anon = await fetch(`${baseURL}/`, { redirect: 'manual', signal: AbortSignal.timeout(5_000) });
+  const loc = anon.headers.get('location') ?? '';
+  if (anon.status < 300 || anon.status >= 400 || !loc.includes('/login')) {
+    throw new Error(`${tag}: auth is not on: anonymous / answered HTTP ${anon.status} -> ${loc}`);
+  }
+  return c.split(';')[0];
+}
+
+export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boolean; extraSeeds?: string[]; auth?: boolean } = {}): Promise<WorkerTill> {
   const fresh = opts.fresh === true;
   const extraSeeds = opts.extraSeeds ?? [];
-  const ownTill = fresh || extraSeeds.length > 0;
-  const port = workerPort(parallelIndex) + (fresh ? FRESH_PORT_OFFSET : extraSeeds.length > 0 ? EXTRA_SEEDS_PORT_OFFSET : 0);
+  const auth = opts.auth === true;
+  const ownTill = fresh || auth || extraSeeds.length > 0;
+  const port =
+    workerPort(parallelIndex) + (auth ? AUTH_PORT_OFFSET : fresh ? FRESH_PORT_OFFSET : extraSeeds.length > 0 ? EXTRA_SEEDS_PORT_OFFSET : 0);
   const url = `http://127.0.0.1:${port}`;
   const tag = `[till:${port}]`;
 
   if (ownTill && (await isHealthy(url))) {
-    throw new Error(`${tag} something is already listening on ${url}; a fresh or extra-seeded till never reuses one`);
+    throw new Error(`${tag} something is already listening on ${url}; a fresh, extra-seeded or auth till never reuses one`);
   }
   if (!ownTill && (await isHealthy(url))) {
     // Same semantics as the `webServer` entries' `reuseExistingServer:
@@ -171,7 +217,7 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-e2e-worker-'));
   // ut-docs#2704: the till opens the OS default browser on boot unless told
   // not to -- every worker would pop a real tab on the developer's desktop.
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     UT_OPEN_BROWSER: process.env.UT_OPEN_BROWSER ?? '0',
     UT_LAN_DISCOVERY: process.env.UT_LAN_DISCOVERY ?? '0', // ut-docs#3814
@@ -191,6 +237,7 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
       ? { UT_TEST_I18N_OVERLAY_DIR: path.resolve(process.env.UT_E2E_I18N_OVERLAY_DIR) }
       : {}),
   };
+  if (auth) delete env.UT_AUTH; // removed, not '' -- auth.Disabled reads it
   const goOpts: ExecFileSyncOptions = { cwd: REPO_ROOT, env, stdio: ['ignore', 'ignore', 'inherit'] };
 
   let child: ChildProcess | undefined;
@@ -260,13 +307,15 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
       }
       await sleep(250);
     }
-    await applyWorkerTillDefaults(url);
+    const cookie = auth ? await completeFirstBoot(url) : undefined;
+    await applyWorkerTillDefaults(url, cookie);
 
     const proc = child;
     const removeExitHook = onExit;
     return {
       url,
       dataDir,
+      ...(auth ? { adminPin: WORKER_TILL_ADMIN_PIN } : {}),
       stop: async () => {
         process.removeListener('exit', removeExitHook);
         if (proc.exitCode === null && proc.signalCode === null) {

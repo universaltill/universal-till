@@ -20,6 +20,12 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 //    wizard / PIN login flow the default project deliberately bypasses.
 // Each boots a REAL server; Chromium drives the layer our Go tests
 // can't see (htmx swaps, Alpine, the OSK, JS errors).
+//
+// Every project here is Chromium. The phone-layout specs also run under
+// WebKit (iOS WKWebView, Pi WebKitGTK) from a SEPARATE config,
+// playwright.webkit.config.ts (ut-docs#3734) — a separate file because
+// `webServer` is top level and would otherwise boot all the static tills
+// for that lane too. It imports EXCLUSIVE_SPECS and WorkerOptions from here.
 
 // Specs that need a real manager session the default (auth-off) till can
 // never provide: login.spec.ts (the wizard/PIN flow itself). Prior to
@@ -57,15 +63,15 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // auto-starts it. It must sort after login.spec.ts (first-boot wizard).
 // ut-docs#5288: the manager-PIN dialog's in-flight Cancel/Escape spec raises the
 // real prompt for a cashier, so it needs a real session (it sorts after login).
-const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304)\.spec\.ts$/;
+export const AUTH_ONLY_SPECS =
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304|notices-cashier-5366)\.spec\.ts$/;
 
 // ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
 // real plugins/layout-salon installed, which HIDES /tables and
 // /kitchen-stations and re-labels /items. Installing that into the shared
 // default till would move the ground under every other menu/nav assertion
 // in the suite, so it gets its own server + project.
-const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
+export const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 
 // ut-docs#2169 / ADR-0092: the diagnostic-mode spec REGISTERS its till
 // against an in-process fake ut-cloud (run-till-diagnostics.sh points
@@ -88,25 +94,25 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // ut-docs#5275: the pair-with-a-shop confirm's Escape/Cancel spec registers this
 // till against its own in-process fake cloud (see the spec's header). ut-docs#5288:
 // the same file also covers Cancel/Escape while the confirmed pair POST is in flight.
-const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477|catalog-store-detail-actions-4228|pair-confirm-escape-5275)\.spec\.ts$/;
+export const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286|cloud-catalog-bootstrap-4494|catalog-language-download-4477|catalog-store-detail-actions-4228|pair-confirm-escape-5275)\.spec\.ts$/;
 
 // ut-docs#3091: the release-notes spec needs a till stamped with a released
 // version and seeded as "just updated" (run-till-release-notes.sh), so the
 // one-time what's-new chip shows — never in the shared default till.
-const RELEASE_NOTES_ONLY_SPECS = /release-notes-3091\.spec\.ts$/;
+export const RELEASE_NOTES_ONLY_SPECS = /release-notes-3091\.spec\.ts$/;
 
 // ut-docs#3940: the incoming-release-notes spec needs a till that sees an
 // update on offer — pointed at a local fake releases API
 // (run-till-incoming-notes.sh, fake-release-server.mjs on 8100) — never the
 // shared default till, whose status bar would then show an update chip.
-const INCOMING_NOTES_ONLY_SPECS = /incoming-release-notes-3940\.spec\.ts$/;
+export const INCOMING_NOTES_ONLY_SPECS = /incoming-release-notes-3940\.spec\.ts$/;
 
 // ut-docs#2913: the report-only CSP spec drives a till started with
 // UT_CSP_REPORT_ONLY=1 (run-till-csp.sh). With the flag on, every page logs
 // its report-only violations as console errors by design, which would trip
 // watchConsole in every other spec — so it gets its own server + project,
 // and the shared default till never sets the flag.
-const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
+export const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
 
 // ut-docs#3127: the "Remove background" spec drives a till with background
 // removal configured against a local fake rembg (run-till-cutout.sh,
@@ -114,7 +120,19 @@ const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
 // pickers as a shop with no rembg service sees them — the built-in engine
 // (photo-cutout-builtin-4137.spec.ts runs there), so it gets its own
 // server + project.
-const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
+export const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
+
+// ut-docs#5366 / ADR-0176: the notices spec drives a till registered with a fake
+// cloud (run-till-notices.sh, fake-notices-cloud.mjs on 8104, the till on 8103)
+// that checks in every second and pulls notices through the real cloudsync
+// path. That would change what every tick does on the shared default till, so
+// it gets its own server + project.
+export const NOTICES_ONLY_SPECS = /notices-5366\.spec\.ts$/;
+
+// Every spec set that needs its own till; the `default` project ignores all
+// of them (and playwright.webkit.config.ts reuses the list). Order is the
+// order the project used before it was extracted.
+export const EXCLUSIVE_SPECS = [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS, NOTICES_ONLY_SPECS];
 
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
@@ -126,7 +144,7 @@ const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
 // project's `use:` is what switches that on. The other four projects keep
 // a single static server each (they have 1-2 spec files, nothing to
 // parallelise) and are deliberately untouched by this.
-type WorkerOptions = { e2eWorkerServer: boolean };
+export type WorkerOptions = { e2eWorkerServer: boolean };
 
 // ut-docs#2345: per-project worker cap for every project that still drives
 // ONE static server. Found live on the first 4-worker run: the `auth`
@@ -226,11 +244,17 @@ export default defineConfig<{}, WorkerOptions>({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-notices.sh',
+      url: 'http://127.0.0.1:8103/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS],
+      testIgnore: EXCLUSIVE_SPECS,
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
@@ -313,6 +337,17 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8101',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'notices',
+      testMatch: NOTICES_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: 'http://127.0.0.1:8103',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

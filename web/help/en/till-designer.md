@@ -3,6 +3,7 @@ id: till-designer
 title: Quick Buttons
 section: Setting up your shop
 order: 115
+public: true
 summary: Arrange the quick-sale buttons, product grid and categories shown on the sale screen, on a live copy of the sale screen itself.
 routes: [/designer]
 keywords: [designer, quick buttons, buttons, layout, product grid, quick sale, sale screen, categories]

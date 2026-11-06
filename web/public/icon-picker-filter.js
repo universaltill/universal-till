@@ -3,14 +3,17 @@
 // in categories.html) carry a search box:
 //
 //   <input type="search" data-icon-filter="<grid id>">
-//   <div id="<grid id>"> .builtin-icon-group-label … .builtin-icon-tile … </div>
+//   <div id="<grid id>" role="listbox" data-roving-listbox>
+//     .builtin-icon-tile[data-icon=none]
+//     .builtin-icon-group > .builtin-icon-group-label + .builtin-icon-tile …
+//   </div>
 //   <div data-icon-filter-empty="<grid id>" hidden>{{ T "…no_match" }}</div>
 //
 // A tile matches when every typed word appears in its visible (translated)
 // label or its English data-keywords. The "No image" tile (data-icon=
-// "none") always stays visible; a group heading hides when none of its
-// tiles match. Delegated on document because the category editor arrives
-// in an htmx-swapped dialog. No strings live here — the no-match message
+// "none") always stays visible; a whole .builtin-icon-group (heading and
+// tiles) hides when none of its tiles match (ut-docs#5601). Delegated on
+// document because the category editor arrives in an htmx-swapped dialog. No strings live here — the no-match message
 // is the server-rendered element above (guard-i18n.sh check 5).
 (function () {
   'use strict';
@@ -24,35 +27,21 @@
     if (!grid) return;
     var words = norm(input.value).split(/\s+/).filter(Boolean);
     var shown = 0;
-    var label = null;
-    var labelHasMatch = false;
-    function closeGroup() {
-      if (label) label.hidden = !labelHasMatch;
-    }
-    Array.prototype.forEach.call(grid.children, function (el) {
-      if (el.classList.contains('builtin-icon-group-label')) {
-        closeGroup();
-        label = el;
-        labelHasMatch = false;
-        return;
-      }
-      if (!el.classList.contains('builtin-icon-tile')) return;
+    Array.prototype.forEach.call(grid.querySelectorAll('.builtin-icon-tile'), function (el) {
       if (el.getAttribute('data-icon') === 'none') { el.hidden = false; return; }
       var hay = norm(el.textContent + ' ' + (el.getAttribute('data-keywords') || ''));
       var match = words.every(function (w) { return hay.indexOf(w) !== -1; });
       el.hidden = !match;
-      if (match) { shown++; labelHasMatch = true; }
+      if (match) shown++;
     });
-    closeGroup();
-    // Roving tabindex (categories.html): if the one tabbable tile is now
-    // hidden, hand the tab stop to the first visible tile so Tab from the
-    // search box still reaches the grid.
-    var tabbable = grid.querySelector('.builtin-icon-tile[tabindex="0"]');
-    if (tabbable && tabbable.hidden) {
-      tabbable.setAttribute('tabindex', '-1');
-      var first = grid.querySelector('.builtin-icon-tile:not([hidden])');
-      if (first) first.setAttribute('tabindex', '0');
-    }
+    // ut-docs#5601: a section (label + its tiles) hides when none match; the
+    // label is never hidden on its own, so a visible section keeps its name.
+    Array.prototype.forEach.call(grid.querySelectorAll('.builtin-icon-group'), function (g) {
+      g.hidden = !g.querySelector('.builtin-icon-tile:not([hidden])');
+    });
+    // One Tab stop on the selected visible option (else the first visible):
+    // the filter may just have hidden the one that held it.
+    if (window.utRovingListbox) window.utRovingListbox.sync(grid);
     var empty = document.querySelector('[data-icon-filter-empty="' + grid.id + '"]');
     if (empty) empty.hidden = shown > 0;
   }

@@ -38,6 +38,110 @@ const pinnedQuery: Record<string, string> = {
   invoices: 'from=2025-12-01&to=2025-12-31',
 };
 
+// DIALOG-OPEN SHOTS (ut-docs#5581). The manual keeps ONE image per topic
+// (internal/manual/manual.go injects web/help/img/<locale>/<id>.png after the
+// topic's <h1>), so a topic either shows its resting page (the default) or,
+// if it has a row in `dialogShots`, the same page with a record dialog OPEN on
+// a seeded row. Record dialogs are non-modal (.show(), the no-showModal rule),
+// so nothing blocks the status bar. At the 1024x600 reference viewport the
+// dialog fills the screen and covers the page (and its status bar), so the
+// image shows the dialog INSTEAD of the list; adopting a topic is a choice to
+// show the dialog in place of the resting page. To adopt it for another topic: seed a row idempotently and WITHOUT
+// dates (every locale re-runs the seed on the shared till; fixed dates trip
+// guard-fixed-dates), add a row below naming the clickable cell (`open`), the
+// `<dialog>` (`dialog`), a selector visible only once the prefill is done
+// (`ready`) and optionally a field proving the right record loaded
+// (`prefilled`), then run `make docs-shots`. Missing row/dialog fails the
+// test: a dialog shot must never silently ship as a resting one. Topics not
+// listed here follow the unchanged code path in capture().
+type DialogShot = {
+  seed?: (page: Page) => Promise<void>; // runs in capture() before goto, on the topic's own till/session
+  open: string; // selector clicked once the page settles (a data-record-open row's cell)
+  dialog: string; // the <dialog> that must end up [open] and visible
+  ready: string; // selector visible only once the prefill for THIS record is done
+  prefilled?: { selector: string; value: string }; // a field whose value proves the right row loaded
+};
+
+const DOCS_PROMO_CODE = 'WEEKEND10';
+
+// Creates the sample promotion and deactivates it, through the till's own API
+// (the logged-in page.request carries the manager session). Idempotent: the
+// auth till is shared by the four locale runs, so a repeat create is refused
+// as a duplicate. Without an HX-Request header every refusal is a 303 to
+// /promotions?err=<key> (never a 400), so the Location header is what tells
+// success from failure. No dates, no customer.
+async function ensureInactivePromotion(page: Page) {
+  const created = await page.request.post('/api/promotions', {
+    maxRedirects: 0,
+    form: {
+      code: DOCS_PROMO_CODE,
+      type: 'percent',
+      value_percent: '10',
+      description: 'Weekend 10% off hot drinks',
+      starts_at: '',
+      ends_at: '',
+      customer_id: '',
+    },
+  });
+  const createdTo = created.headers()['location'] ?? '';
+  expect(created.status(), `creating the sample promotion: expected 303, got ${created.status()} (Location ${createdTo})`).toBe(303);
+  expect(
+    createdTo === '/promotions' || createdTo.includes('err=promotions.error.code_exists'),
+    `creating the sample promotion failed: Location ${createdTo}`,
+  ).toBe(true);
+  const off = await page.request.post(`/api/promotions/${DOCS_PROMO_CODE}/active`, {
+    maxRedirects: 0,
+    form: { active: '0' },
+  });
+  const offTo = off.headers()['location'] ?? '';
+  expect(off.status(), `deactivating the sample promotion: expected 303, got ${off.status()} (Location ${offTo})`).toBe(303);
+  expect(offTo, `deactivating the sample promotion failed: Location ${offTo}`).toBe('/promotions');
+}
+
+const dialogShots: Record<string, DialogShot> = {
+  promotions: {
+    seed: ensureInactivePromotion,
+    open: `#promotions-table tr.promotion-row[data-id="${DOCS_PROMO_CODE}"][data-field-active="0"] td:first-child`,
+    dialog: '#promotion-dialog',
+    ready: '#promotion-dialog form[data-record-when="active=0"] button[type="submit"]', // Activate
+    prefilled: { selector: '#promotion-form input[name="code"]', value: DOCS_PROMO_CODE },
+  },
+};
+
+// Click the seeded row for real (the path record-dialog.js serves), then wait
+// until the dialog is open, prefilled, scrim synced, motion finished and
+// nothing is focused, so the frame holds no timing- or focus-dependent state.
+async function openDialog(page: Page, shot: DialogShot) {
+  const target = page.locator(shot.open);
+  await expect(target, 'dialog-shot row missing').toHaveCount(1);
+  await target.click();
+  const dlg = page.locator(shot.dialog);
+  await expect(dlg).toBeVisible();
+  await expect(dlg).toHaveAttribute('open', '');
+  await expect(page.locator(shot.ready)).toBeVisible();
+  if (shot.prefilled) await expect(page.locator(shot.prefilled.selector)).toHaveValue(shot.prefilled.value);
+  // base.html syncs #ut-scrim on the next animation frame.
+  await expect(page.locator('html')).toHaveClass(/\but-scrim-on\b/);
+  await expect(page.locator('#ut-scrim')).toBeVisible();
+  // Motion backstop (reduced motion is emulated in capture()).
+  await page.waitForFunction(
+    (sel) =>
+      [...(document.querySelector(sel) as HTMLElement).getAnimations({ subtree: true })].every(
+        (a) => a.playState !== 'running',
+      ),
+    shot.dialog,
+  );
+  // record-dialog.js focuses the first enabled field: blur it so no focus ring
+  // is in frame. Blurring fires no focusin, so the focus trap leaves it alone.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(dlg).toHaveAttribute('open', '');
+  await page
+    .waitForFunction(() => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'), null, {
+      timeout: 10_000,
+    })
+    .catch(() => {});
+}
+
 // CLOCK-PINNED FOR DETERMINISM (ut-docs#930, was the accepted gap ut-docs#327
 // flagged): two screens legitimately render the current time server-side —
 // the `designer` topic's receipt preview (#rd-preview, /receipt-designer:
@@ -110,6 +214,13 @@ async function assertPinnedFonts(page: Page, locale: string) {
 }
 
 async function capture(page: Page, id: string, locale: string, route: string) {
+  const shot = dialogShots[id];
+  if (shot) {
+    // Reduced motion makes UT.motionOff() true, so the popup zoom (ADR-0122 §5)
+    // never starts and app.css zeroes transitions: nothing animates into frame.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    if (shot.seed) await shot.seed(page);
+  }
   const sep = route.includes('?') ? '&' : '?';
   let url = `${route}${sep}lang=${locale}`;
   if (pinnedQuery[id]) url += `&${pinnedQuery[id]}`;
@@ -165,6 +276,8 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // Cheap no-op safety net (no webfonts today): let any font load finish.
   await page.evaluate(() => (document as any).fonts.ready);
 
+  if (shot) await openDialog(page, shot);
+
   // fonts.ready resolves when any font FILES have loaded, not when the
   // browser has actually repainted the glyphs with them — a one-frame gap
   // that intermittently captured a page mid-swap (ut-docs#930: `invoices`
@@ -198,13 +311,19 @@ async function capture(page: Page, id: string, locale: string, route: string) {
     // other half of the ut-docs#930 stabilization, alongside the htmx-idle
     // wait above.
     animations: 'disabled',
-    mask: [page.locator('.sb-update'), page.locator('.sb-conn')],
-    maskColor: '#0f172a',
+    // Dialog shots: the full-screen dialog covers the page status bar, and
+    // mask boxes paint over covered elements too (dark boxes on the dialog,
+    // ut-docs#5581 review M1). Hide the volatile chips' paint instead
+    // (visibility keeps layout), which also covers the dialog's own chip.
+    ...(shot
+      ? { style: '.sb-update, .sb-conn { visibility: hidden !important; }' }
+      : { mask: [page.locator('.sb-update'), page.locator('.sb-conn')], maskColor: '#0f172a' }),
   }); // viewport-sized, per config
 
   // A broken/blank capture must fail loudly, not ship silently.
   expect(fs.existsSync(out), `${out} was not written`).toBe(true);
   expect(fs.statSync(out).size, `${out} is suspiciously small — blank capture?`).toBeGreaterThan(MIN_BYTES);
+  if (shot) await expect(page.locator(shot.dialog)).toBeVisible(); // the frame really showed the dialog
 }
 
 // Same barcodes as sale.spec.ts (demo catalog, checksums fixed by migration
@@ -355,7 +474,17 @@ const MOVE_BASE = 'http://127.0.0.1:8093';
 const MOVE_ID = '5127d0c5-0000-4000-8000-000000000001';
 const MOVE_TILL_TOPICS = ['claim'];
 
-for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id))) {
+// ut-docs#5366 (ADR-0176): the `notices` topic's first route is the inbox. It is
+// captured on its own till (8105, run-till-notices.sh with the "docs" fixture),
+// which pulls three fixed notices (a critical strip, a partner message, an
+// info) from a fake cloud, so the screenshot shows the bell, the strip and the
+// inbox with one row open. A critical strip shows on every page of a till that
+// holds one, so no other topic may use that till.
+const NOTICES_BASE = 'http://127.0.0.1:8105';
+const NOTICES_OPEN_ID = '5366d000-0000-4000-8000-000000000002';
+const NOTICES_TILL_TOPICS = ['notices'];
+
+for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id) && !NOTICES_TILL_TOPICS.includes(t.id))) {
   for (const locale of LOCALES as string[]) {
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
       // The basket is server-side state shared across the run — staged once,
@@ -400,6 +529,30 @@ test.describe('move approval (move till)', () => {
         await ensureFullEffects(page);
         await capture(page, topic!.id, locale, route);
         await expect(page.getByTestId('move-approval')).toBeVisible();
+      });
+    }
+  }
+});
+
+test.describe('notices (notices till)', () => {
+  test.use({ baseURL: NOTICES_BASE });
+  for (const id of NOTICES_TILL_TOPICS) {
+    const topic = topics.find((t) => t.id === id);
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${id} (${locale})`, async ({ page }) => {
+        test.skip(!topic, `${id} topic no longer declares routes`);
+        // Turn the (default-off) setting on, as a shop owner does in Settings.
+        expect((await page.request.post('/api/settings/notices', { form: { enabled: 'on' } })).status()).toBe(204);
+        const route = `${topic!.route}?tab=all&open=${NOTICES_OPEN_ID}`;
+        // The notices arrive with the till's first check-ins: wait for them.
+        await expect(async () => {
+          await page.goto(`${route}&lang=${locale}`);
+          await expect(page.getByTestId('notice-row')).toHaveCount(3, { timeout: 1000 });
+        }).toPass({ timeout: 60_000 });
+        await expect(page.getByTestId('notices-strip')).toBeVisible();
+        await ensureFullEffects(page);
+        await capture(page, topic!.id, locale, route);
+        await expect(page.getByTestId('notices-strip')).toBeVisible();
       });
     }
   }

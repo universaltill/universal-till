@@ -3,6 +3,7 @@ id: multitill
 title: چند صندوق (یک فروشگاه)
 section: اتصال و افزونه‌ها
 order: 310
+public: true
 summary: "چند صندوق را در شبکه یک فروشگاه اجرا کنید: یکی صندوق اصلی است، بقیه به آن می‌پیوندند و کاتالوگ، قیمت‌ها، تنظیمات و موجودی خودکار مشترک می‌شود."
 routes: [/tills, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 ---

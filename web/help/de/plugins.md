@@ -3,6 +3,7 @@ id: plugins
 title: Plugin-Store
 section: Verbinden & erweitern
 order: 330
+public: true
 summary: "Fügen Sie Funktionen hinzu, ohne die Kernanwendung zu ändern: Zahlungen, Designs, Sprachpakete, Integrationen, KI-Werkzeuge und mehr."
 routes: [/plugins, /plugins/store, /plugins/store/{listing_id}, /plugins/{section}/{listing_id}, /plugins/{id}/settings]
 keywords: [plugin, marktplatz, installieren, erweiterung, design]

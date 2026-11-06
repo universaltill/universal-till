@@ -44,16 +44,21 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
     {
       name: 'promotions.html value_amount (new-promotion form)',
       goto: '/promotions',
-      selector: '.users-form input[name="value_amount"]',
+      // ut-docs#3661: the form lives in the record dialog now.
+      before: async (page) => {
+        await page.locator('#promotions-new').click();
+      },
+      selector: '#promotion-form input[name="value_amount"]',
       text: '2.50',
     },
     {
       name: 'promotions.html value_percent (new-promotion form)',
       goto: '/promotions',
       before: async (page) => {
-        await page.locator('.users-form select[name="type"]').selectOption('percent');
+        await page.locator('#promotions-new').click();
+        await page.locator('#promotion-form select[name="type"]').selectOption('percent');
       },
-      selector: '.users-form input[name="value_percent"]',
+      selector: '#promotion-form input[name="value_percent"]',
       text: '17.50',
     },
     {

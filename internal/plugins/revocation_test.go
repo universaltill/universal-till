@@ -2,11 +2,15 @@ package plugins
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // TestRevocationEntryDecodesUtCloudWireFormat is the narrowest possible
@@ -16,7 +20,7 @@ import (
 // entry's PluginID as "").
 func TestRevocationEntryDecodesUtCloudWireFormat(t *testing.T) {
 	var feed RevocationFeed
-	body := []byte(`{"revocations":[{"pluginId":"com.acme.rogue","version":"2.1.0","action":"delete","reason":"malware"}],"latestVersion":"7"}`)
+	body := []byte(`{"revocations":[{"pluginId":"com.acme.rogue","manifestId":"com.acme.rogue.manifest","version":"2.1.0","action":"delete","reason":"malware"}],"latestVersion":"7"}`)
 	if err := json.Unmarshal(body, &feed); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -24,7 +28,7 @@ func TestRevocationEntryDecodesUtCloudWireFormat(t *testing.T) {
 		t.Fatalf("revocations = %d, want 1", len(feed.Revocations))
 	}
 	got := feed.Revocations[0]
-	want := RevocationEntry{PluginID: "com.acme.rogue", Version: "2.1.0", Action: "delete", Reason: "malware"}
+	want := RevocationEntry{PluginID: "com.acme.rogue", ManifestID: "com.acme.rogue.manifest", Version: "2.1.0", Action: "delete", Reason: "malware"}
 	if got != want {
 		t.Fatalf("decoded = %+v, want %+v", got, want)
 	}
@@ -145,5 +149,216 @@ func TestSyncRevocationsErrorPaths(t *testing.T) {
 	// Unreachable marketplace (closed port) — fails, doesn't hang.
 	if _, err := NewRevocationChecker(db, "http://127.0.0.1:1", nil).SyncRevocations(ctx); err == nil || !strings.Contains(err.Error(), "fetch revocations") {
 		t.Fatalf("unreachable not surfaced: %v", err)
+	}
+}
+
+// ---- ut-docs#5653: the feed's pluginId is the marketplace listing UUID ----
+
+const testListingUUID = "7b0c6f0e-2d55-4c1a-9d8e-3f1a2b4c5d6e"
+
+func seedInstallStatus(t *testing.T, db *sql.DB, listingID, pluginID string) {
+	t.Helper()
+	if err := data.NewInstallStatusRepo(db).Upsert(context.Background(), data.InstallStatusRow{
+		ListingID: listingID, PluginID: pluginID, State: "Installed",
+		CurrentVersion: "1.2.0", UpdatedAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed install status: %v", err)
+	}
+}
+
+func revokeFeed(pluginID, manifestID, version string) string {
+	b := `{"revocations":[{"pluginId":"` + pluginID + `"`
+	if manifestID != "" {
+		b += `,"manifestId":"` + manifestID + `"`
+	}
+	if version != "" {
+		b += `,"version":"` + version + `"`
+	}
+	return b + `,"action":"disable","reason":"malware"}],"latestVersion":"1"}`
+}
+
+func pluginState(t *testing.T, db *sql.DB, id string) (int, string) {
+	t.Helper()
+	var active int
+	var state string
+	if err := db.QueryRow(`SELECT is_active, install_state FROM plugins WHERE id = ?`, id).Scan(&active, &state); err != nil {
+		t.Fatalf("query plugin %s: %v", id, err)
+	}
+	return active, state
+}
+
+func auditCountFor(t *testing.T, db *sql.DB, id string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'disable_revoked' AND entity_id = ?`, id).Scan(&n); err != nil {
+		t.Fatalf("audit count: %v", err)
+	}
+	return n
+}
+
+func revAuditDetails(t *testing.T, db *sql.DB, id string) map[string]any {
+	t.Helper()
+	var raw string
+	if err := db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'disable_revoked' AND entity_id = ?`, id).Scan(&raw); err != nil {
+		t.Fatalf("audit row for %s: %v", id, err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("audit json: %v", err)
+	}
+	return m
+}
+
+func syncFeed(t *testing.T, db *sql.DB, body string) (int, *RevocationChecker) {
+	t.Helper()
+	srv := revocationFeedServer(t, body)
+	t.Cleanup(srv.Close)
+	rc := NewRevocationChecker(db, srv.URL, nil)
+	n, err := rc.SyncRevocations(context.Background())
+	if err != nil {
+		t.Fatalf("SyncRevocations: %v", err)
+	}
+	return n, rc
+}
+
+func TestSyncRevocations_ListingUUIDResolvesViaInstallStatus(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+	seedInstallStatus(t, db, testListingUUID, "com.x.y")
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
+	if n != 1 {
+		t.Fatalf("n = %d, want 1", n)
+	}
+	if active, state := pluginState(t, db, "com.x.y"); active != 0 || state != "revoked" {
+		t.Fatalf("active=%d state=%q", active, state)
+	}
+	d := revAuditDetails(t, db, "com.x.y")
+	if d["listing_id"] != testListingUUID || d["matched_by"] != "listing_id" {
+		t.Fatalf("audit details = %v", d)
+	}
+}
+
+func TestSyncRevocations_VersionMismatchLeavesPluginActive(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+	seedInstallStatus(t, db, testListingUUID, "com.x.y")
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.1.0"))
+	if n != 0 {
+		t.Fatalf("n = %d, want 0", n)
+	}
+	if active, _ := pluginState(t, db, "com.x.y"); active != 1 {
+		t.Fatal("plugin disabled despite version mismatch")
+	}
+}
+
+func TestSyncRevocations_AlreadyInactiveIsNoop(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", false)
+	seedInstallStatus(t, db, testListingUUID, "com.x.y")
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
+	if n != 0 || auditCountFor(t, db, "com.x.y") != 0 {
+		t.Fatalf("n=%d audit=%d, want 0/0", n, auditCountFor(t, db, "com.x.y"))
+	}
+}
+
+func TestSyncRevocations_UnknownUUIDIsNoop(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
+	if n != 0 {
+		t.Fatalf("n = %d, want 0", n)
+	}
+	if active, _ := pluginState(t, db, "com.x.y"); active != 1 {
+		t.Fatal("unrelated plugin disabled")
+	}
+}
+
+func TestSyncRevocations_BlankInstallStatusPluginIDIsNoop(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+	seedInstallStatus(t, db, testListingUUID, "")
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
+	if n != 0 {
+		t.Fatalf("n = %d, want 0", n)
+	}
+	if active, _ := pluginState(t, db, "com.x.y"); active != 1 {
+		t.Fatal("plugin disabled via blank install status")
+	}
+}
+
+func TestSyncRevocations_StaleInstallStatusRowIsNoop(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+	seedInstallStatus(t, db, testListingUUID, "com.gone.away")
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "", "1.2.0"))
+	if n != 0 {
+		t.Fatalf("n = %d, want 0", n)
+	}
+	if active, _ := pluginState(t, db, "com.x.y"); active != 1 {
+		t.Fatal("plugin disabled via stale install status")
+	}
+}
+
+func TestSyncRevocations_ManifestIDFallbackWithoutInstallStatus(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+
+	n, _ := syncFeed(t, db, revokeFeed("com.x.y", "", "1.2.0"))
+	if n != 1 {
+		t.Fatalf("n = %d, want 1", n)
+	}
+	if d := revAuditDetails(t, db, "com.x.y"); d["matched_by"] != "plugin_id" {
+		t.Fatalf("matched_by = %v, want plugin_id", d["matched_by"])
+	}
+}
+
+func TestSyncRevocations_PrefersFeedManifestID(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.y", "XY", "1.2.0", "none", true)
+
+	n, _ := syncFeed(t, db, revokeFeed(testListingUUID, "com.x.y", "1.2.0"))
+	if n != 1 {
+		t.Fatalf("n = %d, want 1", n)
+	}
+	d := revAuditDetails(t, db, "com.x.y")
+	if d["matched_by"] != "manifest_id" || d["listing_id"] != testListingUUID {
+		t.Fatalf("audit details = %v", d)
+	}
+}
+
+func TestSyncRevocations_InvokesOnRevokedOnceOnlyWhenSomethingDisabled(t *testing.T) {
+	db := managerTestDB(t)
+	seedInstalledPlugin(t, db, "com.x.a", "A", "1.0.0", "wasm", true)
+	seedInstalledPlugin(t, db, "com.x.b", "B", "1.0.0", "wasm", true)
+
+	body := `{"revocations":[` +
+		`{"pluginId":"com.x.a","action":"disable","reason":"r"},` +
+		`{"pluginId":"com.x.b","action":"disable","reason":"r"}]}`
+	srv := revocationFeedServer(t, body)
+	defer srv.Close()
+	calls := 0
+	rc := NewRevocationChecker(db, srv.URL, nil)
+	rc.SetOnRevoked(func(context.Context) error { calls++; return errors.New("reload boom") })
+	n, err := rc.SyncRevocations(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v, want 2/nil (callback error must not fail sync)", n, err)
+	}
+	if calls != 1 {
+		t.Fatalf("onRevoked calls = %d, want 1", calls)
+	}
+
+	// Second pass: everything already disabled -> callback not invoked.
+	calls = 0
+	if n, err := rc.SyncRevocations(context.Background()); err != nil || n != 0 {
+		t.Fatalf("second: n=%d err=%v", n, err)
+	}
+	if calls != 0 {
+		t.Fatalf("onRevoked calls on noop feed = %d, want 0", calls)
 	}
 }

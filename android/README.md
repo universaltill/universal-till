@@ -172,7 +172,14 @@ GitHub Releases API mechanism the other platforms already use).
   API 28+ a signer whose rotation lineage contains a pinned key is accepted; API
   24 to 27 see the old key, so keep the old digest while they exist. Never
   advise uninstalling to recover: it deletes local data. A fork replaces the file
-  with its own digest; see `RELEASING.md`.
+  with its own digest; see `RELEASING.md`. A refusal is also reported to the
+  fleet roster (ut-docs#5446): `MainActivity` calls
+  `Mobile.reportAndroidUpdateRefused(<class>)`, raising the keyed problem
+  `androidupdate.refused` on the heartbeat problems feed (class only, never the
+  digest or package name) until `Mobile.reportAndroidUpdateAccepted()` after a
+  later APK passes. Classes (`UpdateLogic.RefuseClass`, mirrored by Go's
+  `internal/androidupdate`): `unreadable_apk`, `wrong_package`, `not_newer`,
+  `signer_unreadable`, `multiple_signers`, `signer_not_pinned`, `check_error`.
 - Live-verified: a real signed release APK installed and launched on the
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.
@@ -195,6 +202,13 @@ GitHub Releases API mechanism the other platforms already use).
   compile-time table by `Build.SUPPORTED_ABIS[0]` (`UpdateLogic.updateApkUrl`).
   `installUpdate()` still takes no argument. `scripts/ci/guard-android-abi-packages.sh`
   keeps the flavors, the compression and release.yml's published names in step.
+  The base of those names is the Gradle property `updateApkUrlBase` (default
+  our GitHub `releases/latest/download/`; `-PupdateApkUrlBase=https://…/`
+  overrides it; an empty or malformed value fails the build, never a fallback
+  to ours). `release.yml` passes
+  `https://github.com/$GITHUB_REPOSITORY/releases/latest/download/`, or the
+  repository variable `UT_ANDROID_UPDATE_APK_URL_BASE` for a non-GitHub
+  mirror, and fails if an APK's dex does not carry it (ut-docs#5271).
 - **Reliable update flow.** One shared page flow (`web/public/android-update.js`)
   for the status chip, the Settings form and the check-for-updates button. In
   `MainActivity`: the DownloadManager id is kept (SharedPreferences
@@ -690,6 +704,18 @@ Capture: `adb logcat -s MainActivity GoLog` while reproducing, plus the
 till log. A `reload: activity recreated` with no `config change handled`
 line before it points at a configuration change the manifest still
 doesn't declare.
+
+## Screen stays on (ut-docs#5620)
+
+Nothing used to set `FLAG_KEEP_SCREEN_ON`, so the till followed the tablet's
+OS display timeout (seconds) in every mode. `MainActivity` now holds the flag
+from `onResume` to `onPause`, and drops it after an idle window
+(`ScreenAwakeLogic`: 0/15/30/60/120/240/480 minutes, default 120, touch
+re-arms it) so the OS can sleep an abandoned till. The choice is per device
+(SharedPreferences `screen_awake`), set from Settings -> Display via the
+`AndroidKiosk.get/setScreenAwakeMinutes` bridge (`web/public/screen-awake.js`).
+Kiosk lock-task mode does not change it. Not covered: a screen turned off with
+the power button, or Doze while the app is backgrounded.
 
 ## Not yet done
 

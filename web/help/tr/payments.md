@@ -3,6 +3,7 @@ id: payments
 title: Ödemeler
 section: Günlük satış
 order: 20
+public: true
 summary: Nakit yerleşiktir; kart ve diğer ödeme yöntemleri mağazadan eklenti olarak gelir — örneğin kart okuyuculu (terminal) Stripe veya QR kod ile ödeme.
 ---
 

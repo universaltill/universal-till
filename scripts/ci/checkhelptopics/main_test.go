@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/universaltill/universal-till/internal/manual"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -134,27 +136,6 @@ func TestShippedLocalesIncludesManualOnlyLocales(t *testing.T) {
 	}
 }
 
-// Integration: the REAL embedded manual must have a complete German topic
-// set — every id en has, de has too. Exercised as a test (not just the
-// guard's own CI step) so a future en-only topic added without its German
-// translation fails `go test ./...` immediately, the same safety net
-// ar/fa/tr already get from being core-shipped locales. This overlaps with
-// internal/pages' own TestManualIsTranslatedInEveryShippedLocale (both call
-// manual.Load(uiassets.HelpFS, "help") — internal/pages.Library() is
-// literally that same call, cached behind a sync.Once, not a different
-// entry point) — kept anyway so this package's own tests fail without
-// requiring internal/pages to also be run, since guard-help-topics.sh only
-// exercises this package directly.
-func TestManualIsFullyTranslatedIntoGerman(t *testing.T) {
-	lib, err := manual.Load(uiassets.HelpFS, "help")
-	if err != nil {
-		t.Fatalf("loading embedded manual: %v", err)
-	}
-	if missing := lib.MissingTranslations("de"); len(missing) > 0 {
-		t.Errorf("German manual is missing topics: %v", missing)
-	}
-}
-
 // Integration: the REAL internal/pages tree against the REAL embedded manual
 // must be fully covered — this is the check CI runs, exercised as a test so
 // a coverage regression fails `go test ./...` too, not only the guard step.
@@ -178,5 +159,24 @@ func TestRealPagesTreeIsFullyCovered(t *testing.T) {
 	}
 	if un := uncoveredRoutes(routes, lib.RouteCovered); len(un) > 0 {
 		t.Errorf("user-facing page routes with no claiming manual topic: %v", un)
+	}
+}
+
+// ADR-0160 section 2: a PR adding an English-only topic passes; the missing
+// translation is only a warning. A topic English lacks is not invented.
+func TestEnglishOnlyTopicIsWarningNotFailure(t *testing.T) {
+	fsys := fstest.MapFS{
+		"help/en/x.md": {Data: []byte("---\nid: x\ntitle: X\nsection: T\norder: 1\n---\n\n# X\n")},
+	}
+	lib, err := manual.Load(fsys, "help")
+	if err != nil {
+		t.Fatalf("manual.Load: %v", err)
+	}
+	got := translationWarnings(lib, []string{"de", "fa"})
+	if len(got) != 2 || !strings.Contains(got[0], "non-blocking") {
+		t.Errorf("want one non-blocking warning per locale, got %v", got)
+	}
+	if w := translationWarnings(lib, nil); len(w) != 0 {
+		t.Errorf("no locales -> no warnings, got %v", w)
 	}
 }

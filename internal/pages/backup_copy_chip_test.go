@@ -177,3 +177,63 @@ func TestBackupCopyChip_SaveCopyRecordsAndHeadDoesNot(t *testing.T) {
 		t.Fatal("save-copy did not record the copy")
 	}
 }
+
+// ut-docs#5619: the Android shell saves through the system file picker and
+// then tells the till; only a real backup of this till records a copy.
+func TestBackupCopyChip_PickerCopyRecordsOnlyRealBackups(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	mux, store, dbPath := newBackupCopyChipMux(t, now)
+	post := func(name string) int {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/backup/copied/"+name, nil), mgrUser))
+		return rec.Code
+	}
+	if code := post("unitill-pos-19990101-000000.db"); code != http.StatusNotFound {
+		t.Fatalf("unknown backup = %d, want 404", code)
+	}
+	if code := post("notes.db"); code != http.StatusBadRequest {
+		t.Fatalf("bad name = %d, want 400", code)
+	}
+	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v != "" {
+		t.Fatalf("a rejected call recorded a copy: %q", v)
+	}
+	live, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := db.Snapshot(live.DB, dbPath)
+	live.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := post(filepath.Base(snap)); code != http.StatusNoContent {
+		t.Fatalf("real backup = %d, want 204", code)
+	}
+	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v == "" {
+		t.Fatal("picker copy was not recorded")
+	}
+}
+
+// ut-docs#5619: the Android picker fetches the file before it is written; that
+// fetch must not clear the reminder (only /copied, after a good write, does).
+func TestBackupCopyChip_PickerFetchDoesNotRecord(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	mux, store, dbPath := newBackupCopyChipMux(t, now)
+	live, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := db.Snapshot(live.DB, dbPath)
+	live.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/backup/download/"+filepath.Base(snap)+"?via=picker", nil), mgrUser))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download = %d", rec.Code)
+	}
+	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v != "" {
+		t.Fatalf("picker fetch recorded a copy: %q", v)
+	}
+}

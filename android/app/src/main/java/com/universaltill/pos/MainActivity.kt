@@ -29,8 +29,10 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -240,6 +242,60 @@ class MainActivity : AppCompatActivity() {
                 }
             callback.onReceiveValue(uris)
         }
+
+    // ut-docs#5619: Settings -> Backups -> Save to Downloads. The till process
+    // cannot write the shared Downloads folder (scoped storage; the device's
+    // storage may be a USB-C drive), so the page asks this bridge to open the
+    // system "save as" picker, which reaches Downloads, a USB drive or any
+    // storage provider, and streams the backup into the place chosen.
+    private var pendingBackupName: String? = null
+    private val backupSaveLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val name = pendingBackupName
+            pendingBackupName = null
+            if (name == null) return@registerForActivityResult
+            if (uri == null) {
+                reportBackupSave(name, "cancelled")
+            } else {
+                writeBackupTo(name, uri)
+            }
+        }
+
+    private fun writeBackupTo(name: String, uri: Uri) {
+        val host = allowedHost
+        val cookie = host?.let { CookieManager.getInstance().getCookie("http://$it/") }
+        Thread {
+            var code = "saved"
+            try {
+                if (host == null) throw java.io.IOException("till address unknown")
+                val conn = java.net.URL(BackupSaveLogic.downloadUrl(host, name)).openConnection() as java.net.HttpURLConnection
+                try {
+                    conn.connectTimeout = 10_000
+                    conn.readTimeout = 60_000
+                    if (!cookie.isNullOrEmpty()) conn.setRequestProperty("Cookie", cookie)
+                    if (conn.responseCode != 200) throw java.io.IOException("backup download HTTP ${conn.responseCode}")
+                    val out = contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("no output stream")
+                    out.use { o -> conn.inputStream.use { it.copyTo(o) } }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "backup save to picked location failed", e)
+                // Do not leave an empty/partial file in the place the operator chose.
+                runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) }
+                code = BackupSaveLogic.reasonFor(e)
+            }
+            reportBackupSave(name, code)
+        }.start()
+    }
+
+    /** Tells the Settings page how the save went; the page owns the translated wording. */
+    private fun reportBackupSave(name: String, code: String) {
+        if (code !in BackupSaveLogic.RESULT_CODES) return
+        runOnUiThread {
+            webView.evaluateJavascript("window.utBackupSaveResult&&window.utBackupSaveResult('$code','$name')", null)
+        }
+    }
 
     // ut-docs#5190: a file input with capture (the item photo's "Take a
     // photo") opens the SYSTEM camera — focus, flash, full resolution, retake —
@@ -569,6 +625,19 @@ class MainActivity : AppCompatActivity() {
      * class would be a real bypass of the very lock it exists to release.
      */
     private inner class KioskBridge {
+        /** ut-docs#5620: minutes of idle before the till lets the screen sleep (0 = never). */
+        @JavascriptInterface
+        fun getScreenAwakeMinutes(): Int = screenAwakeMinutes()
+
+        /** ut-docs#5620: only the offered choices are accepted; anything else resets to the default. */
+        @JavascriptInterface
+        fun setScreenAwakeMinutes(minutes: Int): Int {
+            val m = ScreenAwakeLogic.normalize(minutes)
+            getSharedPreferences(SCREEN_PREFS, Context.MODE_PRIVATE).edit().putInt(SCREEN_PREF_MINUTES, m).apply()
+            runOnUiThread { startKeepAwake() }
+            return m
+        }
+
         @JavascriptInterface
         fun exitLockdown() {
             runOnUiThread {
@@ -813,6 +882,26 @@ class MainActivity : AppCompatActivity() {
                     // till down with it.
                     Log.w(TAG, "ACTION_REQUEST_ENABLE refused", e)
                     openBluetoothSettings()
+                }
+            }
+        }
+
+        /**
+         * ut-docs#5619: saves backup [name] through the system file picker.
+         * The name is validated here (a plain unitill-pos-*.db file name) and
+         * the bytes come from this till's own loopback download, so the page
+         * cannot make the app write anything else.
+         */
+        @JavascriptInterface
+        fun saveBackupCopy(name: String) {
+            runOnUiThread {
+                if (!BackupSaveLogic.isValidName(name)) return@runOnUiThread
+                pendingBackupName = name
+                try {
+                    backupSaveLauncher.launch(name)
+                } catch (e: ActivityNotFoundException) {
+                    pendingBackupName = null
+                    reportBackupSave(name, "failed")
                 }
             }
         }
@@ -1127,6 +1216,69 @@ class MainActivity : AppCompatActivity() {
         updatePollRunnable = null
     }
 
+    // ut-docs#5620: nothing ever set FLAG_KEEP_SCREEN_ON, so the till screen
+    // slept on the OS display timeout (a few seconds on the test tablet) in
+    // every mode, kiosk included. While this Activity is in front the window
+    // now keeps the display on until the operator has been idle for the
+    // chosen minutes (ScreenAwakeLogic; 0 = never), then the flag drops and
+    // the OS timeout takes over. A touch or key press re-arms it. The choice
+    // is per device (SharedPreferences), set from Settings -> Display.
+    private val awakeHandler = Handler(Looper.getMainLooper())
+    private var lastInteractionMs = 0L
+    private val awakeExpiry = Runnable { evaluateKeepAwake() }
+
+    private fun screenAwakeMinutes(): Int =
+        ScreenAwakeLogic.normalize(
+            getSharedPreferences(SCREEN_PREFS, Context.MODE_PRIVATE)
+                .getInt(SCREEN_PREF_MINUTES, ScreenAwakeLogic.DEFAULT_MINUTES),
+        )
+
+    private fun startKeepAwake() {
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        evaluateKeepAwake()
+    }
+
+    private fun stopKeepAwake() {
+        awakeHandler.removeCallbacks(awakeExpiry)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun evaluateKeepAwake() {
+        awakeHandler.removeCallbacks(awakeExpiry)
+        if (!activityResumed) return
+        val minutes = screenAwakeMinutes()
+        val now = SystemClock.elapsedRealtime()
+        if (ScreenAwakeLogic.keepAwake(minutes, lastInteractionMs, now)) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            ScreenAwakeLogic.remainingMs(minutes, lastInteractionMs, now)?.let {
+                awakeHandler.postDelayed(awakeExpiry, it + 1000L)
+            }
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    /** Touch anywhere in the window counts as use and re-arms a lapsed flag at once. */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            lastInteractionMs = SystemClock.elapsedRealtime()
+            // Only re-evaluate when the flag had lapsed; a live timer is re-armed lazily on expiry.
+            if (activityResumed && (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+                evaluateKeepAwake()
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        // a key press (HID scanner, keyboard) also wakes a lapsed flag
+        if (activityResumed && (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+            evaluateKeepAwake()
+        }
+    }
+
     private fun updatePrefs() = getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
 
     private fun clearUpdateId() =
@@ -1260,7 +1412,7 @@ class MainActivity : AppCompatActivity() {
                         facts?.signerHistory,
                     )
                 } catch (e: Exception) {
-                    ApkCheck.Refuse("signer check failed: ${e.message}")
+                    ApkCheck.Refuse(RefuseClass.CHECK_ERROR, "signer check failed: ${e.message}")
                 }
             runOnUiThread {
                 updateVerifyingApk = false
@@ -1276,9 +1428,19 @@ class MainActivity : AppCompatActivity() {
                     apk.delete()
                     downloaded.delete()
                     clearUpdateId()
+                    // ut-docs#5446: tell the fleet roster, class only (never
+                    // verdict.reason: digests and foreign package names). Runs
+                    // even if the Activity is gone, and a missing Go library
+                    // must never break the refusal.
+                    runCatching { Mobile.reportAndroidUpdateRefused(verdict.cls.wire) }
+                        .onFailure { Log.w(TAG, "update: could not report refusal", it) }
                     if (!isDestroyed) failUpdate("refused: ${verdict.reason}")
                     return@runOnUiThread
                 }
+                // The check passed (pinned or dormant): resolve an earlier
+                // refusal on the fleet roster, whether or not the Activity lives.
+                runCatching { Mobile.reportAndroidUpdateAccepted() }
+                    .onFailure { Log.w(TAG, "update: could not report acceptance", it) }
                 if (isDestroyed) return@runOnUiThread
                 when (verdict) {
                     is ApkCheck.Accept -> {
@@ -2360,6 +2522,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         activityResumed = false
+        stopKeepAwake()
         cancelPendingPinCheck()
         // ut-docs#3466 (ADR-0142 D3): a backgrounded Activity cannot answer
         // a remote unlock; Go reports no_shell until onResume registers the
@@ -2373,6 +2536,8 @@ class MainActivity : AppCompatActivity() {
         // are what re-arms the pin poll, and [schedulePinCheck] refuses
         // while this is false.
         activityResumed = true
+        // ut-docs#5620: the till window keeps the display on while in front.
+        startKeepAwake()
         // ut-docs#3466 (ADR-0142 D3): only the foreground Activity answers
         // a remote kiosk_unlock; cleared again in onPause.
         Mobile.setKioskBridge(remoteUnlockBridge)
@@ -2570,6 +2735,8 @@ class MainActivity : AppCompatActivity() {
 
         // ut-docs#4312: where the in-flight DownloadManager id lives, so a
         // recreated Activity or a later tap finds the same download.
+        private const val SCREEN_PREFS = "screen_awake"
+        private const val SCREEN_PREF_MINUTES = "idle_minutes"
         private const val UPDATE_PREFS = "in_app_update"
         private const val UPDATE_PREF_ID = "download_id"
         private const val UPDATE_PREF_ENQUEUED_AT = "download_enqueued_at_wall_ms"

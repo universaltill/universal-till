@@ -3,6 +3,7 @@ id: self-order
 title: Selbstbedienung
 section: Täglicher Verkauf
 order: 40
+public: true
 summary: Ein kundenseitiger Modus, in dem Kunden den Katalog durchsuchen und ihre eigene Bestellung zusammenstellen.
 keywords: [selbstbedienung, kiosk, kunde]
 ---

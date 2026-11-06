@@ -3,6 +3,7 @@ id: menu
 title: صفحه منو
 section: فروش روزمره
 order: 30
+public: true
 summary: یک صفحه با دکمه‌های لمسی بزرگ که شما را به هر بخش صندوق می‌برد.
 routes: [/menu, /settings/menu, /admin]
 ---

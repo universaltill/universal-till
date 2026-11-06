@@ -3,6 +3,7 @@ id: reports
 title: Reports & end of day
 section: Running the business
 order: 210
+public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
 keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
@@ -14,7 +15,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 ## How to use it
 
-1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in.
+1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in. Inside Custom, "Last 24 hours" is the rolling 24 hours up to now, not the business day — use the Today chip for that.
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), (for a manager/admin) Shrinkage & Loss, or Online channels (once this till has recorded an online order) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two timestamps side by side (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in your own local time. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
@@ -78,7 +79,7 @@ same reasons when the provider refuses or can't be reached.
 
 Next to the top row, pick how you want the period worked out:
 
-- **Custom** — the original rolling window (today, 7/14/30/90 days back from now).
+- **Custom** — the original rolling window (the last 24 hours, or 7/14/30/90 days back from now).
 - **Day / Week / Month / Year** — a real calendar period instead of a rolling
   count: Day is one trading day, Week is Monday–Sunday, Month is a calendar
   month, Year is a calendar year. A date picker appears next to the choice so

@@ -3,8 +3,8 @@
 # Enforces multilingual UI (docs reference/coding-standards.md):
 #   1. Every {{ T "key" }} (or {{ TM "key" … }}) used in a template must
 #      exist in web/locales/en.json.
-#   2. Every locale file must define exactly the same key set as en.json
-#      (the base locale) — no missing translations, no orphan keys.
+#   2. en.json is the only required locale (ADR-0160 section 2). Other
+#      locale files may lack keys or carry orphans: warning only.
 #   3. No Go-side literal replaces a template's own job: a raw English string
 #      written straight to an HTTP response (w.Write/fmt.Fprintf(w, ...)) is
 #      invisible to checks 1-2 above, which only ever look at web/ui/*.html
@@ -65,7 +65,7 @@
 #      thrown one copy away before any check ever saw the data. This check
 #      reads the raw key/value PAIR list instead of the parsed object, so a
 #      duplicate is visible before anything discards it.
-# Fails CI so a new page/string can't ship untranslated.
+# Fails CI so a new page/string can't ship without its English source.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -97,7 +97,9 @@ if missing:
     for k in missing:
         print("  -", k)
 
-# 2. every locale file must match the base key set exactly.
+# 2. non-English locale files are OPTIONAL (ADR-0160 section 2: code merges
+#    with English only; other languages come from Weblate/signed bundles).
+#    A key-set difference against en.json is a non-blocking warning only.
 for path in sorted(glob.glob("web/locales/*.json")):
     if path.endswith("en.json"):
         continue
@@ -105,13 +107,12 @@ for path in sorted(glob.glob("web/locales/*.json")):
     only_base = sorted(base - ks)
     only_loc = sorted(ks - base)
     if only_base or only_loc:
-        fail = True
-        print(f"guard-i18n: {path} differs from en.json:")
-        for k in only_base:
+        print(f"guard-i18n: warning (non-blocking): {path} differs from en.json: "
+              f"{len(only_base)} missing, {len(only_loc)} orphan (translations arrive via Weblate)")
+        for k in only_base[:20]:
             print("  missing:", k)
-        for k in only_loc:
+        for k in only_loc[:20]:
             print("  orphan :", k)
-
 
 # 3. Go-side hardcoded user-facing strings (ut-docs#19): a string literal
 #    passed directly as the body of an HTTP response write is invisible to
@@ -944,7 +945,7 @@ if title_hits:
 
 if fail:
     sys.exit(1)
-print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
+print(f"✓ i18n guard: {len(used)} template keys resolve; en.json is the base (other locales optional); "
       f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
       f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found; "
       f"no missing Go-side i18n key literals found; no format/template verb mismatches found; "

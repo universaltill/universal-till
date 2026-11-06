@@ -3,6 +3,7 @@ id: catalog
 title: کاتالوگ، تنوع‌ها و بارکدها
 section: راه‌اندازی فروشگاه
 order: 110
+public: true
 summary: "محصولات شما: نام‌ها، قیمت‌ها، دسته‌ها، تنوع‌های کالا (سایز، طعم…) و هر تعداد بارکد برای هر کالا یا هر تنوع."
 routes: [/catalog, /import, /items, /modifiers]
 ---

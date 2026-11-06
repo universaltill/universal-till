@@ -3,6 +3,7 @@ id: channel-orders
 title: Online-Bestellungen
 section: Täglicher Verkauf
 order: 16
+public: true
 summary: "Bestellungen aus Ihrem Webshop oder von Marktplätzen, die auf dieser Kasse erfasst wurden: was bestellt wurde, wie weit sie sind und was sie mit Ihrem Bestand gemacht haben."
 routes: [/channel-orders, /channel-orders/{id}]
 keywords: [online-bestellungen, webshop, marktplatz, kanal, shopify, bestellnummer, erstattung, bestand, kein verkauf]

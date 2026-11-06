@@ -739,7 +739,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if cloudHeld != nil {
 			persistCloudShopCurrency(r, d, cloudHeld)
 		}
-		httpx.InitCurrency(st.Currency)
+		common.InitCurrencyFromState(st)
 		// ut-docs#1027: live-apply the just-derived locale, same posture as
 		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
 		// this is safe even when no country matched (st.Locale left at
@@ -869,6 +869,13 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			if err := commitCloudPairing(r.Context(), d, cloudHeld.p); err != nil {
 				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
 				cloudPairFailed = true
+				// Still a brand-new till: the card's lines are true, so park it
+				// until the owner pairs again from Settings (ut-docs#5333).
+				master := ""
+				if cloudHeld.p.Store != nil {
+					master = cloudHeld.p.Store.CatalogMaster
+				}
+				deferNextSteps(r.Context(), d, master)
 			} else {
 				markJoinedShop(r.Context(), d)
 				master := ""

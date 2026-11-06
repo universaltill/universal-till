@@ -3,6 +3,7 @@ id: inventory
 title: Stock & inventory
 section: Setting up your shop
 order: 120
+public: true
 summary: Tracks on-hand quantities per item and variant, and what a sale, refund or delivery does to them.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 # /locations is never screenshotted (docs-shots only captures routes[0]) —

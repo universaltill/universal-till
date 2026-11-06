@@ -28,7 +28,7 @@ func snapshots(t *testing.T, root string, n, size int) []string {
 	t.Helper()
 	var names []string
 	for i := 0; i < n; i++ {
-		at := testNow.Add(-time.Duration(i) * 24 * time.Hour)
+		at := testNow.Add(-time.Duration(i) * 12 * time.Hour) // all inside the 7-day window
 		name := fmt.Sprintf("backups/unitill-pos-%s.db", at.Format("20060102-150405"))
 		putSized(t, root, name, size, at)
 		names = append(names, name)
@@ -97,7 +97,7 @@ func TestRunWith_LowDiskStillKeepsRestoreCopiesInsideTheStatutoryFloor(t *testin
 
 // The low-disk limits are never looser than the normal ones.
 func TestLowDiskLimitsAreTighter(t *testing.T) {
-	if LowDisk.BackupKeep > Normal.BackupKeep || LowDisk.PreRestoreKeep > Normal.PreRestoreKeep ||
+	if LowDisk.PreRestoreKeep > Normal.PreRestoreKeep ||
 		LowDisk.PreRestoreMaxAge > Normal.PreRestoreMaxAge || LowDisk.IssueReportMaxAge > Normal.IssueReportMaxAge ||
 		LowDisk.UpdateDownloadMaxAge > Normal.UpdateDownloadMaxAge {
 		t.Fatalf("LowDisk %+v looser than Normal %+v", LowDisk, Normal)

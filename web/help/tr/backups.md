@@ -3,6 +3,7 @@ id: backups
 title: Yedekler
 section: İşi yürütme
 order: 250
+public: true
 summary: Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indirip güvenli bir yerde saklayabilirsiniz.
 ---
 

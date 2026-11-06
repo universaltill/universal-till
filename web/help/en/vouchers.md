@@ -3,6 +3,7 @@ id: vouchers
 title: Gift vouchers
 section: Everyday selling
 order: 25
+public: true
 summary: Sell gift vouchers by tapping a Gift voucher item — scan the card or let the till create a number — and take them as payment by scanning them at the sale screen or in the payment panel's Split tab.
 keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv, correct, correction, adjust, adjustment, top up, top-up, reload, add value]
 routes: [/vouchers, /vouchers/{id}]

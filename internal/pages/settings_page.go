@@ -875,6 +875,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// renders consistently.
 			"receiptPolicyAdvisoryDE": strings.EqualFold(strings.TrimSpace(all[common.KeyCountry]), "DE"),
 			"backups":                 listBackupsForUI(d, locale),
+			"backupRetentionDays":     data.BackupRetentionDays(r.Context(), d.Db),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -928,8 +929,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2499: clamped here (not the raw field) so a Deps whose
 			// State was never populated by LoadState still pre-selects the
 			// real default in the Sell screen card's <select>.
-			"browsingMode":    common.ClampBrowsingMode(st.BrowsingMode),
-			"launchOnStartup": st.LaunchOnStartup,
+			"browsingMode": common.ClampBrowsingMode(st.BrowsingMode),
+			// ut-docs#5410: the Currency display select, examples included.
+			"currencyDisplayOptions": currencyDisplayOptions(st.CurrencyDisplay, locale),
+			"launchOnStartup":        st.LaunchOnStartup,
 			// shellAttached + piKioskAppliance (ADR-0064, ut-docs#1039;
 			// finding 8 of its review): which of the three window-control
 			// topologies this till is actually in, so the Display card can
@@ -1479,6 +1482,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "paired", map[string]any{"store_id": status.StoreID})
+		// No new Next steps card here (ut-docs#5333, design-5058 N5): a till with
+		// its own history keeps its staff/PINs, devices, stock and products, so
+		// every line would be false. Only a card the wizard deferred (its cloud
+		// commit failed on a brand-new till) is promoted.
+		promoteDeferredNextSteps(r.Context(), d)
 		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
 		fmt.Fprintf(w, `<span>✅ %s <code>%s</code></span>`,
 			html.EscapeString(httpx.T(locale, "settings.enrol.pair_success")), html.EscapeString(status.StoreID))
@@ -3226,6 +3234,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ParseForm only moved up to make override_pin readable
 		// (ut-docs#796).
 		_ = r.ParseForm()
+		// ut-docs#5410: a bad display mode is a 400 (never clamped), refused
+		// before an approver's PIN is asked for. Empty is skipped like every
+		// other field of this handler.
+		currencyDisplay := strings.TrimSpace(r.Form.Get("currency_display"))
+		if currencyDisplay != "" && !httpx.IsCurrencyDisplayMode(currencyDisplay) {
+			http.Error(w, "currency_display must be one of auto, symbol, code", http.StatusBadRequest)
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)
@@ -3233,6 +3249,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				httpx.T(locale, "elevation.summary.store_save"),
 				[]elevationHiddenField{
 					{Name: "currency", Value: r.Form.Get("currency")},
+					{Name: "currency_display", Value: r.Form.Get("currency_display")},
 					{Name: "country", Value: r.Form.Get("country")},
 					{Name: "region", Value: r.Form.Get("region")},
 					{Name: "taxRatePct", Value: r.Form.Get("taxRatePct")},
@@ -3262,6 +3279,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// correct for a caller that does use the raw table), but this
 			// is the one that actually matters for the real UI.
 			extra[common.KeyCurrencyConfirmed] = "true"
+		}
+		if currencyDisplay != "" {
+			st.CurrencyDisplay = currencyDisplay
+			auditPayload["currency_display"] = currencyDisplay
 		}
 		countryChanged := false
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
@@ -3398,7 +3419,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			queueBasePluginsForCountryChange(r.Context(), d, st.Country)
 			startCustomerPhoneE164BackfillForCountryChange(d) // ut-docs#3992
 		}
-		httpx.InitCurrency(st.Currency)
+		common.InitCurrencyFromState(st)
 		// Live-apply, no restart (ut-docs#861) — st.Locale is always the
 		// current-or-just-changed value (CurrentState() seeds it when the
 		// "locale" field wasn't posted this call), same unconditional-call
@@ -3512,6 +3533,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			value = taxrate.FormatPercent(bp)
+		}
+		// ut-docs#5410: a display mode outside auto|symbol|code is refused,
+		// never clamped, so the stored row is what the screen renders.
+		if key == common.KeyCurrencyDisplay && !httpx.IsCurrencyDisplayMode(value) {
+			http.Error(w, "mode must be one of auto, symbol, code", http.StatusBadRequest)
+			return
 		}
 		// ut-docs#2499: same validate-before-persisting reasoning as the
 		// service-charge rate above. An out-of-enum browsing mode would be
@@ -3744,6 +3771,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				s.Theme = value
 			case common.KeyCurrency:
 				s.Currency = value
+			case common.KeyCurrencyDisplay:
+				s.CurrencyDisplay = value // validated above
 			case common.KeyCountry:
 				s.Country = value
 				if derivedLocale != "" && derivedLocale != s.Locale {
@@ -3791,8 +3820,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 		})
 		switch key {
-		case common.KeyCurrency:
-			httpx.InitCurrency(st.Currency)
+		case common.KeyCurrency, common.KeyCurrencyDisplay:
+			common.InitCurrencyFromState(st)
 			// store.currency_confirmed was saved with the currency above.
 		case common.KeyTheme:
 			// ut-docs#2362, same class of gap as ut-docs#2121's display.mode

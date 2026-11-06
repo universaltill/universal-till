@@ -21,6 +21,12 @@ specs across projects, each against its own server(s):
   There is no `webServer` entry and no fixed port for it any more — a
   spec that needs its own URL takes the `baseURL` fixture, never a
   literal.
+  `startWorkerTill(idx, { auth: true })` boots an auth-ON till on worker
+  port + 150 (`AUTH_PORT_OFFSET`); first boot goes through
+  `POST /api/auth/setup` with the admin PIN, the returned till exposes
+  `adminPin`, and a spec signs in through `/login`. Used by
+  `plugin-confirm-5466.spec.ts` (the plugin-view `confirm` component needs a
+  signed-in operator, ut-docs#5466).
 - **auth** (`run-till-auth.sh`, port 8092, auth ON) — a genuinely fresh
   install with no operator PINs set yet, so `login.spec.ts` and its 4
   sibling specs (nav-rail lock/icons, session-expiry x2) can drive the
@@ -66,10 +72,27 @@ genuinely fresh till shows `1.20`, not `1.44`. Fixed both the isolation
 bug and the now-exposed test.
 
     cd e2e && npm ci && npx playwright install chromium
-    npx playwright test                    # headless, every project in playwright.config.ts
+    npx playwright test                    # headless, every project in playwright.config.ts (Chromium; WebKit is separate)
     npx playwright test --headed           # watch it
     npx playwright test --project=default  # skip the auth/setup specs
     npx playwright test --project=auth     # just login.spec.ts and its siblings
+
+### WebKit phone lane (ut-docs#3734)
+
+The iOS app (WKWebView) and the Pi shell (WebKitGTK) render in WebKit, so the
+specs whose purpose is phone width also run under Playwright WebKit, from a
+separate config (`playwright.webkit.config.ts`) so the Chromium run and dev
+machines never need WebKit and no static tills are booted for it.
+
+- Covers every spec with `phone` in its file name, minus the `*_ONLY_SPECS`
+  sets (the auth-project `phone-drawer-*` specs are not in the lane).
+- Locally: `npx playwright install webkit && npx playwright test -c playwright.webkit.config.ts`
+  (or `npm run test:webkit`); `--list` needs no browser.
+- CI: the `webkit-phone` job in `.github/workflows/e2e.yml`, parallel to the
+  Chromium job; on a PR it runs only if the diff touches `web/**`, `e2e/**` or `e2e.yml`,
+  always on push to main.
+- A spec that cannot run in WebKit is skipped per test with
+  `test.skip(browserName === 'webkit', '<reason> ut-docs#N')`, never blanket.
 
 Rules learned the hard way:
 - **One till per worker, never one till shared by two workers** — a

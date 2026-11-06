@@ -3,6 +3,7 @@ id: designer
 title: Receipt designer
 section: Running the business
 order: 240
+public: true
 summary: Customise what your receipt shows — logo, header/footer text, and which sections print — with a live preview and a test print before you commit.
 routes: [/receipt-designer]
 keywords: [receipt, logo, layout, footer, header, preview, print test, tracking QR]

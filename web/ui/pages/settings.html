@@ -164,7 +164,7 @@
        registration state, and the POST is elevation-wired (ut-docs#867). -->
   <div class="set-divider">
     <h3 style="margin:0 0 .3rem">{{ T "settings.enrol.pair_title" }}</h3>
-    <p class="muted">{{ T "settings.enrol.pair_help" }}</p>
+    <p class="muted">{{ T "settings.enrol.pair_help_2" }}</p>
     <!-- Pair is destructive and not idempotent: it clears this till's cloud
          identity before the (single-use) code reaches the cloud, so a second
          submit of the same code — a double-tap on the touchscreen, which htmx
@@ -522,6 +522,27 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  <!-- ut-docs#5620: Android only. The shell keeps the display on while the
+       till is in front and lets the OS sleep it after this much idle time. The
+       row stays hidden on any till without window.AndroidKiosk (browser, Pi,
+       desktop); the choice is per device and lives in the app, not the shop
+       settings. -->
+  <form id="screen-awake-form" class="set-gap" hidden data-testid="screen-awake">
+    <label class="set-row">{{ T "settings.display.awake" }}
+      <select id="screen-awake-select" name="minutes">
+        <option value="0">{{ T "settings.display.awake_never" }}</option>
+        <option value="15">{{ printf (T "settings.display.awake_minutes") 15 }}</option>
+        <option value="30">{{ printf (T "settings.display.awake_minutes") 30 }}</option>
+        <option value="60">{{ printf (T "settings.display.awake_minutes") 60 }}</option>
+        <option value="120">{{ printf (T "settings.display.awake_hours") 2 }}</option>
+        <option value="240">{{ printf (T "settings.display.awake_hours") 4 }}</option>
+        <option value="480">{{ printf (T "settings.display.awake_hours") 8 }}</option>
+      </select>
+    </label>
+    <p class="muted">{{ T "settings.display.awake_help" }}</p>
+    <span id="screen-awake-msg" aria-live="polite" class="muted"></span>
+  </form>
+  <script src="/public/screen-awake.js?v={{ assetv "public/screen-awake.js" }}" defer></script>
   <!-- ut-docs#2308: the sell-screen basket/products divider's own reset --
        the drag itself lives on the sell screen (a live, no-reload
        fetch() POST, see index.html), so this is only the "I want the
@@ -1089,11 +1110,11 @@
     <tbody>
       {{ range .backups }}
       <tr>
-        <td style="font-family:monospace">{{ .Name }}</td>
+        <td style="font-family:monospace">{{ .Name }}{{ if .Newest }} <span class="muted" style="font-family:inherit" data-testid="backup-newest-{{ .Name }}">· {{ T "settings.backup.newest_kept" }}</span>{{ end }}</td>
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
-        <td style="display:flex; gap:.3rem">
-          <button class="btn secondary" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+        <td style="display:flex; gap:.3rem; flex-wrap:wrap">
+          <button class="btn secondary" data-backup-save="{{ .Name }}" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
                the old typed RESTORE word — the elevation dialog's own OOB
                swap (elevation_prompt.html) handles the rest via this same
@@ -1103,6 +1124,14 @@
             <input type="hidden" name="name" value="{{ .Name }}">
             <button class="btn secondary" type="submit">{{ T "settings.backup.restore" }}</button>
           </form>
+          {{/* ut-docs#3092: Delete, with a confirm; the newest backup is always
+               kept (no button, and the server refuses it). Refreshes only
+               this card, like Backup now. */}}
+          {{ if not .Newest }}
+          <button class="btn secondary" type="button" data-testid="backup-delete-{{ .Name }}"
+                  hx-post="/api/backup/delete" hx-vals='{{ jsonVals "name" .Name }}' hx-target="#backup-dl-msg" hx-swap="innerHTML"
+                  hx-confirm="{{ T "settings.backup.delete_confirm" }}" data-after-request="ut-ok refresh-region">{{ T "settings.backup.delete" }}</button>
+          {{ end }}
         </td>
       </tr>
       {{ end }}
@@ -1113,8 +1142,50 @@
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
+  {{/* ut-docs#3092: how long backups are kept (per till). */}}
+  <form class="set-row set-below" id="backup-retention-form" hx-post="/api/backup/retention" hx-target="#backup-retention-msg" hx-swap="innerHTML">
+    <label for="backup-retention-days">{{ T "settings.backup.retention_days" }}</label>
+    <input id="backup-retention-days" type="number" name="days" min="1" max="365" step="1" inputmode="numeric" value="{{ .backupRetentionDays }}" required>
+    <button class="btn secondary" type="submit">{{ T "settings.backup.retention_save" }}</button>
+    <span id="backup-retention-msg" aria-live="polite"></span>
+  </form>
+  <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
   {{ end }}
   </div>
+  <script>
+  // ut-docs#5619: in the Android app the till process cannot write Downloads
+  // (scoped storage; the storage may be a USB drive), so Save to Downloads
+  // opens the system save picker through the app's bridge instead of the
+  // server-side copy. It sits outside the refreshable backup region (a region
+  // refresh does not run scripts). Anywhere else the htmx button above does the copy.
+  (function () {
+    var K = window.AndroidKiosk;
+    if (!K || typeof K.saveBackupCopy !== 'function' || window.utBackupSaveResult) return;
+    var T = {
+      saved: "{{ T "settings.backup.picker_saved" }}",
+      cancelled: "{{ T "settings.backup.picker_cancelled" }}",
+      failed: "{{ T "settings.backup.picker_failed" }}",
+      no_space: "{{ T "settings.backup.picker_no_space" }}"
+    };
+    function say(text, ok) {
+      var el = document.getElementById('backup-dl-msg');
+      if (el) el.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
+    }
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-backup-save]');
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();
+      K.saveBackupCopy(b.getAttribute('data-backup-save'));
+    }, true);
+    window.utBackupSaveResult = function (code, name) {
+      say(T[code] || T.failed, code === 'saved');
+      if (code === 'saved' && window.htmx) {
+        window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
+      }
+    };
+  })();
+  </script>
   {{ if .isManager }}
   {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
        stick, another computer or the Downloads folder (a new or
@@ -2229,6 +2300,19 @@
   </fieldset>
   </div>
 </div>
+<!-- ADR-0176 (ut-docs#5366): notices from Universal Till and partners. A
+     per-till switch, off by default; off means no bell, no inbox and no extra
+     cloud request, and the held notices are erased. -->
+<div class="card" id="settings-notices">
+  <h2>{{ T "settings.notices.title" }}</h2>
+  <p class="muted">{{ T "settings.notices.help" }}</p>
+  <form hx-post="/api/settings/notices" hx-swap="none" data-after-request="ok reload:settings-notices; fail save-error:settings-save-error">
+    <label><input type="checkbox" name="enabled" data-testid="notices-enabled" {{ if eq (index .settingsMap "notices.enabled") "true" }}checked{{ end }}> {{ T "settings.notices.enable" }}</label>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "settings.notices.save" }}</button>
+    </div>
+  </form>
+</div>
 <!-- ut-docs#3115: the shop's name (store.name), editable after setup.
      Elevation-wired like Shop type below, so it renders for every session.
      A plain text input: osk.js's guardSweep gives it inputmode="none" when
@@ -2275,6 +2359,38 @@
     <span id="settings-save-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  <!-- ut-docs#5410: how amounts write the shop currency (auto/symbol/code).
+       Its own lock region, like the language card; options are built in Go
+       ("Symbol (£12.50)") so no digits sit in translation strings. -->
+  <div id="settings-currency-display">
+  <fieldset class="set-lock" data-lock-region="settings-currency-display"{{ if index $.lockedRegions "settings-currency-display" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-currency-display" }}{{ template "set-lock-note" }}{{ end }}
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail save-error:settings-save-error">
+    <label class="set-row" for="currency-display"><span id="currency-display-title">{{ T "settings.currency_display.title" }}</span>
+      <select id="currency-display" name="currency_display" class="currency-display-select" aria-describedby="currency-display-help currency-display-example">
+        {{ range .currencyDisplayOptions }}
+        <option value="{{ .Value }}" data-example="{{ .Example }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <p class="muted" id="currency-display-help">{{ T "settings.currency_display.help" }}</p>
+    <p class="muted" id="currency-display-example" data-testid="currency-display-example"><bdi>{{ range .currencyDisplayOptions }}{{ if .Selected }}{{ .Example }}{{ end }}{{ end }}</bdi></p>
+    <button class="btn btn-touch" type="submit" id="currency-display-apply" aria-labelledby="currency-display-apply currency-display-title">{{ T "settings.currency.apply" }}</button>
+  </form>
+  </fieldset>
+  </div>
+  <script>
+  (function () {
+    var sel = document.getElementById('currency-display');
+    var ex = document.getElementById('currency-display-example');
+    if (!sel || !ex) return;
+    sel.addEventListener('change', function () {
+      var o = sel.options[sel.selectedIndex];
+      var b = ex.querySelector('bdi');
+      if (o && b) b.textContent = o.getAttribute('data-example') || '';
+    });
+  })();
+  </script>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
 <!-- ut-docs#861: the shop's default locale — used for anything with no

@@ -3,6 +3,7 @@ id: my-reports
 title: My reports
 section: Connecting & extending
 order: 361
+public: true
 summary: "See the problem reports this till has captured — sent or still pending (most recent 100) — with their last-known status. Works offline too."
 routes: [/my-reports]
 keywords: [bug, issue, report, status, sent, pending, github, tracking]
@@ -34,4 +35,4 @@ The page never needs the network: it always shows the statuses from the last tim
 
 If this till can't save its own copy of a report — for example, its storage is full — it keeps retrying, but only for a while. After several failed attempts it gives up trying to remember the report locally. The report itself still reaches support either way; it just won't be listed here.
 
-Open it from the report panel's **View my reports** link (🐞 button in the left-hand menu — see the Reporting a problem topic). Only managers and admins see this link and page: it lists every report this till has sent, not just your own.
+Open it from the report panel's **View my reports** link (**Report an issue** button, bug icon, in the left-hand menu — see the Reporting a problem topic). Only managers and admins see this link and page: it lists every report this till has sent, not just your own.

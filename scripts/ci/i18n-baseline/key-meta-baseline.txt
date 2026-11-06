@@ -680,7 +680,6 @@ elevation.summary.barcode_symbology_off
 elevation.summary.barcode_symbology_on
 elevation.summary.browsing_mode
 elevation.summary.buttons_add
-elevation.summary.buttons_delete_item
 elevation.summary.buttons_hide
 elevation.summary.buttons_move
 elevation.summary.buttons_recategorize
@@ -1193,9 +1192,7 @@ kitchenstations.items.remove
 kitchenstations.items.search
 kitchenstations.items.set
 kitchenstations.items.title
-kitchenstations.new.submit
 kitchenstations.new.title
-kitchenstations.none
 kitchenstations.save
 kitchenstations.title
 kitchenstations.view_display
@@ -1780,7 +1777,6 @@ promotions.col.value
 promotions.customer.any
 promotions.customer.search_ph
 promotions.deactivate
-promotions.edit
 promotions.error.code_exists
 promotions.error.create
 promotions.error.dates_invalid
@@ -1792,8 +1788,6 @@ promotions.field.description
 promotions.field.ends_at
 promotions.field.starts_at
 promotions.inactive
-promotions.list_empty
-promotions.new.submit
 promotions.new.title
 promotions.title
 promotions.type.amount
@@ -2052,7 +2046,6 @@ reports.tips.tip_received
 reports.tips.type_service_charge
 reports.tips.type_tip
 reports.title
-reports.today
 reports.top_items
 reports.uncategorized
 reports.wd_fri
@@ -2406,7 +2399,6 @@ settings.enrol.not_registered
 settings.enrol.pair_btn
 settings.enrol.pair_busy
 settings.enrol.pair_failed
-settings.enrol.pair_help
 settings.enrol.pair_placeholder
 settings.enrol.pair_replica_no_store
 settings.enrol.pair_store_mismatch
@@ -3004,8 +2996,6 @@ tender.voucher_check
 tender.voucher_id
 tender.voucher_id_placeholder
 tile_sheet.aria
-tile_sheet.delete_item
-tile_sheet.delete_item_confirm
 tile_sheet.edit
 tile_sheet.hidden_state
 tile_sheet.hide
