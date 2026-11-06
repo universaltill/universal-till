@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/selfupdate"
@@ -122,6 +123,18 @@ type Rule struct {
 	Where      string // location, relative to the data directory
 	Policy     string
 	EnforcedBy string
+	// Args are the numbers in the merchant policy text, in the order of the
+	// verbs in en.json "settings.storage.policy.<Kind>" (ut-docs#3122).
+	Args []int64
+}
+
+// InDatabase reports a "database: <table>" row (sync history).
+func (r Rule) InDatabase() bool { return strings.HasPrefix(r.Where, "database:") }
+
+// Params are the per-till numbers a retention row depends on.
+type Params struct {
+	BackupDays     int   // backup.retention_days
+	ArchiveMinDays int64 // resolved statutory floor (data.ArchiveMinDaysForPruning)
 }
 
 // Retention is the written retention table: every kind of file the till
@@ -132,38 +145,53 @@ type Rule struct {
 // deletes rows (TestPackageNeverTouchesTheDatabase). A new sync_* table fails
 // TestRetentionTableCoversEverySyncHistoryTable until it has a row.
 func Retention() []Rule {
+	return RetentionFor(Params{BackupDays: DefaultBackupRetentionDays, ArchiveMinDays: 0})
+}
+
+// RetentionFor is the retention table with this till's numbers: its days of
+// backups and its resolved statutory floor. Retention() is the same table
+// with the defaults. Every number in a row's Args is a constant or a Params
+// field, so the merchant text can't drift from the job (ut-docs#3122).
+func RetentionFor(p Params) []Rule {
 	return []Rule{
 		{KindBackups, "backups/unitill-pos-*.db",
-			fmt.Sprintf("the last %d days (setting backup.retention_days), pruned after every new backup, never the newest; together at most %d%% of the free space they could release; newest %d below the low-disk floor (never fewer than %d)", DefaultBackupRetentionDays, BackupSharePercent, MinBackupKeep, MinBackupKeep), "after each backup + housekeeping (db.PruneBackupsOlderThan, CapBackups)"},
+			fmt.Sprintf("the last %d days (setting backup.retention_days), pruned after every new backup, never the newest; together at most %d%% of the free space they could release; newest %d below the low-disk floor (never fewer than %d)", p.BackupDays, BackupSharePercent, MinBackupKeep, MinBackupKeep), "after each backup + housekeeping (db.PruneBackupsOlderThan, CapBackups)",
+			[]int64{int64(p.BackupDays), BackupSharePercent, MinBackupKeep}},
 		{KindPreRestore, "backups/pre-restore-*.db",
-			fmt.Sprintf("newest %d, none older than %d days (newest 1, none older than %d day below the low-disk floor), never inside the shop's statutory retention floor (ADR-0040)", PreRestoreKeep, days(PreRestoreMaxAge), days(LowDiskMaxAge)), "housekeeping (db.PrunePreRestore)"},
+			fmt.Sprintf("newest %d, none older than %d days (newest 1, none older than %d day below the low-disk floor), never inside the shop's statutory retention floor (ADR-0040)", PreRestoreKeep, days(PreRestoreMaxAge), days(LowDiskMaxAge)), "housekeeping (db.PrunePreRestore)",
+			[]int64{p.ArchiveMinDays, PreRestoreKeep, int64(days(PreRestoreMaxAge)), int64(LowDisk.PreRestoreKeep)}},
 		{KindIssueReports, "issue-reports/pending/<id>/",
-			fmt.Sprintf("deleted once uploaded, or after %d days unsent (%d day below the low-disk floor)", days(IssueReportMaxAge), days(LowDiskMaxAge)), "cloudsync upload + housekeeping (issuereport.PruneOlderThan)"},
+			fmt.Sprintf("deleted once uploaded, or after %d days unsent (%d day below the low-disk floor)", days(IssueReportMaxAge), days(LowDiskMaxAge)), "cloudsync upload + housekeeping (issuereport.PruneOlderThan)",
+			[]int64{int64(days(IssueReportMaxAge)), int64(LowDiskMaxAge / time.Hour)}},
 		{KindUpdateDownloads, "updates/attempt-*/",
-			fmt.Sprintf("cleared when the next update starts, or after %d days (%d day below the low-disk floor)", days(UpdateDownloadMaxAge), days(LowDiskMaxAge)), "selfupdate + housekeeping (selfupdate.PruneStaleAttempts)"},
+			fmt.Sprintf("cleared when the next update starts, or after %d days (%d day below the low-disk floor)", days(UpdateDownloadMaxAge), days(LowDiskMaxAge)), "selfupdate + housekeeping (selfupdate.PruneStaleAttempts)",
+			[]int64{int64(days(UpdateDownloadMaxAge)), int64(LowDiskMaxAge / time.Hour)}},
 		{KindLogs, "logs/till.log*",
-			fmt.Sprintf("%d files × %d MB, oldest dropped", logging.DefaultMaxFiles, logging.DefaultMaxFileBytes>>20), "logging.RotatingWriter"},
+			fmt.Sprintf("%d files × %d MB, oldest dropped", logging.DefaultMaxFiles, logging.DefaultMaxFileBytes>>20), "logging.RotatingWriter",
+			[]int64{logging.DefaultMaxFiles, logging.DefaultMaxFileBytes >> 20}},
 		{KindDiagnostics, "diagnostics/pending/",
-			"200 batches, oldest dropped; deleted once uploaded", "diagnostics queue"},
+			fmt.Sprintf("%d batches, oldest dropped; deleted once uploaded", diagnostics.MaxPendingBatches), "diagnostics queue",
+			[]int64{int64(diagnostics.MaxPendingBatches)}},
 		// The one row outside the data directory: os.CreateTemp("") stages
 		// into the system temp dir (ut-docs#3955).
 		{KindStagedUploads, "<system temp dir>/" + strings.Join(stagedupload.Patterns(), ", "),
 			fmt.Sprintf("deleted when the upload, import or import preview that made them ends; leftovers after a crash removed after %d hours", int(stagedupload.MaxAge/time.Hour)),
-			"the request handlers + housekeeping (stagedupload.PruneOlderThan)"},
+			"the request handlers + housekeeping (stagedupload.PruneOlderThan)",
+			[]int64{int64(stagedupload.MaxAge / time.Hour)}},
 		{KindSyncAggregateLedger, "database: sales_aggregate_uploads",
 			"rows for business days before the upload look-back window are deleted on every upload round",
-			"cloudsync (salesAggregateLookbackDays, POSRepo.PruneSalesAggregateUploads)"},
+			"cloudsync (salesAggregateLookbackDays, POSRepo.PruneSalesAggregateUploads)", nil},
 		{KindSyncHeldTombstones, "database: held_sales_tombstones",
 			"deleted once older than the tombstone lifetime, on every held-order delete or claim",
-			"data (heldSaleTombstoneTTL, held_sales_repo.go)"},
+			"data (heldSaleTombstoneTTL, held_sales_repo.go)", nil},
 		{KindSyncAssetLedger, "database: sync_asset_ledger",
 			"one row per photo or file this till downloaded from the main till; the row goes when the file is pruned",
-			"LAN asset sync (SyncAssetLedgerRepo.Apply)"},
+			"LAN asset sync (SyncAssetLedgerRepo.Apply)", nil},
 		{KindSyncAdminVersion, "database: sync_admin_version",
-			"a single counter row; never grows", "migration 023 (CHECK id = 1)"},
+			"a single counter row; never grows", "migration 023 (CHECK id = 1)", nil},
 		{KindSyncQuarantine, "database: sync_journal_quarantine",
 			"kept, never deleted automatically; one row per sale (UNIQUE sale_id), so retries add nothing: each row is a sale this till could not apply from another till, and may be its only copy of that sale (ADR-0040, ADR-0065)",
-			"nothing deletes it; shown on /sync-quarantine"},
+			"nothing deletes it; shown on /sync-quarantine", nil},
 	}
 }
 

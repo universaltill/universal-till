@@ -204,9 +204,9 @@ func TestFlush_SplitsIntoBoundedBatches(t *testing.T) {
 // their event count folds into the next gap marker.
 func TestDiskQueue_CapacityDropsOldestBatches(t *testing.T) {
 	kv := withActiveSession(t)
-	origMax := maxPendingBatches
-	maxPendingBatches = 2
-	t.Cleanup(func() { maxPendingBatches = origMax })
+	origMax := MaxPendingBatches
+	MaxPendingBatches = 2
+	t.Cleanup(func() { MaxPendingBatches = origMax })
 	for i := 0; i < 3; i++ {
 		Emit(Gap{DroppedCount: 1})
 		if err := Flush(t.Context(), kv); err != nil {

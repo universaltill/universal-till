@@ -1220,6 +1220,20 @@
   {{ end }}
 </div>
 
+<!-- ut-docs#3122: Settings → Storage — what uses space on this till and how
+     long each kind of file is kept. Read-only; the body loads when the card
+     is shown (intersect once), so /settings never waits for a disk walk. No
+     isManager wrapper: the whole page is already gated by requirePage
+     "settings", so it would be dead code (same as settings-about). -->
+<div class="card settings-wide" id="settings-storage">
+  <h2>{{ T "settings.storage.title" }} {{ helpLink "backups" }}</h2>
+  <p class="muted">{{ T "settings.storage.help" }}</p>
+  <div id="settings-storage-body" data-testid="settings-storage-body"
+       hx-get="/ui/settings/storage" hx-trigger="intersect once" hx-swap="innerHTML">
+    <p class="muted" aria-live="polite">{{ T "settings.storage.loading" }}</p>
+  </div>
+</div>
+
 <!-- ut-docs#867 review nit: with every guard below false (no demo sample,
      no pending base plugin) a non-manager
      session would otherwise get an empty card containing only this

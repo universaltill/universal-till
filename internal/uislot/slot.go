@@ -579,6 +579,8 @@ var CoreSettings = []Entry{
 	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050, Group: "settings.cat.selling.label"},
 	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100, Group: "settings.cat.selling.label"},
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
+	// ut-docs#3122: Storage, read-only, right after the Backups card in the template.
+	{Key: "settings-storage", Href: "#settings-storage", LabelKey: "settings.storage.title", Order: 1250, Group: "settings.cat.backup.label"},
 	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300, Group: "settings.cat.advanced.label"},
 	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
 	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},

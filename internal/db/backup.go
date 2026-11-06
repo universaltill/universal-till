@@ -30,9 +30,15 @@ const (
 	backupTimeLayout = "20060102-150405"
 )
 
+// BackupDirPath is the backup directory next to the DB file, without
+// creating it: for read-only callers (Settings → Storage, ut-docs#3122).
+func BackupDirPath(dbPath string) string {
+	return filepath.Join(filepath.Dir(dbPath), backupDirName)
+}
+
 // BackupDir returns (and creates) the backup directory next to the DB file.
 func BackupDir(dbPath string) (string, error) {
-	dir := filepath.Join(filepath.Dir(dbPath), backupDirName)
+	dir := BackupDirPath(dbPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("backup dir: %w", err)
 	}

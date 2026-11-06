@@ -521,6 +521,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	registerReleaseNotes(mux, d)            // ut-docs#3091: the after-update chip's dismiss
 	registerSettingsLanguageInstall(mux, d) // ut-docs#4477: the Language card's install chip
+	registerSettingsStorage(mux, d)         // ut-docs#3122: the Storage card's body
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#3079: a cashier is sale-only — the whole page is gated,
 		// not just its individual cards/actions.
@@ -845,7 +846,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// a cashier never renders it — but diagnosticsViewFor
 			// unconditionally called PendingSummary, which unmarshals every
 			// pending batch file on disk (up to ~40MB worst case, see
-			// queue.go's maxPendingBatches/maxBatchBytes) on every cashier
+			// queue.go's MaxPendingBatches/maxBatchBytes) on every cashier
 			// GET /settings too. Gate it so a cashier gets the zero-value
 			// view instead (review finding on ut-docs#2169, ut-docs#2235).
 			"diagnostics": diagnosticsViewIfManager(r.Context(), d, locale, isManager),

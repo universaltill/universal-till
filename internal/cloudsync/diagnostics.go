@@ -158,7 +158,7 @@ func ActivateDiagnostics(ctx context.Context, cfg *config.Config, code string) (
 //     block every batch queued after it (review finding, ut-docs#2169: the
 //     original code treated every non-409 the same as a network failure and
 //     `return`ed, so a single permanently-rejected batch silently blocked
-//     the entire upload queue until eviction, up to `maxPendingBatches`
+//     the entire upload queue until eviction, up to `MaxPendingBatches`
 //     batches later).
 //   - Anything else (network error, 5xx): transient — leave the batch for
 //     the next tick and stop this tick's drain so FIFO order is preserved.

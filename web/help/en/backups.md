@@ -71,15 +71,34 @@ Under the list, **Keep backups for (days)** sets how many days of backups this t
 
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:
 
-- Backups: the last 7 days are kept (you can change the number of days, see below). Older ones are deleted whenever a new backup is made and again once a day. The newest backup is always kept. Together they never take more than a quarter of the free disk space: the oldest go first, but the newest 3 are always kept.
+- Backups: the last 7 days are kept (you can change the number of days, see below). Older ones are deleted whenever a new backup is made and again once a day. The newest backup is always kept. If they would take more than a quarter of the free space, the oldest go first, but the newest 3 are always kept.
 - The copy of your data set aside when you restore a backup: kept for as long as the law requires you to keep sales records; after that, only the newest 3 are kept, and none older than 30 days.
 - Issue reports that couldn't be sent: removed after 7 days.
 - Downloaded updates: removed after 7 days.
 - Uploaded files left behind when the till stopped in the middle of an upload or import: removed after 24 hours.
 
-If the disk gets almost full — less than 500 MB free, or less than a tenth of the disk (at most 5 GB), whichever is larger — the till cleans up at once instead of waiting for the next day, and keeps only the minimum: the newest 3 backups, the newest copy set aside by a restore, and issue reports and downloaded updates from the last day. Managers then see **Storage almost full** in the status bar until there is room again. Selling carries on; to free more space, remove files you don't need from the device, or ask whoever set it up.
+If the disk gets almost full — less than 500 MB free, or less than a tenth of the disk (at most 5 GB), whichever is larger — the till cleans up at once instead of waiting for the next day, and keeps only the minimum: the newest 3 backups, the newest copy set aside by a restore, and issue reports and downloaded updates from the last day. Managers then see **Storage almost full** in the status bar until there is room again. Selling carries on; to free more space, remove files you don't need from the device, or ask whoever set it up. Settings → Storage shows what is using the space.
 
 The clean-up never removes sales, receipts, the audit log, Z reports or any other record you must keep by law. Each till cleans only its own disk.
+
+## Storage
+
+In Settings → Storage, a manager or admin sees what is using space on this till and how long the till keeps each kind of file. It is for reading only: nothing on this card deletes anything. The figures load when you scroll to the card, so Settings opens as fast as ever.
+
+**What uses space** lists six rows, each with its size:
+
+- **Your shop data (sales, catalog, settings)**: the till's own data.
+- **Backups, including copies set aside by a restore**: everything in the backups folder.
+- **Logs (technical notes for fixing problems)**: what support asks for when something goes wrong.
+- **Issue reports waiting to be sent**: reports the till could not send yet.
+- **Downloaded updates**: software updates the till has downloaded.
+- **Everything else (photos, plugins and other files)**: the rest of the till's data folder.
+
+A size of **0 B** means nothing of that kind is stored. If some files could not be read, the card says the sizes may be a little low.
+
+Under the table, **Free space on this till** shows how much of the disk is free. Devices that cannot report it do not show this line. When the disk is almost full the card adds a notice; it is the same condition as **Storage almost full** in the status bar. Each till shows only its own disk.
+
+**How long files are kept** lists the same rules as "Automatic clean-up" above, with this till's own numbers: the days of backups you set under Backups, and how long the law requires you to keep sales records in your country. The records the till uses to sync with other tills and the cloud are listed under **Records used to sync with other tills and the cloud**; select that line to open the list.
 
 ## Removing the till from a Linux box
 

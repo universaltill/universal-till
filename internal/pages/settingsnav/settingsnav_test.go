@@ -70,6 +70,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-update", Label: "Software update", Group: backup, Cat: "backup"},
 		{Key: "settings-about", Label: "About", Group: backup, Cat: "backup"},
 		{Key: "settings-backup", Label: "Backups", Group: backup, Cat: "backup"},
+		{Key: "settings-storage", Label: "Storage", Group: backup, Cat: "backup"},
 		{Key: "settings-issuereport", Label: "Report an issue", Group: advanced, Cat: "advanced"},
 		{Key: "settings-diagnostics", Label: "Diagnostic mode", Group: advanced, Cat: "advanced"},
 		{Key: "settings-barcode", Label: "Barcode types", Group: advanced, Cat: "advanced"},

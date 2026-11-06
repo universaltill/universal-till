@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -405,12 +404,6 @@ func checkFreshBackup(dbPath, assetsRoot, name string) {
 // housekeeping goroutine touches it.
 var lastFreshCheckErr string
 
-// maxArchiveRetainDays is the largest archive_min_days that still converts
-// to a positive time.Duration (int64 nanoseconds): math.MaxInt64 / one day,
-// floored. A shop-configured value above this is clamped rather than
-// overflowed (ut-docs#3365 review finding).
-const maxArchiveRetainDays = math.MaxInt64 / int64(24*time.Hour)
-
 // ProblemKeyDiskLow tags the Problems entry (back-office Problems panel +
 // cloud heartbeat, ADR-0018) for "free space on this till's disk is below
 // the low-disk floor" (ut-docs#3121). It stays open until a later check
@@ -494,28 +487,16 @@ func sweepHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now 
 	// audit log), so they are kept for the shop's statutory archive floor
 	// (ADR-0040, ut-docs#3365). On any failure to resolve it, fall back to
 	// the global floor: fail safe toward retaining, never toward deleting.
-	minDays := data.GlobalArchiveMinDays
-	if db != nil {
-		if d, err := data.ResolveArchiveMinDays(context.Background(), db); err == nil {
-			minDays = d
-		} else {
-			log.Printf("[Housekeeping] resolve archive retention: %v (keeping pre-restore copies for %d days)", err, minDays)
-		}
+	minDays, err := data.ArchiveMinDaysForPruning(context.Background(), db)
+	if err != nil {
+		log.Printf("[Housekeeping] resolve archive retention: %v (keeping pre-restore copies for %d days)", err, minDays)
 	}
-	// archive_min_days has no upper bound (only validateCountrySetting's
-	// floor) -- a shop configuring an enormous "never purge" value would
-	// overflow time.Duration (int64 nanoseconds, ~106,751 days) to negative,
-	// which would flip the floor OFF and fail toward deleting instead of
-	// retaining. Clamp instead.
-	if minDays > maxArchiveRetainDays {
-		minDays = maxArchiveRetainDays
-	}
+	// archive_min_days has no upper bound: ArchiveMinDaysForPruning clamps it
+	// so a "never purge" value can't overflow time.Duration negative and
+	// flip the floor off.
 	minRetain := time.Duration(minDays) * 24 * time.Hour
-	policy := map[string]string{}
-	for _, rule := range housekeeping.Retention() {
-		policy[rule.Kind] = rule.Policy
-	}
 	limits := housekeeping.Normal
+	backupDays := housekeeping.DefaultBackupRetentionDays
 	if low {
 		limits = housekeeping.LowDisk
 	} else if days, err := data.BackupRetentionDaysChecked(context.Background(), db); err != nil {
@@ -524,6 +505,11 @@ func sweepHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now 
 		limits.BackupMaxAge = 0
 	} else {
 		limits.BackupMaxAge = time.Duration(days) * 24 * time.Hour
+		backupDays = days
+	}
+	policy := map[string]string{}
+	for _, rule := range housekeeping.RetentionFor(housekeeping.Params{BackupDays: backupDays, ArchiveMinDays: minDays}) {
+		policy[rule.Kind] = rule.Policy
 	}
 	if low && !diskLowOpen(now) {
 		log.Printf("[Housekeeping] low disk: %d MB free of %d MB (floor %d MB) — pruning each kind to its minimum", usage.Free>>20, usage.Total>>20, diskspace.Floor(usage.Total)>>20)

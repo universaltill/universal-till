@@ -35,10 +35,10 @@ var (
 	// uploaded stale. The cloudsync tick (2 min) flushes far sooner in
 	// normal operation — this only bites when the tick has stalled.
 	ringMaxAge = 15 * time.Minute
-	// maxPendingBatches bounds the on-disk queue across ALL sessions; at
+	// MaxPendingBatches bounds the on-disk queue across ALL sessions; at
 	// capacity the oldest batch files are removed and their events counted
 	// toward the next gap marker. 200 × ≤256 KiB is ≤ 50 MB worst case.
-	maxPendingBatches = 200
+	MaxPendingBatches = 200
 )
 
 // Cloud ingestion bounds — mirror ut-cloud/internal/diagnostics'
@@ -262,7 +262,7 @@ func writeBatch(dir, sessionID string, seq int, events []json.RawMessage, now ti
 	return nil
 }
 
-// evictOverflow enforces maxPendingBatches across the whole pending tree,
+// evictOverflow enforces MaxPendingBatches across the whole pending tree,
 // removing batches in Pending's own order (per-session: SessionID string
 // order, then Seq) and returns how many EVENTS were discarded so the caller
 // can fold them into the next gap marker. That order is only "oldest
@@ -283,11 +283,11 @@ func writeBatch(dir, sessionID string, seq int, events []json.RawMessage, now ti
 // window passes.
 func evictOverflow() int {
 	batches, err := Pending()
-	if err != nil || len(batches) <= maxPendingBatches {
+	if err != nil || len(batches) <= MaxPendingBatches {
 		return 0
 	}
 	dropped := 0
-	for _, b := range batches[:len(batches)-maxPendingBatches] {
+	for _, b := range batches[:len(batches)-MaxPendingBatches] {
 		if err := os.Remove(b.Path); err == nil {
 			dropped += len(b.Events)
 		}

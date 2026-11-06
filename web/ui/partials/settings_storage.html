@@ -1,0 +1,53 @@
+{{/* ut-docs#3122: the Storage card's body, rendered by
+     GET /ui/settings/storage (internal/pages/settings_storage.go) into
+     #settings-storage-body when the card scrolls into view. Read-only:
+     no script, no dialog, no inline handler. The only controls are the
+     native <summary> and, on a failed measure, a retry button that is
+     plain htmx. Sizes and the free-space numbers sit in <bdi> so they stay
+     whole under dir=rtl. */}}
+{{ if .Failed }}
+<p class="muted" role="status" data-testid="storage-error">{{ T "settings.storage.error" }}</p>
+<button type="button" class="btn secondary" data-testid="storage-retry"
+        hx-get="/ui/settings/storage" hx-target="#settings-storage-body" hx-swap="innerHTML">{{ T "settings.storage.retry" }}</button>
+{{ else }}
+<h3>{{ T "settings.storage.usage.heading" }}</h3>
+<table class="table storage-table" data-testid="storage-usage">
+  <thead><tr><th scope="col">{{ T "settings.storage.col.what" }}</th><th scope="col">{{ T "settings.storage.col.size" }}</th></tr></thead>
+  <tbody>
+  {{ range .Usage }}
+    <tr data-testid="storage-row-{{ .Category }}"><td>{{ .Label }}</td><td class="storage-size"><bdi>{{ .Size }}</bdi></td></tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ if .Disk }}
+<p data-testid="storage-disk">{{ .Disk.Line }}</p>
+{{ if .Disk.Low }}
+<p class="notice-block-warn" role="status" data-testid="storage-disk-low"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ T "settings.storage.disk_low" }}</p>
+{{ end }}
+{{ end }}
+{{ if .Skipped }}
+<p class="muted" data-testid="storage-skipped">{{ T "settings.storage.skipped" }}</p>
+{{ end }}
+
+<h3>{{ T "settings.storage.retention.heading" }}</h3>
+<p class="muted">{{ T "settings.storage.retention.never" }}</p>
+<table class="table storage-table storage-retention" data-testid="storage-retention">
+  <thead><tr><th scope="col">{{ T "settings.storage.col.what" }}</th><th scope="col">{{ T "settings.storage.col.kept" }}</th></tr></thead>
+  <tbody>
+  {{ range .Files }}
+    <tr data-testid="retention-{{ .Kind }}"><td>{{ .Label }}</td><td>{{ .Policy }}</td></tr>
+  {{ end }}
+  </tbody>
+</table>
+<details class="storage-sync" data-testid="storage-sync-details">
+  <summary>{{ T "settings.storage.retention.sync_summary" }}</summary>
+  <table class="table storage-table storage-retention">
+    <thead><tr><th scope="col">{{ T "settings.storage.col.what" }}</th><th scope="col">{{ T "settings.storage.col.kept" }}</th></tr></thead>
+    <tbody>
+    {{ range .SyncRules }}
+      <tr data-testid="retention-{{ .Kind }}"><td>{{ .Label }}</td><td>{{ .Policy }}</td></tr>
+    {{ end }}
+    </tbody>
+  </table>
+</details>
+{{ end }}

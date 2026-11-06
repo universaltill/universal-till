@@ -5893,6 +5893,18 @@ body.login-screen {
                        break-inside: avoid; }
 /* Wide tables (backups list) scroll INSIDE their card, never past its edge. */
 .settings-grid .card .table { display: block; overflow-x: auto; }
+/* ut-docs#3122 Settings → Storage. Two short columns that wrap: a real table
+   at full width, not the scrolling block the Backups list needs. */
+.settings-grid .card .table.storage-table { display: table; inline-size: 100%; }
+.storage-table td { overflow-wrap: break-word; vertical-align: top; }
+.storage-table th:last-child,
+.storage-table td.storage-size { text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Retention: keep the label column readable next to a long policy (German). */
+.storage-retention th:first-child, .storage-retention td:first-child { inline-size: 38%; }
+.storage-retention th:last-child { text-align: start; }
+.storage-sync > summary { cursor: pointer; padding-block: .7rem; font-weight: 600; } /* >=44px with the base line-height */
+.storage-sync > summary:focus-visible { outline: 3px solid var(--focus-border, var(--accent)); outline-offset: 2px; border-radius: .3rem; }
+.storage-sync[open] > summary { margin-block-end: .4rem; }
 /* Cards whose content is inherently wide (backup file table, the raw
    settings key/value table) span the full grid width instead of
    overflowing their single-column card — column-span is the multi-column-

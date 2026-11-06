@@ -169,6 +169,14 @@ var baseFuncs = template.FuncMap{
 	// claimed by another topic (the settings cards). Locale-less fallback for
 	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
+	// {{ bytes .N }}: human-readable size; FuncsFor overrides it locale-bound.
+	"bytes": func(v any) string {
+		q, ok := qtyFloat(v)
+		if !ok {
+			return ""
+		}
+		return FormatBytes(int64(q), DefaultLocale())
+	},
 	// {{ range railEntries }} — the nav rail's primary links, resolved from
 	// uislot.CoreRail + the active `layout` plugins' rail-slot amendments
 	// (ADR-0088, ut-docs#1912; rail.go). Locale-less fallback for the same
@@ -1146,6 +1154,15 @@ func FuncsFor(locale string) template.FuncMap {
 	// into an editable quantity input: basket.html's qty-input value is
 	// read back and validated server-side against a plain-ASCII-digit
 	// pattern, so it deliberately keeps using FormatQtyLatin instead.
+	// {{ bytes .Size }}: a human-readable size in the request locale
+	// (Settings → Storage, ut-docs#3122). Accepts any integer or float.
+	funcs["bytes"] = func(v any) string {
+		q, ok := qtyFloat(v)
+		if !ok {
+			return ""
+		}
+		return FormatBytes(int64(q), locale)
+	}
 	funcs["qty"] = func(v any) string {
 		q, ok := qtyFloat(v)
 		if !ok {

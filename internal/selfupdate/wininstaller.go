@@ -63,6 +63,10 @@ var (
 // instead of racing the first one's files.
 var windowsHandover atomic.Bool
 
+// UpdatesDir is where update downloads are staged (<data>/updates), for the
+// read-only size report in Settings → Storage (ut-docs#3122).
+func UpdatesDir() string { return windowsUpdateDir() }
+
 func windowsSetupName(version string) string {
 	return fmt.Sprintf("unitill-pos-setup-%s.exe", version)
 }

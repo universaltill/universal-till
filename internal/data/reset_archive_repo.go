@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -543,6 +544,29 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID, block
 // prune a pre-restore database copy inside that floor.
 func ResolveArchiveMinDays(ctx context.Context, db *sql.DB) (int64, error) {
 	return (&POSRepo{}).resolveArchiveMinDays(ctx, db)
+}
+
+// MaxArchiveRetainDays is the largest archive_min_days that still converts
+// to a positive time.Duration (int64 nanoseconds): math.MaxInt64 / one day,
+// floored. A shop-configured value above this is clamped rather than
+// overflowed (ut-docs#3365 review finding).
+const MaxArchiveRetainDays = math.MaxInt64 / int64(24*time.Hour)
+
+// ArchiveMinDaysForPruning is the statutory floor (days) that housekeeping
+// keeps pre-restore copies for: ResolveArchiveMinDays clamped to
+// MaxArchiveRetainDays. On error it returns GlobalArchiveMinDays plus the
+// error (fail toward retaining; the caller logs it). A nil db gives
+// GlobalArchiveMinDays, nil. The sweep and Settings → Storage share it
+// (ut-docs#3122), so the floor shown is the floor applied.
+func ArchiveMinDaysForPruning(ctx context.Context, db *sql.DB) (int64, error) {
+	if db == nil {
+		return GlobalArchiveMinDays, nil
+	}
+	days, err := ResolveArchiveMinDays(ctx, db)
+	if err != nil {
+		return GlobalArchiveMinDays, err
+	}
+	return min(days, MaxArchiveRetainDays), nil
 }
 
 // resolveArchiveMinDays reads the shop's chosen country (settings key

@@ -346,7 +346,7 @@ func TestTick404DrainsSessionAndDeactivates(t *testing.T) {
 // code treated every non-409 status, including 400, as a transient
 // failure and `return`ed on it — so a single permanently-rejected batch
 // silently head-of-line-blocked every batch queued behind it, for every
-// session, until eviction (up to maxPendingBatches later) finally dropped
+// session, until eviction (up to MaxPendingBatches later) finally dropped
 // it. This test proves the fix: the bad batch is discarded without a
 // retry, and the good batch right behind it in the SAME session still
 // uploads and gets acked in the SAME tick.
