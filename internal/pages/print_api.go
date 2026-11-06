@@ -917,7 +917,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if err == nil {
 			doc := print.Doc{
 				StoreName: storeNameOrDefault(ctx, d),
-				Meta:      []string{"TEST PRINT", time.Now().Format("2006-01-02 15:04:05")},
+				Meta:      []string{"TEST PRINT", httpx.FormatDateTimeLatin(time.Now(), httpx.DefaultLocale())},
 				Totals:    []print.KV{{Label: "Printer", Amount: "OK", Strong: true}},
 				Footer:    []string{"Universal Till"},
 				Charset:   cfg.Charset,

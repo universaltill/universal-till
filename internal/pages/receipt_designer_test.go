@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
@@ -454,5 +455,26 @@ func TestReceiptDesignerPage_PreviewUsesShopLocale(t *testing.T) {
 	}
 	if strings.Contains(body, "Receipt 000000123") {
 		t.Errorf("page preview leaked the request-locale receipt number")
+	}
+}
+
+// ut-docs#5748: the designer preview's date is the receipt's date format.
+func TestSampleReceiptDoc_DateMatchesReceiptFormat_5748(t *testing.T) {
+	chdirRoot(t)
+	initPagesI18n(t)
+	defer httpx.SnapshotStateForTests()()
+	for shop, layout := range map[string]string{"en-GB": "02/01/2006 15:04", "en-US": "01/02/2006 15:04"} {
+		httpx.SetDefaultLocale(shop)
+		// The live clock may cross a minute between reads: accept either side.
+		before := clock.Now()
+		doc := sampleReceiptDoc("My Shop", receiptDesign{}, "en")
+		after := clock.Now()
+		got := doc.Meta[1]
+		if got != before.Format(layout) && got != after.Format(layout) {
+			t.Errorf("shop %s: Meta[1] = %q want %q", shop, got, before.Format(layout))
+		}
+		if got != httpx.FormatDateTimeLatin(before, shop) && got != httpx.FormatDateTimeLatin(after, shop) {
+			t.Errorf("shop %s: Meta[1] = %q is not the receipt's FormatDateTimeLatin", shop, got)
+		}
 	}
 }
