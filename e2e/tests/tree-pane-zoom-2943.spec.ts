@@ -159,8 +159,23 @@ test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
       // all (task note), and re-tapping the row already showing is a
       // same-page no-op, not a fresh activation -- so land on a DIFFERENT
       // row first, then tap the one under test.
+      // htmx pushes the URL BEFORE the settle step (default settleDelay
+      // 20 ms), and zoomPane() runs in htmx:afterSettle -- so the `other`
+      // pane's OWN zoom is recorded after toHaveURL resolves. Resetting
+      // __zooms right away let that late, legitimate zoom land in the
+      // tapped row's count (ut-docs#5720). So clear __zooms before tapping
+      // `other` (else the previous row's record would satisfy the first
+      // poll at once), wait until `other`'s zoom is recorded and finished
+      // and the rail row is back, then reset again: what remains is only
+      // what the tap under test causes.
+      await page.evaluate(() => { (window as unknown as { __zooms: Rec[] }).__zooms = []; });
       await page.locator(`#items-rail a[href="${other}"]`).click();
       await expect(page).toHaveURL(new RegExp(`${other.replace(/\//g, '\\/')}$`));
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __zooms: Rec[] }).__zooms.length),
+        `${other}: its own zoom is recorded before the count is reset`).toBeGreaterThan(0);
+      await expect.poll(() => page.evaluate(() => document.getElementById('items-panel')!.getAnimations().length),
+        `${other}: its zoom has finished`).toBe(0);
+      await expect(page.locator(`#items-rail a[href="${href}"]`), `${href}: rail row is visible`).toBeVisible();
       await page.evaluate(() => { (window as unknown as { __zooms: Rec[] }).__zooms = []; });
 
       const link = page.locator(`#items-rail a[href="${href}"]`);
