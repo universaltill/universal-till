@@ -5353,6 +5353,9 @@ body.login-screen {
   padding: 1.6rem; inline-size: min(26rem, 92vw); margin: 8dvh auto 0;
   display: flex; flex-direction: column; gap: .9rem; text-align: center;
 }
+/* ut-docs#5602: on a short till screen (1024x600 kiosk Pi) the 8dvh dead space
+   pushed Back/Next below the fold when an error line showed. */
+@media (max-height: 700px) { .setup-card { margin-block-start: 1rem; } }
 .setup-card h1 { font-size: 1.3rem; margin: 0; }
 .setup-card input[type="text"], .setup-card input[type="password"], .setup-card select {
   inline-size: 100%; padding: .6rem .7rem; font-size: 1.05rem;
