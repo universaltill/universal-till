@@ -2761,6 +2761,8 @@
   "settings.printer.test_failed": "Print failed",
   "settings.printer.test_ok": "Test receipt sent — check the printer",
   "settings.printer.title": "Receipt printer",
+  "settings.printer.voucher_slip": "Print each gift voucher on its own slip",
+  "settings.printer.voucher_slip_hint": "Printed after the receipt, ready to hand over as a gift: shop name and address, value, who it is for and the barcode. Not for voided vouchers or top-ups.",
   "settings.retention.capacity_advisory": "Report archives are small — a few KB per closed day — and won't fill a modern till's disk over the 10-year window.",
   "settings.retention.coverage_label": "Records held",
   "settings.retention.coverage_none": "No archived reports yet.",
