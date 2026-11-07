@@ -146,7 +146,8 @@ func TestPOSRepo_EnsurePaymentMethod(t *testing.T) {
 		Scan(&name, &typ, &active); err != nil {
 		t.Fatalf("row not created: %v", err)
 	}
-	if name != "b8-tender" || typ != "cash" || active != 1 {
+	// ut-docs#5804: an auto-made placeholder is never drawer cash.
+	if name != "b8-tender" || typ != "unknown" || active != 1 {
 		t.Fatalf("created row wrong: name=%q type=%q active=%d", name, typ, active)
 	}
 
@@ -163,7 +164,7 @@ func TestPOSRepo_EnsurePaymentMethod(t *testing.T) {
 	}
 
 	// Migration-seeded 'card' is active with type='card' — Ensure must NOT
-	// rewrite it to type='cash' (that would leak card tenders into the cash
+	// rewrite its type (that would leak card tenders into the cash
 	// drawer expectation at shift close).
 	if err := repo.EnsurePaymentMethod(ctx, "card"); err != nil {
 		t.Fatalf("EnsurePaymentMethod(existing active): %v", err)
@@ -592,7 +593,8 @@ func TestPOSRepo_ListActiveNonCashPaymentMethods(t *testing.T) {
 ('card',      'Card',          'card',    1, 3, NULL),
 ('deadcard',  'Broken Reader', 'card',    0, 4, NULL),
 ('stripe',    'Stripe',        'card',    1, 5, 'com.example.stripe'),
-('gift',      'Gift Card',     'voucher', 1, 6, NULL)`)
+('gift',      'Gift Card',     'voucher', 1, 6, NULL),
+('junk',      'junk',          'unknown', 1, 7, NULL)`)
 
 	got, err := repo.ListActiveNonCashPaymentMethods(ctx)
 	if err != nil {
@@ -617,6 +619,9 @@ func TestPOSRepo_ListActiveNonCashPaymentMethods(t *testing.T) {
 	for _, m := range got {
 		if m.ID == "cash" || m.ID == "cash2" {
 			t.Fatalf("cash tender leaked into the kiosk list: %+v", m)
+		}
+		if m.ID == "junk" {
+			t.Fatalf("placeholder (type unknown) method leaked into the kiosk list: %+v", m)
 		}
 		if m.ID == "deadcard" {
 			t.Fatalf("inactive tender leaked into the kiosk list: %+v", m)

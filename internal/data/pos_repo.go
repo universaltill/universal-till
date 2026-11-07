@@ -2405,14 +2405,15 @@ type EODMethod struct {
 // PayOuts are stored as the (negative) amounts recorded — cash that left the
 // drawer.
 //
-// CashSales is taken from EODMethod{Method:"cash"}.In (see dateRangeSummary)
+// CashSales is taken from the EODMethod rows of every cash-type method
+// (payment_methods.type = 'cash', ut-docs#5804; see applyCashSales)
 // MINUS any cash tip_amount for the day (ut-docs#1046) — EODTip's own doc
 // comment below explains why EODMethod.In on its own is the full tendered
 // amount and so would otherwise include a CASH tip, commingling it into the
 // drawer's expected cash exactly the way ut-docs#1007 already prevents for
 // revenue. The subtracted amount is surfaced separately as TipsHeldOut so
-// the two figures reconcile: CashSales + TipsHeldOut == EODMethod{cash}.In -
-// EODMethod{cash}.Out. Cash tipping is off in the German pilot today (no
+// the two figures reconcile: CashSales + TipsHeldOut == Σ(In - Out) over the
+// cash-type methods. Cash tipping is off in the German pilot today (no
 // current path writes tip_amount on a cash payment via the till UI), but
 // nothing at the API layer rejects one, so this holds correct as soon as it
 // is ever turned on rather than waiting to be noticed then.
@@ -3064,28 +3065,11 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 		// completes; the section is simply absent, same as a day with no
 		// closed shift).
 		if rc, rcErr := r.CashReconciliationForLocalDay(ctx, from); rcErr == nil && rc != nil {
-			// CashSales comes from the report's own payment-method
-			// breakdown (net cash: sales in minus refunds out), so the two
-			// figures on one report can never disagree.
-			for _, m := range rep.Methods {
-				if m.Method == "cash" {
-					rc.CashSales = m.In - m.Out
-					break
-				}
+			// CashSales / TipsHeldOut come from the report's own method and
+			// tip breakdowns, over every cash-type method (ut-docs#5804).
+			if err := r.applyCashSales(ctx, rc, rep.Methods, rep.Tips); err == nil {
+				rep.CashReconciliation = rc
 			}
-			// Hold cash tips out of CashSales (ut-docs#1046), same as #1007
-			// already holds every method's tips out of revenue — rep.Tips
-			// is populated above from the same tip_amount query, keyed by
-			// method_id, so this is the report's own cash-tip figure, not a
-			// separate lookup that could disagree with it.
-			for _, tp := range rep.Tips {
-				if tp.Method == "cash" {
-					rc.TipsHeldOut = tp.Amount
-					rc.CashSales -= tp.Amount
-					break
-				}
-			}
-			rep.CashReconciliation = rc
 		}
 	}
 
@@ -3311,25 +3295,11 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 		rep.OrderTypes = orderTypes
 	}
 	if rc, rcErr := r.CashReconciliationForInstantWindow(ctx, from, to); rcErr == nil && rc != nil {
-		// CashSales comes from the report's own payment-method breakdown
-		// (net cash: sales in minus refunds out), so the two figures on one
-		// report can never disagree.
-		for _, m := range rep.Methods {
-			if m.Method == "cash" {
-				rc.CashSales = m.In - m.Out
-				break
-			}
+		// CashSales / TipsHeldOut over every cash-type method, from the
+		// report's own breakdowns — same as dateRangeSummary (ut-docs#5804).
+		if err := r.applyCashSales(ctx, rc, rep.Methods, rep.Tips); err == nil {
+			rep.CashReconciliation = rc
 		}
-		// Hold cash tips out of CashSales (ut-docs#1046), from the report's
-		// own Tips figure — same as dateRangeSummary.
-		for _, tp := range rep.Tips {
-			if tp.Method == "cash" {
-				rc.TipsHeldOut = tp.Amount
-				rc.CashSales -= tp.Amount
-				break
-			}
-		}
-		rep.CashReconciliation = rc
 	}
 
 	// Per-till (register) breakdown — always computed for the "eod" kind
@@ -7787,7 +7757,14 @@ func (r *POSRepo) EnsurePaymentMethod(ctx context.Context, id string) error {
 	if err := r.db.QueryRowContext(ctx, `SELECT 1 FROM payment_methods WHERE id = ? AND is_active = 1`, id).Scan(&exists); err == nil {
 		return nil
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES (?, ?, 'cash', 1)`, id, id)
+	// An unknown id is a placeholder that keeps payments.method_id's FK
+	// satisfied; it is never drawer cash (ut-docs#5804). Only the built-in
+	// cash tender, if its row is ever missing, is recreated as cash.
+	typ := paymentTypeUnknown
+	if id == paymentTypeCash {
+		typ = paymentTypeCash
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES (?, ?, ?, 1)`, id, id, typ)
 	return err
 }
 
@@ -8463,12 +8440,13 @@ FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
 }
 
 // ListActiveNonCashPaymentMethods returns active tender methods excluding
-// type='cash', for surfaces with no cash drawer (self-order kiosk, ADR-0020
-// v1: card/contactless only).
+// type='cash' (no drawer) and type='unknown' (placeholder rows made by
+// EnsurePaymentMethod, ut-docs#5804), for surfaces with no cash drawer
+// (self-order kiosk, ADR-0020 v1: card/contactless only).
 func (r *POSRepo) ListActiveNonCashPaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, type, COALESCE(plugin_id, '')
-FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order, id`)
+FROM payment_methods WHERE is_active = 1 AND type NOT IN ('cash', 'unknown') ORDER BY sort_order, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list non-cash payment methods: %w", err)
 	}
