@@ -1274,6 +1274,7 @@ func TestSetupWizardShopNameLimitMatchesConfig(t *testing.T) {
 }
 
 func TestShopNameInputsCarryConfigMaxlength(t *testing.T) {
+	withOSLocale(t, "", "") // an OS locale sends a fresh /setup to the language step first
 	want := `name="store_name" maxlength="` + strconv.Itoa(config.MaxStoreNameRunes) + `"`
 	mux, _, _ := newFullAuthDeps(t)
 	rec := httptest.NewRecorder()
