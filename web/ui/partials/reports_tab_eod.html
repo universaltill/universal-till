@@ -55,7 +55,7 @@
       {{ range .EODRows }}
       <tr>
         <td>{{ if .From }}{{ printf (T "reports.eod.period_range") .From .To }}{{ else }}{{ .Period }}{{ end }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
-        {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
+        {{ if $canRunEOD }}<td>{{ qty .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
       {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice .NoSaleCount }}
@@ -91,7 +91,7 @@
             <thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.sales" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
             <tbody>
               {{ range .Operators }}
-              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ qty .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
               {{ end }}
             </tbody>
           </table>
@@ -102,15 +102,15 @@
             {{ if .NoSaleOperators }}<thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.eod.no_sale_opens" }}</th></tr></thead>{{ end }}
             <tbody>
               {{ range .NoSaleOperators }}
-              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td></tr>
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ qty .Count }}</td></tr>
               {{ end }}
-              <tr><td><strong>{{ T "reports.eod.no_sale_total" }}</strong></td><td style="text-align:end"><strong>{{ .NoSaleCount }}</strong></td></tr>
+              <tr><td><strong>{{ T "reports.eod.no_sale_total" }}</strong></td><td style="text-align:end"><strong>{{ qty .NoSaleCount }}</strong></td></tr>
             </tbody>
           </table>
           {{ end }}
           {{ if .Articles }}
           <details>
-            <summary style="cursor:pointer;padding-block:.4rem"><strong>{{ T "reports.eod.by_article" }}</strong> ({{ len .Articles }})</summary>
+            <summary style="cursor:pointer;padding-block:.4rem"><strong>{{ T "reports.eod.by_article" }}</strong> ({{ qty (len .Articles) }})</summary>
             <table class="table" style="margin:.3rem 0 .8rem">
               <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
               <tbody>
