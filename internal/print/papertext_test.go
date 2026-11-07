@@ -19,6 +19,10 @@ const (
 	kickTwin   = " p  ?"
 	forged     = "\nTOTAL 0.00"
 	forgedTwin = " TOTAL 0.00"
+	// escP is the ESC p prefix of any drawer-kick. Tests count it, not the
+	// full kick: on cp858/win125x the trailing 0xFA already folded to '?'
+	// before #5847, so a full-sequence count could not fail there.
+	escP = "\x1bp"
 )
 
 // twinOf maps a dirty fixture string to its sanitised twin without using

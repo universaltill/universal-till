@@ -166,8 +166,8 @@ func TestRenderKitchenTicket_ControlRunesNeverReachPrinter(t *testing.T) {
 	ident := func(s string) string { return s }
 	for _, cs := range allCharsets {
 		out := RenderKitchenTicket(dirtyTicket(ident, cs))
-		if n := bytes.Count(out, cmdKickDrawer); n != 0 {
-			t.Errorf("%q: cmdKickDrawer x%d", cs, n)
+		if n := bytes.Count(out, []byte(escP)); n != 0 {
+			t.Errorf("%q: ESC p x%d", cs, n)
 		}
 		if want := RenderKitchenTicket(dirtyTicket(twinOf, cs)); !bytes.Equal(out, want) {
 			t.Errorf("%q: differs from twin\n got %q\nwant %q", cs, out, want)

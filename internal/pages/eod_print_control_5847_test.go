@@ -34,7 +34,9 @@ func TestBuildEODDoc_ControlRunesInFreeTextNeverReachPrinter(t *testing.T) {
 	for _, cs := range []string{"", "utf8", "ascii", "cp858", "win1250"} {
 		out := print.Render(buildEODDoc(report(dirty), dirty("Shop"), cs, eodArticlePrintAll, 0))
 		ref := print.Render(buildEODDoc(report(clean), clean("Shop"), cs, eodArticlePrintAll, 0))
-		if n := bytes.Count(out, []byte(kick)); n != 0 {
+		// Count the ESC p prefix: the kick's trailing 0xFA already folded to
+		// '?' on cp858/win125x before #5847, so the full sequence could not fail.
+		if n := bytes.Count(out, []byte("\x1bp")); n != 0 {
 			t.Errorf("%q: drawer-kick bytes reached the printer x%d", cs, n)
 		}
 		if a, b := bytes.Count(out, []byte("\n")), bytes.Count(ref, []byte("\n")); a != b {

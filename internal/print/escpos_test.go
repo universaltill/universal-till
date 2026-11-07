@@ -1096,8 +1096,8 @@ func TestRender_ControlRunesInFreeTextNeverReachPrinter(t *testing.T) {
 			if k {
 				wantN = 1
 			}
-			if n := bytes.Count(out, cmdKickDrawer); n != wantN {
-				t.Errorf("%q kick=%v: cmdKickDrawer x%d, want %d", cs, k, n, wantN)
+			if n := bytes.Count(out, []byte(escP)); n != wantN {
+				t.Errorf("%q kick=%v: ESC p x%d, want %d", cs, k, n, wantN)
 			}
 			if a, b := bytes.Count(out, []byte("\n")), bytes.Count(want, []byte("\n")); a != b {
 				t.Errorf("%q kick=%v: %d newlines, sanitised twin has %d", cs, k, a, b)
@@ -1119,8 +1119,8 @@ func TestRenderLabel_ControlRunesNeverReachPrinter(t *testing.T) {
 			t.Errorf("%q: differs from twin\n got %q\nwant %q", cs, got, want)
 		}
 		out := RenderLabelWithUnitPrice("n", "1", "", "C"+kick+forged, cs)
-		if n := bytes.Count(out, cmdKickDrawer); n != 0 {
-			t.Errorf("%q: cmdKickDrawer x%d", cs, n)
+		if n := bytes.Count(out, []byte(escP)); n != 0 {
+			t.Errorf("%q: ESC p x%d", cs, n)
 		}
 		if !bytes.Contains(out, []byte("C"+kickTwin+forgedTwin+"\n")) {
 			t.Errorf("%q: sanitised code text row missing in %q", cs, out)
