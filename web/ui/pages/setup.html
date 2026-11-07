@@ -343,7 +343,7 @@
           {{ if .taxPluginSkipped }}
             <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p> <!-- login-error-role:allow confirms the operator's own skip choice (not an error) and is read in order under the step heading -->
           {{ end }}
-          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}"
+          <input type="text" name="store_name" maxlength="{{ maxStoreNameRunes }}" placeholder="{{ T "setup.store.placeholder" }}"
                  value="{{ .storeName }}" x-model="storeName" aria-required="true">
           <label>{{ T "setup.till_name.title" }}
             <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true">

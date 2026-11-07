@@ -2336,7 +2336,7 @@
   {{ if index $.lockedRegions "settings-store-name" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
     <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
-    <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
+    <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="{{ maxStoreNameRunes }}" dir="auto" autocomplete="off" data-testid="store-name-input">
     <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
     <span id="store-name-msg" aria-live="polite" data-testid="store-name-msg"></span>
   </form>

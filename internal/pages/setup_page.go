@@ -219,18 +219,15 @@ const keyStoreNameRequired = "setup.error.store_name_required"
 // An existing key, shared with the pairing dialog's action-neutral wording.
 const keyTillNameRequired = "tills.pairing.error.name_required_field"
 
-// maxStoreNameRunes matches the shop-name inputs' maxlength="60".
-const maxStoreNameRunes = 60
-
 // isRefusedStoreName reports whether a first-boot shop name must be refused:
 // blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
 // field's own placeholder text in the request's language, or longer than
-// the field's maxlength (enforced here too: the form's cap is client-side
-// only). Shared by the wizard and the bare POST /api/auth/setup fallback
+// config.MaxStoreNameRunes (the field's maxlength, enforced here too: the
+// form's cap is client-side only). Shared by the wizard and the bare POST /api/auth/setup fallback
 // (ut-docs#3096, #3116).
 func isRefusedStoreName(r *http.Request, name string) bool {
 	return config.IsPlaceholderStoreName(name) ||
-		utf8.RuneCountInString(strings.TrimSpace(name)) > maxStoreNameRunes ||
+		utf8.RuneCountInString(strings.TrimSpace(name)) > config.MaxStoreNameRunes ||
 		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
 }
 
