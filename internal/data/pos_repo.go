@@ -7205,16 +7205,31 @@ const (
 	tenderOutSQL = `COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)`
 )
 
-// shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
-// sums of a shift window on a register, so cash takings and cash tips can
-// never use different windows (ut-docs#5801).
-func shiftCashWindow(registerID string, openedAt, closedAt sql.NullString) (string, []any) {
-	timeFilter := `s.completed_at >= ?`
-	args := []any{registerID, openedAt.String}
-	if closedAt.Valid {
-		timeFilter += ` AND s.completed_at <= ?`
+// shiftWindow is the one shift-window predicate (ut-docs#5796): col at or after
+// opened_at and, once closed, at or before closed_at (inclusive both ends, as
+// noSaleShiftWhere). Both sides go through datetime() so a legacy
+// 'YYYY-MM-DD HH:MM:SS' opened_at orders correctly against RFC 3339 columns
+// (a text compare puts '...T08' after '... 10' on the same day). An open
+// shift (closed_at NULL or ”) is unbounded above. col must be spelled as the
+// index expression expects, e.g. "s.completed_at" -> idx_sales_register_completed_dt.
+// A value datetime() cannot parse is NULL, so that row falls outside the window.
+func shiftWindow(col string, openedAt, closedAt sql.NullString) (string, []any) {
+	w := "datetime(" + col + ") >= datetime(?)"
+	args := []any{openedAt.String}
+	if closedAt.Valid && closedAt.String != "" {
+		w += " AND datetime(" + col + ") <= datetime(?)"
 		args = append(args, closedAt.String)
 	}
+	return "(" + w + ")", args
+}
+
+// shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
+// sums of a shift window on a register, so cash takings and cash tips can
+// never use different windows (ut-docs#5801). The window goes through
+// shiftWindow (datetime() on both sides, as noSaleShiftWhere).
+func shiftCashWindow(registerID string, openedAt, closedAt sql.NullString) (string, []any) {
+	win, wargs := shiftWindow("s.completed_at", openedAt, closedAt)
+	args := append([]any{registerID}, wargs...)
 	return `
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
@@ -7222,7 +7237,7 @@ JOIN payment_methods pm ON pm.id = p.method_id
 WHERE pm.type = 'cash'
   AND s.status = 'completed'
   AND s.register_id = ?
-  AND ` + timeFilter + "\n", args
+  AND ` + win + "\n", args
 }
 
 // SumCashPaymentsForShift sums cash payments in shift window for a register:
