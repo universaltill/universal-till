@@ -324,6 +324,11 @@ drawer is pre-filled, so you confirm it rather than re-type it. You can
 still edit the figure if the drawer was corrected in between; whatever
 you submit is what's recorded.
 
+The expected cash you count against is the opening float plus cash sales,
+minus cash refunds, plus cash tips, plus pay-ins, minus pay-outs. A refund
+paid out in cash counts on the shift and register it was paid from, even
+when the original sale was on an earlier shift. Card refunds don't change it.
+
 When you close a shift, count the drawer and enter the counted cash as
 before. Two optional extras join it:
 

@@ -2950,8 +2950,8 @@ WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&rep.ClearedBasket
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
-  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
+  `+tenderInSQL+`,
+  `+tenderOutSQL+`
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
 WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
@@ -3238,8 +3238,8 @@ WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
 	mwin, margs := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
-  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
+  `+tenderInSQL+`,
+  `+tenderOutSQL+`
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
 WHERE s.status = 'completed' AND `+mwin+`
@@ -7197,6 +7197,14 @@ SELECT 1 FROM shifts WHERE id = ? AND closed_at IS NULL
 	return true, nil
 }
 
+// tenderInSQL / tenderOutSQL: a payment row's cash-in (sale) and cash-out
+// (return) amount, net of change. One definition for the EOD In/Out split,
+// the cloud aggregate and the shift sum, so they cannot drift (ut-docs#5803).
+const (
+	tenderInSQL  = `COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0)`
+	tenderOutSQL = `COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)`
+)
+
 // shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
 // sums of a shift window on a register, so cash takings and cash tips can
 // never use different windows (ut-docs#5801).
@@ -7217,13 +7225,14 @@ WHERE pm.type = 'cash'
   AND ` + timeFilter + "\n", args
 }
 
-// SumCashPaymentsForShift sums cash payments in shift window for a register.
-// The amount is tendered net of change, so it INCLUDES cash tips
-// (payments.amount already carries tip_amount); see ShiftCashBreakdown.
+// SumCashPaymentsForShift sums cash payments in shift window for a register:
+// cash taken net of change, sales minus refunds (sale_type='return' rows
+// subtract, as the EOD In/Out split). It INCLUDES cash tips (payments.amount
+// already carries tip_amount); see ShiftCashBreakdown.
 func (r *POSRepo) SumCashPaymentsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
 	from, args := shiftCashWindow(registerID, openedAt, closedAt)
 	var cashPayments int64
-	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(p.amount - p.change_given), 0)`+from, args...).Scan(&cashPayments); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT `+tenderInSQL+` - `+tenderOutSQL+from, args...).Scan(&cashPayments); err != nil {
 		return 0, fmt.Errorf("sum cash payments: %w", err)
 	}
 	return cashPayments, nil

@@ -19,6 +19,15 @@ VALUES(?, ?, ?, 'sale', 'GBP', ?, 0, 0, ?, ?, ?, ?)`, id, "R-"+id, status, total
 	}
 }
 
+// scInsertReturn inserts a sale_type='return' sale (a refund).
+func scInsertReturn(t *testing.T, dbx *posTestDB, id, status, register string, total int64, at string) {
+	t.Helper()
+	if _, err := dbx.d.DB.ExecContext(context.Background(), `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
+VALUES(?, ?, ?, 'return', 'GBP', ?, 0, 0, ?, ?, ?, ?)`, id, "R-"+id, status, total, total, register, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func scInsertPayment(t *testing.T, dbx *posTestDB, id, saleID, method string, amount, change, tip int64, at string) {
 	t.Helper()
 	if _, err := dbx.d.DB.ExecContext(context.Background(), `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, paid_at)
@@ -139,5 +148,86 @@ func TestSumCashTipsForShift_SameWindowAsCashSales(t *testing.T) {
 	}
 	if tendered != 10500 {
 		t.Fatalf("tendered = %d, want 10500 (same single in-window payment)", tendered)
+	}
+}
+
+// Cash refunds subtract from the drawer (ut-docs#5803).
+func TestShiftCashBreakdown_SubtractsCashRefunds(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	for _, id := range []string{"reg-r", "reg-r2"} {
+		if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES(?,?,1)`, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-r", "reg-r", "user1", 10000, "2026-01-01T09:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	scInsertSale(t, dbx, "s-cash", "completed", "reg-r", 6000, "2026-01-01T10:00:00Z")
+	scInsertPayment(t, dbx, "p-cash", "s-cash", "cash", 6000, 1000, 0, "2026-01-01T10:00:00Z")
+	scInsertReturn(t, dbx, "r-cash", "completed", "reg-r", 1500, "2026-01-01T11:00:00Z")
+	scInsertPayment(t, dbx, "pr-cash", "r-cash", "cash", 1500, 0, 0, "2026-01-01T11:00:00Z")
+	// Ignored: card refund, other register, voided, before the shift opened.
+	scInsertReturn(t, dbx, "r-card", "completed", "reg-r", 700, "2026-01-01T11:10:00Z")
+	scInsertPayment(t, dbx, "pr-card", "r-card", "card", 700, 0, 0, "2026-01-01T11:10:00Z")
+	scInsertReturn(t, dbx, "r-oth", "completed", "reg-r2", 900, "2026-01-01T11:20:00Z")
+	scInsertPayment(t, dbx, "pr-oth", "r-oth", "cash", 900, 0, 0, "2026-01-01T11:20:00Z")
+	scInsertReturn(t, dbx, "r-void", "voided", "reg-r", 800, "2026-01-01T11:30:00Z")
+	scInsertPayment(t, dbx, "pr-void", "r-void", "cash", 800, 0, 0, "2026-01-01T11:30:00Z")
+	scInsertReturn(t, dbx, "r-early", "completed", "reg-r", 600, "2026-01-01T08:00:00Z")
+	scInsertPayment(t, dbx, "pr-early", "r-early", "cash", 600, 0, 0, "2026-01-01T08:00:00Z")
+
+	sum, err := dbx.repo.SumCashPaymentsForShift(ctx, "reg-r", nullStr("2026-01-01T09:00:00Z"), nullStr(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum != 3500 {
+		t.Fatalf("SumCashPaymentsForShift = %d, want 3500", sum)
+	}
+	b, err := dbx.repo.ShiftCashBreakdown(ctx, "shift-r", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Opening.Minor() != 10000 || b.CashSales.Minor() != 3500 || b.TipsHeldOut.Minor() != 0 ||
+		b.Adjustments.Minor() != 0 || b.Expected.Minor() != 13500 {
+		t.Fatalf("breakdown = %+v, want opening 10000 cash 3500 tips 0 adj 0 expected 13500", b)
+	}
+	if sum := b.Opening.Add(b.CashSales).Add(b.TipsHeldOut).Add(b.Adjustments); sum != b.Expected {
+		t.Fatalf("identity broken: sum %d != expected %d", sum.Minor(), b.Expected.Minor())
+	}
+	exp, err := dbx.repo.ComputeExpectedCash(ctx, "shift-r", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exp != 13500 {
+		t.Fatalf("ComputeExpectedCash = %d, want 13500", exp)
+	}
+}
+
+func TestShiftCashBreakdown_RefundWithTipsAndAdjustment(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg-rt','RT Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-rt", "reg-rt", "user1", 10000, "2026-01-01T09:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	scInsertSale(t, dbx, "s-rt", "completed", "reg-rt", 40000, "2026-01-01T10:00:00Z")
+	scInsertPayment(t, dbx, "p-rt", "s-rt", "cash", 45000, 3000, 2000, "2026-01-01T10:00:00Z")
+	scInsertReturn(t, dbx, "r-rt", "completed", "reg-rt", 1500, "2026-01-01T10:30:00Z")
+	scInsertPayment(t, dbx, "pr-rt", "r-rt", "cash", 1500, 0, 0, "2026-01-01T10:30:00Z")
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift-rt", "cash_adjustment", map[string]any{"amount": -1500}, "2026-01-01T11:00:00Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	b, err := dbx.repo.ShiftCashBreakdown(ctx, "shift-rt", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.CashSales.Minor() != 38500 || b.TipsHeldOut.Minor() != 2000 || b.Adjustments.Minor() != -1500 || b.Expected.Minor() != 49000 {
+		t.Fatalf("breakdown = %+v, want cash 38500 tips 2000 adj -1500 expected 49000", b)
+	}
+	if sum := b.Opening.Add(b.CashSales).Add(b.TipsHeldOut).Add(b.Adjustments); sum != b.Expected {
+		t.Fatalf("identity broken: sum %d != expected %d", sum.Minor(), b.Expected.Minor())
 	}
 }
