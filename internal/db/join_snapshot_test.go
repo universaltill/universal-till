@@ -555,3 +555,44 @@ func TestRedactedJoinSnapshot_ResetsSalesMirrorBookkeeping(t *testing.T) {
 		t.Errorf("join snapshot mirror_sales = %d, want the copied row kept", n)
 	}
 }
+
+// ut-docs#5808: a till that re-joins a promoted main till inherits, through
+// the join snapshot, the recording time of the sales that main till adopted
+// late (sales.recorded_at) and its Z-window floor, so a second promote still
+// counts each such sale in exactly one Z. Neither may be redacted.
+func TestRedactedJoinSnapshot_KeepsRecordedAtAndWindowFloor_5808(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	recorded := time.Now().UTC().Add(-90 * time.Second).Format(time.RFC3339)
+	floor := time.Now().UTC().Add(-2 * time.Minute).Format("2006-01-02 15:04:05")
+	for _, s := range []string{
+		`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at, recorded_at)
+  VALUES ('s1', 'R-1', 'completed', 'sale', 'GBP', 1, 0, 0, 1, '` + recorded + `', '` + recorded + `', '` + recorded + `')`,
+		`INSERT INTO settings (key, value) VALUES ('reports.eod_window_floor', '` + floor + `')`,
+	} {
+		if _, err := d.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cdb.Close()
+	var gotRec sql.NullString
+	if err := cdb.QueryRow(`SELECT recorded_at FROM sales WHERE id = 's1'`).Scan(&gotRec); err != nil {
+		t.Fatal(err)
+	}
+	if !gotRec.Valid || gotRec.String != recorded {
+		t.Errorf("join snapshot sales.recorded_at = %v, want %q", gotRec, recorded)
+	}
+	var gotFloor string
+	if err := cdb.QueryRow(`SELECT value FROM settings WHERE key = 'reports.eod_window_floor'`).Scan(&gotFloor); err != nil || gotFloor != floor {
+		t.Errorf("join snapshot eod_window_floor = %q (%v), want %q", gotFloor, err, floor)
+	}
+}
