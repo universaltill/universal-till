@@ -76,6 +76,8 @@ func TestEndOfDay_NoSaleCountAndPerCashier(t *testing.T) {
 		t.Fatalf("NoSaleOperators = %+v, want %+v", rep.NoSaleOperators, want)
 	}
 	rep.NoSaleCount, rep.NoSaleOperators = 0, nil
+	// GeneratedAt is wall-clock; the two runs can straddle a second boundary.
+	rep.GeneratedAt = control.GeneratedAt
 	if !reflect.DeepEqual(rep, control) {
 		t.Fatalf("no-sale events changed another report field:\n got %+v\nwant %+v", rep, control)
 	}
@@ -113,6 +115,8 @@ func TestEndOfDayInstant_NoSaleCountAndPerCashier(t *testing.T) {
 		t.Fatalf("NoSaleOperators = %+v, want %+v", rep.NoSaleOperators, want)
 	}
 	rep.NoSaleCount, rep.NoSaleOperators = 0, nil
+	// GeneratedAt is wall-clock; the two runs can straddle a second boundary.
+	rep.GeneratedAt = control.GeneratedAt
 	if !reflect.DeepEqual(rep, control) {
 		t.Fatalf("no-sale events changed another report field:\n got %+v\nwant %+v", rep, control)
 	}
