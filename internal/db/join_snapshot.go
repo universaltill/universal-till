@@ -244,9 +244,10 @@ func SweepOrphanedJoinSnapshots(dbPath string) (int, error) {
 // change log on a join-snapshot copy (ut-docs#5074, see RedactedJoinSnapshot).
 func resetSalesMirrorBookkeeping(cdb *sql.DB) error {
 	for _, q := range []string{
-		`DELETE FROM mirror_state`,      // sales-mirror:allow join snapshot never carries a copy cursor
-		`DELETE FROM sales_mirror_log`,  // sales-mirror:allow nor the main till's change log
-		`DELETE FROM sales_mirror_acks`, // sales-mirror:allow nor other tills' acknowledgements
+		`DELETE FROM mirror_state`,         // sales-mirror:allow join snapshot never carries a copy cursor
+		`DELETE FROM sales_mirror_log`,     // sales-mirror:allow nor the main till's change log
+		`DELETE FROM sales_mirror_acks`,    // sales-mirror:allow nor other tills' acknowledgements
+		`DELETE FROM mirror_sale_arrivals`, // sales-mirror:allow nor the main till's own-sale arrival times (ut-docs#5777)
 	} {
 		if _, err := cdb.Exec(q); err != nil {
 			return fmt.Errorf("reset sales mirror bookkeeping: %w", err)
