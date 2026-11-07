@@ -6059,6 +6059,31 @@ body.login-screen {
    "Light: no animations, flat look (fastest)") must never outgrow its card
    at 360px — it shrinks and the native control truncates the label. */
 .set-row select { max-inline-size: 100%; min-inline-size: 0; }
+/* Stacked checkbox row (was an inline style on four stock/receipt labels). */
+.set-block { display: block; margin-block: .35rem; }
+/* ut-docs#5738: a label-wrapped checkbox in Settings is a >=44px touch row
+   with a 1.5rem box under kiosk mode or a coarse pointer (touchscreen). One
+   shared rule, so every current and future checkbox row inherits it; desktop
+   mouse density is unchanged. .staff-lang-opt and .ps-switch size themselves.
+   flex-wrap: nowrap keeps the text beside the box (a .set-row label would
+   otherwise drop it under the box at phone width). The @media copy below
+   must stay in sync with this one (the spec tests both branches). */
+body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch):has(> input[type="checkbox"]) {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem;
+  min-block-size: 2.75rem; margin-block: .35rem;
+}
+body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[type="checkbox"] {
+  flex: none; inline-size: 1.5rem; block-size: 1.5rem; margin: 0;
+}
+@media (pointer: coarse) {
+  .settings-panel label:not(.staff-lang-opt):not(.ps-switch):has(> input[type="checkbox"]) {
+    display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem;
+    min-block-size: 2.75rem; margin-block: .35rem;
+  }
+  .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[type="checkbox"] {
+    flex: none; inline-size: 1.5rem; block-size: 1.5rem; margin: 0;
+  }
+}
 .set-tight { margin-block-start: .35rem; }
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }
