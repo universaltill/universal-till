@@ -242,3 +242,39 @@ func (r *POSRepo) NoSaleOperatorsForInstantWindow(ctx context.Context, from, to 
 	win, args := instantWindow("e.created_at", from, to)
 	return r.noSaleOperators(ctx, win, args)
 }
+
+// noSaleShiftWhere attributes a no-sale open to ONE shift (ut-docs#5755)
+// with SumCashPaymentsForShift's rule: same register, created_at at or after
+// opened_at and, once the shift is closed, at or before closed_at (inclusive,
+// as the cash takings are) — an open shift is unbounded above. Both sides go
+// through datetime(...) (instantWindow's normalisation, ADR-0066): opened_at
+// may be the 001 schema default's 'YYYY-MM-DD HH:MM:SS' form while
+// created_at is RFC 3339, and a text compare would misorder them. till_id is
+// not filtered (cash takings aren't either). An event with no register_id
+// (EnsureRegister failed when it was recorded) matches no shift; it still
+// counts on the EOD. Its one '?' is the shift id; an unknown id matches
+// nothing.
+const noSaleShiftWhere = `EXISTS (
+  SELECT 1 FROM shifts sh
+  WHERE sh.id = ?
+    AND e.register_id = sh.register_id
+    AND datetime(e.created_at) >= datetime(sh.opened_at)
+    AND (sh.closed_at IS NULL OR sh.closed_at = ''
+         OR datetime(e.created_at) <= datetime(sh.closed_at)))`
+
+// NoSaleForShift returns one shift's no-sale drawer opens (ut-docs#5755): the
+// total and the per-cashier breakdown (noSaleOperators' grouping, order and
+// name fallback, #5753). Informational only — callers never fold it into
+// expected cash, variance, skim or float. An unknown shift id, or a shift with
+// no opens, returns (0, nil, nil).
+func (r *POSRepo) NoSaleForShift(ctx context.Context, shiftID string) (int, []NoSaleOperator, error) {
+	ops, err := r.noSaleOperators(ctx, noSaleShiftWhere, []any{shiftID})
+	if err != nil {
+		return 0, nil, fmt.Errorf("no-sale for shift: %w", err)
+	}
+	total := 0
+	for _, o := range ops {
+		total += o.Count
+	}
+	return total, ops, nil
+}
