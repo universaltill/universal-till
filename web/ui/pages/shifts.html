@@ -12,7 +12,7 @@
   {{ else }}<span class="tag">{{ T "shifts.none_open" }}</span>{{ end }}
 </div>
 
-<div class="catalog-layout">
+<div class="catalog-layout shifts-layout">
   <div class="catalog-list">
     {{ if .HasOpen }}
     <div class="card">
@@ -20,7 +20,7 @@
       <table class="table">
         <tbody>
           <tr><td>{{ T "shifts.register" }}</td><td>{{ .Current.RegisterID }}</td></tr>
-          <tr><td>{{ T "shifts.cashier" }}</td><td>{{ .Current.CashierID }}</td></tr>
+          <tr><td>{{ T "shifts.cashier" }}</td><td>{{ if .Current.CashierName }}{{ .Current.CashierName }}{{ else }}—{{ end }}</td></tr>
           <tr><td>{{ T "shifts.opened_at" }}</td><td>{{ datetime .Current.OpenedAt }}</td></tr>
           <tr><td>{{ T "shifts.opening_cash" }}</td><td>{{ money .Current.OpeningCash }}</td></tr>
           {{ if .NoSaleOK }}<tr><td>{{ T "reports.eod.no_sale_title" }}</td><td>{{ qty .NoSaleCount }}</td></tr>{{ end }}
@@ -40,7 +40,8 @@
     {{ end }}
 
     <div class="card" {{ if .HasOpen }}style="margin-top:1rem"{{ end }}>
-      <h2>{{ T "shifts.history" }}</h2>
+      <h2 id="shifts-history-title">{{ T "shifts.history" }}</h2>
+      <div class="shifts-history-scroll" role="region" tabindex="0" aria-labelledby="shifts-history-title">
       <table class="table">
         <thead><tr><th>{{ T "shifts.opened_at" }}</th><th>{{ T "shifts.closed_at" }}</th><th>{{ T "shifts.opening_cash" }}</th><th>{{ T "shifts.counted" }}</th><th>{{ T "shifts.expected" }}</th><th>{{ T "shifts.variance" }}</th></tr></thead>
         <tbody>
@@ -60,6 +61,7 @@
           {{ end }}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 
@@ -77,7 +79,8 @@
            inputmode="decimal" + oninput fixes both; window.utCurrency
            .toMinor() replaces the hardcoded `* 100`, which was also wrong
            by 100x on any 0-decimal currency (IRR/IRT/IQD/AFN/JPY). -->
-      <label>{{ T "shifts.counted_cash" }} ({{ currency.Display }})
+      <div class="shifts-close-grid">
+      <label class="shifts-close-wide">{{ T "shifts.counted_cash" }} ({{ currency.Display }})
         <input type="text" id="closing-cash" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} required {{ moneyplaceholderlocal currency.Decimals 0 }}
                data-input="minor:closing-cash-minor">
       </label>
@@ -88,12 +91,13 @@
       </label>
       <label>{{ T "shifts.reason" }} <input type="text" name="skim_reason" placeholder="{{ T "shifts.skim" }}"></label>
       {{ if .NeedsManagerPIN }}
-      <label>{{ T "shifts.manager_pin" }}
+      <label class="shifts-close-pin">{{ T "shifts.manager_pin" }}
         <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "shifts.manager_pin_placeholder" }}">
       </label>
-      <p class="muted" style="font-size:.82rem">{{ T "shifts.skim_manager_pin_hint" }}</p>
+      <p class="muted shifts-close-hint" style="font-size:.82rem">{{ T "shifts.skim_manager_pin_hint" }}</p>
       {{ end }}
-      <label>{{ T "shifts.note" }} <input type="text" name="note" placeholder="{{ T "shifts.note_hint" }}"></label>
+      <label class="shifts-close-note{{ if not .NeedsManagerPIN }} shifts-close-wide{{ end }}">{{ T "shifts.note" }} <input type="text" name="note" placeholder="{{ T "shifts.note_hint" }}"></label>
+      </div>
       <details class="catalog-extra">
         <summary>{{ T "shifts.count_protocol" }}</summary>
         <p class="muted" style="font-size:.82rem">{{ T "shifts.count_protocol_hint" }}</p>
