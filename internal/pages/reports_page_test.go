@@ -2334,3 +2334,21 @@ func TestReportsPage_EODRowNoSaleHiddenWithoutEODReport(t *testing.T) {
 		t.Fatalf("no-sale detail must stay behind eod_report, got: %s", body)
 	}
 }
+
+// A range archive carries the no-sale total only: no Operator|Opens header
+// over a lone Total row (ut-docs#5753 UX S1).
+func TestReportsPage_EODRowNoSaleRangeHasNoOperatorHeader(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01..2026-01-03',
+'{"from":"2026-01-01","to":"2026-01-03","sales_count":3,"net":500,"no_sale_count":4}')`); err != nil {
+		t.Fatal(err)
+	}
+	body := getReportsTab(t, mux, "eod", "").Body.String()
+	if !strings.Contains(body, "No sale (drawer opens)") || !strings.Contains(body, `<strong>4</strong>`) {
+		t.Fatalf("expected the no-sale total for a range archive, got: %s", body)
+	}
+	if strings.Contains(body, "Opens</th>") {
+		t.Fatalf("range archive must not show the Operator|Opens header, got: %s", body)
+	}
+}

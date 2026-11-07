@@ -258,3 +258,56 @@ func TestEndOfDay_NoSaleOmittedFromJSONWhenZero(t *testing.T) {
 		t.Fatalf("zero no-sale fields must be omitted from JSON: %s", b)
 	}
 }
+
+// The window is local_date, not the UTC date of created_at: an open stamped
+// 23:30 UTC yesterday that the shop's clock put on today (a shop east of
+// UTC) counts on today's report, whatever the host's own TZ.
+func TestNoSale_DateWindowUsesLocalDateNotUTCDate(t *testing.T) {
+	d := b8OpenDB(t, "ns-localdate.db")
+	repo := NewPOSRepo(d.DB)
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	yesterday := today.AddDate(0, 0, -1)
+	mustExec(t, d, `INSERT INTO no_sale_events (id, created_at, local_date, actor_id) VALUES ('ld1', ?, ?, 'ns-a')`,
+		b8At(today.Add(-30*time.Minute)), today.Format("2006-01-02"))
+	ctx := context.Background()
+	cur, err := repo.EndOfDay(ctx, today.Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := repo.EndOfDay(ctx, yesterday.Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.NoSaleCount != 1 || prev.NoSaleCount != 0 {
+		t.Fatalf("today=%d yesterday=%d, want 1 and 0 (window is local_date)", cur.NoSaleCount, prev.NoSaleCount)
+	}
+	if len(cur.NoSaleOperators) != 1 || len(prev.NoSaleOperators) != 0 {
+		t.Fatalf("operators today=%+v yesterday=%+v", cur.NoSaleOperators, prev.NoSaleOperators)
+	}
+}
+
+// A failing no-sale read never fails the close: the report still
+// generates, with no no-sale figures (best-effort, like Operators).
+func TestEndOfDay_NoSaleFailureNeverFailsClose(t *testing.T) {
+	d := b8OpenDB(t, "ns-broken.db")
+	repo := NewPOSRepo(d.DB)
+	at := iwAnchor()
+	nsSeedSale(t, d, at)
+	mustExec(t, d, `ALTER TABLE no_sale_events RENAME TO no_sale_events_gone`)
+	ctx := context.Background()
+	rep, err := repo.EndOfDay(ctx, b8ExpectedDay(t, d, at, 0, 0))
+	if err != nil {
+		t.Fatalf("EndOfDay must not fail on a no-sale read error: %v", err)
+	}
+	if rep.SalesCount != 1 || rep.NoSaleCount != 0 || rep.NoSaleOperators != nil {
+		t.Fatalf("date path: sales=%d nosale=%d ops=%+v", rep.SalesCount, rep.NoSaleCount, rep.NoSaleOperators)
+	}
+	irep, err := repo.EndOfDayInstant(ctx, at.Add(-time.Hour), at.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("EndOfDayInstant must not fail on a no-sale read error: %v", err)
+	}
+	if irep.SalesCount != 1 || irep.NoSaleCount != 0 || irep.NoSaleOperators != nil {
+		t.Fatalf("instant path: sales=%d nosale=%d ops=%+v", irep.SalesCount, irep.NoSaleCount, irep.NoSaleOperators)
+	}
+}

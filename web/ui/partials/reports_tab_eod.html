@@ -99,7 +99,7 @@
           {{ if .NoSaleCount }}
           <strong>{{ T "reports.eod.no_sale_title" }}</strong>
           <table class="table" style="margin:.3rem 0 .8rem">
-            <thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.eod.no_sale_opens" }}</th></tr></thead>
+            {{ if .NoSaleOperators }}<thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.eod.no_sale_opens" }}</th></tr></thead>{{ end }}
             <tbody>
               {{ range .NoSaleOperators }}
               <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td></tr>
