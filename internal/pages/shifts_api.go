@@ -689,10 +689,10 @@ func respondShiftSuccess(w http.ResponseWriter, r *http.Request, data ShiftOpenR
 	} else {
 		// ut-docs#1406: was a hardcoded, untranslated "Shift opened: %s" and
 		// never escaped — same defect class #1289 fixed on respondCloseSuccess.
-		// data.ShiftID is uuid.NewString(), never user input, but escaping
-		// keeps the two sibling functions consistent.
+		// ut-docs#5810: the confirmation carries no internal id; the JSON
+		// branch still returns shift_id for API clients.
 		locale := httpx.ResolveLocale(w, r)
-		msg := fmt.Sprintf(httpx.T(locale, "shifts.open_success"), data.ShiftID)
+		msg := httpx.T(locale, "shifts.open_confirmed")
 		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
 	}
 }
