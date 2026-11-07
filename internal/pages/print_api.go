@@ -754,9 +754,9 @@ func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string
 // language for their receipt (customerReceiptDoc), "" the shop's language.
 // slips is the number of gift voucher slips (ut-docs#4247) in the print job:
 // 0 when the setting is off, the sale issued none, or the job was refused or
-// never built (no printer, doc error). A job that was sent but failed still
-// reports its slips, as they were attempted — the reprint audit row records
-// the count (ut-docs#5783).
+// never built (no printer, doc error). A job that was built but failed
+// (transport or send error) still reports its slips, as they were attempted —
+// the reprint audit row records the count (ut-docs#5783).
 func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) (slips int, err error) {
 	// ADR-0124 §3: the shared choke point every receipt print path reaches
 	// (tender and refund auto-print, manual print, reprint) refuses here as
