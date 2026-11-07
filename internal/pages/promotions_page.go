@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -166,6 +168,28 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		renderPromotions(w, r, httpx.QueryErrKey(r))
+	})
+
+	// Customer lookup for the promotion dialog's "only for this customer"
+	// picker (ut-docs#5589). Gated on "settings" like the rest of Promotions,
+	// NOT "data_management": GET /api/data/customers is the GDPR erasure
+	// picker (carries email, data_management) and stays as it is. This one
+	// returns id/name/phone only. JSON, not requireManager's HTML error page,
+	// because the dialog's script does r.json().
+	mux.HandleFunc("GET /api/promotions/customers", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.RequestLocale(r)
+		if !canPerform(d, r, "settings") {
+			dataAPIRespond(w, http.StatusForbidden, false, httpx.T(locale, "common.error.manager_or_admin_required"))
+			return
+		}
+		list, err := posRepo.SearchCustomersForPicker(r.Context(), r.URL.Query().Get("q"), 25)
+		if err != nil {
+			logging.L().Errorf("promotions: customer picker: %v", err)
+			dataAPIRespond(w, http.StatusInternalServerError, false, httpx.T(locale, "common.error.server"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"customers": list}, "error": nil})
 	})
 
 	mux.HandleFunc("POST /api/promotions", func(w http.ResponseWriter, r *http.Request) {
