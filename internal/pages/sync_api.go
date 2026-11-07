@@ -1204,7 +1204,11 @@ func friendlyJoinError(locale string, err error) string {
 	if !errors.As(err, &je) {
 		return fmt.Sprintf(httpx.T(locale, "tills.join_error.unexpected"), err.Error())
 	}
-	msg := httpx.T(locale, joinErrLocaleKey[je.kind])
+	key := joinErrLocaleKey[je.kind]
+	if je.kind == joinErrUnsentDayClosesRefused && !planPurchaseAllowed() {
+		key = "tills.join_error.unsent_day_closes_refused_ios" // ut-docs#3434
+	}
+	msg := httpx.T(locale, key)
 	if je.detail == "" {
 		return msg
 	}

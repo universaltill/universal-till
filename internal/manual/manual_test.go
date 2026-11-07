@@ -672,3 +672,84 @@ func TestShippedHelpDeclaresPublicAndLocalesAgree(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3434: <!-- plan-purchase --> blocks are dropped for a host that
+// may not offer plan purchase (the iOS app).
+const planPurchaseTopic = `---
+id: plans
+title: Plans
+section: Setting up
+---
+
+# Plans
+
+Before text.
+
+<!-- plan-purchase -->
+
+Pay on your phone with the QR code.
+
+<!-- /plan-purchase -->
+
+After text.
+`
+
+func TestPlanPurchaseBlock_Dropped(t *testing.T) {
+	tp, err := parseTopic([]byte(planPurchaseTopic))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tp.HTML), "Pay on your phone") || strings.Contains(string(tp.HTML), "raw HTML omitted") {
+		t.Fatalf("full HTML wrong: %s", tp.HTML)
+	}
+	if !strings.Contains(tp.Markdown, "<!-- plan-purchase -->") {
+		t.Error("Markdown must stay the raw body, markers included")
+	}
+	np := tp.WithoutPlanPurchase()
+	h := string(np.HTML)
+	if strings.Contains(h, "Pay on your phone") || !strings.Contains(h, "Before text.") || !strings.Contains(h, "After text.") {
+		t.Fatalf("no-purchase HTML wrong: %s", h)
+	}
+	if strings.Contains(string(tp.HTML), "After text.") == false {
+		t.Error("the original topic was mutated")
+	}
+	plain := &Topic{HTML: "x"}
+	if plain.WithoutPlanPurchase().HTML != "x" {
+		t.Error("a topic without markers must be unchanged")
+	}
+}
+
+func TestPlanPurchaseBlock_Unbalanced(t *testing.T) {
+	head := "---\nid: p\ntitle: P\n---\n\n"
+	for name, body := range map[string]string{
+		"opener only":  "<!-- plan-purchase -->\n\nx\n",
+		"closer only":  "x\n\n<!-- /plan-purchase -->\n",
+		"nested":       "<!-- plan-purchase -->\n\n<!-- plan-purchase -->\n\nx\n\n<!-- /plan-purchase -->\n\n<!-- /plan-purchase -->\n",
+		"closer first": "<!-- /plan-purchase -->\n\nx\n\n<!-- plan-purchase -->\n",
+		// A near-miss pair would otherwise render as plain comments and
+		// leave the paragraph showing on iOS.
+		"misspelt pair": "<!--plan-purchase-->\n\nx\n\n<!--/plan-purchase-->\n",
+		"with text":     "<!-- plan-purchase: iOS -->\n\nx\n\n<!-- /plan-purchase: iOS -->\n",
+	} {
+		if _, err := parseTopic([]byte(head + body)); err == nil {
+			t.Errorf("%s: want a parse error", name)
+		}
+	}
+}
+
+func TestSearchFor_NoPurchase(t *testing.T) {
+	fsys := fstest.MapFS{"help/en/plans.md": &fstest.MapFile{Data: []byte(planPurchaseTopic)}}
+	lib, err := Load(fsys, "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lib.SearchFor("en", "qr", true); len(got) != 1 || !strings.Contains(got[0].Snippet, "QR") {
+		t.Fatalf("full search = %+v", got)
+	}
+	if got := lib.SearchFor("en", "qr", false); len(got) != 0 {
+		t.Fatalf("no-purchase search still hits the dropped block: %+v", got)
+	}
+	if got := lib.Search("en", "qr"); len(got) != 1 {
+		t.Fatalf("Search must equal SearchFor(true): %+v", got)
+	}
+}
