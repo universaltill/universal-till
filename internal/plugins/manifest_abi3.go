@@ -123,7 +123,7 @@ var coreEventRoots = map[string]bool{
 	"payments": true, "plugin": true, "plugins": true, "receipt": true,
 	"reconcile": true, "reports": true, "sale": true, "sales": true,
 	"shifts": true, "stock": true, "sync": true, "system": true,
-	"tax": true, "ui": true,
+	"tax": true, "till": true, "ui": true, // till.* is core's (till.drawer.no_sale, ut-docs#5758)
 }
 
 var (
