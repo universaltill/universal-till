@@ -108,7 +108,7 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 		}
 
 		// Open shift
-		shiftID, err := pos.OpenShift(ctx, dp.Db, pos.ShiftInput{
+		opened, err := pos.OpenShift(ctx, dp.Db, pos.ShiftInput{
 			RegisterID:  req.RegisterID,
 			CashierID:   req.CashierID,
 			OpeningCash: money.FromMinor(openingCash),
@@ -118,7 +118,8 @@ func OpenShift(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		respondShiftSuccess(w, r, ShiftOpenResponse{ShiftID: shiftID, Success: true})
+		respondShiftSuccess(w, r, ShiftOpenResponse{ShiftID: opened.ShiftID, Success: true})
+		dispatchShiftOpened(ctx, dp, opened) // best-effort, after commit and response (ut-docs#5770)
 	}
 }
 
@@ -270,8 +271,8 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
-		// Get expected cash before closing
-		openingCash, ok, err := repo.GetShiftOpeningCash(ctx, req.ShiftID)
+		// 404 pre-check; pos.CloseShift computes and stores expected cash.
+		_, ok, err := repo.GetShiftOpeningCash(ctx, req.ShiftID)
 		if err != nil {
 			respondCloseError(w, r, http.StatusInternalServerError, fmt.Sprintf("query shift: %v", err))
 			return
@@ -281,14 +282,8 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		expectedCash, err := pos.ComputeExpectedCash(ctx, dp.Db, req.ShiftID, openingCash)
-		if err != nil {
-			respondCloseError(w, r, http.StatusInternalServerError, fmt.Sprintf("compute expected cash: %v", err))
-			return
-		}
-
 		// Close shift
-		err = pos.CloseShift(ctx, dp.Db, pos.ShiftCloseInput{
+		closed, err := pos.CloseShift(ctx, dp.Db, pos.ShiftCloseInput{
 			ShiftID:            req.ShiftID,
 			ClosingCash:        money.FromMinor(req.ClosingCash),
 			Note:               req.Note,
@@ -303,15 +298,16 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		variance := req.ClosingCash - expectedCash
+		// The response, the stored row and the event are one value (ut-docs#5770).
 		respondCloseSuccess(w, r, ShiftCloseResponse{
 			Success:      true,
-			ExpectedCash: expectedCash,
-			ClosingCash:  req.ClosingCash,
-			Variance:     variance,
-			Skim:         req.Skim,
-			NewFloat:     req.ClosingCash - req.Skim,
+			ExpectedCash: closed.ExpectedCash.Minor(),
+			ClosingCash:  closed.ClosingCash.Minor(),
+			Variance:     closed.Variance.Minor(),
+			Skim:         closed.Skim.Minor(),
+			NewFloat:     closed.NewFloat.Minor(),
 		})
+		dispatchShiftClosed(ctx, dp, closed)
 	}
 }
 

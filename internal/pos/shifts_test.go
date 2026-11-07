@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/money"
 	_ "modernc.org/sqlite"
 )
 
@@ -16,11 +17,12 @@ func TestOpenShift(t *testing.T) {
 
 	seedShiftData(t, db)
 
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID:  "reg1",
 		CashierID:   "user1",
 		OpeningCash: 10000, // £100.00
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -103,11 +105,12 @@ func TestCloseShift(t *testing.T) {
 	seedShiftData(t, db)
 
 	// Open shift
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID:  "reg1",
 		CashierID:   "user1",
 		OpeningCash: 10000,
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -132,7 +135,7 @@ VALUES ('pay1', ?, 'cash', 200, 'GBP', 80, ?)
 	}
 
 	// Close shift
-	err = CloseShift(ctx, db, ShiftCloseInput{
+	_, err = CloseShift(ctx, db, ShiftCloseInput{
 		ShiftID:     shiftID,
 		ClosingCash: 10120, // opening 10000 + net cash 120
 		Note:        "end of day",
@@ -188,11 +191,12 @@ func TestComputeExpectedCash(t *testing.T) {
 	seedShiftData(t, db)
 
 	// Open shift
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID:  "reg1",
 		CashierID:   "user1",
 		OpeningCash: 10000,
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -249,11 +253,12 @@ func TestRecordCashAdjustment(t *testing.T) {
 	seedShiftData(t, db)
 
 	// Open shift
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID:  "reg1",
 		CashierID:   "user1",
 		OpeningCash: 10000,
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -298,12 +303,13 @@ func TestRecordCashAdjustment_ClosedShift(t *testing.T) {
 	seedShiftData(t, db)
 
 	// Open and close shift
-	shiftID, _ := OpenShift(ctx, db, ShiftInput{
+	opened, _ := OpenShift(ctx, db, ShiftInput{
 		RegisterID:  "reg1",
 		CashierID:   "user1",
 		OpeningCash: 10000,
 	})
-	_ = CloseShift(ctx, db, ShiftCloseInput{
+	shiftID := opened.ShiftID
+	_, _ = CloseShift(ctx, db, ShiftCloseInput{
 		ShiftID:     shiftID,
 		ClosingCash: 10000,
 	})
@@ -333,11 +339,12 @@ func TestCloseShift_SkimComputesNewFloat(t *testing.T) {
 
 	seedShiftData(t, db)
 
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID:  "reg1",
 		CashierID:   "user1",
 		OpeningCash: 10000, // £100.00 float
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -358,7 +365,7 @@ VALUES ('pay1', 'sale1', 'cash', 41110, 'GBP', 0, ?)
 	}
 
 	// Close counting £511.10, skimming £411.10 back to the safe.
-	err = CloseShift(ctx, db, ShiftCloseInput{
+	_, err = CloseShift(ctx, db, ShiftCloseInput{
 		ShiftID:        shiftID,
 		ClosingCash:    51110,
 		Skim:           41110,
@@ -422,13 +429,14 @@ func TestCloseShift_NoSkimStillRecordsNewFloat(t *testing.T) {
 
 	seedShiftData(t, db)
 
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000,
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
-	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000}); err != nil {
+	if _, err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10000}); err != nil {
 		t.Fatalf("CloseShift failed: %v", err)
 	}
 	var newFloat int64
@@ -459,9 +467,10 @@ func TestCloseShift_SkimValidation(t *testing.T) {
 
 	seedShiftData(t, db)
 
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000,
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -481,7 +490,7 @@ func TestCloseShift_SkimValidation(t *testing.T) {
 		{"skim with no approver", ShiftCloseInput{ShiftID: shiftID, ClosingCash: 10100, Skim: 100}},
 	}
 	for _, c := range cases {
-		if err := CloseShift(ctx, db, c.in); err == nil {
+		if _, err := CloseShift(ctx, db, c.in); err == nil {
 			t.Errorf("%s: expected error, got nil", c.name)
 		}
 		var closedAt sql.NullString
@@ -504,9 +513,10 @@ func TestRecordCashAdjustment_SkimType(t *testing.T) {
 
 	seedShiftData(t, db)
 
-	shiftID, err := OpenShift(ctx, db, ShiftInput{
+	opened, err := OpenShift(ctx, db, ShiftInput{
 		RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000,
 	})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
@@ -552,11 +562,12 @@ func TestLastClosedShiftNewFloat(t *testing.T) {
 	}
 
 	// A shift closed with a skim: carry-forward is its new_float.
-	shiftID, err := OpenShift(ctx, db, ShiftInput{RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000})
+	opened, err := OpenShift(ctx, db, ShiftInput{RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000})
+	shiftID := opened.ShiftID
 	if err != nil {
 		t.Fatalf("OpenShift failed: %v", err)
 	}
-	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 51110, Skim: 41110, SkimApproverID: "mgr1"}); err != nil {
+	if _, err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: shiftID, ClosingCash: 51110, Skim: 41110, SkimApproverID: "mgr1"}); err != nil {
 		t.Fatalf("CloseShift failed: %v", err)
 	}
 	cf, ok, err := LastClosedShiftNewFloat(ctx, db, "reg1")
@@ -704,4 +715,81 @@ CREATE TABLE audit_log (
   blocked_actor_id TEXT
 );
 `
+}
+
+// ut-docs#5770: OpenShift/CloseShift return exactly what they committed,
+// so the shift.* events are never a re-stamp.
+func TestOpenShift_ReturnsCommittedValues(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+	seedShiftData(t, db)
+
+	opened, err := OpenShift(ctx, db, ShiftInput{RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rowOpened string
+	if err := db.QueryRowContext(ctx, `SELECT opened_at FROM shifts WHERE id = ?`, opened.ShiftID).Scan(&rowOpened); err != nil {
+		t.Fatal(err)
+	}
+	if opened.OpenedAt != rowOpened || opened.RegisterID != "reg1" || opened.CashierID != "user1" || opened.OpeningCash != 10000 {
+		t.Fatalf("OpenedShift %+v disagrees with row (opened_at %q)", opened, rowOpened)
+	}
+	// A refused open returns the zero value.
+	if got, err := OpenShift(ctx, db, ShiftInput{RegisterID: "reg1", CashierID: "user1"}); err == nil || got != (OpenedShift{}) {
+		t.Fatalf("second open: got %+v, %v; want zero value and an error", got, err)
+	}
+}
+
+func TestCloseShift_ReturnsCommittedValues(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+	seedShiftData(t, db)
+
+	opened, err := OpenShift(ctx, db, ShiftInput{RegisterID: "reg1", CashierID: "user1", OpeningCash: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tester: backdate the open so opened_at != closed_at (a swapped or
+	// re-stamped timestamp would otherwise pass within one second), and add
+	// a float top-up so expected cash != opening cash (a ClosedShift built
+	// from opening instead of expected would otherwise pass).
+	execSQL(t, db, `UPDATE shifts SET opened_at = '2001-01-01T08:00:00Z' WHERE id = '`+opened.ShiftID+`'`) // fixed-date:ok far past, no clock check
+	if _, err := RecordCashAdjustment(ctx, db, CashAdjustmentInput{
+		ShiftID: opened.ShiftID, Type: "adjustment", Amount: 2500, Reason: "float top-up", ActorID: "user1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := CloseShift(ctx, db, ShiftCloseInput{
+		ShiftID: opened.ShiftID, ClosingCash: 9000, Skim: 4000, SkimApproverID: "user1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rowOpened, rowClosed string
+	var expected int64
+	if err := db.QueryRowContext(ctx, `SELECT opened_at, closed_at, expected_cash FROM shifts WHERE id = ?`, opened.ShiftID).Scan(&rowOpened, &rowClosed, &expected); err != nil {
+		t.Fatal(err)
+	}
+	want := ClosedShift{
+		ShiftID: opened.ShiftID, RegisterID: "reg1", CashierID: "user1",
+		OpenedAt: rowOpened, ClosedAt: rowClosed,
+		OpeningCash: 10000, ClosingCash: 9000, ExpectedCash: money.FromMinor(expected),
+		Variance: 9000 - money.FromMinor(expected), Skim: 4000, NewFloat: 5000,
+	}
+	if closed != want {
+		t.Fatalf("ClosedShift\n got  %+v\n want %+v", closed, want)
+	}
+	if closed.ExpectedCash != 12500 || closed.Variance != -3500 {
+		t.Fatalf("expected 12500 / variance -3500, got %v / %v", closed.ExpectedCash, closed.Variance)
+	}
+	if closed.OpenedAt != "2001-01-01T08:00:00Z" || closed.ClosedAt == closed.OpenedAt { // fixed-date:ok far past
+		t.Fatalf("opened_at %q / closed_at %q: want the backdated open and a distinct close", closed.OpenedAt, closed.ClosedAt)
+	}
+	// A refused close returns the zero value.
+	if got, err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: opened.ShiftID, ClosingCash: 1}); err == nil || got != (ClosedShift{}) {
+		t.Fatalf("re-close: got %+v, %v; want zero value and an error", got, err)
+	}
 }

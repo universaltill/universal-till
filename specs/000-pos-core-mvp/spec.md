@@ -143,7 +143,7 @@ Examples:
 ### Event Dispatch Semantics
 
 - Plugin events are dispatched synchronously by default (the host calls plugin handlers during the triggering transaction) but must not compromise core data integrity:
-	- If a plugin handler returns an error during a non-critical event (e.g., `sale.viewed`), log the error, audit it, and continue the primary flow.
+	- If a plugin handler returns an error during a non-critical event (e.g., `stock.adjusted`), log the error, audit it, and continue the primary flow.
 	- For critical events that must be enforced (e.g., payment authorization hooks), the plan must explicitly mark them as blocking and document rollback semantics; otherwise the default is non-blocking with audit.
 	- The host must protect critical DB transactions: do not allow plugin errors to leave the DB in an inconsistent state. Prefer invoking non-essential plugin side-effects after the DB transaction commits, or use compensating actions.
 

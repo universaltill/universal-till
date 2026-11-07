@@ -93,26 +93,52 @@ type CashAdjustmentInput struct {
 	BlockedActorID string
 }
 
-// OpenShift creates a new shift record with opening cash and audit entry
-func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error) {
+// OpenedShift is what OpenShift committed (ut-docs#5770): the shift.opened
+// event carries these exact values, never a re-stamp.
+type OpenedShift struct {
+	ShiftID     string
+	RegisterID  string
+	CashierID   string
+	OpeningCash money.Money
+	OpenedAt    string // the row's exact RFC 3339 UTC string
+}
+
+// ClosedShift is what CloseShift committed (ut-docs#5770).
+type ClosedShift struct {
+	ShiftID      string
+	RegisterID   string
+	CashierID    string
+	OpenedAt     string // the row's exact strings
+	ClosedAt     string
+	OpeningCash  money.Money
+	ClosingCash  money.Money
+	ExpectedCash money.Money // as stored: opening + cash takings + adjustments, before the skim
+	Variance     money.Money // closing - expected; may be negative
+	Skim         money.Money
+	NewFloat     money.Money
+}
+
+// OpenShift creates a new shift record with opening cash and audit entry,
+// and returns what it committed. On error the zero OpenedShift is returned.
+func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (OpenedShift, error) {
 	repo := data.NewPOSRepo(sqlDB)
 	if in.RegisterID == "" {
-		return "", errors.New("register_id required")
+		return OpenedShift{}, errors.New("register_id required")
 	}
 	if in.CashierID == "" {
-		return "", errors.New("cashier_id required")
+		return OpenedShift{}, errors.New("cashier_id required")
 	}
 	if in.OpeningCash < 0 {
-		return "", errors.New("opening_cash must be >= 0")
+		return OpenedShift{}, errors.New("opening_cash must be >= 0")
 	}
 
 	// Check if there's already an open shift for this register
 	existingID, err := repo.FindOpenShiftForRegister(ctx, nil, in.RegisterID)
 	if err != nil {
-		return "", err
+		return OpenedShift{}, err
 	}
 	if existingID != "" {
-		return "", fmt.Errorf("register %s already has an open shift: %s", in.RegisterID, existingID)
+		return OpenedShift{}, fmt.Errorf("register %s already has an open shift: %s", in.RegisterID, existingID)
 	}
 
 	shiftID := in.ShiftID
@@ -120,8 +146,8 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error
 		shiftID = uuid.NewString()
 	}
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
-		now := time.Now().UTC().Format(time.RFC3339)
 		if err := repo.InsertShift(ctx, tx, shiftID, in.RegisterID, in.CashierID, in.OpeningCash.Minor(), now); err != nil {
 			return err
 		}
@@ -136,10 +162,13 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return OpenedShift{}, err
 	}
 
-	return shiftID, nil
+	return OpenedShift{
+		ShiftID: shiftID, RegisterID: in.RegisterID, CashierID: in.CashierID,
+		OpeningCash: in.OpeningCash, OpenedAt: now,
+	}, nil
 }
 
 // CloseShift closes an existing shift, calculates expected cash, and
@@ -153,47 +182,47 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (string, error
 // computed BEFORE the close is persisted, so the skim row can never feed
 // back into the calculated figure — variance compares the count against
 // takings, before any skim.
-func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
+func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) (ClosedShift, error) {
 	repo := data.NewPOSRepo(sqlDB)
 	if in.ShiftID == "" {
-		return errors.New("shift_id required")
+		return ClosedShift{}, errors.New("shift_id required")
 	}
 	if in.ClosingCash < 0 {
-		return errors.New("closing_cash must be >= 0")
+		return ClosedShift{}, errors.New("closing_cash must be >= 0")
 	}
 	if in.Skim < 0 {
-		return errors.New("skim must be >= 0")
+		return ClosedShift{}, errors.New("skim must be >= 0")
 	}
 	if in.Skim > in.ClosingCash {
-		return errors.New("skim cannot exceed the counted closing cash")
+		return ClosedShift{}, errors.New("skim cannot exceed the counted closing cash")
 	}
 	if in.Skim > 0 && in.SkimApproverID == "" {
-		return errors.New("skim requires an authorized approver")
+		return ClosedShift{}, errors.New("skim requires an authorized approver")
 	}
 	if in.CountProtocol != "" && !ValidCountProtocol(in.CountProtocol) {
-		return errors.New("count_protocol must be a flat JSON object of denomination:count")
+		return ClosedShift{}, errors.New("count_protocol must be a flat JSON object of denomination:count")
 	}
 
 	// Verify shift exists and is open
-	_, cashierID, openingCash, err := repo.LoadShiftForClose(ctx, nil, in.ShiftID)
+	registerID, cashierID, openedAt, openingCash, err := repo.LoadShiftForClose(ctx, nil, in.ShiftID)
 	if err != nil {
-		return err
+		return ClosedShift{}, err
 	}
 
 	// Calculate expected cash
 	expectedCash, err := repo.ComputeExpectedCash(ctx, in.ShiftID, openingCash)
 	if err != nil {
-		return fmt.Errorf("compute expected cash: %w", err)
+		return ClosedShift{}, fmt.Errorf("compute expected cash: %w", err)
 	}
 
 	newFloat := in.ClosingCash - in.Skim
+	now := time.Now().UTC().Format(time.RFC3339)
+	variance := in.ClosingCash - money.FromMinor(expectedCash)
 
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
-		now := time.Now().UTC().Format(time.RFC3339)
 		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash.Minor(), expectedCash, newFloat.Minor(), in.Note, in.CountProtocol, now); err != nil {
 			return err
 		}
-		variance := in.ClosingCash - money.FromMinor(expectedCash)
 		payload := map[string]any{
 			"closing_cash":  in.ClosingCash.Minor(),
 			"expected_cash": expectedCash,
@@ -232,8 +261,17 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return ClosedShift{}, err
+	}
 
-	return err
+	return ClosedShift{
+		ShiftID: in.ShiftID, RegisterID: registerID, CashierID: cashierID,
+		OpenedAt: openedAt, ClosedAt: now,
+		OpeningCash: money.FromMinor(openingCash), ClosingCash: in.ClosingCash,
+		ExpectedCash: money.FromMinor(expectedCash), Variance: variance,
+		Skim: in.Skim, NewFloat: newFloat,
+	}, nil
 }
 
 // maxCountProtocolLen bounds the denomination-count JSON blob a client can

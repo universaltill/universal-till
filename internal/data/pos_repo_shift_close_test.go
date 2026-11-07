@@ -50,12 +50,12 @@ func TestShiftOpenExistsAndLoadShiftForClose(t *testing.T) {
 		t.Fatalf("expected no open shift for an unknown id, got open=%v err=%v", open, err)
 	}
 
-	regID, cashierID, opening, err := dbx.repo.LoadShiftForClose(ctx, nil, "shift1")
+	regID, cashierID, openedAt, opening, err := dbx.repo.LoadShiftForClose(ctx, nil, "shift1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if regID != "reg1" || cashierID != "user1" || opening != 5000 {
-		t.Fatalf("unexpected shift-for-close data: reg=%q cashier=%q opening=%d", regID, cashierID, opening)
+	if regID != "reg1" || cashierID != "user1" || opening != 5000 || openedAt != "2026-01-01T09:00:00Z" {
+		t.Fatalf("unexpected shift-for-close data: reg=%q cashier=%q opened=%q opening=%d", regID, cashierID, openedAt, opening)
 	}
 
 	// Close it, then LoadShiftForClose must refuse to load it again — an
@@ -63,7 +63,7 @@ func TestShiftOpenExistsAndLoadShiftForClose(t *testing.T) {
 	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift1", 7000, 7000, 7000, "end of day", "", "2026-01-01T17:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := dbx.repo.LoadShiftForClose(ctx, nil, "shift1"); err == nil {
+	if _, _, _, _, err := dbx.repo.LoadShiftForClose(ctx, nil, "shift1"); err == nil {
 		t.Fatal("expected an error loading an already-closed shift for close")
 	}
 	if open, err := dbx.repo.ShiftOpenExists(ctx, nil, "shift1"); err != nil || open {
@@ -71,7 +71,7 @@ func TestShiftOpenExistsAndLoadShiftForClose(t *testing.T) {
 	}
 
 	// LoadShiftForClose on a never-existed id.
-	if _, _, _, err := dbx.repo.LoadShiftForClose(ctx, nil, "never-existed"); err == nil {
+	if _, _, _, _, err := dbx.repo.LoadShiftForClose(ctx, nil, "never-existed"); err == nil {
 		t.Fatal("expected an error for an unknown shift id")
 	}
 }

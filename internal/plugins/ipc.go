@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/money"
 )
 
 // EventDispatchMode defines how events are delivered to plugins
@@ -21,7 +22,7 @@ type EventDispatchMode int
 const (
 	// NonBlocking: Events are delivered asynchronously. Plugin errors are logged and audited
 	// but do not affect the core transaction. This is the default for most events.
-	// Use for: sale.viewed, inventory.adjusted, report.generated
+	// Use for: sale.completed, stock.adjusted, shift.opened/closed (post-commit notifications)
 	NonBlocking EventDispatchMode = iota
 
 	// Blocking: Events are delivered synchronously within the transaction. Plugin errors
@@ -320,11 +321,8 @@ func NewEventBus(db *sql.DB) *EventBus {
 	eb.eventModes["stock.adjusted"] = NonBlocking
 	eb.eventModes["customer.erased"] = NonBlocking
 	eb.eventModes[TillDrawerNoSaleEvent] = NonBlocking
-	eb.eventModes["sale.viewed"] = NonBlocking
-	eb.eventModes["inventory.adjusted"] = NonBlocking
-	eb.eventModes["report.generated"] = NonBlocking
-	eb.eventModes["shift.opened"] = NonBlocking
-	eb.eventModes["shift.closed"] = NonBlocking
+	eb.eventModes[ShiftOpenedEvent] = NonBlocking
+	eb.eventModes[ShiftClosedEvent] = NonBlocking
 
 	// Blocking: Only critical validation/authorization events should block
 	// These are not yet implemented but reserved for future use:
@@ -1013,6 +1011,51 @@ type TillDrawerNoSalePayload struct {
 // PublishTillDrawerNoSale publishes till.drawer.no_sale (NonBlocking).
 func (eb *EventBus) PublishTillDrawerNoSale(ctx context.Context, ev TillDrawerNoSalePayload) (string, error) {
 	return eb.Publish(ctx, TillDrawerNoSaleEvent, ev)
+}
+
+// ShiftOpenedEvent / ShiftClosedEvent: contract ut-docs
+// reference/contracts/shift-events.md (ut-docs#5770).
+const (
+	ShiftOpenedEvent = "shift.opened"
+	ShiftClosedEvent = "shift.closed"
+)
+
+// ShiftOpenedPayload is the shift.opened payload. Every key is always
+// present. Money is integer minor units of Currency. No free text.
+type ShiftOpenedPayload struct {
+	ShiftID     string      `json:"shift_id"`
+	RegisterID  string      `json:"register_id"`
+	CashierID   string      `json:"cashier_id"`
+	Currency    string      `json:"currency"` // shop ISO 4217 code, "" if unset
+	OpeningCash money.Money `json:"opening_cash"`
+	OpenedAt    string      `json:"opened_at"` // the row's exact RFC 3339 UTC string
+}
+
+// ShiftClosedPayload is the shift.closed payload. Same rules. Never the
+// note, the skim reason or the count protocol.
+type ShiftClosedPayload struct {
+	ShiftID      string      `json:"shift_id"`
+	RegisterID   string      `json:"register_id"`
+	CashierID    string      `json:"cashier_id"`
+	Currency     string      `json:"currency"`
+	OpenedAt     string      `json:"opened_at"`
+	ClosedAt     string      `json:"closed_at"`
+	OpeningCash  money.Money `json:"opening_cash"`
+	ClosingCash  money.Money `json:"closing_cash"`  // counted
+	ExpectedCash money.Money `json:"expected_cash"` // opening + cash takings + adjustments, before the skim
+	Variance     money.Money `json:"variance"`      // closing - expected; may be negative
+	Skim         money.Money `json:"skim"`          // to safe at close; 0 = none
+	NewFloat     money.Money `json:"new_float"`     // closing - skim
+}
+
+// PublishShiftOpened publishes shift.opened (NonBlocking).
+func (eb *EventBus) PublishShiftOpened(ctx context.Context, ev ShiftOpenedPayload) (string, error) {
+	return eb.Publish(ctx, ShiftOpenedEvent, ev)
+}
+
+// PublishShiftClosed publishes shift.closed (NonBlocking).
+func (eb *EventBus) PublishShiftClosed(ctx context.Context, ev ShiftClosedPayload) (string, error) {
+	return eb.Publish(ctx, ShiftClosedEvent, ev)
 }
 
 // PublishCustomerErased is a helper to publish customer.erased events.

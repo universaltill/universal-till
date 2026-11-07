@@ -7074,22 +7074,22 @@ VALUES (?, ?, ?, ?, ?)
 	return nil
 }
 
-// LoadShiftForClose fetches shift info required to close.
-func (r *POSRepo) LoadShiftForClose(ctx context.Context, tx *sql.Tx, shiftID string) (string, string, int64, error) {
-	var registerID, cashierID string
-	var openingCash int64
-	err := r.exec(tx).QueryRowContext(ctx, `
-SELECT register_id, cashier_id, opening_cash
+// LoadShiftForClose fetches the open shift's register, cashier, opened_at
+// (the row's exact string) and opening cash — what closing it needs and
+// what the shift.closed event reports (ut-docs#5770).
+func (r *POSRepo) LoadShiftForClose(ctx context.Context, tx *sql.Tx, shiftID string) (registerID, cashierID, openedAt string, openingCash int64, err error) {
+	err = r.exec(tx).QueryRowContext(ctx, `
+SELECT register_id, cashier_id, opened_at, opening_cash
 FROM shifts 
 WHERE id = ? AND closed_at IS NULL
-`, shiftID).Scan(&registerID, &cashierID, &openingCash)
+`, shiftID).Scan(&registerID, &cashierID, &openedAt, &openingCash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", 0, errors.New("shift not found or already closed")
+			return "", "", "", 0, errors.New("shift not found or already closed")
 		}
-		return "", "", 0, fmt.Errorf("query shift: %w", err)
+		return "", "", "", 0, fmt.Errorf("query shift: %w", err)
 	}
-	return registerID, cashierID, openingCash, nil
+	return registerID, cashierID, openedAt, openingCash, nil
 }
 
 // UpdateShiftClose sets closing details. newFloat is the drawer's

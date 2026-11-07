@@ -399,6 +399,8 @@ func TestEventDataClassRegistry(t *testing.T) {
 		"stock.adjusted":             {data.DataClassStock},
 		"customer.erased":            {data.DataClassCustomers},
 		"till.drawer.no_sale":        {data.DataClassSales, data.DataClassStaff},
+		"shift.opened":               {data.DataClassSales, data.DataClassStaff},
+		"shift.closed":               {data.DataClassSales, data.DataClassStaff},
 		"catalog.identify":           {data.DataClassCatalog},
 		"catalog.identify.confirmed": {data.DataClassCatalog},
 		"ui.view.ask":                {},
