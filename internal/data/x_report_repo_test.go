@@ -463,3 +463,70 @@ func TestShiftXReport_QueryPlans(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5797: ListOpenShifts feeds the /shifts X picker and Current card.
+
+func TestListOpenShifts_NewestPerRegisterOrderedByName(t *testing.T) {
+	f := &xrFx{posTestDB: newPOSLifecycleTestDB(t), t0: shiftWindowBase()}
+	at := func(d time.Duration) string { return b8At(f.t0.Add(d)) }
+	mustExec(t, f.d, `INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('u-a','alice','Alice','','cashier',1)`)
+	mustExec(t, f.d, `INSERT INTO registers(id,name,is_active) VALUES('rb','B Till',1)`)
+	mustExec(t, f.d, `INSERT INTO registers(id,name,is_active) VALUES('ra','A Till',1)`)
+	mustExec(t, f.d, `INSERT INTO registers(id,name,is_active) VALUES('rc','C Till',1)`)
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('A-old','ra','u-a',?,0)`, at(-3*time.Hour))
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('A-new','ra','u-a',?,0)`, at(-time.Hour))
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('B1','rb','u-a',?,0)`, at(-2*time.Hour))
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, closed_at, opening_cash) VALUES('C1','rc','u-a',?,?,0)`, at(-5*time.Hour), at(-4*time.Hour))
+	got, err := f.repo.ListOpenShifts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ShiftID != "A-new" || got[0].RegisterName != "A Till" || got[1].ShiftID != "B1" {
+		t.Fatalf("got %+v, want [A-new, B1]", got)
+	}
+}
+
+func TestListOpenShifts_NameFallbacks(t *testing.T) {
+	f := xrFixtureF(t)
+	ctx := context.Background()
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('Sb','reg-b','u-b',?,0)`, b8At(f.t0))
+	mustExec(t, f.d, `PRAGMA foreign_keys = OFF`)
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('Sx','reg-x','ghost',?,0)`, b8At(f.t0))
+	mustExec(t, f.d, `INSERT INTO registers(id,name,is_active) VALUES('reg-e','',1)`)
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('Se','reg-e','',?,0)`, b8At(f.t0))
+	open, err := f.repo.ListOpenShifts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 4 {
+		t.Fatalf("got %d open shifts, want 4: %+v", len(open), open)
+	}
+	for _, o := range open {
+		rep, err := f.repo.ShiftXReport(ctx, o.ShiftID, f.t0.Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.RegisterName != rep.RegisterName || o.CashierName != rep.CashierName {
+			t.Fatalf("%s: names %q/%q differ from ShiftXReport %q/%q", o.ShiftID, o.RegisterName, o.CashierName, rep.RegisterName, rep.CashierName)
+		}
+	}
+}
+
+func TestListOpenShifts_None(t *testing.T) {
+	f := &xrFx{posTestDB: newPOSLifecycleTestDB(t), t0: shiftWindowBase()}
+	got, err := f.repo.ListOpenShifts(context.Background())
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v; want empty, nil", got, err)
+	}
+}
+
+func TestListOpenShifts_InactiveRegisterStillListed(t *testing.T) {
+	f := &xrFx{posTestDB: newPOSLifecycleTestDB(t), t0: shiftWindowBase()}
+	mustExec(t, f.d, `INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('u-a','alice','Alice','','cashier',1)`)
+	mustExec(t, f.d, `INSERT INTO registers(id,name,is_active) VALUES('ri','Old Till',0)`)
+	mustExec(t, f.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('Si','ri','u-a',?,0)`, b8At(f.t0))
+	got, err := f.repo.ListOpenShifts(context.Background())
+	if err != nil || len(got) != 1 || got[0].RegisterName != "Old Till" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}

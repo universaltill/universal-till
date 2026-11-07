@@ -249,3 +249,45 @@ ORDER BY datetime(created_at), rowid`, shiftID)
 	rep.GeneratedAt = now.UTC().Format(time.RFC3339)
 	return rep, nil
 }
+
+// OpenShift is one register's open shift with display names, for the /shifts
+// X picker and Current card (ut-docs#5797). Names use ShiftXReport's fallbacks.
+type OpenShift struct {
+	ShiftID, RegisterID, RegisterName, CashierID, CashierName, OpenedAt string
+}
+
+// ListOpenShifts returns the newest open shift (closed_at IS NULL) of each
+// register, ordered by register name then id. Read-only. A deactivated
+// register's open shift is still listed: its drawer still holds cash.
+func (r *POSRepo) ListOpenShifts(ctx context.Context) ([]OpenShift, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT s.id, s.register_id, COALESCE(NULLIF(rg.name,''), s.register_id),
+       COALESCE(s.cashier_id,''),
+       COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), COALESCE(s.cashier_id,'')),
+       s.opened_at
+FROM shifts s
+LEFT JOIN registers rg ON rg.id = s.register_id
+LEFT JOIN users u      ON u.id  = s.cashier_id
+WHERE s.closed_at IS NULL
+ORDER BY COALESCE(NULLIF(rg.name,''), s.register_id), s.register_id, s.opened_at DESC, s.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list open shifts: %w", err)
+	}
+	defer rows.Close()
+	var out []OpenShift
+	seen := map[string]bool{}
+	for rows.Next() {
+		var o OpenShift
+		if err := rows.Scan(&o.ShiftID, &o.RegisterID, &o.RegisterName, &o.CashierID, &o.CashierName, &o.OpenedAt); err != nil {
+			return nil, fmt.Errorf("list open shifts: %w", err)
+		}
+		if seen[o.RegisterID] {
+			continue // newest first: keep the first row per register
+		}
+		seen[o.RegisterID] = true
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list open shifts: %w", err)
+	}
+	return out, nil
+}

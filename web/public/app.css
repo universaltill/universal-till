@@ -942,6 +942,20 @@ body.sale-screen .session-admin-link { display: none; }
    e2e/tests/tills-pairing-layout-1548.spec.ts seeds a real pending request
    precisely so it fails on that, rather than measuring an empty list. */
 .pairing-table { display: block; overflow-x: auto; }
+/* ut-docs#5797: X report on /shifts. Amount columns align to the inline end
+   (mirrors in RTL); the 5-column tender table scrolls inside its own box at
+   kiosk/tablet widths and table-cards.js stacks it at <=480px; the totals and
+   cash tables opt out of the card stacking with data-cards="off". */
+.x-report { margin-block-start: .9rem; border-block-start: 1px solid var(--border); padding-block-start: .6rem; }
+.x-report h3 { margin-block: 0 .2rem; }
+.x-report h4 { margin-block: .8rem .3rem; }
+#x-report-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
+.x-report-num :is(td, th):not(:first-child) { text-align: end; font-variant-numeric: tabular-nums; }
+.x-report-tenders { display: block; overflow-x: auto; inline-size: max-content; max-inline-size: 100%; }
+.x-report-reason { overflow-wrap: anywhere; }
+.x-report-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
+.x-report-bar p { margin: 0; }
+.x-report-link { display: inline-block; min-block-size: 44px; padding-block: .6rem; box-sizing: border-box; }
 /* ut-docs#2781: the roster gained a Role column and a per-till Change role
    button; with the link/version columns and a long (tr/ar) label it can
    outgrow a 1024px kiosk the same way — same escape hatch, scrolling the

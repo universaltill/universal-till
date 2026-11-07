@@ -641,6 +641,7 @@ var demoAllowedRoutes = map[string]bool{
 	"/journal/{receipt}":       true,
 	"/reports":                 true,
 	"/shifts":                  true,
+	"POST /shifts/x-report":    true,
 	"/ui/journal":              true,
 	"/ui/reports/tab/{name}":   true,
 	"GET /api/audit/export":    true,

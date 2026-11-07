@@ -802,7 +802,8 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // /vouchers (ut-docs#4251) have {wildcard} children (GET /help/{topic}), so a deeper path
 // (/help/a/b) is unclaimed and would fall through to the catch-all inside
 // core's namespace (ut-docs#3791).
-// /settings, /catalog, /users, /open-orders, /recovery register only
+// /settings, /catalog, /users, /open-orders, /recovery, /shifts (POST
+// /shifts/x-report, ut-docs#5797) register only
 // literal multi-segment children (/settings/menu, /catalog/tax-codes) and
 // no subtree catch-all of their own, so any other child
 // (/settings/vendor-x) is unclaimed and falls through to the catch-all the
@@ -818,6 +819,7 @@ var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders", "/notices",
+	"/shifts",
 }
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under
