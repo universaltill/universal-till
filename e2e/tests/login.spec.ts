@@ -757,8 +757,9 @@ test.describe.serial('first-boot setup and PIN login', () => {
       page.waitForResponse((r) => r.url().includes('/api/shifts/open')),
       page.locator('#open-shift-form button[type=submit]').click(),
     ]);
-    // Check the status, not the text: the success message carries the new
-    // shift's UUID, which can itself contain "500" (ut-docs#3155 CI).
+    // Check the status, not the text: the success message used to carry
+    // the shift's UUID, which could contain "500" (ut-docs#3155 CI); it no
+    // longer does (ut-docs#5810), but the status stays the robust check.
     expect(resp.status()).toBeLessThan(500);
 
     const result = page.locator('#shift-result');

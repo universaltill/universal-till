@@ -2722,7 +2722,6 @@ shifts.note_hint
 shifts.open
 shifts.open_new
 shifts.open_since
-shifts.open_success
 shifts.opened_at
 shifts.opening_carried
 shifts.opening_cash

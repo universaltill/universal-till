@@ -160,14 +160,17 @@ func TestOpenShift_HTMLSummaryIsTranslated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Shift opened:") {
-		t.Fatalf("expected the shifts.open_success template, got:\n%s", body)
-	}
-
 	var shiftID string
 	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&shiftID); err != nil {
 		t.Fatal(err)
 	}
+	// ut-docs#5810: plain confirmation, never the internal shift id or an
+	// unfilled format verb.
+	if body := rec.Body.String(); !strings.Contains(body, "Shift opened.") ||
+		strings.Contains(body, shiftID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
+		t.Fatalf("expected the shifts.open_confirmed text without the shift id, got:\n%s", body)
+	}
+
 	if rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+shiftID+"&closing_cash=5000"); rec.Code != http.StatusOK {
 		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
 	}
@@ -183,8 +186,11 @@ func TestOpenShift_HTMLSummaryIsTranslated(t *testing.T) {
 	if recFa.Code != http.StatusOK {
 		t.Fatalf("open (fa locale): %d: %s", recFa.Code, recFa.Body.String())
 	}
-	if !strings.Contains(recFa.Body.String(), "شیفت باز شد") {
-		t.Fatalf("expected the fa translation of shifts.open_success, got:\n%s", recFa.Body.String())
+	// fa has no translation yet (ADR-0160 §2): falls back to English. Once
+	// Weblate delivers fa for shifts.open_confirmed, assert the fa text here
+	// again — this half then proves the HTML branch honours the locale.
+	if body := recFa.Body.String(); !strings.Contains(body, "Shift opened.") || strings.Contains(body, "%") {
+		t.Fatalf("expected the English fallback of shifts.open_confirmed, got:\n%s", body)
 	}
 }
 
