@@ -139,7 +139,11 @@ func writeAdoptionNote(w http.ResponseWriter, locale string, a salesMirrorAdopti
 	if a.Err != nil {
 		fmt.Fprintf(w, `<p class="muted">✗ %s</p>`, html.EscapeString(httpx.T(locale, "tills.promote_adopt_resumes")))
 	}
-	if n := a.OwnOutsideZ + a.LateOutsideZ; n > 0 {
+	// Copied sales the previous main till logged after its last close
+	// (LateOutsideZ) are no longer "in no Z": they count in this till's next
+	// Z by arrival time and are listed late (ut-docs#5769), so only this
+	// till's own unpushed sales are disclosed here.
+	if n := a.OwnOutsideZ; n > 0 {
 		line("⚠ ", "tills.promote_outside_z", n)
 	}
 }

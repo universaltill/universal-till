@@ -794,8 +794,9 @@ func (r *SalesMirrorRepo) HasUnadopted(ctx context.Context) (bool, error) {
 // it (M6 review finding 2): this till's own completed sales created after
 // ownLastClose and before floor and after pushedUpTo (they never reached the
 // previous main till), and copied sales created before floor that the
-// previous main till logged only after its last close (late journal). Both
-// are disclosed on promote; the floor never moves below a close, which
+// previous main till logged only after its last close (late journal). Only
+// `own` is disclosed on promote as "in no Z": `late` sales now count in the
+// next Z by arrival time (ut-docs#5769) and are kept for the audit entry; the floor never moves below a close, which
 // would count that close's sales twice.
 func (r *SalesMirrorRepo) SalesOutsideAnyZ(ctx context.Context, floor, ownLastClose, pushedUpTo string) (own, late int, err error) {
 	if err = r.db.QueryRowContext(ctx, `
