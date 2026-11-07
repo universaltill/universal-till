@@ -366,7 +366,8 @@ section on any day at least one shift was closed: opening float, cash
 sales, tips held out (only printed on a day that actually has a cash
 tip), pay-ins, pay-outs, calculated (what should be in the drawers),
 counted (what was in them), variance, skim to safe, and the new float
-carried to the next day. Cash sales excludes any cash tip the same way
+carried to the next day. Cash sales counts every payment method of the
+cash type, not only the built-in Cash button, and excludes any cash tip the same way
 tips are already held out of revenue elsewhere on the report — that is
 why the "Tips held out" line sits between cash sales and pay-ins:
 opening float + cash sales + tips held out + pay-ins + pay-outs together
