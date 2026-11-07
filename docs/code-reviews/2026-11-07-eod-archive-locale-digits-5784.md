@@ -42,6 +42,6 @@ which `qtyFloat` handles. `FormatFloat(…,'f',-1,…)` never prints "3.0".
 - Seen, pre-existing: the Reports summary count and the "14 days" option are
   Latin in fa/ar → added to ut-docs#5785.
 
-Pre-flight: help topic n/a (digit shape only, no flow or wording change); en.json/meta n/a (no keys); reference n/a; README n/a; review record updated (this file); follow-ups → ut-docs#5785.
+Pre-flight: docs-shots surface hash refreshed with the escape hatch (no screenshot renders the EOD archive tab; reports.png shows the summary cards only); help topic n/a (digit shape only, no flow or wording change); en.json/meta n/a (no keys); reference n/a; README n/a; review record updated (this file); follow-ups → ut-docs#5785.
 
 Verdict: approve.
