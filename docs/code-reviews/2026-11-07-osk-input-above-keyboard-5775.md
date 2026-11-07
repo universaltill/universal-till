@@ -61,3 +61,7 @@ page n/a; README n/a; review record updated (this file).
 ## Verdict
 
 Approve. Deferred: none.
+
+## CI follow-up
+
+First CI run: `build` failed `guard-docs-shots_test.sh` (stale surface hash — `web/public/osk.js` is screenshot surface). No docs-shot opens the OSK and `clearKeyboard` runs only when it is open, so the hash was refreshed with `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`) instead of regenerating; guard + its test pass locally.
