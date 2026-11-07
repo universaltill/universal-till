@@ -1,10 +1,17 @@
 {{/* ut-docs#5797: the X report fragment swapped into #x-report-body on /shifts
-     (data .R = data.XReport). A mid-shift read: no Z wording, no number, no
-     print. The heading and "nothing is closed" line live on the page. */}}
+     (data .R = data.XReport). A mid-shift read: no Z wording, no number. Print
+     button: ut-docs#5798. The heading and "nothing is closed" line live on the page. */}}
 <div class="x-report-result">
   <div class="x-report-bar">
     <p><strong>{{ T "shifts.x_report.generated_at" }}</strong> {{ datetime .R.GeneratedAt }}</p>
-    <button type="button" class="btn secondary" data-action="empty:x-report-body focus:x-report-show">{{ T "shifts.x_report.hide" }}</button>
+    <div class="x-report-actions">
+      <button type="button" id="x-report-print" class="btn secondary"
+              hx-post="{{ .PrintURL }}" hx-target="#x-report-print-msg" hx-swap="innerHTML"
+              hx-indicator="#x-report-print-busy" hx-disabled-elt="this">{{ T "shifts.x_report.print" }}</button>
+      <span id="x-report-print-busy" class="htmx-indicator muted" role="status">{{ T "shifts.x_report.printing" }}</span>
+      <button type="button" class="btn secondary" data-action="empty:x-report-body focus:x-report-show">{{ T "shifts.x_report.hide" }}</button>
+    </div>
+    <span id="x-report-print-msg" class="x-report-print-msg" aria-live="polite"></span>
   </div>
 
   <table class="table">
