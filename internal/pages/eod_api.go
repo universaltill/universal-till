@@ -683,6 +683,9 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	return doc
 }
 
+// eodHoldDeadline bounds generateEOD's held write-lock section (M1).
+const eodHoldDeadline = 4 * time.Second
+
 // generateEOD produces, archives and (best-effort) prints the close-to-close
 // report (ADR-0066). Idempotent per local calendar day: returns
 // createdNew=false when a close already happened today (ArchiveReport's
@@ -728,8 +731,38 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	if floor := eodWindowFloor(ctx, d); floor.After(from) {
 		from = floor
 	}
+	// ut-docs#5769 (ADR-0066 amendment): take the write lock BEFORE `to` and
+	// hold it until every window read is done, so a concurrent apply (sale
+	// replay, journaled no-sale/cleared basket) either committed before
+	// (stamp < to, visible here) or runs after (stamp >= to, the next Z).
+	// Released before the archive write below, which takes the lock itself.
+	//
+	// M1: the held section carries its own deadline, below the 5 s
+	// busy_timeout other writers wait on: a slow Z fails ITSELF (nothing is
+	// archived; the scheduler retries next tick) rather than stalling a
+	// checkout past busy_timeout. Every read below uses hctx.
+	hctx, hcancel := context.WithTimeout(ctx, eodHoldDeadline)
+	heldAt := time.Now()
+	release, lerr := repo.HoldWriteLock(hctx)
+	if lerr != nil {
+		hcancel()
+		return data.EODReport{}, false, lerr
+	}
+	var relOnce sync.Once
+	releaseHeld := func() {
+		relOnce.Do(func() {
+			release()
+			hcancel()
+			if held := time.Since(heldAt); held > time.Second {
+				logging.L().Warnf("eod: write lock held %s (checkouts queue behind it)", held.Round(time.Millisecond))
+			} else {
+				logging.L().Debugf("eod: write lock held %s", held.Round(time.Millisecond))
+			}
+		})
+	}
+	defer releaseHeld()
 	to := time.Now()
-	rep, err := repo.EndOfDayInstant(ctx, from, to)
+	rep, err := repo.EndOfDayInstant(hctx, from, to)
 	if err != nil {
 		return rep, false, err
 	}
@@ -748,7 +781,7 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
 	// archive is write-once per period, so a report archived without these
 	// tables could never be repaired.
-	salesForBands, err := repo.SalesForTaxBandsInstant(ctx, from, to)
+	salesForBands, err := repo.SalesForTaxBandsInstant(hctx, from, to)
 	if err != nil {
 		return rep, false, err
 	}
@@ -758,7 +791,8 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// [from, to) window, best-effort (see attachEODFiscalDevice's own doc
 	// comment): a non-TR shop, or TR without the plugin active, leaves
 	// rep.FiscalDevice nil.
-	attachEODFiscalDevice(ctx, d, repo, &rep, from, to)
+	attachEODFiscalDevice(hctx, d, repo, &rep, from, to)
+	releaseHeld() // every window read is done (idempotent)
 	// Display-only period (ADR-0066 Decision 6): the shop's LOCAL offset,
 	// never UTC — a UTC-stamped close on a till at a large positive offset
 	// would display a calendar date shifted from the shop's own, the exact

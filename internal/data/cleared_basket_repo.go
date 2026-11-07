@@ -25,6 +25,9 @@ type ClearedBasket struct {
 	ActorID    string
 	LineCount  int
 	Total      money.Money
+	// ReceivedAt (migration 098, ut-docs#5769): see NoSaleEvent.ReceivedAt. Never set from a journal payload: the
+	// arrival time must be this till's own clock.
+	ReceivedAt string
 }
 
 // InsertClearedBasket writes one cleared_baskets row and returns its id.
@@ -95,11 +98,11 @@ func (r *POSRepo) ApplyJournaledClearedBasket(ctx context.Context, e ClearedBask
 		return false, errors.New("apply journaled cleared basket: TillID is required")
 	}
 	res, err := r.db.ExecContext(ctx, `
-INSERT INTO cleared_baskets (id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor)
-VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?)
+INSERT INTO cleared_baskets (id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor, received_at)
+VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))
 ON CONFLICT(id) DO NOTHING`,
 		e.ID, e.CreatedAt, e.CreatedAt, nullIfEmpty(e.RegisterID), e.TillID,
-		nullIfEmpty(e.ActorID), e.LineCount, e.Total.Minor())
+		nullIfEmpty(e.ActorID), e.LineCount, e.Total.Minor(), e.ReceivedAt)
 	if err != nil {
 		return false, fmt.Errorf("apply journaled cleared basket: %w", err)
 	}

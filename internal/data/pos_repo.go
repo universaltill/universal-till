@@ -947,6 +947,10 @@ func windowArgs(from, to time.Time) (string, string) {
 // Bound params are rendered by windowArgs, same as every other window query
 // in this file.
 //
+// The column passed for the Z is the ARRIVAL time (saleArrivalCol /
+// eventArrivalCol, ADR-0066 amendment, ut-docs#5769), not the origin time: a
+// row counts in the Z whose window contains when this till recorded it.
+//
 // A zero `from` is the till's first-ever close (ADR-0066 Decision 3): the
 // lower bound is omitted ENTIRELY — "since the beginning of recorded
 // history" — never backfilled with a synthetic epoch/install date, so every
@@ -964,6 +968,28 @@ func instantWindow(col string, from, to time.Time) (string, []any) {
 	// wrong precedence.
 	return "(datetime(" + col + ") >= datetime(?) AND datetime(" + col + ") < datetime(?))",
 		[]any{fromStr, toStr}
+}
+
+// ADR-0066 amendment (ut-docs#5769): a row counts in the Z whose window
+// contains the time THIS till recorded it. Own sales: completed_at ==
+// created_at (CompleteSale stamps both from one clock read). Journaled sales:
+// created_at is the origin time and completed_at the apply time. A NULL
+// completed_at (seed/legacy row) falls back to created_at.
+func saleArrivalCol(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	return "COALESCE(" + alias + "completed_at, " + alias + "created_at)"
+}
+
+// eventArrivalCol is the same rule for no_sale_events / cleared_baskets:
+// received_at is stamped only when a journaled row is applied; NULL (own row,
+// or stored before migration 098) counts by created_at. alias "" or "e".
+func eventArrivalCol(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	return "COALESCE(" + alias + "received_at, " + alias + "created_at)"
 }
 
 type DailySales struct {
@@ -1117,7 +1143,7 @@ ORDER BY revenue DESC`, day)
 // untouched for EndOfDayRange, per the ADR's "parallel siblings, not a
 // retrofit" decision.
 func (r *POSRepo) DepartmentsForInstantWindow(ctx context.Context, from, to time.Time) ([]DeptSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
 SELECT COALESCE(dr.root_name, '') AS department,
        SUM(sl.quantity) AS qty,
@@ -1200,7 +1226,9 @@ ORDER BY gross DESC`, day)
 
 // ArticleGroupsForInstantWindow is ArticleGroupsForDay's close-to-close
 // sibling (ADR-0066, ut-docs#1010/#1141's own EODInstant path), matched on
-// the same half-open instantWindow(s.created_at) [from, to) range
+// the same half-open instantWindow(saleArrivalCol("s")) [from, to) range
+// (ADR-0066 amendment, ut-docs#5769: a sale counts by the time this till
+// recorded it, COALESCE(completed_at, created_at))
 // dateRangeSummaryInstant/DepartmentsForInstantWindow use, rather than one
 // local calendar day. This is what the LIVE "Run end-of-day" endpoint
 // actually calls (internal/pages' generateEOD → EndOfDayInstant →
@@ -1208,7 +1236,7 @@ ORDER BY gross DESC`, day)
 // that path (EndOfDay/EndOfDayRange are the scheduler-tick/ad-hoc-range
 // callers only).
 func (r *POSRepo) ArticleGroupsForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleGroupSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(c.name, '') AS article_group,
        SUM(sl.quantity) AS qty,
@@ -1292,7 +1320,7 @@ ORDER BY gross DESC`, day)
 // Still no LIMIT. Grouped by sl.name_snapshot, same as ArticleSalesForDay/
 // TopItems.
 func (r *POSRepo) ArticleSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sl.name_snapshot,
        SUM(sl.quantity) AS qty,
@@ -1389,7 +1417,7 @@ ORDER BY 1 ASC`, day)
 // (not OrderTypeSalesForDay) is the one the live EOD endpoint actually
 // calls. Same normalizing CASE and deliberate ASC order as OrderTypeSalesForDay.
 func (r *POSRepo) OrderTypeSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OrderTypeSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order_type,
        SUM(sl.quantity) AS qty,
@@ -1497,7 +1525,7 @@ ORDER BY gross DESC`, day)
 // elevation actor/blocked-actor pair) — see OperatorSalesForDay's doc
 // comment.
 func (r *POSRepo) OperatorSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OperatorSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(s.cashier_id, '') AS cashier_id,
        COALESCE(NULLIF(u.display_name, ''), u.username, s.cashier_id, '') AS display_name,
@@ -2504,8 +2532,12 @@ type EODReport struct {
 	// instant path.
 	NoSaleCount     int              `json:"no_sale_count,omitempty"`
 	NoSaleOperators []NoSaleOperator `json:"no_sale_operators,omitempty"`
-	Net             int64            `json:"net"`
-	TaxNet          int64            `json:"tax_net"`
+	// LateEntries (ut-docs#5769, ADR-0066 amendment): rows journaled from
+	// other tills, made before this Z's `from` and recorded after it. Nil
+	// when there are none and on a till's first-ever close.
+	LateEntries *EODLateEntries `json:"late_entries,omitempty"`
+	Net         int64           `json:"net"`
+	TaxNet      int64           `json:"tax_net"`
 	// TaxBands is the per-VAT-rate net/tax/gross breakdown (ut-docs#1003).
 	// Filled by internal/pages' attachEODTaxBands, NOT by EndOfDay/
 	// EndOfDayRange themselves — the banding math (discount proration +
@@ -3099,6 +3131,11 @@ GROUP BY s.till_id ORDER BY 4 DESC`, from)
 // wrapper formatting the instants back into date strings would silently
 // re-introduce calendar-day bucketing.
 //
+// Sales and no-sale/cleared events window on their ARRIVAL time — when this
+// till recorded them (saleArrivalCol / eventArrivalCol, ADR-0066 amendment,
+// ut-docs#5769) — so a sale journaled in from another till after a Z lands in
+// the next Z instead of vanishing.
+//
 // Two deliberate differences from dateRangeSummary beyond the comparison
 // form:
 //   - The cancellations query still windows on COALESCE(voided_at,
@@ -3123,7 +3160,7 @@ GROUP BY s.till_id ORDER BY 4 DESC`, from)
 // calendar-day banding).
 func (r *POSRepo) dateRangeSummaryInstant(ctx context.Context, from, to time.Time) (EODReport, error) {
 	rep := EODReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
-	win, args := instantWindow("created_at", from, to)
+	win, args := instantWindow(saleArrivalCol(""), from, to)
 	err := r.db.QueryRowContext(ctx, `
 SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN 1 END), 0),
@@ -3156,7 +3193,7 @@ WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.Cancel
 
 	// Cleared baskets (ut-docs#1122) — same separate scan as
 	// dateRangeSummary, instant-windowed on created_at like the totals.
-	cwin, cargs := instantWindow("created_at", from, to)
+	cwin, cargs := instantWindow(eventArrivalCol(""), from, to)
 	err = r.db.QueryRowContext(ctx, `
 SELECT COUNT(*), COALESCE(SUM(total_minor), 0)
 FROM cleared_baskets
@@ -3164,6 +3201,13 @@ WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod instant cleared baskets: %w", err)
 	}
+	// Late entries (ut-docs#5769): fiscal disclosure, so a hard error here
+	// fails the close (the archive is write-once).
+	late, err := r.LateEntriesForInstantWindow(ctx, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant late entries: %w", err)
+	}
+	rep.LateEntries = late
 	// No-sale drawer opens (ut-docs#5753): best-effort, never fails the close.
 	if n, nerr := r.NoSaleCountForInstantWindow(ctx, from, to); nerr == nil {
 		rep.NoSaleCount = n
@@ -3185,7 +3229,7 @@ WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
 	rep.VouchersAdjustedCount = vouchers.AdjustedCount
 	rep.VouchersAdjusted = vouchers.AdjustedMinor
 
-	mwin, margs := instantWindow("s.created_at", from, to)
+	mwin, margs := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
   COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
@@ -3579,7 +3623,7 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, args...)
 // SalesForTaxBands so a rate-carrying zero-money line can't invent a
 // spurious band.
 func (r *POSRepo) SalesForTaxBandsInstant(ctx context.Context, from, to time.Time) ([]EODTaxBandSale, error) {
-	win, args := instantWindow("created_at", from, to)
+	win, args := instantWindow(saleArrivalCol(""), from, to)
 	saleRows, err := r.db.QueryContext(ctx, `
 SELECT id, sale_type, subtotal, discount_total, tax_total, total,
        service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
@@ -3605,7 +3649,7 @@ ORDER BY created_at, id`, args...)
 		return nil, err
 	}
 
-	swin, sargs := instantWindow("s.created_at", from, to)
+	swin, sargs := instantWindow(saleArrivalCol("s"), from, to)
 	lineRows, err := r.db.QueryContext(ctx, `
 SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
 FROM sale_lines sl

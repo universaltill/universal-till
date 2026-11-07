@@ -25,6 +25,13 @@ type NoSaleEvent struct {
 	ActorID    string
 	ApproverID string
 	Reason     string
+	// ReceivedAt (migration 098, ut-docs#5769) is when THIS till recorded a
+	// journaled row; ApplyJournaledNoSaleEvent defaults it to the SQL clock
+	// at execution, under the write lock (EOD atomicity). Empty on
+	// a local insert (stored NULL: the row counts by CreatedAt).
+	// Never set from a journal payload: the arrival time must be this
+	// till's own clock, or a remote till could place a row in any Z.
+	ReceivedAt string
 }
 
 // InsertNoSaleEvent writes one no_sale_events row and returns its id.
@@ -132,11 +139,11 @@ func (r *POSRepo) ApplyJournaledNoSaleEvent(ctx context.Context, e NoSaleEvent) 
 		return false, errors.New("apply journaled no-sale event: TillID is required")
 	}
 	res, err := r.db.ExecContext(ctx, `
-INSERT INTO no_sale_events (id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason)
-VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?)
+INSERT INTO no_sale_events (id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason, received_at)
+VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))
 ON CONFLICT(id) DO NOTHING`,
 		e.ID, e.CreatedAt, e.CreatedAt, nullIfEmpty(e.RegisterID), e.TillID,
-		nullIfEmpty(e.ActorID), nullIfEmpty(e.ApproverID), nullIfEmpty(e.Reason))
+		nullIfEmpty(e.ActorID), nullIfEmpty(e.ApproverID), nullIfEmpty(e.Reason), e.ReceivedAt)
 	if err != nil {
 		return false, fmt.Errorf("apply journaled no-sale event: %w", err)
 	}
@@ -193,7 +200,7 @@ WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&n)
 // NoSaleCountForInstantWindow is NoSaleCountForDateRange over the
 // close-to-close instant window [from, to) (zero from = unbounded).
 func (r *POSRepo) NoSaleCountForInstantWindow(ctx context.Context, from, to time.Time) (int, error) {
-	win, args := instantWindow("created_at", from, to)
+	win, args := instantWindow(eventArrivalCol(""), from, to)
 	var n int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM no_sale_events WHERE `+win, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("no-sale count for instant window: %w", err)
@@ -239,7 +246,7 @@ func (r *POSRepo) NoSaleOperatorsForDay(ctx context.Context, day string) ([]NoSa
 
 // NoSaleOperatorsForInstantWindow is the close-to-close sibling.
 func (r *POSRepo) NoSaleOperatorsForInstantWindow(ctx context.Context, from, to time.Time) ([]NoSaleOperator, error) {
-	win, args := instantWindow("e.created_at", from, to)
+	win, args := instantWindow(eventArrivalCol("e"), from, to)
 	return r.noSaleOperators(ctx, win, args)
 }
 
