@@ -13,7 +13,7 @@ import (
 // (ut-docs#5801): Opening + CashSales + TipsHeldOut + Adjustments == Expected.
 type ShiftCash struct {
 	Opening     money.Money
-	CashSales   money.Money // cash amount - change_given - tip_amount
+	CashSales   money.Money // cash sales (amount - change_given - tip_amount) minus cash refunds (ut-docs#5803)
 	TipsHeldOut money.Money // cash tip_amount, same window as CashSales
 	Adjustments money.Money // SumShiftAdjustments (pay-ins +, pay-outs/skims -)
 	Expected    money.Money // the sum; == shifts.expected_cash at close
