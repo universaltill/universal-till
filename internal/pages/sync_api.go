@@ -782,7 +782,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			"data": map[string]any{
 				"till_id":     tillID,
 				"bearer":      bearer,
-				"shop_name":   storeNameOrDefault(r.Context(), d),
+				"shop_name":   shopNameOrEmpty(r.Context(), d),
 				"till_no":     tillNo,
 				"register_id": registerID,
 				"role":        role,
@@ -881,7 +881,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			// link: this main till serves GET /api/sync/link at this level
 			// (ADR-0114 §11) — a replica dials only when advertised.
 			// version: what a replica without the link follows (ut-docs#2738).
-			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": link,
+			"data": map[string]any{"till_id": till.ID, "shop_name": shopNameOrEmpty(r.Context(), d), "link": link,
 				"version": buildinfo.Version},
 			"error": nil,
 		})

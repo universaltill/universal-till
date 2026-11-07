@@ -14,7 +14,7 @@
      paste-a-code "joined" render can legitimately coexist on the page at
      once, and a shared id would make document.getElementById ambiguous
      between the two fragments' own restart scripts. -->
-<span>✓ {{ T "tills.joined" }}: {{ .shopName }}</span>
+<span>✓ {{ T "tills.joined" }}{{ with .shopName }}: {{ . }}{{ end }}</span>
 {{ if .restartSupported }}
 <!-- Same staged-restore-only-applies-at-next-boot mechanism as
      pairing_wait.html's joined branch (ut-docs#1550) — see that file's

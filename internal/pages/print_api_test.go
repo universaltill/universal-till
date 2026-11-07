@@ -932,12 +932,23 @@ func TestBuildReceiptDoc_NormalSale(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
 
+	// ut-docs#5773: an unnamed shop (no store.name yet) carries no name, never a placeholder.
 	doc, err := buildReceiptDoc(context.Background(), dp, "R001")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.StoreName == "" {
-		t.Fatal("expected a store name")
+	if doc.StoreName != "" {
+		t.Fatalf("unnamed shop: expected an empty store name, got %q", doc.StoreName)
+	}
+	if err := dp.Settings.Set(context.Background(), common.KeyStoreName, "Café Linde"); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = buildReceiptDoc(context.Background(), dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.StoreName != "Café Linde" {
+		t.Fatalf("expected the shop's name, got %q", doc.StoreName)
 	}
 	if len(doc.Lines) != 1 || doc.Lines[0].Name != "Apple" {
 		t.Fatalf("expected the sale's line, got %+v", doc.Lines)

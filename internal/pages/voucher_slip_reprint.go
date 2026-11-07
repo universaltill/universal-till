@@ -25,7 +25,7 @@ func voucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, cfg pri
 	loc := httpx.DefaultLocale()
 	rd := receiptDesignFromSettings(ctx, d)
 	return print.VoucherSlip{
-		StoreName: storeNameOrDefault(ctx, d),
+		StoreName: shopNameOrEmpty(ctx, d),
 		Header:    rd.Header,
 		Logo:      receiptLogoRaster(rd),
 		Charset:   cfg.Charset,

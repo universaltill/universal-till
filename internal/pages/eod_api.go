@@ -819,7 +819,7 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	}
 	if cfg := printerConfig(ctx, d); cfg.Enabled() {
 		articleMode, articleCap := resolveEODArticlePrintSettings(ctx, d)
-		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset, articleMode, articleCap)
+		doc := buildEODDoc(rep, shopNameOrEmpty(ctx, d), cfg.Charset, articleMode, articleCap)
 		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {
@@ -1146,7 +1146,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		// Deliberately the CURRENT live setting, not whatever was in effect
 		// when this report was originally closed (ut-docs#1650 review finding
 		// 2) — same convention this handler already follows for
-		// storeNameOrDefault/cfg.Charset just above: a reprint reflects
+		// shopNameOrEmpty/cfg.Charset just above: a reprint reflects
 		// today's config. `rep.Articles` itself is unaffected (the archive's
 		// content_json always holds every article; only how many of them
 		// this handler prints changes), and the on-screen archived-report
@@ -1156,7 +1156,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		// gets a reprint with no BY ARTICLE section and no "+N more"-style
 		// marker that anything is missing, unlike "capped".
 		articleMode, articleCap := resolveEODArticlePrintSettings(r.Context(), d)
-		doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset, articleMode, articleCap)
+		doc := buildEODDoc(rep, shopNameOrEmpty(r.Context(), d), cfg.Charset, articleMode, articleCap)
 		if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
