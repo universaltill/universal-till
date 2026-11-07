@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -123,14 +124,16 @@ func registerShiftXReportPrint(mux *http.ServeMux, d *common.Deps) {
 
 		// Audit after a successful print only. A failed audit write is
 		// logged but still answers success: the paper is out, and a 5xx
-		// would invite a second print.
+		// would invite a second print. WithoutCancel: the paper is out even
+		// if the browser has gone away, so its audit row must still land.
+		actx := context.WithoutCancel(ctx)
 		now := time.Now().UTC().Format(time.RFC3339)
 		payload := map[string]string{"register_id": rep.Shift.RegisterID}
 		var aerr error
 		if elev.Outcome == elevated {
-			aerr = repo.InsertAuditElevated(ctx, nil, actorID, elev.ActorID, "shift", rep.Shift.ID, "x_report_printed", payload, now, "")
+			aerr = repo.InsertAuditElevated(actx, nil, actorID, elev.ActorID, "shift", rep.Shift.ID, "x_report_printed", payload, now, "")
 		} else {
-			aerr = repo.InsertAudit(ctx, nil, actorID, "shift", rep.Shift.ID, "x_report_printed", payload, now, "")
+			aerr = repo.InsertAudit(actx, nil, actorID, "shift", rep.Shift.ID, "x_report_printed", payload, now, "")
 		}
 		if aerr != nil {
 			logging.L().Errorf("x report print: audit: %v", aerr)
@@ -169,8 +172,8 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 	doc := print.Doc{StoreName: storeName, Charset: charset, Meta: []string{
 		T("shifts.x_report.paper.title"),
 		T("shifts.x_report.paper.not_a_close"),
-		footerRow(T("shifts.register"), rep.RegisterName),
-		footerRow(T("shifts.cashier"), rep.CashierName),
+		footerRow(T("shifts.register"), xPaperText(rep.RegisterName)),
+		footerRow(T("shifts.cashier"), xPaperText(rep.CashierName)),
 		footerRow(T("shifts.opened_at"), stamp(rep.Shift.OpenedAt)),
 		fmt.Sprintf(T("reports.zpaper.generated"), stamp(rep.GeneratedAt)),
 	}}
@@ -200,7 +203,7 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 			label = T("shifts.skim")
 		}
 		if a.Reason != "" {
-			label += ": " + a.Reason
+			label += ": " + xPaperText(a.Reason)
 		}
 		doc.Footer = append(doc.Footer, footerRow(label, amt(a.Amount))) // clips the label, never the amount
 	}
@@ -213,6 +216,19 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 		doc.Footer = append(doc.Footer, "", fmt.Sprintf(T("reports.zpaper.receipts_range"), rep.FirstReceipt, rep.LastReceipt))
 	}
 	return doc
+}
+
+// xPaperText makes free text (an adjustment reason any cashier can type, a
+// register or cashier name) safe for one paper line: every control rune
+// becomes a space. The utf8 charset sends bytes raw, so an ESC p in a reason
+// would kick the drawer and a newline would forge a line on the report.
+func xPaperText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // xMethodLabel: the core tender key when the id is a core one, else the
