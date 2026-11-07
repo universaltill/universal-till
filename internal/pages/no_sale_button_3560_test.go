@@ -46,7 +46,10 @@ func TestIndex_NoSaleButtonOnlyWithDrawerCapablePrinter(t *testing.T) {
 		ti := strings.Index(home, `class="tender"`)
 		si := strings.Index(home, `id="no-sale-status"`)
 		bi := strings.Index(home, `id="basket"`)
-		if ti < 0 || si < ti || (bi >= 0 && bi < ti && si > bi && si < bi+10) {
+		// Tester (ut-docs#3560): also before the tender footer, so a status
+		// region moved anywhere later in the page is caught.
+		fi := strings.Index(home, `class="tender-default-footer`)
+		if ti < 0 || si < ti || fi < 0 || si > fi || (bi >= 0 && bi < ti && si > bi && si < bi+10) {
 			t.Fatalf("mode %s: #no-sale-status must be inside .tender", mode)
 		}
 	}
@@ -59,9 +62,45 @@ func TestIndex_NoSaleButtonOnlyWithDrawerCapablePrinter(t *testing.T) {
 }
 
 func TestIndex_NoSaleButtonShownToCashierWithoutPermission(t *testing.T) {
-	cashier := cashier3134
-	home := getIndexAs(t, "device", &cashier)
-	if !strings.Contains(home, `data-testid="no-sale-open"`) {
+	// Tester (ut-docs#3560): newButtonsMux runs with UT_AUTH=off, where
+	// canPerform is always true, so without auth on this could not tell a
+	// permission-gated button from an ungated one. Turn auth on with a real
+	// AuthSvc and confirm the cashier really lacks no_sale.
+	mux, d := newIndexAndButtonsMux(t)
+	t.Setenv("UT_AUTH", "on")
+	d.AuthSvc = auth.NewService(d.Db)
+	setSettings(t, d, map[string]string{"printer.mode": "device"})
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/", nil), cashier3134)
+	if canPerform(d, req, "no_sale") {
+		t.Fatal("fixture: cashier must not hold no_sale")
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d: %.300s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `data-testid="no-sale-open"`) {
 		t.Fatal("a session without no_sale still sees the button (it gets the PIN prompt)")
+	}
+}
+
+// AC10 (tester, ut-docs#3560): the self-order kiosk's customer page never
+// renders the No sale button, even with a drawer-capable printer.
+func TestSelfOrder_NeverRendersNoSaleButton(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	if err := dp.Settings.Set(t.Context(), "printer.mode", "device"); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /self-order = %d", rec.Code)
+	}
+	for _, bad := range []string{"no-sale-open", "/api/pos/no-sale", "no-sale-status"} {
+		if strings.Contains(rec.Body.String(), bad) {
+			t.Fatalf("/self-order renders %q", bad)
+		}
 	}
 }

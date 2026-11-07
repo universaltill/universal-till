@@ -76,13 +76,16 @@ test('manager: one tap opens the drawer, inline notice, basket untouched', async
 });
 
 test('double click sends exactly one kick', async ({ page }) => {
+  // Tester (ut-docs#3560): the device transport opens the file O_WRONLY
+  // (no append), so a second kick overwrites the first 5 bytes and the file
+  // size cannot tell one kick from two. Count the requests the page sends.
+  let posts = 0;
+  page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/api/pos/no-sale')) posts++; });
   await page.getByTestId('no-sale-open').dblclick();
   await expect(page.locator('#no-sale-status')).toContainText('Cash drawer opened.');
-  const one = size();
-  // A single tap on a fresh file sends the same number of bytes.
-  writeFileSync(dev, '');
-  await page.getByTestId('no-sale-open').click();
-  await expect.poll(size).toBe(one);
+  await page.waitForTimeout(1000); // let a second request, if any, go out
+  expect(posts).toBe(1);
+  expect(size()).toBe(5); // one pin kick
 });
 
 test('button is disabled while the request is in flight', async ({ page }) => {
@@ -95,6 +98,11 @@ test('button is disabled while the request is in flight', async ({ page }) => {
   release();
   await expect(page.locator('#no-sale-status')).toContainText('Cash drawer opened.');
   await expect(btn).toBeEnabled();
+  // Tester (ut-docs#3560): the busy ring ends with the request — the glyph
+  // comes back and the in-flight class is gone (htmx 1.9 shares one request
+  // counter between hx-indicator and hx-disabled-elt on the same element).
+  await expect(btn.locator('.btn-ico')).toBeVisible();
+  expect(await btn.evaluate((el) => getComputedStyle(el, '::after').content)).toBe('none');
 });
 
 test('drawer kick failure shows an error notice and nothing is sent', async ({ page }) => {
@@ -136,6 +144,9 @@ test('cashier: manager PIN dialog (not modal), wrong PIN, then approval', async 
 });
 
 test('cashier: cancelling the PIN dialog records nothing', async ({ page }) => {
+  // Tester (ut-docs#3560): self-contained — don't rely on the previous test
+  // having created the cashier (fails under -g, retries or reordering).
+  await createCashier(page);
   await loginWith(page, CASHIER_PIN);
   await page.goto('/');
   await page.getByTestId('no-sale-open').click();

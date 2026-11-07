@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -180,7 +181,15 @@ func TestNoSaleHTMX_FailureNoticesAre200AndRecordNothing(t *testing.T) {
 
 func TestNoSaleHTMX_SettingsHintVsAskManager(t *testing.T) {
 	noSaleHTMXInit(t)
-	mux, dp, _ := newNoSaleTestDeps(t, "")
+	// Tester (ut-docs#3560, UX U3): the hint follows both no_drawer_printer
+	// ("") and drawer_unsupported ("system").
+	for _, mode := range []string{"", "system"} {
+		t.Run("mode="+mode, func(t *testing.T) { noSaleSettingsHintCase(t, mode) })
+	}
+}
+
+func noSaleSettingsHintCase(t *testing.T, mode string) {
+	mux, dp, _ := newNoSaleTestDeps(t, mode)
 	// manager holds settings -> link
 	body := postNoSaleHTMX(t, mux, manager3134, url.Values{}).Body.String()
 	if !strings.Contains(body, `href="/settings#settings-printer"`) || strings.Contains(body, "Ask a manager to check the printer settings.") {
@@ -204,5 +213,39 @@ func TestNoSaleHTMX_JSONContentTypeStaysJSON(t *testing.T) {
 	mux.ServeHTTP(rec, auth.WithUser(req, manager3134))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("JSON body must keep the JSON contract (409), got %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// AC9 (tester, ut-docs#3560): No sale is offline-first — the path is a
+// settings read, the local printer transport and a local SQLite write. With
+// every default-transport HTTP request failing (network down) the drawer
+// still opens and the open is recorded, and nothing tried the network.
+type noSaleNoNetwork struct{ calls int }
+
+func (n *noSaleNoNetwork) RoundTrip(r *http.Request) (*http.Response, error) {
+	n.calls++
+	return nil, fmt.Errorf("network down (test): %s", r.URL)
+}
+
+func TestNoSaleHTMX_WorksWithNetworkDown(t *testing.T) {
+	noSaleHTMXInit(t)
+	mux, dp, dev := newNoSaleTestDeps(t, "device")
+	nn := &noSaleNoNetwork{}
+	orig := http.DefaultTransport
+	http.DefaultTransport = nn
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	rec := postNoSaleHTMX(t, mux, manager3134, url.Values{})
+	if !strings.Contains(rec.Body.String(), "Cash drawer opened.") {
+		t.Fatalf("want success offline, got %d %q", rec.Code, rec.Body.String())
+	}
+	if got, _ := os.ReadFile(dev); len(got) == 0 {
+		t.Fatal("drawer not kicked offline")
+	}
+	if rows := noSaleRows(t, dp.Db); len(rows) != 1 {
+		t.Fatalf("want one recorded open offline, got %+v", rows)
+	}
+	if nn.calls != 0 {
+		t.Fatalf("no-sale made %d outbound HTTP call(s)", nn.calls)
 	}
 }
