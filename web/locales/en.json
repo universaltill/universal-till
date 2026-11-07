@@ -2113,7 +2113,7 @@
   "reports.eod.fiscal_device.maker": "Device maker",
   "reports.eod.fiscal_device.mali_fis": "Fiscal receipts (mali fiş)",
   "reports.eod.fiscal_device.match": "Device receipts match the till's tenders",
-  "reports.eod.fiscal_device.mismatch": "Mismatch: device recorded %d receipts, the till recorded %d tenders on it",
+  "reports.eod.fiscal_device.mismatch_count": "Mismatch: device recorded %s receipts, the till recorded %s tenders on it",
   "reports.eod.fiscal_device.none": "No device receipts and no till tenders on the device in this period — check the device's own Z report.",
   "reports.eod.fiscal_device.other": "Other slips",
   "reports.eod.fiscal_device.serial": "Device serial",
