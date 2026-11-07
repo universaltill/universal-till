@@ -5467,6 +5467,29 @@ body.login-screen {
   overflow-wrap: anywhere; min-inline-size: 0;
 }
 .builtin-icon-tile img { display: block; }
+/* ut-docs#5736: the chosen tile also carries a tick badge, a SHAPE cue (WCAG
+   1.4.1) so "chosen" no longer rests on the accent hue alone, which the
+   same-hue focus outline otherwise matches. ::after is the filled circle,
+   ::before the check (clip-path, so no left/right and no image); both sit
+   in the top inline-end corner over the tile padding, clear of the label.
+   background/clip-path only: html.fx-light wipes box-shadow/filter but not
+   these, so the badge survives it. Scoped to the icon grids; aria-selected
+   already tells assistive tech, so the badge is decorative (content: "").
+   The circle is --focus-border, not --accent: amber/fresh/monarch's raw
+   --accent is only ~2.5-2.8:1 under the white check; their darker
+   --focus-border (ut-docs#797) keeps the check >=3:1 (WCAG 1.4.11). */
+.builtin-icon-tile { position: relative; }
+.builtin-icon-tile[aria-selected="true"]::before,
+.builtin-icon-tile[aria-selected="true"]::after {
+  content: ""; position: absolute; box-sizing: border-box; pointer-events: none;
+  inset-block-start: 3px; inset-inline-end: 3px;
+  inline-size: 1.1rem; block-size: 1.1rem;
+}
+.builtin-icon-tile[aria-selected="true"]::after { border-radius: 50%; background: var(--focus-border); }
+.builtin-icon-tile[aria-selected="true"]::before {
+  z-index: 1; background: var(--accent-contrast);
+  clip-path: polygon(20% 52%, 30% 42%, 42% 55%, 70% 27%, 80% 37%, 42% 75%);
+}
 /* ut-docs#2506: ~70 icons in sections. The grid scrolls inside its own
    box (touch-scrollable, no nested page jump) so the dialog's Save stays
    reachable at the 1024×600 floor; the section headings span the whole
@@ -6036,6 +6059,31 @@ body.login-screen {
    "Light: no animations, flat look (fastest)") must never outgrow its card
    at 360px — it shrinks and the native control truncates the label. */
 .set-row select { max-inline-size: 100%; min-inline-size: 0; }
+/* Stacked checkbox row (was an inline style on four stock/receipt labels). */
+.set-block { display: block; margin-block: .35rem; }
+/* ut-docs#5738: a label-wrapped checkbox in Settings is a >=44px touch row
+   with a 1.5rem box under kiosk mode or a coarse pointer (touchscreen). One
+   shared rule, so every current and future checkbox row inherits it; desktop
+   mouse density is unchanged. .staff-lang-opt and .ps-switch size themselves.
+   flex-wrap: nowrap keeps the text beside the box (a .set-row label would
+   otherwise drop it under the box at phone width). The @media copy below
+   must stay in sync with this one (the spec tests both branches). */
+body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch):has(> input[type="checkbox"]) {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem;
+  min-block-size: 2.75rem; margin-block: .35rem;
+}
+body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[type="checkbox"] {
+  flex: none; inline-size: 1.5rem; block-size: 1.5rem; margin: 0;
+}
+@media (pointer: coarse) {
+  .settings-panel label:not(.staff-lang-opt):not(.ps-switch):has(> input[type="checkbox"]) {
+    display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem;
+    min-block-size: 2.75rem; margin-block: .35rem;
+  }
+  .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[type="checkbox"] {
+    flex: none; inline-size: 1.5rem; block-size: 1.5rem; margin: 0;
+  }
+}
 .set-tight { margin-block-start: .35rem; }
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }
@@ -7569,6 +7617,9 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
     box-shadow: inset 0 0 0 2px Highlight;
   }
   .picker-tile:focus-visible { outline: 3px solid CanvasText; outline-offset: 2px; }
+  /* ut-docs#5736: the tile is Highlight here, so the badge inverts: HighlightText circle, Highlight check. */
+  .builtin-icon-tile[aria-selected="true"]::after { forced-color-adjust: none; background: HighlightText; }
+  .builtin-icon-tile[aria-selected="true"]::before { forced-color-adjust: none; background: Highlight; }
   .order-type-option { border: 1px solid ButtonText; }
   .order-type-option[aria-checked="true"],
   body:not(.pos-sheet-open) .basket .order-type-option[aria-checked="true"] {
