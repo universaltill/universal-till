@@ -110,3 +110,86 @@ func TestPrintDocWithSlips_OneJobInOrder(t *testing.T) {
 		t.Error("nil slips must equal the plain receipt")
 	}
 }
+
+func TestRenderVoucherSlip_Note(t *testing.T) {
+	s := sampleSlip("GV-7K3P", "For Anna")
+	s.Note = "Reprinted 6 Nov 2026"
+	out := RenderVoucherSlip(s)
+	note := encodeText(s.Note, s.Charset)
+	if n := bytes.Count(out, note); n != 1 {
+		t.Fatalf("note printed %d times, want 1", n)
+	}
+	data, _ := code128Data("GV-7K3P")
+	bar := bytes.Index(out, append([]byte{0x1d, 0x6b, 0x49, byte(len(data))}, data...))
+	ni := bytes.Index(out, note)
+	if bar < 0 || ni < bar {
+		t.Error("note must follow the barcode")
+	}
+	if ni > bytes.LastIndex(out, cmdFeedCut) {
+		t.Error("note must precede feed+cut")
+	}
+	if n := bytes.Count(out, cmdFeedCut); n != 1 {
+		t.Errorf("feed+cut count = %d, want 1", n)
+	}
+	if bytes.Contains(out, cmdKickDrawer) || bytes.Contains(out, cmdKickDrawerPin5) {
+		t.Error("slip must never kick the drawer")
+	}
+}
+
+func TestRenderVoucherSlip_NoNoteUnchanged(t *testing.T) {
+	s := sampleSlip("GV-7K3P", "For Anna")
+	base := RenderVoucherSlip(s)
+	s.Note = "Reprinted 6 Nov 2026"
+	with := RenderVoucherSlip(s)
+	if len(with) <= len(base) {
+		t.Fatal("note must add bytes")
+	}
+	rule := append([]byte(strings.Repeat("-", Width)+"\n"), cmdFeedCut...)
+	if !bytes.HasSuffix(base, append([]byte("\n"), rule...)) {
+		t.Error("no-note slip must keep blank line, rule, cut adjacency")
+	}
+}
+
+func TestRenderVoucherSlipText_Note(t *testing.T) {
+	s := sampleSlip("GV-7K3P", "For Anna")
+	s.Note = "Reprinted 6 Nov 2026"
+	out := RenderVoucherSlipText(s)
+	ci, ni := strings.Index(out, "GV-7K3P"), strings.Index(out, s.Note)
+	if ni < 0 || ci < 0 || ni < ci {
+		t.Fatalf("note must follow the code:\n%s", out)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, s.Note) && !strings.HasPrefix(l, " ") {
+			t.Errorf("note not centred: %q", l)
+		}
+	}
+	s.Note = ""
+	if strings.Contains(RenderVoucherSlipText(s), "Reprinted") {
+		t.Error("empty note must print nothing")
+	}
+}
+
+func TestPrintVoucherSlip_DeviceOneSlip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lp0")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := sampleSlip("GV-A", "For Anna")
+	s.Note = "Reprinted 6 Nov 2026"
+	cfg := Config{Mode: "device", Device: path, Charset: "utf8"}
+	if err := PrintVoucherSlip(context.Background(), cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, RenderVoucherSlip(s)) {
+		t.Error("job != exactly one slip")
+	}
+}
+
+func TestPrintVoucherSlip_Off(t *testing.T) {
+	for _, m := range []string{"off", ""} {
+		if err := PrintVoucherSlip(context.Background(), Config{Mode: m}, sampleSlip("GV-A", "")); err != nil {
+			t.Errorf("mode %q: %v", m, err)
+		}
+	}
+}
