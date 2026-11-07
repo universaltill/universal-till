@@ -607,6 +607,20 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		doc.Footer = append(doc.Footer, "", T("reports.zpaper.cleared_title"))
 		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.cleared_baskets"), rep.ClearedBasketCount), money(rep.ClearedBasketTotal)))
 	}
+	// No-sale drawer opens (ut-docs#5753): no money moved — informational,
+	// never in doc.Totals. Omitted on a day with none (STORNOS/CLEARED
+	// convention). footerRow per cashier: names are free text (BY OPERATOR).
+	if rep.NoSaleCount > 0 {
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.no_sale_title"))
+		doc.Footer = append(doc.Footer, footerRow(T("reports.zpaper.no_sale_total"), strconv.Itoa(rep.NoSaleCount)))
+		for _, o := range rep.NoSaleOperators {
+			name := o.DisplayName
+			if name == "" {
+				name = T("reports.eod.unattributed")
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, strconv.Itoa(o.Count)))
+		}
+	}
 	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
 	// least one shift was closed that day; a day-close without one still
 	// renders a complete report. Amounts stored negative (skim, pay-outs)

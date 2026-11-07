@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -166,4 +167,78 @@ SELECT MAX(created_at) FROM (
 		return "", fmt.Errorf("newest local journal entry: %w", err)
 	}
 	return newest.String, nil
+}
+
+// NoSaleOperator is one cashier's no-sale drawer-open count in a Z window
+// (ut-docs#5753).
+type NoSaleOperator struct {
+	CashierID   string `json:"cashier_id"`   // "" = no actor recorded
+	DisplayName string `json:"display_name"` // "" -> the renderer prints reports.eod.unattributed
+	Count       int    `json:"count"`
+}
+
+// NoSaleCountForDateRange counts the no-sale drawer opens of every till on
+// the local-calendar days from..to inclusive (ut-docs#5753).
+func (r *POSRepo) NoSaleCountForDateRange(ctx context.Context, from, to string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM no_sale_events
+WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("no-sale count for date range: %w", err)
+	}
+	return n, nil
+}
+
+// NoSaleCountForInstantWindow is NoSaleCountForDateRange over the
+// close-to-close instant window [from, to) (zero from = unbounded).
+func (r *POSRepo) NoSaleCountForInstantWindow(ctx context.Context, from, to time.Time) (int, error) {
+	win, args := instantWindow("created_at", from, to)
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM no_sale_events WHERE `+win, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("no-sale count for instant window: %w", err)
+	}
+	return n, nil
+}
+
+// noSaleOperators groups no-sale opens per actor; the display name falls
+// back exactly like OperatorSalesForDay (display_name, username, raw id,
+// ""). where is the caller's window predicate.
+func (r *POSRepo) noSaleOperators(ctx context.Context, where string, args []any) ([]NoSaleOperator, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(e.actor_id, '') AS cashier_id,
+       COALESCE(NULLIF(u.display_name, ''), u.username, e.actor_id, '') AS display_name,
+       COUNT(*) AS cnt
+FROM no_sale_events e
+LEFT JOIN users u ON u.id = e.actor_id
+WHERE `+where+`
+GROUP BY COALESCE(e.actor_id, '')
+ORDER BY cnt DESC, display_name, cashier_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("no-sale operators: %w", err)
+	}
+	defer rows.Close()
+	var out []NoSaleOperator
+	for rows.Next() {
+		var o NoSaleOperator
+		if err := rows.Scan(&o.CashierID, &o.DisplayName, &o.Count); err != nil {
+			return nil, fmt.Errorf("no-sale operators scan: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("no-sale operators rows: %w", err)
+	}
+	return out, nil
+}
+
+// NoSaleOperatorsForDay lists the per-cashier no-sale opens of one local day.
+func (r *POSRepo) NoSaleOperatorsForDay(ctx context.Context, day string) ([]NoSaleOperator, error) {
+	return r.noSaleOperators(ctx, `e.local_date = date(?)`, []any{day})
+}
+
+// NoSaleOperatorsForInstantWindow is the close-to-close sibling.
+func (r *POSRepo) NoSaleOperatorsForInstantWindow(ctx context.Context, from, to time.Time) ([]NoSaleOperator, error) {
+	win, args := instantWindow("e.created_at", from, to)
+	return r.noSaleOperators(ctx, win, args)
 }
