@@ -354,8 +354,21 @@ func applyMirrorRecords(ctx context.Context, tx *sql.Tx, epoch string, recs []Mi
 				continue
 			}
 			s := rec.Sale
-			if (o.SelfTillID != "" && s.OriginTillID == o.SelfTillID) ||
-				(o.WindowStart != "" && s.LocalDate != "" && s.LocalDate < o.WindowStart) {
+			windowed := o.WindowStart != "" && s.LocalDate != "" && s.LocalDate < o.WindowStart
+			if o.SelfTillID != "" && s.OriginTillID == o.SelfTillID {
+				// This till's own sale lives in sales, never in the copy. Only
+				// when the previous main till recorded it is kept (ut-docs#5777):
+				// a promote counts it by that time if it was after that till's
+				// last close.
+				if !windowed && s.CompletedAt != nil && *s.CompletedAt != "" {
+					if err := keepOwnArrival(ctx, tx, s); err != nil {
+						return err
+					}
+				}
+				res.Skipped++
+				continue
+			}
+			if windowed {
 				res.Skipped++
 				continue
 			}
@@ -399,6 +412,19 @@ func applyMirrorRecords(ctx context.Context, tx *sql.Tx, epoch string, recs []Mi
 		} else {
 			res.Skipped++
 		}
+	}
+	return nil
+}
+
+// keepOwnArrival records when the previous main till applied this till's own
+// sale s (ut-docs#5777). Same transaction as the page's cursor; a re-apply of
+// the record replaces the time (the last apply wins, like the copy).
+func keepOwnArrival(ctx context.Context, tx *sql.Tx, s *MirrorSale) error {
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO mirror_sale_arrivals (id, completed_at, local_date) VALUES (?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET completed_at = excluded.completed_at, local_date = excluded.local_date`,
+		s.ID, *s.CompletedAt, s.LocalDate); err != nil {
+		return fmt.Errorf("sales mirror apply: keep own sale %s arrival: %w", s.ID, err)
 	}
 	return nil
 }
@@ -572,12 +598,51 @@ DELETE FROM mirror_sales WHERE id IN (
 			}
 		}
 	}
+	if salesBefore != "" {
+		if _, err := r.db.ExecContext(ctx, `DELETE FROM mirror_sale_arrivals WHERE local_date < ?`, salesBefore); err != nil {
+			return total, fmt.Errorf("sales mirror prune own arrivals: %w", err)
+		}
+	}
 	if closesBefore != "" {
 		if _, err := r.db.ExecContext(ctx, `DELETE FROM mirror_closes WHERE created_at < ?`, closesBefore); err != nil {
 			return total, fmt.Errorf("sales mirror prune closes: %w", err)
 		}
 	}
 	return total, nil
+}
+
+// MarkOwnLateArrivals stamps sales.recorded_at on this till's own completed
+// sales that the previous main till applied at or after its last close
+// (floor, "YYYY-MM-DD HH:MM:SS" UTC) although they were made before it, so
+// the till's next Z counts them by that recording time (ADR-0066 amendment
+// rule 1, ut-docs#5777). Sales this till's own last close (ownLastClose, ""
+// for none) already covered are left alone. The row's created_at,
+// completed_at and local_date are never touched (rule 4). recorded_at is
+// written once: a second call changes nothing. Returns the rows marked.
+func (r *SalesMirrorRepo) MarkOwnLateArrivals(ctx context.Context, floor, ownLastClose string) (int, error) {
+	res, err := r.db.ExecContext(ctx, `
+UPDATE sales SET recorded_at = a.completed_at
+FROM mirror_sale_arrivals a
+WHERE sales.id = a.id AND COALESCE(sales.till_id, '') = '' AND sales.status = 'completed'
+  AND sales.recorded_at IS NULL
+  AND datetime(a.completed_at) >= datetime(?)
+  AND datetime(sales.created_at) < datetime(?)
+  AND (? = '' OR datetime(sales.created_at) >= datetime(?))`, floor, floor, ownLastClose, ownLastClose)
+	if err != nil {
+		return 0, fmt.Errorf("sales mirror: mark own late sales: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// ClearOwnArrivals drops every recorded own-sale arrival. A promoted till
+// calls it once MarkOwnLateArrivals has run: as main till nothing reads them
+// again, and nothing else would ever prune them (ut-docs#5777).
+func (r *SalesMirrorRepo) ClearOwnArrivals(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM mirror_sale_arrivals`); err != nil {
+		return fmt.Errorf("sales mirror: clear own arrivals: %w", err)
+	}
+	return nil
 }
 
 // StartResync begins (or restarts) a state re-sync in epoch: the next state
@@ -611,10 +676,6 @@ type MirrorAdoptResult struct {
 	Adopted int // copied sales written into sales, verbatim
 	Failed  int // could not be written (a receipt number or reference this till refuses); they stay in the copy
 	Voided  int // sales this till held as completed that the copy knows were voided
-	// LateBeforeFloor: copied sales created before the floor that reached
-	// the previous main till only after its last close (logged after it),
-	// so they were in no Z; disclosed, never re-counted (M6 review finding 2).
-	LateBeforeFloor int
 }
 
 // The verbatim copy of one copied sale into this till's own tables. No
@@ -801,7 +862,7 @@ func (r *SalesMirrorRepo) HasUnadopted(ctx context.Context) (bool, error) {
 func (r *SalesMirrorRepo) SalesOutsideAnyZ(ctx context.Context, floor, ownLastClose, pushedUpTo string) (own, late int, err error) {
 	if err = r.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM sales
-WHERE till_id = '' AND status = 'completed'
+WHERE till_id = '' AND status = 'completed' AND recorded_at IS NULL
   AND datetime(created_at) < datetime(?) AND (? = '' OR datetime(created_at) >= datetime(?))
   AND (? = '' OR created_at > ?)`, floor, ownLastClose, ownLastClose, pushedUpTo, pushedUpTo).Scan(&own); err != nil {
 		return 0, 0, fmt.Errorf("sales mirror: own sales outside any Z: %w", err)

@@ -974,12 +974,16 @@ func instantWindow(col string, from, to time.Time) (string, []any) {
 // contains the time THIS till recorded it. Own sales: completed_at ==
 // created_at (CompleteSale stamps both from one clock read). Journaled sales:
 // created_at is the origin time and completed_at the apply time. A NULL
-// completed_at (seed/legacy row) falls back to created_at.
+// completed_at (seed/legacy row) falls back to created_at. recorded_at
+// (migration 099, ut-docs#5777) is set only on a promoted till's own sale that
+// the previous main till applied after its last close: that till's recording
+// time wins, so the sale counts once in the promoted till's next Z while its
+// created_at / completed_at stay untouched.
 func saleArrivalCol(alias string) string {
 	if alias != "" {
 		alias += "."
 	}
-	return "COALESCE(" + alias + "completed_at, " + alias + "created_at)"
+	return "COALESCE(" + alias + "recorded_at, " + alias + "completed_at, " + alias + "created_at)"
 }
 
 // eventArrivalCol is the same rule for no_sale_events / cleared_baskets:
@@ -1228,7 +1232,7 @@ ORDER BY gross DESC`, day)
 // sibling (ADR-0066, ut-docs#1010/#1141's own EODInstant path), matched on
 // the same half-open instantWindow(saleArrivalCol("s")) [from, to) range
 // (ADR-0066 amendment, ut-docs#5769: a sale counts by the time this till
-// recorded it, COALESCE(completed_at, created_at))
+// recorded it, COALESCE(recorded_at, completed_at, created_at))
 // dateRangeSummaryInstant/DepartmentsForInstantWindow use, rather than one
 // local calendar day. This is what the LIVE "Run end-of-day" endpoint
 // actually calls (internal/pages' generateEOD → EndOfDayInstant →
