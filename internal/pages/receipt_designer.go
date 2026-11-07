@@ -62,7 +62,7 @@ func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.D
 		Header:    rd.Header,
 		// clock.Now (not time.Now) so this sample ticket's date is byte-stable
 		// under `make docs-shots` (ut-docs#930); real wall-clock everywhere else.
-		Meta: []string{fmt.Sprintf(httpx.T(locale, "receipt.paper.receipt_no"), "000000123"), clock.Now().Format("2006-01-02 15:04")},
+		Meta: []string{fmt.Sprintf(httpx.T(locale, "receipt.paper.receipt_no"), "000000123"), httpx.FormatDateTimeLatin(clock.Now(), httpx.DefaultLocale())},
 		Lines: []print.Line{
 			line("Apples", "SKU-001", "2", "£4.32"),
 			line("Orange Juice 1L", "SKU-002", "1", "£2.64"),
