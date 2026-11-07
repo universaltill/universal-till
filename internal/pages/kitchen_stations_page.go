@@ -227,7 +227,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 
 		httpx.Render("ui/pages/kitchen_stations.html", map[string]any{
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.kitchen_stations"),
-			"theme":         d.CurrentState().Theme,
+			"theme":         d.ResolvedTheme(r),
 			"menuItems":     d.MenuSnapshot(),
 			"stations":      stations,
 			"categories":    catRows,

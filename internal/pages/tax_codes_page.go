@@ -220,7 +220,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 		taxCodesData := map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.tax_codes"),
 			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"TaxCodes":  buildTaxCodeRows(views),
 			// ut-docs#2095: /catalog/tax-codes is NOT an /items rail section
 			// (unlike /catalog, /modifiers, /catalog/option-sets,

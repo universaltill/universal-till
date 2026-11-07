@@ -49,7 +49,7 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		data := map[string]any{
 			"title":          httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
-			"theme":          d.CurrentState().Theme,
+			"theme":          d.ResolvedTheme(r),
 			"menuItems":      d.MenuSnapshot(),
 			"Current":        current,
 			"HasOpen":        hasOpen,

@@ -239,7 +239,7 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 		}
 		translationsData := map[string]any{
 			"title":      httpx.T(httpx.RequestLocale(r), "page.title.translations"),
-			"theme":      d.CurrentState().Theme,
+			"theme":      d.ResolvedTheme(r),
 			"menuItems":  d.MenuSnapshot(),
 			"editLocale": editLocale,
 			"locales":    i18n.Available(),

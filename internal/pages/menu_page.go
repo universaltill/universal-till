@@ -469,7 +469,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/menu.html", map[string]any{
 			"title": httpx.T(locale, "page.title.menu"),
-			"theme": d.CurrentState().Theme,
+			"theme": d.ResolvedTheme(r),
 			// menuScreen collapses the small-text top nav: the touch tiles below
 			// ARE the navigation, so the header stays clean (logo + lock).
 			"menuScreen":    true,

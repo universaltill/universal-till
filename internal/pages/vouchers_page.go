@@ -195,7 +195,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		}
 		page := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "vouchers.title"),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
 			"q":           f.Query,
@@ -273,7 +273,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		expected := judged.BalanceMinor
 		httpx.Render("ui/pages/voucher_detail.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "vouchers.title"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"voucher":   v,
 			"history":   views,
