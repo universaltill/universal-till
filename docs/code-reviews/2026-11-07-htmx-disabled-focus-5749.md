@@ -61,8 +61,10 @@ Tester: Sonnet (separate subagent)
   `node --check web/public/app.js` clean. No Go change.
 
 Pre-flight: help topic n/a (no help topic describes focus after a form
-submit; no visible change beyond keeping keyboard focus); docs-shots n/a
-(nothing visual changes); `reference/` n/a; README n/a; `en.json` n/a (no
+submit; no visible change beyond keeping keyboard focus); docs-shots: surface hash refreshed only
+(`update-docs-shots-surface-hash.sh`, `web/help/img/manifest.json`) — the hook
+moves focus after a request and changes no rendered pixel; CI
+`guard-docs-shots_test.sh` caught the first push without it; `reference/` n/a; README n/a; `en.json` n/a (no
 strings); review record updated (this file); follow-ups: none.
 
 Verdict: approve.
