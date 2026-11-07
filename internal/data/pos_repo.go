@@ -2396,8 +2396,10 @@ type EODMethod struct {
 
 // CashReconciliation is the day-level cash-drawer reconciliation on the
 // Z-report (ut-docs#1006, German pilot): every shift CLOSED on the shop-local
-// day, summed. All amounts are minor units. Skim and PayOuts are stored as
-// the (negative) amounts recorded — cash that left the drawer.
+// day, summed. Same cash-tip rule as the shift close and X report: see
+// ShiftCashBreakdown (ut-docs#5801). All amounts are minor units. Skim and
+// PayOuts are stored as the (negative) amounts recorded — cash that left the
+// drawer.
 //
 // CashSales is taken from EODMethod{Method:"cash"}.In (see dateRangeSummary)
 // MINUS any cash tip_amount for the day (ut-docs#1046) — EODTip's own doc
@@ -7195,29 +7197,47 @@ SELECT 1 FROM shifts WHERE id = ? AND closed_at IS NULL
 	return true, nil
 }
 
-// SumCashPaymentsForShift sums cash payments in shift window for a register.
-func (r *POSRepo) SumCashPaymentsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
+// shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
+// sums of a shift window on a register, so cash takings and cash tips can
+// never use different windows (ut-docs#5801).
+func shiftCashWindow(registerID string, openedAt, closedAt sql.NullString) (string, []any) {
 	timeFilter := `s.completed_at >= ?`
 	args := []any{registerID, openedAt.String}
 	if closedAt.Valid {
 		timeFilter += ` AND s.completed_at <= ?`
 		args = append(args, closedAt.String)
 	}
-	query := fmt.Sprintf(`
-SELECT COALESCE(SUM(p.amount - p.change_given), 0)
+	return `
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
 JOIN payment_methods pm ON pm.id = p.method_id
 WHERE pm.type = 'cash'
   AND s.status = 'completed'
   AND s.register_id = ?
-  AND %s
-`, timeFilter)
+  AND ` + timeFilter + "\n", args
+}
+
+// SumCashPaymentsForShift sums cash payments in shift window for a register.
+// The amount is tendered net of change, so it INCLUDES cash tips
+// (payments.amount already carries tip_amount); see ShiftCashBreakdown.
+func (r *POSRepo) SumCashPaymentsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
+	from, args := shiftCashWindow(registerID, openedAt, closedAt)
 	var cashPayments int64
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&cashPayments); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(p.amount - p.change_given), 0)`+from, args...).Scan(&cashPayments); err != nil {
 		return 0, fmt.Errorf("sum cash payments: %w", err)
 	}
 	return cashPayments, nil
+}
+
+// SumCashTipsForShift sums tip_amount on cash payments in the shift window
+// for a register: same joins, filter and window as SumCashPaymentsForShift.
+func (r *POSRepo) SumCashTipsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
+	from, args := shiftCashWindow(registerID, openedAt, closedAt)
+	var tips int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(p.tip_amount), 0)`+from, args...).Scan(&tips); err != nil {
+		return 0, fmt.Errorf("sum cash tips: %w", err)
+	}
+	return tips, nil
 }
 
 // SumShiftAdjustments returns total adjustments for a shift.
@@ -7237,29 +7257,15 @@ WHERE entity_type = 'shift'
 	return adjustments, nil
 }
 
-// ComputeExpectedCash calculates expected cash for a shift.
+// ComputeExpectedCash calculates expected cash for a shift: opening + cash
+// sales + cash tips + adjustments (tips are in the drawer), i.e.
+// ShiftCashBreakdown(...).Expected (ut-docs#5801).
 func (r *POSRepo) ComputeExpectedCash(ctx context.Context, shiftID string, openingCash int64) (int64, error) {
-	if shiftID == "" {
-		return 0, errors.New("shift_id required")
-	}
-	var openedAt, closedAt sql.NullString
-	var registerID string
-	if err := r.db.QueryRowContext(ctx, `
-SELECT register_id, opened_at, closed_at
-FROM shifts
-WHERE id = ?
-`, shiftID).Scan(&registerID, &openedAt, &closedAt); err != nil {
-		return 0, fmt.Errorf("query shift: %w", err)
-	}
-	cashPayments, err := r.SumCashPaymentsForShift(ctx, registerID, openedAt, closedAt)
+	b, err := r.ShiftCashBreakdown(ctx, shiftID, openingCash)
 	if err != nil {
 		return 0, err
 	}
-	adjustments, err := r.SumShiftAdjustments(ctx, shiftID)
-	if err != nil {
-		return 0, err
-	}
-	return openingCash + cashPayments + adjustments, nil
+	return b.Expected.Minor(), nil
 }
 
 // LookupCustomer resolves a customer by id/loyalty/phone.

@@ -337,7 +337,9 @@ func RecordCashAdjustment(ctx context.Context, sqlDB *sql.DB, in CashAdjustmentI
 }
 
 // ComputeExpectedCash calculates expected cash for a shift
-// Formula: opening_cash + cash_payments + adjustments (adjustments should be stored as negative values for payouts)
+// Formula: opening + cash sales + cash tips + adjustments (tips are in the
+// drawer; payouts are stored as negative adjustments; see
+// data.ShiftCashBreakdown, ut-docs#5801).
 func ComputeExpectedCash(ctx context.Context, sqlDB *sql.DB, shiftID string, openingCash int64) (int64, error) {
 	return data.NewPOSRepo(sqlDB).ComputeExpectedCash(ctx, shiftID, openingCash)
 }

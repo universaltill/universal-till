@@ -113,7 +113,7 @@ A customer can add value to a voucher they already have — the card keeps its n
 1. Open **Menu → Gift vouchers** and tap the voucher's card number.
 2. Under **Top up**, type the **Amount to add**, e.g. `20.00`, and tap **Add to sale**.
 3. The sale screen opens with a gift voucher line for this card number, marked *Top-up*. Add anything else the customer is buying, then take the payment as usual.
-4. When the sale is paid, the voucher's balance goes up by the amount. The receipt lists it under **Vouchers issued** as a *Gift voucher top-up*, with the card number, the amount added and the new balance, and the voucher's **History** shows a **Top-up** line linked to the receipt.
+4. When the sale is paid, the voucher's balance goes up by the amount. The receipt lists it under **Vouchers issued** as a *Gift voucher top-up*, with the card number, the amount added and the new balance, and the voucher's **History** shows a **Top-up** line linked to the receipt. With **Print each gift voucher on its own slip** on, a top-up also prints on its own slip with the amount added and the new balance — see [Receipts & printing](/help/printing).
 
 A used-up voucher becomes **Active** again; its original value never changes. Nothing is added to the voucher until the sale is paid — tap ✕ on the line to drop the top-up. The day-end (Z) report counts a top-up with the vouchers sold in **GUTSCHEINE**. Voiding the sale takes the amount back off the voucher, but only while the customer hasn't spent it.
 

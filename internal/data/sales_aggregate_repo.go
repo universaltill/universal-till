@@ -52,8 +52,10 @@ type SalesAggregateHour struct {
 // SalesAggregatePayment is one payment method's net takings for the day,
 // mirroring EODMethod (In − Out: amount − change_given, sales minus
 // returns — so it INCLUDES tips, exactly like EODMethod.In) plus the
-// method's tips (EODTip). ExpectedCash is the cash method's net cash taken
-// (cash tendered − change given − cash refunded), zero for any other method.
+// method's tips (EODTip). ExpectedCash is the cash method's takings net of
+// change and refunds, MINUS cash tips — the Z-report's CashSales, not
+// expected drawer cash (no float, no adjustments, no tips); the wire name
+// expected_cash_minor is a shipped contract. Zero for any other method.
 type SalesAggregatePayment struct {
 	Method       string
 	Amount       money.Money
