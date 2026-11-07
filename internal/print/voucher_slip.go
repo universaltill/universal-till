@@ -14,6 +14,10 @@ type VoucherSlip struct {
 	Logo      []byte // pre-encoded GS v 0 raster, optional
 	Charset   string
 	Voucher   VoucherBlock
+	// Note is an optional extra line printed centred under the code, e.g.
+	// "Reprinted 6 Nov 2026" on a slip printed again from the voucher's page
+	// (ut-docs#5740). Empty = no line: the #4247 slip is byte-identical.
+	Note string
 }
 
 // RenderVoucherSlip produces the ESC/POS bytes of one slip: a complete
@@ -42,6 +46,11 @@ func RenderVoucherSlip(s VoucherSlip) []byte {
 	b.Write(cmdAlignLeft)
 	line(strings.Repeat("-", Width))
 	writeVoucherESC(&b, line, s.Voucher)
+	if s.Note != "" {
+		b.Write(cmdAlignMid)
+		line(clip(s.Note, Width))
+		b.Write(cmdAlignLeft)
+	}
 	line("")
 	line(strings.Repeat("-", Width))
 	b.Write(cmdFeedCut)
@@ -65,6 +74,9 @@ func RenderVoucherSlipText(s VoucherSlip) string {
 	}
 	b.WriteString(strings.Repeat("-", Width) + "\n")
 	writeVoucherText(&b, center, s.Voucher)
+	if s.Note != "" {
+		center(s.Note)
+	}
 	b.WriteString("\n" + strings.Repeat("-", Width) + "\n")
 	return b.String()
 }

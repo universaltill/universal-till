@@ -1153,7 +1153,7 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatQty(q, locale)
 	}
-	// {{ date .IssuedAt }}: date-ordering convention follows the request
+	// {{ date .IssuedAt }}: date-ordering convention follows DateLocale of the request
 	// locale (de-DE renders 06.09.2026, en-US renders 09/06/2026), digit
 	// shape follows locale too, same as money above (ut-docs#1130). Accepts
 	// either a time.Time or an RFC3339 string (the storage format for

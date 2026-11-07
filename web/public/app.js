@@ -1168,6 +1168,50 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   if (q) q.focus({ preventScroll: true });
 });
 
+// ut-docs#5749: hx-disabled-elt disables the control for the length of the
+// request, and a disabled element cannot hold focus, so a keyboard operator
+// who pressed Enter on a submit button was dropped onto <body> and lost their
+// place. When a request starts from (or inside) an hx-disabled-elt scope and
+// the focused control is within the requesting element, remember it per xhr.
+// htmx 1.9 re-enables the disabled elements just BEFORE htmx:afterRequest
+// (afterSwap still sees them disabled), so restore there: back to that
+// control, or -- if the swap removed it, or it sits in a dialog that just
+// closed -- to the result region (the target's live region, else the target;
+// an outerHTML swap that replaced the target is found again by id), so the
+// outcome is read out. Only when focus really fell to <body>: a deliberate
+// move (the chat refocus above, a dialog, the operator tabbing on
+// mid-request) is left alone. A swap delayed past afterRequest (swap:Nms,
+// view transitions -- unused today) would undo this restore.
+var disabledFocus = new WeakMap();
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  var a = document.activeElement;
+  if (!d.xhr || !d.elt || !d.elt.closest || !d.elt.closest('[hx-disabled-elt]')) return;
+  if (!a || a === document.body || !d.elt.contains(a)) return;
+  disabledFocus.set(d.xhr, { el: a, target: d.target, targetId: d.target && d.target.id });
+});
+document.addEventListener('htmx:afterRequest', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && disabledFocus.get(d.xhr);
+  if (!rec) return;
+  disabledFocus.delete(d.xhr);
+  var a = document.activeElement;
+  if (a && a !== document.body) return; // focus was moved on purpose
+  if (rec.el.isConnected && !rec.el.disabled) {
+    rec.el.focus({ preventScroll: true });
+    if (document.activeElement === rec.el) return;
+  }
+  var t = rec.target;
+  if ((!t || !t.isConnected) && rec.targetId) t = document.getElementById(rec.targetId);
+  if (!t || !t.isConnected) return;
+  t = t.closest('[aria-live],[role=status],[role=alert]') || t;
+  if (!t.hasAttribute('tabindex')) {
+    t.setAttribute('tabindex', '-1');
+    t.addEventListener('blur', function () { t.removeAttribute('tabindex'); }, { once: true });
+  }
+  t.focus({ preventScroll: true });
+});
+
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
 // on a full-page response — an in-panel swap (/items, /admin,
 // /help/{topic}) never touches document.title at all, so the browser tab

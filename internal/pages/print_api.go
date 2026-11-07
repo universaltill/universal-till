@@ -588,18 +588,7 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 	if vs, vErr := data.NewPOSRepo(d.Db).VouchersIssuedInSale(ctx, detail.ID); vErr == nil && len(vs) > 0 {
 		doc.VoucherHeading = T("receipt.vouchers.issued")
 		for _, v := range vs {
-			vb := print.VoucherBlock{
-				Label:  T("catalog.item_type.gift_voucher"),
-				Amount: money(v.OriginalAmountMinor),
-				Code:   v.ID,
-				Issued: true,
-			}
-			if v.HolderLabel != "" {
-				vb.Holder = Tf("basket.gift_voucher.for", v.HolderLabel)
-			}
-			if v.Status == "void" {
-				vb.Void = T("receipt.vouchers.void")
-			}
+			vb := issuedVoucherBlock(v, printLocale, cfg.Charset)
 			doc.Vouchers = append(doc.Vouchers, vb)
 		}
 	}
@@ -636,6 +625,24 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 		doc.Footer = []string{rd.Footer}
 	}
 	return doc, nil
+}
+
+// issuedVoucherBlock is the printed block of one issued gift voucher — the
+// receipt's (ut-docs#4224) and the slip's (ut-docs#4247/#5740).
+func issuedVoucherBlock(v data.Voucher, locale, charset string) print.VoucherBlock {
+	vb := print.VoucherBlock{
+		Label:  httpx.T(locale, "catalog.item_type.gift_voucher"),
+		Amount: httpx.FormatMoneyPrint(v.OriginalAmountMinor, locale, charset),
+		Code:   v.ID,
+		Issued: true,
+	}
+	if v.HolderLabel != "" {
+		vb.Holder = fmt.Sprintf(httpx.T(locale, "basket.gift_voucher.for"), v.HolderLabel)
+	}
+	if v.Status == "void" {
+		vb.Void = httpx.T(locale, "receipt.vouchers.void")
+	}
+	return vb
 }
 
 // receiptMethodLabel names a payment on the printed receipt (ut-docs#4199).
@@ -917,7 +924,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if err == nil {
 			doc := print.Doc{
 				StoreName: storeNameOrDefault(ctx, d),
-				Meta:      []string{"TEST PRINT", time.Now().Format("2006-01-02 15:04:05")},
+				Meta:      []string{"TEST PRINT", httpx.FormatDateTimeLatin(time.Now(), httpx.DefaultLocale())},
 				Totals:    []print.KV{{Label: "Printer", Amount: "OK", Strong: true}},
 				Footer:    []string{"Universal Till"},
 				Charset:   cfg.Charset,

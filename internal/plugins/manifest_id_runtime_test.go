@@ -36,6 +36,8 @@ func TestValidatePluginID(t *testing.T) {
 		// Windows strips a trailing dot, so "com.foo." would alias
 		// "com.foo"'s directory; reserved device names aren't directories.
 		"com.foo.", "nul", "con", "com1", "lpt9", "aux.txt",
+		// core event roots (ADR-0121 §2, ut-docs#5768)
+		"till.x", "agent.x",
 	}
 	for _, id := range bad {
 		if err := validatePluginID(id); err == nil {

@@ -52,6 +52,27 @@ func PrintDocWithSlips(ctx context.Context, c Config, doc Doc, slips []VoucherSl
 	}
 }
 
+// PrintVoucherSlip prints ONE voucher slip on its own — no receipt — as one
+// job (ut-docs#5740): ESC/POS for a thermal printer (one feed+cut, no drawer
+// kick), the plain-text slip via lp for a system printer, nothing when off.
+func PrintVoucherSlip(ctx context.Context, c Config, s VoucherSlip) error {
+	switch c.Mode {
+	case "system":
+		return systemPrint(ctx, c, RenderVoucherSlipText(s))
+	case "off", "":
+		return nil
+	default:
+		tr, err := NewTransport(c)
+		if err != nil {
+			return err
+		}
+		if tr == nil {
+			return nil
+		}
+		return tr.Print(ctx, RenderVoucherSlip(s))
+	}
+}
+
 // systemPrint sends plain text to a regular printer via CUPS `lp`. The printer
 // name (optional) is taken from Address; empty uses the system default printer.
 // A monospaced pitch keeps the receipt's column alignment.
