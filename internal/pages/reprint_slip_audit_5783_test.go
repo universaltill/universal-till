@@ -68,3 +68,32 @@ func TestReprint_AuditRecordsVoucherSlipsOnPrintFailure(t *testing.T) {
 		t.Fatalf("audit = %s, want ok false and voucher_slips 2", data)
 	}
 }
+
+// ut-docs#5793: top-up slips are counted too.
+func TestReprint_AuditCountsTopUpSlips(t *testing.T) {
+	mux, dp := newPrintAPITestDeps(t)
+	seedIssueAndTopUpSale(t, dp)
+	slipDevice(t, dp, "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/print/receipt/R001", nil))
+	var data string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'receipt_reprint'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(data, `"voucher_slips":3`) {
+		t.Fatalf("audit = %s, want voucher_slips 3", data)
+	}
+
+	mux2, dp2 := newPrintAPITestDeps(t)
+	seedSlipVouchers(t, dp2)
+	seedSlipTopUp(t, dp2, "GV-A", "sale-tu", "R-TU", 2000)
+	slipDevice(t, dp2, "true")
+	rec = httptest.NewRecorder()
+	mux2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/print/receipt/R-TU", nil))
+	if err := dp2.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'receipt_reprint'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(data, `"voucher_slips":1`) {
+		t.Fatalf("audit = %s, want voucher_slips 1", data)
+	}
+}
