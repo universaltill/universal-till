@@ -70,7 +70,7 @@ func cloudPrintReport(ctx context.Context, d *common.Deps, r cloudsync.PrintRepo
 	if !cfg.Enabled() {
 		return "", errNoReceiptPrinter
 	}
-	doc := buildPrintReportDoc(r, storeNameOrDefault(ctx, d), cfg.Charset)
+	doc := buildPrintReportDoc(r, shopNameOrEmpty(ctx, d), cfg.Charset)
 	pctx, cancel := context.WithTimeout(ctx, printReportPrintTimeout)
 	defer cancel()
 	if err := print.PrintDoc(pctx, cfg, doc); err != nil {

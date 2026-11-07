@@ -282,9 +282,11 @@ func Render(d Doc) []byte {
 		b.Write(d.Logo) // pre-encoded GS v 0 raster (RasterLogo)
 		b.WriteByte('\n')
 	}
-	b.Write(cmdDoubleOn)
-	line(clip(d.StoreName, Width/2)) // double-width font halves the columns
-	b.Write(cmdDoubleOff)
+	if strings.TrimSpace(d.StoreName) != "" { // unnamed shop: no row, no gap (ut-docs#5773)
+		b.Write(cmdDoubleOn)
+		line(clip(d.StoreName, Width/2)) // double-width font halves the columns
+		b.Write(cmdDoubleOff)
+	}
 	for _, h := range d.Header {
 		line(clip(h, Width))
 	}
@@ -760,7 +762,9 @@ func RenderText(d Doc) string {
 		}
 		b.WriteString(strings.Repeat(" ", pad) + s + "\n")
 	}
-	center(d.StoreName)
+	if strings.TrimSpace(d.StoreName) != "" { // unnamed shop: no row (ut-docs#5773)
+		center(d.StoreName)
+	}
 	for _, h := range d.Header {
 		center(h)
 	}

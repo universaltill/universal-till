@@ -801,7 +801,7 @@ func renderTipsTab(repo *data.POSRepo, d *common.Deps, r *http.Request, window r
 	}
 
 	return httpx.RenderPartial("ui/partials/reports_tab_tips.html", map[string]any{
-		"StoreName":     storeNameOrDefault(ctx, d),
+		"StoreName":     shopNameOrEmpty(ctx, d),
 		"CanView":       canView,
 		"CanRecord":     canRecord,
 		"CashierFilter": cashierFilter,
@@ -920,7 +920,7 @@ func renderYuzdeUsuluTab(repo *data.POSRepo, d *common.Deps, r *http.Request, wi
 	}
 
 	return httpx.RenderPartial("ui/partials/reports_tab_yuzde_usulu.html", map[string]any{
-		"StoreName":     storeNameOrDefault(ctx, d),
+		"StoreName":     shopNameOrEmpty(ctx, d),
 		"CanView":       canView,
 		"CanRecord":     canRecord,
 		"CashierFilter": cashierFilter,
