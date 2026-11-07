@@ -243,8 +243,8 @@ GROUP BY h ORDER BY h`, args...)
 	// Payment methods: EODMethod's In − Out and EODTip's tip sum, one pass.
 	rows, err = r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0)
-  - COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0),
+  `+tenderInSQL+`
+  - `+tenderOutSQL+`,
   COALESCE(SUM(p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id

@@ -1000,6 +1000,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.fiscal_device_no_receipt", "refund", errors.New("fiscal device approved refund with no receipt evidence"))
 			return
 		}
+		// ut-docs#5803: record THIS till's register on the return exactly as the
+		// sale path does (pos_api.go completeTender: this till's identity, then
+		// EnsureRegister for the ambiguous case; "" stays NULL), otherwise the
+		// shift's expected-cash window (sales.register_id = shift register)
+		// never sees the cash refund.
+		refundRegisterID := tillRegisterIDBestEffort(r.Context(), d)
+		if refundRegisterID == "" {
+			if regID, rerr := repo.EnsureRegister(r.Context()); rerr == nil {
+				refundRegisterID = regID
+			}
+		}
 		saleInput := pos.SaleInput{
 			// SaleID carries forward whatever fiscalStartCarrier minted
 			// above (empty if fiscal.sign.start has no subscriber) — ADR-0077
@@ -1008,6 +1019,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			SaleID:                 fiscalStartCarrier.SaleID,
 			SaleType:               "return",
 			CashierID:              actorID,
+			RegisterID:             refundRegisterID,
 			ActorID:                actorID,
 			Currency:               detail.Currency,
 			TaxInclusive:           inclusive,
