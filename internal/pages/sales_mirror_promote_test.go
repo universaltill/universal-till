@@ -61,6 +61,18 @@ func TestSalesMirrorPromote_AdoptsTheCopyWithoutMovingStock(t *testing.T) {
 		fromA = append(fromA, shop.sell(a, 250))
 	}
 	shop.push(a)
+	// A journaled sale counts in the Z whose window holds the moment it ARRIVED
+	// (completed_at on the receiving till; ut-docs#5769, ADR-0066 amendment),
+	// not its origin time. A's sales were just applied on M (completed_at =
+	// now), but M's close below is a minute ago, so they would land after it
+	// and B's next Z would rightly count them (flaky on the second-truncated
+	// window bound). Make them arrive on M before the close, as for fromM.
+	// (Arrival = origin: the harness already dates A's sales two hours back.)
+	for _, id := range fromA {
+		if _, err := shop.main.d.Db.Exec(`UPDATE sales SET completed_at = created_at WHERE id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for range 3 {
 		fromM = append(fromM, shop.sell(shop.main, 300))
 	}
