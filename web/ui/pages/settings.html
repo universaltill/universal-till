@@ -1589,8 +1589,8 @@
         if (!list.length) { out.innerHTML = '<p class="muted">' + esc(custT.noMatches) + '</p>'; return; }
         out.innerHTML = list.map(function (c) {
           return '<div style="display:flex;gap:.5rem;align-items:center;margin:.2rem 0">'
-            + '<span>' + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + (c.Email ? ' · ' + esc(c.Email) : '') + '</span>'
-            + '<button class="btn secondary" data-erase="' + esc(c.ID) + '">' + esc(custT.eraseBtn) + '</button></div>';
+            + '<span>' + esc(c.name) + (c.phone ? ' · ' + esc(c.phone) : '') + (c.email ? ' · ' + esc(c.email) : '') + '</span>'
+            + '<button class="btn secondary" data-erase="' + esc(c.id) + '">' + esc(custT.eraseBtn) + '</button></div>';
         }).join('');
       }).catch(function (e) { renderNotice(msg, 'error', e); });
   }

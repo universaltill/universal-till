@@ -6622,24 +6622,25 @@ func (r *POSRepo) DistinctAuditEntityTypes(ctx context.Context) ([]string, error
 
 // CustomerSummary is a row in the customer picker for data management.
 type CustomerSummary struct {
-	ID    string
-	Name  string
-	Phone string
-	Email string
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+	Email string `json:"email"`
 }
 
 // SearchCustomers finds customers by name/phone/email for the erasure picker.
 // The name matches on SearchFold (ut-docs#4650), so "MÜLLER" finds "Müller";
-// phone and email keep their LIKE substring match.
+// phone and email keep their LIKE substring match, with %, _ and \ in q
+// matching literally (likeLiteral, ut-docs#5863).
 func (r *POSRepo) SearchCustomers(ctx context.Context, q string, limit int) ([]CustomerSummary, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	like := "%" + strings.TrimSpace(q) + "%"
+	like := "%" + likeLiteral.Replace(strings.TrimSpace(q)) + "%"
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(phone,''), COALESCE(email,'')
 FROM customers
-WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? OR email LIKE ?)
+WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? ESCAPE '\' OR email LIKE ? ESCAPE '\')
 ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search customers: %w", err)
