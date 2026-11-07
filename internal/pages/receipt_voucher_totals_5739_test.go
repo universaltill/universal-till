@@ -136,7 +136,7 @@ func TestRenderReceipt_TotalsShowVouchersIssued_5739(t *testing.T) {
 		{Code: "GS-4", Amount: 500, TopUp: true},
 	}
 	render := func(design receiptDesign, vs []receiptVoucherIssue) string {
-		html, err := renderReceipt(funcs, "123", nil, payments, 0, 0, 4000, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", design, "", vs, "", nil, nil, "", "en")
+		html, err := renderReceipt(funcs, "123", nil, payments, 0, 0, 4000, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", design, "", vs, "", nil, nil, "", "en", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
