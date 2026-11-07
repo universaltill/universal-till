@@ -60,18 +60,38 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 				carryMinor = carried.Minor()
 			}
 		}
+		// ut-docs#5797: open shifts per register -- names for the Current card
+		// and the X report picker. Best-effort: on error the X section is
+		// hidden and the Current card shows raw ids. No figure is read here.
+		openShifts, osErr := repo.ListOpenShifts(r.Context())
+		if osErr != nil {
+			logging.L().Errorf("list open shifts: %v", osErr)
+		}
+		xDefault, hasX := pickXShift(openShifts, "", xTillRegister(r.Context(), d))
+		curRegName, curCashierName := current.RegisterID, current.CashierID
+		for _, o := range openShifts {
+			if o.ShiftID == current.ID {
+				curRegName, curCashierName = o.RegisterName, o.CashierName
+			}
+		}
 		data := map[string]any{
-			"title":           httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
-			"theme":           d.ResolvedTheme(r),
-			"menuItems":       d.MenuSnapshot(),
-			"Current":         current,
-			"HasOpen":         hasOpen,
-			"NoSaleOK":        noSaleOK,
-			"NoSaleCount":     noSaleCount,
-			"NoSaleOperators": noSaleOps,
-			"History":         history,
-			"Registers":       registers,
-			"TillRegisterID":  tillRegisterID,
+			"CurrentRegisterName": curRegName,
+			"CurrentCashierName":  curCashierName,
+			"HasX":                hasOpen && osErr == nil && hasX,
+			"XShifts":             openShifts,
+			"XShowPicker":         len(openShifts) > 1,
+			"XDefaultRegister":    xDefault.RegisterID,
+			"title":               httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
+			"theme":               d.ResolvedTheme(r),
+			"menuItems":           d.MenuSnapshot(),
+			"Current":             current,
+			"HasOpen":             hasOpen,
+			"NoSaleOK":            noSaleOK,
+			"NoSaleCount":         noSaleCount,
+			"NoSaleOperators":     noSaleOps,
+			"History":             history,
+			"Registers":           registers,
+			"TillRegisterID":      tillRegisterID,
 			// Minor units plus a pre-formatted decimal for the number input
 			// (templates shouldn't do float math on money).
 			"CarryForwardMinor": carryMinor,
@@ -87,4 +107,5 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/shifts.html", data)(w, r)
 	})
+	registerShiftXReport(mux, d)
 }

@@ -6,7 +6,7 @@ order: 210
 public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
+keywords: [z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
 ---
 
 # Reports & end of day
@@ -315,6 +315,20 @@ one register it now defaults to this till's own register (set under
 Settings → Tills), so opening a shift on the till you're standing at
 normally needs no picking — you can still choose a different register
 from the list for the rare case a shift needs opening on one.
+
+## X report (mid-shift read)
+
+The **X report** shows where the open shift stands right now, without closing anything: the shift's sales, returns, tax, voided sales, baskets cleared before payment, payments by method, the cash in the drawer, no-sale drawer opens, and the first and last receipt — from when the shift opened until the moment you ask. It is for one register at a time.
+
+It is not an end-of-day (Z) report. Nothing is closed or reset, it does not change the end-of-day report or its numbering, and it is not stored or exported.
+
+1. Open **Menu → Shifts**. The **X report** section is in the Current Shift card.
+2. Tap **Show X report**. The figures appear under the button, with the time they are "as of". Tap the button again to read fresh figures.
+3. Tap **Hide X report** to clear the figures from the screen — do this before you step away from a till customers can see.
+
+If more than one register has an open shift, pick the register first; it starts on this till's own register. Who can see it: roles with the **Reports** permission. For any other role the till asks for a manager PIN in the same dialog it uses for other approvals; with sign-in turned off there is no PIN. Viewing it leaves no audit entry.
+
+The **Expected** line in the cash section is the same figure the shift close counts your drawer against at that moment: opening cash, plus cash sales, plus cash tips held in the drawer, plus adjustments and payouts. Managers can also reach this page from the link at the top of Reports → Day-end (EOD). Printing an X report comes later.
 
 ## Counting the drawer at close: skim & new float
 
