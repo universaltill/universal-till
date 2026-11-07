@@ -339,6 +339,16 @@ before. Two optional extras join it:
   shops that want the till count documented piece by piece. Leave it
   empty to skip it entirely.
 
+While a shift is open, the **Current Shift** card on the Shifts page
+shows how often the cash drawer was opened without a sale ("no sale") on
+that shift's register since it opened. From the first one it also lists
+one line per cashier ("Unattributed" when no cashier was recorded). The
+message shown after you close the shift adds the same total on its own
+line. No money moved, so neither ever changes the expected cash, the
+variance, the skim or the new float. The card shows 0 until the drawer is
+opened without a sale. The per-cashier list appears from the first one.
+The close message mentions it only when there was at least one.
+
 ## Cash reconciliation on the day-end report
 
 The printed end-of-day (Z) report gains a **CASH RECONCILIATION**

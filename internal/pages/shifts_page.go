@@ -15,6 +15,19 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/shifts", func(w http.ResponseWriter, r *http.Request) {
 		repo := data.NewPOSRepo(d.Db)
 		current, hasOpen, _ := repo.CurrentOpenShift(r.Context())
+		// ut-docs#5755: the open shift's no-sale drawer opens, per cashier.
+		// Best-effort -- a failed query omits the row, never fails the page
+		// (and never shows a false 0). Declared before the local `data` map
+		// below shadows the data package.
+		noSaleCount, noSaleOK := 0, false
+		var noSaleOps []data.NoSaleOperator
+		if hasOpen {
+			if n, ops, nsErr := repo.NoSaleForShift(r.Context(), current.ID); nsErr == nil {
+				noSaleCount, noSaleOps, noSaleOK = n, ops, true
+			} else {
+				logging.L().Errorf("shift no-sale opens: %v", nsErr)
+			}
+		}
 		history, _ := repo.ListRecentShifts(r.Context(), 20)
 		// This till's own register identity (ut-docs#268), used only to
 		// preselect the shift-open picker (ut-docs#940) -- ambiguous
@@ -48,14 +61,17 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		data := map[string]any{
-			"title":          httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
-			"theme":          d.ResolvedTheme(r),
-			"menuItems":      d.MenuSnapshot(),
-			"Current":        current,
-			"HasOpen":        hasOpen,
-			"History":        history,
-			"Registers":      registers,
-			"TillRegisterID": tillRegisterID,
+			"title":           httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
+			"theme":           d.ResolvedTheme(r),
+			"menuItems":       d.MenuSnapshot(),
+			"Current":         current,
+			"HasOpen":         hasOpen,
+			"NoSaleOK":        noSaleOK,
+			"NoSaleCount":     noSaleCount,
+			"NoSaleOperators": noSaleOps,
+			"History":         history,
+			"Registers":       registers,
+			"TillRegisterID":  tillRegisterID,
 			// Minor units plus a pre-formatted decimal for the number input
 			// (templates shouldn't do float math on money).
 			"CarryForwardMinor": carryMinor,

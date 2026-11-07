@@ -149,6 +149,10 @@ type ShiftCloseResponse struct {
 	Variance     int64  `json:"variance,omitempty"`
 	Skim         int64  `json:"skim,omitempty"`
 	NewFloat     int64  `json:"new_float,omitempty"`
+	// ut-docs#5755: the closed shift's no-sale drawer opens. Informational
+	// only (never in expected/variance/skim/new float); omitted when 0.
+	NoSaleCount     int                   `json:"no_sale_count,omitempty"`
+	NoSaleOperators []data.NoSaleOperator `json:"no_sale_operators,omitempty"`
 }
 
 // CloseShift handles POST /api/shifts/close
@@ -304,14 +308,22 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		}
 
 		variance := req.ClosingCash - expectedCash
-		respondCloseSuccess(w, r, ShiftCloseResponse{
+		resp := ShiftCloseResponse{
 			Success:      true,
 			ExpectedCash: expectedCash,
 			ClosingCash:  req.ClosingCash,
 			Variance:     variance,
 			Skim:         req.Skim,
 			NewFloat:     req.ClosingCash - req.Skim,
-		})
+		}
+		// ut-docs#5755: best-effort -- the close is already committed; a
+		// failed query only omits the no-sale line.
+		if n, ops, nsErr := repo.NoSaleForShift(ctx, req.ShiftID); nsErr == nil {
+			resp.NoSaleCount, resp.NoSaleOperators = n, ops
+		} else {
+			log.Printf("shift close: no-sale opens for %s: %v", req.ShiftID, nsErr)
+		}
+		respondCloseSuccess(w, r, resp)
 	}
 }
 
@@ -721,7 +733,15 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 		} else {
 			msg = fmt.Sprintf(httpx.T(locale, "shifts.close_success"), expected, actual, variance)
 		}
-		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
+		out := "<div class='success'>" + html.EscapeString(msg)
+		if data.NoSaleCount > 0 {
+			// Own line, not space-joined: ja/zh/th don't separate sentences
+			// with spaces (ut-docs#5755).
+			// Locale digit shape, like the money figures above ({{ qty }}'s Go twin).
+			count := httpx.FormatQty(float64(data.NoSaleCount), locale)
+			out += "<br>" + html.EscapeString(fmt.Sprintf(httpx.T(locale, "shifts.close_no_sale_opens"), count))
+		}
+		writeHTML(w, http.StatusOK, out+"</div>")
 	}
 }
 

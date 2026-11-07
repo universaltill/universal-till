@@ -2,15 +2,21 @@ package pages
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1473,5 +1479,207 @@ func TestRecordCashAdjustment_ValidationErrors(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for an empty actor id, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#5755: the close summary carries the shift's no-sale drawer opens.
+// Informational only; times come from time.Now() (guard-fixed-dates).
+
+// nsOpenShift opens a shift on reg1 and returns its id; events recorded after
+// it fall in the shift window (inclusive at both ends, same-second included).
+func nsOpenShift(t *testing.T, mux *http.ServeMux, dp *common.Deps) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT OR IGNORE INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func nsAddEvents(t *testing.T, dp *common.Deps, n int, actor string) {
+	t.Helper()
+	repo := data.NewPOSRepo(dp.Db)
+	for i := 0; i < n; i++ {
+		if _, err := repo.InsertNoSaleEvent(context.Background(), nil, data.NoSaleEvent{
+			CreatedAt: time.Now().UTC().Format(time.RFC3339), RegisterID: "reg1", ActorID: actor,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func nsSeedActors(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('ns-a','alice','Alice','','cashier')`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('ns-b','bob','Bob','','cashier')`,
+	} {
+		if _, err := dp.Db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func nsCloseJSON(t *testing.T, mux *http.ServeMux, id string) json.RawMessage {
+	t.Helper()
+	rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+id+`","closing_cash":4900}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	d, _, errVal, _ := envelopeOf(t, rec.Body.Bytes())
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null, got %s", errVal)
+	}
+	return d
+}
+
+func TestCloseShift_JSONCarriesNoSaleCount(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	nsSeedActors(t, dp)
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 2, "ns-a")
+	nsAddEvents(t, dp, 1, "ns-b")
+
+	d := nsCloseJSON(t, mux, id)
+	var got struct {
+		NoSaleCount     int                   `json:"no_sale_count"`
+		NoSaleOperators []data.NoSaleOperator `json:"no_sale_operators"`
+		ExpectedCash    int64                 `json:"expected_cash"`
+		Variance        int64                 `json:"variance"`
+	}
+	if err := json.Unmarshal(d, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.NoSaleCount != 3 {
+		t.Fatalf("no_sale_count = %d, want 3 (%s)", got.NoSaleCount, d)
+	}
+	want := []data.NoSaleOperator{{CashierID: "ns-a", DisplayName: "Alice", Count: 2}, {CashierID: "ns-b", DisplayName: "Bob", Count: 1}}
+	if !reflect.DeepEqual(got.NoSaleOperators, want) {
+		t.Fatalf("operators = %+v, want %+v", got.NoSaleOperators, want)
+	}
+	// AC6: never money — same expected/variance as a control shift with no events.
+	if got.ExpectedCash != 5000 || got.Variance != -100 {
+		t.Fatalf("expected 5000/-100 unchanged, got %d/%d", got.ExpectedCash, got.Variance)
+	}
+	var details string
+	if err := dp.Db.QueryRow(`SELECT COALESCE(data_json,'') FROM audit_log WHERE entity_type='shift' AND entity_id=? AND action='close'`, id).Scan(&details); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(details, "no_sale") {
+		t.Fatalf("close audit payload must not carry no-sale data: %s", details)
+	}
+}
+
+func TestCloseShift_JSONOmitsNoSaleWhenZero(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	id := nsOpenShift(t, mux, dp)
+	d := string(nsCloseJSON(t, mux, id))
+	if strings.Contains(d, "no_sale_count") || strings.Contains(d, "no_sale_operators") {
+		t.Fatalf("expected no no-sale fields at 0, got %s", d)
+	}
+}
+
+func TestCloseShift_HTMLAppendsNoSaleLine(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	nsSeedActors(t, dp)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 3, "ns-a")
+
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	base := html.EscapeString(fmt.Sprintf(httpx.T("en", "shifts.close_success"),
+		httpx.FormatMoneyDisplay(5000, "en"), httpx.FormatMoneyDisplay(4900, "en"), httpx.FormatMoneyDisplay(-100, "en")))
+	want := "<div class='success'>" + base + "<br>No-sale drawer opens this shift: 3</div>"
+	if rec.Body.String() != want {
+		t.Fatalf("body = %q\nwant   %q", rec.Body.String(), want)
+	}
+}
+
+func TestCloseShift_HTMLExactlyUnchangedWhenZero(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	base := html.EscapeString(fmt.Sprintf(httpx.T("en", "shifts.close_success"),
+		httpx.FormatMoneyDisplay(5000, "en"), httpx.FormatMoneyDisplay(4900, "en"), httpx.FormatMoneyDisplay(-100, "en")))
+	if want := "<div class='success'>" + base + "</div>"; rec.Body.String() != want {
+		t.Fatalf("body = %q\nwant   %q", rec.Body.String(), want)
+	}
+}
+
+func TestCloseShift_SkimMessageAlsoGetsNoSaleLine(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	nsSeedActors(t, dp)
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 2, "ns-b")
+
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=5000&skim=3000&skim_reason=to+safe")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Skim:") || !strings.Contains(body, "New float:") {
+		t.Fatalf("expected the skim variant, got %s", body)
+	}
+	if !strings.HasSuffix(body, "<br>No-sale drawer opens this shift: 2</div>") {
+		t.Fatalf("expected the no-sale line at the end, got %s", body)
+	}
+}
+
+func TestCloseShift_NoSaleQueryErrorStillCloses(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE no_sale_events`); err != nil {
+		t.Fatal(err)
+	}
+	d := string(nsCloseJSON(t, mux, id))
+	if strings.Contains(d, "no_sale_count") {
+		t.Fatalf("expected no no-sale field on a query error, got %s", d)
+	}
+	var closed sql.NullString
+	if err := dp.Db.QueryRow(`SELECT closed_at FROM shifts WHERE id=?`, id).Scan(&closed); err != nil || !closed.Valid || closed.String == "" {
+		t.Fatalf("shift must be closed: %v %v", closed, err)
+	}
+
+	id = nsOpenShift(t, mux, dp)
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "<br>") || !strings.Contains(rec.Body.String(), "Shift closed.") {
+		t.Fatalf("HTML close on error: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#5755 review: the close line's count uses the locale's digit shape,
+// like the money figures before it.
+func TestCloseShift_HTMLNoSaleLineUsesLocaleDigits(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 3, "")
+
+	rec := postShiftForm(t, mux, "/api/shifts/close?lang=fa", "shift_id="+id+"&closing_cash=4900")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.HasSuffix(body, "۳</div>") || strings.HasSuffix(body, "3</div>") {
+		t.Fatalf("expected the no-sale count as Extended Arabic-Indic ۳, got %s", body)
 	}
 }
