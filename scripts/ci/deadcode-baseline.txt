@@ -62,9 +62,7 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
 internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebuilt
 internal/data/tills_repo.go: unreachable func: TillsRepo.InsertTill
-internal/data/user_display_repo.go: unreachable func: NewUserDisplayRepo
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Delete
-internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Get
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.GetAll
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Set
 internal/diagnostics/device_model.go: unreachable func: SetDeviceModel
@@ -93,9 +91,6 @@ internal/manual/manual.go: unreachable func: Library.MissingTranslations
 internal/manual/manual.go: unreachable func: Library.RouteCovered
 internal/netaccess/netaccess.go: unreachable func: ObserveServices
 internal/pages/common/deps.go: unreachable func: Deps.WaitForAsyncWork
-internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedBrowsingMode
-internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedTheme
-internal/pages/common/personal_display.go: unreachable func: Deps.personalDisplayValue
 internal/pages/eod_method_tax_bands.go: unreachable func: attachEODMethodTaxBands
 internal/pages/eod_method_tax_bands.go: unreachable func: computeEODMethodTaxBands
 internal/pages/eod_tax_bands.go: unreachable func: attachEODTaxBands

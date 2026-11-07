@@ -822,7 +822,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsNav = append(settingsNav, pluginSettingsNavRows(locale, pluginSections)...)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
-			"theme":       st.Theme,
+			"theme":       d.ResolvedTheme(r),
+			"tillTheme":   st.Theme,
 			"themes":      availableThemes(r.Context(), d),
 			"settings":    st,
 			"settingsMap": visibleSettings(all),

@@ -279,7 +279,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.reports"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"IsManager": canPerform(d, r, "reports"),
 			// ut-docs#1465: gates the "Shrinkage & Loss" tab button's own

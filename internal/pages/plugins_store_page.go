@@ -191,7 +191,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 		cats := storeCategories(items)
 		httpx.Render("ui/pages/plugins_store.html", map[string]any{
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
-			"theme":            d.CurrentState().Theme,
+			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"Items":            items,
 			"Categories":       cats,
@@ -224,7 +224,7 @@ func PluginStoreDetailHandler(d *common.Deps) http.HandlerFunc {
 			if it.ListingID == listingID {
 				httpx.Render("ui/pages/plugins_store_detail.html", map[string]any{
 					"title":     it.Name + " — " + httpx.T(locale, "page.title.plugin_store"),
-					"theme":     d.CurrentState().Theme,
+					"theme":     d.ResolvedTheme(r),
 					"menuItems": d.MenuSnapshot(),
 					"Item":      it,
 					// ut-docs#4791: the first Download registers an

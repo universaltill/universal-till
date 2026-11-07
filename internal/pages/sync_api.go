@@ -486,7 +486,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// the same view as the status-bar chip that links here (#2742).
 		lv := replicaLinkView(r.Context(), d)
 		m["title"] = httpx.T(httpx.RequestLocale(r), "page.title.tills")
-		m["theme"] = d.CurrentState().Theme
+		m["theme"] = d.ResolvedTheme(r)
 		m["menuItems"] = d.MenuSnapshot()
 		m["MainUnreachable"] = lv.State == linkUnreachable
 		m["MainUnreachableSince"] = lv.Since

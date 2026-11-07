@@ -462,7 +462,7 @@
   <p class="muted">{{ T "settings.theme.help_per_till" }}</p>
   <form hx-post="/api/settings/theme" hx-swap="none" data-after-request="ok reload:settings-theme; fail save-error:settings-save-error">
     <select name="theme">
-      {{ $current := .theme }}
+      {{ $current := .tillTheme }}
       {{ range .themes }}
       <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ T .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
       {{ end }}

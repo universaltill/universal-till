@@ -143,7 +143,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		httpx.Render("ui/pages/users.html", map[string]any{
 			"title":       httpx.T(locale, "page.title.users"),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"users":       rows,
 			"customRoles": customRoles,

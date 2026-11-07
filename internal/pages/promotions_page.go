@@ -90,7 +90,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/promotions.html", map[string]any{
 			"title":      httpx.T(locale, "page.title.promotions"),
-			"theme":      d.CurrentState().Theme,
+			"theme":      d.ResolvedTheme(r),
 			"menuItems":  d.MenuSnapshot(),
 			"promotions": views,
 			"errKey":     errKey,

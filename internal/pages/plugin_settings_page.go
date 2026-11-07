@@ -778,7 +778,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	pageData := func(r *http.Request, pluginID string, views []pluginSettingView, formOnly bool, extra map[string]any) map[string]any {
 		out := map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"PluginID":  pluginID,
 			"Settings":  views,

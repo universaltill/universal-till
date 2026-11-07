@@ -198,7 +198,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		countrySettingsData := map[string]any{
 			"title":          httpx.T(httpx.RequestLocale(r), "page.title.country_settings"),
-			"theme":          st.Theme,
+			"theme":          d.ResolvedTheme(r),
 			"menuItems":      d.MenuSnapshot(),
 			"countries":      rows,
 			"floorDays":      data.GlobalArchiveMinDays,

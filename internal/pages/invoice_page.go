@@ -393,7 +393,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/invoices.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.invoices"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"Items":     list,
 			"From":      from,
@@ -502,7 +502,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/invoice.html", map[string]any{
 			"title":        inv.DisplayNo,
-			"theme":        d.CurrentState().Theme,
+			"theme":        d.ResolvedTheme(r),
 			"menuItems":    d.MenuSnapshot(),
 			"Inv":          inv,
 			"Sale":         sale,

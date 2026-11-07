@@ -136,7 +136,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"systemImporters":  systemImporters,
 			"canManagePlugins": canPerform(d, r, "plugin_management"),
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.import"),
-			"theme":            d.CurrentState().Theme,
+			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
 			// ut-docs#5070: a replacement till restores its backup instead

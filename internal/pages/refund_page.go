@@ -630,7 +630,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		needsManagerPIN := !authOff && !canPerform(d, r, "refund")
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
-			"theme":                d.CurrentState().Theme,
+			"theme":                d.ResolvedTheme(r),
 			"menuItems":            d.MenuSnapshot(),
 			"Sale":                 detail,
 			"Lines":                refundableLines(detail, returned, returnedByLine),

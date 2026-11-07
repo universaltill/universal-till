@@ -88,7 +88,7 @@ func registerMoveApproval(mux *http.ServeMux, d *common.Deps) {
 		id := r.PathValue("id")
 		page := map[string]any{
 			"title": httpx.T(locale, "page.title.move_till"),
-			"theme": d.CurrentState().Theme,
+			"theme": d.ResolvedTheme(r),
 		}
 		p, ok := enroll.PendingMoveByID(d.Cfg, id)
 		if !ok || d.SyncPrimaryURL(r.Context()) != "" {

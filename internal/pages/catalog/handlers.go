@@ -868,7 +868,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
 			"menuItems":             d.MenuSnapshot(),
-			"theme":                 d.CurrentState().Theme,
+			"theme":                 d.ResolvedTheme(r),
 			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, icons, currentPrices, updatedAts),
 			"Categories":            cats,
 			"CategoryFilterOptions": categoryFilterOptions,
@@ -939,7 +939,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// internal/pages/catalog/. Same page-title bug, same fix.
 		modifiersData["title"] = httpx.T(httpx.RequestLocale(r), "modifiers.title")
 		modifiersData["menuItems"] = d.MenuSnapshot()
-		modifiersData["theme"] = d.CurrentState().Theme
+		modifiersData["theme"] = d.ResolvedTheme(r)
 		modifiersData["InItemsShell"] = httpx.IsFragmentSwap(w, r)
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
@@ -971,7 +971,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		optionSetsData := map[string]any{
 			"title":        httpx.T(httpx.RequestLocale(r), "items.option_sets.name"),
 			"menuItems":    d.MenuSnapshot(),
-			"theme":        d.CurrentState().Theme,
+			"theme":        d.ResolvedTheme(r),
 			"Sets":         optionSetCards(sets),
 			"InItemsShell": httpx.IsFragmentSwap(w, r),
 			"ErrorSetID":   "",

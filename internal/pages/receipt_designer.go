@@ -125,7 +125,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/receipt_designer.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.receipt_designer"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"D":         rd,
 			"H1":        header[0], "H2": header[1], "H3": header[2],
