@@ -42,6 +42,10 @@ Reviewer re-verified the TDD claim in its own worktree: reverting the production
 
 Pre-flight: help topic n/a (no help page states a shop-name length); docs-shots surface hash updated, screenshots n/a (no pixel change); en.json / i18n-meta n/a (no new keys); reference/ n/a; README n/a; review record — this file; follow-ups — none.
 
+## CI follow-up
+
+First CI run: `test-heavy (internal/pages/... en_GB locale)` failed `TestShopNameInputsCarryConfigMaxlength` (GET /setup → 303 to the language step when LANG is set). Reproduced locally with `LANG=en_GB.UTF-8`; fixed by pinning the OS locale (`withOSLocale(t, "", "")`) as the neighbouring setup tests do; passes with no locale, en_GB and de_DE.
+
 ## Verdict
 
 Approve. Possible overlap with open PR universal-till#2411 (it also edits `auth_page_test.go`; different lines) — whichever merges second rebases.
