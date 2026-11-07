@@ -520,8 +520,8 @@ func formatMoneyCurrency(minor int64, c CurrencyInfo, locale string, digitShape 
 // on-screen, non-editable quantity display: receipt.html, invoice.html,
 // order_view.html, journal_detail.html, self_order_cart.html, Open
 // orders' pay-at-the-counter tab, and the reports tabs (top/slow items,
-// dead stock, by-department, and the archived-EOD by-article-group/
-// by-article/by-order-type breakdowns) — the quantity-side twin of
+// dead stock, by-department, and the archived-EOD list's counts and
+// by-article-group/by-article/by-order-type breakdowns, ut-docs#5784) — the quantity-side twin of
 // FormatMoney's own {{ money }} binding. Two things stay Latin-only
 // deliberately, via FormatQtyLatin below, not this: any ESC/POS print path
 // (a thermal printer can't render Arabic-Indic glyphs), and basket.html's
