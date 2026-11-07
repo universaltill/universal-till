@@ -329,6 +329,11 @@ minus cash refunds, plus cash tips, plus pay-ins, minus pay-outs. A refund
 paid out in cash counts on the shift and register it was paid from, even
 when the original sale was on an earlier shift. Card refunds don't change it.
 
+Only sales completed on the shift's own register count, from the moment the
+shift was opened until it is closed. A sale made earlier the same day,
+before the shift opened, never counts towards that shift's expected cash,
+whichever way the till recorded the opening time.
+
 When you close a shift, count the drawer and enter the counted cash as
 before. Two optional extras join it:
 

@@ -3,7 +3,9 @@ package data
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // Cash-tip rule (ut-docs#5801): Opening + CashSales + TipsHeldOut +
@@ -229,5 +231,60 @@ func TestShiftCashBreakdown_RefundWithTipsAndAdjustment(t *testing.T) {
 	}
 	if sum := b.Opening.Add(b.CashSales).Add(b.TipsHeldOut).Add(b.Adjustments); sum != b.Expected {
 		t.Fatalf("identity broken: sum %d != expected %d", sum.Minor(), b.Expected.Minor())
+	}
+}
+
+// shiftWindowBase is UTC noon today, derived from the clock (never a fixed
+// date: guard-fixed-dates.sh). t0-1h is always the same UTC day.
+func shiftWindowBase() time.Time {
+	n := time.Now().UTC()
+	return time.Date(n.Year(), n.Month(), n.Day(), 12, 0, 0, 0, time.UTC)
+}
+
+// ut-docs#5796 F1: a legacy 'YYYY-MM-DD HH:MM:SS' opened_at must not pull in
+// earlier sales of the same UTC day (text compare puts 'T' after ' ').
+func TestShiftCashBreakdown_LegacyOpenedAtExcludesEarlierSameDay(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec(t, dbx.d, `INSERT INTO registers(id,name,is_active) VALUES('reg-a','A',1)`)
+	t0 := shiftWindowBase()
+	legacy := t0.Format("2006-01-02 15:04:05")
+	mustExec(t, dbx.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, opening_cash) VALUES('L','reg-a','user1',?,0)`, legacy)
+	for i, c := range []struct {
+		at  time.Time
+		amt int64
+	}{{t0.Add(-time.Hour), 1000}, {t0.Add(-25 * time.Hour), 2000}, {t0.Add(5 * time.Minute), 300}} {
+		id := fmt.Sprintf("lg%d", i)
+		scInsertSale(t, dbx, id, "completed", "reg-a", c.amt, b8At(c.at))
+		scInsertPayment(t, dbx, "p-"+id, id, "cash", c.amt, 0, 0, b8At(c.at))
+	}
+	b, err := dbx.repo.ShiftCashBreakdown(ctx, "L", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.CashSales.Minor() != 300 || b.Expected.Minor() != 300 {
+		t.Fatalf("breakdown = %+v, want CashSales 300 Expected 300 (only the sale after opening)", b)
+	}
+	got, err := dbx.repo.SumCashPaymentsForShift(ctx, "reg-a", nullStr(legacy), sql.NullString{})
+	if err != nil || got != 300 {
+		t.Fatalf("SumCashPaymentsForShift = %d, %v; want 300", got, err)
+	}
+}
+
+// A closed_at of ” (Valid but empty) means open, not "bound at ”".
+func TestShiftWindow_ClosedEmptyIsOpen(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	mustExec(t, dbx.d, `INSERT INTO registers(id,name,is_active) VALUES('reg-a','A',1)`)
+	t0 := shiftWindowBase()
+	mustExec(t, dbx.d, `INSERT INTO shifts(id, register_id, cashier_id, opened_at, closed_at, opening_cash) VALUES('E','reg-a','user1',?,'',0)`, b8At(t0))
+	scInsertSale(t, dbx, "e1", "completed", "reg-a", 700, b8At(t0.Add(time.Minute)))
+	scInsertPayment(t, dbx, "p-e1", "e1", "cash", 700, 0, 0, b8At(t0.Add(time.Minute)))
+	b, err := dbx.repo.ShiftCashBreakdown(ctx, "E", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.CashSales.Minor() != 700 {
+		t.Fatalf("CashSales = %d, want 700 (closed_at '' is open)", b.CashSales.Minor())
 	}
 }
