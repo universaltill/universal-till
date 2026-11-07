@@ -85,10 +85,11 @@ type VoucherBlock struct {
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
-	// Issued marks a voucher this sale issued (not a top-up, ut-docs#4252).
-	// Render/RenderText ignore it; callers use it to pick the vouchers that
-	// get a stand-alone slip (ut-docs#4247).
-	Issued bool
+	// Slip marks a block that also gets a stand-alone hand-over slip when
+	// printer.voucher_slip is on (ut-docs#4247 issued vouchers, #5793
+	// top-ups). Render/RenderText ignore it; a block with Void set never
+	// gets a slip.
+	Slip bool
 }
 
 // Line is one sale line.
