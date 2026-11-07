@@ -233,8 +233,10 @@ func TestShiftXReport_HTMLMatchesRepo(t *testing.T) {
 	if strings.Contains(body, "End of day") || strings.Contains(body, "Z-report") || strings.Contains(body, "Z report") {
 		t.Error("no Z wording in the X fragment")
 	}
-	if strings.Contains(body, `aria-live`) {
-		t.Error("no live region around the report")
+	// ut-docs#5798: the only live region is the print status; the figures
+	// themselves must not be announced.
+	if strings.Count(body, `aria-live`) != 1 || !strings.Contains(body, `id="x-report-print-msg" class="x-report-print-msg" aria-live="polite"`) {
+		t.Error("the print status is the only live region of the report")
 	}
 }
 

@@ -328,7 +328,9 @@ It is not an end-of-day (Z) report. Nothing is closed or reset, it does not chan
 
 If more than one register has an open shift, pick the register first; it starts on this till's own register. Who can see it: roles with the **Reports** permission. For any other role the till asks for a manager PIN in the same dialog it uses for other approvals; with sign-in turned off there is no PIN. Viewing it leaves no audit entry.
 
-The **Expected** line in the cash section is the same figure the shift close counts your drawer against at that moment: opening cash, plus cash sales, plus cash tips held in the drawer, plus adjustments and payouts. Managers can also reach this page from the link at the top of Reports → Day-end (EOD). Printing an X report comes later.
+The **Expected** line in the cash section is the same figure the shift close counts your drawer against at that moment: opening cash, plus cash sales, plus cash tips held in the drawer, plus adjustments and payouts. Managers can also reach this page from the link at the top of Reports → Day-end (EOD).
+
+**Printing it.** With the figures shown, tap **Print X report**. The till reads the shift again at that moment and prints those figures, so the paper can be newer than the screen. It needs a receipt printer set up under Settings → Receipt printer; without one, or if the printer does not answer, "Print failed" shows next to the button and nothing is recorded. The printout is titled "X REPORT" and says it is not a day close: it has no end-of-day number and does not open the cash drawer. The same permission or manager PIN applies as for viewing, and the PIN is asked again for printing. Unlike viewing, printing leaves an audit entry (who printed it, and who approved).
 
 ## Counting the drawer at close: skim & new float
 

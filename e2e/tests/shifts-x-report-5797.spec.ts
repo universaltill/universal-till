@@ -108,7 +108,7 @@ test('X report: touch targets and no page scroll at 1024x600 and 360px', async (
     const result = page.locator('#x-report-body .x-report-result');
     await expect(result).toBeVisible();
     const where = `${vp.width}x${vp.height}`;
-    for (const sel of ['#x-report-show', '#x-report-body .x-report-bar button']) {
+    for (const sel of ['#x-report-show', '#x-report-print', '#x-report-body .x-report-bar button[data-action]']) {
       const box = await page.locator(sel).boundingBox();
       expect(box, `${sel} at ${where}`).not.toBeNull();
       expect(box!.height, `${sel} height at ${where}`).toBeGreaterThanOrEqual(44);
@@ -172,4 +172,41 @@ test('X report: Reports -> End of day links to the X section', async ({ page }) 
   await link.click();
   await expect(page).toHaveURL(/\/shifts#x-report$/);
   await expect(page.locator('#x-report')).toBeInViewport();
+});
+
+test('X report: a print failure shows inline and keeps the figures (ut-docs#5798)', async ({ page }) => {
+  await ensureOpenShift(page);
+  await page.goto('/shifts');
+  await page.locator('#x-report-show').click();
+  await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();
+
+  await page.route('**/x-report/print', (route) =>
+    route.fulfill({ status: 502, contentType: 'text/html', body: "<div class='error' role='alert'>Print failed</div>" }));
+  await page.locator('#x-report-print').click();
+  await expect(page.locator('#x-report-print-msg')).toContainText('Print failed');
+  await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();
+
+  await page.unroute('**/x-report/print');
+  await page.route('**/x-report/print', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: "<span class='x-report-print-ok' role='status'>\u2713 X report sent to the printer</span>" }));
+  await page.locator('#x-report-print').click();
+  await expect(page.locator('#x-report-print-msg')).toContainText('X report sent to the printer');
+  await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();
+});
+
+// Tester (ut-docs#5798): a 502 HTML body is force-swapped by app.js's global
+// beforeSwap, so the test above passes without shifts.html's XR_TARGETS
+// entry; only a dropped connection (htmx:sendError) proves that entry.
+test('X report: a dropped connection on Print shows inline and keeps the figures (ut-docs#5798)', async ({ page }) => {
+  const assertClean = watchConsole(page, /^Failed to load resource:.*ERR_FAILED|^htmx:(afterRequest|sendError)$/);
+  await ensureOpenShift(page);
+  await page.goto('/shifts');
+  await page.locator('#x-report-show').click();
+  await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();
+  await page.route('**/x-report/print', (route) => route.abort());
+  await page.locator('#x-report-print').click();
+  await expect(page.locator('#x-report-print-msg [role="alert"]')).toContainText('Something went wrong');
+  await expect(page.locator('#x-report-print')).toBeEnabled();
+  await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();
+  assertClean();
 });

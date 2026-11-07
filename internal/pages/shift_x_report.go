@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -87,8 +88,11 @@ func registerShiftXReport(mux *http.ServeMux, d *common.Deps) {
 			writeJSON(w, http.StatusOK, map[string]any{"data": toXReportDTO(rep), "error": nil})
 			return
 		}
-		httpx.RenderPartial("ui/partials/shift_x_report.html", map[string]any{"R": rep})(w, r)
+		httpx.RenderPartial("ui/partials/shift_x_report.html", map[string]any{
+			"R": rep, "PrintURL": "/api/shifts/" + url.PathEscape(rep.Shift.ID) + "/x-report/print",
+		})(w, r)
 	})
+	registerShiftXReportPrint(mux, d)
 }
 
 func wantsJSON(r *http.Request) bool {
