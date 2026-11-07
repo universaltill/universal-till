@@ -1942,7 +1942,6 @@ reports.eod.fiscal_device.iade_fisi
 reports.eod.fiscal_device.maker
 reports.eod.fiscal_device.mali_fis
 reports.eod.fiscal_device.match
-reports.eod.fiscal_device.mismatch
 reports.eod.fiscal_device.none
 reports.eod.fiscal_device.other
 reports.eod.fiscal_device.serial
