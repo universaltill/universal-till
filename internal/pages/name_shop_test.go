@@ -74,7 +74,7 @@ func TestNameShopGateCandidate_Shapes(t *testing.T) {
 	}
 	for _, p := range []string{"/", "/login", "/pin", "/help/display", "/self-order", "/api/pos/x",
 		"/ui/shop-name-notice", "/public/app.js", "/kitchen-display/1", "/orders", "/tables",
-		"/open-orders", "/refund/R1", "/plugin/x/y", "/setup", "/name-shop", "/settings/cloud/move/m1",
+		"/open-orders", "/refund/R1", "/journal/R1", "/plugin/x/y", "/setup", "/name-shop", "/settings/cloud/move/m1",
 		"/o/abc", "/lock", "/logout"} {
 		cases = append(cases, tc{"exempt " + p, "GET", p, nil, false})
 		cases = append(cases, tc{"exempt boosted " + p, "GET", p, boosted, false})

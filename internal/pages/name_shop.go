@@ -103,7 +103,7 @@ var nameShopExactPaths = map[string]bool{
 var nameShopExemptPrefixes = []string{
 	"/api/", "/ui/", "/v1/", "/notices/", // APIs, fragments, polls
 	"/setup/", "/help/",
-	"/self-order/", "/kitchen-display/", "/o/", "/refund/", "/plugin/", // selling / customer-facing / plugin-owned (R2)
+	"/self-order/", "/kitchen-display/", "/o/", "/refund/", "/journal/", "/plugin/", // selling / customer-facing / plugin-owned (R2); /journal/ is the /orders → refund path (review M1)
 	"/public/", "/themes/", "/plugin-icons/", "/plugin-fonts/", "/ext/", // assets
 	"/settings/cloud/move/", // move approval must never wait on a name prompt
 }

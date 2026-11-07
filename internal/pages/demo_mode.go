@@ -763,7 +763,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/save":                           true,
 	"POST /api/settings/staff-languages":                true,
 	"POST /api/settings/store-name":                     true,
-	"GET /name-shop":                                    true, // ut-docs#4391: renames the shop/till; a demo till is already named
+	"GET /name-shop":                                    true, // ut-docs#4391: allowed so an unnamed demo till could still reach the page (denied would 403 every gated admin page); same as POST /api/settings/store-name above
 	"POST /name-shop":                                   true,
 	"POST /api/settings/till-name":                      true,
 	"POST /api/settings/till-register":                  true,
