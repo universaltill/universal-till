@@ -37,3 +37,10 @@ Approve (two low findings fixed in review).
 ## Deferred
 - Drop `xPaperText` and add the X-report case to the AC2 test table once universal-till#2442 is on `main` (that helper lives only in that open PR).
 - Reject control characters at name save time (local catalogue/settings saves), so they never reach the DB; this change only protects paper.
+
+## CI follow-up
+
+`desktop-shell`'s deadcode-baseline guard flagged `paperTicket` as newly unreachable. Its only caller,
+`RenderKitchenTicketText`, is already on `scripts/ci/deadcode-baseline.txt` (no page previews a kitchen
+ticket yet). The sanitising is now inlined in that renderer rather than growing the baseline. Behaviour
+is unchanged, and `go test ./internal/print/` passes.

@@ -114,22 +114,6 @@ func paperDoc(d Doc) Doc {
 	return d
 }
 
-// paperTicket returns a sanitised copy of t (plain-text kitchen renderer).
-func paperTicket(t KitchenTicket) KitchenTicket {
-	t.Station, t.OrderNo, t.OrderLabel = paperText(t.Station), paperText(t.OrderNo), paperText(t.OrderLabel)
-	t.OrderType, t.Table, t.Timestamp = paperText(t.OrderType), paperText(t.Table), paperText(t.Timestamp)
-	if t.Items != nil {
-		items := make([]KitchenItem, len(t.Items))
-		for i, it := range t.Items {
-			it.Qty, it.Name, it.Mode = paperText(it.Qty), paperText(it.Name), paperText(it.Mode)
-			it.Modifiers = paperTexts(it.Modifiers)
-			items[i] = it
-		}
-		t.Items = items
-	}
-	return t
-}
-
 // paperSlip returns a sanitised copy of s (plain-text voucher slip).
 func paperSlip(s VoucherSlip) VoucherSlip {
 	s.StoreName = paperText(s.StoreName)

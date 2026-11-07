@@ -143,7 +143,20 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 // kitchen-ticket preview or drop this together with those tests is a
 // product call, deliberately not made here.
 func RenderKitchenTicketText(t KitchenTicket) string {
-	t = paperTicket(t) // ut-docs#5847
+	// ut-docs#5847: sanitise a copy of every free-text field (inlined here,
+	// not a papertext.go helper, because this renderer is itself on the
+	// deadcode baseline and a helper only it calls would be a new entry).
+	t.Station, t.OrderNo, t.OrderLabel = paperText(t.Station), paperText(t.OrderNo), paperText(t.OrderLabel)
+	t.OrderType, t.Table, t.Timestamp = paperText(t.OrderType), paperText(t.Table), paperText(t.Timestamp)
+	if t.Items != nil {
+		items := make([]KitchenItem, len(t.Items))
+		for i, it := range t.Items {
+			it.Qty, it.Name, it.Mode = paperText(it.Qty), paperText(it.Name), paperText(it.Mode)
+			it.Modifiers = paperTexts(it.Modifiers)
+			items[i] = it
+		}
+		t.Items = items
+	}
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
