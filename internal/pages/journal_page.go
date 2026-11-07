@@ -66,16 +66,25 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#4252: a top-up this sale made, taken back by voiding the
 		// sale, is marked like a void voucher (the voucher itself lives on).
 		voidTopUps := map[string]bool{}
-		if len(sale.VoucherIssues) > 0 {
-			if vs, vErr := repo.VouchersIssuedInSale(r.Context(), sale.ID); vErr == nil {
+		// ut-docs#5838: the slip setting also gates the read, as the receipt
+		// doc reads issued vouchers whatever the ledger rows say.
+		slipsOn := printerConfig(r.Context(), d).VoucherSlip
+		var slipCount int
+		if len(sale.VoucherIssues) > 0 || slipsOn {
+			vs, vErr := repo.VouchersIssuedInSale(r.Context(), sale.ID)
+			if vErr == nil {
 				for _, v := range vs {
 					voidVouchers[v.ID] = v.Status == "void"
 				}
 			}
-			if tops, tErr := repo.VoucherTopUpsInSale(r.Context(), sale.ID); tErr == nil {
+			tops, tErr := repo.VoucherTopUpsInSale(r.Context(), sale.ID)
+			if tErr == nil {
 				for _, t := range tops {
 					voidTopUps[t.VoucherID] = t.Reversed
 				}
+			}
+			if vErr == nil && tErr == nil {
+				slipCount = slipBearingVouchers(vs, tops)
 			}
 		}
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
@@ -94,6 +103,9 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			"VoucherHrefs":    voucherHrefs,
 			"VoidVouchers":    voidVouchers,
 			"VoidTopUps":      voidTopUps,
+			// ut-docs#5838: second print button, only when a reprint would
+			// print at least one voucher slip.
+			"ReprintNoSlips": slipsOn && slipCount > 0,
 		})(w, r)
 	})
 

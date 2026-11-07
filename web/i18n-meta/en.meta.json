@@ -606,5 +606,6 @@
   "settings.notices.enable": {"description": "Checkbox label that switches Notices on for this till.", "review": "standard"},
   "settings.notices.save": {"description": "Save button of the Notices settings card.", "review": "standard"},
   "settings.printer.voucher_slip": {"description": "Checkbox label in Settings > Receipt printer: when ticked, every gift voucher sold or topped up in a sale also prints on its own separate slip after the receipt.", "review": "standard"},
-  "settings.printer.voucher_slip_hint": {"description": "Help line under the separate-gift-voucher-slip checkbox in Settings > Receipt printer: when it prints, what is on the slip (a top-up's slip adds the amount added and the new balance), and that voided vouchers and top-ups taken back get none.", "review": "standard"}
+  "settings.printer.voucher_slip_hint": {"description": "Help line under the separate-gift-voucher-slip checkbox in Settings > Receipt printer: when it prints, what is on the slip (a top-up's slip adds the amount added and the new balance), and that voided vouchers and top-ups taken back get none.", "review": "standard"},
+  "journal.reprint_no_slips": {"description": "Button on a past sale's journal page, next to Print receipt: prints the receipt again but leaves out the separate gift voucher slips. Shown only when 'Print each gift voucher on its own slip' is on and the sale has a valid voucher.", "review": "standard", "max_length": 32}
 }

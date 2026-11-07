@@ -1276,6 +1276,7 @@
   "journal.filter.till": "Till",
   "journal.replica_no_cross_till": "Cross-till sales are only available on this shop's main till.",
   "journal.reprint": "Print receipt",
+  "journal.reprint_no_slips": "Print without voucher slips",
   "journal.reprinted": "Receipt sent to the printer",
   "journal.tender.split": "Split",
   "journal.tender.unknown": "Unknown",
