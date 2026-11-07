@@ -120,7 +120,8 @@
         "setup",
         "tour",
         "demo",
-        "shop_name_notice"
+        "shop_name_notice",
+        "name_shop"
       ]
     },
     "selforder": {

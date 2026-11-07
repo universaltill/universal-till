@@ -575,5 +575,13 @@
   "settings.notices.enable": {"description": "Checkbox label that switches Notices on for this till.", "review": "standard"},
   "settings.notices.save": {"description": "Save button of the Notices settings card.", "review": "standard"},
   "settings.printer.voucher_slip": {"description": "Checkbox label in Settings > Receipt printer: when ticked, every gift voucher sold in a sale also prints on its own separate slip after the receipt.", "review": "standard"},
-  "settings.printer.voucher_slip_hint": {"description": "Help line under the separate-gift-voucher-slip checkbox in Settings > Receipt printer: when it prints, what is on the slip, and that voided vouchers and top-ups get none.", "review": "standard"}
+  "settings.printer.voucher_slip_hint": {"description": "Help line under the separate-gift-voucher-slip checkbox in Settings > Receipt printer: when it prints, what is on the slip, and that voided vouchers and top-ups get none.", "review": "standard"},
+  "page.title.name_shop": {"description": "Browser/page title of the page that asks a manager for the shop and/or till name before opening manager pages.", "review": "standard", "max_length": 40},
+  "name_shop.heading_both": {"description": "Heading when both the shop name and this till's own name are missing.", "review": "standard", "max_length": 50},
+  "name_shop.heading_shop": {"description": "Heading when only the shop name is missing.", "review": "standard", "max_length": 50},
+  "name_shop.heading_till": {"description": "Heading when only this till's own name is missing.", "review": "standard", "max_length": 50},
+  "name_shop.intro": {"description": "Shown above one or both name fields; must read right whether one or two fields are asked for. Says selling is never blocked.", "review": "standard"},
+  "name_shop.till_name_help": {"description": "Help line inside the till-name field's label, with an example name.", "review": "standard"},
+  "name_shop.save": {"description": "Submit button on the name-your-shop page; saves the names and goes on to the page the manager opened.", "review": "standard", "max_length": 24},
+  "name_shop.error.till_name_invalid": {"description": "Inline refusal under the till-name field for a blank, too long, or control-character name.", "review": "standard"}
 }

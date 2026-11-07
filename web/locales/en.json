@@ -3925,5 +3925,13 @@
   "settings.notices.title": "Notices",
   "settings.notices.help": "Show messages from Universal Till and your partners in a notice bell. A notice never blocks a sale. Off by default; turning it off removes the notices held on this till.",
   "settings.notices.enable": "Show notices on this till",
-  "settings.notices.save": "Save"
+  "settings.notices.save": "Save",
+  "page.title.name_shop": "Name your shop",
+  "name_shop.heading_both": "Name your shop and this till",
+  "name_shop.heading_shop": "Name your shop",
+  "name_shop.heading_till": "Name this till",
+  "name_shop.intro": "Add this once to open Settings, Reports and the other manager pages. Selling carries on as normal.",
+  "name_shop.till_name_help": "Shown on reports and the Tills page so you can tell your tills apart, for example \"Front counter\".",
+  "name_shop.save": "Save and continue",
+  "name_shop.error.till_name_invalid": "Enter a name for this till: up to 60 characters, no line breaks or tabs."
 }

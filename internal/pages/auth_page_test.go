@@ -375,3 +375,39 @@ func TestBareFirstBootSetupRequiresShopName(t *testing.T) {
 		t.Errorf("store.name = %q ok=%v, want %q", v, ok, "Corner Café")
 	}
 }
+
+// ut-docs#4391: the bare first-boot form may carry an optional till_name —
+// absent leaves till.name unset (the name-shop gate asks later), present and
+// valid is stored, present and invalid refuses the whole setup.
+func TestFirstBootSetup_TillName(t *testing.T) {
+	withOSLocale(t, "", "")
+	for _, bad := range []string{"  ", strings.Repeat("é", 61), "a\nb"} {
+		mux, svc, d := newAuthTestMux(t)
+		rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Corner Café"}, "till_name": {bad}}, nil)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), template.HTMLEscapeString(httpx.T("en", "tills.pairing.error.name_required_field"))) {
+			t.Fatalf("till_name=%q: code=%d, want the login page with the till-name error", bad, rec.Code)
+		}
+		if v, _, _ := d.Settings.Get(t.Context(), "store.name"); v == "Corner Café" {
+			t.Errorf("till_name=%q: store.name written on refusal", bad)
+		}
+		if first, err := svc.NeedsFirstBoot(t.Context()); err != nil || !first {
+			t.Errorf("till_name=%q: must stay first boot", bad)
+		}
+	}
+	mux, _, d := newAuthTestMux(t)
+	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Corner Café"}, "till_name": {" Front counter "}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("valid: code=%d", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "till.name"); v != "Front counter" {
+		t.Errorf("till.name=%q", v)
+	}
+	mux, _, d = newAuthTestMux(t)
+	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Corner Café"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("absent: code=%d", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), "till.name"); v != "" {
+		t.Errorf("absent till_name must leave till.name unset, got %q", v)
+	}
+}

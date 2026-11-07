@@ -535,6 +535,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
+	registerNameShop(mux, dp)                         // ut-docs#4391: ask a manager on an unnamed main till for the shop/till name
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
 	registerNextStepsUI(mux, dp)                      // ut-docs#5058 UT-3: dismiss the "Next steps" card after a cloud setup
 	registerMoveApproval(mux, dp)                     // ut-docs#5127 UT-1b: approve or decline a move into another shop
@@ -761,7 +762,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// mux, so a panic anywhere in the chain gets a clean response. The CSP
 	// header wrap sits just inside it so login/setup pages, auth redirects
 	// and recovered 500s all carry the header too.
-	return recoverMiddleware(cspWrap(lanWrap(demoWrap(auth.Middleware(boosted, authSvc))))), dp
+	return recoverMiddleware(cspWrap(lanWrap(demoWrap(auth.Middleware(nameShopGate(boosted, dp), authSvc))))), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything
