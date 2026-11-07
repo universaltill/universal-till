@@ -4640,7 +4640,19 @@ func (r *POSRepo) ListRegisters(ctx context.Context) ([]Register, error) {
 // CreateRegister adds a new, active register (a till/checkout station).
 // The schema's UNIQUE constraint on name rejects duplicates. locationID is
 // optional (nil leaves the register unassigned to any stock location).
+//
+// Admin-screen entry point: refuses control/invisible characters in name
+// (ErrNameInvalidCharacters, ut-docs#5858) and stores it trimmed.
+// CreateRegisterForEnrolment skips the check (card D covers till names).
 func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *string) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
+	return r.createRegister(ctx, name, locationID)
+}
+
+func (r *POSRepo) createRegister(ctx context.Context, name string, locationID *string) (string, error) {
 	id := uuid.NewString()
 	if _, err := r.db.ExecContext(ctx,
 		`INSERT INTO registers (id, name, location_id, is_active) VALUES (?, ?, ?, 1)`, id, name, locationID); err != nil {
@@ -4665,7 +4677,7 @@ func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName strin
 		if i > 1 {
 			name = fmt.Sprintf("%s (%d)", baseName, i)
 		}
-		id, err := r.CreateRegister(ctx, name, nil)
+		id, err := r.createRegister(ctx, name, nil)
 		if err == nil {
 			return id, name, nil
 		}
@@ -4679,6 +4691,10 @@ func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName strin
 // RenameRegister changes a register's display name; the id (and every
 // shift/sale row keyed by it) is unaffected.
 func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error {
+	newName, err := CheckSingleLineName(newName)
+	if err != nil {
+		return err
+	}
 	res, err := r.db.ExecContext(ctx, `UPDATE registers SET name = ? WHERE id = ?`, newName, id)
 	if err != nil {
 		return fmt.Errorf("rename register: %w", err)

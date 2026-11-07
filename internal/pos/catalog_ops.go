@@ -18,7 +18,17 @@ func DeactivateVariant(ctx context.Context, db *sql.DB, variantID string) error 
 	return data.NewCatalogRepo(db).DeactivateVariant(ctx, variantID)
 }
 
+// CreateItem, UpdateItemReturningWasActive, CreateVariant and UpdateVariant
+// are the admin catalogue form's entry points: they refuse a name holding
+// control or invisible characters (data.ErrNameInvalidCharacters,
+// ut-docs#5858) and store it trimmed. data.CreateItem, shared with my.
+// directives, stays unchecked so the till never refuses a name my. accepted.
 func CreateItem(ctx context.Context, db *sql.DB, in ItemInput) (string, error) {
+	name, err := data.CheckSingleLineName(in.Name)
+	if err != nil {
+		return "", err
+	}
+	in.Name = name
 	return data.NewCatalogRepo(db).CreateItem(ctx, catalogtypes.ItemInput(in))
 }
 
@@ -30,14 +40,29 @@ func CreateItem(ctx context.Context, db *sql.DB, in ItemInput) (string, error) {
 // wrapper was removed by the ut-docs#1566 dead-code burn-down once its last
 // caller (a test) was pointed here.
 func UpdateItemReturningWasActive(ctx context.Context, db *sql.DB, in ItemInput) (bool, error) {
+	name, err := data.CheckSingleLineName(in.Name)
+	if err != nil {
+		return false, err
+	}
+	in.Name = name
 	return data.NewCatalogRepo(db).UpdateItemReturningWasActive(ctx, catalogtypes.ItemInput(in))
 }
 
 func CreateVariant(ctx context.Context, db *sql.DB, in VariantInput) (string, error) {
+	name, err := data.CheckSingleLineName(in.Name)
+	if err != nil {
+		return "", err
+	}
+	in.Name = name
 	return data.NewCatalogRepo(db).CreateVariant(ctx, catalogtypes.VariantInput(in))
 }
 
 func UpdateVariant(ctx context.Context, db *sql.DB, in VariantInput) error {
+	name, err := data.CheckSingleLineName(in.Name)
+	if err != nil {
+		return err
+	}
+	in.Name = name
 	return data.NewCatalogRepo(db).UpdateVariant(ctx, catalogtypes.VariantInput(in))
 }
 

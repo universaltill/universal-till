@@ -191,16 +191,26 @@ func saveOptionSetTx(ctx context.Context, tx *sql.Tx, p OptionSetSave, values []
 // RenameOptionSet renames a set. A name another set already has is
 // ErrOptionSetExists; an unknown id is ErrOptionSetNotFound.
 func (r *OptionSetRepo) RenameOptionSet(ctx context.Context, id, name string) error {
-	_, err := r.SaveOptionSet(ctx, OptionSetSave{ID: id, Name: &name})
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return err
+	}
+	_, err = r.SaveOptionSet(ctx, OptionSetSave{ID: id, Name: &name})
 	return err
 }
 
 // ReplaceOptionSetValues makes values the set's full ordered value list in
 // one call — add, edit, reorder and remove (see replaceOptionSetValuesTx).
 func (r *OptionSetRepo) ReplaceOptionSetValues(ctx context.Context, optionSetID string, values []OptionSetValueInput) error {
-	if values == nil {
-		values = []OptionSetValueInput{}
+	checked := make([]OptionSetValueInput, 0, len(values))
+	for _, v := range values {
+		text, err := CheckSingleLineName(v.Value)
+		if err != nil {
+			return err
+		}
+		checked = append(checked, OptionSetValueInput{ID: v.ID, Value: text})
 	}
+	values = checked
 	_, err := r.SaveOptionSet(ctx, OptionSetSave{ID: optionSetID, Values: &values})
 	return err
 }

@@ -666,6 +666,9 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
+			if errors.Is(err, data.ErrNameInvalidCharacters) {
+				key = "common.error.name_invalid_characters"
+			}
 			renderCategoryDialogError(w, r, key, 0)
 			return
 		}
@@ -704,11 +707,13 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		// The hidden flag rides in the same UPDATE (review finding 6).
 		if err := catRepo.UpdateCategoryWithHidden(r.Context(), id, f.name, f.color, f.hidden); err != nil {
 			key := "categories.error.rename"
-			switch err {
-			case data.ErrCategoryNameRequired:
+			switch {
+			case err == data.ErrCategoryNameRequired:
 				key = "categories.error.name_required"
-			case data.ErrCategoryNotFound:
+			case err == data.ErrCategoryNotFound:
 				key = "categories.error.not_found"
+			case errors.Is(err, data.ErrNameInvalidCharacters):
+				key = "common.error.name_invalid_characters"
 			}
 			renderCategoryDialogError(w, r, key, 0)
 			return

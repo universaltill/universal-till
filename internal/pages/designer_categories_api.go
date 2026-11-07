@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -127,10 +128,14 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 			fail(w, r, http.StatusBadRequest, errKey, 0)
 			return
 		}
-		id, err := catRepo.CreateCategoryWithColor(r.Context(), name, color)
+		id, err := catRepo.CreateCategoryWithColorHidden(r.Context(), name, color, false)
 		if err != nil {
 			if err == data.ErrCategoryNameRequired {
 				fail(w, r, http.StatusBadRequest, "categories.error.name_required", 0)
+				return
+			}
+			if errors.Is(err, data.ErrNameInvalidCharacters) {
+				fail(w, r, http.StatusBadRequest, "common.error.name_invalid_characters", 0)
 				return
 			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "categories.error.create", "designer_categories", err)
@@ -189,11 +194,13 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 			fail(w, r, http.StatusBadRequest, errKey, 0)
 			return
 		}
-		if err := catRepo.UpdateCategory(r.Context(), id, name, color); err != nil {
-			switch err {
-			case data.ErrCategoryNameRequired:
+		if err := catRepo.UpdateCategoryWithHidden(r.Context(), id, name, color, nil); err != nil {
+			switch {
+			case errors.Is(err, data.ErrNameInvalidCharacters):
+				fail(w, r, http.StatusBadRequest, "common.error.name_invalid_characters", 0)
+			case err == data.ErrCategoryNameRequired:
 				fail(w, r, http.StatusBadRequest, "categories.error.name_required", 0)
-			case data.ErrCategoryNotFound:
+			case err == data.ErrCategoryNotFound:
 				fail(w, r, http.StatusNotFound, "categories.error.not_found", 0)
 			default:
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "categories.error.rename", "designer_categories", err)
