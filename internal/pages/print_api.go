@@ -768,6 +768,19 @@ func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string
 // (transport or send error) still reports its slips, as they were attempted —
 // the reprint audit row records the count (ut-docs#5783).
 func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) (slips int, err error) {
+	return printReceiptWith(ctx, d, receiptNo, customerLocale, receiptPrintOpts{})
+}
+
+// receiptPrintOpts narrows a receipt print (ut-docs#5838).
+type receiptPrintOpts struct {
+	// skipSlips leaves the gift voucher slips out of the job even when the
+	// slip setting is on: the journal's "Print without voucher slips".
+	skipSlips bool
+}
+
+// printReceiptWith is printReceiptIn with options; see there for the
+// meaning of customerLocale and slips.
+func printReceiptWith(ctx context.Context, d *common.Deps, receiptNo, customerLocale string, o receiptPrintOpts) (slips int, err error) {
 	// ADR-0124 §3: the shared choke point every receipt print path reaches
 	// (tender and refund auto-print, manual print, reprint) refuses here as
 	// well, so a handler that misses the gate still cannot print.
@@ -786,7 +799,7 @@ func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLoca
 	// via lp for a regular (system) printer, per the configured type. The
 	// voucher slips (ut-docs#4247) ride in the same job as the receipt.
 	var vs []print.VoucherSlip
-	if cfg.VoucherSlip {
+	if cfg.VoucherSlip && !o.skipSlips {
 		vs = voucherSlips(doc)
 	}
 	return len(vs), print.PrintDocWithSlips(ctx, cfg, doc, vs)
@@ -808,6 +821,25 @@ func voucherSlips(doc print.Doc) []print.VoucherSlip {
 		})
 	}
 	return out
+}
+
+// slipBearingVouchers counts the slips a receipt print would add for a sale's
+// issued vouchers and top-ups (ut-docs#5838). It must mirror the Slip/Void
+// rules of customerReceiptDoc and voucherSlips (#4247, #5793, #5794); a test
+// pins the parity.
+func slipBearingVouchers(issued []data.Voucher, tops []data.VoucherTopUp) int {
+	n := 0
+	for _, v := range issued {
+		if v.Status != "void" {
+			n++
+		}
+	}
+	for _, t := range tops {
+		if !t.Reversed && !t.VoucherVoid {
+			n++
+		}
+	}
+	return n
 }
 
 // clampCopies bounds a requested label copy count to [1, 50] — never zero
@@ -1073,7 +1105,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if !httpx.InstalledLocale(loc) {
 			loc = ""
 		}
-		slips, err := printReceiptIn(ctx, d, receiptNo, loc)
+		// ut-docs#5838: "1" exactly leaves the voucher slips out; any other
+		// value is a plain reprint.
+		skip := r.PostForm.Get("no_slips") == "1"
+		slips, err := printReceiptWith(ctx, d, receiptNo, loc, receiptPrintOpts{skipSlips: skip})
 		now := time.Now().UTC().Format(time.RFC3339)
 		if errors.Is(err, errCustomerDocumentsSuppressed) {
 			// ADR-0124 §3: refused, with a distinct status the receipt
@@ -1087,6 +1122,9 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		audit := map[string]any{"ok": err == nil}
 		if loc != "" {
 			audit["customer_locale"] = loc
+		}
+		if skip {
+			audit["slips_skipped"] = true
 		}
 		if slips > 0 {
 			// ut-docs#5783: redeemable voucher codes were printed again.
