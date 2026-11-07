@@ -1216,6 +1216,11 @@ jobs:
     environment: release-signing
     permissions:
       contents: write # needed to see the draft release by tag — see verify-versions' comment
+    outputs:
+      # ADR-0181: the provenance job attests only a checksums.txt with this digest.
+      checksums_sha256: ${{ steps.upload.outputs.checksums_sha256 }}
+      # Empty when signing is not configured (no checksums.txt.sig).
+      sig_sha256: ${{ steps.upload.outputs.sig_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1335,6 +1340,7 @@ jobs:
           fi
       # The signature goes up BEFORE the checksums.txt it covers.
       - name: Upload checksums.txt.sig, then checksums.txt
+        id: upload
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -1345,6 +1351,67 @@ jobs:
             gh release upload "$TAG" "$ASSETS/checksums.txt.sig" --clobber
           fi
           gh release upload "$TAG" "$ASSETS/checksums.txt" --clobber
+          echo "checksums_sha256=$(sha256sum "$ASSETS/checksums.txt" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          if [ -f "$ASSETS/checksums.txt.sig" ]; then
+            echo "sig_sha256=$(sha256sum "$ASSETS/checksums.txt.sig" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ADR-0181 (ut-docs#5437): build-provenance attestations (SLSA Build L2) for
+  # every release asset, BEFORE publish. Runs after `checksums`, which wrote
+  # and signed the final pre-publish checksums.txt, and gates publish-release:
+  # a release whose assets cannot be attested and verified stays a draft.
+  # Deliberately NOT in the release-signing environment: no job may hold both
+  # the Ed25519 seed (checksums, macos-dmg-attach) and a Sigstore OIDC token.
+  # Every action here is pinned to a full commit SHA because of that token.
+  # It proves which commit and workflow built the files, not that the commit
+  # is benign (ADR-0181 section 3).
+  provenance:
+    needs: [prepare, checksums]
+    if: ${{ !cancelled() && needs.checksums.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # needed to see the draft release by tag — see verify-versions' comment
+      id-token: write # Sigstore OIDC certificate for the attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+      - name: Download the draft's assets and bind them to this run's checksums.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          CHECKSUMS_SHA256: ${{ needs.checksums.outputs.checksums_sha256 }}
+          SIG_SHA256: ${{ needs.checksums.outputs.sig_sha256 }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/assets"
+          mkdir -p "$ASSETS"
+          gh release download "$TAG" --dir "$ASSETS" --clobber
+          got="$(sha256sum "$ASSETS/checksums.txt" | awk '{print $1}')"
+          if [ -z "$CHECKSUMS_SHA256" ] || [ "$got" != "$CHECKSUMS_SHA256" ]; then
+            echo "::error::checksums.txt sha256 (${got}) is not the one the checksums job signed and uploaded (${CHECKSUMS_SHA256:-none})"
+            exit 1
+          fi
+          # checksums.txt.sig is bound the same way (empty output = unsigned run).
+          got_sig=""
+          if [ -f "$ASSETS/checksums.txt.sig" ]; then got_sig="$(sha256sum "$ASSETS/checksums.txt.sig" | awk '{print $1}')"; fi
+          if [ "$got_sig" != "$SIG_SHA256" ]; then
+            echo "::error::checksums.txt.sig sha256 (${got_sig:-none}) is not the one the checksums job signed and uploaded (${SIG_SHA256:-none})"
+            exit 1
+          fi
+          bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
+      - name: Attest build provenance of every release asset
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/assets/*
+      - name: Verify the attestations (and that verification can fail)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: bash scripts/ci/verify-release-provenance.sh "$RUNNER_TEMP/assets" "$TAG"
 
   # Flips the release goreleaser created (draft: true, .goreleaser.yaml) to
   # published/"Latest" — the ONLY point in this whole workflow that does.
@@ -1383,8 +1450,9 @@ jobs:
         android-app,
         verify-versions,
         checksums,
+        provenance,
       ]
-    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' && needs.checksums.result == 'success' }}
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' && needs.checksums.result == 'success' && needs.provenance.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1427,6 +1495,10 @@ jobs:
     environment: release-signing
     permissions:
       contents: write
+    outputs:
+      # ADR-0181: provenance-dmg attests only a checksums.txt with this digest.
+      checksums_sha256: ${{ steps.attach.outputs.checksums_sha256 }}
+      sig_sha256: ${{ steps.attach.outputs.sig_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1499,6 +1571,7 @@ jobs:
             mv "$RUNNER_TEMP/checksums.new.sig" "$RUNNER_TEMP/checksums.txt.sig"
           fi
       - name: Attach the .dmg and upload checksums.txt
+        id: attach
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -1510,8 +1583,10 @@ jobs:
           if [ -n "${UT_RELEASE_KEYS_HEX:-}" ]; then
             # Signature first: the old checksums.txt still verifies against it.
             gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt.sig" --clobber
+            echo "sig_sha256=$(sha256sum "$RUNNER_TEMP/checksums.txt.sig" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           fi
           gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt" --clobber
+          echo "checksums_sha256=$(sha256sum "$RUNNER_TEMP/checksums.txt" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       # The gate verify-versions used to run for the .dmg: the published
       # checksums.txt entry must match the published artifact — plus every
       # other asset, since checksums.txt was just rewritten.
@@ -1532,6 +1607,74 @@ jobs:
           if [ -n "${UT_RELEASE_KEYS_HEX:-}" ]; then
             go run ./scripts/releasesig verify --checksums "$ASSETS/checksums.txt" --sig "$ASSETS/checksums.txt.sig"
           fi
+
+  # ADR-0181: the only writer after publish is macos-dmg-attach (.dmg plus the
+  # rewritten checksums.txt and .sig), so a second job attests those and then
+  # verifies the whole published set. The release is already public, so a
+  # failure here makes the run red; it cannot fall back to a draft (the same
+  # model as ADR-0178's post-publish re-sign). Not in the release-signing
+  # environment, for the reason given on `provenance`.
+  provenance-dmg:
+    needs: [prepare, macos-app, macos-dmg-attach]
+    if: ${{ !cancelled() && needs.macos-dmg-attach.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # the release is published by now
+      id-token: write # Sigstore OIDC certificate for the attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+      - name: Download the published assets and bind them to this run's .dmg and checksums.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          DMG_SHA256: ${{ needs.macos-app.outputs.dmg_sha256 }}
+          CHECKSUMS_SHA256: ${{ needs.macos-dmg-attach.outputs.checksums_sha256 }}
+          SIG_SHA256: ${{ needs.macos-dmg-attach.outputs.sig_sha256 }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/assets"
+          SUBJECTS="$RUNNER_TEMP/subjects"
+          mkdir -p "$ASSETS" "$SUBJECTS"
+          gh release download "$TAG" --dir "$ASSETS" --clobber
+          dmg="unitill-pos-${VERSION}-macOS-arm64.dmg"
+          got="$(sha256sum "$ASSETS/$dmg" | awk '{print $1}')"
+          if [ -z "$DMG_SHA256" ] || [ "$got" != "$DMG_SHA256" ]; then
+            echo "::error::$dmg sha256 (${got}) is not the one macos-app produced (${DMG_SHA256:-none})"
+            exit 1
+          fi
+          got="$(sha256sum "$ASSETS/checksums.txt" | awk '{print $1}')"
+          if [ -z "$CHECKSUMS_SHA256" ] || [ "$got" != "$CHECKSUMS_SHA256" ]; then
+            echo "::error::checksums.txt sha256 (${got}) is not the one macos-dmg-attach uploaded (${CHECKSUMS_SHA256:-none})"
+            exit 1
+          fi
+          got_sig=""
+          if [ -f "$ASSETS/checksums.txt.sig" ]; then got_sig="$(sha256sum "$ASSETS/checksums.txt.sig" | awk '{print $1}')"; fi
+          if [ "$got_sig" != "$SIG_SHA256" ]; then
+            echo "::error::checksums.txt.sig sha256 (${got_sig:-none}) is not the one macos-dmg-attach uploaded (${SIG_SHA256:-none})"
+            exit 1
+          fi
+          bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
+          # Only what changed after publish: the other assets were attested
+          # by `provenance` and their digests did not change.
+          cp "$ASSETS/$dmg" "$ASSETS/checksums.txt" "$SUBJECTS/"
+          if [ -f "$ASSETS/checksums.txt.sig" ]; then
+            cp "$ASSETS/checksums.txt.sig" "$SUBJECTS/"
+          fi
+      - name: Attest build provenance of the .dmg and the rewritten checksums
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/subjects/*
+      - name: Verify the attestations of the whole published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: bash scripts/ci/verify-release-provenance.sh "$RUNNER_TEMP/assets" "$TAG"
 
   # ut-docs#2274: on the workflow_dispatch path, `prepare` creates and
   # pushes the tag before any build job runs (so every downstream job can
@@ -1575,6 +1718,7 @@ jobs:
         android-app,
         verify-versions,
         checksums,
+        provenance,
         publish-release,
       ]
     # Only for a tag `prepare` itself created (the workflow_dispatch path —
