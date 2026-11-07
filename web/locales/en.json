@@ -1592,6 +1592,7 @@
   "pfand.modal.confirm": "Pay Out",
   "pfand.modal.manager_pin": "Manager PIN",
   "pfand.modal.title": "Deposit refund",
+  "pfand.recorded": "Deposit refund recorded: %s",
   "plugin.content.fallback_notice": "This content isn't available in your language yet — showing what's there so far.",
   "plugin.content.meta": "Content v%s · updated %s",
   "plugin.content.search_placeholder": "Search…",

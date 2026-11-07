@@ -668,7 +668,7 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 		}
 		auditCashAdjustmentOverride(ctx, dp, gate, actorID, adjustmentID)
 
-		respondAdjustmentSuccess(w, r, CashAdjustmentResponse{AdjustmentID: adjustmentID, Success: true})
+		respondPfandSuccess(w, r, CashAdjustmentResponse{AdjustmentID: adjustmentID, Success: true}, req.Amount)
 	}
 }
 
@@ -766,6 +766,36 @@ func respondAdjustmentSuccess(w http.ResponseWriter, r *http.Request, data CashA
 		msg := httpx.T(locale, "shifts.adjustment_confirmed")
 		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
 	}
+}
+
+// pfandNoticeDismissMs is how long the Pfand confirmation stays up before
+// app.js's scheduleToastDismiss removes it (pausable; the ✕ dismisses sooner).
+const pfandNoticeDismissMs = 8000
+
+// respondPfandSuccess answers a successful Pfand payout (ut-docs#5823). The
+// dialog closes on a 2xx, so an in-dialog message would vanish unseen; the HTML
+// branch instead sends only an out-of-band notice into the page-level
+// #pfand-notice live region on the menu page (the in-dialog #pfand-result
+// target is swapped with nothing). The JSON branch is the shared envelope.
+func respondPfandSuccess(w http.ResponseWriter, r *http.Request, data CashAdjustmentResponse, amountMinor int64) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		respondAdjustmentSuccess(w, r, data)
+		return
+	}
+	locale := httpx.ResolveLocale(w, r)
+	amount := httpx.FormatMoneyDisplay(amountMinor, locale)
+	// Escape the template, then substitute the escaped amount wrapped in <bdi>
+	// so an RTL paragraph keeps the number and currency symbol in one run.
+	tmpl := httpx.T(locale, "pfand.recorded")
+	if strings.Count(tmpl, "%s") != 1 || strings.Contains(strings.ReplaceAll(tmpl, "%s", ""), "%") {
+		// A translation without exactly one usable %s: use the English template.
+		tmpl = httpx.T("en", "pfand.recorded")
+	}
+	msg := strings.Replace(html.EscapeString(tmpl), "%s", "<bdi>"+html.EscapeString(amount)+"</bdi>", 1)
+	dismiss := httpx.T(locale, "notice.dismiss")
+	writeHTML(w, http.StatusOK, fmt.Sprintf(
+		`<div id="pfand-notice" hx-swap-oob="innerHTML"><div class="pos-notice success" role="status" data-dismiss-ms="%d"><span class="notice-text">%s</span><button type="button" class="notice-dismiss" aria-label="%s">✕</button></div></div>`,
+		pfandNoticeDismissMs, msg, html.EscapeString(dismiss)))
 }
 
 // registerShiftsAPI registers shift API routes

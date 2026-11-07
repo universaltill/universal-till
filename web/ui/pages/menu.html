@@ -11,6 +11,12 @@
   <a class="btn primary btn-touch" href="{{ .backToSaleURL }}"><span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "menu.back_to_sale" }}</a>
 </div>
 
+<!-- ut-docs#5823: live region for the deposit-refund confirmation. The Pfand
+     dialog closes on success, so PfandRueckgabe answers with an out-of-band
+     (hx-swap-oob="innerHTML") .pos-notice into this element, which lives
+     outside the dialog and is empty until then. -->
+<div id="pfand-notice" class="pfand-notice" aria-live="polite" data-testid="pfand-notice"></div>
+
 <div class="menu-grid">
   {{ range .Tiles }}
   {{/* ADR-0088: a `layout` plugin may group tiles; the heading spans the
