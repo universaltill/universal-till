@@ -566,3 +566,38 @@ func TestSaleHasVoucherIssueOrTopUp(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5793: VoucherVoid says the voucher is void NOW, apart from whether
+// this top-up was reversed — the slip must not hand over a fresh scannable
+// gift slip for a void voucher.
+func TestVoucherTopUpsInSale_VoucherVoid(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-voucher-void.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	vSeedVoucher(t, ctx, repo, "GS-OK", 1000)
+	vSeedVoucher(t, ctx, repo, "GS-VOID", 1000)
+	if _, err := topUpInTx(t, repo, "GS-OK", "s-ok", 500, topUpTestCeiling); err != nil {
+		t.Fatal(err)
+	}
+	tops, err := repo.VoucherTopUpsInSale(ctx, "s-ok")
+	if err != nil || len(tops) != 1 {
+		t.Fatalf("tops = %+v, err = %v", tops, err)
+	}
+	if tops[0].VoucherVoid || tops[0].Reversed {
+		t.Fatalf("active voucher top-up = %+v, want VoucherVoid false", tops[0])
+	}
+
+	if _, err := d.DB.Exec(`UPDATE vouchers SET status = 'void', balance = 0 WHERE id = 'GS-VOID'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := topUpInTxForce(t, repo, "GS-VOID", "s-void", 700, topUpTestCeiling, true); err != nil {
+		t.Fatal(err)
+	}
+	tops, err = repo.VoucherTopUpsInSale(ctx, "s-void")
+	if err != nil || len(tops) != 1 {
+		t.Fatalf("tops = %+v, err = %v", tops, err)
+	}
+	if tops[0].Reversed || !tops[0].VoucherVoid {
+		t.Fatalf("forced top-up of a void voucher = %+v, want not reversed, VoucherVoid true", tops[0])
+	}
+}

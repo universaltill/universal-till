@@ -605,6 +605,10 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 				Amount:  "+" + money(t.AmountMinor),
 				Balance: Tf("receipt.vouchers.new_balance", money(t.BalanceAfterMinor)),
 				Code:    t.VoucherID,
+				// ut-docs#5793: a top-up gets its own slip too, unless the
+				// voucher is void now. Void is left to Reversed so the
+				// receipt itself is unchanged.
+				Slip: !t.VoucherVoid,
 			}
 			if t.HolderLabel != "" {
 				vb.Holder = Tf("basket.gift_voucher.for", t.HolderLabel)
@@ -634,7 +638,7 @@ func issuedVoucherBlock(v data.Voucher, locale, charset string) print.VoucherBlo
 		Label:  httpx.T(locale, "catalog.item_type.gift_voucher"),
 		Amount: httpx.FormatMoneyPrint(v.OriginalAmountMinor, locale, charset),
 		Code:   v.ID,
-		Issued: true,
+		Slip:   true,
 	}
 	if v.HolderLabel != "" {
 		vb.Holder = fmt.Sprintf(httpx.T(locale, "basket.gift_voucher.for"), v.HolderLabel)
@@ -753,7 +757,7 @@ func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string
 // printReceiptIn prints a receipt; customerLocale is a kiosk customer's own
 // language for their receipt (customerReceiptDoc), "" the shop's language.
 // slips is the number of gift voucher slips (ut-docs#4247) in the print job:
-// 0 when the setting is off, the sale issued none, or the job was refused or
+// 0 when the setting is off, the sale issued or topped up none, or the job was refused or
 // never built (no printer, doc error). A job that was built but failed
 // (transport or send error) still reports its slips, as they were attempted —
 // the reprint audit row records the count (ut-docs#5783).
@@ -784,11 +788,12 @@ func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLoca
 
 // voucherSlips derives the stand-alone slips (ut-docs#4247) from the receipt
 // doc itself, so they share its locale, charset and logo: one per voucher the
-// sale issued, none for a voided one or a top-up.
+// sale issued or topped up; none for a voided voucher, a top-up
+// taken back, or a top-up of a voucher void since (ut-docs#5793).
 func voucherSlips(doc print.Doc) []print.VoucherSlip {
 	var out []print.VoucherSlip
 	for _, v := range doc.Vouchers {
-		if !v.Issued || v.Void != "" {
+		if !v.Slip || v.Void != "" {
 			continue
 		}
 		out = append(out, print.VoucherSlip{

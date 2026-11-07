@@ -168,27 +168,219 @@ func TestPrintReceiptIn_VoidVoucherNoSlip(t *testing.T) {
 	}
 }
 
-func TestPrintReceiptIn_TopUpNoSlip(t *testing.T) {
+// seedSlipTopUp records a real top-up of voucherID by a new completed sale
+// (ledger row + balance, through TopUpVoucher).
+func seedSlipTopUp(t *testing.T, dp *common.Deps, voucherID, saleID, receiptNo string, amount int64) {
+	t.Helper()
+	ctx := context.Background()
+	seedReceiptSale(t, dp, saleID, receiptNo, "sale", "", amount, 0, 0)
+	repo := data.NewPOSRepo(dp.Db)
+	tx, err := dp.Db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.TopUpVoucher(ctx, tx, voucherID, saleID, amount, 1_000_000, false, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ut-docs#5793: a top-up gets its own slip.
+func TestPrintReceiptIn_TopUpSlip(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	ctx := context.Background()
 	seedSlipVouchers(t, dp)
-	seedReceiptSale(t, dp, "sale-tu", "R-TU", "sale", "", 500, 0, 0)
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO voucher_transactions(id, voucher_id, sale_id, type, amount) VALUES ('vt-tu', 'GV-A', 'sale-tu', 'top_up', 500)`); err != nil {
+	seedSlipTopUp(t, dp, "GV-A", "sale-tu", "R-TU", 2000)
+	dev := slipDevice(t, dp, "true")
+	n, err := printReceiptIn(ctx, dp, "R-TU", "")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("slips = %d, want 1", n)
 	}
 	doc, err := customerReceiptDoc(ctx, dp, "R-TU", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Vouchers) == 0 {
-		t.Fatal("precondition: the top-up block should be on the receipt")
+	slips := voucherSlips(doc)
+	if len(slips) != 1 {
+		t.Fatalf("voucherSlips = %d, want 1", len(slips))
 	}
-	dev := slipDevice(t, dp, "true")
-	if _, err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil {
+	want := append(print.Render(doc), print.RenderVoucherSlip(slips[0])...)
+	got := readJob(t, dev)
+	if !bytes.Equal(got, want) {
+		t.Fatal("job != receipt + top-up slip")
+	}
+	b := doc.Vouchers[0]
+	for _, w := range []string{"Gift voucher top-up", b.Amount, "For Anna", b.Balance} {
+		if !bytes.Contains(got[len(print.Render(doc)):], []byte(w)) {
+			t.Errorf("slip lacks %q", w)
+		}
+	}
+	if !strings.HasPrefix(b.Amount, "+") || !strings.Contains(b.Balance, "45.00") {
+		t.Errorf("block amount/balance = %q / %q", b.Amount, b.Balance)
+	}
+	if !bytes.Contains(got, []byte("{BGV-A")) {
+		t.Error("slip lacks the CODE128 for GV-A")
+	}
+	if n := bytes.Count(got, []byte{0x1d, 0x56, 0x42, 0x03}); n != 2 {
+		t.Fatalf("feed-cut count = %d, want 2", n)
+	}
+}
+
+func TestPrintReceiptIn_TopUpSlipNoHolder(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedSlipVouchers(t, dp)
+	seedSlipTopUp(t, dp, "GV-B", "sale-tu", "R-TU", 500)
+	slipDevice(t, dp, "true")
+	doc := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	slips := voucherSlips(doc)
+	if len(slips) != 1 {
+		t.Fatalf("voucherSlips = %d, want 1", len(slips))
+	}
+	if bytes.Contains(print.RenderVoucherSlip(slips[0]), []byte("For ")) {
+		t.Error("no holder: no For row")
+	}
+}
+
+func TestPrintReceiptIn_TopUpReversedNoSlip(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedSlipVouchers(t, dp)
+	seedSlipTopUp(t, dp, "GV-A", "sale-tu", "R-TU", 2000)
+	tx, err := dp.Db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback() }()
+	if err := data.NewPOSRepo(dp.Db).VoidVouchersIssuedInSale(ctx, tx, "sale-tu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	doc := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	if len(doc.Vouchers) != 1 || doc.Vouchers[0].Void == "" {
+		t.Fatalf("precondition: receipt block must be marked void: %+v", doc.Vouchers)
+	}
+	dev := slipDevice(t, dp, "true")
+	if n, err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil || n != 0 {
+		t.Fatalf("slips = %d, err = %v, want 0", n, err)
+	}
 	if !bytes.Equal(readJob(t, dev), print.Render(doc)) {
-		t.Fatal("a top-up-only sale must print no slip")
+		t.Fatal("job must equal the plain receipt")
+	}
+}
+
+func TestPrintReceiptIn_TopUpOfVoidVoucherNoSlip(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedSlipVouchers(t, dp)
+	seedSlipTopUp(t, dp, "GV-A", "sale-tu", "R-TU", 2000)
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE vouchers SET status = 'void' WHERE id = 'GV-A'`); err != nil {
+		t.Fatal(err)
+	}
+	doc := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	if len(doc.Vouchers) != 1 || doc.Vouchers[0].Void != "" {
+		t.Fatalf("receipt block must stay as today (not void): %+v", doc.Vouchers)
+	}
+	dev := slipDevice(t, dp, "true")
+	if n, err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil || n != 0 {
+		t.Fatalf("slips = %d, err = %v, want 0", n, err)
+	}
+	if !bytes.Equal(readJob(t, dev), print.Render(doc)) {
+		t.Fatal("job must equal the plain receipt")
+	}
+}
+
+// seedIssueAndTopUpSale: R001 issues GV-A/GV-B (seedSlipVouchers) and also
+// tops up GV-C, which another sale issued.
+func seedIssueAndTopUpSale(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	seedSlipVouchers(t, dp)
+	seedReceiptSale(t, dp, "sale0", "R000", "sale", "", 1500, 0, 0)
+	if err := data.NewPOSRepo(dp.Db).CreateVoucher(context.Background(), nil, data.Voucher{ID: "GV-C", OriginalAmountMinor: 1500, BalanceMinor: 1500, Currency: "GBP", IssuedSaleID: "sale0", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	tx, err := dp.Db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := data.NewPOSRepo(dp.Db).TopUpVoucher(ctx, tx, "GV-C", "sale1", 500, 1_000_000, false, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrintReceiptIn_IssueAndTopUpSlipsInOrder(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedIssueAndTopUpSale(t, dp)
+	dev := slipDevice(t, dp, "true")
+	n, err := printReceiptIn(ctx, dp, "R001", "")
+	if err != nil || n != 3 {
+		t.Fatalf("slips = %d, err = %v, want 3", n, err)
+	}
+	doc := mustReceiptDoc(t, ctx, dp, "R001", "")
+	slips := voucherSlips(doc)
+	if len(slips) != 3 {
+		t.Fatalf("voucherSlips = %d, want 3", len(slips))
+	}
+	got := readJob(t, dev)
+	tail := got[len(print.Render(doc)):]
+	a, b, c := bytes.Index(tail, []byte("{BGV-A")), bytes.Index(tail, []byte("{BGV-B")), bytes.Index(tail, []byte("{BGV-C"))
+	if a < 0 || b < a || c < b {
+		t.Fatalf("slip order wrong: A %d B %d C %d", a, b, c)
+	}
+	if v := slips[0].Voucher; v.Label != "Gift voucher" || strings.HasPrefix(v.Amount, "+") || v.Balance != "" {
+		t.Errorf("issue slip block changed: %+v", v)
+	}
+	if v := slips[2].Voucher; v.Label != "Gift voucher top-up" || !strings.HasPrefix(v.Amount, "+") || v.Balance == "" {
+		t.Errorf("top-up slip block wrong: %+v", v)
+	}
+}
+
+func TestPrintReceiptIn_TopUpSlipsOff(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedIssueAndTopUpSale(t, dp)
+	dev := slipDevice(t, dp, "")
+	if n, err := printReceiptIn(ctx, dp, "R001", ""); err != nil || n != 0 {
+		t.Fatalf("slips = %d, err = %v, want 0", n, err)
+	}
+	doc := mustReceiptDoc(t, ctx, dp, "R001", "")
+	if !bytes.Equal(readJob(t, dev), print.Render(doc)) {
+		t.Fatal("setting off: job must equal the plain receipt")
+	}
+}
+
+// R9: a reprint shows the balance right after the top-up, not today's.
+func TestVoucherSlips_TopUpBalanceIsHistorical(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedSlipVouchers(t, dp)
+	seedSlipTopUp(t, dp, "GV-A", "sale-tu", "R-TU", 2000)
+	before := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	repo := data.NewPOSRepo(dp.Db)
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GV-A", 1000, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordVoucherTransaction(ctx, nil, data.VoucherTransaction{ID: "red1", VoucherID: "GV-A", SaleID: "sale1", Type: "redemption", AmountMinor: 1000, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	after := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	s0, s1 := voucherSlips(before), voucherSlips(after)
+	if len(s0) != 1 || len(s1) != 1 || s1[0].Voucher.Balance != s0[0].Voucher.Balance {
+		t.Fatalf("balance changed after redemption: %+v vs %+v", s0, s1)
 	}
 }
 
@@ -291,4 +483,45 @@ func TestPostSettingsPrinter_VoucherSlipElevationRoundTrip(t *testing.T) {
 	if v, ok, _ := d.Settings.Get(t.Context(), keyPrinterVoucherSlip); ok && v == "true" {
 		t.Fatal("must not be saved before approval")
 	}
+}
+
+// Tester (ut-docs#5793, R9): the test above seeds vouchers without an 'issue'
+// ledger row, so it only exercises the replica branch of the balance-after
+// read. A voucher issued on this till has one (internal/pos/sales.go); pin
+// the historical slip balance on that path too.
+func TestVoucherSlips_TopUpBalanceIsHistorical_IssueRow(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedSlipVouchers(t, dp)
+	repo := data.NewPOSRepo(dp.Db)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := repo.RecordVoucherTransaction(ctx, nil, data.VoucherTransaction{ID: "iss-a", VoucherID: "GV-A", SaleID: "sale1", Type: "issue", AmountMinor: 2500, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	seedSlipTopUp(t, dp, "GV-A", "sale-tu", "R-TU", 2000)
+	before := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GV-A", 1000, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordVoucherTransaction(ctx, nil, data.VoucherTransaction{ID: "red1", VoucherID: "GV-A", SaleID: "sale2", Type: "redemption", AmountMinor: 1000, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	after := mustReceiptDoc(t, ctx, dp, "R-TU", "")
+	s0, s1 := voucherSlips(before), voucherSlips(after)
+	if len(s0) != 1 || len(s1) != 1 {
+		t.Fatalf("slips = %d / %d, want 1 / 1", len(s0), len(s1))
+	}
+	if !strings.Contains(s0[0].Voucher.Balance, "45.00") || s1[0].Voucher.Balance != s0[0].Voucher.Balance {
+		t.Fatalf("slip balance = %q before, %q after a later redemption; want 45.00 both times", s0[0].Voucher.Balance, s1[0].Voucher.Balance)
+	}
+}
+
+// mustReceiptDoc builds the customer receipt doc and fails the test on error.
+func mustReceiptDoc(t *testing.T, ctx context.Context, dp *common.Deps, receiptNo, locale string) print.Doc {
+	t.Helper()
+	doc, err := customerReceiptDoc(ctx, dp, receiptNo, locale)
+	if err != nil {
+		t.Fatalf("customerReceiptDoc(%s): %v", receiptNo, err)
+	}
+	return doc
 }
