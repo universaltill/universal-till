@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -704,4 +705,56 @@ CREATE TABLE audit_log (
   blocked_actor_id TEXT
 );
 `
+}
+
+// ut-docs#5796 F1: a shift whose opened_at is in the legacy
+// 'YYYY-MM-DD HH:MM:SS' form must not count earlier same-day sales in the
+// expected cash CloseShift stores.
+func TestCloseShift_LegacyOpenedAtExpectedCash(t *testing.T) {
+	ctx := context.Background()
+	db := testShiftDB(t)
+	defer db.Close()
+	seedShiftData(t, db)
+
+	n := time.Now().UTC().Truncate(time.Second)
+	if n.Hour() == 0 && n.Minute() == 0 && n.Second() < 30 {
+		t.Skip("same-UTC-day precondition")
+	}
+	execSQL(t, db, `INSERT INTO shifts (id, register_id, cashier_id, opened_at, opening_cash) VALUES ('sh-legacy','reg1','user1','`+
+		n.Add(-10*time.Second).Format("2006-01-02 15:04:05")+`',500)`)
+	for _, s := range []struct {
+		id  string
+		at  time.Time
+		amt int
+	}{{"old", n.Add(-20 * time.Second), 1000}, {"new", n.Add(-5 * time.Second), 300}} {
+		at := s.at.Format(time.RFC3339)
+		if _, err := db.ExecContext(ctx, `INSERT INTO sales (id, receipt_no, status, sale_type, register_id, cashier_id, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES (?, ?, 'completed', 'sale', 'reg1', 'user1', 'GBP', ?, 0, 0, ?, ?, ?)`, s.id, "R-"+s.id, s.amt, s.amt, at, at); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO payments (id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES (?, ?, 'cash', ?, 'GBP', 0, ?)`, "p-"+s.id, s.id, s.amt, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CloseShift(ctx, db, ShiftCloseInput{ShiftID: "sh-legacy", ClosingCash: 800}); err != nil {
+		t.Fatalf("CloseShift: %v", err)
+	}
+	var expected int64
+	if err := db.QueryRowContext(ctx, `SELECT expected_cash FROM shifts WHERE id='sh-legacy'`).Scan(&expected); err != nil {
+		t.Fatal(err)
+	}
+	if expected != 800 {
+		t.Fatalf("stored expected_cash = %d, want 800 (opening 500 + the sale after opening 300)", expected)
+	}
+	var payload string
+	if err := db.QueryRowContext(ctx, `SELECT data_json FROM audit_log WHERE entity_type='shift' AND entity_id='sh-legacy' AND action='close'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(payload), &m); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m["expected_cash"].(float64); got != 800 {
+		t.Fatalf("audit expected_cash = %v, want 800", m["expected_cash"])
+	}
 }
