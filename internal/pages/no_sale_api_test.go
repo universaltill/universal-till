@@ -18,7 +18,7 @@ import (
 )
 
 // ut-docs#2558: POST /api/pos/no-sale opens the cash drawer without a sale.
-// It is gated exactly like a cash skim (cash_adjustment, manager PIN via
+// It is gated by the dedicated no_sale permission (ut-docs#3560; manager PIN via
 // checkOrElevate), kicks the drawer FIRST, and records the open (event row
 // + audit row) only once the printer accepted the kick.
 
@@ -191,9 +191,9 @@ func TestNoSale_CashierWithManagerPINElevatesAndRecordsBoth(t *testing.T) {
 	}
 }
 
-func TestNoSale_CashierGrantedCashAdjustmentNeedsNoPIN(t *testing.T) {
+func TestNoSale_CashierGrantedNoSaleNeedsNoPIN(t *testing.T) {
 	mux, dp, _ := newNoSaleTestDeps(t, "device")
-	set3134Grant(t, dp.Db, "cashier", "cash_adjustment", 1)
+	set3134Grant(t, dp.Db, "cashier", "no_sale", 1)
 
 	rec := postNoSale(t, mux, cashier3134, `{}`)
 	if rec.Code != http.StatusOK {

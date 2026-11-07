@@ -4077,6 +4077,29 @@ body.osk-padded #table-add-modal .modifier-actions {
   .tender-default-footer > .payment-trigger { flex-basis: 100%; }
   .tender-default-footer > .tender-icon-btn { flex: 1 1 0; }
 }
+/* ut-docs#3560: with the No sale icon the one-line row needs 19.6rem
+   (7rem Pay + 4 x 2.75rem + 4 x .4rem); below that Pay takes its own line
+   and the four icons share the next, as #5221 does for three. */
+@container tender-actions (max-width: 19.6rem) {
+  .tender-default-footer:has(> [data-no-sale-btn]) > .payment-trigger { flex-basis: 100%; }
+  .tender-default-footer:has(> [data-no-sale-btn]) > .tender-icon-btn { flex: 1 1 0; }
+}
+/* ut-docs#3560: the No sale outcome, first in the tender panel; full row in
+   the #5227 row-wrap tiers (inline-size:100% = its own flex line). */
+.tender > .no-sale-status { flex: 0 0 auto; inline-size: 100%; margin-block-end: .45rem; }
+.tender > .no-sale-status:empty { display: none; }
+.no-sale-status > .pos-notice { margin-block-end: 0; }
+.no-sale-status > .elevation-hint { display: block; font-size: .9rem; }
+/* ut-docs#3560: busy ring in place of the glyph while the kick is in flight
+   (up to ~15s against a dead network printer); static under reduced motion. */
+[data-no-sale-btn].htmx-request .btn-ico { visibility: hidden; }
+[data-no-sale-btn].htmx-request::after {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  inline-size: 1.1rem; block-size: 1.1rem;
+  border: 2px solid currentColor; border-block-start-color: transparent; border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { [data-no-sale-btn].htmx-request::after { animation: none; } }
 /* ut-docs#2702: the preferred payment method (payments.default_method)
    leads the payment panel's grid and spans its whole first row — the
    quick-pay button's one-tap job, now one tap after Pay. */

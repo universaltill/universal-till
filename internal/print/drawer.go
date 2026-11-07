@@ -52,3 +52,9 @@ func OpenDrawer(ctx context.Context, c Config) error {
 	}
 	return nil
 }
+
+// DrawerCapable reports whether a printer.mode value can kick a cash drawer
+// (ut-docs#3560: the sale screen shows its No sale button only then). A
+// positive list matching NewTransport's thermal modes: "system" (office
+// printer), off, unset and unknown modes are all false.
+func DrawerCapable(mode string) bool { return mode == "network" || mode == "device" }

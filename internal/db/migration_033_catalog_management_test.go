@@ -122,10 +122,11 @@ func TestMigration033_IsIdempotent(t *testing.T) {
 	// 3 void_comp_waste grants 035_shrinkage_events.sql adds (ut-docs#1465)
 	// + the 3 stock_management grants 052 adds (ut-docs#3079)
 	// + the 3 notices.view grants 096 adds (ut-docs#5366)
+	// + the 3 no_sale grants 098 adds (ut-docs#3560)
 	// — Open() above runs every migration on disk, not just 033, so a
 	// later migration that also seeds role_permissions moves this total;
 	// update it again the same way whenever the next one does.
-	if total != 66 {
-		t.Fatalf("role_permissions total = %d after replays, want 66 (54 baseline + 3 from 033 + 3 from 035 + 3 from 052 + 3 from 096)", total)
+	if total != 69 {
+		t.Fatalf("role_permissions total = %d after replays, want 69 (54 baseline + 3 from 033 + 3 from 035 + 3 from 052 + 3 from 096 + 3 from 098)", total)
 	}
 }

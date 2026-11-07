@@ -76,7 +76,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   from, so a past day whose sales, voids and no-sale opens did not change is
   not rebuilt (ut-docs#2559; migration 085)
 - `no_sale_events` — "No sale" cash-drawer opens (`POST /api/pos/no-sale`,
-  gated by the `cash_adjustment` permission or a manager PIN; recorded only
+  gated by the `no_sale` permission (migration 098) or a manager PIN; recorded only
   after the drawer kick reached the printer). Append-only; `local_date` and
   the till key (`till_id`, else `register_id`) follow the sales rules, so
   the ADR-0111 rollup reports them as `no_sale_count` and

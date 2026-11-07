@@ -363,6 +363,12 @@
       next.click(); next.focus();
     }
   }">
+    <!-- ut-docs#3560: the No sale outcome (and its PIN hint) lands here, first
+         in the tender panel: next to the button just tapped at every width,
+         outside #basket (basket swaps would wipe it) and above the tiles'
+         bottom edge so tiles do not jump. The one persistent live region;
+         the notice inside carries no role (no_sale_status.html). -->
+    <div id="no-sale-status" class="no-sale-status" role="status" aria-atomic="true"></div>
     <!-- ut-docs#2702 (product owner, 2026-09-25): compact tender panel —
          "barcode box can be thinner smaller with its belongings, one row
          buttons at the bottom of it is enough: one payment button which
@@ -523,6 +529,19 @@
         <span class="btn-ico" aria-hidden="true">{{ icon "clipboard-list" }}</span><span class="visually-hidden">{{ T "open_orders.title" }}</span>
         <span class="count-badge" data-testid="open-orders-badge" data-count="0" hidden
               hx-get="/ui/open-orders-badge" hx-trigger="load, held-changed from:body" hx-target="this" hx-swap="outerHTML"></span></button>
+      {{ if .noSaleAvailable }}
+      <!-- ut-docs#3560: No sale (open the cash drawer). Last in the row:
+           an infrequent action stays clear of Pay. Shown only with a
+           drawer-capable printer, to every staff session: one without the
+           no_sale permission gets the shared manager-PIN prompt, so the
+           button is deliberately not permission-gated. Explicit hx-target/
+           hx-swap (no inheritance); drop a second tap while in flight. -->
+      <button type="button" class="btn secondary tender-icon-btn" data-testid="no-sale-open" data-no-sale-btn
+              title="{{ T "pos.no_sale.title" }}"
+              hx-post="/api/pos/no-sale" hx-target="#no-sale-status" hx-swap="innerHTML"
+              hx-sync="this:drop" hx-disabled-elt="this">
+        <span class="btn-ico" aria-hidden="true">{{ icon "archive" }}</span><span class="visually-hidden">{{ T "pos.no_sale.title" }}</span></button>
+      {{ end }}
       <!-- ut-docs#2858: every badge render swaps its watcher in here (out
            of band); it polls for held-sale changes made on other tills. -->
       <span id="open-orders-watch" hidden aria-hidden="true"></span>

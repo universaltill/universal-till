@@ -239,6 +239,10 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// stock_management-gated /inventory — a cashier (sale-only)
 			// doesn't get it, same as the rail's Stock entry.
 			"canManageStock": canPerform(d, r, "stock_management"),
+			// ut-docs#3560: the No sale (open drawer) icon — only with a
+			// thermal printer that can kick a drawer; never permission-gated
+			// here (a session without no_sale gets the manager-PIN prompt).
+			"noSaleAvailable": noSaleDrawerAvailable(r.Context(), d),
 			// ut-docs#3710: start the guided tour (web/ui/partials/tour.html)
 			// — a signed-in operator who hasn't finished it, or ?tour=1.
 			"tourStart": tourShouldStart(r.Context(), d, r),

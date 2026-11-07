@@ -78,3 +78,12 @@ func TestOpenDrawer_TransportFailureIsReturned(t *testing.T) {
 		t.Fatal("device mode with no path must fail")
 	}
 }
+
+// ut-docs#3560: the sale screen shows No sale only for a thermal transport.
+func TestDrawerCapable(t *testing.T) {
+	for mode, want := range map[string]bool{"network": true, "device": true, "": false, "off": false, "system": false, "junk": false} {
+		if got := DrawerCapable(mode); got != want {
+			t.Errorf("DrawerCapable(%q) = %v, want %v", mode, got, want)
+		}
+	}
+}

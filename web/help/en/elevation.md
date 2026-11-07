@@ -11,7 +11,7 @@ keywords: [pin, approval, manager pin, override, elevation, permission]
 # Manager approval on the spot
 
 Some actions — changing a permission, promoting a till, running a backup,
-running or reprinting the end-of-day report, creating a user or changing
+running or reprinting the end-of-day report, opening the cash drawer without a sale (No sale), creating a user or changing
 someone's PIN or role, and others — need a manager's or admin's say-so.
 If your own account isn't
 allowed to do one of these, the screen doesn't just refuse: it opens a small

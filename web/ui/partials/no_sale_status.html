@@ -1,0 +1,17 @@
+{{/* no_sale_status.html — the inline outcome of the sale screen's No sale
+     button (ut-docs#3560), swapped into #no-sale-status. Data: Level
+     (success|error), MsgKey, ShowSettingsLink (settings holders get a link to
+     the printer settings), ShowAskManager (everyone else gets plain text).
+
+     No role on the inner .pos-notice, success or error: the persistent
+     #no-sale-status container is the one live region (role=status), and a
+     nested role=alert inside it is read twice by NVDA/JAWS. This
+     deliberately differs from basket.html's per-notice roles. Success
+     auto-dismisses (app.js scheduleToastDismiss); an error stays until the
+     dismiss button or the next No sale. */}}
+<div class="pos-notice {{ .Level }}">
+  <span class="notice-text">{{ T .MsgKey }}
+    {{ if .ShowSettingsLink }}<a href="/settings#settings-printer">{{ T "pos.no_sale.printer_settings_link" }}</a>{{ end }}
+    {{ if .ShowAskManager }}{{ T "pos.no_sale.ask_manager" }}{{ end }}</span>
+  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+</div>

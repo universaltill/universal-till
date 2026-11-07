@@ -6,7 +6,7 @@ order: 10
 public: true
 summary: "The main register screen: scan or pick items, take payment, print or skip the receipt."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
-keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, dine-in/takeaway prompt, before first item, at pay, suggestions, offline, sync chip, voucher, gutschein, gift card]
+keywords: [no sale, open drawer, cash drawer, basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, dine-in/takeaway prompt, before first item, at pay, suggestions, offline, sync chip, voucher, gutschein, gift card]
 ---
 
 # Selling & checkout
@@ -72,6 +72,18 @@ If a held sale was parked before a shop switched on either of the deferred promp
 If you keep a customer list, scanning or typing their code into the barcode box links them to the current sale instead of adding an item — the same box you scan products into. This only recognizes a **customer code** in the shape the till expects (starting `CUST` or `LOY`) — a phone number or any other loyalty number typed in on its own isn't recognized as a customer lookup and is refused as "Item not found" like an unmatched product barcode; issue customers a code in the recognized shape (see **Users, PINs & shifts** or your customer-management plugin's own setup) if you want to look them up this way. A recognized-but-unknown code gets its own message instead ("Customer not found"). Once linked, a success message names the customer and their name shows above the basket totals for the rest of the sale.
 
 Linking a customer is what lets a customer-specific promotion code (see **Discounts** above) be recognized — scan the customer first, then their code.
+
+## No sale: opening the cash drawer
+
+The **No sale** button opens the cash drawer without ringing up a sale, for example to give change or check the float. It is the drawer icon at the end of the action row under the basket, after Hold, New sale and Open orders. On a phone, open the basket; the drawer icon is in the row with Pay.
+
+- **It only shows when a receipt printer with a drawer is set up.** That means a thermal printer connected by network or USB, with the drawer plugged into it; see **Printing**. With no printer, or an office (regular) printer, the button is not shown.
+- **Your basket is not touched.** You can use No sale with an empty basket or in the middle of a sale; no line is added or removed.
+- **Permission.** Managers and admins can open the drawer straight away. If your role does not have the **No sale** permission (cashiers by default), a manager-PIN box opens: a manager types their PIN to approve it, or you cancel and carry on selling. An admin can give the permission to a role under Users → Permissions.
+- **Every open is recorded** with who opened it and, if a PIN was needed, who approved it.
+- **The result appears above the scan box.** "Cash drawer opened." disappears by itself. If the drawer could not be opened, the message says why and what to do (check that the printer is on and connected, or set up the printer in Settings); it stays until you dismiss it. If it says the drawer opened but could not be saved, tell a manager.
+
+No sale works with no network connection: it only needs the printer.
 
 ## "Customers also buy" suggestions
 
