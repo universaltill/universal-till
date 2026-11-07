@@ -195,6 +195,8 @@
   window.utTableCards = scan;
 
   document.addEventListener('htmx:load', function (ev) { scan(ev.target); });
+  // UT.refreshRegion (app.js) swaps a region in without htmx:load.
+  document.addEventListener('ut:region-refreshed', function (ev) { scan(ev.target); });
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { scan(document.body); });
   } else {

@@ -675,6 +675,7 @@ func TestShiftsPage_Markup5782(t *testing.T) {
 		`class="catalog-layout shifts-layout"`,
 		`class="shifts-history-scroll" role="region" tabindex="0" aria-labelledby="shifts-history-title"`,
 		`id="shifts-history-title"`,
+		`class="card shifts-history-card"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s in /shifts markup", want)

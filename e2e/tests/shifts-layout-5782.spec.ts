@@ -111,7 +111,29 @@ test.describe('kiosk 1024x600', () => {
     await expect(cell).not.toHaveText(cashierId);
     await expect(page.locator('.shifts-history-scroll tbody tr')).toHaveCount(20); // the page lists the latest 20 (the open one included)
     await expectCloseControlsInViewport(page, 600);
+    // all six History headers sit inside the History box (R2: no hidden columns)
+    const hist = await page.locator('.shifts-history-scroll').evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+    expect(hist.sw, 'History scroller needs no horizontal scroll').toBeLessThanOrEqual(hist.cw);
+    const box = await page.locator('.shifts-history-scroll').boundingBox();
+    const ths = page.locator('.shifts-history-scroll thead th');
+    await expect(ths).toHaveCount(6);
+    for (let i = 0; i < 6; i++) {
+      const b = await ths.nth(i).boundingBox();
+      expect(b!.x, `header ${i} left`).toBeGreaterThanOrEqual(box!.x - 1);
+      expect(b!.x + b!.width, `header ${i} right`).toBeLessThanOrEqual(box!.x + box!.width + 1);
+    }
     await page.screenshot({ path: test.info().outputPath('shifts-1024x600.png') });
+  });
+
+  test('Denomination count open: no horizontal page scroll', async ({ page, request }) => {
+    await closeAnyOpen(request);
+    await openShift(request);
+    await page.goto('/shifts');
+    await page.locator('#close-shift-form summary').click();
+    await expect(page.locator('#denom-grid')).toBeVisible();
+    const m = await hScroll(page);
+    expect(m.sw, 'denomination grid open').toBeLessThanOrEqual(m.cw);
+    await page.screenshot({ path: test.info().outputPath('shifts-1024x600-denom.png') });
   });
 
   test('worst case with the manager-PIN rows still fits', async ({ page, request }) => {
@@ -154,12 +176,15 @@ test.describe('phone 360px', () => {
     await expect(page.locator('#close-shift-form')).toBeVisible();
     m = await hScroll(page);
     expect(m.sw, 'after open (refreshRegion)').toBeLessThanOrEqual(m.cw);
+    // refreshRegion fires ut:region-refreshed, which table-cards.js re-scans on
+    await expect(page.locator('.shifts-history-scroll table.t-cards'), 'History is a card list after open').toHaveCount(1);
 
     await page.locator('#closing-cash').fill('10.00');
     await page.locator('#close-shift-form button[type=submit]').click();
     await expect(page.locator('#open-shift-form')).toBeVisible();
     m = await hScroll(page);
     expect(m.sw, 'after close (refreshRegion)').toBeLessThanOrEqual(m.cw);
+    await expect(page.locator('.shifts-history-scroll table.t-cards'), 'History is a card list after close').toHaveCount(1);
     await page.screenshot({ path: test.info().outputPath('shifts-360.png'), fullPage: true });
   });
 });

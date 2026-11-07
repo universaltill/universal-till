@@ -4522,7 +4522,7 @@ func (r *POSRepo) CurrentOpenShift(ctx context.Context) (ShiftSummary, bool, err
 	var closing, expected sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
 SELECT s.id, s.register_id, s.cashier_id,
-       COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), s.cashier_id, ''),
+       COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), s.cashier_id),
        s.opened_at, s.closed_at, s.opening_cash, s.closing_cash, s.expected_cash, s.note
 FROM shifts s LEFT JOIN users u ON u.id = s.cashier_id
 WHERE s.closed_at IS NULL ORDER BY s.opened_at DESC LIMIT 1`).Scan(
