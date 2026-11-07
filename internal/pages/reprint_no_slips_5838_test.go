@@ -131,11 +131,34 @@ func TestJournalDetail_NoSlipsButtonVisibility(t *testing.T) {
 	seedReceiptSale(t, dp, "sale-plain", "R-PLAIN", "sale", "", 500, 0, 0)
 
 	slipDevice(t, dp, "true")
-	if !strings.Contains(journalBody(t, dp, "R001"), noSlipsBtn) {
+	body := journalBody(t, dp, "R001")
+	if !strings.Contains(body, noSlipsBtn) {
 		t.Fatal("setting on + voucher sale: button missing")
+	}
+	// The button must actually send no_slips=1, or it would print the slips.
+	i := strings.Index(body, noSlipsBtn)
+	start := strings.LastIndex(body[:i], "<button")
+	if tag := body[start:i]; !strings.Contains(tag, "no_slips") || !strings.Contains(tag, "1") {
+		t.Fatalf("no-slips button does not send no_slips=1: %s", tag)
 	}
 	if strings.Contains(journalBody(t, dp, "R-PLAIN"), noSlipsBtn) {
 		t.Fatal("voucher-free sale must not show the button")
+	}
+	slipDevice(t, dp, "false")
+	if strings.Contains(journalBody(t, dp, "R001"), noSlipsBtn) {
+		t.Fatal("setting off: button must be absent")
+	}
+}
+
+// Setting off on a sale whose ledger records the voucher issue and top-up, so
+// the journal reads the vouchers anyway: the setting alone must hide the
+// button (Tester mutation T-1).
+func TestJournalDetail_NoSlipsButtonHiddenWithSettingOff(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	seedIssueAndTopUpSale(t, dp)
+	slipDevice(t, dp, "true")
+	if !strings.Contains(journalBody(t, dp, "R001"), noSlipsBtn) {
+		t.Fatal("precondition: setting on must show the button")
 	}
 	slipDevice(t, dp, "false")
 	if strings.Contains(journalBody(t, dp, "R001"), noSlipsBtn) {
