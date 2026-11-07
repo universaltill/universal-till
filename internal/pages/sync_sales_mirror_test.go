@@ -316,7 +316,7 @@ func TestSalesMirrorAcks_Throttle(t *testing.T) {
 	}
 }
 
-// The state re-sync pages sales (not the caller's own) then closes, all at
+// The state re-sync pages sales (the caller's own as bare headers, ut-docs#5807) then closes, all at
 // resume_seq, and holds the log above resume_seq for the caller.
 func TestSalesMirrorState_PagesSalesThenCloses(t *testing.T) {
 	shop := newMirrorShop(t, "A", "B")
@@ -337,6 +337,7 @@ func TestSalesMirrorState_PagesSalesThenCloses(t *testing.T) {
 	head, _ := data.NewSalesMirrorRepo(shop.main.d.Db).LogHead(ctx)
 	from := time.Now().AddDate(0, 0, -400).Format("2006-01-02")
 	seen := map[string]bool{}
+	var ownRec *data.MirrorSale
 	closes := 0
 	cursor, resume := "", ""
 	for i := 0; ; i++ {
@@ -357,6 +358,9 @@ func TestSalesMirrorState_PagesSalesThenCloses(t *testing.T) {
 			}
 			if rec.Sale != nil {
 				seen[rec.Sale.ID] = true
+				if rec.Sale.ID == own {
+					ownRec = rec.Sale
+				}
 			}
 			if rec.Close != nil {
 				closes++
@@ -367,8 +371,11 @@ func TestSalesMirrorState_PagesSalesThenCloses(t *testing.T) {
 		}
 		cursor, resume = r.state.NextCursor, fmt.Sprint(r.state.ResumeSeq)
 	}
-	if seen[own] {
-		t.Fatal("B was sent its own sale")
+	if !seen[own] {
+		t.Fatal("B was not sent its own sale as a header (ut-docs#5807)")
+	}
+	if ownRec == nil || ownRec.Total != 0 || len(ownRec.Lines) != 0 || len(ownRec.Payments) != 0 {
+		t.Fatalf("B's own sale is not header-only: %+v", ownRec)
 	}
 	for _, id := range want {
 		if !seen[id] {

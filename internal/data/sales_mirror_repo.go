@@ -510,11 +510,11 @@ SELECT id, kind, period, z_number, prev_z_number, prev_closed_at, first_receipt,
 FROM report_archive WHERE id IN (%s)`
 )
 
-// LoadMirrorSales reads the CURRENT state of the given sales (completed or
-// voided only) with every child, in batched reads: one query per table per
-// chunk of 500 ids, never one per sale. Ids not found (moved by a history
-// reset, or not completed/voided) are absent from the map.
-func (r *SalesMirrorRepo) LoadMirrorSales(ctx context.Context, ids []string, src MirrorSource) (map[string]*MirrorSale, error) {
+// LoadMirrorSaleHeaders reads the sale rows only (completed or voided), every
+// child slice empty and non-nil; for records that must not carry children
+// (the caller's own sales on a state page, ut-docs#5807). Ids not found are
+// absent from the map.
+func (r *SalesMirrorRepo) LoadMirrorSaleHeaders(ctx context.Context, ids []string, src MirrorSource) (map[string]*MirrorSale, error) {
 	out := make(map[string]*MirrorSale, len(ids))
 	if len(ids) == 0 {
 		return out, nil
@@ -548,6 +548,21 @@ func (r *SalesMirrorRepo) LoadMirrorSales(ctx context.Context, ids []string, src
 	})
 	if err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// LoadMirrorSales reads the CURRENT state of the given sales (completed or
+// voided only) with every child, in batched reads: one query per table per
+// chunk of 500 ids, never one per sale. Ids not found (moved by a history
+// reset, or not completed/voided) are absent from the map.
+func (r *SalesMirrorRepo) LoadMirrorSales(ctx context.Context, ids []string, src MirrorSource) (map[string]*MirrorSale, error) {
+	out, err := r.LoadMirrorSaleHeaders(ctx, ids, src)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
 	}
 	found := make([]string, 0, len(out))
 	for _, id := range ids {
@@ -741,36 +756,38 @@ type MirrorStateKey struct {
 
 // StateSaleIDs pages the ids of completed or voided sales with
 // local_date >= fromDate, strictly after (afterDate, afterRowID) in
-// (local_date, rowid) order, leaving out excludeTill's own (sales.till_id).
-// It returns each sale's id, local_date and rowid (the next cursor). The
+// (local_date, rowid) order. callerTill's own sales (sales.till_id) are
+// returned flagged in own, not excluded (ut-docs#5807). It returns each
+// sale's id, local_date and rowid (the next cursor). The
 // order comes straight from idx_sales_local_date (whose entries end in the
 // rowid), so a page never sorts the rest of the window (M2 review finding
 // 4); TestSalesMirrorStateReadUsesIndexOrder pins it. The rowid is stable
 // for the length of one re-sync on this till.
-func (r *SalesMirrorRepo) StateSaleIDs(ctx context.Context, fromDate, afterDate string, afterRowID int64, excludeTill string, limit int) (ids, dates []string, rowids []int64, err error) {
+func (r *SalesMirrorRepo) StateSaleIDs(ctx context.Context, fromDate, afterDate string, afterRowID int64, callerTill string, limit int) (ids, dates []string, rowids []int64, own []bool, err error) {
 	if afterDate < fromDate {
 		afterDate, afterRowID = fromDate, -1
 	}
-	rows, err := r.db.QueryContext(ctx, mirrorStateSalesSQL, afterDate, afterDate, afterRowID, excludeTill, limit)
+	rows, err := r.db.QueryContext(ctx, mirrorStateSalesSQL, callerTill, afterDate, afterDate, afterRowID, limit)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("sales mirror: state sales: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("sales mirror: state sales: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id, d string
-		var rid int64
-		if err := rows.Scan(&id, &d, &rid); err != nil {
-			return nil, nil, nil, fmt.Errorf("sales mirror: scan state sale: %w", err)
+		var rid, flag int64
+		if err := rows.Scan(&id, &d, &rid, &flag); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("sales mirror: scan state sale: %w", err)
 		}
 		ids, dates, rowids = append(ids, id), append(dates, d), append(rowids, rid)
+		own = append(own, flag != 0)
 	}
-	return ids, dates, rowids, rows.Err()
+	return ids, dates, rowids, own, rows.Err()
 }
 
 const mirrorStateSalesSQL = `
-SELECT id, local_date, rowid FROM sales INDEXED BY idx_sales_local_date
+SELECT id, local_date, rowid, (till_id <> '' AND till_id = ?) FROM sales INDEXED BY idx_sales_local_date
 WHERE (local_date > ? OR (local_date = ? AND rowid > ?))
-  AND status IN ('completed', 'voided') AND till_id <> ?
+  AND status IN ('completed', 'voided')
 ORDER BY local_date, rowid LIMIT ?`
 
 // StateCloseIDs pages this main till's closes created on or after fromDate,
