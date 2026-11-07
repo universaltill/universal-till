@@ -66,6 +66,8 @@ var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 var UpdateAvailable = func() bool { return updates.Current().Available }
 
 var baseFuncs = template.FuncMap{
+	// maxStoreNameRunes is the shop-name input cap (ut-docs#5774).
+	"maxStoreNameRunes": func() int { return config.MaxStoreNameRunes },
 	// ut-docs#4370: request-bound by withTranslateMode; false everywhere else.
 	"translatemode": func() bool { return false },
 	// runelen: a field's `size` attribute must track how many CHARACTERS
