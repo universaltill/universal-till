@@ -3809,7 +3809,7 @@ FROM report_archive WHERE kind = ?
 HAVING (? != 'eod' OR NOT EXISTS (
   SELECT 1 FROM report_archive ra2
   WHERE ra2.kind = 'eod'
-    AND date(ra2.created_at, 'localtime') = date(?, 'localtime')))
+    AND date(ra2.created_at, '-1 second', 'localtime') = date(?, '-1 second', 'localtime')))
 ON CONFLICT (kind, period) DO NOTHING`
 		args = []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt,
 			closedAtStr, kind, kind, closedAtStr}
@@ -5412,7 +5412,7 @@ func (r *POSRepo) NextDisplayNo(ctx context.Context, tx *sql.Tx) (string, error)
 	var maxVal sql.NullInt64
 	if err := exec.QueryRowContext(ctx, `
 SELECT COALESCE(MAX(CAST(substr(display_no, ?) AS INTEGER)), 0)
-FROM sales WHERE display_no LIKE ? || '%' AND created_at > ?`,
+FROM sales WHERE display_no LIKE ? || '%' AND created_at >= ?`,
 		len(prefix)+1, prefix, since).Scan(&maxVal); err != nil {
 		return "", fmt.Errorf("next display no: %w", err)
 	}
