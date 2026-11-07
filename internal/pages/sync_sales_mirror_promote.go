@@ -30,11 +30,12 @@ const (
 
 // salesMirrorAdoption is what a promote adopted, for the promote panel.
 type salesMirrorAdoption struct {
-	Ran          bool
-	Result       data.MirrorAdoptResult
-	OwnOutsideZ  int // this till's own sales before the floor that never reached the main till
-	LateOutsideZ int // copied sales before the floor the main till received after its close
-	Err          error
+	Ran            bool
+	Result         data.MirrorAdoptResult
+	OwnOutsideZ    int // this till's own sales before the floor that never reached the main till
+	LateOutsideZ   int // copied sales before the floor the main till received after its close
+	OwnLateCounted int // this till's own sales the main till recorded after its close: counted in the next Z by that time (ut-docs#5777)
+	Err            error
 }
 
 // adoptSalesMirrorOnPromote runs right after the replica identity is
@@ -66,6 +67,18 @@ func adoptSalesMirrorOnPromote(ctx context.Context, d *common.Deps, actorID, pus
 			if own != nil {
 				ownLast = own.UTC().Format("2006-01-02 15:04:05")
 			}
+			// Own sales the old main till applied after its close count in this
+			// till's next Z by that recording time (ut-docs#5777). Marked first:
+			// SalesOutsideAnyZ then leaves them out of the unpushed warning.
+			if n, err := repo.MarkOwnLateArrivals(ctx, last, ownLast); err != nil {
+				logging.L().Warnf("sales mirror: mark own late sales: %v", err)
+			} else {
+				out.OwnLateCounted = n
+				// Marked once; as main till nothing reads the arrivals again.
+				if err := repo.ClearOwnArrivals(ctx); err != nil {
+					logging.L().Warnf("sales mirror: %v", err)
+				}
+			}
 			out.OwnOutsideZ, out.LateOutsideZ, _ = repo.SalesOutsideAnyZ(ctx, last, ownLast, strings.TrimSpace(pushedUpTo))
 		}
 	}
@@ -73,7 +86,7 @@ func adoptSalesMirrorOnPromote(ctx context.Context, d *common.Deps, actorID, pus
 	out.Result, out.Err = runSalesMirrorAdoption(ctx, d)
 	_ = data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, actorID, "till", "-", "sales_adopted",
 		map[string]any{"adopted": out.Result.Adopted, "failed": out.Result.Failed, "voided": out.Result.Voided,
-			"own_outside_z": out.OwnOutsideZ, "late_outside_z": out.LateOutsideZ},
+			"own_outside_z": out.OwnOutsideZ, "late_outside_z": out.LateOutsideZ, "own_late_counted": out.OwnLateCounted},
 		time.Now().UTC().Format(time.RFC3339), "")
 	return out
 }

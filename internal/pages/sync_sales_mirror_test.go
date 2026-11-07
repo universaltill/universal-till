@@ -180,14 +180,16 @@ func TestSalesMirrorFeed_PagesTheLogWithOwnOriginCovered(t *testing.T) {
 		t.Fatalf("close on B's page = %+v", r.Close)
 	}
 
-	// A's page covers the same range without A's own sale.
+	// A's page covers the same range; A's own sale goes as a bare header
+	// only (its recording time, ut-docs#5777): nothing to copy.
 	ra := shop.feedAfter(a, epoch, 0, 200)
 	if ra.status != http.StatusOK || ra.page.ToSeq != head {
 		t.Fatalf("A's page: %d %+v", ra.status, ra.page)
 	}
 	for _, rec := range ra.page.Records {
-		if rec.Sale != nil && rec.Sale.ID == saleA {
-			t.Fatal("A was sent its own sale")
+		if rec.Sale != nil && rec.Sale.ID == saleA &&
+			(len(rec.Sale.Lines) != 0 || len(rec.Sale.Payments) != 0 || rec.Sale.Total != 0) {
+			t.Fatal("A was sent more than the header of its own sale")
 		}
 	}
 
@@ -504,7 +506,7 @@ func TestSalesMirrorStatus_MainTillShowsAcks(t *testing.T) {
 }
 
 // At the head: 200, no records, more=false. A page holding only the
-// caller's own sales advances the range with zero records.
+// caller's own sales advances the range with bare headers only (ut-docs#5777).
 func TestSalesMirrorFeed_AtHeadAndOwnOnlyPages(t *testing.T) {
 	shop := newMirrorShop(t, "A")
 	epoch := shop.enable()
@@ -515,8 +517,13 @@ func TestSalesMirrorFeed_AtHeadAndOwnOnlyPages(t *testing.T) {
 	shop.push(a)
 	head, _ := data.NewSalesMirrorRepo(shop.main.d.Db).LogHead(t.Context())
 	r := shop.feedAfter(a, epoch, 0, 200)
-	if r.status != http.StatusOK || len(r.page.Records) != 0 || r.page.ToSeq != head || r.page.More {
+	if r.status != http.StatusOK || len(r.page.Records) != 3 || r.page.ToSeq != head || r.page.More {
 		t.Fatalf("own-only page: %d records, to %d of %d, more %v", len(r.page.Records), r.page.ToSeq, head, r.page.More)
+	}
+	for _, rec := range r.page.Records {
+		if rec.Sale == nil || rec.Sale.CompletedAt == nil || len(rec.Sale.Lines) != 0 || len(rec.Sale.Payments) != 0 || rec.Sale.Total != 0 {
+			t.Fatalf("own sale record is not a bare header: %+v", rec.Sale)
+		}
 	}
 	r = shop.feedAfter(a, epoch, head, 200)
 	if r.status != http.StatusOK || len(r.page.Records) != 0 || r.page.FromSeq != head || r.page.ToSeq != head || r.page.More {

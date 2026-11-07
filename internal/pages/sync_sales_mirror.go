@@ -37,7 +37,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// SalesMirrorFeedVersion is the feed's major version (contract 1.0.0).
+// SalesMirrorFeedVersion is the feed's major version (contract 1.x; 1.1.0 adds header-only own sales).
 const SalesMirrorFeedVersion = 1
 
 // Feed bounds (design §5.1, §11).
@@ -332,12 +332,25 @@ func (s *salesMirrorServer) feed(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ownSaleArrival is the bare header of a sale sent back to its own origin
+// till: enough to pass the copy's validity check and carry the recording
+// time, nothing else (ut-docs#5777).
+func ownSaleArrival(s *data.MirrorSale) *data.MirrorSale {
+	return &data.MirrorSale{
+		ID: s.ID, OriginTillID: s.OriginTillID, OriginTillName: s.OriginTillName, ReceiptNo: s.ReceiptNo,
+		Status: s.Status, SaleType: s.SaleType, Currency: s.Currency, CreatedAt: s.CreatedAt,
+		CompletedAt: s.CompletedAt, LocalDate: s.LocalDate,
+		Lines: []data.MirrorSaleLine{}, Payments: []data.MirrorPayment{}, Charges: []data.MirrorSaleCharge{},
+		Discounts: []data.MirrorSaleDiscount{}, Links: []data.MirrorSaleLink{},
+	}
+}
+
 // buildMirrorRecords turns log entries into feed records with batched reads
 // (one query per table, design §11), bounded by salesMirrorMaxPageBytes. It
 // returns the records and the seq the page covers up to: the last entry it
 // took, so a page cut by the byte bound still covers an exact range.
-// Records whose CURRENT origin is the caller are left out but covered;
-// several entries for one record in a page collapse to one (its state is
+// A sale whose CURRENT origin is the caller goes as a bare header only
+// (ownSaleArrival); several entries for one record in a page collapse to one (its state is
 // the same current state either way).
 func buildMirrorRecords(ctx context.Context, repo *data.SalesMirrorRepo, entries []data.MirrorLogEntry, after int64, callerTill string, src data.MirrorSource) ([]data.MirrorRecord, int64, error) {
 	var saleIDs, closeIDs []string
@@ -380,8 +393,12 @@ func buildMirrorRecords(ctx context.Context, repo *data.SalesMirrorRepo, entries
 			case sale == nil:
 				rec = data.MirrorRecord{Seq: e.Seq, Op: e.Op, ID: e.RefID, Gone: true}
 			case sale.OriginTillID == callerTill:
-				toSeq = e.Seq
-				continue
+				// The caller's own sale is not sent back (it has it). Only a
+				// bare header goes, so the caller keeps WHEN this till recorded
+				// it: a promote counts a sale recorded after this till's last
+				// close in its next Z (ut-docs#5777). The caller skips it as its
+				// own and keeps just the time; no line, payment or amount moves.
+				rec = data.MirrorRecord{Seq: e.Seq, Op: e.Op, Sale: ownSaleArrival(sale)}
 			default:
 				rec = data.MirrorRecord{Seq: e.Seq, Op: e.Op, Sale: sale}
 			}

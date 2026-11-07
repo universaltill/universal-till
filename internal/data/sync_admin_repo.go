@@ -631,6 +631,7 @@ var nonAdminTables = map[string]string{
 	// other tills' sales, and the copy is per-till state by nature. Only
 	// internal/data/sales_mirror_repo.go reads these tables
 	// (guard-sales-mirror-isolation.sh); the names below are classification only.
+	"mirror_sale_arrivals":       "when the previous main till applied a sale this till made (ut-docs#5777) — local copy bookkeeping, same reasoning as mirror_sales",                 // sales-mirror:allow table classification
 	"mirror_sales":               "read-only copy of the shop's sales on an additional till (ut-docs#5074) — its own feed, never the admin bundle",                                    // sales-mirror:allow table classification
 	"mirror_sale_lines":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
 	"mirror_sale_line_modifiers": "child of mirror_sale_lines (ut-docs#5074) — same reasoning",                                                                                        // sales-mirror:allow table classification

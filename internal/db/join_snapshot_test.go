@@ -516,6 +516,7 @@ func TestRedactedJoinSnapshot_ResetsSalesMirrorBookkeeping(t *testing.T) {
 		`INSERT INTO mirror_state (key, value) VALUES ('epoch', 'e1'), ('cursor', '42')`,
 		`INSERT INTO sales_mirror_log (op, ref_id) VALUES ('sale', 's1')`,
 		`INSERT INTO sales_mirror_acks (till_id, epoch, acked_seq, acked_at) VALUES ('t2', 'e1', 1, 'x')`,
+		`INSERT INTO mirror_sale_arrivals (id, completed_at, local_date) VALUES ('a1', 'x', '2026-10-25')`,
 		`INSERT INTO mirror_sales (id, src_seq, epoch, origin_till_id, receipt_no, status, sale_type, tender_type,
   currency, subtotal, discount_total, tax_total, total, rounding, service_charge_amount, service_charge_tax_basis_bp,
   voucher_issue_total, offline, created_at, local_date, received_at)
@@ -542,7 +543,7 @@ func TestRedactedJoinSnapshot_ResetsSalesMirrorBookkeeping(t *testing.T) {
 		}
 		return n
 	}
-	for _, tb := range []string{"mirror_state", "sales_mirror_log", "sales_mirror_acks"} {
+	for _, tb := range []string{"mirror_state", "sales_mirror_log", "sales_mirror_acks", "mirror_sale_arrivals"} {
 		if n := count(cdb, tb); n != 0 {
 			t.Errorf("join snapshot %s has %d rows, want 0", tb, n)
 		}
