@@ -4506,6 +4506,7 @@ type ShiftSummary struct {
 	ID          string
 	RegisterID  string
 	CashierID   string
+	CashierName string // CurrentOpenShift only: display_name, else username, else raw id (ut-docs#5782)
 	OpenedAt    string
 	ClosedAt    string
 	OpeningCash int64
@@ -4522,9 +4523,12 @@ func (r *POSRepo) CurrentOpenShift(ctx context.Context) (ShiftSummary, bool, err
 	var closedAt, note sql.NullString
 	var closing, expected sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note
-FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`).Scan(
-		&s.ID, &s.RegisterID, &s.CashierID, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
+SELECT s.id, s.register_id, s.cashier_id,
+       COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), s.cashier_id),
+       s.opened_at, s.closed_at, s.opening_cash, s.closing_cash, s.expected_cash, s.note
+FROM shifts s LEFT JOIN users u ON u.id = s.cashier_id
+WHERE s.closed_at IS NULL ORDER BY s.opened_at DESC LIMIT 1`).Scan(
+		&s.ID, &s.RegisterID, &s.CashierID, &s.CashierName, &s.OpenedAt, &closedAt, &s.OpeningCash, &closing, &expected, &note)
 	if err == sql.ErrNoRows {
 		return ShiftSummary{}, false, nil
 	}
