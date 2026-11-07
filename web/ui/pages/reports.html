@@ -31,10 +31,10 @@
     {{ else }}
     <select name="days" data-change="submit-form">
       <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.days.last_24h" }}</option>
-      <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>7 {{ T "reports.days" }}</option>
-      <option value="14" {{ if eq .Days 14 }}selected{{ end }}>14 {{ T "reports.days" }}</option>
-      <option value="30" {{ if eq .Days 30 }}selected{{ end }}>30 {{ T "reports.days" }}</option>
-      <option value="90" {{ if eq .Days 90 }}selected{{ end }}>90 {{ T "reports.days" }}</option>
+      <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>{{ qty 7 }} {{ T "reports.days" }}</option>
+      <option value="14" {{ if eq .Days 14 }}selected{{ end }}>{{ qty 14 }} {{ T "reports.days" }}</option>
+      <option value="30" {{ if eq .Days 30 }}selected{{ end }}>{{ qty 30 }} {{ T "reports.days" }}</option>
+      <option value="90" {{ if eq .Days 90 }}selected{{ end }}>{{ qty 90 }} {{ T "reports.days" }}</option>
     </select>
     {{ end }}
   </form>
@@ -48,7 +48,7 @@
     <div class="muted" style="font-size:.8rem">{{ money .YoYThen }} → {{ money .YoYNow }}</div></div>
   {{ end }}
   <div class="card kpi"><div class="kpi-label">{{ T "reports.revenue" }}</div><div class="kpi-value">{{ money .GrandTotal }}</div></div>
-  <div class="card kpi"><div class="kpi-label">{{ T "reports.sales" }}</div><div class="kpi-value">{{ .GrandCount }}</div></div>
+  <div class="card kpi"><div class="kpi-label">{{ T "reports.sales" }}</div><div class="kpi-value">{{ qty .GrandCount }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.avg_sale" }}</div><div class="kpi-value">{{ money .GrandAvg }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.tax" }}</div><div class="kpi-value">{{ money .GrandTax }}</div></div>
   <div class="card kpi"><div class="kpi-label">{{ T "reports.discounts" }}</div><div class="kpi-value">{{ money .GrandDiscount }}</div></div>
