@@ -381,6 +381,48 @@ func TestSettingsWriteThrough_CountrySaveGoesThroughMain(t *testing.T) {
 	wantCountryThroughMain(t, main, dp)
 }
 
+// ut-docs#5779: on an additional till the country travels alone; the main
+// till derives (or, with a confirmed locale, does not) and the replica's
+// memory follows the store.locale row mirrored from main's answer.
+func TestSettingsWriteThrough_CountryLocaleFollowsMainAnswer(t *testing.T) {
+	t.Run("main confirmed: nothing derived anywhere", func(t *testing.T) {
+		main, mux, dp := newCountrySyncPair(t)
+		if err := main.dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+			t.Fatal(err)
+		}
+		before := dp.CurrentState().Locale
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &ownerOnReplica)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert = %d %q", rec.Code, rec.Body.String())
+		}
+		if got := mustSetting(t, main.dp, common.KeyLocale); got != "" {
+			t.Fatalf("main %s = %q, want nothing derived (confirmed)", common.KeyLocale, got)
+		}
+		if got := mustSetting(t, dp, common.KeyLocale); got != "" {
+			t.Fatalf("replica %s = %q, want unchanged empty", common.KeyLocale, got)
+		}
+		if got := dp.CurrentState().Locale; got != before {
+			t.Fatalf("replica memory locale = %q, want unchanged %q", got, before)
+		}
+	})
+	t.Run("main derives: replica row and memory follow", func(t *testing.T) {
+		main, mux, dp := newCountrySyncPair(t)
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &ownerOnReplica)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert = %d %q", rec.Code, rec.Body.String())
+		}
+		if got := mustSetting(t, main.dp, common.KeyLocale); got != "de-DE" {
+			t.Fatalf("main %s = %q, want de-DE", common.KeyLocale, got)
+		}
+		if got := mustSetting(t, dp, common.KeyLocale); got != "de-DE" {
+			t.Fatalf("replica %s = %q, want de-DE", common.KeyLocale, got)
+		}
+		if got := dp.CurrentState().Locale; got != "de-DE" {
+			t.Fatalf("replica memory locale = %q, want de-DE (main's answer)", got)
+		}
+	})
+}
+
 // A manager may not move a shop whose signing device is confirmed: refused,
 // nothing changes on either till.
 func TestSettingsWriteThrough_CountryByManagerRefusedWhileConfigured(t *testing.T) {

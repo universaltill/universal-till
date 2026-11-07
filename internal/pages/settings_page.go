@@ -3650,6 +3650,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// shop-configuration hygiene plus an owner check on changing a
 		// live shop's tax jurisdiction, no longer a shared-key guard.
 		countryChanged := false
+		// ut-docs#5779: the locale the country implies, decided BEFORE the
+		// write so it persists with the country (one SetMany) and not only
+		// in memory.
+		var derivedLocale string
 		if key == common.KeyCountry {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
 				return
@@ -3665,6 +3669,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
 					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
 					return
+				}
+				// ut-docs#1027 / #1074 / #5779: the same rule the main till
+				// applies (confirmed guard, safe-to-preset, no-op when
+				// equal). A lookup error derives nothing; the country save
+				// itself stays lenient.
+				loc, lerr := derivedLocaleForCountry(r.Context(), d, value)
+				if lerr != nil {
+					logging.L().Warnf("settings: derive locale for country: %v", lerr)
+				} else {
+					derivedLocale = loc
 				}
 			}
 		}
@@ -3696,6 +3710,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// confirmed so a catalogue import never re-asks after this.
 			kv[common.KeyCurrencyConfirmed] = "true"
 		}
+		if derivedLocale != "" {
+			// Not KeyLocaleConfirmed/KeyLocaleGeneration: a derivation is
+			// not an operator choice (common/state.go).
+			kv[common.KeyLocale] = derivedLocale
+		}
 		localeGeneration := int64(-1)
 		if key == common.KeyLocale && slices.Contains(httpx.AvailableLocales(), value) && tillFollowsMain(r.Context(), d) {
 			cur, _, _ := d.Settings.Get(r.Context(), common.KeyLocaleGeneration)
@@ -3709,6 +3728,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_fiscal", err)
 			return
+		}
+		// ut-docs#5779: an additional till derives nothing itself -- main
+		// does -- so its memory follows the store.locale row main's answer
+		// mirrored (main's confirmed guard wins; a failed mirror leaves the
+		// old row and so the old memory).
+		if key == common.KeyCountry && tillFollowsMain(r.Context(), d) {
+			if v, _, _ := d.Settings.Get(r.Context(), common.KeyLocale); localeSafeToPreset(v) {
+				derivedLocale = v
+			}
 		}
 		// Every write to the fiscal posture toggles is itself audit-logged
 		// (ADR-0048 Decision 1): the shop's own trail honestly records when
@@ -3743,29 +3771,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// reflect into state for known keys
 		truthy := func(v string) bool { return strings.ToLower(v) == "true" || v == "1" || v == "on" }
-		// ut-docs#1027: this raw key/value table is, today, the ONLY shipped
-		// UI path that lets an operator change store.country after setup
-		// (neither Settings form posts "country" — see the currency-card
-		// handler above and the Language card below) — so it's where the
-		// card's "changing country afterwards re-derives the locale"
-		// acceptance criterion actually has to live. Looked up before
-		// UpdateState's closure, not inside it, so the DB read doesn't run
-		// under the state write lock.
-		var derivedLocale string
-		if key == common.KeyCountry {
-			// ut-docs#1074: never re-derive once the operator has explicitly
-			// chosen a locale via Settings' Language card — same guard as
-			// the /api/settings/save country handler just above.
-			localeConfirmed, _, lcErr := d.Settings.Get(r.Context(), common.KeyLocaleConfirmed)
-			if lcErr != nil {
-				logging.L().Warnf("settings: read %s: %v", common.KeyLocaleConfirmed, lcErr)
-			}
-			if localeConfirmed != "true" {
-				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
-					derivedLocale = cs.DefaultLocale
-				}
-			}
-		}
+		// ut-docs#1027 / #5779: this raw key/value table is the shipped UI
+		// path that changes store.country after setup, so the derived locale
+		// (decided and persisted with the write above) is persisted and
+		// live-applied here.
 		st := d.UpdateState(func(s *common.RuntimeState) {
 			switch key {
 			case common.KeyTheme:
