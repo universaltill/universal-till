@@ -372,7 +372,7 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 	}
 
 	doc := print.Doc{
-		StoreName: storeNameOrDefault(ctx, d),
+		StoreName: shopNameOrEmpty(ctx, d),
 		Logo:      receiptLogoRaster(rd),
 		Header:    rd.Header,
 		Meta: []string{
@@ -923,7 +923,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		if err == nil {
 			doc := print.Doc{
-				StoreName: storeNameOrDefault(ctx, d),
+				StoreName: shopNameOrEmpty(ctx, d),
 				Meta:      []string{"TEST PRINT", httpx.FormatDateTimeLatin(time.Now(), httpx.DefaultLocale())},
 				Totals:    []print.KV{{Label: "Printer", Amount: "OK", Strong: true}},
 				Footer:    []string{"Universal Till"},

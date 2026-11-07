@@ -2800,7 +2800,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
+			shopNameOrEmpty(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`

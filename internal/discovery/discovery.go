@@ -148,8 +148,8 @@ func GateOnFirstBoot(inner RoleCheck, firstBoot FirstBootChecker) RoleCheck {
 }
 
 // advertisedName is the name Advertiser broadcasts over mDNS — deliberately
-// separate from internal/pages's OWN storeNameOrDefault (a different
-// function, used by receipts, reports and the AI assistant; this package
+// separate from internal/pages's OWN shopNameOrEmpty (a different
+// function that returns "" for an unnamed shop, used by receipts and reports; this package
 // can't call it directly — internal/pages imports internal/discovery for
 // the discover-primaries API handler, so the reverse import would be a
 // cycle), because the discovery list is the one place several *different*
@@ -158,7 +158,7 @@ func GateOnFirstBoot(inner RoleCheck, firstBoot FirstBootChecker) RoleCheck {
 // "this shop", so two freshly-unboxed shops scanning the same LAN segment
 // showed up as visually indistinguishable candidates, with nothing but a
 // raw till-id UUID to tell them apart (ut-docs#1295). This package used to
-// carry its own duplicate storeNameOrDefault for the same reason (see
+// carry its own duplicate store-name helper for the same reason (see
 // docs/code-reviews/2026-08-02-mdns-lan-discovery.md) — folded into this
 // function directly rather than kept as a second, now-unreferenced copy
 // (independent review, ut-docs#1295).

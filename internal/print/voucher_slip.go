@@ -37,9 +37,11 @@ func RenderVoucherSlip(s VoucherSlip) []byte {
 		b.Write(s.Logo)
 		b.WriteByte('\n')
 	}
-	b.Write(cmdDoubleOn)
-	line(clip(s.StoreName, Width/2))
-	b.Write(cmdDoubleOff)
+	if strings.TrimSpace(s.StoreName) != "" { // unnamed shop: no row (ut-docs#5773)
+		b.Write(cmdDoubleOn)
+		line(clip(s.StoreName, Width/2))
+		b.Write(cmdDoubleOff)
+	}
 	for _, h := range s.Header {
 		line(clip(h, Width))
 	}
@@ -68,7 +70,9 @@ func RenderVoucherSlipText(s VoucherSlip) string {
 		}
 		b.WriteString(strings.Repeat(" ", pad) + t + "\n")
 	}
-	center(s.StoreName)
+	if strings.TrimSpace(s.StoreName) != "" { // unnamed shop: no row (ut-docs#5773)
+		center(s.StoreName)
+	}
 	for _, h := range s.Header {
 		center(h)
 	}

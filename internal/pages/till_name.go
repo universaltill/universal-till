@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -94,18 +95,24 @@ func tillNameTaken(ctx context.Context, d *common.Deps, name string) (bool, erro
 	return data.NewTillsRepo(d.Db).NameTakenExcept(ctx, name, exceptID)
 }
 
-// storeNameOrDefault reads the shop name saved by the first-boot wizard.
-func storeNameOrDefault(ctx context.Context, d *common.Deps) string {
-	if v, ok, _ := d.Settings.Get(ctx, "store.name"); ok && strings.TrimSpace(v) != "" {
-		return v
+// shopNameOrEmpty is the shop's real name (store.name, trimmed), or "" when
+// it is unset, unreadable, blank or a placeholder the till or cloud fills in
+// for an unnamed shop (config.IsPlaceholderStoreName: "My Store", "Universal
+// Till store"). Callers omit the name on "" — core never prints or sends an
+// English placeholder in its place (ut-docs#5773; same rule as
+// data.ShopContextRow).
+func shopNameOrEmpty(ctx context.Context, d *common.Deps) string {
+	v, ok, err := d.Settings.Get(ctx, common.KeyStoreName)
+	if err != nil || !ok || config.IsPlaceholderStoreName(v) {
+		return ""
 	}
-	return "this shop"
+	return strings.TrimSpace(v)
 }
 
 // tillNameOrDefault reads this (primary) till's own name, defaulting when
 // unset — distinct from a replica's own sync.till_name (ut-docs#396).
-// Unlike storeNameOrDefault's bare-string default (which only ever reaches
-// non-template contexts — receipts, mDNS), every caller of this
+// Unlike shopNameOrEmpty (which omits an unnamed shop and only ever reaches
+// non-template contexts — receipts, sync JSON), every caller of this
 // helper renders into a template that already shows the wizard's translated
 // "setup.till_name.default" — so the fallback here goes through T too,
 // otherwise an upgraded install with no till.name set would show the English
