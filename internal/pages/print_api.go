@@ -606,15 +606,21 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 				Balance: Tf("receipt.vouchers.new_balance", money(t.BalanceAfterMinor)),
 				Code:    t.VoucherID,
 				// ut-docs#5793: a top-up gets its own slip too, unless the
-				// voucher is void now. Void is left to Reversed so the
-				// receipt itself is unchanged.
+				// voucher is void now.
 				Slip: !t.VoucherVoid,
 			}
 			if t.HolderLabel != "" {
 				vb.Holder = Tf("basket.gift_voucher.for", t.HolderLabel)
 			}
-			if t.Reversed {
+			// A top-up taken back says so; otherwise a voucher void since
+			// (its top-up not reversed) prints the issued block's void
+			// notice, so the code is never a scannable symbol for a void
+			// voucher (ut-docs#5794).
+			switch {
+			case t.Reversed:
 				vb.Void = T("receipt.vouchers.top_up_void")
+			case t.VoucherVoid:
+				vb.Void = T("receipt.vouchers.void")
 			}
 			doc.Vouchers = append(doc.Vouchers, vb)
 		}
