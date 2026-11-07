@@ -152,3 +152,46 @@ func TestRenderKitchenTicket_LineModeMarkerOnlyWhenSet(t *testing.T) {
 		t.Fatal("ESC/POS ticket must carry the mode marker too")
 	}
 }
+
+func dirtyTicket(f func(string) string, cs string) KitchenTicket {
+	in := func(s string) string { return f(s + kick + forged) }
+	return KitchenTicket{
+		Station: in("KITCHEN"), OrderNo: in("R-1"), OrderLabel: in("ORDER"), OrderType: in("takeaway"),
+		Table: in("T5"), Timestamp: in("18:30"), Charset: cs,
+		Items: []KitchenItem{{Qty: in("2"), Name: in("Burger"), Modifiers: []string{in("no onions")}, Mode: in("takeaway")}},
+	}
+}
+
+func TestRenderKitchenTicket_ControlRunesNeverReachPrinter(t *testing.T) {
+	ident := func(s string) string { return s }
+	for _, cs := range allCharsets {
+		out := RenderKitchenTicket(dirtyTicket(ident, cs))
+		if n := bytes.Count(out, cmdKickDrawer); n != 0 {
+			t.Errorf("%q: cmdKickDrawer x%d", cs, n)
+		}
+		if want := RenderKitchenTicket(dirtyTicket(twinOf, cs)); !bytes.Equal(out, want) {
+			t.Errorf("%q: differs from twin\n got %q\nwant %q", cs, out, want)
+		}
+		clean := RenderKitchenTicket(dirtyTicket(func(string) string { return "x" }, cs))
+		if a, b := bytes.Count(out, []byte("\n")), bytes.Count(clean, []byte("\n")); a != b {
+			t.Errorf("%q: %d newlines, clean ticket has %d", cs, a, b)
+		}
+	}
+}
+
+func TestRenderKitchenTicketText_ControlRunesOnlyStructuralNewlines(t *testing.T) {
+	ident := func(s string) string { return s }
+	tk := dirtyTicket(ident, "")
+	out := RenderKitchenTicketText(tk)
+	if want := RenderKitchenTicketText(dirtyTicket(twinOf, "")); out != want {
+		t.Errorf("differs from twin\n got %q\nwant %q", out, want)
+	}
+	for _, r := range out {
+		if r < 0x20 && r != '\n' {
+			t.Errorf("control rune %U", r)
+		}
+	}
+	if tk.Items[0].Modifiers[0] != dirtyTicket(ident, "").Items[0].Modifiers[0] {
+		t.Error("caller's ticket mutated")
+	}
+}

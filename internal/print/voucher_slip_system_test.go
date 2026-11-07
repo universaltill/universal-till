@@ -63,3 +63,20 @@ func TestPrintVoucherSlip_SystemMode(t *testing.T) {
 		t.Fatalf("system job mismatch: %q", got)
 	}
 }
+
+func TestRenderVoucherSlipText_ControlRunesOnlyStructuralNewlines(t *testing.T) {
+	ident := func(s string) string { return s }
+	s := dirtySlip(ident, "")
+	out := RenderVoucherSlipText(s)
+	if want := RenderVoucherSlipText(dirtySlip(twinOf, "")); out != want {
+		t.Errorf("differs from twin\n got %q\nwant %q", out, want)
+	}
+	for _, r := range out {
+		if r < 0x20 && r != '\n' {
+			t.Errorf("control rune %U", r)
+		}
+	}
+	if s.Header[0] != dirtySlip(ident, "").Header[0] {
+		t.Error("caller's slip mutated")
+	}
+}

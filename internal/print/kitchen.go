@@ -93,7 +93,7 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		// strings.ToUpper isn't Turkish-locale-aware (dotless/dotted I) —
 		// a pre-existing cosmetic quirk, more reachable now that this can
 		// carry real translated text, not just English. Not solved here.
-		line(clip(strings.ToUpper(s), Width))
+		line(clip(strings.ToUpper(paperText(s)), Width)) // paperText first: ToUpper turns an invalid byte into U+FFFD (ut-docs#5847)
 	}
 	if s := strings.TrimSpace(t.Table); s != "" {
 		line(clip(s, Width))
@@ -113,7 +113,7 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		line(clip(label, Width/2)) // double-width halves the columns
 		b.Write(cmdDoubleOff)
 		if m := strings.TrimSpace(it.Mode); m != "" {
-			line(clip("  * "+strings.ToUpper(m), Width))
+			line(clip("  * "+strings.ToUpper(paperText(m)), Width))
 		}
 		for _, m := range it.Modifiers {
 			if m = strings.TrimSpace(m); m != "" {
@@ -143,6 +143,7 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 // kitchen-ticket preview or drop this together with those tests is a
 // product call, deliberately not made here.
 func RenderKitchenTicketText(t KitchenTicket) string {
+	t = paperTicket(t) // ut-docs#5847
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)

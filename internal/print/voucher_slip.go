@@ -59,6 +59,7 @@ func RenderVoucherSlip(s VoucherSlip) []byte {
 
 // RenderVoucherSlipText is the plain-text (system/CUPS) form of a slip.
 func RenderVoucherSlipText(s VoucherSlip) string {
+	s = paperSlip(s) // ut-docs#5847
 	var b strings.Builder
 	center := func(t string) {
 		t = clip(t, Width)
