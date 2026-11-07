@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Install-time half of the payment-key hijack fix (2026-07-30): the sync
@@ -17,7 +18,7 @@ import (
 
 func openRealDB(t *testing.T) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "validate.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "validate.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

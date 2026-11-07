@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ADR-0116 D6 (ut-docs#3524): a 401 carries a machine code; after 3
@@ -325,7 +325,7 @@ func TestRevokedTillLocksOutHourlyAndStillSellsOffline(t *testing.T) {
 	http.DefaultTransport, httpClient.Transport = dead, dead
 	t.Cleanup(func() { http.DefaultTransport, httpClient.Transport = prevDefault, prevClient })
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "revoked.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "revoked.db"))
 	if err != nil {
 		t.Fatalf("open migrated db: %v", err)
 	}
