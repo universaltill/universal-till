@@ -2695,7 +2695,6 @@ shadow_documents.sale_recorded
 shifts.adjust
 shifts.adjust_type
 shifts.adjustment
-shifts.adjustment_success
 shifts.amount
 shifts.amount_hint
 shifts.cashier

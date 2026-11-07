@@ -812,12 +812,8 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// English locale: sanity check the fragment still renders correctly.
-	// This alone does NOT prove the fix — en.json's translated string is
-	// textually identical to the old hardcoded literal, so this assertion
-	// would pass unchanged against the pre-fix code too. The real
-	// regression proof is the fa-locale assertion below, which only
-	// passes once the message is actually routed through T().
+	// ut-docs#5814: plain confirmation, never the internal adjustment id or
+	// an unfilled format verb.
 	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
 		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -827,13 +823,18 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 	if recEn.Code != http.StatusOK {
 		t.Fatalf("adjustment: %d: %s", recEn.Code, recEn.Body.String())
 	}
-	if body := recEn.Body.String(); !strings.Contains(body, "Adjustment recorded:") {
-		t.Fatalf("expected the shifts.adjustment_success template, got:\n%s", body)
+	var adjID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM audit_log WHERE action='cash_adjustment' LIMIT 1`).Scan(&adjID); err != nil {
+		t.Fatal(err)
+	}
+	if body := recEn.Body.String(); !strings.Contains(body, "Adjustment recorded.") ||
+		strings.Contains(body, adjID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
+		t.Fatalf("expected the shifts.adjustment_confirmed text without the adjustment id, got:\n%s", body)
 	}
 
-	// A non-English locale actually renders translated prose, not the
-	// English template spliced in — this is the assertion that fails
-	// pre-fix (see #1289/#1406's own review record for this same class).
+	// fa has no translation yet (ADR-0160 §2): falls back to English. Once
+	// Weblate delivers fa for shifts.adjustment_confirmed, assert the fa text
+	// here again — this half then proves the HTML branch honours the locale.
 	reqFa := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
 		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
 	reqFa.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -844,8 +845,8 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 	if recFa.Code != http.StatusOK {
 		t.Fatalf("adjustment (fa locale): %d: %s", recFa.Code, recFa.Body.String())
 	}
-	if !strings.Contains(recFa.Body.String(), "اصلاح ثبت شد") {
-		t.Fatalf("expected the fa translation of shifts.adjustment_success, got:\n%s", recFa.Body.String())
+	if body := recFa.Body.String(); !strings.Contains(body, "Adjustment recorded.") || strings.Contains(body, "%") {
+		t.Fatalf("expected the English fallback of shifts.adjustment_confirmed, got:\n%s", body)
 	}
 }
 
@@ -1147,6 +1148,75 @@ func TestPfandRueckgabe_RecordsPayoutAndReducesExpectedCash(t *testing.T) {
 	}
 	if !strings.Contains(rec3.Body.String(), `"expected_cash":4500`) {
 		t.Fatalf("expected expected_cash=4500 reflecting the payout, got %s", rec3.Body.String())
+	}
+}
+
+// ut-docs#5814: the Pfand dialog shares respondAdjustmentSuccess; its HTML
+// confirmation must not carry the internal adjustment id either.
+func TestPfandRueckgabe_HTMLConfirmationHasNoInternalID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/pfandrueckgabe", strings.NewReader("amount=500"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var adjID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM audit_log WHERE action='cash_adjustment' LIMIT 1`).Scan(&adjID); err != nil {
+		t.Fatal(err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Adjustment recorded.") ||
+		strings.Contains(body, adjID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
+		t.Fatalf("expected the plain confirmation without the adjustment id, got:\n%s", body)
+	}
+}
+
+// The JSON branch keeps returning adjustment_id for API clients.
+func TestRecordCashAdjustment_JSONStillReturnsAdjustmentID(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adjustment: %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			AdjustmentID string `json:"adjustment_id"`
+			Success      bool   `json:"success"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Data.AdjustmentID == "" || !out.Data.Success {
+		t.Fatalf("expected adjustment_id and success in JSON, got %s", rec.Body.String())
 	}
 }
 
