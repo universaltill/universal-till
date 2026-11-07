@@ -1175,7 +1175,7 @@ func TestPfandRueckgabe_HTMLConfirmationHasNoInternalID(t *testing.T) {
 	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM audit_log WHERE action='cash_adjustment' LIMIT 1`).Scan(&adjID); err != nil {
 		t.Fatal(err)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Adjustment recorded.") ||
+	if body := rec.Body.String(); !strings.Contains(body, "Deposit refund recorded:") ||
 		strings.Contains(body, adjID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
 		t.Fatalf("expected the plain confirmation without the adjustment id, got:\n%s", body)
 	}
@@ -1757,5 +1757,137 @@ func TestCloseShift_HTMLNoSaleLineUsesLocaleDigits(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.HasSuffix(body, "۳</div>") || strings.HasSuffix(body, "3</div>") {
 		t.Fatalf("expected the no-sale count as Extended Arabic-Indic ۳, got %s", body)
+	}
+}
+
+// pfandPost opens a register + shift (auth off) and posts a Pfand payout.
+func pfandPost(t *testing.T, target, accept, form string, openShift bool) (*httptest.ResponseRecorder, *common.Deps) {
+	t.Helper()
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	if openShift {
+		if _, err := dp.Db.ExecContext(context.Background(), `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+			t.Fatal(err)
+		}
+		if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+			t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec, dp
+}
+
+// ut-docs#5823: the Pfand dialog closes on success, so the confirmation is an
+// out-of-band notice into a page-level live region, carrying the amount.
+func TestPfandRueckgabe_HTMLConfirmationIsOOBNoticeWithAmount(t *testing.T) {
+	rec, dp := pfandPost(t, "/api/shifts/pfandrueckgabe", "", "amount=250", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var adjID string
+	if err := dp.Db.QueryRowContext(context.Background(), `SELECT id FROM audit_log WHERE action='cash_adjustment' LIMIT 1`).Scan(&adjID); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`id="pfand-notice"`, `hx-swap-oob="innerHTML"`, `class="pos-notice success"`,
+		`role="status"`, `data-dismiss-ms="8000"`, `notice-dismiss`, "<bdi>£2.50</bdi>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{adjID, "%s", "%!", "class='success'"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("body must not contain %q:\n%s", bad, body)
+		}
+	}
+}
+
+func TestPfandRueckgabe_NoticeAmountUsesFormatMoneyDisplayInRTLLocale(t *testing.T) {
+	rec, _ := pfandPost(t, "/api/shifts/pfandrueckgabe?lang=ar", "", "amount=250", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := "<bdi>" + html.EscapeString(httpx.FormatMoneyDisplay(250, "ar")) + "</bdi>"
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the RTL display-formatted amount %q in:\n%s", want, rec.Body.String())
+	}
+}
+
+func TestPfandRueckgabe_JSONResponseUnchanged(t *testing.T) {
+	rec, _ := pfandPost(t, "/api/shifts/pfandrueckgabe", "application/json", "amount=250", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			AdjustmentID string `json:"adjustment_id"`
+			Success      bool   `json:"success"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Data.AdjustmentID == "" || !out.Data.Success || out.Error != nil {
+		t.Fatalf("unexpected JSON envelope: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "pfand-notice") {
+		t.Fatalf("JSON must not carry the notice: %s", rec.Body.String())
+	}
+}
+
+func TestPfandRueckgabe_ErrorResponsesCarryNoNotice(t *testing.T) {
+	rec, _ := pfandPost(t, "/api/shifts/pfandrueckgabe", "", "amount=0", true)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "<div class='error'>") || strings.Contains(rec.Body.String(), "pfand-notice") {
+		t.Fatalf("amount 0: want 400 error div, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec, _ = pfandPost(t, "/api/shifts/pfandrueckgabe", "", "amount=250", false)
+	if rec.Code < 400 || !strings.Contains(rec.Body.String(), "<div class='error'>") || strings.Contains(rec.Body.String(), "pfand-notice") {
+		t.Fatalf("no open shift: want error div, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPfandRueckgabe_WrongPINCarriesNoNotice(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, _ := newShiftsAPITestDeps(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/pfandrueckgabe", strings.NewReader("amount=250&manager_pin=000000"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "<div class='error'>") || strings.Contains(rec.Body.String(), "pfand-notice") {
+		t.Fatalf("want 403 error div, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRecordCashAdjustment_HTMLConfirmationUnchanged(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Adjustment recorded.") || strings.Contains(rec.Body.String(), "pfand-notice") {
+		t.Fatalf("unexpected adjustment confirmation %d: %s", rec.Code, rec.Body.String())
 	}
 }

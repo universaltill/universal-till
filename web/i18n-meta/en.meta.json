@@ -1,4 +1,5 @@
 {
+  "pfand.recorded": {"description": "Menu page: brief confirmation shown after a deposit refund (Pfand) payout is recorded; the placeholder is the refunded amount as a formatted currency string.", "review": "standard", "placeholders": ["refunded amount, formatted currency"], "max_length": 60},
   "receipt.vouchers.reprinted": {"description": "Printed on a gift-voucher slip printed again from the voucher's page, so it can be told from the slip handed over at the sale. Printed on 58/80 mm paper.", "review": "legal", "placeholders": ["date the slip was reprinted"], "max_length": 42},
   "vouchers.print_slip.button": {"description": "Button on a gift voucher's page (manager): prints that voucher's gift slip again on this till's receipt printer, without a receipt.", "review": "standard", "max_length": 24},
   "vouchers.print_slip.printing": {"description": "Shown next to Print voucher slip while the slip is being sent to the receipt printer.", "review": "standard"},
