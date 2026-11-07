@@ -2916,7 +2916,6 @@
   "shifts.adjust": "اصلاح (±)",
   "shifts.adjust_type": "نوع",
   "shifts.adjustment": "اصلاح / برداشت وجه",
-  "shifts.adjustment_success": "اصلاح ثبت شد: %s",
   "shifts.amount": "مبلغ",
   "shifts.amount_hint": "منفی یعنی خروج وجه",
   "shifts.cashier": "صندوقدار",

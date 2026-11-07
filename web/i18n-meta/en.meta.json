@@ -19,6 +19,7 @@
   "settings.display.awake_help": {"description": "Help line under the Android-only keep-screen-on dropdown.", "review": "standard"},
   "settings.display.awake_minutes": {"description": "Option in the keep-screen-on dropdown: the screen may sleep after this many idle minutes.", "review": "standard", "placeholders": ["number of minutes"]},
   "settings.display.awake_never": {"description": "Option in the keep-screen-on dropdown: the screen never sleeps while the till app is open.", "review": "standard"},
+  "shifts.adjustment_confirmed": {"description": "Shifts page: confirmation shown in the cash adjustment / payout form's result area after an adjustment or payout is recorded (also returned to the Pfand return dialog). Plain sentence, no identifiers.", "review": "standard"},
   "agent.action.settings_set": {"description": "Title of the core-rendered confirm card when the AI assistant asks to change one or more shop settings. Nothing changes until the operator presses Confirm.", "review": "standard"},
   "agent.field.setting": {"description": "Column value on the assistant's confirm card for a settings change: names the row's change as a setting (the row's item is the setting's own label from the Settings screen).", "review": "standard"},
   "agent.value.on": {"description": "Before/after value on the assistant's confirm card for an on/off setting that is switched on.", "review": "standard"},
