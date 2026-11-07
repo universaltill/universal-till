@@ -85,6 +85,8 @@ func TestParseManifest_ABI3Refusals(t *testing.T) {
 		{"schedule raises a sale event", `,"schedules":[{"event":"sale.completed","every_s":60}]`, "core's \"sale\" namespace"},
 		{"schedule raises a fiscal ask", `,"schedules":[{"event":"fiscal.sign.ask","every_s":60}]`, "core's \"fiscal\" namespace"},
 		{"schedule raises a ui event", `,"schedules":[{"event":"ui.view.ask","every_s":60}]`, "core's \"ui\" namespace"},
+		{"schedule raises a shift event", `,"schedules":[{"event":"shift.tick","every_s":60}]`, "core's \"shift\" namespace"},
+		{"schedule raises a till event", `,"schedules":[{"event":"till.tick","every_s":60}]`, "core's \"till\" namespace"},
 		{"schedule raises a payment authorize", `,"schedules":[{"event":"payment.card.authorize","every_s":60}]`, "core's \"payment\" namespace"},
 		{"schedule raises another plugin's event", `,"schedules":[{"event":"other.tick","every_s":60}]`, "must start with this plugin's own id (\"t.p.\")"},
 		{"schedule shares only the id's first segment", `,"schedules":[{"event":"t.tick","every_s":60}]`, "must start with this plugin's own id"},
@@ -159,7 +161,8 @@ func TestParseManifest_ScheduleEventWithHyphenatedID(t *testing.T) {
 // ADR-0121 2026-10-03 amendment (ut-docs#3329): a plugin's event namespace
 // is its manifest id, so an id may never start with a core event root.
 func TestParseManifest_RefusesIDInCoreEventNamespace(t *testing.T) {
-	for _, id := range []string{"sale", "sale.myplugin", "fiscal.de", "ui.x", "payment.card", "tax.de.tse"} {
+	for _, id := range []string{"sale", "sale.myplugin", "fiscal.de", "ui.x", "payment.card", "tax.de.tse",
+		"shift", "shift.x", "till.x", "agent.x", "charge.x", "inventory.x", "report.x"} {
 		src := `{"id":"` + id + `","name":"T","version":"1.0.0","runtime":"none"}`
 		_, err := ParseManifest(strings.NewReader(src))
 		if err == nil {
@@ -170,7 +173,8 @@ func TestParseManifest_RefusesIDInCoreEventNamespace(t *testing.T) {
 			t.Fatalf("id %q: error %q does not name the core namespace %q", id, err, root)
 		}
 	}
-	for _, id := range []string{"t.p", "com.universaltill.ut-faq", "tax_de", "sales_tools.x", "com.sale"} {
+	for _, id := range []string{"t.p", "com.universaltill.ut-faq", "tax_de", "sales_tools.x", "com.sale",
+		"com.universaltill.shift-report", "reporting.x", "tills.x", "agents.x"} {
 		src := `{"id":"` + id + `","name":"T","version":"1.0.0","runtime":"none"}`
 		if _, err := ParseManifest(strings.NewReader(src)); err != nil {
 			t.Fatalf("id %q refused: %v", id, err)
