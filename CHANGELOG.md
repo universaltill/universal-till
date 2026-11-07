@@ -38,6 +38,17 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Promoting a till counts its own late sales once (ut-docs#5777, #5807).**
+  When an additional till is promoted to main till, its own sales that the
+  old main till recorded only after its last day close are now counted in
+  the promoted till's next Z report, exactly once. The till learns when the
+  main till recorded each of its sales from the sales copy, both the regular
+  feed and a full re-sync. Upgrade the main till first: a till that re-syncs
+  its copy from a main till older than this release, or copies from one
+  older than the release that introduced the sales copy's arrival times,
+  keeps no recording time for those sales, and after a promote they still
+  appear in no Z. A gift-voucher sold in such a sale still shows only in the
+  old main till's voucher totals.
 - **Opening another order no longer loses an "add by hand" counter order
   (ut-docs#3586).** A pay-at-the-counter order with no items the till could
   price (only lines listed to add by hand) counted as an empty basket. If the

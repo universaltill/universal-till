@@ -37,7 +37,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// SalesMirrorFeedVersion is the feed's major version (contract 1.x; 1.1.0 adds header-only own sales).
+// SalesMirrorFeedVersion is the feed's major version (contract 1.x; 1.1.0 adds header-only own sales on the feed, 1.2.0 on state pages).
 const SalesMirrorFeedVersion = 1
 
 // Feed bounds (design §5.1, §11).
@@ -333,8 +333,8 @@ func (s *salesMirrorServer) feed(w http.ResponseWriter, r *http.Request) {
 }
 
 // ownSaleArrival is the bare header of a sale sent back to its own origin
-// till: enough to pass the copy's validity check and carry the recording
-// time, nothing else (ut-docs#5777).
+// till, on the feed and on state pages: enough to pass the copy's validity
+// check and carry the recording time, nothing else (ut-docs#5777, #5807).
 func ownSaleArrival(s *data.MirrorSale) *data.MirrorSale {
 	return &data.MirrorSale{
 		ID: s.ID, OriginTillID: s.OriginTillID, OriginTillName: s.OriginTillName, ReceiptNo: s.ReceiptNo,
@@ -546,19 +546,42 @@ func (s *salesMirrorServer) state(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		ids, dates, rowids, err := s.repo.StateSaleIDs(ctx, fromDate, key.A, afterRow, till.ID, limit)
+		ids, dates, rowids, own, err := s.repo.StateSaleIDs(ctx, fromDate, key.A, afterRow, till.ID, limit)
 		if err != nil {
 			writeSalesMirrorError(w, http.StatusInternalServerError, salesMirrorError{Code: "server", Message: "could not read sales"})
 			return
 		}
-		sales, err := s.repo.LoadMirrorSales(ctx, ids, src)
+		var fullIDs, ownIDs []string
+		for i, id := range ids {
+			if own[i] {
+				ownIDs = append(ownIDs, id)
+			} else {
+				fullIDs = append(fullIDs, id)
+			}
+		}
+		sales, err := s.repo.LoadMirrorSales(ctx, fullIDs, src)
+		if err != nil {
+			writeSalesMirrorError(w, http.StatusInternalServerError, salesMirrorError{Code: "server", Message: "could not read sales"})
+			return
+		}
+		heads, err := s.repo.LoadMirrorSaleHeaders(ctx, ownIDs, src)
 		if err != nil {
 			writeSalesMirrorError(w, http.StatusInternalServerError, salesMirrorError{Code: "server", Message: "could not read sales"})
 			return
 		}
 		cut := false
 		for i, id := range ids {
-			if sale := sales[id]; sale != nil {
+			sale := sales[id]
+			if own[i] {
+				// The caller's own sale goes back as a bare header, like the
+				// feed's (ut-docs#5777/#5807): it carries the recording time,
+				// no line, payment or amount leaves the main till.
+				sale = nil
+				if h := heads[id]; h != nil {
+					sale = ownSaleArrival(h)
+				}
+			}
+			if sale != nil {
 				rec := data.MirrorRecord{Seq: resume, Op: data.MirrorOpSale, Sale: sale}
 				raw, _ := json.Marshal(rec)
 				if len(page.Records) > 0 && total+len(raw) > salesMirrorMaxPageBytes {
