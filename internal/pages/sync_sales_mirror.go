@@ -37,7 +37,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// SalesMirrorFeedVersion is the feed's major version (contract 1.x; 1.1.0 adds header-only own sales).
+// SalesMirrorFeedVersion is the feed's major version (contract 1.x; 1.1.0 adds header-only own sales on the feed, 1.2.0 on state pages).
 const SalesMirrorFeedVersion = 1
 
 // Feed bounds (design §5.1, §11).
