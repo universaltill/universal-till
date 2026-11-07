@@ -3356,8 +3356,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// per-browser preference from — notification email in
 			// particular, the exact case this card exists to fix.
 			if slices.Contains(httpx.AvailableLocales(), v) {
-				st.Locale = v
-				auditPayload["locale"] = v
+				// ut-docs#5751: a bare pick of the shop's own language keeps
+				// its region (en-US stays en-US), so date order survives.
+				stored := resolveShopLocalePick(r.Context(), d, v, st.Country)
+				st.Locale = stored
+				auditPayload["locale"] = stored
 				localeChosen = true
 				// ut-docs#1074: this form field is the one genuine
 				// operator-explicit locale choice (Settings' Language
