@@ -11,14 +11,14 @@
     <thead><tr><th>{{ T "reports.shrinkage_reason" }}</th><th style="text-align:end">{{ T "reports.shrinkage_count" }}</th><th style="text-align:end">{{ T "reports.shrinkage_value" }}</th></tr></thead>
     <tbody>
       {{ range .ByReason }}
-      <tr><td>{{ T (printf "shrinkage.reason.%s" .ReasonCategory) }}</td><td class="muted" style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Total }}</td></tr>
+      <tr><td>{{ T (printf "shrinkage.reason.%s" .ReasonCategory) }}</td><td class="muted" style="text-align:end">{{ qty .Count }}</td><td style="text-align:end">{{ money .Total }}</td></tr>
       {{ else }}
       <tr><td colspan="3" class="empty">{{ T "reports.none" }}</td></tr>
       {{ end }}
     </tbody>
     {{ if .ByReason }}
     <tfoot>
-      <tr><td style="font-weight:600">{{ T "reports.shrinkage_total" }}</td><td class="muted" style="text-align:end; font-weight:600">{{ .TotalCount }}</td><td style="text-align:end; font-weight:600">{{ money .TotalValue }}</td></tr>
+      <tr><td style="font-weight:600">{{ T "reports.shrinkage_total" }}</td><td class="muted" style="text-align:end; font-weight:600">{{ qty .TotalCount }}</td><td style="text-align:end; font-weight:600">{{ money .TotalValue }}</td></tr>
     </tfoot>
     {{ end }}
   </table>
