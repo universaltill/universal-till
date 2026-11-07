@@ -110,14 +110,14 @@ func registerShiftXReportPrint(mux *http.ServeMux, d *common.Deps) {
 		// must be refused here or it would look like success.
 		cfg, cerr := printerConfigChecked(ctx, d)
 		if cerr != nil || !cfg.Enabled() {
-			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "settings.printer.test_failed", cerr)
+			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "shifts.x_report.print_failed", cerr)
 			return
 		}
 		doc := buildXReportDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
 		pctx, cancel := context.WithTimeout(ctx, xPrintTimeout)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {
-			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "settings.printer.test_failed", perr)
+			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "shifts.x_report.print_failed", perr)
 			return
 		}
 

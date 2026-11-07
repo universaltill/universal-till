@@ -181,7 +181,7 @@ test('X report: a print failure shows inline and keeps the figures (ut-docs#5798
   await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();
 
   await page.route('**/x-report/print', (route) =>
-    route.fulfill({ status: 502, contentType: 'text/html', body: "<div class='error' role='alert'>Print failed</div>" }));
+    route.fulfill({ status: 502, contentType: 'text/html', body: "<div class='error' role='alert'>Print failed. Check the receipt printer in Settings → Receipt printer, then tap Print X report again.</div>" }));
   await page.locator('#x-report-print').click();
   await expect(page.locator('#x-report-print-msg')).toContainText('Print failed');
   await expect(page.locator('#x-report-body .x-report-result')).toBeVisible();

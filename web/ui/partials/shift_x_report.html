@@ -7,7 +7,8 @@
     <div class="x-report-actions">
       <button type="button" id="x-report-print" class="btn secondary"
               hx-post="{{ .PrintURL }}" hx-target="#x-report-print-msg" hx-swap="innerHTML"
-              hx-disabled-elt="this">{{ T "shifts.x_report.print" }}</button>
+              hx-indicator="#x-report-print-busy" hx-disabled-elt="this">{{ T "shifts.x_report.print" }}</button>
+      <span id="x-report-print-busy" class="htmx-indicator muted" role="status">{{ T "shifts.x_report.printing" }}</span>
       <button type="button" class="btn secondary" data-action="empty:x-report-body focus:x-report-show">{{ T "shifts.x_report.hide" }}</button>
     </div>
     <span id="x-report-print-msg" class="x-report-print-msg" aria-live="polite"></span>

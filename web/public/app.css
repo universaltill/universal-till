@@ -956,8 +956,9 @@ body.sale-screen .session-admin-link { display: none; }
 .x-report-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
 .x-report-bar p { margin: 0; }
 .x-report-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-.x-report-print-msg { flex-basis: 100%; min-block-size: 1.3rem; }
-.x-report-print-msg .error { margin-block: 0; }
+.x-report-print-msg { flex-basis: 100%; min-block-size: 1.3rem; margin-block-end: .4rem; }
+.x-report-print-msg .error { margin-block: 0; color: var(--danger); }
+.x-report-print-msg .error::before { content: "⚠ "; }
 .x-report-link { display: inline-block; min-block-size: 44px; padding-block: .6rem; box-sizing: border-box; }
 /* ut-docs#2781: the roster gained a Role column and a per-till Change role
    button; with the link/version columns and a long (tr/ar) label it can

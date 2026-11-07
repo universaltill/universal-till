@@ -101,7 +101,7 @@ func TestXReportPrint_PrinterOffIs502NoAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := f.post(t, xpPrintPath, url.Values{}, nil, nil)
-	if rec.Code != 502 || !strings.Contains(rec.Body.String(), "Print failed") {
+	if rec.Code != 502 || !strings.Contains(rec.Body.String(), "Check the receipt printer") {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
 	if n := len(xpAuditRows(t, f)); n != 0 {
@@ -114,7 +114,7 @@ func TestXReportPrint_PrinterUnreachableIs502NoAudit(t *testing.T) {
 	f := xpFixture(t)
 	setNetworkPrinter(t, f.dp, unreachableAddr())
 	rec := f.post(t, xpPrintPath, url.Values{}, nil, nil)
-	if rec.Code != 502 || !strings.Contains(rec.Body.String(), "Print failed") {
+	if rec.Code != 502 || !strings.Contains(rec.Body.String(), "Check the receipt printer") {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
 	if n := len(xpAuditRows(t, f)); n != 0 {

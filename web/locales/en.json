@@ -3025,6 +3025,8 @@
   "shifts.x_report.failed": "The X report could not be loaded. Tap Show X report to try again.",
   "shifts.x_report.print": "Print X report",
   "shifts.x_report.print_ok": "X report sent to the printer",
+  "shifts.x_report.printing": "Printing…",
+  "shifts.x_report.print_failed": "Print failed. Check the receipt printer in Settings → Receipt printer, then tap Print X report again.",
   "shifts.x_report.paper.title": "X REPORT",
   "shifts.x_report.paper.not_a_close": "Not a day close. Nothing is closed.",
   "shrinkage.error.invalid_reason": "Choose a reason: void, comp, or waste.",
