@@ -414,6 +414,15 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			doc.Footer = append(doc.Footer, eodRow(name, money(t.Revenue)))
 		}
 	}
+	// Rows recorded late from other tills (ut-docs#5776): an explanation of
+	// the totals above, never an extra amount; absent when nothing is late.
+	doc.Footer = append(doc.Footer, eodLateNoteFooter(rep.LateEntries, T, money, func(s string) string {
+		ts, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return ""
+		}
+		return httpx.FormatDateTimeLatin(ts.Local(), printLocale)
+	})...)
 	// Fiscal device (ÖKC) Z-status/reconciliation (ut-docs#2410) — TR shops
 	// only; nil for every other market (see attachEODFiscalDevice's own
 	// doc comment), so this section is entirely absent from every other
