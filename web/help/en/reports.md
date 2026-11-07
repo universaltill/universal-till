@@ -143,6 +143,16 @@ till, once they have synced. No sale happened, so this never changes Gross,
 Net, Refunds or the STORNOS figure. The section is absent on a day with
 none.
 
+If the cash drawer was opened without a sale (a "no sale"), the printed
+report shows a section headed **NO SALE (DRAWER OPENS)** with
+the total number of opens and, for a single day, one line per cashier
+("Unattributed" when no cashier was recorded). On a shop with several tills,
+the main till's report includes the opens on every till, once they have
+synced. No money moved, so this never changes Gross, Net, Refunds, the
+STORNOS figure or the cash count. The section is absent on a day with none,
+and a report over several days shows the total only. The same figures
+appear in that day's detail on the **Day-end (EOD)** tab of Reports.
+
 The report also always prints **Erstellt von** (who ran the close) — the
 person's display name, or "System" for the automatic scheduled close — so
 there's a record of who closed the day even without checking the Audit

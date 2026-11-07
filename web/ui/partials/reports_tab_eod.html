@@ -58,7 +58,7 @@
         {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
-      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice }}
+      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice .NoSaleCount }}
       <!-- ut-docs#1010: per-article-group/per-article/per-operator
            breakdowns for THIS archived report, same single-day-only
            breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
@@ -93,6 +93,18 @@
               {{ range .Operators }}
               <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
               {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+          {{ if .NoSaleCount }}
+          <strong>{{ T "reports.eod.no_sale_title" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            {{ if .NoSaleOperators }}<thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.eod.no_sale_opens" }}</th></tr></thead>{{ end }}
+            <tbody>
+              {{ range .NoSaleOperators }}
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td></tr>
+              {{ end }}
+              <tr><td><strong>{{ T "reports.eod.no_sale_total" }}</strong></td><td style="text-align:end"><strong>{{ .NoSaleCount }}</strong></td></tr>
             </tbody>
           </table>
           {{ end }}

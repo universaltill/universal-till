@@ -2496,8 +2496,16 @@ type EODReport struct {
 	// informational: never folded into Gross/Net/Refunds/Cancel*.
 	ClearedBasketCount int   `json:"cleared_basket_count"`
 	ClearedBasketTotal int64 `json:"cleared_basket_total"`
-	Net                int64 `json:"net"`
-	TaxNet             int64 `json:"tax_net"`
+	// NoSaleCount / NoSaleOperators (ut-docs#5753): "No sale" drawer opens
+	// (no_sale_events, #2558) of EVERY till (replica opens once journaled,
+	// #3562), same window as ClearedBasketCount. No money moved: never in
+	// Gross/Net/Refund*/Cancel*/Methods/CashReconciliation. Per-cashier is
+	// single-day only on the date path (like Operators), always on the
+	// instant path.
+	NoSaleCount     int              `json:"no_sale_count,omitempty"`
+	NoSaleOperators []NoSaleOperator `json:"no_sale_operators,omitempty"`
+	Net             int64            `json:"net"`
+	TaxNet          int64            `json:"tax_net"`
 	// TaxBands is the per-VAT-rate net/tax/gross breakdown (ut-docs#1003).
 	// Filled by internal/pages' attachEODTaxBands, NOT by EndOfDay/
 	// EndOfDayRange themselves — the banding math (discount proration +
@@ -2882,6 +2890,10 @@ WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&rep.ClearedBasket
 	if err != nil {
 		return rep, fmt.Errorf("eod cleared baskets: %w", err)
 	}
+	// No-sale drawer opens (ut-docs#5753): best-effort, never fails the close.
+	if n, nerr := r.NoSaleCountForDateRange(ctx, from, to); nerr == nil {
+		rep.NoSaleCount = n
+	}
 
 	// Voucher flows (ut-docs#1008) — same local-calendar-day window as the
 	// totals query above, range-capable like Methods (not gated on from==to).
@@ -2999,6 +3011,9 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 		}
 		if operators, err := r.OperatorSalesForDay(ctx, from); err == nil {
 			rep.Operators = operators
+		}
+		if ns, err := r.NoSaleOperatorsForDay(ctx, from); err == nil {
+			rep.NoSaleOperators = ns
 		}
 		if orderTypes, err := r.OrderTypeSalesForDay(ctx, from); err == nil {
 			rep.OrderTypes = orderTypes
@@ -3149,6 +3164,10 @@ WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod instant cleared baskets: %w", err)
 	}
+	// No-sale drawer opens (ut-docs#5753): best-effort, never fails the close.
+	if n, nerr := r.NoSaleCountForInstantWindow(ctx, from, to); nerr == nil {
+		rep.NoSaleCount = n
+	}
 
 	// Voucher flows (ut-docs#1008) — the instant sibling lives in
 	// voucher_repo.go, called out explicitly by ADR-0066 precisely because
@@ -3234,6 +3253,9 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 	}
 	if operators, err := r.OperatorSalesForInstantWindow(ctx, from, to); err == nil {
 		rep.Operators = operators
+	}
+	if ns, err := r.NoSaleOperatorsForInstantWindow(ctx, from, to); err == nil {
+		rep.NoSaleOperators = ns
 	}
 	if orderTypes, err := r.OrderTypeSalesForInstantWindow(ctx, from, to); err == nil {
 		rep.OrderTypes = orderTypes

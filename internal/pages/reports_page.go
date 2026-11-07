@@ -538,6 +538,10 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				ArticleGroups []data.ArticleGroupSales
 				Articles      []data.ArticleSales
 				Operators     []data.OperatorSales
+				// NoSaleCount/NoSaleOperators (ut-docs#5753): same archived-
+				// report, same-gate, nil-when-absent as Operators.
+				NoSaleCount     int
+				NoSaleOperators []data.NoSaleOperator
 				// OrderTypes (ut-docs#1015) is the same archived-report,
 				// same-gate, same-nil-when-absent breakdown as the three
 				// above.
@@ -582,6 +586,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.ArticleGroups = rep.ArticleGroups
 							row.Articles = rep.Articles
 							row.Operators = rep.Operators
+							row.NoSaleCount = rep.NoSaleCount
+							row.NoSaleOperators = rep.NoSaleOperators
 							row.OrderTypes = eodOrderTypesForDisplay(rep.OrderTypes) // ut-docs#3632
 							row.FiscalDevice = rep.FiscalDevice
 							if rep.Day == "" {
