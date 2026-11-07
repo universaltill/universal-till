@@ -747,11 +747,18 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
-// MirrorStateKey is a position in a state re-sync: sales in (local_date, id)
-// order, then closes in (created_at, id) order.
+// MirrorStateKey is a position in a state re-sync, which pages three phases
+// in turn: "sales" (StateSaleIDs, in (local_date, rowid) order), "closes"
+// (this main till's own closes, StateCloseIDs, in (created_at, id) order)
+// and "peer" (other tills' closes, StatePeerCloseKeys, in
+// (created_at, rowid) order). A and B are the last position served,
+// exclusive: A is the local_date or created_at, B the rowid (sales, peer,
+// in base 10) or the report_archive id (closes). An empty A starts the
+// phase at its beginning. decodeMirrorStateCursor (internal/pages) reads it
+// back from next_cursor.
 type MirrorStateKey struct {
-	Phase string // "sales" or "closes"
-	A, B  string // (local_date, id) or (created_at, id), exclusive
+	Phase string // "sales", "closes" or "peer"
+	A, B  string // see above
 }
 
 // StateSaleIDs pages the ids of completed or voided sales with
