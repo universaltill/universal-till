@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -45,15 +47,23 @@ type noSaleRequest struct {
 //     transaction (InsertAuditElevated when a PIN elevated the request).
 //  4. publish till.drawer.no_sale (best-effort, after commit and response).
 //
+// Two request bodies, one handler (ut-docs#3560). application/json is the API
+// contract: JSON in, JSON out, a denial is 403/429 manager_pin_required. The
+// sale-screen button instead posts application/x-www-form-urlencoded through
+// the till's shared utPostWithElevation helper (fields override_pin, reason);
+// there a denial is answered with the shared elevation-prompt dialog
+// (renderElevationPrompt, 200 text/html + X-UT-Response) and its PIN retry
+// re-posts the same form. Every other outcome stays the JSON envelope. A form
+// post is a CORS "simple request", so that branch refuses a cross-origin
+// caller (sameOriginRequest) before any PIN attempt is counted.
+//
 // Not a customer document: no receipt is printed, so the ADR-0124
 // customer-document suppression does not apply.
 func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/pos/no-sale", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		var req noSaleRequest
-		// An empty body is an empty request (no PIN, no reason).
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			writeNoSaleError(w, http.StatusBadRequest, "invalid_request", "request body must be a JSON object")
+		req, form, ok := decodeNoSaleRequest(w, r)
+		if !ok {
 			return
 		}
 		reason := strings.TrimSpace(req.Reason)
@@ -66,6 +76,15 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 		actorID, approverID := elev.ActorID, ""
 		switch elev.Outcome {
 		case needsElevation:
+			if form {
+				var hidden []elevationHiddenField
+				if reason != "" {
+					hidden = append(hidden, elevationHiddenField{Name: "reason", Value: reason})
+				}
+				renderElevationPrompt(w, r, "/api/pos/no-sale", "#no-sale-status",
+					httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.no_sale"), hidden, elev)
+				return
+			}
 			status := http.StatusForbidden
 			if errors.Is(elev.Err, auth.ErrLockedOut) {
 				status = http.StatusTooManyRequests
@@ -134,6 +153,31 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 		// never waits on a plugin (ut-docs#5758).
 		dispatchTillDrawerNoSale(ctx, d, id, ev)
 	})
+}
+
+// decodeNoSaleRequest reads the JSON or form body (see registerNoSaleAPI). On
+// failure it has already written the response and ok is false. form reports
+// the urlencoded branch, which also enforces the same-origin rule.
+func decodeNoSaleRequest(w http.ResponseWriter, r *http.Request) (req noSaleRequest, form, ok bool) {
+	body := http.MaxBytesReader(w, r.Body, 4096)
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && mt == "application/x-www-form-urlencoded" {
+		if !sameOriginRequest(r) {
+			writeNoSaleError(w, http.StatusForbidden, "cross_origin", "cross-origin request refused")
+			return req, true, false
+		}
+		r.Body = body
+		if err := r.ParseForm(); err != nil {
+			writeNoSaleError(w, http.StatusBadRequest, "invalid_request", "request body must be a valid form")
+			return req, true, false
+		}
+		return noSaleRequest{ManagerPIN: r.PostForm.Get("override_pin"), Reason: r.PostForm.Get("reason")}, true, true
+	}
+	// An empty body is an empty request (no PIN, no reason).
+	if err := json.NewDecoder(body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeNoSaleError(w, http.StatusBadRequest, "invalid_request", "request body must be a JSON object")
+		return req, false, false
+	}
+	return req, false, true
 }
 
 // recordNoSale writes the event row and its audit row atomically.

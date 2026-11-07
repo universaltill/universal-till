@@ -44,6 +44,10 @@
             data-action="refocus-scan">
       <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
     {{ if .canManageStock }}<a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory"><span class="btn-ico" aria-hidden="true">{{ icon "package" }}</span> {{ T "kiosk.inventory" }}</a>{{ end }}
+    <!-- ut-docs#3560: second copy of the No Sale action (the row footer is below the fold at <=480px). -->
+    <button class="btn secondary compact" type="button" data-testid="no-sale-phone" data-ut-no-sale
+            title="{{ T "no_sale.action_title" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "inbox" }}</span> {{ T "no_sale.action" }}</button>
   </div>
 </div>
 
@@ -465,6 +469,18 @@
          the payment overlay would make "hold this basket for the next
          customer" cost an unrelated trip through Payment. New Customer stays
          inside the overlay's own footer — New sale here covers it. -->
+    <!-- ut-docs#3560: No Sale outcome. Outside every htmx swap target (#basket
+         etc.) so a swap never wipes it; errors go to the global #pos-alert. The
+         success notice is a .pos-notice child app.js adds and scheduleToastDismiss
+         removes, so this container stays.
+         Strings travel as data-* so app.js stays locale-free. -->
+    <div id="no-sale-status" role="status" data-testid="no-sale-status"
+         data-msg-opened="{{ T "no_sale.opened" }}"
+         data-msg-no-printer="{{ T "no_sale.error.no_drawer_printer" }}"
+         data-msg-unsupported="{{ T "no_sale.error.drawer_unsupported" }}"
+         data-msg-kick-failed="{{ T "no_sale.error.drawer_kick_failed" }}"
+         data-msg-not-recorded="{{ T "no_sale.error.not_recorded" }}"
+         data-msg-failed="{{ T "no_sale.error.failed" }}"></div>
     <div class="tender-default-footer">
       <!-- ut-docs#1984: rendered from the CURRENT basket at page-load time
            (payItemCount/payTotal, index_page.go) so the empty/non-empty
@@ -526,6 +542,13 @@
       <!-- ut-docs#2858: every badge render swaps its watcher in here (out
            of band); it polls for held-sale changes made on other tills. -->
       <span id="open-orders-watch" hidden aria-hidden="true"></span>
+      <!-- ut-docs#3560: No Sale -- open the cash drawer without a sale. Last in
+           DOM order (farthest from Pay; mirrors under RTL). One tap, no
+           confirm; a role without cash_adjustment gets the shared manager-PIN
+           dialog (app.js utNoSale -> utPostWithElevation). -->
+      <button type="button" class="btn secondary tender-icon-btn" data-testid="no-sale" data-ut-no-sale
+              title="{{ T "no_sale.action_title" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "inbox" }}</span><span class="visually-hidden">{{ T "no_sale.action" }}</span></button>
     </div>
 
     <!-- data-ut-no-scrim (ut-docs#2873): a panel docked beside the basket,

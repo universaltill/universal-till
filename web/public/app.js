@@ -3393,6 +3393,80 @@ window.utElevationErrorText = function (e) {
   return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 
+// ut-docs#3560: sale-screen No Sale (open the cash drawer without a sale).
+// A tap on any [data-ut-no-sale] (the action-row icon, the phone-row copy)
+// posts /api/pos/no-sale through utPostWithElevation, so a role without
+// cash_adjustment gets the shared manager-PIN dialog (.show(), never
+// showModal). Success -> a self-clearing .pos-notice in #no-sale-status;
+// every failure -> the global #pos-alert (sticky until dismissed). Both
+// copies are disabled while a request, PIN dialog included, is in flight,
+// so a double tap sends exactly one request. Never touches the basket, the
+// payment overlay or held orders. Strings come from #no-sale-status data-*.
+(function () {
+  var inFlight = false;
+  var ERR_MSG = {
+    no_drawer_printer: 'msgNoPrinter',
+    drawer_unsupported: 'msgUnsupported',
+    drawer_kick_failed: 'msgKickFailed',
+    not_recorded: 'msgNotRecorded'
+  };
+  function buttons() { return document.querySelectorAll('[data-ut-no-sale]'); }
+  function setBusy(on) {
+    Array.prototype.forEach.call(buttons(), function (b) {
+      b.disabled = on;
+      if (on) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
+    });
+  }
+  function showError(text, sticky) {
+    var box = document.getElementById('pos-alert');
+    if (!box || !text) return;
+    if (sticky) box.dataset.sticky = '1'; else delete box.dataset.sticky;
+    box.hidden = false; // unhide before the text so a screen reader announces it
+    var span = box.querySelector('.notice-text');
+    if (span) span.textContent = text;
+    if (typeof scheduleToastDismiss === 'function') scheduleToastDismiss();
+  }
+  function showOpened(text) {
+    var host = document.getElementById('no-sale-status');
+    if (!host || !text) return;
+    host.textContent = '';
+    var n = document.createElement('div');
+    n.className = 'pos-notice success';
+    var t = document.createElement('span');
+    t.className = 'notice-text';
+    t.textContent = text;
+    n.appendChild(t);
+    host.appendChild(n);
+    if (typeof scheduleToastDismiss === 'function') scheduleToastDismiss(); // ~2.5 s, removes n
+  }
+  function onDone(r, host) {
+    return r.json().catch(function () { return null; }).then(function (res) {
+      var d = host ? host.dataset : {};
+      if (r.ok && res && !res.error) { showOpened(d.msgOpened); return; }
+      var code = res && res.error && res.error.code;
+      showError(d[ERR_MSG[code]] || d.msgFailed, false);
+    });
+  }
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest('[data-ut-no-sale]') : null;
+    if (!btn || inFlight || btn.disabled) return;
+    inFlight = true;
+    setBusy(true);
+    var host = document.getElementById('no-sale-status');
+    window.utPostWithElevation('/api/pos/no-sale', {}, function (r) { return onDone(r, host); }, function () { /* cancelled: say nothing */ })
+      .catch(function (e) {
+        // Network failure or timeout: the drawer may or may not have opened.
+        showError(window.utElevationErrorText(e) === e ? (host && host.dataset.msgFailed) : window.utElevationErrorText(e), true);
+      })
+      .then(function () {
+        inFlight = false;
+        setBusy(false);
+        var a = document.activeElement;
+        if (!a || a === document.body) { try { btn.focus(); } catch (e) { /* best effort */ } }
+      });
+  });
+})();
+
 // ut-docs#2024 (moved here by ut-docs#2173): toggles the two fade classes
 // app.css's ::before/::after pseudo-elements key off, for any horizontally-
 // scrollable .tab-bar. Math.abs() on scrollLeft (rather than comparing

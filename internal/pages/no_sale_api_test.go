@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,4 +284,170 @@ func TestNoSale_EmptyBodyIsAnEmptyRequest(t *testing.T) {
 	if rows := noSaleRows(t, dp.Db); len(rows) != 1 || rows[0].reason != "" {
 		t.Fatalf("want one no_sale_events row with no reason, got %+v", rows)
 	}
+}
+
+// ut-docs#3560: the sale-screen No Sale button posts the till's shared
+// utPostWithElevation shape (application/x-www-form-urlencoded). A denial is
+// answered with the elevation-prompt HTML fragment; every other outcome stays
+// the JSON envelope. A JSON caller keeps the JSON 403.
+
+func postNoSaleForm(t *testing.T, mux *http.ServeMux, u auth.User, vals url.Values, hdr map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/no-sale", strings.NewReader(vals.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	req = auth.WithUser(req, u)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func requireNoSalePrompt(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 prompt, got %d %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", ct)
+	}
+	if got := rec.Header().Get("X-UT-Response"); got != "elevation-prompt" {
+		t.Fatalf("X-UT-Response = %q, want elevation-prompt", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="elevation-modal"`) || !strings.Contains(body, `hx-post="/api/pos/no-sale"`) {
+		t.Fatalf("prompt must carry #elevation-modal with hx-post=/api/pos/no-sale, got %q", body)
+	}
+	return body
+}
+
+func TestNoSale_FormCashierNoPINRendersElevationPrompt(t *testing.T) {
+	mux, dp, dev := newNoSaleTestDeps(t, "device")
+	rec := postNoSaleForm(t, mux, cashier3134, url.Values{}, nil)
+	body := requireNoSalePrompt(t, rec)
+	if !strings.Contains(body, "Open the cash drawer without a sale") {
+		t.Fatalf("prompt must summarise the action, got %q", body)
+	}
+	if got, _ := os.ReadFile(dev); len(got) != 0 {
+		t.Fatalf("a prompt must not kick the drawer, printer got % x", got)
+	}
+	assertNothingRecorded(t, dp)
+}
+
+func TestNoSale_FormWrongPINRePromptsWithError(t *testing.T) {
+	mux, dp, _ := newNoSaleTestDeps(t, "device")
+	rec := postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {"000000"}}, nil)
+	body := requireNoSalePrompt(t, rec)
+	if !strings.Contains(body, "Invalid PIN") {
+		t.Fatalf("want the invalid-PIN text, got %q", body)
+	}
+	assertNothingRecorded(t, dp)
+
+	// Past the device-wide threshold the prompt shows the lockout text, and
+	// even the correct PIN is refused.
+	for i := 0; i < 6; i++ {
+		rec = postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {"000000"}}, nil)
+	}
+	rec = postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {perm3134MgrPIN}}, nil)
+	body = requireNoSalePrompt(t, rec)
+	if !strings.Contains(body, "Too many attempts") {
+		t.Fatalf("want the locked-out text, got %q", body)
+	}
+	assertNothingRecorded(t, dp)
+}
+
+func TestNoSale_FormManagerPINElevatesReturnsJSON(t *testing.T) {
+	mux, dp, _ := newNoSaleTestDeps(t, "device")
+	rec := postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {perm3134MgrPIN}}, nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("want 200 JSON, got %d %q (%q)", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+	if id, code := decodeNoSaleEnvelope(t, rec); id == "" || code != "" {
+		t.Fatalf("want data.id, got id %q error %q", id, code)
+	}
+	rows := noSaleRows(t, dp.Db)
+	if len(rows) != 1 || rows[0].actor != "cashier1" || rows[0].approver != "mgr1" {
+		t.Fatalf("want one event actor=cashier1 approver=mgr1, got %+v", rows)
+	}
+	if a := noSaleAudit(t, dp.Db); len(a) != 1 || a[0].actor != "mgr1" || a[0].blocked != "cashier1" {
+		t.Fatalf("want one elevated audit row actor=mgr1 blocked=cashier1, got %+v", a)
+	}
+}
+
+func TestNoSale_FormPermittedReturnsJSONNoPrompt(t *testing.T) {
+	mux, dp, _ := newNoSaleTestDeps(t, "device")
+	rec := postNoSaleForm(t, mux, manager3134, url.Values{}, nil)
+	if rec.Code != http.StatusOK || rec.Header().Get("X-UT-Response") != "" {
+		t.Fatalf("want 200 JSON with no prompt header, got %d %q", rec.Code, rec.Header().Get("X-UT-Response"))
+	}
+	if id, _ := decodeNoSaleEnvelope(t, rec); id == "" {
+		t.Fatalf("want data.id, got %q", rec.Body.String())
+	}
+	if rows := noSaleRows(t, dp.Db); len(rows) != 1 || rows[0].approver != "" {
+		t.Fatalf("want one un-elevated event, got %+v", rows)
+	}
+}
+
+func TestNoSale_FormErrorsStayJSON(t *testing.T) {
+	mux, dp, _ := newNoSaleTestDeps(t, "")
+	rec := postNoSaleForm(t, mux, manager3134, url.Values{}, nil)
+	if rec.Code != http.StatusConflict || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("want 409 JSON, got %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if _, code := decodeNoSaleEnvelope(t, rec); code != "no_drawer_printer" {
+		t.Fatalf("error code = %q, want no_drawer_printer", code)
+	}
+	assertNothingRecorded(t, dp)
+}
+
+func TestNoSale_FormCrossOriginRefusedBeforePIN(t *testing.T) {
+	mux, dp, dev := newNoSaleTestDeps(t, "device")
+	// More wrong-PIN cross-site posts than the lockout threshold: none may
+	// reach AuthorizeManager.
+	for i := 0; i < 8; i++ {
+		rec := postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {"000000"}}, map[string]string{"Sec-Fetch-Site": "cross-site"})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("attempt %d: want 403, got %d %q", i, rec.Code, rec.Body.String())
+		}
+		if _, code := decodeNoSaleEnvelope(t, rec); code != "cross_origin" {
+			t.Fatalf("attempt %d: error code = %q, want cross_origin", i, code)
+		}
+	}
+	rec := postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {perm3134MgrPIN}}, map[string]string{"Origin": "https://evil.example"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("valid PIN cross-origin: want 403, got %d", rec.Code)
+	}
+	if got, _ := os.ReadFile(dev); len(got) != 0 {
+		t.Fatalf("cross-origin must not kick the drawer, printer got % x", got)
+	}
+	assertNothingRecorded(t, dp)
+	// The lockout counter did not move: a same-origin valid PIN still works.
+	if rec := postNoSaleForm(t, mux, cashier3134, url.Values{"override_pin": {perm3134MgrPIN}}, nil); rec.Code != http.StatusOK || rec.Header().Get("X-UT-Response") != "" {
+		t.Fatalf("same-origin valid PIN after cross-origin probing: want 200 JSON, got %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNoSale_JSONContractUnchanged(t *testing.T) {
+	mux, _, _ := newNoSaleTestDeps(t, "device")
+	rec := postNoSale(t, mux, cashier3134, ``)
+	if rec.Code != http.StatusForbidden || rec.Header().Get("X-UT-Response") != "" {
+		t.Fatalf("JSON cashier without PIN: want 403 JSON, got %d %q", rec.Code, rec.Header().Get("X-UT-Response"))
+	}
+	if _, code := decodeNoSaleEnvelope(t, rec); code != "manager_pin_required" {
+		t.Fatalf("error code = %q, want manager_pin_required", code)
+	}
+}
+
+func TestNoSale_MultipartIsInvalidRequest(t *testing.T) {
+	mux, dp, _ := newNoSaleTestDeps(t, "device")
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/no-sale", strings.NewReader("--b\r\nContent-Disposition: form-data; name=\"override_pin\"\r\n\r\n1\r\n--b--\r\n"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=b")
+	req = auth.WithUser(req, manager3134)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d %q", rec.Code, rec.Body.String())
+	}
+	assertNothingRecorded(t, dp)
 }

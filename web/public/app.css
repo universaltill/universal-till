@@ -4065,7 +4065,7 @@ body.osk-padded #table-add-modal .modifier-actions {
 /* ut-docs#5221: the action row's width, not the window's, decides when it
    wraps. In the side-by-side tender column (~251px of row at 768-860px
    wide) Pay's 7rem basis plus three 2.75rem icons and their .4rem gaps
-   (16.45rem) does not fit, so Open orders dropped alone onto a second line
+   (16.45rem; 19.6rem since the fourth icon, No Sale, ut-docs#3560) does not fit, so Open orders dropped alone onto a second line
    by accident (#4897 made the same wrap happen at a high UI scale). Where
    the row cannot hold them in one line, Pay now takes a full line of its own
    and the three icons share the next evenly. Where it fits (900x414, the
@@ -4073,7 +4073,7 @@ body.osk-padded #table-add-modal .modifier-actions {
    the column .tender, so its width comes from the parent, never its
    content, which is what a size container needs. */
 .tender-default-footer { container-type: inline-size; container-name: tender-actions; }
-@container tender-actions (max-width: 16.45rem) {
+@container tender-actions (max-width: 19.6rem) {
   .tender-default-footer > .payment-trigger { flex-basis: 100%; }
   .tender-default-footer > .tender-icon-btn { flex: 1 1 0; }
 }
@@ -7631,3 +7631,10 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
+
+/* ut-docs#3560: No Sale outcome notice, directly above the action row. It
+   self-clears (scheduleToastDismiss); in the display:contents tiers (768-900 x
+   <=540) it takes its own flex line. Logical properties only. */
+#no-sale-status:empty { display: none; }
+#no-sale-status { margin-block-end: .4rem; }
+.pos-container > .tender #no-sale-status { flex: 0 0 100%; }
