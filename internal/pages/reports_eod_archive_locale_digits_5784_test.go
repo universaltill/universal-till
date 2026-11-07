@@ -24,6 +24,12 @@ func TestReportsEODArchive_CountsUseLocaleDigits(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// en keeps Latin digits: guards against a regression that localizes
+	// digits for every locale.
+	if rec := getReportsTab(t, mux, "eod", "?lang=en"); !strings.Contains(rec.Body.String(), "<td>23</td>") {
+		t.Errorf("en: want Latin <td>23</td> in EOD archive")
+	}
+
 	for _, locale := range []string{"ar", "fa"} {
 		t.Run(locale, func(t *testing.T) {
 			rec := getReportsTab(t, mux, "eod", "?lang="+locale)
