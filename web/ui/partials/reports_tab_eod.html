@@ -1,6 +1,7 @@
 {{ if .IsManager }}
 <div class="card">
   <h2>{{ T "reports.eod.title" }}</h2>
+  <p class="muted"><a class="x-report-link" href="/shifts#x-report">{{ T "reports.eod.x_report_link" }}</a></p>
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
     <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
     <span id="eod-msg" aria-live="polite"></span>

@@ -19,8 +19,8 @@
       <h2>{{ T "shifts.current" }}</h2>
       <table class="table">
         <tbody>
-          <tr><td>{{ T "shifts.register" }}</td><td>{{ .Current.RegisterID }}</td></tr>
-          <tr><td>{{ T "shifts.cashier" }}</td><td>{{ .Current.CashierID }}</td></tr>
+          <tr><td>{{ T "shifts.register" }}</td><td>{{ .CurrentRegisterName }}</td></tr>
+          <tr><td>{{ T "shifts.cashier" }}</td><td>{{ .CurrentCashierName }}</td></tr>
           <tr><td>{{ T "shifts.opened_at" }}</td><td>{{ datetime .Current.OpenedAt }}</td></tr>
           <tr><td>{{ T "shifts.opening_cash" }}</td><td>{{ money .Current.OpeningCash }}</td></tr>
           {{ if .NoSaleOK }}<tr><td>{{ T "reports.eod.no_sale_title" }}</td><td>{{ qty .NoSaleCount }}</td></tr>{{ end }}
@@ -35,6 +35,25 @@
           {{ end }}
         </tbody>
       </table>
+      {{ end }}
+      {{ if .HasX }}
+      <section id="x-report" class="x-report" aria-labelledby="x-report-title">
+        <h3 id="x-report-title">{{ T "shifts.x_report.title" }}</h3>
+        <p class="muted">{{ T "shifts.x_report.not_a_close" }}</p>
+        <form id="x-report-form" hx-post="/shifts/x-report" hx-target="#x-report-body"
+              hx-swap="innerHTML show:#x-report:top" hx-disabled-elt="find button[type=submit]">
+          {{ if .XShowPicker }}
+          <label>{{ T "shifts.register" }}
+            <select name="register">
+              {{ range .XShifts }}<option value="{{ .RegisterID }}"{{ if eq .RegisterID $.XDefaultRegister }} selected{{ end }}>{{ .RegisterName }}</option>
+              {{ end }}
+            </select>
+          </label>
+          {{ else }}<input type="hidden" name="register" value="{{ .XDefaultRegister }}">{{ end }}
+          <button type="submit" id="x-report-show" class="btn secondary">{{ T "shifts.x_report.show" }}</button>
+        </form>
+        <div id="x-report-body"></div>
+      </section>
       {{ end }}
     </div>
     {{ end }}
@@ -172,7 +191,7 @@
 // visibly happens. Same fix as refund.html's own #refund-msg handler.
 document.body.addEventListener('htmx:responseError', function (ev) {
   var target = ev.detail && ev.detail.target;
-  if (!target || target.id !== 'shift-result') return;
+  if (!target || (target.id !== 'shift-result' && target.id !== 'x-report-body')) return;
   // The server already renders a styled `<div class='error'>…</div>`
   // fragment for non-JSON requests (respondAdjustmentError/
   // respondShiftError/respondCloseError) — swap it in the same way a
@@ -189,8 +208,8 @@ document.body.addEventListener('htmx:responseError', function (ev) {
 // (respond*Error above) so this reads the same as any other error here.
 document.body.addEventListener('htmx:sendError', function (ev) {
   var target = ev.detail && ev.detail.target;
-  if (!target || target.id !== 'shift-result') return;
-  target.innerHTML = "<div class='error'>{{ T "designer.error.server" }}</div>";
+  if (!target || (target.id !== 'shift-result' && target.id !== 'x-report-body')) return;
+  target.innerHTML = "<div class='error' role='alert'>{{ T "designer.error.server" }}</div>";
 });
 
 // Denomination count → count_protocol JSON (ut-docs#1006): a flat object
