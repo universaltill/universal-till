@@ -10,8 +10,12 @@ import (
 
 // EODLateTill is one other till's rows that a Z counted although they were
 // made before that Z's window opened (ut-docs#5769, ADR-0066 amendment).
-// Gross/RefundTotal are minor-unit sums in a stored-JSON DTO, like
-// EODReport.Gross; nothing does arithmetic on them in Go.
+// Gross/RefundTotal/ClearedBasketTotal are minor-unit sums in a stored-JSON
+// DTO, like EODReport.Gross; nothing does arithmetic on them in Go.
+// ClearedBasketTotal is a pointer so a real 0 sum (recorded) differs from
+// "not recorded" (nil: a Z archived before ut-docs#5776, or no late cleared
+// baskets). EarliestOrigin is this till's own oldest origin time (local-offset
+// RFC3339, "" when unparseable or on a Z archived before ut-docs#5776).
 type EODLateTill struct {
 	TillID             string `json:"till_id"`
 	Name               string `json:"name"`
@@ -21,6 +25,8 @@ type EODLateTill struct {
 	RefundTotal        int64  `json:"refund_total"`
 	NoSaleCount        int    `json:"no_sale_count"`
 	ClearedBasketCount int    `json:"cleared_basket_count"`
+	ClearedBasketTotal *int64 `json:"cleared_basket_total,omitempty"`
+	EarliestOrigin     string `json:"earliest_origin,omitempty"`
 }
 
 // EODLateEntries is the "recorded late from other tills" note stored on the
@@ -49,10 +55,17 @@ func (r *POSRepo) LateEntriesForInstantWindow(ctx context.Context, from, to time
 		}
 		return t
 	}
-	var earliest string // min origin as "YYYY-MM-DD HH:MM:SS" (datetime form, sorts as text)
-	note := func(min sql.NullString) {
-		if min.Valid && min.String != "" && (earliest == "" || min.String < earliest) {
+	var earliest string            // min origin as "YYYY-MM-DD HH:MM:SS" (datetime form, sorts as text)
+	tillMin := map[string]string{} // same datetime form, per till
+	note := func(id string, min sql.NullString) {
+		if !min.Valid || min.String == "" {
+			return
+		}
+		if earliest == "" || min.String < earliest {
 			earliest = min.String
+		}
+		if cur := tillMin[id]; cur == "" || min.String < cur {
+			tillMin[id] = min.String
 		}
 	}
 
@@ -91,18 +104,19 @@ GROUP BY `+key+`, s.sale_type`, append(sargs, fromStr)...)
 		} else {
 			t.SalesCount, t.Gross = n, gross
 		}
-		note(min)
+		note(id, min)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	for _, ev := range []struct{ table, field string }{
-		{"no_sale_events", "no"}, {"cleared_baskets", "cl"},
+	for _, ev := range []struct{ table, field, amount string }{
+		{"no_sale_events", "no", "0"},
+		{"cleared_baskets", "cl", "COALESCE(SUM(e.total_minor), 0)"},
 	} {
 		ewin, eargs := instantWindow(eventArrivalCol("e"), from, to)
 		erows, err := r.db.QueryContext(ctx, `
-SELECT e.till_id, COALESCE(t.name, ''), COUNT(*), MIN(datetime(e.created_at))
+SELECT e.till_id, COALESCE(t.name, ''), COUNT(*), `+ev.amount+`, MIN(datetime(e.created_at))
 FROM `+ev.table+` e
 LEFT JOIN tills t ON t.id = e.till_id
 WHERE COALESCE(e.till_id, '') <> '' AND `+ewin+`
@@ -119,8 +133,9 @@ GROUP BY e.till_id`, append(eargs, fromStr)...)
 		for erows.Next() {
 			var id, name string
 			var n int
+			var amt int64
 			var min sql.NullString
-			if err := erows.Scan(&id, &name, &n, &min); err != nil {
+			if err := erows.Scan(&id, &name, &n, &amt, &min); err != nil {
 				erows.Close()
 				return nil, fmt.Errorf("scan late %s: %w", ev.table, err)
 			}
@@ -132,8 +147,10 @@ GROUP BY e.till_id`, append(eargs, fromStr)...)
 				t.NoSaleCount = n
 			} else {
 				t.ClearedBasketCount = n
+				v := amt
+				t.ClearedBasketTotal = &v
 			}
-			note(min)
+			note(id, min)
 		}
 		err = erows.Err()
 		erows.Close()
@@ -145,14 +162,23 @@ GROUP BY e.till_id`, append(eargs, fromStr)...)
 		return nil, nil
 	}
 	out := &EODLateEntries{}
-	for _, t := range tills {
+	for id, t := range tills {
+		t.EarliestOrigin = lateLocalRFC3339(tillMin[id])
 		out.Tills = append(out.Tills, *t)
 	}
 	sort.Slice(out.Tills, func(i, j int) bool { return out.Tills[i].TillID < out.Tills[j].TillID })
-	if ts, perr := time.ParseInLocation("2006-01-02 15:04:05", earliest, time.UTC); perr == nil {
-		out.EarliestOrigin = ts.Local().Format(time.RFC3339)
-	}
+	out.EarliestOrigin = lateLocalRFC3339(earliest)
 	return out, nil
+}
+
+// lateLocalRFC3339 turns a SQLite "YYYY-MM-DD HH:MM:SS" UTC datetime into a
+// local-offset RFC3339 string; "" when it does not parse.
+func lateLocalRFC3339(s string) string {
+	ts, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.UTC)
+	if err != nil {
+		return ""
+	}
+	return ts.Local().Format(time.RFC3339)
 }
 
 // HoldWriteLock takes SQLite's write lock (every BeginTx here is BEGIN

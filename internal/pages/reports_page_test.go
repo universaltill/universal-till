@@ -2352,3 +2352,81 @@ func TestReportsPage_EODRowNoSaleRangeHasNoOperatorHeader(t *testing.T) {
 		t.Fatalf("range archive must not show the Operator|Opens header, got: %s", body)
 	}
 }
+
+// ut-docs#5776: the archived EOD detail row shows the "recorded late from
+// other tills" note.
+const lateNoteJSON = `{"day":"2026-01-01","sales_count":3,"net":500,"gross":500,"late_entries":{"earliest_origin":"2026-01-05T09:30:00Z","tills":[` +
+	`{"till_id":"till-a","name":"Bar till","sales_count":2,"gross":750,"refund_count":1,"refund_total":40,"no_sale_count":1,"cleared_basket_count":1,"cleared_basket_total":250,"earliest_origin":"2026-01-05T09:30:00Z"},` +
+	`{"till_id":"abcdefgh-1234","name":"","sales_count":1,"gross":100}]}}`
+
+func TestReportsPage_EODRowShowsLateNote(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01',?)`, lateNoteJSON); err != nil {
+		t.Fatal(err)
+	}
+	body := getReportsTab(t, mux, "eod", "").Body.String()
+	for _, want := range []string{"Recorded late from other tills", "Already included in this report", "Bar till", "£7.50", "-£0.40", "£2.50",
+		"Other till abcdefgh", `<td style="text-align:end">5</td>`, "Earliest made"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in the late note, got: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Earliest made: ") {
+		t.Fatalf("per-till earliest present: the overall line must not repeat it, got: %s", body)
+	}
+}
+
+func TestReportsPage_EODRowLateNoteOnlyOpensDetail(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01',
+'{"day":"2026-01-01","sales_count":0,"net":0,"late_entries":{"earliest_origin":"2026-01-05T09:30:00Z","tills":[{"till_id":"t","name":"Bar","no_sale_count":1,"cleared_basket_count":2}]}}')`); err != nil {
+		t.Fatal(err)
+	}
+	body := getReportsTab(t, mux, "eod", "").Body.String()
+	// slice-A shape: overall earliest line, cleared as a count (no amount).
+	for _, want := range []string{"Recorded late from other tills", "Earliest made: ", "Bar"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q for a late-only archive, got: %s", want, body)
+		}
+	}
+	// 2 cleared + 1 drawer open: the cleared cell is the bare count "2", not money.
+	if !strings.Contains(body, `<td style="text-align:end">2</td>`) {
+		t.Fatalf("an unrecorded cleared total must render as a count, not an amount: %s", body)
+	}
+}
+
+func TestReportsPage_EODRowOmitsLateNoteWhenAbsent(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01','{"day":"2026-01-01","sales_count":3,"net":500}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r2','eod','2026-01-02','{"day":"2026-01-02","sales_count":3,"net":500,"late_entries":{"tills":[]}}')`); err != nil {
+		t.Fatal(err)
+	}
+	body := getReportsTab(t, mux, "eod", "").Body.String()
+	if strings.Contains(body, "Recorded late") {
+		t.Fatalf("expected no late note when absent/empty, got: %s", body)
+	}
+}
+
+func TestReportsPage_EODRowLateNoteHiddenWithoutEODReport(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	if err := data.NewAuthRepo(dp.Db).SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01',?)`, lateNoteJSON); err != nil {
+		t.Fatal(err)
+	}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/eod", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if strings.Contains(body, "Recorded late") || strings.Contains(body, "Bar till") || strings.Contains(body, "£7.50") {
+		t.Fatalf("late note must stay behind eod_report, got: %s", body)
+	}
+}

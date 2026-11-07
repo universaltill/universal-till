@@ -161,6 +161,25 @@ sends the request an `annotation` value; there's no on-screen field for it
 yet, so this is mainly useful to an integration or a future till update —
 it prints as **Anmerkung** immediately under Erstellt von when present.
 
+## Rows recorded late from other tills
+
+On a shop with several tills, the main till's day-end (Z) report counts every
+till's sales, refunds, cleared baskets and drawer opens once they have synced.
+Sometimes a row is made on another till before the main till's previous close
+but only reaches the main till after it, for example when that till was
+offline. That earlier report is already closed and is never changed, so the
+row is counted in the next report instead. That report then shows a section
+headed **RECORDED LATE FROM OTHER TILLS**. For each till it lists how many
+rows came in late, the sales amount, any refunds and cleared baskets with
+their amounts, any drawer opens, and when the oldest of them was made. These
+figures are **already included in the report's totals**. The section explains
+them and adds nothing on top. A till that is no longer in this till's list of
+tills is shown as "Other till" followed by a short id. On a report closed
+before this section existed, the cleared baskets show as a number only and
+the time of the oldest row is shown once for all tills. The section is absent
+when nothing arrived late, and on a till's first close. The same figures appear
+in that report's detail on the **Day-end (EOD)** tab of Reports.
+
 ## Article group, article and operator breakdowns
 
 Running End of day for a single day (not a date range) adds three more

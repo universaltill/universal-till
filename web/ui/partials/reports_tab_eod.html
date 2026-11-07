@@ -58,7 +58,7 @@
         {{ if $canRunEOD }}<td>{{ qty .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
-      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice .NoSaleCount }}
+      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice .NoSaleCount .LateNote }}
       <!-- ut-docs#1010: per-article-group/per-article/per-operator
            breakdowns for THIS archived report, same single-day-only
            breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
@@ -71,9 +71,42 @@
            <details> to keep the report list itself usable.
            OrderTypes (ut-docs#1015) joins the same gate — only ever two
            rows (dine in/takeaway), same plain-table treatment as
-           ArticleGroups/Operators. -->
+           ArticleGroups/Operators.
+           LateNote (ut-docs#5776) joins the same gate and leads the cell:
+           it explains the report's totals (rows made on another till before
+           the previous close), so it never reads as an extra amount. -->
       <tr>
         <td colspan="{{ if $canRunEOD }}5{{ else }}2{{ end }}" style="padding-inline-start:1.5rem">
+          {{ with .LateNote }}
+          <strong>{{ T "reports.eod.late_title" }}</strong>
+          <p class="muted" style="margin:.2rem 0">{{ T "reports.eod.late_note" }}</p>
+          {{ if and (not .HasPerTillEarliest) .EarliestOrigin }}<p class="muted" style="margin:.2rem 0">{{ printf (T "reports.eod.late_earliest") (datetime .EarliestOrigin) }}</p>{{ end }}
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr>
+              <th>{{ T "reports.eod.late_till" }}</th>
+              <th style="text-align:end">{{ T "reports.eod.late_entries" }}</th>
+              <th style="text-align:end">{{ T "reports.sales" }}</th>
+              {{ if .HasRefunds }}<th style="text-align:end">{{ T "reports.refunds" }}</th>{{ end }}
+              {{ if .HasCleared }}<th style="text-align:end">{{ T "reports.eod.late_cleared" }}</th>{{ end }}
+              {{ if .HasNoSale }}<th style="text-align:end">{{ T "reports.eod.late_no_sale" }}</th>{{ end }}
+              {{ if .HasPerTillEarliest }}<th style="text-align:end">{{ T "reports.eod.late_earliest_col" }}</th>{{ end }}
+            </tr></thead>
+            <tbody>
+              {{ $n := . }}
+              {{ range .Tills }}
+              <tr>
+                <td>{{ if .Name }}{{ .Name }}{{ else }}{{ printf (T "reports.eod.late_other_till") .ShortID }}{{ end }}</td>
+                <td style="text-align:end">{{ qty .Entries }}</td>
+                <td style="text-align:end">{{ money .Gross }}</td>
+                {{ if $n.HasRefunds }}<td style="text-align:end">{{ if .RefundCount }}-{{ money .RefundTotal }}{{ end }}</td>{{ end }}
+                {{ if $n.HasCleared }}<td style="text-align:end">{{ if .ClearedCount }}{{ if $n.ClearedAsCount }}{{ qty .ClearedCount }}{{ else }}{{ money .ClearedTotal }}{{ end }}{{ end }}</td>{{ end }}
+                {{ if $n.HasNoSale }}<td style="text-align:end">{{ if .NoSaleCount }}{{ qty .NoSaleCount }}{{ end }}</td>{{ end }}
+                {{ if $n.HasPerTillEarliest }}<td style="text-align:end">{{ if .EarliestOrigin }}{{ datetime .EarliestOrigin }}{{ end }}</td>{{ end }}
+              </tr>
+              {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
           {{ if .ArticleGroups }}
           <strong>{{ T "reports.eod.by_article_group" }}</strong>
           <table class="table" style="margin:.3rem 0 .8rem">
