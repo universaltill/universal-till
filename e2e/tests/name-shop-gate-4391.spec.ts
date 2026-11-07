@@ -51,8 +51,10 @@ test('an unnamed main till asks a manager for both names, never on the sale scre
   await expect(page).toHaveURL(/\/$/);
 
   // A boosted rail navigation is gated too (R1): a full navigation, not a swap.
-  await page.locator('nav a[href="/reports"]').first().click();
-  await expect(page).toHaveURL(/\/name-shop/);
+  // The rail has no Reports link; its Menu link (/menu) is a gated admin page.
+  await page.getByTestId('nav-menu').click();
+  await expect(page).toHaveURL(/\/name-shop\?next=%2Fmenu$/);
+  await expect(page.getByTestId('name-shop')).toHaveCount(1); // not nested in a swapped page
 
   // A blank submit is refused inline, nothing saved.
   await page.getByTestId('name-shop-save').click();
@@ -62,7 +64,7 @@ test('an unnamed main till asks a manager for both names, never on the sale scre
   await page.getByTestId('name-shop-store').fill('E2E Corner Bakery');
   await page.getByTestId('name-shop-till').fill('E2E Front counter');
   await page.getByTestId('name-shop-save').click();
-  await expect(page).toHaveURL(/\/reports$/);
+  await expect(page).toHaveURL(/\/menu$/);
 
   // Named now: the gate is out of the way.
   await page.goto('/settings');
