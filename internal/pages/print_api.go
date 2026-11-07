@@ -665,9 +665,16 @@ func receiptMethodLabel(locale, method string) string {
 // calls, purely for that — nothing outside _test.go ever reassigns them.
 var (
 	printAsyncTimeout = 15 * time.Second
-	printReceiptFn    = printReceiptIn
+	printReceiptFn    = printReceiptNoSlips
 	printKitchenFn    = printKitchenFiltered
 )
+
+// printReceiptNoSlips is the auto-print path's view of printReceiptIn: only
+// the reprint handler audits the slip count (ut-docs#5783).
+func printReceiptNoSlips(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) error {
+	_, err := printReceiptIn(ctx, d, receiptNo, customerLocale)
+	return err
+}
 
 // recordPrintFailureCtx returns the short-lived context used to WRITE a print
 // failure down (audit row + the /orders warning flag, ut-docs#517a).
@@ -745,29 +752,34 @@ func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string
 
 // printReceiptIn prints a receipt; customerLocale is a kiosk customer's own
 // language for their receipt (customerReceiptDoc), "" the shop's language.
-func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) error {
+// slips is the number of gift voucher slips (ut-docs#4247) in the print job:
+// 0 when the setting is off, the sale issued none, or the job was refused or
+// never built (no printer, doc error). A job that was sent but failed still
+// reports its slips, as they were attempted — the reprint audit row records
+// the count (ut-docs#5783).
+func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) (slips int, err error) {
 	// ADR-0124 §3: the shared choke point every receipt print path reaches
 	// (tender and refund auto-print, manual print, reprint) refuses here as
 	// well, so a handler that misses the gate still cannot print.
 	if customerDocumentsSuppressed(ctx, d) {
-		return errCustomerDocumentsSuppressed
+		return 0, errCustomerDocumentsSuppressed
 	}
 	cfg := printerConfig(ctx, d)
 	if !cfg.Enabled() {
-		return fmt.Errorf("no printer configured")
+		return 0, fmt.Errorf("no printer configured")
 	}
 	doc, err := customerReceiptDoc(ctx, d, receiptNo, customerLocale)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// PrintDocWithSlips renders ESC/POS for a thermal printer or plain text
 	// via lp for a regular (system) printer, per the configured type. The
 	// voucher slips (ut-docs#4247) ride in the same job as the receipt.
-	var slips []print.VoucherSlip
+	var vs []print.VoucherSlip
 	if cfg.VoucherSlip {
-		slips = voucherSlips(doc)
+		vs = voucherSlips(doc)
 	}
-	return print.PrintDocWithSlips(ctx, cfg, doc, slips)
+	return len(vs), print.PrintDocWithSlips(ctx, cfg, doc, vs)
 }
 
 // voucherSlips derives the stand-alone slips (ut-docs#4247) from the receipt
@@ -1050,7 +1062,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if !httpx.InstalledLocale(loc) {
 			loc = ""
 		}
-		err := printReceiptIn(ctx, d, receiptNo, loc)
+		slips, err := printReceiptIn(ctx, d, receiptNo, loc)
 		now := time.Now().UTC().Format(time.RFC3339)
 		if errors.Is(err, errCustomerDocumentsSuppressed) {
 			// ADR-0124 §3: refused, with a distinct status the receipt
@@ -1064,6 +1076,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		audit := map[string]any{"ok": err == nil}
 		if loc != "" {
 			audit["customer_locale"] = loc
+		}
+		if slips > 0 {
+			// ut-docs#5783: redeemable voucher codes were printed again.
+			audit["voucher_slips"] = slips
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
 			audit, now, "")

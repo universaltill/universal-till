@@ -85,8 +85,12 @@ func TestPrintReceiptIn_VoucherSlips(t *testing.T) {
 	ctx := context.Background()
 	seedSlipVouchers(t, dp)
 	dev := slipDevice(t, dp, "true")
-	if err := printReceiptIn(ctx, dp, "R001", ""); err != nil {
+	n, err := printReceiptIn(ctx, dp, "R001", "")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("printReceiptIn slips = %d, want 2", n)
 	}
 	doc, err := customerReceiptDoc(ctx, dp, "R001", "")
 	if err != nil {
@@ -124,8 +128,8 @@ func TestPrintReceiptIn_VoucherSlipsOffUnchanged(t *testing.T) {
 	seedReceiptSale(t, dp, "sale2", "R002", "sale", "", 120, 0, 0)
 
 	dev := slipDevice(t, dp, "")
-	if err := printReceiptIn(ctx, dp, "R001", ""); err != nil {
-		t.Fatal(err)
+	if n, err := printReceiptIn(ctx, dp, "R001", ""); err != nil || n != 0 {
+		t.Fatalf("setting off: slips = %d, err = %v, want 0, nil", n, err)
 	}
 	doc, _ := customerReceiptDoc(ctx, dp, "R001", "")
 	if !bytes.Equal(readJob(t, dev), print.Render(doc)) {
@@ -133,7 +137,7 @@ func TestPrintReceiptIn_VoucherSlipsOffUnchanged(t *testing.T) {
 	}
 
 	dev = slipDevice(t, dp, "true")
-	if err := printReceiptIn(ctx, dp, "R002", ""); err != nil {
+	if _, err := printReceiptIn(ctx, dp, "R002", ""); err != nil {
 		t.Fatal(err)
 	}
 	doc, _ = customerReceiptDoc(ctx, dp, "R002", "")
@@ -150,7 +154,7 @@ func TestPrintReceiptIn_VoidVoucherNoSlip(t *testing.T) {
 		t.Fatal(err)
 	}
 	dev := slipDevice(t, dp, "true")
-	if err := printReceiptIn(ctx, dp, "R001", ""); err != nil {
+	if _, err := printReceiptIn(ctx, dp, "R001", ""); err != nil {
 		t.Fatal(err)
 	}
 	got := readJob(t, dev)
@@ -180,7 +184,7 @@ func TestPrintReceiptIn_TopUpNoSlip(t *testing.T) {
 		t.Fatal("precondition: the top-up block should be on the receipt")
 	}
 	dev := slipDevice(t, dp, "true")
-	if err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil {
+	if _, err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(readJob(t, dev), print.Render(doc)) {
@@ -192,7 +196,10 @@ func TestPrintReceiptIn_VoucherSlipsSuppressed(t *testing.T) {
 	h := newShadowDocsHarness(t, "PT", receiptPolicyAlways)
 	seedSlipVouchers(t, h.dp)
 	dev := slipDevice(t, h.dp, "true")
-	err := printReceiptIn(context.Background(), h.dp, "R001", "")
+	n, err := printReceiptIn(context.Background(), h.dp, "R001", "")
+	if n != 0 {
+		t.Fatalf("suppressed: slips = %d, want 0", n)
+	}
 	if !errors.Is(err, errCustomerDocumentsSuppressed) {
 		t.Fatalf("err = %v, want errCustomerDocumentsSuppressed", err)
 	}
