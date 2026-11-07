@@ -336,6 +336,18 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			renderLogin(w, r, keyStoreNameRequired, "")
 			return
 		}
+		// ut-docs#4391: an optional till name, the wizard's rule
+		// (validateTillName). Absent: unchanged (the name-shop gate asks
+		// later); present but invalid: refused, nothing saved.
+		tillName := ""
+		if _, sent := r.PostForm["till_name"]; sent {
+			tn, err := validateTillName(r.PostFormValue("till_name"))
+			if err != nil {
+				renderLogin(w, r, keyTillNameRequired, "")
+				return
+			}
+			tillName = tn
+		}
 		hash, err := auth.HashPIN(pin)
 		if err != nil {
 			renderLogin(w, r, "auth.error.pin_format", "")
@@ -364,6 +376,13 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
 			loginUnavailable(w, r, "", err)
 			return
+		}
+		if tillName != "" {
+			// settings-write:allow first boot runs before this till follows a main till (as setup_page.go)
+			if err := d.Settings.Set(r.Context(), "till.name", tillName); err != nil {
+				loginUnavailable(w, r, "", err)
+				return
+			}
 		}
 		token, err := svc.CreateSession(r.Context(), adminID)
 		if err != nil {

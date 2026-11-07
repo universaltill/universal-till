@@ -1,0 +1,43 @@
+{{ define "content" }}
+{{/* ut-docs#4391: asks a manager on an unnamed MAIN till for whichever of the shop
+     name / this till's name is missing, then continues to `next`. A full page in the
+     base layout (status bar, lock, exit-to-OS stay reachable), never a dialog. No
+     autofocus, no native `required` (its bubble speaks the browser's language, not the
+     shop's), no placeholder text (a placeholder that looks like a value reads as already
+     answered, ut-docs#1548). */}}
+<div class="page-head page-head-wrap">
+  <h1>{{ if and .view.AskShop .view.AskTill }}{{ T "name_shop.heading_both" }}{{ else if .view.AskShop }}{{ T "name_shop.heading_shop" }}{{ else }}{{ T "name_shop.heading_till" }}{{ end }} {{ helpLink "display" }}</h1>
+  <a class="btn secondary btn-touch" href="{{ backtosaleurl }}" data-testid="name-shop-back"><span class="back-arrow" aria-hidden="true">←</span> {{ T "menu.back_to_sale" }}</a>
+</div>
+<div class="card name-shop-card" data-testid="name-shop">
+  <p class="muted">{{ T "name_shop.intro" }}</p>
+  <form class="name-shop-form" method="post" action="/name-shop" hx-boost="false" novalidate>
+    <input type="hidden" name="next" value="{{ .view.Next }}">
+    {{ if .view.AskShop }}
+    <label>{{ T "settings.store_name.title" }}
+      <span class="muted" id="name-shop-store-help">{{ T "settings.store_name.help" }}</span>
+      <input type="text" name="store_name" value="{{ .view.ShopValue }}" maxlength="80"
+             dir="auto" autocomplete="off" autocapitalize="words" spellcheck="false"
+             aria-required="true"
+             aria-describedby="name-shop-store-help{{ if .view.ShopErr }} name-shop-store-error{{ end }}"
+             {{ if .view.ShopErr }}class="field-invalid" aria-invalid="true"{{ end }}
+             data-testid="name-shop-store">
+    </label>
+    {{ if .view.ShopErr }}<p class="field-error-msg" id="name-shop-store-error" data-testid="name-shop-store-error">{{ T .view.ShopErr }}</p>{{ end }}
+    {{ end }}
+    {{ if .view.AskTill }}
+    <label>{{ T "settings.tills.name_label" }}
+      <span class="muted" id="name-shop-till-help">{{ T "name_shop.till_name_help" }}</span>
+      <input type="text" name="till_name" value="{{ .view.TillValue }}" maxlength="60"
+             dir="auto" autocomplete="off" autocapitalize="words" spellcheck="false"
+             aria-required="true"
+             aria-describedby="name-shop-till-help{{ if .view.TillErr }} name-shop-till-error{{ end }}"
+             {{ if .view.TillErr }}class="field-invalid" aria-invalid="true"{{ end }}
+             data-testid="name-shop-till">
+    </label>
+    {{ if .view.TillErr }}<p class="field-error-msg" id="name-shop-till-error" data-testid="name-shop-till-error">{{ T .view.TillErr }}</p>{{ end }}
+    {{ end }}
+    <button class="btn primary btn-touch" type="submit" data-testid="name-shop-save">{{ T "name_shop.save" }}</button>
+  </form>
+</div>
+{{ end }}

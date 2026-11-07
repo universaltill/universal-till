@@ -7472,6 +7472,15 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .move-decline { margin: 0; }
 #move-approval-notice-mount:empty { display: none; }
 
+/* ut-docs#4391: the "Name your shop" page (name_shop.html). Narrow like
+   .move-approval so a 1280px till or a desktop doesn't stretch two short
+   fields across the screen; the fields stack (the global wrapped-label rule)
+   at full card width, so a 360px phone needs nothing extra. */
+.name-shop-card { max-inline-size: 40rem; }
+.name-shop-form { display: flex; flex-direction: column; align-items: stretch; gap: .9rem; }
+.name-shop-form > .field-error-msg { margin-block-start: -.6rem; }
+.name-shop-form > button { align-self: flex-start; }
+
 /* ut-docs#5410: Currency display select (Settings -> Currency). */
 .currency-display-select { min-block-size: 44px; }
 

@@ -244,6 +244,59 @@ func storeNameForCard(stored string) string {
 	return strings.TrimSpace(stored)
 }
 
+// applyStoreName: the Shop name card's write (ut-docs#3115) — unchanged-name
+// short circuit on a main till, saveShopSettings (joined-till write-through),
+// audit store_name_changed {old,new}. Shared with POST /name-shop
+// (ut-docs#4391). The caller has validated name and passed the elevation gate.
+func applyStoreName(r *http.Request, d *common.Deps, posRepo *data.POSRepo, elev elevationCheck, name string) error {
+	old, _, err := d.Settings.Get(r.Context(), common.KeyStoreName)
+	if err != nil {
+		return err
+	}
+	// Unchanged: nothing to write or audit (ut-cloud's RenameStore
+	// treats a same-name rename the same way). Only on a till that
+	// decides for itself: an additional till's store.name is a mirror
+	// that can lag the main till (a rename from my. or another till not
+	// pulled yet), so a match here proves nothing and short-circuiting
+	// would silently drop the rename. It always forwards, and "old" in
+	// its audit entry is its mirror's value.
+	if strings.TrimSpace(old) == name && !tillFollowsMain(r.Context(), d) {
+		return nil
+	}
+	if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyStoreName: name}); err != nil {
+		return err
+	}
+	settingsAudit(r, posRepo, elev, "settings", common.KeyStoreName, "store_name_changed",
+		map[string]any{"old": old, "new": name})
+	return nil
+}
+
+// applyOwnTillName: this till's own name — till.name on a main till,
+// sync.till_name on a joined one (ut-docs#3292), audit till_name_changed
+// {name,key}, renameOwnRegisterAfterTill. name must be non-empty and already
+// validated. Shared with POST /name-shop (ut-docs#4391).
+func applyOwnTillName(r *http.Request, d *common.Deps, posRepo *data.POSRepo, elev elevationCheck, name string) error {
+	// The key enroll.DeviceName reads for this till's role, as the
+	// cloud's rename_till does (cloudRenameTill): the main till's
+	// own name is till.name; a joined till's is its per-till
+	// sync.till_name, which saveShopSettings keeps local. till.name
+	// is shop-wide there (it holds the main till's name), so writing
+	// it would rename the main till instead (ut-docs#3292).
+	key := "till.name"
+	if tillFollowsMain(r.Context(), d) {
+		key = "sync.till_name"
+	}
+	if err := saveShopSettings(r.Context(), d, elev, map[string]string{key: name}); err != nil {
+		return err
+	}
+	settingsAudit(r, posRepo, elev, "settings", key, "till_name_changed",
+		map[string]any{"name": name, "key": key})
+	if key == "till.name" {
+		renameOwnRegisterAfterTill(r.Context(), d, name)
+	}
+	return nil
+}
+
 // storeNameErrorKey maps a config.NormalizeStoreName refusal to the
 // message the Shop name card shows.
 func storeNameErrorKey(err error) string {
@@ -2569,30 +2622,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "store_name", Value: name}}, elev)
 			return
 		}
-		old, _, err := d.Settings.Get(r.Context(), common.KeyStoreName)
-		if err != nil {
-			http.Error(w, "could not save", http.StatusInternalServerError)
-			return
-		}
-		// Unchanged: nothing to write or audit (ut-cloud's RenameStore
-		// treats a same-name rename the same way). Only on a till that
-		// decides for itself: an additional till's store.name is a mirror
-		// that can lag the main till (a rename from my. or another till not
-		// pulled yet), so a match here proves nothing and short-circuiting
-		// would silently drop the rename. It always forwards, and "old" in
-		// its audit entry is its mirror's value.
-		if strings.TrimSpace(old) == name && !tillFollowsMain(r.Context(), d) {
-			settingsRespondSaved(w, r, elev)
-			return
-		}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyStoreName: name}); err != nil {
+		if err := applyStoreName(r, d, posRepo, elev, name); err != nil {
 			if !respondSettingsSyncError(w, r, err) {
 				http.Error(w, "could not save", http.StatusInternalServerError)
 			}
 			return
 		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyStoreName, "store_name_changed",
-			map[string]any{"old": old, "new": name})
 		settingsRespondSaved(w, r, elev)
 	})
 
@@ -3122,26 +3157,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if name != "" {
-			// The key enroll.DeviceName reads for this till's role, as the
-			// cloud's rename_till does (cloudRenameTill): the main till's
-			// own name is till.name; a joined till's is its per-till
-			// sync.till_name, which saveShopSettings keeps local. till.name
-			// is shop-wide there (it holds the main till's name), so writing
-			// it would rename the main till instead (ut-docs#3292).
-			key := "till.name"
-			if tillFollowsMain(r.Context(), d) {
-				key = "sync.till_name"
-			}
-			if err := saveShopSettings(r.Context(), d, elev, map[string]string{key: name}); err != nil {
+			if err := applyOwnTillName(r, d, posRepo, elev, name); err != nil {
 				if !respondSettingsSyncError(w, r, err) {
 					http.Error(w, "could not save", http.StatusInternalServerError)
 				}
 				return
-			}
-			settingsAudit(r, posRepo, elev, "settings", key, "till_name_changed",
-				map[string]any{"name": name, "key": key})
-			if key == "till.name" {
-				renameOwnRegisterAfterTill(r.Context(), d, name)
 			}
 		}
 		settingsRespondSaved(w, r, elev)
