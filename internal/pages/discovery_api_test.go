@@ -372,3 +372,57 @@ func TestDiscoverPrimariesAPI_PromotedTillSeesOldMainTill(t *testing.T) {
 		t.Fatalf("expected the old main till listed, got: %+v", out.Data.Primaries)
 	}
 }
+
+// TestDiscoverPrimariesAPI_RepairedTillSeesOldMainTill covers ut-docs#5897 (a till promoted before #5893, repaired at boot): the
+// scan's self-filter drops a candidate whose till_id equals this till's own
+// discovery id. A promoted till used to keep its old main till's id, so it hid
+// that till; with its own fresh id the old main till's advertisement is a
+// normal candidate again.
+func TestDiscoverPrimariesAPI_RepairedTillSeesOldMainTill(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+	ctx := t.Context()
+	repo := data.NewSettingsRepo(dp.Db)
+	const oldID = "old-main-till-id"
+	if err := repo.Set(ctx, data.LANDiscoveryTillIDSettingsKey, oldID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-#5893 promote: sync.* gone, discovery id still the old main's.
+	if err := repo.Set(ctx, data.TillIdentityCloudIDSettingsKey, "cloud-c"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `DELETE FROM settings WHERE key = 'sync.primary_url'`); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := repo.RepairInheritedDiscoveryID(ctx, "", time.Now()); err != nil || !res.Repaired {
+		t.Fatalf("repair: %+v %v", res, err)
+	}
+	stubBrowse(t, []discovery.Candidate{
+		{Name: "Old Main", TillID: oldID, BaseURL: "http://192.168.1.60:8080"},
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Primaries []struct {
+				TillID string `json:"till_id"`
+			} `json:"primaries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Data.Primaries) != 1 || out.Data.Primaries[0].TillID != oldID {
+		t.Fatalf("expected the old main till listed, got: %+v", out.Data.Primaries)
+	}
+}
