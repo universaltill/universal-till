@@ -3110,6 +3110,7 @@
   "sync.error.bad_batch": "Invalid sync batch",
   "sync.error.bad_path": "Invalid path",
   "sync.error.name_taken": "That till name is already in use on this shop's network.",
+  "sync.error.name_too_long": "A till name can be at most 60 characters.",
   "sync.error.no_lan_address": "This till isn't connected to the shop network. Connect it to the network and try again.",
   "sync.error.server": "Something went wrong. Please try again.",
   "sync.main_till_unreachable": "Main till not reachable — selling offline",

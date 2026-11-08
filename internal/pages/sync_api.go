@@ -637,11 +637,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
-		// ut-docs#5862: a till name must be one line with no hidden
-		// formatting characters. 400, never 422 (422 means name_taken to
+		// ut-docs#5862, #5875: one line, no hidden formatting characters, at
+		// most maxTillNameRunes. 400, never 422 (422 means name_taken to
 		// completeJoin); refused before the one-time token is spent.
-		if _, err := data.CheckSingleLineName(in.Name); err != nil {
-			common.LocalizedError(w, r, http.StatusBadRequest, keyNameInvalidCharacters)
+		if key := tillNameRefusalKey(in.Name); key != "" {
+			common.LocalizedError(w, r, http.StatusBadRequest, key)
 			return
 		}
 		presented := strings.TrimSpace(in.Token)
