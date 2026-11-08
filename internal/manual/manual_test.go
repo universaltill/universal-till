@@ -198,7 +198,7 @@ func TestTopicForRoute(t *testing.T) {
 
 func TestSearchRanksTitleAboveBody(t *testing.T) {
 	lib := load(t)
-	res := lib.Search("en", "catalog")
+	res := lib.SearchFor("en", "catalog", true)
 	if len(res) == 0 {
 		t.Fatal("no results for 'catalog'")
 	}
@@ -209,31 +209,31 @@ func TestSearchRanksTitleAboveBody(t *testing.T) {
 
 func TestSearchMatchesKeywordsAndBody(t *testing.T) {
 	lib := load(t)
-	if res := lib.Search("en", "tender"); len(res) == 0 || res[0].Topic.ID != "sell" {
+	if res := lib.SearchFor("en", "tender", true); len(res) == 0 || res[0].Topic.ID != "sell" {
 		t.Errorf("keyword search failed: %+v", res)
 	}
-	if res := lib.Search("en", "basket"); len(res) == 0 {
+	if res := lib.SearchFor("en", "basket", true); len(res) == 0 {
 		t.Error("body/keyword search found nothing for 'basket'")
 	}
 }
 
 func TestSearchIsCaseAndAccentInsensitiveEnough(t *testing.T) {
 	lib := load(t)
-	if res := lib.Search("en", "SELLING"); len(res) == 0 {
+	if res := lib.SearchFor("en", "SELLING", true); len(res) == 0 {
 		t.Error("uppercase query found nothing")
 	}
 }
 
 func TestSearchEmptyQueryReturnsNothing(t *testing.T) {
 	lib := load(t)
-	if res := lib.Search("en", "   "); len(res) != 0 {
+	if res := lib.SearchFor("en", "   ", true); len(res) != 0 {
 		t.Errorf("blank query returned %d results", len(res))
 	}
 }
 
 func TestSearchSnippetHasNoHTML(t *testing.T) {
 	lib := load(t)
-	res := lib.Search("en", "button")
+	res := lib.SearchFor("en", "button", true)
 	if len(res) == 0 {
 		t.Fatal("no results")
 	}
@@ -624,7 +624,7 @@ func TestRouteCovered(t *testing.T) {
 // "catalog, variants & barcodes your products: names…" in flat lowercase.)
 func TestSearchSnippetKeepsOriginalCase(t *testing.T) {
 	lib := load(t)
-	res := lib.Search("en", "tap")
+	res := lib.SearchFor("en", "tap", true)
 	if len(res) == 0 {
 		t.Fatal("no results")
 	}
@@ -749,7 +749,7 @@ func TestSearchFor_NoPurchase(t *testing.T) {
 	if got := lib.SearchFor("en", "qr", false); len(got) != 0 {
 		t.Fatalf("no-purchase search still hits the dropped block: %+v", got)
 	}
-	if got := lib.Search("en", "qr"); len(got) != 1 {
+	if got := lib.SearchFor("en", "qr", true); len(got) != 1 {
 		t.Fatalf("Search must equal SearchFor(true): %+v", got)
 	}
 }

@@ -480,14 +480,12 @@ func (l *Library) MissingTranslations(locale string) []string {
 	return missing
 }
 
-// Search scores title > keywords > summary > body. Deliberately simple: the
-// corpus is a few dozen topics per locale, so an index would be more moving
-// parts than the problem needs, and it stays correct as topics change.
-func (l *Library) Search(locale, query string) []Result { return l.SearchFor(locale, query, true) }
-
-// SearchFor is Search for a host that may (planPurchase) or may not offer
-// plan purchase: when false, matching and snippets ignore the topics'
-// <!-- plan-purchase --> blocks (ut-docs#3434).
+// SearchFor scores title > keywords > summary > body. Deliberately simple:
+// the corpus is a few dozen topics per locale, so an index would be more
+// moving parts than the problem needs, and it stays correct as topics
+// change. planPurchase says whether the host may offer plan purchase: when
+// false, matching and snippets ignore the topics' <!-- plan-purchase -->
+// blocks (ut-docs#3434).
 func (l *Library) SearchFor(locale, query string, planPurchase bool) []Result {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
