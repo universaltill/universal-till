@@ -6,7 +6,7 @@ order: 210
 public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
+keywords: [shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
 ---
 
 # Reports & end of day
@@ -385,6 +385,26 @@ line. No money moved, so neither ever changes the expected cash, the
 variance, the skim or the new float. The card shows 0 until the drawer is
 opened without a sale. The per-cashier list appears from the first one.
 The close message mentions it only when there was at least one.
+
+### Printing a shift slip
+
+After you close a shift, the confirmation message has a **Print shift slip**
+button. It prints a slip titled **SHIFT CLOSE** on the receipt printer: the
+register, the cashier, when the shift was opened and closed, the shift's
+sales, payments, voids and cash (the same figures as the X report, up to the
+moment of the close), and then the drawer count: **Expected**, **Counted**,
+**Variance**, **Skim to safe** (only when you skimmed) and **New float**.
+
+It is not a day close: it has no end-of-day number, it does not open the cash
+drawer and it changes nothing — the shift, the Z report and your exports stay
+as they were. You can print it again from the same message; each print leaves
+an entry in the audit log. The button is only on that confirmation message,
+so reload the page and it is gone.
+
+Printing needs the **Reports** permission; without it the till asks for a
+manager's PIN (with sign-in off, no PIN is asked). If the receipt printer is
+off or does not answer, you see "Print failed" under the button and nothing
+is recorded.
 
 ## Cash reconciliation on the day-end report
 

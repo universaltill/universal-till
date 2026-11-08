@@ -189,7 +189,7 @@
 // — without this, every error (validation, the manager-PIN-required 403,
 // …) fails completely silently: the operator clicks Record and nothing
 // visibly happens. Same fix as refund.html's own #refund-msg handler.
-var XR_TARGETS = ['shift-result', 'x-report-body', 'x-report-print-msg'];
+var XR_TARGETS = ['shift-result', 'x-report-body', 'x-report-print-msg', 'shift-slip-print-msg'];
 document.body.addEventListener('htmx:responseError', function (ev) {
   var target = ev.detail && ev.detail.target;
   if (!target || XR_TARGETS.indexOf(target.id) === -1) return;

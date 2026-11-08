@@ -417,6 +417,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/receipt-designer/test":              true,
 	"POST /api/reports/eod/print/{period}":         true,
 	"POST /api/shifts/{id}/x-report/print":         true, // ut-docs#5798: prints the X report
+	"POST /api/shifts/{id}/close-slip/print":       true, // ut-docs#5841: prints the shift close slip
 	"POST /api/settings/printer":                   true,
 	// Fiscal devices and registers: TSE override/provisioning, Türkiye ÖKC
 	// device, §146a register.

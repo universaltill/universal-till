@@ -8,6 +8,7 @@ import (
 	"html"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -143,6 +144,7 @@ type ShiftCloseRequest struct {
 // ShiftCloseResponse models response for shift close
 type ShiftCloseResponse struct {
 	Success      bool   `json:"success"`
+	ShiftID      string `json:"shift_id,omitempty"` // ut-docs#5841: lets the client print the shift slip
 	Message      string `json:"message,omitempty"`
 	ExpectedCash int64  `json:"expected_cash,omitempty"`
 	ClosingCash  int64  `json:"closing_cash,omitempty"`
@@ -310,6 +312,7 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		variance := req.ClosingCash - expectedCash
 		resp := ShiftCloseResponse{
 			Success:      true,
+			ShiftID:      req.ShiftID,
 			ExpectedCash: expectedCash,
 			ClosingCash:  req.ClosingCash,
 			Variance:     variance,
@@ -741,7 +744,18 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 			count := httpx.FormatQty(float64(data.NoSaleCount), locale)
 			out += "<br>" + html.EscapeString(fmt.Sprintf(httpx.T(locale, "shifts.close_no_sale_opens"), count))
 		}
-		writeHTML(w, http.StatusOK, out+"</div>")
+		out += "</div>"
+		if data.ShiftID != "" {
+			// ut-docs#5841: offer the shift close slip. Inline, no dialog;
+			// the message span is a XR_TARGETS id on /shifts.
+			slipURL := html.EscapeString("/api/shifts/" + url.PathEscape(data.ShiftID) + "/close-slip/print")
+			out += "<div class='x-report-actions'><button type='button' id='shift-slip-print' class='btn secondary' hx-post='" + slipURL + "'" +
+				" hx-target='#shift-slip-print-msg' hx-swap='innerHTML' hx-indicator='#shift-slip-print-busy' hx-disabled-elt='this'>" +
+				html.EscapeString(httpx.T(locale, "shifts.close_slip.print")) + "</button>" +
+				"<span id='shift-slip-print-busy' class='htmx-indicator muted' role='status'>" + html.EscapeString(httpx.T(locale, "shifts.close_slip.printing")) + "</span></div>" +
+				"<span id='shift-slip-print-msg' class='x-report-print-msg' aria-live='polite'></span>"
+		}
+		writeHTML(w, http.StatusOK, out)
 	}
 }
 
