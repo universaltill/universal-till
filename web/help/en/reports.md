@@ -6,7 +6,7 @@ order: 210
 public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
+keywords: [shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
 ---
 
 # Reports & end of day
@@ -16,7 +16,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 ## How to use it
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in. Inside Custom, "Last 24 hours" is the rolling 24 hours up to now, not the business day — use the Today chip for that.
-2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), or (for a manager/admin) Shrinkage & Loss — and that report loads when you open it.
+2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), (for a manager/admin) Shrinkage & Loss, or Online channels (once this till has recorded an online order) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
@@ -85,10 +85,21 @@ Next to the top row, pick how you want the period worked out:
   month, Year is a calendar year. A date picker appears next to the choice so
   you can look at a past period — e.g. pick Month and a date in July to see
   July's numbers, even if today is in August.
-- Sales trend, Items, Tax and Payments & channels use whichever period is
-  selected, so they always agree with the numbers at the top. Forecast and
+- Sales trend, Items, Tax and Payments & channels use
+  whichever period is selected, so they always agree with the numbers at the top. Forecast and
   Day-end's archive list don't — they show their own fixed windows regardless
-  of the period picker.
+  of the period picker. Online channels also follows the selected period, but its orders are
+  separate from the numbers at the top (see Online channels below).
+
+## Online channels
+
+The Online channels tab totals the orders from your web shop and marketplaces (the ones on Online orders) for the period you picked: one row per channel and currency. It appears once this till has recorded an online order; only the main till records them.
+
+- These orders are not till sales. They are not in the figures at the top of Reports, the drawer, the day-end (Z) report or the fiscal journal, and no sales figure on another tab changes because of them. They do lower stock, so stock warnings, Forecast and dead stock can change after a web order.
+- Order value is the order totals as the channel reported them, with shipping and any tax the channel added. After refunds is the order value minus refunds.
+- Refunds are what has been refunded so far on orders placed in the period, whatever day the refund was made: a refund given today on last month's order shows in last month.
+- An order cancelled before it was paid is not counted; the tab says how many there were. An order cancelled after it was paid is counted, and its refund takes it back out.
+- Amounts stay in each order's own currency and are never added across currencies. When two or more channels sell in the same currency, a Total row adds them up for that currency.
 
 ## Business day start
 
@@ -374,6 +385,26 @@ line. No money moved, so neither ever changes the expected cash, the
 variance, the skim or the new float. The card shows 0 until the drawer is
 opened without a sale. The per-cashier list appears from the first one.
 The close message mentions it only when there was at least one.
+
+### Printing a shift slip
+
+After you close a shift, the confirmation message has a **Print shift slip**
+button. It prints a slip titled **SHIFT CLOSE** on the receipt printer: the
+register, the cashier, when the shift was opened and closed, the shift's
+sales, payments, voids and cash (the same figures as the X report, up to the
+moment of the close), and then the drawer count: **Expected**, **Counted**,
+**Variance**, **Skim to safe** (only when you skimmed) and **New float**.
+
+It is not a day close: it has no end-of-day number, it does not open the cash
+drawer and it changes nothing — the shift, the Z report and your exports stay
+as they were. You can print it again from the same message; each print leaves
+an entry in the audit log. The button is only on that confirmation message,
+so reload the page and it is gone.
+
+Printing needs the **Reports** permission; without it the till asks for a
+manager's PIN (with sign-in off, no PIN is asked). If the receipt printer is
+off or does not answer, you see "Print failed" under the button and nothing
+is recorded.
 
 ## Cash reconciliation on the day-end report
 

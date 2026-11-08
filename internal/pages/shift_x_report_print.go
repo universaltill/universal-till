@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -150,33 +149,50 @@ func registerShiftXReportPrint(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
-// buildXReportDoc lays out the X report for the 80mm receipt printer. Pure.
-// Same print-locale/money/date convention as buildEODDoc (store locale,
-// Latin digits, ut-docs#1130). Never a Z: no "END OF DAY"/period line, no
-// Z number, no series, no Barcode, no Logo, no TSEQR, KickDrawer false.
-func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
-	loc := httpx.DefaultLocale()
-	T := func(k string) string { return httpx.T(loc, k) }
-	amt := func(m money.Money) string { // sign-first, as buildEODDoc's signed
+// xDocHelpers returns the print locale and the money/date formatters shared
+// by the X report and the shift close slip: store locale, Latin digits,
+// sign-first amounts (as buildEODDoc's signed, ut-docs#1130).
+func xDocHelpers(charset string) (loc string, T func(string) string, amt func(money.Money) string, stamp func(string) string) {
+	loc = httpx.DefaultLocale()
+	T = func(k string) string { return httpx.T(loc, k) }
+	amt = func(m money.Money) string {
 		if v := m.Minor(); v < 0 {
 			return "-" + httpx.FormatMoneyPrint(-v, loc, charset)
 		}
 		return httpx.FormatMoneyPrint(m.Minor(), loc, charset)
 	}
-	stamp := func(s string) string { // stored time -> local Latin "date HH:MM"
+	stamp = func(s string) string { // stored time -> local Latin "date HH:MM"
 		if t, ok := httpx.ParseStoredTime(s); ok {
 			return httpx.FormatDateTimeLatin(t.Local(), loc)
 		}
 		return s
 	}
+	return loc, T, amt, stamp
+}
+
+// buildXReportDoc lays out the X report for the 80mm receipt printer. Pure.
+// Same print-locale/money/date convention as buildEODDoc (store locale,
+// Latin digits, ut-docs#1130). Never a Z: no "END OF DAY"/period line, no
+// Z number, no series, no Barcode, no Logo, no TSEQR, KickDrawer false.
+func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
+	_, T, _, stamp := xDocHelpers(charset)
 	doc := print.Doc{StoreName: storeName, Charset: charset, Meta: []string{
 		T("shifts.x_report.paper.title"),
 		T("shifts.x_report.paper.not_a_close"),
-		footerRow(T("shifts.register"), xPaperText(rep.RegisterName)),
-		footerRow(T("shifts.cashier"), xPaperText(rep.CashierName)),
+		footerRow(T("shifts.register"), rep.RegisterName),
+		footerRow(T("shifts.cashier"), rep.CashierName),
 		footerRow(T("shifts.opened_at"), stamp(rep.Shift.OpenedAt)),
 		fmt.Sprintf(T("reports.zpaper.generated"), stamp(rep.GeneratedAt)),
 	}}
+	appendXFigures(&doc, rep, charset)
+	return doc
+}
+
+// appendXFigures adds the shared figures block (totals, payments, voids,
+// cleared, cash, no-sale, receipt range) to doc. Used by the X report and
+// the shift close slip (ut-docs#5841).
+func appendXFigures(doc *print.Doc, rep data.XReport, charset string) {
+	loc, T, amt, _ := xDocHelpers(charset)
 	doc.Totals = []print.KV{
 		{Label: fmt.Sprintf(T("reports.zpaper.sales"), rep.SalesCount), Amount: amt(rep.SalesGross)},
 		{Label: fmt.Sprintf(T("reports.zpaper.refunds"), rep.ReturnsCount), Amount: "-" + amt(rep.ReturnsTotal)},
@@ -203,7 +219,7 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 			label = T("shifts.skim")
 		}
 		if a.Reason != "" {
-			label += ": " + xPaperText(a.Reason)
+			label += ": " + a.Reason
 		}
 		doc.Footer = append(doc.Footer, footerRow(label, amt(a.Amount))) // clips the label, never the amount
 	}
@@ -215,20 +231,6 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 	if rep.FirstReceipt != "" {
 		doc.Footer = append(doc.Footer, "", fmt.Sprintf(T("reports.zpaper.receipts_range"), rep.FirstReceipt, rep.LastReceipt))
 	}
-	return doc
-}
-
-// xPaperText makes free text (an adjustment reason any cashier can type, a
-// register or cashier name) safe for one paper line: every control rune
-// becomes a space. The utf8 charset sends bytes raw, so an ESC p in a reason
-// would kick the drawer and a newline would forge a line on the report.
-func xPaperText(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
 }
 
 // xMethodLabel: the core tender key when the id is a core one, else the

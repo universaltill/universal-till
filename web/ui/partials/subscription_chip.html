@@ -12,7 +12,8 @@
      that is not a replica registered via its main till) the chip is a
      button that opens the Renew / Choose-a-plan panel (base.html's
      #subscription-panel) right here — no navigation; otherwise it stays
-     the link to Settings. */}}
+     the link to Settings. ut-docs#3434: .openPanel is false on iOS
+     (plan_purchase.go), so the chip is always the Settings link there. */}}
 {{ if .openPanel }}
 <button type="button" class="sb-item sb-subscription is-{{ .state }}" data-testid="sb-subscription" data-sub-state="{{ .state }}" data-sub-panel-open
    hx-post="/api/subscription/panel" hx-target="#subscription-panel-body" hx-swap="innerHTML"
