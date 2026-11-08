@@ -17,7 +17,7 @@ import (
 func TestAdminApply_CategoryRetiredInPlace(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO categories (id, name) VALUES ('cat-1', 'Drinks')`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)

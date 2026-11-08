@@ -348,6 +348,11 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // snapshot replaced it, ADR-0033 "two till ids"), so a fresh UUID is the only
 // option; it is never "kept if present" because a present value on a joined
 // till is always the main till's. The cloud id above is unaffected.
+//
+// An admin pull that is in flight when this commits is refused by
+// ApplyAdminWithResult's in-tx sync.primary_url check (ErrNotReplica), so it
+// cannot write the old main's lan_discovery.till_id or till.name back
+// (ut-docs#5896).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
