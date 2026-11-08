@@ -65,9 +65,19 @@ var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 // value (e.g. via t.Cleanup) after overriding it.
 var UpdateAvailable = func() bool { return updates.Current().Available }
 
+// PlanPurchaseAllowed is the seam behind the planpurchaseallowed template func
+// (ut-docs#5868). On iOS the closed #subscription-panel dialog must not be in
+// the DOM at all (App Store 3.1, ut-docs#3434). httpx cannot import
+// internal/pages, so pages sets this to its planPurchaseAllowed predicate at
+// init; the default (true) leaves any binary or test that never imports pages
+// unchanged.
+var PlanPurchaseAllowed = func() bool { return true }
+
 var baseFuncs = template.FuncMap{
 	// maxStoreNameRunes is the shop-name input cap (ut-docs#5774).
 	"maxStoreNameRunes": func() int { return config.MaxStoreNameRunes },
+	// planpurchaseallowed is false on iOS (ut-docs#5868); see PlanPurchaseAllowed.
+	"planpurchaseallowed": func() bool { return PlanPurchaseAllowed() },
 	// ut-docs#4370: request-bound by withTranslateMode; false everywhere else.
 	"translatemode": func() bool { return false },
 	// runelen: a field's `size` attribute must track how many CHARACTERS

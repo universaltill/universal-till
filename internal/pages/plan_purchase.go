@@ -3,7 +3,14 @@ package pages
 import (
 	"net/http"
 	"runtime"
+
+	"github.com/universaltill/universal-till/internal/httpx"
 )
+
+// ut-docs#5868: base.html renders through httpx, which cannot import pages,
+// so hand it the one predicate (it reads planPurchasePlatform, so a test that
+// flips the platform flips the layout too).
+func init() { httpx.PlanPurchaseAllowed = planPurchaseAllowed }
 
 // planPurchasePlatform is runtime.GOOS, a var only so tests can render the
 // iPhone/iPad variant (ut-docs#3434): an App Store app may not offer, or

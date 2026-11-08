@@ -32,7 +32,7 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 
 	baseline := SnapshotStateForTests()
 	wantTV := TranslationsVersion()
-	cross, bridge, avail := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable
+	cross, bridge, avail, planBuy := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable, PlanPurchaseAllowed
 
 	for round := 0; round < 2; round++ { // restore is reusable
 		InitI18n(nil, "tr")
@@ -53,6 +53,7 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 		CrossDeviceLinkActionable = func() bool { return !cross() }
 		UpdateInstallBridge = func() bool { return !bridge() }
 		UpdateAvailable = func() bool { return !avail() }
+		PlanPurchaseAllowed = func() bool { return !planBuy() } // ut-docs#5868
 
 		baseline()
 
@@ -99,7 +100,7 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 			t.Errorf("round %d: rail visibility source not restored", round)
 		}
 		// Funcs aren't comparable; tell them apart by what they return.
-		if CrossDeviceLinkActionable() != cross() || UpdateInstallBridge() != bridge() || UpdateAvailable() != avail() {
+		if CrossDeviceLinkActionable() != cross() || UpdateInstallBridge() != bridge() || UpdateAvailable() != avail() || PlanPurchaseAllowed() != planBuy() {
 			t.Errorf("round %d: platform seams not restored", round)
 		}
 	}
