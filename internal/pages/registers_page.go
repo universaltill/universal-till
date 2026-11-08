@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -207,6 +208,10 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		}
 		id, err := posRepo.CreateRegister(r.Context(), name, locationID)
 		if err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) {
+				renderRegistersDialogError(w, r, "common.error.name_invalid_characters")
+				return
+			}
 			renderRegistersDialogError(w, r, "registers.error.create")
 			return
 		}
@@ -230,6 +235,10 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if err := posRepo.RenameRegister(r.Context(), id, name); err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) {
+				renderRegistersDialogError(w, r, "common.error.name_invalid_characters")
+				return
+			}
 			renderRegistersDialogError(w, r, "registers.error.rename")
 			return
 		}

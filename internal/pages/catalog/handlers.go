@@ -1021,6 +1021,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	optionSetRefusal := func(w http.ResponseWriter, r *http.Request, setID string, err error) {
 		loc := httpx.ResolveLocale(w, r)
 		switch {
+		case errors.Is(err, data.ErrNameInvalidCharacters):
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(loc, "common.error.name_invalid_characters"))
 		case errors.Is(err, data.ErrOptionSetNotFound):
 			renderOptionSetsListStatus(w, r, http.StatusNotFound, "", httpx.T(loc, "catalog.option_sets.not_found"))
 		case errors.Is(err, data.ErrOptionSetExists):
@@ -1229,6 +1231,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if _, err := data.NewOptionSetRepo(d.Db).CreateOptionSet(r.Context(), name); err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) && strings.TrimSpace(r.Form.Get("panelItem")) == "" {
+				// text/html through the list's own error line: a text/plain
+				// 400 would be dropped for the generic banner (app.js).
+				renderOptionSetsListStatus(w, r, http.StatusBadRequest, "", httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+				return
+			}
 			optionSetAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -1255,6 +1263,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if _, err := data.NewOptionSetRepo(d.Db).AddOptionSetValue(r.Context(), setID, value); err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) && strings.TrimSpace(r.Form.Get("panelItem")) == "" {
+				// text/html through the list's own error line: a text/plain
+				// 400 would be dropped for the generic banner (app.js).
+				renderOptionSetsListStatus(w, r, http.StatusBadRequest, "", httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+				return
+			}
 			optionSetAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -1622,6 +1636,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if groupID == "" {
 			newID := uuid.NewString()
 			if _, err := modRepo.CreateGroup(r.Context(), newID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
@@ -1638,6 +1656,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 		} else {
 			if err := modRepo.UpdateGroup(r.Context(), groupID, name, required, minSelect, maxSelect, sortOrder, active); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
@@ -1695,11 +1717,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		optionID := strings.TrimSpace(r.Form.Get("id"))
 		if optionID == "" {
 			if _, err := modRepo.CreateOption(r.Context(), uuid.NewString(), groupID, name, priceDeltaMinor, sortOrder); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
 		} else {
 			if err := modRepo.UpdateOption(r.Context(), optionID, name, priceDeltaMinor, sortOrder, active); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
@@ -3152,11 +3182,25 @@ func files(paths ...string) []string { return paths }
 // barcode conflicts via FriendlyBarcodeConflict. Anything else still goes
 // through the generic translated+logged path.
 func skuAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if nameCharsError(w, r, err) {
+		return
+	}
 	if errors.Is(err, data.ErrSKUExists) {
 		common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.sku_exists")
 		return
 	}
 	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}
+
+// nameCharsError answers a name refused by data.CheckSingleLineName (control
+// or invisible characters, ut-docs#5858) with a translated 400 and reports
+// whether it did. Callers try it before their generic error path.
+func nameCharsError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, data.ErrNameInvalidCharacters) {
+		return false
+	}
+	common.LocalizedError(w, r, http.StatusBadRequest, "common.error.name_invalid_characters")
+	return true
 }
 
 // optionSetUsedByMax caps how many items an option-set card's "Used by"
@@ -3192,6 +3236,9 @@ func optionSetCards(sets []data.OptionSetAdmin) []optionSetCard {
 // the one mistake an operator actually makes here, so it gets its own
 // actionable message; anything else takes the generic translated+logged path.
 func optionSetAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if nameCharsError(w, r, err) {
+		return
+	}
 	if errors.Is(err, data.ErrOptionSetExists) || errors.Is(err, data.ErrOptionSetValueExists) {
 		common.LocalizedError(w, r, status, "catalog.option_sets.exists")
 		return

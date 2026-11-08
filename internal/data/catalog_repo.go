@@ -1197,8 +1197,12 @@ ORDER BY rate_basis_points DESC, name`)
 // is UNIQUE; a conflict is reported as ErrTaxCodeNameExists rather than a
 // raw 500 so the handler can surface a validation message.
 func (r *CatalogRepo) CreateTaxCode(ctx context.Context, name string, rateBP int, takeawayBP *int) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	id := uuid.NewString()
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 INSERT INTO tax_codes (id, name, rate_basis_points, takeaway_rate_basis_points, is_active)
 VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 	if err != nil {
@@ -1216,6 +1220,10 @@ VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 // resubmitted unchanged); there is no separate delete method since
 // tax_codes.id is FK-referenced by items.tax_code_id (001_init.sql).
 func (r *CatalogRepo) UpdateTaxCode(ctx context.Context, id, name string, rateBP int, takeawayBP *int, isActive bool) error {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return err
+	}
 	res, err := r.db.ExecContext(ctx, `
 UPDATE tax_codes SET name = ?, rate_basis_points = ?, takeaway_rate_basis_points = ?, is_active = ?
 WHERE id = ?`, name, rateBP, nullableIntPtr(takeawayBP), boolToInt(isActive), id)
@@ -1633,14 +1641,27 @@ func (r *CatalogRepo) CreateCategory(ctx context.Context, name string) (string, 
 // caller's job (categories_page.go, same as the item editor's
 // validateLookups): the repo stays a plain persistence layer.
 func (r *CatalogRepo) CreateCategoryWithColor(ctx context.Context, name, color string) (string, error) {
-	return r.CreateCategoryWithColorHidden(ctx, name, color, false)
+	return r.createCategoryRow(ctx, name, color, false)
 }
 
 // CreateCategoryWithColorHidden is CreateCategoryWithColor plus the
 // category's sell_screen_hidden flag (the editor's "Show on the sale
 // screen" box, manage-shop catalog contract §3.2), written by the SAME
 // INSERT so a failure can't leave a half-saved category behind.
+//
+// This is the admin-screen entry point: the name is refused with
+// ErrNameInvalidCharacters when it holds control or invisible characters
+// (ut-docs#5858). CreateCategoryWithColor, shared with my. directives, skips
+// that check so the till never refuses a name my. accepted.
 func (r *CatalogRepo) CreateCategoryWithColorHidden(ctx context.Context, name, color string, hidden bool) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
+	return r.createCategoryRow(ctx, name, color, hidden)
+}
+
+func (r *CatalogRepo) createCategoryRow(ctx context.Context, name, color string, hidden bool) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", ErrCategoryNameRequired
@@ -1687,14 +1708,25 @@ func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error
 // flag, parent) is touched. An empty colour clears the column (NULL,
 // read back as "") — how the picker's "No colour" tile is stored.
 func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string) error {
-	return r.UpdateCategoryWithHidden(ctx, id, name, color, nil)
+	return r.updateCategoryRow(ctx, id, name, color, nil)
 }
 
 // UpdateCategoryWithHidden is UpdateCategory plus, when hidden is non-nil,
 // the sell_screen_hidden flag — in the SAME UPDATE statement, so the
 // editor's Save can't rename a category and then fail on the flag (review
 // finding 6). nil leaves the flag as it is.
+//
+// Admin-screen entry point: refuses control/invisible characters in name
+// (ErrNameInvalidCharacters, ut-docs#5858); UpdateCategory (directives) does not.
 func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, color string, hidden *bool) error {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return err
+	}
+	return r.updateCategoryRow(ctx, id, name, color, hidden)
+}
+
+func (r *CatalogRepo) updateCategoryRow(ctx context.Context, id, name, color string, hidden *bool) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ErrCategoryNameRequired

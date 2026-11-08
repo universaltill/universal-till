@@ -281,6 +281,10 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if _, err := repo.CreateTaxCode(r.Context(), name, rateBP, takeawayBP); err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) {
+				http.Error(w, httpx.T(locale, "common.error.name_invalid_characters"), http.StatusBadRequest)
+				return
+			}
 			if errors.Is(err, data.ErrTaxCodeNameExists) {
 				http.Error(w, httpx.T(locale, "taxcodes.err.duplicate_name"), http.StatusBadRequest)
 				return
@@ -323,6 +327,8 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 		active := taxCodeFormActive(r)
 		if err := repo.UpdateTaxCode(r.Context(), id, name, rateBP, takeawayBP, active); err != nil {
 			switch {
+			case errors.Is(err, data.ErrNameInvalidCharacters):
+				http.Error(w, httpx.T(locale, "common.error.name_invalid_characters"), http.StatusBadRequest)
 			case errors.Is(err, data.ErrTaxCodeNameExists):
 				http.Error(w, httpx.T(locale, "taxcodes.err.duplicate_name"), http.StatusBadRequest)
 			case errors.Is(err, data.ErrTaxCodeNotFound):
