@@ -29,7 +29,7 @@ func TestCloudRenameItem_RefusesBadName(t *testing.T) {
 	ctx := t.Context()
 	before, _ := itemNameAndAudit(t, dp, "itm1", "cloud_item_renamed")
 
-	_, err := cloudRenameItem(ctx, dp, "itm1", "Ap‮ple")
+	_, err := cloudRenameItem(ctx, dp, "itm1", "Ap\u202eple")
 	if !errors.Is(err, data.ErrNameInvalidCharacters) {
 		t.Fatalf("err = %v, want ErrNameInvalidCharacters", err)
 	}
@@ -49,7 +49,7 @@ func TestCloudRenameItem_RefusesBadName(t *testing.T) {
 func TestCloudSaveItem_RefusesBadName(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	before, _ := itemNameAndAudit(t, dp, "itm1", "cloud_item_saved")
-	bad := "Ap‮ple"
+	bad := "Ap\u202eple"
 	if _, err := cloudSaveItem(t.Context(), dp, data.ItemPatch{ID: "itm1", Name: &bad}); !errors.Is(err, data.ErrNameInvalidCharacters) {
 		t.Fatalf("err = %v, want ErrNameInvalidCharacters", err)
 	}
@@ -71,7 +71,7 @@ func TestCloudSaveItem_RefusesBadName(t *testing.T) {
 
 func TestCloudCreateItem_RefusesBadName(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
-	if _, err := cloudCreateItem(t.Context(), dp, "Ba‮d Widget", 500, ""); !errors.Is(err, data.ErrNameInvalidCharacters) {
+	if _, err := cloudCreateItem(t.Context(), dp, "Ba\u202ed Widget", 500, ""); !errors.Is(err, data.ErrNameInvalidCharacters) {
 		t.Fatalf("err = %v, want ErrNameInvalidCharacters", err)
 	}
 	var n int

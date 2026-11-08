@@ -291,7 +291,7 @@ func TestSingleLineName_SaveGroupRefusalWritesNothing(t *testing.T) {
 	opts := []data.ModifierOption{{ID: "o1", Name: "One", IsActive: true}, {ID: "o2", Name: "Two", IsActive: true}}
 	_, err := repo.SaveGroup(ctx, data.ModifierGroupSave{ID: "g1", Create: true, Name: strp("Sauces"), Options: &opts})
 	nlMust(t, err)
-	bad := []data.ModifierOption{{ID: "o1", Name: "Uno", IsActive: true}, {ID: "o2", Name: "Do‮s", IsActive: true}, {ID: "o3", Name: "Three", IsActive: true}}
+	bad := []data.ModifierOption{{ID: "o1", Name: "Uno", IsActive: true}, {ID: "o2", Name: "Do\u202es", IsActive: true}, {ID: "o3", Name: "Three", IsActive: true}}
 	_, err = repo.SaveGroup(ctx, data.ModifierGroupSave{ID: "g1", Name: strp("Dips"), Options: &bad})
 	nlRefused(t, err)
 	if got, _ := nlRead(d, `SELECT name FROM item_modifier_groups WHERE id = 'g1'`); got != "Sauces" {
@@ -320,7 +320,7 @@ func TestSingleLineName_CreateGroupWithOptionsChecked(t *testing.T) {
 			t.Fatalf("%s: left %d groups, %d options, %d links", label, g, o, l)
 		}
 	}
-	_, err := repo.CreateGroupWithOptions(ctx, "g1", nlID("it", 0), "Sa‮uce", false, 0, 1, 0, []data.ModifierOption{{Name: "Hot"}})
+	_, err := repo.CreateGroupWithOptions(ctx, "g1", nlID("it", 0), "Sa\u202euce", false, 0, 1, 0, []data.ModifierOption{{Name: "Hot"}})
 	nlRefused(t, err)
 	empty("bad group name")
 	_, err = repo.CreateGroupWithOptions(ctx, "g1", nlID("it", 0), "Sauce", false, 0, 1, 0, []data.ModifierOption{{Name: "Hot"}, {Name: "Mi\x1bld"}})
@@ -673,7 +673,7 @@ func TestSingleLineName_ReceivedNameLegacyTolerance(t *testing.T) {
 				})
 			}},
 	}
-	const bad, other = "Co‮la", "Co‭la"
+	const bad, other = "Co\u202ela", "Co\u202dla"
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			d := nlOpen(t)
@@ -699,5 +699,27 @@ func TestSingleLineName_ReceivedNameLegacyTolerance(t *testing.T) {
 				t.Fatalf("name = %q, want Cola", n)
 			}
 		})
+	}
+}
+
+// A set stored before the rule (bad legacy name) must still retire: the
+// freed name is the till's own data, not a received name (review F1).
+func TestRetireOptionSet_LegacyBadNameStillRetires_5871(t *testing.T) {
+	d := nlOpen(t)
+	nlSeedSet(t, d, 1)
+	bad := "Si\u202eze"
+	nlExec(t, d, `UPDATE option_sets SET name = ? WHERE id = ?`, bad, nlID("s", 1))
+	repo := data.NewOptionSetRepo(d.DB)
+	nlMust(t, nlTx(t, d, func(tx *sql.Tx) error {
+		return repo.RetireOptionSetTx(context.Background(), tx, nlID("s", 1))
+	}))
+	got, ok := nlSetName(d, 1, namecases.Case{})
+	if !ok || got != bad+" (s-1)" {
+		t.Fatalf("freed name = %q ok=%v, want %q", got, ok, bad+" (s-1)")
+	}
+	var active int
+	nlMust(t, d.DB.QueryRow(`SELECT is_active FROM option_sets WHERE id = ?`, nlID("s", 1)).Scan(&active))
+	if active != 0 {
+		t.Fatal("set still active after retire")
 	}
 }

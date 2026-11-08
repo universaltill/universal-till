@@ -17,9 +17,9 @@ func TestPullRefusesABadNameKeepsPreviousVersion(t *testing.T) {
 	h.feed.add(itemFeedRow(1, 1, "Flat White", 100))
 	h.mustRun()
 
-	h.feed.add(itemFeedRow(1, 2, "Flat‮White", 100)) // an update with a bad name
+	h.feed.add(itemFeedRow(1, 2, "Flat\u202eWhite", 100)) // an update with a bad name
 	h.feed.add(itemFeedRow(2, 2, "Neighbour", 100))
-	h.feed.add(itemFeedRow(3, 2, "a​b", 100)) // a create with a bad name
+	h.feed.add(itemFeedRow(3, 2, "a\u200bb", 100)) // a create with a bad name
 	res := h.mustRun()
 
 	if res.Refused != 2 {
@@ -114,7 +114,7 @@ func TestPullOptionSetBadNewValueRefusedWholeRow(t *testing.T) {
 	h := newHarness(t)
 	h.feed.add(setRow(cSet, 1, "Sizes", val(1, "Small"), val(2, "Large")))
 	h.mustRun()
-	h.feed.add(setRow(cSet, 2, "Sizes", val(1, "Small"), val(2, "Large"), val(3, "x​y")))
+	h.feed.add(setRow(cSet, 2, "Sizes", val(1, "Small"), val(2, "Large"), val(3, "x\u200by")))
 	res := h.mustRun()
 	if res.Refused != 1 {
 		t.Fatalf("result = %+v, want 1 refused", res)
@@ -130,7 +130,7 @@ func TestPullResendsStoredLegacyBadNameUnchanged(t *testing.T) {
 	h := newHarness(t)
 	h.feed.add(itemFeedRow(1, 1, "Cola", 100))
 	h.mustRun()
-	const legacy = "Co‮la"
+	const legacy = "Co\u202ela"
 	if _, err := h.db.Exec(`UPDATE items SET name = ? WHERE id = ?`, legacy, itemID(1)); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestPullResendsStoredLegacyBadNameUnchanged(t *testing.T) {
 		t.Fatalf("item = %+v, want price 150 and the legacy name kept", it)
 	}
 
-	h.feed.add(itemFeedRow(1, 3, "Co‭la", 150))
+	h.feed.add(itemFeedRow(1, 3, "Co\u202dla", 150))
 	if res := h.mustRun(); res.Refused != 1 {
 		t.Fatalf("result = %+v, want the different bad name refused", res)
 	}

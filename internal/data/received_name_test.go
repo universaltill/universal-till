@@ -27,7 +27,7 @@ func TestCheckReceivedName_NewRangesNameCases(t *testing.T) {
 }
 
 func TestCheckReceivedName_UnchangedStoredIsTolerated(t *testing.T) {
-	bad, padded, other := "Co‮la", "  Co‮la ", "Co‭la"
+	bad, padded, other := "Co\u202ela", "  Co\u202ela ", "Co\u202dla"
 	for _, tc := range []struct {
 		label    string
 		stored   string

@@ -2928,6 +2928,7 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 // and sync_admin.go's admin_pulled already use to distinguish a
 // cloud-originated mutation from an operator's own action at the till.
 func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
+	name = strings.TrimSpace(name) // the stored value, for the dedupe, audit row and message
 	repo := data.NewCatalogRepo(d.Db)
 	// Idempotency check first, gate second: on a replica, the item most
 	// directives replay against has usually already arrived via the normal
