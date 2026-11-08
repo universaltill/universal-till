@@ -203,6 +203,11 @@ func (r *CatalogRepo) saveVariantTx(ctx context.Context, tx *sql.Tx, p VariantSa
 		if p.Name == nil {
 			return res, errors.New("a new variant needs a name")
 		}
+		vn, err := checkReceivedName(nil, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		p.Name = &vn
 		if p.PriceMinor == nil {
 			return res, errors.New("a new variant needs a price")
 		}
@@ -248,7 +253,11 @@ func (r *CatalogRepo) saveVariantTx(ctx context.Context, tx *sql.Tx, p VariantSa
 	if p.Name != nil || p.PriceMinor != nil || p.SKU != nil || p.Active != nil {
 		oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, "", p.ID)
 		if p.Name != nil {
-			cur.name = *p.Name
+			vn, err := checkReceivedName(&cur.name, *p.Name)
+			if err != nil {
+				return res, err
+			}
+			cur.name = vn
 			res.Changed = append(res.Changed, "name")
 		}
 		if p.PriceMinor != nil {

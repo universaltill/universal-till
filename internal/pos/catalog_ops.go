@@ -21,8 +21,9 @@ func DeactivateVariant(ctx context.Context, db *sql.DB, variantID string) error 
 // CreateItem, UpdateItemReturningWasActive, CreateVariant and UpdateVariant
 // are the admin catalogue form's entry points: they refuse a name holding
 // control or invisible characters (data.ErrNameInvalidCharacters,
-// ut-docs#5858) and store it trimmed. data.CreateItem, shared with my.
-// directives, stays unchecked so the till never refuses a name my. accepted.
+// ut-docs#5858) and store it trimmed. data.CreateItem checks too
+// (ut-docs#5871); this wrapper's check is kept so the admin error precedes
+// the repo's.
 func CreateItem(ctx context.Context, db *sql.DB, in ItemInput) (string, error) {
 	name, err := data.CheckSingleLineName(in.Name)
 	if err != nil {

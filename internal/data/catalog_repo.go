@@ -1641,7 +1641,7 @@ func (r *CatalogRepo) CreateCategory(ctx context.Context, name string) (string, 
 // caller's job (categories_page.go, same as the item editor's
 // validateLookups): the repo stays a plain persistence layer.
 func (r *CatalogRepo) CreateCategoryWithColor(ctx context.Context, name, color string) (string, error) {
-	return r.createCategoryRow(ctx, name, color, false)
+	return r.CreateCategoryWithColorHidden(ctx, name, color, false)
 }
 
 // CreateCategoryWithColorHidden is CreateCategoryWithColor plus the
@@ -1649,10 +1649,10 @@ func (r *CatalogRepo) CreateCategoryWithColor(ctx context.Context, name, color s
 // screen" box, manage-shop catalog contract §3.2), written by the SAME
 // INSERT so a failure can't leave a half-saved category behind.
 //
-// This is the admin-screen entry point: the name is refused with
-// ErrNameInvalidCharacters when it holds control or invisible characters
-// (ut-docs#5858). CreateCategoryWithColor, shared with my. directives, skips
-// that check so the till never refuses a name my. accepted.
+// The name is refused with ErrNameInvalidCharacters when it holds control or
+// invisible characters (ut-docs#5858). CreateCategoryWithColor, shared with
+// my. directives, checks too (ut-docs#5871): a create has no stored name to
+// tolerate.
 func (r *CatalogRepo) CreateCategoryWithColorHidden(ctx context.Context, name, color string, hidden bool) (string, error) {
 	name, err := CheckSingleLineName(name)
 	if err != nil {
@@ -1707,8 +1707,36 @@ func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error
 // id → ErrCategoryNotFound, nothing else on the row (sort order, active
 // flag, parent) is touched. An empty colour clears the column (NULL,
 // read back as "") — how the picker's "No colour" tile is stored.
+//
+// The name is checked with the single-line rule unless it equals the stored
+// one (ut-docs#5871: a category stored before the rule stays editable).
 func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string) error {
-	return r.updateCategoryRow(ctx, id, name, color, nil)
+	if strings.TrimSpace(name) == "" {
+		return ErrCategoryNameRequired
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("update category: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var stored string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM categories WHERE id = ?`, id).Scan(&stored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCategoryNotFound
+		}
+		return fmt.Errorf("update category: load: %w", err)
+	}
+	n, err := checkReceivedName(&stored, name)
+	if err != nil {
+		return err
+	}
+	if err := updateCategoryRowExec(ctx, tx, id, n, color, nil); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update category: commit: %w", err)
+	}
+	return nil
 }
 
 // UpdateCategoryWithHidden is UpdateCategory plus, when hidden is non-nil,
@@ -1716,17 +1744,19 @@ func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string
 // editor's Save can't rename a category and then fail on the flag (review
 // finding 6). nil leaves the flag as it is.
 //
-// Admin-screen entry point: refuses control/invisible characters in name
-// (ErrNameInvalidCharacters, ut-docs#5858); UpdateCategory (directives) does not.
+// Admin-screen entry point: always refuses control/invisible characters in
+// name (ErrNameInvalidCharacters, ut-docs#5858), even an unchanged stored
+// one; UpdateCategory (directives) tolerates an unchanged stored name
+// (ut-docs#5871).
 func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, color string, hidden *bool) error {
 	name, err := CheckSingleLineName(name)
 	if err != nil {
 		return err
 	}
-	return r.updateCategoryRow(ctx, id, name, color, hidden)
+	return updateCategoryRowExec(ctx, r.db, id, name, color, hidden)
 }
 
-func (r *CatalogRepo) updateCategoryRow(ctx context.Context, id, name, color string, hidden *bool) error {
+func updateCategoryRowExec(ctx context.Context, q dbExecutor, id, name, color string, hidden *bool) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ErrCategoryNameRequired
@@ -1735,7 +1765,7 @@ func (r *CatalogRepo) updateCategoryRow(ctx context.Context, id, name, color str
 	if hidden != nil {
 		hiddenArg = boolToInt(*hidden)
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden), updated_at = datetime('now') WHERE id = ?`,
+	res, err := q.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden), updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(strings.TrimSpace(color)), hiddenArg, id)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
@@ -1860,9 +1890,14 @@ func (r *CatalogRepo) UpdateCategoryPartial(ctx context.Context, id string, p Ca
 		return res, fmt.Errorf("update category partial: load: %w", err)
 	}
 	if p.Name != nil {
+		storedName := name
 		name = strings.TrimSpace(*p.Name)
 		if name == "" {
 			return res, ErrCategoryNameRequired
+		}
+		var err error
+		if name, err = checkReceivedName(&storedName, name); err != nil {
+			return res, err
 		}
 	}
 	if p.Color != nil {
@@ -2546,6 +2581,13 @@ func (r *CatalogRepo) DeactivateVariant(ctx context.Context, variantID string) e
 }
 
 func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput) (string, error) {
+	// ut-docs#5871: the single-line name rule, before the blank check so a
+	// whitespace-only name stays "name required" and never inserts blank.
+	name, err := CheckSingleLineName(in.Name)
+	if err != nil {
+		return "", err
+	}
+	in.Name = name
 	if in.Name == "" {
 		return "", errors.New("name required")
 	}
@@ -2806,6 +2848,13 @@ func recordPriceChangeExec(ctx context.Context, ex execer, itemID, variantID str
 // + a subsequent same-tx stock movement landing or rolling back together —
 // see the import commit loop in internal/pages/import_page.go.
 func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogtypes.ItemInput) (string, error) {
+	// ut-docs#5871: the single-line name rule, before the blank check so a
+	// whitespace-only name stays "name required" and never inserts blank.
+	name, err := CheckSingleLineName(in.Name)
+	if err != nil {
+		return "", err
+	}
+	in.Name = name
 	if in.Name == "" {
 		return "", errors.New("name required")
 	}
@@ -3226,19 +3275,48 @@ func (r *CatalogRepo) SetItemName(ctx context.Context, id, name string) error {
 	if id == "" || strings.TrimSpace(name) == "" {
 		return errors.New("id and name required")
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET name = ?, updated_at = datetime('now') WHERE id = ?`, name, id)
+	// One transaction: the stored name is read for the legacy-tolerance
+	// comparison (ut-docs#5871) and the rename lands with it.
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("set item name: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var stored string
+	err = tx.QueryRowContext(ctx, `SELECT name FROM items WHERE id = ?`, id).Scan(&stored)
+	switch {
+	case err == nil:
+		n, err := checkReceivedName(&stored, name)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET name = ?, updated_at = datetime('now') WHERE id = ?`, n, id); err != nil {
+			return fmt.Errorf("set item name: %w", err)
+		}
+		return commitSetName(tx, "set item name")
+	case !errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("set item name: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil
+	err = tx.QueryRowContext(ctx, `SELECT name FROM item_variants WHERE id = ? AND is_active = 1`, id).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("item not found")
 	}
-	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET name = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, name, id)
 	if err != nil {
 		return fmt.Errorf("set variant name: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("item not found")
+	n, err := checkReceivedName(&stored, name)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET name = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, n, id); err != nil {
+		return fmt.Errorf("set variant name: %w", err)
+	}
+	return commitSetName(tx, "set variant name")
+}
+
+func commitSetName(tx *sql.Tx, what string) error {
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", what, err)
 	}
 	return nil
 }
