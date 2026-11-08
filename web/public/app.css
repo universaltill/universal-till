@@ -965,6 +965,9 @@ body.sale-screen .session-admin-link { display: none; }
    outgrow a 1024px kiosk the same way — same escape hatch, scrolling the
    table instead of the page. */
 .tills-roster { display: block; overflow-x: auto; }
+/* ut-docs#1294: the 36-char discovery id wraps inside the name cell instead
+   of widening the column (only `anywhere` lowers min-content width). */
+.tills-roster .till-id { overflow-wrap: anywhere; }
 /* "Join as" choice on the join forms (tills.html, setup.html). */
 .join-role { border: 0; padding: 0; margin-block: .6rem; }
 .join-role label { display: block; margin-block: .3rem; }

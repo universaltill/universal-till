@@ -3043,7 +3043,6 @@ tills.discovery.find_button
 tills.discovery.help
 tills.discovery.none_found
 tills.discovery.result_address
-tills.discovery.result_name
 tills.discovery.searching
 tills.discovery.title
 tills.enrolled
