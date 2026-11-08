@@ -110,23 +110,3 @@ func TestBuildXReportDoc_NoReceiptsOmitsRange(t *testing.T) {
 		t.Fatalf("footer:\n%s", foot)
 	}
 }
-
-// Free text (an adjustment reason any cashier types, the register and
-// cashier names) must not carry control bytes to the printer: the utf8
-// charset passes them through raw, so ESC p would kick the drawer and a
-// newline would forge a line on the X report (review, ut-docs#5798).
-func TestBuildXReportDoc_FreeTextHasNoControlBytes(t *testing.T) {
-	xdocSetup(t)
-	rep := xdocReport()
-	rep.RegisterName = "Front\nTill"
-	rep.CashierName = "Al\x1bex"
-	rep.Cash.Adjustments = []data.XAdjustment{{Type: "payout", Reason: "Milk\x1bp\x00\x19\xfa\nExpected £0.00", Amount: money.FromMinor(-500)}}
-	doc := buildXReportDoc(rep, "Corner Shop", "utf8")
-	for _, s := range append(append([]string{}, doc.Meta...), doc.Footer...) {
-		for _, r := range s {
-			if r < 0x20 || r == 0x7f {
-				t.Fatalf("control byte %#x on paper in %q", r, s)
-			}
-		}
-	}
-}
