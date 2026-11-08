@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -30,24 +29,27 @@ func truncateTillName(raw string) string {
 	return name
 }
 
-// validateTillName is the strict rule for a name that arrives without a
-// form (the cloud's rename_till, ut-docs#3272): trimmed, then refused —
-// never truncated — when empty, longer than maxTillNameRunes, or holding
-// any control character, so the name the till stores and reports back is
-// exactly the one it was sent.
+// validateTillName is the strict rule for a till name that arrives from the
+// first-boot wizard, the cloud pairing form, the cloud's rename_till
+// (ut-docs#3272) or a joined till's reported name: trimmed, then refused —
+// never truncated or stripped — when empty, longer than maxTillNameRunes, or
+// failing data.CheckSingleLineName (control, line-break, invisible or
+// bidi-override characters; ut-docs#5862), so the name the till stores and
+// reports back is exactly the one it was sent. The characters refusal is
+// data.ErrNameInvalidCharacters itself (errors.Is), so an operator-facing
+// caller can show common.error.name_invalid_characters. Settings' rename
+// truncates instead (truncateTillName) and checks the characters itself.
 func validateTillName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
 		return "", errors.New("till name is empty")
 	}
-	if !utf8.ValidString(name) {
-		return "", errors.New("till name is not valid UTF-8")
+	name, err := data.CheckSingleLineName(name)
+	if err != nil {
+		return "", err
 	}
 	if n := utf8.RuneCountInString(name); n > maxTillNameRunes {
 		return "", fmt.Errorf("till name is %d characters; the limit is %d", n, maxTillNameRunes)
-	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return "", errors.New("till name contains a control character")
 	}
 	return name, nil
 }

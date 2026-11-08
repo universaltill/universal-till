@@ -637,6 +637,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#5862: a till name must be one line with no hidden
+		// formatting characters. 400, never 422 (422 means name_taken to
+		// completeJoin); refused before the one-time token is spent.
+		if _, err := data.CheckSingleLineName(in.Name); err != nil {
+			common.LocalizedError(w, r, http.StatusBadRequest, keyNameInvalidCharacters)
+			return
+		}
 		presented := strings.TrimSpace(in.Token)
 		// Satellites are TLS-only from enrolment (ADR-0114 §7, ut-docs#4411),
 		// whether the satellite role is the till's own choice or the
@@ -1148,6 +1155,9 @@ const (
 	joinErrUnsentDayCloses
 	joinErrUnsentDayClosesRefused
 	joinErrMainReplaced // ut-docs#5058: that main till was replaced
+	// ut-docs#5862: this till's name has control or invisible characters;
+	// refused locally, before the main till is contacted.
+	joinErrNameInvalid
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1171,6 +1181,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnsentDayCloses:        "tills.join_error.unsent_day_closes",
 	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
 	joinErrMainReplaced:           "tills.join_error.replaced",
+	joinErrNameInvalid:            keyNameInvalidCharacters,
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1270,6 +1281,12 @@ func primaryURLFromAddress(address string) (string, bool) {
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
 func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string, replaceConfirmed bool) (string, error) {
+	// ut-docs#5862: a till name is one line with no hidden formatting
+	// characters. Checked first — nothing is sent to the main till and no
+	// one-time token is spent for a name it would only have to refuse.
+	if _, err := data.CheckSingleLineName(name); err != nil {
+		return "", &joinError{kind: joinErrNameInvalid}
+	}
 	// ut-docs#5058 UT-5 (rejoin_replay.go): a joined till re-joining sends
 	// its unsent journal to the new main till before the wipe. Day closes
 	// the cloud has not acknowledged would be wiped instead: refuse first,
