@@ -40,7 +40,7 @@
     <input type="hidden" name="base_url" value="{{ .BaseURL }}">
     <input type="hidden" name="till_id" value="{{ .TillID }}">
     <label class="join-notice-label" for="join-notice-name">{{ T "tills.pairing.your_till_name" }}</label>
-    <input type="text" id="join-notice-name" name="name" required hx-preserve>
+    <input type="text" id="join-notice-name" name="name" required maxlength="60" hx-preserve>
     {{ if .HasSales }}<span class="join-notice-confirm">
       <input type="checkbox" id="join-notice-replace" name="replace_local_data" value="1" required hx-preserve aria-describedby="join-notice-warning">
       <label class="join-notice-label" for="join-notice-replace">{{ T "tills.discovery.ambient.has_sales_confirm" }}</label>

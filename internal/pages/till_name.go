@@ -81,6 +81,20 @@ func tillNameRefusalKey(raw string) string {
 	}
 }
 
+// tillNameErrKey is the operator-facing key for a validateTillName refusal on
+// the wizard and the cloud pairing form (ut-docs#5898): too long, invisible
+// characters, or (default) an empty name.
+func tillNameErrKey(err error) string {
+	switch {
+	case errors.Is(err, errTillNameTooLong):
+		return keyTillNameTooLong
+	case errors.Is(err, data.ErrNameInvalidCharacters): // ut-docs#5862
+		return keyNameInvalidCharacters
+	default:
+		return keyTillNameRequired
+	}
+}
+
 // deviceNameOrDefault is the Settings till-name field's value: this till's
 // own name as it reports it to the cloud (enroll.DeviceName) — till.name on
 // the main till, sync.till_name on a joined till, never the main till's

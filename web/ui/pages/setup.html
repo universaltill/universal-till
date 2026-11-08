@@ -531,7 +531,7 @@
             <button type="button" id="setup-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="setup-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
           </div>
           <label>{{ T "tills.pairing.your_till_name" }}
-            <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required>
+            <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required maxlength="60">
           </label>
           {{/* Action-neutral wording, not tills.pairing.error.name_required —
                see tills.html's own comment on the same element. */}}
