@@ -28,7 +28,8 @@ rows := catimport.ToRows(res) // []catimport.Row, money in minor units
   mapping (`not_generic`). A nil mapping is `Parse` / `ParseXLSX`.
 - **Packages:** `catimport` (CSV/XLSX parsing, detection, `Row`/`ToRows`),
   `catimport/barcode` (the ADR-0059 symbology registry), and
-  `catimport/catalogrules` (item types, the net-quantity rule).
+  `catimport/catalogrules` (item types, the net-quantity rule,
+  `CheckSingleLineName`; `catalogrules/namecases` is its shared case table).
 - **Pure.** No database, no files, no network. It never imports a till
   package (`internal/...`): `scripts/ci/guard-catimport-module.sh`.
 - **Few vendor formats.** A vendor's export is parsed by its

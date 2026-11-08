@@ -3,6 +3,9 @@ package data
 import (
 	"errors"
 	"testing"
+
+	"github.com/universaltill/universal-till/catimport/catalogrules"
+	"github.com/universaltill/universal-till/catimport/catalogrules/namecases"
 )
 
 func TestCheckSingleLineName(t *testing.T) {
@@ -65,5 +68,18 @@ func TestCheckSingleLineName(t *testing.T) {
 	}
 	if got, err := CheckSingleLineName("  "); err != nil || got != "" {
 		t.Fatalf("blank: got %q, %v", got, err)
+	}
+}
+
+func TestCheckSingleLineName_DelegatesToCatalogrules(t *testing.T) {
+	if ErrNameInvalidCharacters != catalogrules.ErrNameInvalidCharacters {
+		t.Fatal("data.ErrNameInvalidCharacters must be the catalogrules value")
+	}
+	for _, c := range namecases.Cases() {
+		got, err := CheckSingleLineName(c.In)
+		want, wantErr := catalogrules.CheckSingleLineName(c.In)
+		if got != want || err != wantErr {
+			t.Errorf("%s: data = %q, %v; catalogrules = %q, %v", c.Label, got, err, want, wantErr)
+		}
 	}
 }
