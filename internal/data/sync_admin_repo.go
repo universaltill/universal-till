@@ -724,6 +724,14 @@ func TourDoneSettingsKey(userID string) string {
 // the same id.
 const TillIdentityCloudIDSettingsKey = "till_identity.cloud_id"
 
+// LANDiscoveryTillIDSettingsKey is the till's LAN discovery id: what the mDNS
+// advertiser announces, what verification codes and primary proofs are signed
+// with, and what the scan's "self" filter compares against
+// (discovery.TillIDSettingKey aliases it; data cannot import discovery).
+// Shop-wide (ShopWideSettingPrefixes), so a joined till holds its main till's
+// value; ClearReplicaIdentity mints a fresh one on promote (ut-docs#5893).
+const LANDiscoveryTillIDSettingsKey = "lan_discovery.till_id"
+
 // DeviceInfoIDSettingsKey holds the stable device id the device_id_get host
 // function hands a plugin holding device-info (ADR-0140, ut-docs#3862): a
 // v4 UUID minted on first use and never reset — not on a marketplace
