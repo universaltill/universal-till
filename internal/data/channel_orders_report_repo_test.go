@@ -106,7 +106,7 @@ func TestChannelSummary_CancelledBeforePaymentNotCounted(t *testing.T) {
 func TestChannelSummary_RefundDatedByPlacedAt(t *testing.T) {
 	d, repo := openChannelOrders(t)
 	seedReportOrder(t, d, "o1", "com.x.shop", "GBP", "2026-10-10T10:00:00Z", "new", "partially_refunded", 5000, 1200, false)
-	mustExecCO(t, d, `UPDATE channel_orders SET updated_at='2026-11-15T09:00:00Z' WHERE id='o1'`)
+	mustExecCO(t, d, `UPDATE channel_orders SET updated_at='2026-11-15T09:00:00Z' WHERE id='o1'`) // fixed-date:ok data only: SummaryByWindow is queried with explicit reportFrom/reportTo, no real-clock check reads it
 	oct, err := repo.SummaryByWindow(context.Background(), reportFrom, reportTo)
 	if err != nil {
 		t.Fatal(err)
