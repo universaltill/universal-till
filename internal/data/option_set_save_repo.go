@@ -154,6 +154,18 @@ func saveOptionSetTx(ctx context.Context, tx *sql.Tx, p OptionSetSave, values []
 		return res, fmt.Errorf("save option set: load: %w", err)
 	}
 	if p.Name != nil {
+		// ut-docs#5871: the single-line rule, unless the name equals the
+		// stored one (a set stored before the rule stays editable).
+		var stored *string
+		if exists {
+			s := name
+			stored = &s
+		}
+		n, err := checkReceivedName(stored, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		p.Name = &n
 		if taken, err := rowExistsArgs(ctx, tx, `SELECT 1 FROM option_sets WHERE name = ? AND id <> ?`, *p.Name, p.ID); err != nil {
 			return res, fmt.Errorf("save option set: name check: %w", err)
 		} else if taken {
@@ -202,8 +214,8 @@ func (r *OptionSetRepo) RenameOptionSet(ctx context.Context, id, name string) er
 // ReplaceOptionSetValues makes values the set's full ordered value list in
 // one call — add, edit, reorder and remove (see replaceOptionSetValuesTx).
 func (r *OptionSetRepo) ReplaceOptionSetValues(ctx context.Context, optionSetID string, values []OptionSetValueInput) error {
-	// Only new values or changed texts are checked: a bad value already
-	// stored (a directive path is unchecked) must not block editing,
+	// Only new values or changed texts are checked: a bad value stored
+	// before the rule (ut-docs#5871 tolerance) must not block editing,
 	// moving or removing the others.
 	storedText := map[string]string{}
 	if cur, err := r.GetOptionSet(ctx, optionSetID); err == nil {
@@ -260,7 +272,9 @@ func normalizeOptionSetValues(in []OptionSetValueInput) ([]OptionSetValueInput, 
 			// transient UNIQUE collision while swapping two values. A value
 			// containing a control character (NUL included) could otherwise
 			// collide with that placeholder instead of a real value.
-			return nil, fmt.Errorf("%w: option set value %q must not contain control characters", ErrOptionSetValueInvalid, text)
+			// Never tolerated, even unchanged: it cannot have been stored by
+			// SaveOptionSet (ut-docs#5871). Both errors match errors.Is.
+			return nil, fmt.Errorf("%w: option set value %q must not contain control characters: %w", ErrOptionSetValueInvalid, text, ErrNameInvalidCharacters)
 		case texts[text]:
 			return nil, fmt.Errorf("%w: %s", ErrOptionSetValueExists, text)
 		}
@@ -281,22 +295,36 @@ func normalizeOptionSetValues(in []OptionSetValueInput) ([]OptionSetValueInput, 
 // kept row is parked on a placeholder text (NUL + its own id, unique and
 // never a valid trimmed value) before the final texts are written.
 func replaceOptionSetValuesTx(ctx context.Context, tx *sql.Tx, setID string, values []OptionSetValueInput) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM option_set_values WHERE option_set_id = ?`, setID)
+	rows, err := tx.QueryContext(ctx, `SELECT id, value FROM option_set_values WHERE option_set_id = ?`, setID)
 	if err != nil {
 		return fmt.Errorf("save option set: read values: %w", err)
 	}
-	stored := map[string]bool{}
+	stored := map[string]string{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, val string
+		if err := rows.Scan(&id, &val); err != nil {
 			rows.Close()
 			return fmt.Errorf("save option set: read values: %w", err)
 		}
-		stored[id] = true
+		stored[id] = val
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("save option set: read values: %w", err)
+	}
+	// ut-docs#5871: every value passes the single-line rule before any write;
+	// one whose text equals the stored value (by id) is tolerated.
+	values = append([]OptionSetValueInput(nil), values...)
+	for i, v := range values {
+		var sp *string
+		if prev, ok := stored[v.ID]; ok {
+			sp = &prev
+		}
+		n, err := checkReceivedName(sp, v.Value)
+		if err != nil {
+			return fmt.Errorf("option set value %s: %w", v.ID, err)
+		}
+		values[i].Value = n
 	}
 	listed := make(map[string]bool, len(values))
 	for _, v := range values {
@@ -310,14 +338,14 @@ func replaceOptionSetValuesTx(ctx context.Context, tx *sql.Tx, setID string, val
 		}
 	}
 	for _, v := range values {
-		if stored[v.ID] {
+		if _, ok := stored[v.ID]; ok {
 			if _, err := tx.ExecContext(ctx, `UPDATE option_set_values SET value = ? WHERE id = ?`, "\x00"+v.ID, v.ID); err != nil {
 				return fmt.Errorf("save option set: park value: %w", err)
 			}
 		}
 	}
 	for i, v := range values {
-		if stored[v.ID] {
+		if _, ok := stored[v.ID]; ok {
 			if _, err := tx.ExecContext(ctx, `UPDATE option_set_values SET value = ?, sort_order = ? WHERE id = ?`, v.Value, i, v.ID); err != nil {
 				if isUniqueViolation(err) {
 					return fmt.Errorf("%w: %s", ErrOptionSetValueExists, v.Value)

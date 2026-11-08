@@ -337,7 +337,11 @@ func (r *CatalogRepo) saveItemTx(ctx context.Context, tx *sql.Tx, p ItemPatch, b
 	// the local item editor uses.
 	oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, p.ID, "")
 	if p.Name != nil {
-		cur.Name = *p.Name
+		n, err := checkReceivedName(&cur.Name, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		cur.Name = n
 		res.Changed = append(res.Changed, "name")
 	}
 	if p.PriceMinor != nil {
@@ -815,6 +819,11 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 		if p.Name == nil {
 			return res, errors.New("a new category needs a name")
 		}
+		n, err := checkReceivedName(nil, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		p.Name = &n
 		var maxOrder sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `SELECT MAX(sort_order) FROM categories`).Scan(&maxOrder); err != nil {
 			return res, fmt.Errorf("save category: sort order: %w", err)
@@ -832,6 +841,13 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 	}
 
 	if p.Name != nil {
+		if !res.Created {
+			n, err := checkReceivedName(&name, *p.Name)
+			if err != nil {
+				return res, err
+			}
+			p.Name = &n
+		}
 		if active {
 			var other string
 			err := tx.QueryRowContext(ctx, `SELECT name FROM categories WHERE is_active = 1 AND id <> ? AND lower(name) = lower(?) LIMIT 1`, p.ID, *p.Name).Scan(&other)

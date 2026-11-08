@@ -1988,6 +1988,7 @@ func cloudRenameItem(ctx context.Context, d *common.Deps, itemID, name string) (
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
 	}
+	name = strings.TrimSpace(name) // the stored value, for the audit row and the message
 	if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
 		return "", err
 	}
