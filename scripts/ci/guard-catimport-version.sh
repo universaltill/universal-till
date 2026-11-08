@@ -44,6 +44,15 @@ elif [[ "${rc}" -ne 0 ]]; then
   fail "${V}"
 fi
 
+# On the push to main, catimport-tag.yml (seconds) usually tags HEAD before
+# this step runs: that tag was cut from this very change, so it is not a
+# "latest tag" the change must rise above.
+if [[ "$(git -C "${REPO}" rev-parse -q --verify "refs/tags/catimport/v${V}^{commit}" || true)" == \
+  "$(git -C "${REPO}" rev-parse HEAD)" ]]; then
+  echo "✅ catimport version: ${V} (catimport/v${V} is already on HEAD)"
+  exit 0
+fi
+
 if [[ "$(semver_cmp "${V}" "${L}")" == -1 ]]; then
   fail "catimport/VERSION ${V} is below the latest tag catimport/v${L}"
 fi

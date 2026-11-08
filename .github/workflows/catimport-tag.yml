@@ -1,6 +1,7 @@
 # Cuts the catimport/vX.Y.Z tag when a catimport change merges (ut-docs#5882;
-# ADR-0164 §1). A lane's own tag push was refused by the org rules in
-# ut-docs#4735, so CI tags it instead, from catimport/VERSION. The PR guard
+# ADR-0164 §1). A cloud lane's own tag push was refused by its session's
+# permission classifier (ut-docs#4735), so CI tags it instead, from
+# catimport/VERSION. The PR guard
 # scripts/ci/guard-catimport-version.sh already made sure VERSION was bumped.
 #
 # Decision table (scripts/ci/catimport-tag.sh; L = highest catimport/v* tag,
@@ -10,7 +11,9 @@
 #   V == L, catimport source changed  red: bump catimport/VERSION
 #   V < L, or VERSION missing/bad ... red
 # A red run on main IS the alert. "Re-run failed jobs" and "Run workflow" are
-# safe: the script is idempotent and never moves or deletes a tag. Tags pushed
+# safe: the script is idempotent and never moves or deletes a tag. A re-run
+# of an old run after a newer tag exists goes red ("below the latest tag"),
+# changing nothing: retry with "Run workflow" on main instead. Tags pushed
 # with GITHUB_TOKEN trigger no other workflow (release.yml's v* never matches
 # catimport/v* anyway).
 name: catimport tag

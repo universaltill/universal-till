@@ -148,6 +148,20 @@ scenario; printf 'package barcode\n\nvar X = 14\n' >catimport/barcode/b.go; prin
 check pass "0.10.1 is above the latest tag v0.10.0" "latest tag catimport/v0.10.0"
 git tag -d catimport/v0.9.0 catimport/v0.10.0 >/dev/null
 
+# Push to main after catimport-tag.yml already tagged HEAD (it beats the
+# build job's guard step): the tag cut from this change must not fail it.
+scenario; printf 'package barcode\n\nvar X = 15\n' >catimport/barcode/b.go; printf '0.4.1\n' >catimport/VERSION; land tagged-head
+git tag -a catimport/v0.4.1 -m x HEAD
+check pass "source push to main already tagged on HEAD" "already on HEAD"
+git tag -d catimport/v0.4.1 >/dev/null
+git checkout -q -f -B work "${BOOT}"; printf '0.5.0\n' >catimport/VERSION; land bootstrap-tagged
+git tag -a catimport/v0.5.0 -m x HEAD
+check pass "bump-only push to main already tagged on HEAD (this PR's merge)" "already on HEAD"
+git tag -d catimport/v0.5.0 >/dev/null
+# ...but a tag for VERSION on another commit still means "not bumped".
+scenario; printf 'package barcode\n\nvar X = 16\n' >catimport/barcode/b.go; land tagged-elsewhere
+check fail "VERSION's tag on the base, not HEAD" "catimport/barcode/b.go"
+
 # Explicit base argument.
 scenario; printf 'package barcode\n\nvar X = 11\n' >catimport/barcode/b.go; land go-explicit
 check fail "explicit base-rev argument" "catimport/barcode/b.go" "${BASE}" .
