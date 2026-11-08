@@ -13,7 +13,7 @@ import (
 func TestAdminDumpApplyRoundTrip_CategoryImagePath(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT INTO categories (id, name, image_path) VALUES ('cat-img', 'Coffee', '/public/assets/category-icons/coffee.svg')`)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)

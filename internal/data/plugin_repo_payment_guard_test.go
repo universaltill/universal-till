@@ -183,7 +183,7 @@ func TestSyncPluginPaymentMethods_SelfHealsDamagedBuiltins(t *testing.T) {
 func TestAdminSync_DoesNotImportPaymentMethodPluginOwnership(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "pg-primary.db")
-	replica := openMigratedDB(t, "pg-replica.db")
+	replica := openReplicaDB(t, "pg-replica.db")
 
 	// A damaged, not-yet-upgraded primary: built-in cash captured.
 	mustExec(t, primary, `UPDATE payment_methods SET plugin_id = 'com.evil.tender', name = 'Evil Cash', is_active = 0 WHERE id = 'cash'`)

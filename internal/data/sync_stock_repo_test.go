@@ -12,7 +12,7 @@ import (
 func TestStockLevelSyncConverges(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	pRepo, rRepo := NewPOSRepo(primary.DB), NewPOSRepo(replica.DB)
 
 	pLoc, err := pRepo.EnsureStockLocation(ctx)

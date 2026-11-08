@@ -12,7 +12,7 @@ import (
 func TestAdminDumpApplyRoundTrip_CategoryIconAndHidden(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT INTO categories (id, name, icon, sell_screen_hidden) VALUES ('cat-ic', 'Coffee', 'lucide:coffee', 1)`)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)

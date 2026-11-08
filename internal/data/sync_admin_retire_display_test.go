@@ -24,7 +24,7 @@ import (
 func TestAdminApply_BrandRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO brands (id, name) VALUES ('b1', 'Acme Foods')`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -101,7 +101,7 @@ func TestAdminApply_BrandRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 func TestAdminApply_TaxCodeRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO tax_codes (id, name, rate_basis_points) VALUES ('tc-red', 'Reduced 7%', 700)`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -168,7 +168,7 @@ func TestAdminApply_TaxCodeRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 func TestAdminApply_UserRetiredInPlace_DisplayUsernameUnmangled(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO users (id, username, display_name, pin_hash) VALUES ('u-alice', 'alice', 'Alice', 'hash')`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -250,7 +250,7 @@ func TestAdminApply_UserRetiredInPlace_DisplayUsernameUnmangled(t *testing.T) {
 func TestAdminApply_RetiredLocationAndRegisterNamesUnmangledInStockAndFiscalReaders(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-1', 'Back Room', 1)`)
 	mustExec(t, primary, `INSERT INTO registers (id, name, location_id, is_active) VALUES ('reg-1', 'Front Till', 'loc-1', 1)`)

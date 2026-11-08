@@ -85,7 +85,16 @@ func (r *CatalogRepo) SaveTaxCodeTx(ctx context.Context, tx *sql.Tx, s TaxCodeSa
 		takeawayBP = &v
 	}
 	if s.Name != nil {
-		name = *s.Name
+		var stored *string
+		if exists {
+			prev := name
+			stored = &prev
+		}
+		n, err := checkReceivedName(stored, *s.Name)
+		if err != nil {
+			return res, err
+		}
+		name = n
 		res.Changed = append(res.Changed, "name")
 	}
 	if s.RateBP != nil {

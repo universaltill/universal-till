@@ -12,8 +12,9 @@ import (
 )
 
 // ut-docs#5858: the admin-screen entry points refuse control and invisible
-// characters in single-line names; the directive-shared ones stay unchecked
-// so the till never refuses a name my. accepted.
+// characters in single-line names. ut-docs#5871: so do the directive and
+// catalogue-pull ones (see singleline_name_received_5871_test.go), except
+// that a name equal to the stored one is tolerated there.
 
 const (
 	nlEsc   = "Co\x1bla"
@@ -63,32 +64,6 @@ func TestSingleLineName_CategoryAdminPaths(t *testing.T) {
 	cats, _ := repo.ListCategories(ctx)
 	if len(cats) != 1 || cats[0].Name != nlRTLOk {
 		t.Fatalf("categories = %+v, want one named %q", cats, nlRTLOk)
-	}
-}
-
-// No gap with my.: the directive-shared category methods still store U+202E.
-func TestSingleLineName_CategoryDirectivePathsUnchecked(t *testing.T) {
-	d := nlOpen(t)
-	repo := data.NewCatalogRepo(d.DB)
-	ctx := context.Background()
-	id, err := repo.CreateCategoryWithColor(ctx, nlRLO, "")
-	if err != nil {
-		t.Fatalf("CreateCategoryWithColor refused a name my. accepts: %v", err)
-	}
-	if err := repo.UpdateCategory(ctx, id, "x"+nlRLO, ""); err != nil {
-		t.Fatalf("UpdateCategory refused a name my. accepts: %v", err)
-	}
-	cats, _ := repo.ListCategories(ctx)
-	if len(cats) != 1 || cats[0].Name != "x"+nlRLO {
-		t.Fatalf("categories = %+v", cats)
-	}
-}
-
-func TestSingleLineName_ItemDirectivePathUnchecked(t *testing.T) {
-	d := nlOpen(t)
-	repo := data.NewCatalogRepo(d.DB)
-	if _, err := repo.CreateItem(context.Background(), itemInputNamed(nlRLO)); err != nil {
-		t.Fatalf("data.CreateItem refused a name my. accepts: %v", err)
 	}
 }
 
@@ -195,21 +170,6 @@ func TestSingleLineName_OptionSets(t *testing.T) {
 	}
 }
 
-// No gap with my.: SaveOptionSet (family B) is untouched, U+2028 still passes.
-func TestSingleLineName_SaveOptionSetStillAcceptsLineSeparator(t *testing.T) {
-	d := nlOpen(t)
-	repo := data.NewOptionSetRepo(d.DB)
-	ctx := context.Background()
-	setID, err := repo.CreateOptionSet(ctx, "Sizes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	vals := []data.OptionSetValueInput{{ID: "v1", Value: "a\u2028b"}}
-	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: setID, Values: &vals}); err != nil {
-		t.Fatalf("SaveOptionSet refused U+2028: %v", err)
-	}
-}
-
 func TestSingleLineName_Registers(t *testing.T) {
 	d := nlOpen(t)
 	repo := data.NewPOSRepo(d.DB)
@@ -286,8 +246,9 @@ func itemInputNamed(name string) catalogtypes.ItemInput {
 	return catalogtypes.ItemInput{ID: "nl-item", SKU: "NL-1", Name: name, BasePrice: 100, IsActive: true}
 }
 
-// A bad value stored through the unchecked path (my. directive) must not
-// block editing the other values; only new or changed texts are checked.
+// A bad value stored before the rule (ut-docs#5871) must not block editing
+// the other values; only new or changed texts are checked. It is seeded with
+// raw SQL because every public path now refuses it.
 func TestSingleLineName_ReplaceValuesIgnoresUnchangedBadValue(t *testing.T) {
 	d := nlOpen(t)
 	repo := data.NewOptionSetRepo(d.DB)
@@ -297,8 +258,7 @@ func TestSingleLineName_ReplaceValuesIgnoresUnchangedBadValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	badText := "Lar\u202ege"
-	vals := []data.OptionSetValueInput{{ID: "v-small", Value: "Small"}, {ID: "v-bad", Value: badText}}
-	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: setID, Values: &vals}); err != nil {
+	if _, err := d.DB.Exec(`INSERT INTO option_set_values (id, option_set_id, value, sort_order) VALUES ('v-small', ?, 'Small', 0), ('v-bad', ?, ?, 1)`, setID, setID, badText); err != nil {
 		t.Fatal(err)
 	}
 	// Rename a sibling, bad value passed through unchanged.
