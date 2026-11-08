@@ -100,7 +100,7 @@ run_tag fail "V < L is red" "below"
 fresh; git -C "${W}" rm -q catimport/VERSION; land missing
 run_tag fail "missing VERSION is red" "catimport/VERSION"
 fresh; printf 'v0.5.0\n' >"${W}/catimport/VERSION"; land malformed
-run_tag fail "malformed VERSION is red" "catimport/VERSION"
+run_tag fail "malformed VERSION is red" "not a bare X.Y.Z"
 expect "nothing tagged on a malformed VERSION" "$(tag_sha catimport/v0.5.0)" none
 
 # HEAD not on origin/main (committed locally, never pushed).
@@ -131,6 +131,20 @@ expect "the other commit's tag is never moved" "$(tag_sha catimport/v0.5.0)" "${
 fresh; printf '0.5.0\n' >"${W}/catimport/VERSION"; land bump
 git -C "${O}" tag -a catimport/v0.5.0 -m racer "$(git -C "${W}" rev-parse HEAD)"
 run_tag pass "a concurrent run that tagged HEAD is green" "already"
+
+# Numeric, not lexical, latest tag: with v0.9.0 and v0.10.0 on the origin and
+# VERSION 0.10.0 after a README-only change, nothing is tagged (a lexical
+# compare would pick 0.9.0 and try to cut v0.10.0 again).
+fresh
+git -C "${W}" tag -a catimport/v0.9.0 -m x; git -C "${W}" tag -a catimport/v0.10.0 -m x
+git -C "${W}" push -q origin refs/tags/catimport/v0.9.0 refs/tags/catimport/v0.10.0
+printf '0.10.0\n' >"${W}/catimport/VERSION"; printf '# d\n' >"${W}/catimport/README.md"; land readme-multi
+run_tag pass "V == L by numeric compare (0.10.0 over 0.9.0) is a no-op" "no catimport source change since catimport/v0.10.0"
+fresh
+git -C "${W}" tag -a catimport/v0.9.0 -m x; git -C "${W}" tag -a catimport/v0.10.0 -m x
+git -C "${W}" push -q origin refs/tags/catimport/v0.9.0 refs/tags/catimport/v0.10.0
+printf '0.10.1\n' >"${W}/catimport/VERSION"; land bump-multi
+run_tag pass "0.10.1 above 0.10.0 is tagged" "created catimport/v0.10.1"
 
 if [[ "${FAIL_COUNT}" -ne 0 ]]; then
   echo "${FAIL_COUNT} check(s) failed"

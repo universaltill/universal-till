@@ -129,6 +129,25 @@ scenario; git tag catimport/vfoo; printf 'package barcode\n\nvar X = 10\n' >cati
 check fail "non-semver tag ignored, VERSION unchanged" "above 0.4.0"
 git tag -d catimport/vfoo >/dev/null
 
+# README-only PR on top of an untagged source bump (main between a merge and
+# its tag run): only the PR's own diff counts, not "since the tag".
+git checkout -q -f -B work "${UNTAGGED}"; printf '# d2\n' >catimport/README.md; land readme-over-untagged
+check pass "README-only PR over an untagged bump on the base" "0.5.0"
+
+# Bump-only PR that lands exactly on the latest tag (bootstrap base without
+# VERSION, no source change): a bump-only change must be > L.
+git checkout -q -f -B work "${BOOT}"; printf '0.4.0\n' >catimport/VERSION; land bump-only-equal
+check fail "bump-only PR equal to the latest tag" "bump-only"
+
+# Numeric, not lexical, comparison: v0.10.0 is above v0.9.0 (and git lists
+# catimport/v0.10.0 before catimport/v0.9.0).
+git tag -a catimport/v0.9.0 -m x "${BASE}"; git tag -a catimport/v0.10.0 -m x "${BASE}"
+scenario; printf 'package barcode\n\nvar X = 13\n' >catimport/barcode/b.go; printf '0.9.1\n' >catimport/VERSION; land multi-digit-low
+check fail "0.9.1 is below the latest tag v0.10.0" "below the latest tag catimport/v0.10.0"
+scenario; printf 'package barcode\n\nvar X = 14\n' >catimport/barcode/b.go; printf '0.10.1\n' >catimport/VERSION; land multi-digit-ok
+check pass "0.10.1 is above the latest tag v0.10.0" "latest tag catimport/v0.10.0"
+git tag -d catimport/v0.9.0 catimport/v0.10.0 >/dev/null
+
 # Explicit base argument.
 scenario; printf 'package barcode\n\nvar X = 11\n' >catimport/barcode/b.go; land go-explicit
 check fail "explicit base-rev argument" "catimport/barcode/b.go" "${BASE}" .
