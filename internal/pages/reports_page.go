@@ -277,6 +277,13 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			grandAvg = grandTotal / int64(grandCount)
 		}
 
+		// ut-docs#5427: the Online channels tab is hidden until this till has
+		// recorded an online order (fails closed on a DB error).
+		hasChannelOrders, err := data.NewChannelOrdersRepo(d.Db).HasAny(r.Context())
+		if err != nil {
+			logging.L().Warnf("reports: online channels check failed, tab hidden: %v", err)
+		}
+
 		httpx.Render("ui/pages/reports.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.reports"),
 			"theme":     d.ResolvedTheme(r),
@@ -293,26 +300,27 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			// country rather than on a permission — the permission gate
 			// inside the tab is still `worker_allocation`, shared with the
 			// Tips tab (ADR-0063: one ledger, two filtered views).
-			"ShowYuzdeUsulu": d.CurrentState().Country == "TR",
-			"Days":           days,
-			"Presets":        presets,
-			"CustomActive":   customActive,
-			"CurrentURI":     r.URL.RequestURI(),
-			"Period":         reportPeriodParam(r),
-			"Anchor":         window.Anchor,
-			"PeriodLabel":    window.Label,
-			"YoYHas":         lastYear.Count > 0,
-			"YoYNow":         curPeriod.Total,
-			"YoYThen":        lastYear.Total,
-			"YoYPct":         yoyPct,
-			"RunningOut":     runningOut,
-			"GrandTotal":     grandTotal,
-			"GrandTax":       grandTax,
-			"GrandDiscount":  grandDiscount,
-			"GrandCount":     grandCount,
-			"GrandAvg":       grandAvg,
-			"GrandRefunds":   grandRefunds,
-			"GrandNet":       grandNet,
+			"ShowYuzdeUsulu":     d.CurrentState().Country == "TR",
+			"ShowOnlineChannels": hasChannelOrders,
+			"Days":               days,
+			"Presets":            presets,
+			"CustomActive":       customActive,
+			"CurrentURI":         r.URL.RequestURI(),
+			"Period":             reportPeriodParam(r),
+			"Anchor":             window.Anchor,
+			"PeriodLabel":        window.Label,
+			"YoYHas":             lastYear.Count > 0,
+			"YoYNow":             curPeriod.Total,
+			"YoYThen":            lastYear.Total,
+			"YoYPct":             yoyPct,
+			"RunningOut":         runningOut,
+			"GrandTotal":         grandTotal,
+			"GrandTax":           grandTax,
+			"GrandDiscount":      grandDiscount,
+			"GrandCount":         grandCount,
+			"GrandAvg":           grandAvg,
+			"GrandRefunds":       grandRefunds,
+			"GrandNet":           grandNet,
 		})(w, r)
 	})
 
@@ -627,6 +635,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 		case "tips":
 			renderTipsTab(repo, d, r, window)(w, r)
+		case "online-channels":
+			renderOnlineChannelsTab(d, r, window)(w, r)
 		case "yuzde-usulu":
 			renderYuzdeUsuluTab(repo, d, r, window)(w, r)
 		default:
