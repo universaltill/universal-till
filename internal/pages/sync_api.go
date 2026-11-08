@@ -1158,6 +1158,8 @@ const (
 	// ut-docs#5862: this till's name has control or invisible characters;
 	// refused locally, before the main till is contacted.
 	joinErrNameInvalid
+	// ut-docs#5898: this till's name is longer than maxTillNameRunes.
+	joinErrNameTooLong
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1182,6 +1184,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
 	joinErrMainReplaced:           "tills.join_error.replaced",
 	joinErrNameInvalid:            keyNameInvalidCharacters,
+	joinErrNameTooLong:            keyTillNameTooLong,
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1288,7 +1291,13 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	// ut-docs#5862: a till name is one line with no hidden formatting
 	// characters. Checked first — nothing is sent to the main till and no
 	// one-time token is spent for a name it would only have to refuse.
-	if _, err := data.CheckSingleLineName(name); err != nil {
+	// ut-docs#5898: and no longer than maxTillNameRunes (the main till
+	// refuses a longer one too).
+	switch tillNameRefusalKey(name) {
+	case "":
+	case keyTillNameTooLong:
+		return "", &joinError{kind: joinErrNameTooLong}
+	default:
 		return "", &joinError{kind: joinErrNameInvalid}
 	}
 	// ut-docs#5058 UT-5 (rejoin_replay.go): a joined till re-joining sends

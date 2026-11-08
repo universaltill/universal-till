@@ -3,7 +3,6 @@ package pages
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -443,7 +442,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
+		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters || errKey == keyTillNameTooLong {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		if errKey == keyCloudExpired {
@@ -483,7 +482,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#4146: likewise a refused till name (a control
 			// character, too long) is not echoed: the field would look
 			// filled while every resubmit fails with "required".
-			if errKey != keyTillNameRequired && errKey != keyNameInvalidCharacters {
+			if errKey != keyTillNameRequired && errKey != keyNameInvalidCharacters && errKey != keyTillNameTooLong {
 				data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 			}
 		}
@@ -673,11 +672,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// checked before anything is persisted.
 		tillName, tillNameErr := validateTillName(r.PostFormValue("till_name"))
 		if tillNameErr != nil {
-			key := keyTillNameRequired
-			if errors.Is(tillNameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
-				key = keyNameInvalidCharacters
-			}
-			renderWizard(w, r, key, "")
+			renderWizard(w, r, tillNameErrKey(tillNameErr), "")
 			return
 		}
 
