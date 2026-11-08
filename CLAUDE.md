@@ -16,6 +16,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   comment-only edits are fine. Add a new `NNN_*.sql` and pin its checksum in
   `internal/db/shipped_migrations_test.go` (the failure message prints it).
 
+## Shared catimport module (ADR-0164, `scripts/ci/guard-catimport-version.sh`)
+- A PR changing `catimport/` Go source, `go.mod` or `go.sum` bumps
+  `catimport/VERSION` (patch fix, minor new name); `catimport-tag.yml` tags
+  `catimport/vX.Y.Z` on merge — never push that tag by hand (#5882).
+
 ## Card data (ADR-0127, `scripts/ci/guard-card-data-schema.sh`)
 - Card data lives only in the PSP's vault: no migration names a card
   number, BIN/IIN, CVV/CVC, track data or PIN block (last4, brand, expiry,

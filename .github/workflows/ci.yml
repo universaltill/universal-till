@@ -245,6 +245,16 @@ jobs:
         run: bash scripts/ci/guard-catimport-module.sh
       - name: catimport module guard regression test
         run: bash scripts/ci/guard-catimport-module_test.sh
+      - name: catimport VERSION guard (ut-docs#5882)
+        # checkout is depth 1: fetch HEAD's parent (the base tip; on a PR the
+        # merge commit's first parent) and the catimport/v* tags.
+        run: |
+          git fetch --no-tags --depth=2 origin "${GITHUB_SHA}" '+refs/tags/catimport/*:refs/tags/catimport/*'
+          bash scripts/ci/guard-catimport-version.sh
+      - name: catimport VERSION guard regression test
+        run: bash scripts/ci/guard-catimport-version_test.sh
+      - name: catimport tag script regression test
+        run: bash scripts/ci/catimport-tag_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
