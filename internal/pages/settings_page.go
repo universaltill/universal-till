@@ -3512,6 +3512,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ut-docs#5874: the shop name takes the Shop name card's rule here
+		// too (plus the single-line rule, which also refuses U+E0100-E01EF),
+		// before the elevation gate, and the normalised name is what is
+		// stored - the raw editor cannot do what the card refuses.
+		if key == common.KeyStoreName {
+			norm, err := data.CheckSingleLineName(value)
+			if err == nil {
+				norm, err = config.NormalizeStoreName(norm)
+			}
+			if err != nil {
+				msgKey := keyNameInvalidCharacters
+				if !errors.Is(err, data.ErrNameInvalidCharacters) && !errors.Is(err, config.ErrStoreNameInvalidChars) {
+					msgKey = storeNameErrorKey(err)
+				}
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), msgKey), http.StatusBadRequest)
+				return
+			}
+			value = norm
+		}
 		// ut-docs#244: validate before persisting, not just before reflecting
 		// into RuntimeState — the old code let an unparsable value through to
 		// d.Settings.Set unchanged (silently no-op'ing only the in-memory
