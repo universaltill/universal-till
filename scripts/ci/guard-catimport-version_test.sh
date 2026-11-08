@@ -17,6 +17,9 @@ cleanup() {
   remove_guard_test_sandbox
 }
 trap cleanup EXIT
+# CI runners have no git identity; every commit/tag/merge here needs one.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid
+export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 CLONE_DIR=""
 FAIL_COUNT=0
 GUARD="scripts/ci/guard-catimport-version.sh"

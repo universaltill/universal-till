@@ -66,3 +66,16 @@ ut-cloud `docs/5882-catimport-ci-tag`).
 
 Deferred: none new. DevOps should watch the first `catimport tag` run on `main` for v0.5.0, then raise
 ut-cloud's `require` to `catimport/v0.5.0`.
+
+## Post-review CI fix (orchestrator)
+
+The first PR run of `build` went red in `guard-catimport-version_test.sh`
+with `fatal: empty ident name`: Actions runners have no git identity, and one
+sandbox `git` call lacked the `-c user.*` flags. Both `_test.sh` files now
+export a fixed `GIT_AUTHOR_*`/`GIT_COMMITTER_*` identity. That exposed a real
+weakness in `catimport-tag.sh`: the caller's `GIT_COMMITTER_*` environment
+overrides `-c user.*`, so the bot tagger identity is now set through
+`GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` on the `tag` call. The test that
+checks the tagger is `github-actions[bot]` caught this. Reproduced locally
+with an empty `HOME` and `GIT_CONFIG_NOSYSTEM=1`. Red before the fix, green
+after; shellcheck 0 issues.

@@ -87,8 +87,9 @@ fi
 
 TAG="catimport/v${V}"
 subject="$(git -C "${REPO}" log -1 --format=%s HEAD)"
-git -C "${REPO}" -c "user.name=${ACTOR_NAME}" -c "user.email=${ACTOR_EMAIL}" \
-  tag -a "${TAG}" -m "catimport v${V}" -m "${subject} (${head_sha:0:12})" HEAD
+# Env, not -c: GIT_COMMITTER_* in the caller's environment would beat -c.
+GIT_COMMITTER_NAME="${ACTOR_NAME}" GIT_COMMITTER_EMAIL="${ACTOR_EMAIL}" \
+  git -C "${REPO}" tag -a "${TAG}" -m "catimport v${V}" -m "${subject} (${head_sha:0:12})" HEAD
 
 push_err=""
 if ! push_err="$(git -C "${REPO}" push origin "refs/tags/${TAG}" 2>&1)"; then
