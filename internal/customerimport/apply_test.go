@@ -561,3 +561,42 @@ func TestApply_MatchesPhonesNotYetBackfilled(t *testing.T) {
 		t.Fatalf("customers = %d", n)
 	}
 }
+
+// ut-docs#5861: a customer name is held to data.CheckSingleLineName, the
+// rule the till's admin screens use (ut-docs#5858), so an import cannot
+// store a line break, C1 control or bidi override in a name. Address keeps
+// its own (multi-line) rule.
+func TestApply_NameRefusesLineBreaksAndInvisibleFormatting(t *testing.T) {
+	d := open(t)
+	refused := []string{
+		"Ada\nLovelace", // line break
+		"Ada\tLovelace", // tab
+		"Ada\u0085Pond", // C1 next line
+		"Ada Pond",      // line separator
+		"‮Ada Pond",     // right-to-left override
+		"Ada​Pond",      // zero-width space
+		"⁧Ada Pond",     // unbalanced isolate
+	}
+	rows := make([]customerimport.Row, 0, len(refused)+2)
+	for i, n := range refused {
+		rows = append(rows, customerimport.Row{Row: i + 1, Name: n})
+	}
+	rows = append(rows,
+		customerimport.Row{Row: len(refused) + 1, Name: "‏مریم‏ احمدی"}, // RLM in an RTL name
+		customerimport.Row{Row: len(refused) + 2, Name: "Zoe Hill", Address: "1 High St\nLeeds"},
+	)
+	res := apply(t, d, rows...)
+	for i := range refused {
+		if res.Rows[i].Outcome != customerimport.Invalid || strings.Join(res.Rows[i].Fields, ",") != "name" {
+			t.Errorf("name %q: got %s %v, want invalid [name]", refused[i], res.Rows[i].Outcome, res.Rows[i].Fields)
+		}
+	}
+	for _, r := range res.Rows[len(refused):] {
+		if r.Outcome == customerimport.Invalid {
+			t.Errorf("row %d must be accepted: %+v", r.Row, r)
+		}
+	}
+	if n := count(t, d, `SELECT COUNT(*) FROM customers`); n != 2 {
+		t.Fatalf("customers = %d, want 2", n)
+	}
+}
