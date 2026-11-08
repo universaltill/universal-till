@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/universaltill/universal-till/internal/data"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -370,6 +371,12 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 				msg = httpx.T(locale, "tills.pairing.error.name_required")
 			}
 			pairWaitView(w, r, statusURL, "error", "", "", msg)
+			return
+		}
+		// ut-docs#5862: one line, no hidden formatting characters; refused
+		// here, before any request to the main till.
+		if _, err := data.CheckSingleLineName(name); err != nil {
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, keyNameInvalidCharacters))
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {

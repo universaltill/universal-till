@@ -235,12 +235,50 @@ func TestSingleLineName_Registers(t *testing.T) {
 	}
 }
 
-// No gap with my.: enrolment provisioning is unchecked (card D).
-func TestSingleLineName_EnrolmentRegisterUnchecked(t *testing.T) {
+// ut-docs#5862: enrolment provisioning checks the name too. A refused name is
+// an error (the enroll handler fails open to a manual assignment), never a
+// silently stripped one.
+func TestSingleLineName_EnrolmentRegisterRefused(t *testing.T) {
 	d := nlOpen(t)
 	repo := data.NewPOSRepo(d.DB)
-	if _, name, err := repo.CreateRegisterForEnrolment(context.Background(), nlRLO); err != nil || name != nlRLO {
-		t.Fatalf("CreateRegisterForEnrolment = %q, %v; want unchanged name", name, err)
+	ctx := context.Background()
+	for label, bad := range nlBadNames() {
+		t.Run(label, func(t *testing.T) {
+			id, name, err := repo.CreateRegisterForEnrolment(ctx, bad)
+			nlRefused(t, err)
+			if id != "" || name != "" {
+				t.Fatalf("got id=%q name=%q alongside the refusal", id, name)
+			}
+		})
+	}
+	if regs, _ := repo.ListRegisters(ctx); len(regs) != 0 {
+		t.Fatalf("registers = %+v, want none after refused enrolments", regs)
+	}
+	if _, name, err := repo.CreateRegisterForEnrolment(ctx, nlRTL); err != nil || name != nlRTLOk {
+		t.Fatalf("CreateRegisterForEnrolment(balanced isolate) = %q, %v; want trimmed %q", name, err, nlRTLOk)
+	}
+}
+
+// ut-docs#5862: following the till's rename is best-effort — a refused name is
+// skipped (false, nil), never an error that fails the till rename.
+func TestSingleLineName_RegisterFollowsTillSkipsBadName(t *testing.T) {
+	d := nlOpen(t)
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	id, err := repo.CreateRegister(ctx, "Bar", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for label, bad := range nlBadNames() {
+		t.Run(label, func(t *testing.T) {
+			if renamed, err := repo.RenameRegisterToFollowTill(ctx, id, bad); renamed || err != nil {
+				t.Fatalf("RenameRegisterToFollowTill = %v, %v; want false, nil", renamed, err)
+			}
+		})
+	}
+	regs, _ := repo.ListRegisters(ctx)
+	if len(regs) != 1 || regs[0].Name != "Bar" {
+		t.Fatalf("registers = %+v, want one still named Bar", regs)
 	}
 }
 

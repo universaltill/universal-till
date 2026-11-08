@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -218,6 +219,10 @@ const keyStoreNameRequired = "setup.error.store_name_required"
 // (ut-docs#4146: no default till name — the operator names it on step 4).
 // An existing key, shared with the pairing dialog's action-neutral wording.
 const keyTillNameRequired = "tills.pairing.error.name_required_field"
+
+// keyNameInvalidCharacters is the shared refusal for a name with control,
+// line-break or invisible characters (ut-docs#5858, till names ut-docs#5862).
+const keyNameInvalidCharacters = "common.error.name_invalid_characters"
 
 // isRefusedStoreName reports whether a first-boot shop name must be refused:
 // blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
@@ -438,7 +443,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired {
+		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		if errKey == keyCloudExpired {
@@ -478,7 +483,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#4146: likewise a refused till name (a control
 			// character, too long) is not echoed: the field would look
 			// filled while every resubmit fails with "required".
-			if errKey != keyTillNameRequired {
+			if errKey != keyTillNameRequired && errKey != keyNameInvalidCharacters {
 				data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 			}
 		}
@@ -668,7 +673,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// checked before anything is persisted.
 		tillName, tillNameErr := validateTillName(r.PostFormValue("till_name"))
 		if tillNameErr != nil {
-			renderWizard(w, r, keyTillNameRequired, "")
+			key := keyTillNameRequired
+			if errors.Is(tillNameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
+				key = keyNameInvalidCharacters
+			}
+			renderWizard(w, r, key, "")
 			return
 		}
 

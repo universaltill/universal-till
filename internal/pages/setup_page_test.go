@@ -381,6 +381,12 @@ func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
 		"over 60 runes": {"till_name": {strings.Repeat("é", 61)}},
 	}
 	for label, extra := range cases {
+		// ut-docs#5862: a bad character has its own message; the rest keep
+		// the name-required one.
+		errKey := "tills.pairing.error.name_required_field"
+		if label == "control char" {
+			errKey = "common.error.name_invalid_characters"
+		}
 		t.Run(label, func(t *testing.T) {
 			mux, svc, d := newFullAuthDeps(t)
 			form := url.Values{
@@ -396,7 +402,7 @@ func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
 				t.Fatalf("code=%d loc=%q, want a 200 wizard re-render", rec.Code, rec.Header().Get("Location"))
 			}
 			body := rec.Body.String()
-			want := template.HTMLEscapeString(httpx.T("en", "tills.pairing.error.name_required_field"))
+			want := template.HTMLEscapeString(httpx.T("en", errKey))
 			if !strings.Contains(body, `<p class="login-error" role="alert">`+want+`</p>`) {
 				t.Errorf("re-render lacks the %q error: %s", want, body)
 			}

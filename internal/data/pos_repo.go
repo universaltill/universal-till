@@ -4643,7 +4643,7 @@ func (r *POSRepo) ListRegisters(ctx context.Context) ([]Register, error) {
 //
 // Admin-screen entry point: refuses control/invisible characters in name
 // (ErrNameInvalidCharacters, ut-docs#5858) and stores it trimmed.
-// CreateRegisterForEnrolment skips the check (card D covers till names).
+// CreateRegisterForEnrolment checks too and refuses (ut-docs#5862).
 func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *string) (string, error) {
 	name, err := CheckSingleLineName(name)
 	if err != nil {
@@ -4670,8 +4670,16 @@ func (r *POSRepo) createRegister(ctx context.Context, name string, locationID *s
 // UNIQUE violation this retries with "<baseName> (2)", "<baseName> (3)", …
 // up to a bounded number of attempts. Returns the id and the (possibly
 // suffixed) name actually used.
+//
+// A baseName with control or invisible characters is refused with
+// ErrNameInvalidCharacters (ut-docs#5862); the enroll handler fails open on
+// any error here and enrols the till without a register.
 func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName string) (string, string, error) {
 	const maxAttempts = 50
+	baseName, err := CheckSingleLineName(baseName)
+	if err != nil {
+		return "", "", err
+	}
 	name := baseName
 	for i := 1; i <= maxAttempts; i++ {
 		if i > 1 {
@@ -4709,8 +4717,13 @@ func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error 
 // register keeps its till's name when the till is renamed (ut-docs#4022).
 // Best-effort by design: a name another register already holds is left
 // alone (renamed=false, no error) — the till rename itself must never fail
-// over its register — and so is an unknown id or an unchanged name.
+// over its register — and so is an unknown id, an unchanged name, or a name
+// CheckSingleLineName refuses (ut-docs#5862; renamed=false, no error).
 func (r *POSRepo) RenameRegisterToFollowTill(ctx context.Context, id, newName string) (bool, error) {
+	newName, err := CheckSingleLineName(newName)
+	if err != nil {
+		return false, nil
+	}
 	res, err := r.db.ExecContext(ctx, `
 UPDATE registers SET name = ?
 WHERE id = ? AND name IS NOT ?
