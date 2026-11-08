@@ -183,6 +183,11 @@ func ClassifyInstallError(err error, hasOwner bool) InstallFailure {
 		return InstallFailure{MessageKey: "plugins.install.error.incompatible", Message: "This plugin is not compatible with this till.", Retryable: false}
 	}
 
+	// ut-docs#5658: a revoked release stays refused until another version is installed.
+	if errors.Is(err, ErrRevokedRelease) {
+		return InstallFailure{MessageKey: "plugins.install.error.revoked", Message: "The marketplace has withdrawn this plugin version, so it can't be installed. Install another version.", Retryable: false}
+	}
+
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case msg == "":
