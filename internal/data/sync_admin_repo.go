@@ -480,15 +480,16 @@ var nonAdminTables = map[string]string{
 	// itself; these underlying rows never travel because a row without the
 	// Ed25519-verified plugin FILES would leave a replica with a phantom
 	// plugin.
-	"plugins":               "installed-plugin rows — travel via SyncPluginsRepo's own bundle, not this one",
-	"plugin_catalog":        "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
-	"plugin_entries":        "plugin-contributed menu/hook entries — recreated on re-install, not synced",
-	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
-	"plugin_provides":       "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
-	"plugin_markets":        "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
-	"plugin_schedules":      "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",
-	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
-	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
+	"plugins":                 "installed-plugin rows — travel via SyncPluginsRepo's own bundle, not this one",
+	"plugin_catalog":          "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
+	"plugin_entries":          "plugin-contributed menu/hook entries — recreated on re-install, not synced",
+	"plugin_hooks":            "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_provides":         "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
+	"plugin_markets":          "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
+	"plugin_schedules":        "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",
+	"plugin_revoked_releases": "mirror of the marketplace revocation feed (ut-docs#5658): every till polls and records it for itself; rewritten wholesale on each poll, so syncing it till-to-till would only race the feed",
+	"plugin_install_status":   "install-progress bookkeeping — SyncPluginsRepo's own source table",
+	"plugin_permissions":      "granted permissions for one installed plugin instance — recreated on re-install",
 
 	// Sync's own internal bookkeeping — syncing the sync mechanism's state
 	// to itself would be circular.
