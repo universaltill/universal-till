@@ -21,7 +21,7 @@ import (
 
 // TillIDSettingKey is the settings-table key holding this till's LAN
 // discovery identity.
-const TillIDSettingKey = "lan_discovery.till_id"
+const TillIDSettingKey = data.LANDiscoveryTillIDSettingsKey
 
 // SettingsReader is the minimal settings access TillID and ReportedTillID
 // need — satisfied by *data.SettingsRepo and by test doubles that don't
