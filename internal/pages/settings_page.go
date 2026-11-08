@@ -3091,14 +3091,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// pairing-time name until ut-docs#3294. A name another till in the shop
 	// uses is refused (ut-docs#3308).
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
-		// No rejecting validation here (the name is only trimmed/
-		// truncated), so the gate stays first, exactly as before —
-		// ParseForm only moved up to make override_pin readable
-		// (ut-docs#796).
+		// Two refusals (invalid characters, a taken name) come before the
+		// elevation gate (ut-docs#557 convention: a value refused anyway
+		// must not burn an approver's PIN entry); ParseForm sits up here
+		// to make override_pin readable (ut-docs#796).
 		_ = r.ParseForm()
 		// Mirrors the field's own maxlength server-side (maxTillNameRunes,
 		// shared with the cloud rename_till hook, which refuses instead).
 		name := truncateTillName(r.Form.Get("name"))
+		// ut-docs#5862: one line, no hidden formatting characters (the #5858
+		// rule); refused, never stripped. 422 + RefuseText is the shape the
+		// name_taken refusal below uses (inline in #till-name-msg).
+		if name != "" {
+			if _, err := data.CheckSingleLineName(name); err != nil {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), keyNameInvalidCharacters), http.StatusUnprocessableEntity)
+				return
+			}
+		}
 		// ut-docs#3308: a name another till in the shop already uses is
 		// refused, before the elevation gate (ut-docs#557 convention: a
 		// value refused anyway must not burn an approver's PIN entry).
@@ -3493,6 +3502,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if key == common.KeyReportRetentionMode {
 			common.LocalizedError(w, r, http.StatusForbidden, "settings.retention.err_use_retention_card")
 			return
+		}
+		// ut-docs#5862 (review finding): this till's name keys take the
+		// Till name card's single-line rule here too, before the elevation
+		// gate, so the raw editor cannot store a name that card refuses.
+		if key == "till.name" || key == "sync.till_name" {
+			if _, err := data.CheckSingleLineName(value); err != nil {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), keyNameInvalidCharacters), http.StatusBadRequest)
+				return
+			}
 		}
 		// ut-docs#244: validate before persisting, not just before reflecting
 		// into RuntimeState — the old code let an unparsable value through to
