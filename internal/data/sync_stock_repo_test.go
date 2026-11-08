@@ -61,7 +61,7 @@ func TestStockLevelSyncConverges(t *testing.T) {
 	}
 
 	rSync := NewSyncStockRepo(rRepo)
-	n, err := rSync.ApplyStockLevels(ctx, bundle, rLoc)
+	n, err := rSync.ApplyStockLevels(ctx, bundle, rLoc, "v1")
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestStockLevelSyncConverges(t *testing.T) {
 	}
 
 	// Idempotent: same bundle again = zero corrections.
-	n2, err := rSync.ApplyStockLevels(ctx, bundle, rLoc)
+	n2, err := rSync.ApplyStockLevels(ctx, bundle, rLoc, "v1")
 	if err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}

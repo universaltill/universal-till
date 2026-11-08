@@ -302,7 +302,9 @@ func markLinkContact(ctx context.Context, d *common.Deps) {
 // time.Now() taken when the main till answered, so its monotonic reading
 // is kept) — both sync.last_contact_at and this process's monotonic twin
 // (Deps.MarkMainContact, ut-docs#2915) — and returns the stored RFC 3339
-// value. Every write of sync.last_contact_at goes through here.
+// value. Every write of sync.last_contact_at goes through here except the
+// pull tick's, which batches the key into its replica-guarded write and
+// calls MarkMainContact itself (ut-docs#5903).
 func recordMainContact(ctx context.Context, d *common.Deps, at time.Time) string {
 	d.MarkMainContact(at)
 	s := at.UTC().Format(time.RFC3339)

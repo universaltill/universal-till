@@ -526,9 +526,6 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		logging.L().Errorf("sync pull: bad response: %v", err)
 		return
 	}
-	// ut-docs#2781: this till's role as the main till holds it, on every
-	// answer (unchanged or not).
-	rememberOwnTillRole(ctx, d, out.Data.Role)
 	// The main till answered here; the asset sync and apply below can take
 	// up to the client timeout, and a contact stamped after them would read
 	// as contact after a link loss noticed meanwhile (ut-docs#2915 review).
@@ -548,7 +545,7 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 			// admin_pulled audit / refresh / last_pull_ok_at / main contact
 			// (promote just wiped those sync.* keys), and no plugin or stock
 			// pull from the old main.
-			logging.L().Infof("sync pull: skipped, this till was promoted to main till during the pull")
+			promotedMidPull("sync pull")
 			return
 		}
 		if err != nil {
@@ -572,21 +569,46 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		for _, id := range applied.ErasedCustomerIDs {
 			_, _ = plugins.SharedBus(d.Db).PublishCustomerErased(ctx, plugins.CustomerErasedEvent{CustomerID: id})
 		}
-		_ = d.Settings.Set(ctx, "sync.pull_version", out.Data.Version)
-		_ = d.Settings.Set(ctx, "sync.last_pull_at", now)
+	}
+	// ut-docs#5903: the tick's bookkeeping commits only while this till is
+	// still a replica (same in-tx check as the admin apply), so a promote
+	// that lands after primary_url was read cannot get sync.till_role, the
+	// contact keys or pull_version re-created on the new main till. This
+	// also covers an unchanged answer, which skips the apply's own guard.
+	//
+	// sync.last_pull_ok_at is the fact that the poll round-tripped AND
+	// (nothing changed, or the apply above actually succeeded) — see the
+	// early return in the failure branch above. The link (ADR-0114)
+	// refreshes last_contact_at between its 5-min pulls only while this is
+	// recent (refreshLinkContact), so a link over a stuck pull cannot keep
+	// the chip green. ut-docs#807: sync.last_contact_at is likewise only
+	// written here, never on a failed apply.
+	state := map[string]string{"sync.last_contact_at": now, "sync.last_pull_ok_at": now}
+	if !out.Data.Unchanged {
+		state["sync.pull_version"] = out.Data.Version
+		state["sync.last_pull_at"] = now
+	}
+	// ut-docs#2781: this till's role as the main till holds it, on every
+	// answer (unchanged or not); written only on a change.
+	if role, ok := ownTillRoleChange(ctx, d, out.Data.Role); ok {
+		state[tillRoleSettingsKey] = role
+	}
+	if err := d.Settings.SetManyIfReplica(ctx, state); errors.Is(err, data.ErrNotReplica) {
+		if !out.Data.Unchanged {
+			refresh(ctx) // the apply above committed before the promote did
+		}
+		promotedMidPull("sync pull")
+		return
+	} else if err != nil {
+		logging.L().Errorf("sync pull: record pull state: %v", err)
+	}
+	if !out.Data.Unchanged {
 		_ = posRepo.InsertAudit(ctx, nil, "system", "till", get("sync.till_id"), "admin_pulled",
 			map[string]any{"version": out.Data.Version}, now, "")
 		refresh(ctx)
 		logging.L().Infof("sync pull: admin state %s applied from the primary", out.Data.Version)
 	}
-	// Reached only when the poll round-tripped AND (nothing changed, or the
-	// apply above actually succeeded) — see the early return in the failure
-	// branch just above. sync.last_pull_ok_at is this fact alone: the link
-	// (ADR-0114) refreshes last_contact_at between its 5-min pulls only
-	// while this is recent (refreshLinkContact), so a link over a stuck
-	// pull cannot keep the chip green.
-	recordMainContact(ctx, d, answeredAt)
-	_ = d.Settings.Set(ctx, "sync.last_pull_ok_at", now)
+	d.MarkMainContact(answeredAt) // sync.last_contact_at itself is in state
 	primaryContactOK(ctx, d)
 
 	// ut-docs#460 — the plugin set follows the primary. Best-effort like
@@ -597,6 +619,14 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// subsequent admin pull, once installed locally) and before the stock
 	// section (whose push-queue gate may legitimately end the tick).
 	syncPullPlugins(ctx, d, client, primary, bearer)
+
+	// A promote during the plugin step: don't even ask the old main for
+	// stock. Only an optimisation — ApplyStockLevels' in-tx check is the
+	// guarantee (ut-docs#5903).
+	if get("sync.primary_url") == "" {
+		promotedMidPull("sync pull")
+		return
+	}
 
 	// D3b — stock levels follow the primary (it has every till's sale
 	// journal, so its aggregate is the shop truth). Runs AFTER the admin
@@ -638,15 +668,27 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		logging.L().Errorf("stock sync pull: no stock location: %v", err)
 		return
 	}
-	corrections, err := stockRepo.ApplyStockLevels(ctx, sout.Data.Bundle, locID)
-	if err != nil {
-		logging.L().Errorf("stock sync pull: apply failed after %d corrections: %v", corrections, err)
+	// Corrections and sync.stock_version commit in one tx with the replica
+	// check (ut-docs#5903): all or nothing.
+	corrections, err := stockRepo.ApplyStockLevels(ctx, sout.Data.Bundle, locID, sout.Data.Version)
+	if errors.Is(err, data.ErrNotReplica) {
+		promotedMidPull("stock sync pull")
 		return
 	}
-	_ = d.Settings.Set(ctx, "sync.stock_version", sout.Data.Version)
+	if err != nil {
+		logging.L().Errorf("stock sync pull: apply failed: %v", err)
+		return
+	}
 	if corrections > 0 {
 		logging.L().Infof("stock sync: %d level corrections applied from the primary (%s)", corrections, sout.Data.Version)
 	}
+}
+
+// promotedMidPull logs the benign promote race (ut-docs#5896, #5903): this
+// till was promoted to main till while the tick was in flight. INFO, never
+// ERROR — it is not a failure.
+func promotedMidPull(step string) {
+	logging.L().Infof("%s: skipped, this till was promoted to main till during the pull", step)
 }
 
 // StartHeldOrderClaimReaffirm periodically re-affirms this till's PRIMARY-side
@@ -779,7 +821,9 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 		if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &cached) != nil {
 			// No usable cache (pre-cache release, or corrupt). Clear the
 			// fingerprint so the next tick full-fetches and rebuilds it.
-			_ = d.Settings.Set(ctx, "sync.plugins_version", "")
+			if err := d.Settings.SetManyIfReplica(ctx, map[string]string{"sync.plugins_version": ""}); errors.Is(err, data.ErrNotReplica) {
+				promotedMidPull("plugin sync pull")
+			}
 			return
 		}
 		convergePluginSet(ctx, d, cached.Plugins)
@@ -790,10 +834,14 @@ func syncPullPlugins(ctx context.Context, d *common.Deps, client *http.Client, p
 		// Advance the fingerprint (and the reconcile cache) only on full
 		// convergence, so any skipped install/uninstall is retried next
 		// tick instead of silently forgotten behind an unchanged poll.
+		// Guarded like the tick's other bookkeeping (ut-docs#5903).
+		kv := map[string]string{"sync.plugins_version": out.Data.Version}
 		if raw, err := json.Marshal(out.Data.Bundle); err == nil {
-			_ = d.Settings.Set(ctx, "sync.plugins_bundle", string(raw))
+			kv["sync.plugins_bundle"] = string(raw)
 		}
-		_ = d.Settings.Set(ctx, "sync.plugins_version", out.Data.Version)
+		if err := d.Settings.SetManyIfReplica(ctx, kv); errors.Is(err, data.ErrNotReplica) {
+			promotedMidPull("plugin sync pull")
+		}
 	}
 }
 

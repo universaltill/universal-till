@@ -25,6 +25,12 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	return s.repo.Set(ctx, key, value)
 }
 
+// SetManyIfReplica is data.SettingsRepo.SetManyIfReplica: the keys commit
+// together, only while this till is still a replica (ut-docs#5903).
+func (s *Store) SetManyIfReplica(ctx context.Context, kv map[string]string) error {
+	return s.repo.SetManyIfReplica(ctx, kv)
+}
+
 // SyncBearerPrev, RotateSyncBearer and AdoptPrevSyncBearer are the
 // data.SettingsRepo methods of the same names (ut-docs#5203): the replica's
 // previous LAN bearer, kept so a main till restored from an older backup can

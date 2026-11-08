@@ -39,7 +39,11 @@ func (b StockBundle) Fingerprint() string {
 // DumpStock aggregates on-hand per item/variant across every location —
 // the shop-wide truth on the primary, and the local view on a replica.
 func (r *SyncStockRepo) DumpStock(ctx context.Context) (StockBundle, error) {
-	rows, err := r.db.db.QueryContext(ctx, `
+	return dumpStock(ctx, r.db.db)
+}
+
+func dumpStock(ctx context.Context, q queryer) (StockBundle, error) {
+	rows, err := q.QueryContext(ctx, `
 SELECT COALESCE(item_id, ''), COALESCE(variant_id, ''), SUM(quantity)
 FROM inventory
 GROUP BY COALESCE(item_id, ''), COALESCE(variant_id, '')
@@ -68,8 +72,24 @@ ORDER BY COALESCE(item_id, ''), COALESCE(variant_id, '')`)
 // ensure the till's own sale journal has been fully pushed first — otherwise
 // the primary hasn't seen our latest sales and the correction would briefly
 // re-add sold stock.
-func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle, locationID string) (int, error) {
-	local, err := r.DumpStock(ctx)
+//
+// All corrections and sync.stock_version (version) commit in ONE transaction
+// that first re-reads sync.primary_url (requireReplica): a promote that
+// commits after the pull tick fetched the bundle wins, and the call returns
+// ErrNotReplica having written nothing — the new main till's stock is the
+// shop's truth and must not be overwritten with the old main's (ut-docs#5903).
+// Any error rolls everything back (count 0): no partial corrections, no
+// version advance. The tx holds the write lock for the whole diff.
+func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle, locationID, version string) (int, error) {
+	tx, err := r.db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("apply stock levels: %w", err)
+	}
+	defer tx.Rollback()
+	if err := requireReplica(ctx, tx); err != nil {
+		return 0, err
+	}
+	local, err := dumpStock(ctx, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -83,7 +103,7 @@ func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle
 		if delta == 0 {
 			return nil
 		}
-		_, err := r.db.RecordStockMovement(ctx, nil, StockMovementInput{
+		_, err := r.db.RecordStockMovement(ctx, tx, StockMovementInput{
 			ItemID:     itemID,
 			VariantID:  variantID,
 			LocationID: locationID,
@@ -102,7 +122,7 @@ func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle
 		seen[key(loc)] = true
 		target := want[key(loc)].Quantity // absent from the primary = 0
 		if err := apply(loc.ItemID, loc.VariantID, target-loc.Quantity); err != nil {
-			return corrections, err
+			return 0, err
 		}
 	}
 	for _, row := range bundle.Rows {
@@ -110,8 +130,14 @@ func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle
 			continue
 		}
 		if err := apply(row.ItemID, row.VariantID, row.Quantity); err != nil {
-			return corrections, err
+			return 0, err
 		}
+	}
+	if err := NewSettingsRepo(r.db.db).SetTx(ctx, tx, "sync.stock_version", version); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("apply stock levels: %w", err)
 	}
 	return corrections, nil
 }

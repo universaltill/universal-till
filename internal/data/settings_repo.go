@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,6 +127,42 @@ ON CONFLICT(key) DO UPDATE SET
 		return settingsObs.wrapf("set_tx", "set setting %s", err, key)
 	}
 	invalidateCachedSetting(r.db, key)
+	return nil
+}
+
+// SetManyIfReplica writes kv in one transaction, only while this till is
+// still a replica (requireReplica first); else ErrNotReplica and nothing is
+// written. It is for the pull tick's bookkeeping keys, so a tick that loses
+// the race with promote cannot re-create sync.* keys promote just deleted
+// (ut-docs#5903). An empty kv still runs the check. Never pass sync.bearer:
+// it is file-backed and outside the tx.
+func (r *SettingsRepo) SetManyIfReplica(ctx context.Context, kv map[string]string) error {
+	var err error
+	done := settingsObs.trace("set_many_if_replica")
+	defer func() { done(err) }()
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return settingsObs.wrap("set_many_if_replica", err)
+	}
+	defer tx.Rollback()
+	if err = requireReplica(ctx, tx); err != nil {
+		if errors.Is(err, ErrNotReplica) {
+			// A benign refusal, not a failure: keep it out of the ERROR trace.
+			refused := err
+			err = nil
+			return refused
+		}
+		return settingsObs.wrap("set_many_if_replica", err)
+	}
+	for k, v := range kv {
+		if err = r.SetTx(ctx, tx, k, v); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return settingsObs.wrap("set_many_if_replica", err)
+	}
 	return nil
 }
 

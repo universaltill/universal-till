@@ -117,14 +117,27 @@ func displayModeRoleRefusal(role, mode string) string {
 	return ""
 }
 
-// rememberOwnTillRole stores the role the main till reported for this till
-// (the admin pull), writing only on a change. An empty or unknown value —
-// an older main till, or garbage — leaves the stored role alone.
-func rememberOwnTillRole(ctx context.Context, d *common.Deps, role string) {
+// ownTillRoleChange is the role to store for what the main till reported:
+// ok only for a valid role that differs from the stored one (#2781 rules: an
+// empty or unknown value — an older main till, or garbage — leaves the
+// stored role alone).
+func ownTillRoleChange(ctx context.Context, d *common.Deps, role string) (string, bool) {
 	if !data.ValidTillRole(role) {
-		return
+		return "", false
 	}
 	if cur, _, _ := d.Settings.Get(ctx, tillRoleSettingsKey); cur == role {
+		return "", false
+	}
+	return role, true
+}
+
+// rememberOwnTillRole stores the role the main till reported for this till,
+// writing only on a change (ownTillRoleChange). The pull tick does not use
+// it: it batches the role into its guarded bookkeeping write so a promote
+// that wins the race cannot get the old main's role back (ut-docs#5903).
+func rememberOwnTillRole(ctx context.Context, d *common.Deps, role string) {
+	role, ok := ownTillRoleChange(ctx, d, role)
+	if !ok {
 		return
 	}
 	if err := d.Settings.Set(ctx, tillRoleSettingsKey, role); err != nil {

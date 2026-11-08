@@ -615,23 +615,41 @@ type pullTestPrimary struct {
 	// onAdmin, when set, runs when /api/sync/admin is requested, before it
 	// is served (simulates a promote landing mid-pull, ut-docs#5896).
 	onAdmin func()
+	// onPlugins / onStock are onAdmin's siblings for /api/sync/plugins and
+	// /api/sync/stock (ut-docs#5903).
+	onPlugins, onStock func()
+	// tillID is the replica's enrolment row on this primary; adminHave
+	// records each /api/sync/admin request's have= value (an unchanged
+	// answer is one whose have equals the primary's fingerprint).
+	tillID    string
+	adminHave []string
 }
 
 func newPullTestPrimary(t *testing.T) *pullTestPrimary {
 	t.Helper()
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	if err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
-	p := &pullTestPrimary{dp: dp}
+	p := &pullTestPrimary{dp: dp, tillID: tillID}
 	mux := http.NewServeMux()
 	registerSyncAdmin(mux, dp)
 	wrapped := http.NewServeMux()
 	wrapped.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		p.visited = append(p.visited, r.URL.Path)
-		if p.onAdmin != nil && r.URL.Path == "/api/sync/admin" {
-			p.onAdmin()
+		if r.URL.Path == "/api/sync/admin" {
+			p.adminHave = append(p.adminHave, r.URL.Query().Get("have"))
+			if p.onAdmin != nil {
+				p.onAdmin()
+			}
+		}
+		if p.onPlugins != nil && r.URL.Path == "/api/sync/plugins" {
+			p.onPlugins()
+		}
+		if p.onStock != nil && r.URL.Path == "/api/sync/stock" {
+			p.onStock()
 		}
 		mux.ServeHTTP(w, r)
 	})
@@ -640,14 +658,16 @@ func newPullTestPrimary(t *testing.T) *pullTestPrimary {
 	return p
 }
 
-func (p *pullTestPrimary) hitStock() bool {
+func (p *pullTestPrimary) hit(path string) bool {
 	for _, v := range p.visited {
-		if v == "/api/sync/stock" {
+		if v == path {
 			return true
 		}
 	}
 	return false
 }
+
+func (p *pullTestPrimary) hitStock() bool { return p.hit("/api/sync/stock") }
 
 func newPullTestReplica(t *testing.T, primaryURL string) *common.Deps {
 	t.Helper()
@@ -838,6 +858,11 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// ut-docs#5903: the primary must really report a valid role for this
+	// till, or the sync.till_role assertion below is vacuous.
+	if role, ok, err := data.NewTillsRepo(primary.dp.Db).RoleByID(ctx, primary.tillID); err != nil || !ok || !data.ValidTillRole(role) {
+		t.Fatalf("primary role for the replica = %q ok=%v err=%v, want a valid role", role, ok, err)
+	}
 	// Promote while the pull is in flight: the tick has already read
 	// primary_url/bearer, and the answer still carries the old main's bundle.
 	primary.onAdmin = func() {
@@ -871,7 +896,7 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 	if v, _, _ := replica.Settings.Get(ctx, "till.name"); v != "Till 2" {
 		t.Fatalf("till.name = %q, want Till 2", v)
 	}
-	for _, k := range []string{"sync.pull_version", "sync.last_pull_at", "sync.last_pull_ok_at", "sync.last_contact_at"} {
+	for _, k := range []string{"sync.pull_version", "sync.last_pull_at", "sync.last_pull_ok_at", "sync.last_contact_at", "sync.till_role"} {
 		if v, _, _ := replica.Settings.Get(ctx, k); v != "" {
 			t.Fatalf("%s re-created after promote: %q", k, v)
 		}
@@ -891,5 +916,190 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 	}
 	if primary.hitStock() {
 		t.Fatal("stock pulled from the old main after promote")
+	}
+}
+
+// promoteReplica is a promote (ClearReplicaIdentity) landing now.
+func promoteReplica(t *testing.T, replica *common.Deps) func() {
+	return func() {
+		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(t.Context()); err != nil {
+			t.Errorf("promote: %v", err)
+		}
+	}
+}
+
+func settingBlank(t *testing.T, d *common.Deps, k string) bool {
+	t.Helper()
+	v, _, _ := d.Settings.Get(t.Context(), k)
+	return strings.TrimSpace(v) == ""
+}
+
+// seedPrimaryStock puts 5 of a new item on the primary and returns its id.
+func seedPrimaryStock(t *testing.T, primary *pullTestPrimary) string {
+	t.Helper()
+	ctx := t.Context()
+	id, err := data.NewCatalogRepo(primary.dp.Db).CreateItem(ctx, catalogtypes.ItemInput{Name: "Stocked Widget", BasePrice: 300, IsActive: true})
+	if err != nil {
+		t.Fatalf("seed primary item: %v", err)
+	}
+	pos := data.NewPOSRepo(primary.dp.Db)
+	loc, err := pos.EnsureStockLocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pos.RecordStockMovement(ctx, nil, data.StockMovementInput{ItemID: id, LocationID: loc, Type: "receive", Quantity: 5}); err != nil {
+		t.Fatalf("seed primary stock: %v", err)
+	}
+	dump, err := data.NewSyncStockRepo(pos).DumpStock(ctx)
+	if err != nil || len(dump.Rows) == 0 || dump.Rows[0].Quantity != 5 {
+		t.Fatalf("precondition: primary stock dump = %+v, %v", dump, err)
+	}
+	return id
+}
+
+// ut-docs#5903: an UNCHANGED answer skips the admin apply (and so its
+// in-tx guard), so a promote landing mid-pull must still stop the tick.
+func TestSyncPullTick_PromotedMidPullUnchangedAnswer_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	seedPrimaryStock(t, primary)
+
+	// Tick 1: a normal pull establishes the fingerprint and role.
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	if v, _, _ := replica.Settings.Get(ctx, "sync.till_role"); v != "additional" {
+		t.Fatalf("tick 1: sync.till_role = %q, want additional", v)
+	}
+	pv, _, _ := replica.Settings.Get(ctx, "sync.pull_version")
+	if pv == "" || settingBlank(t, replica, "sync.stock_version") {
+		t.Fatalf("tick 1: pull_version %q / stock_version not set", pv)
+	}
+	mc := replica.MainContact()
+	primary.visited, primary.adminHave = nil, nil
+
+	primary.onAdmin = promoteReplica(t, replica)
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	restoreLog()
+
+	if len(primary.adminHave) != 1 || primary.adminHave[0] != pv {
+		t.Fatalf("admin have = %v, want [%s] (proves the answer was unchanged)", primary.adminHave, pv)
+	}
+	for _, k := range []string{"sync.till_role", "sync.last_contact_at", "sync.last_pull_ok_at", "sync.pull_version",
+		"sync.last_pull_at", "sync.stock_version", "sync.plugins_version", "sync.plugins_bundle"} {
+		if !settingBlank(t, replica, k) {
+			v, _, _ := replica.Settings.Get(ctx, k)
+			t.Errorf("%s re-created after promote: %q", k, v)
+		}
+	}
+	if primary.hit("/api/sync/plugins") || primary.hit("/api/sync/stock") {
+		t.Errorf("old main asked for plugins/stock after promote: %v", primary.visited)
+	}
+	if !replica.MainContact().Equal(mc) {
+		t.Errorf("main contact marked after promote")
+	}
+	out := logs.String()
+	if !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Errorf("missing skip INFO line; log:\n%s", out)
+	}
+	if strings.Contains(out, "apply failed") || strings.Contains(out, "[ERROR]") {
+		t.Errorf("promote race logged as a failure; log:\n%s", out)
+	}
+}
+
+// ut-docs#5903 (R5): promote during the plugin step stops the tick: no
+// plugin bookkeeping keys, no stock pull.
+func TestSyncPullTick_PromotedDuringPluginPullIsSkipped_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	primary.onPlugins = promoteReplica(t, replica)
+
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	restoreLog()
+
+	if !primary.hit("/api/sync/plugins") {
+		t.Fatal("precondition: the plugin step never ran")
+	}
+	for _, k := range []string{"sync.plugins_version", "sync.plugins_bundle", "sync.stock_version"} {
+		if !settingBlank(t, replica, k) {
+			v, _, _ := replica.Settings.Get(ctx, k)
+			t.Errorf("%s written after promote: %q", k, v)
+		}
+	}
+	if primary.hitStock() {
+		t.Error("stock pulled from the old main after promote")
+	}
+	if out := logs.String(); !strings.Contains(out, "[INFO] plugin sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Errorf("missing skip INFO line; log:\n%s", out)
+	}
+}
+
+func replicaAdjustCount(t *testing.T, replica *common.Deps) int {
+	t.Helper()
+	var n int
+	if err := replica.Db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM stock_movements WHERE type = 'adjust'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// ut-docs#5903 (AC3): a promote landing between the stock GET and the apply
+// must leave the new main's stock alone.
+func TestSyncPullTick_PromotedDuringStockPullIsSkipped_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	seedPrimaryStock(t, primary)
+	primary.onStock = promoteReplica(t, replica)
+
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	restoreLog()
+
+	if !primary.hitStock() {
+		t.Fatal("precondition: the stock step never ran")
+	}
+	if n := replicaAdjustCount(t, replica); n != 0 {
+		t.Errorf("adjust movements after promote = %d, want 0", n)
+	}
+	if !settingBlank(t, replica, "sync.stock_version") {
+		t.Error("sync.stock_version written after promote")
+	}
+	out := logs.String()
+	if !strings.Contains(out, "[INFO] stock sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Errorf("missing skip INFO line; log:\n%s", out)
+	}
+	if strings.Contains(out, "stock sync pull: apply failed") {
+		t.Errorf("promote race logged as a failure; log:\n%s", out)
+	}
+}
+
+// ut-docs#5903 (AC5): control for the transactional ApplyStockLevels.
+func TestSyncPullTick_StockCorrectionAppliedFromPrimary_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	seedPrimaryStock(t, primary)
+
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+
+	if n := replicaAdjustCount(t, replica); n != 1 {
+		t.Errorf("adjust movements = %d, want 1", n)
+	}
+	dump, err := data.NewSyncStockRepo(data.NewPOSRepo(replica.Db)).DumpStock(ctx)
+	if err != nil || len(dump.Rows) != 1 || dump.Rows[0].Quantity != 5 {
+		t.Errorf("replica stock = %+v, %v; want one row of 5", dump, err)
+	}
+	if settingBlank(t, replica, "sync.stock_version") {
+		t.Error("sync.stock_version not advanced")
 	}
 }
