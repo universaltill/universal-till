@@ -11,6 +11,12 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
+// shiftHistoryRow is one History row; SlipSfx is empty for an open shift.
+type shiftHistoryRow struct {
+	data.ShiftSummary
+	SlipSfx string
+}
+
 func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/shifts", func(w http.ResponseWriter, r *http.Request) {
 		repo := data.NewPOSRepo(d.Db)
@@ -28,7 +34,16 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 				logging.L().Errorf("shift no-sale opens: %v", nsErr)
 			}
 		}
-		history, _ := repo.ListRecentShifts(r.Context(), 20)
+		recent, _ := repo.ListRecentShifts(r.Context(), 20)
+		// ut-docs#5877: closed rows get a per-row slip result id (server-derived).
+		history := make([]shiftHistoryRow, 0, len(recent))
+		for _, s := range recent {
+			row := shiftHistoryRow{ShiftSummary: s}
+			if !s.Open {
+				row.SlipSfx = shiftSlipRowSuffix(s.ID)
+			}
+			history = append(history, row)
+		}
 		// This till's own register identity (ut-docs#268), used only to
 		// preselect the shift-open picker (ut-docs#940) -- ambiguous
 		// (ErrRegisterIdentityAmbiguous) or any other resolution error just

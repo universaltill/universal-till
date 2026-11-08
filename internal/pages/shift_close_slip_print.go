@@ -2,11 +2,14 @@ package pages
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,6 +45,9 @@ func registerShiftCloseSlipPrint(mux *http.ServeMux, d *common.Deps) {
 		}
 		// PostForm only: a PIN in the query string is ignored.
 		pin := strings.TrimSpace(r.PostForm.Get("override_pin"))
+		// ut-docs#5877: the /shifts History row button sends reprint=1 (PostForm
+		// only, exactly "1"); the close-result button sends nothing.
+		reprint := r.PostForm.Get("reprint") == "1"
 
 		// Read and 404 BEFORE the PIN gate: an unknown or open shift never
 		// burns a PIN or lockout slot and never renders a prompt. A closed
@@ -69,8 +75,16 @@ func registerShiftCloseSlipPrint(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			locale := httpx.ResolveLocale(w, r)
-			renderElevationPrompt(w, r, r.URL.Path, "#shift-slip-print-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.shift_slip_print"), slip.X.RegisterName), nil, elev)
+			// The row target comes from the DB id, never from client input,
+			// so the PIN retry swaps into the same History row.
+			target := "#shift-slip-print-msg"
+			var hidden []elevationHiddenField
+			if reprint {
+				target += "-" + shiftSlipRowSuffix(slip.X.Shift.ID)
+				hidden = []elevationHiddenField{{Name: "reprint", Value: "1"}}
+			}
+			renderElevationPrompt(w, r, r.URL.Path, target,
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.shift_slip_print"), slip.X.RegisterName), hidden, elev)
 			return
 		}
 		actorID := elev.ActorID
@@ -85,7 +99,7 @@ func registerShiftCloseSlipPrint(mux *http.ServeMux, d *common.Deps) {
 			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "shifts.close_slip.print_failed", cerr)
 			return
 		}
-		doc := buildShiftSlipDoc(slip, storeNameOrDefault(ctx, d), cfg.Charset)
+		doc := buildShiftSlipDoc(slip, storeNameOrDefault(ctx, d), cfg.Charset, reprint)
 		pctx, cancel := context.WithTimeout(ctx, xPrintTimeout)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {
@@ -99,6 +113,9 @@ func registerShiftCloseSlipPrint(mux *http.ServeMux, d *common.Deps) {
 		actx := context.WithoutCancel(ctx)
 		now := time.Now().UTC().Format(time.RFC3339)
 		payload := map[string]string{"register_id": slip.X.Shift.RegisterID}
+		if reprint {
+			payload["reprint"] = "true"
+		}
 		var aerr error
 		if elev.Outcome == elevated {
 			aerr = repo.InsertAuditElevated(actx, nil, actorID, elev.ActorID, "shift", slip.X.Shift.ID, "shift_slip_printed", payload, now, "")
@@ -120,10 +137,26 @@ func registerShiftCloseSlipPrint(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+var shiftSlipSafeID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// shiftSlipRowSuffix is the id suffix of a History row's result region
+// (ut-docs#5877): the shift id itself when it is HTML-id safe (uuid ids
+// always are), else "h" + 16 hex of its sha256. The template and the
+// handler both use it, so the elevation prompt targets the row without the
+// client ever naming a target.
+func shiftSlipRowSuffix(id string) string {
+	if shiftSlipSafeID.MatchString(id) {
+		return id
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "h" + hex.EncodeToString(sum[:])[:16]
+}
+
 // buildShiftSlipDoc lays out the "Shift close" slip for the 80mm receipt
 // printer. Pure. Never a Z: no "END OF DAY"/period line, no Z or document
 // number, no Barcode, Logo or TSEQR, KickDrawer false; and no X title.
-func buildShiftSlipDoc(s data.ShiftCloseSlip, storeName, charset string) print.Doc {
+// reprint (a History-row print) adds one "Reprinted <stamp>" line.
+func buildShiftSlipDoc(s data.ShiftCloseSlip, storeName, charset string, reprint bool) print.Doc {
 	_, T, amt, stamp := xDocHelpers(charset)
 	x := s.X
 	doc := print.Doc{StoreName: storeName, Charset: charset, Meta: []string{
@@ -134,6 +167,9 @@ func buildShiftSlipDoc(s data.ShiftCloseSlip, storeName, charset string) print.D
 		footerRow(T("shifts.closed_at"), stamp(x.Shift.ClosedAt)),
 		fmt.Sprintf(T("reports.zpaper.generated"), stamp(x.GeneratedAt)),
 	}}
+	if reprint {
+		doc.Meta = append(doc.Meta, fmt.Sprintf(T("shifts.close_slip.paper.reprinted"), stamp(x.GeneratedAt)))
+	}
 	appendXFigures(&doc, x, charset)
 	variance := amt(s.Variance)
 	if s.Variance.Minor() > 0 {
