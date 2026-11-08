@@ -834,8 +834,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				for _, field := range fields {
 					switch field {
 					case "name":
-						name := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_name_%d", i)))
-						if name == "" {
+						name, nerr := data.CheckSingleLineName(r.FormValue(fmt.Sprintf("row_name_%d", i)))
+						if nerr != nil {
+							// ut-docs#5908: same rule as the file's own cells.
+							overrideNotes[i] = T("import.problem_grid.name_invalid_characters")
+							rowFailed = true
+						} else if name == "" {
 							overrideNotes[i] = T("import.problem_grid.name_required")
 							rowFailed = true
 						} else {
@@ -949,7 +953,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			status := T("import.status.ok")
 			skipped := false
 			var fixFields []string
+			nameReason := importNameRuleReasonFn(T, it)
 			switch {
+			case nameReason != "":
+				// ut-docs#5908: a name/department/category the single-line
+				// rule refuses is never importable, whatever else is wrong
+				// with the row; first case so no DB lookup runs for it and
+				// it offers no "Import anyway" fix.
+				status, skipped = nameReason, true
 			case overrideNotes[i] != "":
 				// Ticked to import but the correction didn't validate —
 				// stays skipped, and the status says why.
@@ -1120,6 +1131,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						// a generic translated reason (ut-docs#303).
 						log.Printf("[import] ensure department %q: %v", it.Department, err)
 						rows[i].Status = T("import.status.department_failed")
+						if errors.Is(err, data.ErrNameInvalidCharacters) {
+							rows[i].Status = T("import.status.department_invalid_characters")
+						}
 						rows[i].Failed = true
 						failed++
 						continue
@@ -1131,6 +1145,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					if err != nil {
 						log.Printf("[import] ensure category %q: %v", it.Category, err)
 						rows[i].Status = T("import.status.category_failed")
+						if errors.Is(err, data.ErrNameInvalidCharacters) {
+							rows[i].Status = T("import.status.category_invalid_characters")
+						}
 						rows[i].Failed = true
 						failed++
 						continue
@@ -1259,6 +1276,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 					log.Printf("[import] create item %q: %v", it.Name, err)
 					rows[i].Status = T("import.status.item_failed")
+					if errors.Is(err, data.ErrNameInvalidCharacters) {
+						rows[i].Status = T("import.status.name_invalid_characters")
+					}
 					rows[i].Failed = true
 					failed++
 					continue
@@ -2264,6 +2284,28 @@ func sniffLegacyXLSUpload(file multipart.File) (bool, error) {
 		return false, nil
 	}
 	return catimport.LooksLikeLegacyXLS(buf[:]), nil
+}
+
+// importNameRuleReasonFn is a seam so a test can reach the commit's own
+// defence-in-depth mapping with the preview gate bypassed.
+var importNameRuleReasonFn = importNameRuleReason
+
+// importNameRuleReason applies the shared single-line name rule (the one
+// every other entry point uses) to a row's item name, department and
+// category, and returns the translated, field-specific reason for the first
+// refusal, or "" when all pass. A blank value passes: blank name stays
+// missing_name, blank department/category still means "none" (ut-docs#5908).
+func importNameRuleReason(T func(string) string, it catimport.ImportItem) string {
+	if _, err := data.CheckSingleLineName(it.Name); err != nil {
+		return T("import.status.name_invalid_characters")
+	}
+	if _, err := data.CheckSingleLineName(it.Department); err != nil {
+		return T("import.status.department_invalid_characters")
+	}
+	if _, err := data.CheckSingleLineName(it.Category); err != nil {
+		return T("import.status.category_invalid_characters")
+	}
+	return ""
 }
 
 // translateImportIssue turns a catimport row-level Issue reason code into

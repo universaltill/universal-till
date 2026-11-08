@@ -2,8 +2,10 @@ package data_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/universaltill/universal-till/catimport/catalogrules/namecases"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -166,5 +168,70 @@ func TestItemExistsByNameAndCategory(t *testing.T) {
 	}
 	if exists, err := repo.ItemExistsByNameAndCategory(ctx, "Chips", "", "Snacks"); err != nil || exists {
 		t.Fatalf("same category name with no department must not match a department-nested row: exists=%v err=%v, want false/nil", exists, err)
+	}
+}
+
+// ut-docs#5908: EnsureCategoryUnder(Tx) applies the single-line name rule, so
+// a bad department/category name can never be stored by any import path.
+func TestEnsureCategoryUnder_RefusesSingleLineRuleNames(t *testing.T) {
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat5908.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+	count := func() int {
+		var n int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM categories`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	parent, err := repo.EnsureCategoryUnder(ctx, "Parent", "")
+	if err != nil || parent == "" {
+		t.Fatalf("parent: %q %v", parent, err)
+	}
+	for _, c := range namecases.Cases() {
+		for _, withParent := range []string{"", parent} {
+			for _, viaTx := range []bool{false, true} {
+				before := count()
+				var id string
+				var err error
+				if viaTx {
+					tx, terr := d.DB.BeginTx(ctx, nil)
+					if terr != nil {
+						t.Fatal(terr)
+					}
+					id, err = repo.EnsureCategoryUnderTx(ctx, tx, c.In, withParent)
+					if cerr := tx.Commit(); cerr != nil {
+						t.Fatal(cerr)
+					}
+				} else {
+					id, err = repo.EnsureCategoryUnder(ctx, c.In, withParent)
+				}
+				if c.OK {
+					if err != nil || id == "" {
+						t.Fatalf("%s: want ok, got %q %v", c.Label, id, err)
+					}
+					var name string
+					if err := d.DB.QueryRow(`SELECT name FROM categories WHERE id = ?`, id).Scan(&name); err != nil || name != c.Want {
+						t.Fatalf("%s: stored %q (%v), want %q", c.Label, name, err, c.Want)
+					}
+					continue
+				}
+				if !errors.Is(err, data.ErrNameInvalidCharacters) || id != "" {
+					t.Fatalf("%s: want ErrNameInvalidCharacters, got %q %v", c.Label, id, err)
+				}
+				if after := count(); after != before {
+					t.Fatalf("%s: refused name wrote %d categories", c.Label, after-before)
+				}
+			}
+		}
+	}
+	a, _ := repo.EnsureCategoryUnder(ctx, "Drinks", "")
+	b, err := repo.EnsureCategoryUnder(ctx, "Drinks\r\n", "")
+	if err != nil || a != b {
+		t.Fatalf("Drinks\\r\\n must resolve to Drinks: %q %q %v", a, b, err)
 	}
 }
