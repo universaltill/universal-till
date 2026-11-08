@@ -61,6 +61,27 @@ type Topic struct {
 
 	plain      string // body as plain text, for snippets
 	plainLower string // the same, lower-cased, for matching
+
+	// The same three with every <!-- plan-purchase --> block dropped
+	// (ut-docs#3434). Equal to the full ones when the topic has no block.
+	htmlNoPurchase       template.HTML
+	plainNoPurchase      string
+	plainLowerNoPurchase string
+}
+
+// WithoutPlanPurchase returns a copy of the topic with its marked
+// plan-purchase blocks removed from HTML and from search text, for a host
+// that may not offer plan purchase (the iOS app, ut-docs#3434). Markdown is
+// left raw. The library itself has no platform knowledge.
+func (t *Topic) WithoutPlanPurchase() *Topic {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	if t.htmlNoPurchase != "" || t.plain != "" {
+		c.HTML, c.plain, c.plainLower = t.htmlNoPurchase, t.plainNoPurchase, t.plainLowerNoPurchase
+	}
+	return &c
 }
 
 // Section groups topics in the navigation column.
@@ -459,10 +480,13 @@ func (l *Library) MissingTranslations(locale string) []string {
 	return missing
 }
 
-// Search scores title > keywords > summary > body. Deliberately simple: the
-// corpus is a few dozen topics per locale, so an index would be more moving
-// parts than the problem needs, and it stays correct as topics change.
-func (l *Library) Search(locale, query string) []Result {
+// SearchFor scores title > keywords > summary > body. Deliberately simple:
+// the corpus is a few dozen topics per locale, so an index would be more
+// moving parts than the problem needs, and it stays correct as topics
+// change. planPurchase says whether the host may offer plan purchase: when
+// false, matching and snippets ignore the topics' <!-- plan-purchase -->
+// blocks (ut-docs#3434).
+func (l *Library) SearchFor(locale, query string, planPurchase bool) []Result {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return nil
@@ -473,6 +497,9 @@ func (l *Library) Search(locale, query string) []Result {
 		tp, ok := l.Topic(locale, id)
 		if !ok {
 			continue
+		}
+		if !planPurchase {
+			tp = tp.WithoutPlanPurchase()
 		}
 		score := 0
 		for _, term := range terms {
@@ -606,15 +633,78 @@ func parseTopic(raw []byte) (*Topic, error) {
 		return nil, fmt.Errorf("front matter has no title")
 	}
 
-	var buf bytes.Buffer
-	if err := md.Convert([]byte(body), &buf); err != nil {
-		return nil, fmt.Errorf("rendering markdown: %w", err)
+	full, noPurchase, err := splitPlanPurchase(body)
+	if err != nil {
+		return nil, err
+	}
+	render := func(src string) (template.HTML, error) {
+		var buf bytes.Buffer
+		if err := md.Convert([]byte(src), &buf); err != nil {
+			return "", fmt.Errorf("rendering markdown: %w", err)
+		}
+		return template.HTML(buf.String()), nil //nolint:gosec // topics are repo content, not user input
+	}
+	var rerr error
+	if tp.HTML, rerr = render(full); rerr != nil {
+		return nil, rerr
+	}
+	tp.htmlNoPurchase = tp.HTML
+	if noPurchase != full {
+		if tp.htmlNoPurchase, rerr = render(noPurchase); rerr != nil {
+			return nil, rerr
+		}
 	}
 	tp.Markdown = body
-	tp.HTML = template.HTML(buf.String()) //nolint:gosec // topics are repo content, not user input
-	tp.plain = plainText(body)
+	tp.plain = plainText(full)
 	tp.plainLower = strings.ToLower(tp.plain)
+	tp.plainNoPurchase = tp.plain
+	if noPurchase != full {
+		tp.plainNoPurchase = plainText(noPurchase)
+	}
+	tp.plainLowerNoPurchase = strings.ToLower(tp.plainNoPurchase)
 	return tp, nil
+}
+
+const (
+	planPurchaseOpen  = "<!-- plan-purchase -->"
+	planPurchaseClose = "<!-- /plan-purchase -->"
+)
+
+// splitPlanPurchase returns the body with the marker lines removed (full)
+// and with each marked block removed (noPurchase). Markers sit on their own
+// line; an unbalanced or nested marker is an error so a typo can't silently
+// publish (or hide) a purchase paragraph (ut-docs#3434).
+func splitPlanPurchase(body string) (full, noPurchase string, err error) {
+	var f, n []string
+	in := false
+	for i, line := range strings.Split(body, "\n") {
+		switch strings.TrimSpace(line) {
+		case planPurchaseOpen:
+			if in {
+				return "", "", fmt.Errorf("line %d: nested %s", i+1, planPurchaseOpen)
+			}
+			in = true
+		case planPurchaseClose:
+			if !in {
+				return "", "", fmt.Errorf("line %d: %s without an opener", i+1, planPurchaseClose)
+			}
+			in = false
+		default:
+			if t := strings.TrimSpace(line); strings.HasPrefix(t, "<!--") && strings.Contains(t, "plan-purchase") {
+				// A near-miss marker would render as a plain comment and
+				// leave its paragraph showing on iOS: refuse it.
+				return "", "", fmt.Errorf("line %d: malformed plan-purchase marker %q (want %s or %s on its own line)", i+1, t, planPurchaseOpen, planPurchaseClose)
+			}
+			f = append(f, line)
+			if !in {
+				n = append(n, line)
+			}
+		}
+	}
+	if in {
+		return "", "", fmt.Errorf("%s is never closed", planPurchaseOpen)
+	}
+	return strings.Join(f, "\n"), strings.Join(n, "\n"), nil
 }
 
 func unquote(s string) string {

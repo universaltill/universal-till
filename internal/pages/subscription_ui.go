@@ -51,6 +51,10 @@ type subscriptionView struct {
 	// change plan" panel opener (ut-docs#4286). Hides the button; the
 	// panel's endpoints refuse on their own.
 	CanRenew bool
+	// NoPlanPurchase: this host may not offer plan purchase (the iOS app,
+	// ut-docs#3434, plan_purchase.go): no panel opener, neutral wording. The
+	// zero value keeps today's behaviour.
+	NoPlanPurchase bool
 	// CheckResult is "Check now"'s one-line result, translated; empty on a
 	// plain render.
 	CheckResult string
@@ -78,7 +82,7 @@ func (v subscriptionView) PausedOnly(only string) []string {
 
 func subscriptionViewFor(ctx context.Context, r entitlement.Reader, now time.Time, locale string) subscriptionView {
 	ev := entitlement.Describe(ctx, r, now)
-	v := subscriptionView{State: string(ev.State), Plan: string(ev.Plan)}
+	v := subscriptionView{State: string(ev.State), Plan: string(ev.Plan), NoPlanPurchase: !planPurchaseAllowed()}
 	if ev.State == entitlement.StateLapsed {
 		v.Status = entitlement.StatusLapsed
 		if s, _, err := r.Get(ctx, entitlement.KeySubscriptionStatus); err == nil && strings.TrimSpace(s) == entitlement.StatusNone {
@@ -102,7 +106,7 @@ func subscriptionViewFor(ctx context.Context, r entitlement.Reader, now time.Tim
 func subscriptionViewWithCheck(r *http.Request, d *common.Deps, locale string) subscriptionView {
 	v := subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale)
 	v.CanCheck = canCheckSubscription(d, r)
-	v.CanRenew = v.CanCheck && enroll.HasCredentials(d.Cfg)
+	v.CanRenew = v.CanCheck && enroll.HasCredentials(d.Cfg) && !v.NoPlanPurchase
 	return v
 }
 
@@ -259,7 +263,7 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 		// keeps the link to Settings.
 		httpx.RenderPartial("ui/partials/subscription_chip.html", map[string]any{
 			"state":     string(ev.State),
-			"openPanel": canCheckSubscription(d, r) && enroll.HasCredentials(d.Cfg),
+			"openPanel": planPurchaseAllowed() && canCheckSubscription(d, r) && enroll.HasCredentials(d.Cfg),
 		})(w, r)
 	})
 
@@ -300,7 +304,7 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 		}
 		view := subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale)
 		view.CanCheck = canCheckSubscription(d, r)
-		view.CanRenew = view.CanCheck
+		view.CanRenew = view.CanCheck && !view.NoPlanPurchase
 		result := "timed_out"
 		switch outcome {
 		case refreshActive:
@@ -314,7 +318,11 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 			}
 		case refreshNotActive:
 			result = "not_active"
-			view.CheckResult = httpx.T(locale, "subscription.check_result.still_lapsed")
+			key := "subscription.check_result.still_lapsed"
+			if view.NoPlanPurchase {
+				key += "_ios" // ut-docs#3434: no "if you've just paid" on iOS
+			}
+			view.CheckResult = httpx.T(locale, key)
 		default:
 			view.CheckResult = httpx.T(locale, "subscription.check_result.offline")
 		}

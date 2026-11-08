@@ -55,7 +55,7 @@ func registerHelp(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		q := r.URL.Query().Get("q")
 		httpx.RenderPartial("ui/partials/help_results.html", map[string]any{
-			"results": l.Search(locale, q),
+			"results": l.SearchFor(locale, q, planPurchaseAllowed()),
 			"query":   q,
 		})(w, r)
 	})
@@ -110,6 +110,9 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 			return
 		}
 		topic = t
+		if !planPurchaseAllowed() { // ut-docs#3434: no purchase instructions in the iOS app
+			topic = topic.WithoutPlanPurchase()
+		}
 	}
 
 	data := map[string]any{
