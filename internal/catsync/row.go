@@ -71,7 +71,9 @@ type row struct {
 
 // cleanText trims s and refuses empty, over-long, invalid UTF-8, control
 // and invisible format characters (the agentaction rule: a plugin must not
-// show the operator a different name than the one stored).
+// show the operator a different name than the one stored). It is the strict
+// rule for ids and SKUs; names use cleanName, which also lets RTL marks and
+// balanced isolates through.
 func cleanText(s string, maxRunes int) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxRunes {
@@ -84,6 +86,19 @@ func cleanText(s string, maxRunes int) (string, bool) {
 		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d') {
 			return "", false
 		}
+	}
+	return s, true
+}
+
+// cleanName is cleanText for a display name (item name, category level): the
+// blank and length rules are the same, the characters are
+// data.CheckSingleLineName's (ut-docs#5858), so an imported name is held to
+// the rule the admin screens apply. It accepts LRM/RLM/ALM and balanced
+// isolates (RTL shops need them) and refuses U+2028/2029.
+func cleanName(s string, maxRunes int) (string, bool) {
+	s, err := data.CheckSingleLineName(s)
+	if err != nil || s == "" || utf8.RuneCountInString(s) > maxRunes {
+		return "", false
 	}
 	return s, true
 }
@@ -128,7 +143,7 @@ func parseRow(raw json.RawMessage) (row, string, rowIssue) {
 		return row{}, "", newIssue(IssueExternalIDInvalid)
 	}
 	r := row{ext: ext, active: true, weighed: w.SoldByWeight}
-	if r.name, ok = cleanText(w.Name, nameMaxRunes); !ok {
+	if r.name, ok = cleanName(w.Name, nameMaxRunes); !ok {
 		return row{}, ext, newIssue(IssueNameInvalid)
 	}
 	if w.PriceMinor == nil || *w.PriceMinor < 0 || *w.PriceMinor > priceMinorMax {
@@ -145,7 +160,7 @@ func parseRow(raw json.RawMessage) (row, string, rowIssue) {
 			return row{}, ext, newIssue(IssueCategoryTooDeep, strconv.Itoa(categoryDepth))
 		}
 		for _, c := range w.CategoryPath {
-			name, ok := cleanText(c, categoryMaxRune)
+			name, ok := cleanName(c, categoryMaxRune)
 			if !ok {
 				return row{}, ext, newIssue(IssueCategoryLevelInvalid)
 			}

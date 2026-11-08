@@ -610,6 +610,7 @@
   "common.edit": "Edit",
   "common.error.invalid_upload": "Invalid upload",
   "common.error.manager_or_admin_required": "Manager or admin required",
+  "common.error.name_invalid_characters": "Names can't contain line breaks, tabs or hidden formatting characters. Retype the name and save again.",
   "common.error.network": "Connection problem. Check your network and try again.",
   "common.error.outcome_unknown": "The connection dropped before the till replied, so this may or may not have been done. Check before you try again.",
   "common.error.outcome_timeout": "The till did not reply in time, so this may or may not have been done. Check before you try again.",
