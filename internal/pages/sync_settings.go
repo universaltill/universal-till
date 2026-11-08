@@ -3,10 +3,12 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/fleetlink"
@@ -149,6 +151,16 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 				country, countryInBatch = s.Value, true
 			case common.KeyLocale:
 				localeInBatch = true
+			case common.KeyStoreName:
+				// ut-docs#5894: the Shop name card's rule, before anything
+				// is written; the stored (and answered) name is the
+				// normalised one.
+				norm, err := config.CheckStoreName(s.Value)
+				if err != nil {
+					fail(http.StatusBadRequest, syncStoreNameRefusalCode(err), "store.name is not a valid shop name")
+					return
+				}
+				s.Value = norm
 			case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 				// The upsert handler's ADR-0048 gates: fabricating an
 				// override is refused for everyone; clearing one is
@@ -329,4 +341,18 @@ func derivedLocaleForCountry(ctx context.Context, d *common.Deps, country string
 		return "", nil
 	}
 	return cs.DefaultLocale, nil
+}
+
+// syncStoreNameRefusalCode is the error.code a refused store.name answers
+// with (ut-docs#5894); settingsSyncMessageKey translates it on the
+// additional till.
+func syncStoreNameRefusalCode(err error) string {
+	switch {
+	case errors.Is(err, config.ErrStoreNameTooLong):
+		return "store_name_too_long"
+	case errors.Is(err, config.ErrStoreNameInvalidChars):
+		return "store_name_invalid_chars"
+	default:
+		return "store_name_required"
+	}
 }

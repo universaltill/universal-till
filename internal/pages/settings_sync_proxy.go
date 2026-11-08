@@ -85,6 +85,13 @@ func settingsSyncMessageKey(se *errSettingsSync) string {
 		// A main till older than ut-docs#2980 still answers this for
 		// store.country.
 		return "settings.error.change_on_main_till"
+	case "store_name_invalid_chars":
+		// ut-docs#5894: a main till with a stricter shop-name rule.
+		return "settings.store_name.error_invalid_chars"
+	case "store_name_too_long":
+		return "settings.store_name.error_too_long"
+	case "store_name_required":
+		return "settings.store_name.error_required"
 	default:
 		return "settings.error.main_till_refused"
 	}

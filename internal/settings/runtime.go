@@ -80,9 +80,14 @@ func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error
 	// blank, the cloud's default) is never written. LoadRuntimeConfig
 	// ignores a blank store.name, so without this every boot wrote the
 	// env default back over migration 075's blank. A real UT_STORE_NAME is
-	// still saved, as before.
-	if config.IsPlaceholderStoreName(cfg.StoreName) {
+	// still saved, as before. ut-docs#5894: a name config.CheckStoreName
+	// refuses (hidden or line-break characters) is skipped the same way, and
+	// a real one is written trimmed. A refused name already stored is left
+	// as it is, not rewritten or blanked.
+	if n, err := config.CheckStoreName(cfg.StoreName); err != nil {
 		delete(kv, "store.name")
+	} else {
+		kv["store.name"] = n
 	}
 	// A failed read is treated like an unparseable value: without knowing
 	// what is stored, writing the config default could clobber the shop's

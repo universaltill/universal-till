@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -224,16 +223,30 @@ const keyTillNameRequired = "tills.pairing.error.name_required_field"
 // line-break or invisible characters (ut-docs#5858, till names ut-docs#5862).
 const keyNameInvalidCharacters = "common.error.name_invalid_characters"
 
-// isRefusedStoreName reports whether a first-boot shop name must be refused:
-// blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
-// field's own placeholder text in the request's language, or longer than
-// config.MaxStoreNameRunes (the field's maxlength, enforced here too: the
-// form's cap is client-side only). Shared by the wizard and the bare POST /api/auth/setup fallback
-// (ut-docs#3096, #3116).
-func isRefusedStoreName(r *http.Request, name string) bool {
-	return config.IsPlaceholderStoreName(name) ||
-		utf8.RuneCountInString(strings.TrimSpace(name)) > config.MaxStoreNameRunes ||
-		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
+// keyStoreNameInvalidChars: a first-boot shop name with a line break, tab or
+// hidden character (ut-docs#5894) - the Shop name card's own message. A var
+// from storeNameErrorKey, not a string const: TestSettingScope_EveryUsedKeyIsClassified
+// reads a const with this "settings." prefix as a settings key.
+var keyStoreNameInvalidChars = storeNameErrorKey(config.ErrStoreNameInvalidChars)
+
+// firstBootStoreName checks a first-boot shop name with config.CheckStoreName
+// plus the name field's own placeholder text in the request's language. It
+// returns the trimmed name and "", or "" and the wizard error key:
+// keyStoreNameInvalidChars for a character refusal, keyStoreNameRequired for
+// blank, placeholder or too long (unchanged wording; the field's maxlength
+// caps length client-side). Shared by the wizard, the bare POST
+// /api/auth/setup and the cloud-pair prefill (ut-docs#3096, #3116, #5894).
+func firstBootStoreName(r *http.Request, raw string) (name, errKey string) {
+	n, err := config.CheckStoreName(raw)
+	switch {
+	case errors.Is(err, config.ErrStoreNameInvalidChars):
+		return "", keyStoreNameInvalidChars
+	case err != nil:
+		return "", keyStoreNameRequired
+	case strings.EqualFold(n, httpx.T(httpx.RequestLocale(r), "setup.store.placeholder")):
+		return "", keyStoreNameRequired
+	}
+	return n, ""
 }
 
 // registerSetup wires the first-boot wizard: language → country (prefills
@@ -443,7 +456,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
+		if errKey == keyStoreNameRequired || errKey == keyStoreNameInvalidChars || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		if errKey == keyCloudExpired {
@@ -477,7 +490,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// shop still called "My Store".
 			// A refused placeholder ("My Store") is not echoed back, so
 			// Next stays disabled until a real name is typed.
-			if errKey != keyStoreNameRequired {
+			if errKey != keyStoreNameRequired && errKey != keyStoreNameInvalidChars {
 				data["storeName"] = strings.TrimSpace(r.PostFormValue("store_name"))
 			}
 			// ut-docs#4146: likewise a refused till name (a control
@@ -663,9 +676,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// 001's seeded "My Store", the cloud's default, or the step's own
 		// placeholder text. Checked with the other pre-persist validations,
 		// so a refusal saves nothing.
-		storeName := strings.TrimSpace(r.PostFormValue("store_name"))
-		if isRefusedStoreName(r, storeName) {
-			renderWizard(w, r, keyStoreNameRequired, "")
+		storeName, storeErrKey := firstBootStoreName(r, r.PostFormValue("store_name"))
+		if storeErrKey != "" {
+			renderWizard(w, r, storeErrKey, "")
 			return
 		}
 		// ut-docs#4146: the till is named too — no "Till 1" default. Same

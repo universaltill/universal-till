@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -162,6 +163,22 @@ func NormalizeStoreName(s string) (string, error) {
 	return s, nil
 }
 
+// CheckStoreName is the one shop-name check every till writer of store.name
+// runs (ut-docs#5894): catalogrules.CheckSingleLineName (which also refuses
+// U+2028/U+2029 and U+E0100-E01EF), then NormalizeStoreName, the order
+// ut-docs#5874 used. It returns the trimmed name, or an error wrapping
+// exactly one of ErrStoreNameRequired, ErrStoreNameTooLong or
+// ErrStoreNameInvalidChars; a single-line refusal wraps
+// ErrStoreNameInvalidChars too, so callers map errors one way. The error
+// text never contains the value, so it is safe to log.
+func CheckStoreName(s string) (string, error) {
+	norm, err := catalogrules.CheckSingleLineName(s)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrStoreNameInvalidChars, err)
+	}
+	return NormalizeStoreName(norm)
+}
+
 type Config struct {
 	StoreName     string
 	ListenAddr    string
@@ -277,6 +294,15 @@ func Init() (*Config, error) {
 			FallbackTimeoutSec:    fallbackTimeout,
 			RequestTimeoutSec:     30,
 		},
+	}
+
+	// ut-docs#5894: a UT_STORE_NAME the shop-name check refuses (hidden or
+	// line-break characters) is ignored, like a placeholder: cfg.StoreName is
+	// the fallback the kiosk and enrolment read while store.name is blank.
+	// Blank/placeholder values keep the silent path; the value is not logged.
+	if _, err := CheckStoreName(cfg.StoreName); err != nil && !errors.Is(err, ErrStoreNameRequired) {
+		logging.L().Warnf("config: UT_STORE_NAME is not usable as a shop name (%v); ignoring it", err)
+		cfg.StoreName = DefaultStoreName
 	}
 
 	// ADR-0158: a release binary carries the marketplace key; it is then

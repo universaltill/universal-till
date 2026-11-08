@@ -398,9 +398,10 @@ func cloudShopView(r *http.Request, h *heldCloudPairing, countries []setupCountr
 	if st == nil {
 		return v
 	}
-	// The same refusal as the final post (isRefusedStoreName, incl. the
-	// localized placeholder): a name it would refuse is asked locally.
-	if n := strings.TrimSpace(st.Name); n != "" && !isRefusedStoreName(r, n) {
+	// The same refusal as the final post (firstBootStoreName, incl. the
+	// localized placeholder and hidden characters, ut-docs#5894): a name it
+	// would refuse is asked locally.
+	if n, key := firstBootStoreName(r, st.Name); key == "" {
 		v.Name, v.HasName = n, true
 	}
 	if isValidShopType(st.ShopType) {

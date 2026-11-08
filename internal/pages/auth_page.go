@@ -136,7 +136,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		// ut-docs#3116: the first-boot form keeps a typed shop name across a
 		// PIN error, like the wizard; a refused name is not echoed back.
-		if firstBoot && r.Method == http.MethodPost && errKey != keyStoreNameRequired {
+		if firstBoot && r.Method == http.MethodPost && errKey != keyStoreNameRequired && errKey != keyStoreNameInvalidChars {
 			data["storeName"] = strings.TrimSpace(r.PostFormValue("store_name"))
 		}
 		httpx.RenderPartial("ui/pages/login.html", data)(w, r)
@@ -331,9 +331,9 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ut-docs#3116: name the shop here too, never finishing first boot
 		// on migration 001's seeded "My Store" — the wizard's rule (#3096).
 		// Checked before any write, so a refusal saves nothing.
-		storeName := strings.TrimSpace(r.PostFormValue("store_name"))
-		if isRefusedStoreName(r, storeName) {
-			renderLogin(w, r, keyStoreNameRequired, "")
+		storeName, storeErrKey := firstBootStoreName(r, r.PostFormValue("store_name"))
+		if storeErrKey != "" {
+			renderLogin(w, r, storeErrKey, "")
 			return
 		}
 		hash, err := auth.HashPIN(pin)
