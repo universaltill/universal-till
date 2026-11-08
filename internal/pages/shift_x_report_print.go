@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -172,8 +171,8 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 	doc := print.Doc{StoreName: storeName, Charset: charset, Meta: []string{
 		T("shifts.x_report.paper.title"),
 		T("shifts.x_report.paper.not_a_close"),
-		footerRow(T("shifts.register"), xPaperText(rep.RegisterName)),
-		footerRow(T("shifts.cashier"), xPaperText(rep.CashierName)),
+		footerRow(T("shifts.register"), rep.RegisterName),
+		footerRow(T("shifts.cashier"), rep.CashierName),
 		footerRow(T("shifts.opened_at"), stamp(rep.Shift.OpenedAt)),
 		fmt.Sprintf(T("reports.zpaper.generated"), stamp(rep.GeneratedAt)),
 	}}
@@ -203,7 +202,7 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 			label = T("shifts.skim")
 		}
 		if a.Reason != "" {
-			label += ": " + xPaperText(a.Reason)
+			label += ": " + a.Reason
 		}
 		doc.Footer = append(doc.Footer, footerRow(label, amt(a.Amount))) // clips the label, never the amount
 	}
@@ -216,19 +215,6 @@ func buildXReportDoc(rep data.XReport, storeName, charset string) print.Doc {
 		doc.Footer = append(doc.Footer, "", fmt.Sprintf(T("reports.zpaper.receipts_range"), rep.FirstReceipt, rep.LastReceipt))
 	}
 	return doc
-}
-
-// xPaperText makes free text (an adjustment reason any cashier can type, a
-// register or cashier name) safe for one paper line: every control rune
-// becomes a space. The utf8 charset sends bytes raw, so an ESC p in a reason
-// would kick the drawer and a newline would forge a line on the report.
-func xPaperText(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
 }
 
 // xMethodLabel: the core tender key when the id is a core one, else the
