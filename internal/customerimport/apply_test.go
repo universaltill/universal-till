@@ -568,35 +568,41 @@ func TestApply_MatchesPhonesNotYetBackfilled(t *testing.T) {
 // its own (multi-line) rule.
 func TestApply_NameRefusesLineBreaksAndInvisibleFormatting(t *testing.T) {
 	d := open(t)
-	refused := []string{
-		"Ada\nLovelace", // line break
-		"Ada\tLovelace", // tab
-		"Ada\u0085Pond", // C1 next line
-		"Ada Pond",      // line separator
-		"‮Ada Pond",     // right-to-left override
-		"Ada​Pond",      // zero-width space
-		"⁧Ada Pond",     // unbalanced isolate
+	refused := []customerimport.Row{
+		{Name: "Ada\nLovelace"},  // line break
+		{Name: "Ada\tLovelace"},  // tab
+		{Name: "Ada\u0085Pond"},  // C1 next line
+		{Name: "Ada\u2028Pond"},  // line separator
+		{Name: "\u202eAda Pond"}, // right-to-left override
+		{Name: "Ada\u200bPond"},  // zero-width space
+		{Name: "\u2067Ada Pond"}, // unbalanced isolate
+		{Name: "Ada\u00adPond", Email: "ada@example.test", ForceFields: []string{"name"}}, // soft hyphen, forced
 	}
+	rtl := "\u200fمریم\u200f احمدی" // RLM in an RTL name
 	rows := make([]customerimport.Row, 0, len(refused)+2)
-	for i, n := range refused {
-		rows = append(rows, customerimport.Row{Row: i + 1, Name: n})
+	for i, r := range refused {
+		r.Row = i + 1
+		rows = append(rows, r)
 	}
 	rows = append(rows,
-		customerimport.Row{Row: len(refused) + 1, Name: "‏مریم‏ احمدی"}, // RLM in an RTL name
+		customerimport.Row{Row: len(refused) + 1, Name: rtl},
 		customerimport.Row{Row: len(refused) + 2, Name: "Zoe Hill", Address: "1 High St\nLeeds"},
 	)
 	res := apply(t, d, rows...)
 	for i := range refused {
 		if res.Rows[i].Outcome != customerimport.Invalid || strings.Join(res.Rows[i].Fields, ",") != "name" {
-			t.Errorf("name %q: got %s %v, want invalid [name]", refused[i], res.Rows[i].Outcome, res.Rows[i].Fields)
+			t.Errorf("name %q: got %s %v, want invalid [name]", refused[i].Name, res.Rows[i].Outcome, res.Rows[i].Fields)
 		}
 	}
 	for _, r := range res.Rows[len(refused):] {
-		if r.Outcome == customerimport.Invalid {
-			t.Errorf("row %d must be accepted: %+v", r.Row, r)
+		if r.Outcome != customerimport.Created {
+			t.Errorf("row %d: got %+v, want created", r.Row, r)
 		}
 	}
 	if n := count(t, d, `SELECT COUNT(*) FROM customers`); n != 2 {
 		t.Fatalf("customers = %d, want 2", n)
+	}
+	if n := count(t, d, `SELECT COUNT(*) FROM customers WHERE name = ?`, rtl); n != 1 {
+		t.Fatalf("the RTL name must be stored byte for byte, found %d", n)
 	}
 }
