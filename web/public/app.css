@@ -5712,7 +5712,8 @@ body.login-screen {
    instead of pushing the version label onto a second line at 1024x600. The
    bar keeps wrapping when it is genuinely crowded (ut-docs#3050: a nowrap
    bar overflowed sideways with update + register + marketplace chips
-   showing). The 2.25rem touch target is a ::before hit area centred on the
+   showing). The touch target (44px under pointer: coarse, see the block after
+   the 480px phone tier) is a ::before hit area centred on the
    chip, not min-block-size: a 2.25rem chip made the whole bar ~15px taller
    the moment it appeared. Trade-off: where the bar wraps (tablet, phone) the
    hit area reaches a few px into the neighbouring row's gap. */
@@ -5874,6 +5875,50 @@ body.login-screen {
   .statusbar .sb-release-notes a { min-inline-size: 0; flex: 0 1 auto; }
   .statusbar .sb-release-notes-text { overflow: hidden; text-overflow: ellipsis; min-inline-size: 0; }
   .statusbar .sb-release-notes-dismiss { flex: none; }
+}
+
+/* ut-docs#5867: every actionable status-bar control gets a 44 CSS px hit area
+   under a coarse pointer. A centred ::before, not min-block-size: a taller
+   chip made the whole bar taller the moment it appeared (#3459). The block
+   inset is 50% - 22px (44px total, whatever the root font size); the inline
+   inset only reaches past the box when it is narrower than 44px, so a wide
+   chip never spills onto its neighbour. Placed AFTER every .statusbar .sb-*
+   base rule and the 480px phone block (source order decides equal-specificity
+   ties). Fine pointers get nothing. Logical properties only. */
+@media (pointer: coarse) {
+  .statusbar :is(a, button):is(.sb-enrol, .sb-update, .sb-power, .sb-link, .sb-main-till,
+      .sb-plugin-update, .sb-language-pack-update, .sb-subscription, .sb-cloud-auth,
+      .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-backup-copy,
+      .sb-translate-off, .sb-release-notes-dismiss),
+  .statusbar .sb-release-notes > a,
+  .statusbar .sb-update.is-stuck a {
+    position: relative;
+  }
+  .statusbar :is(a, button):is(.sb-enrol, .sb-update, .sb-power, .sb-link, .sb-main-till,
+      .sb-plugin-update, .sb-language-pack-update, .sb-subscription, .sb-cloud-auth,
+      .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-backup-copy,
+      .sb-translate-off, .sb-release-notes-dismiss)::before,
+  .statusbar .sb-release-notes > a::before,
+  .statusbar .sb-update.is-stuck a::before {
+    content: ""; position: absolute;
+    inset-block: min(0px, calc(50% - 22px));
+    inset-inline: min(0px, calc(50% - 22px));
+    /* Under every in-flow box of the bar (.statusbar is a stacking context:
+       sticky + z-index 90), so where rows wrap less than 44px apart a later
+       chip's hit area never covers an earlier control's own box (#5867). */
+    z-index: -1;
+  }
+}
+
+/* The phone tier above caps these chips with overflow: hidden (ellipsis),
+   which would also clip their hit area to the 18px box. Clip only the inline
+   axis there: the hit area reaches out vertically, and a text longer than the
+   70vw cap is cut at the cap (no ellipsis glyph; `clip` paints none) instead
+   of widening the bar. */
+@media (pointer: coarse) and (max-width: 480px) {
+  .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-link, .sb-plugin-update, .sb-language-pack-update) {
+    overflow: clip visible;
+  }
 }
 
 /* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */
