@@ -1065,11 +1065,20 @@ type AdminApplyResult struct {
 	ErasedCustomerIDs []string
 }
 
+// ErrNotReplica: ApplyAdminWithResult refused because this till has no
+// sync.primary_url, i.e. it is not (or, after a promote that won the race,
+// no longer) a replica. Nothing was written (ut-docs#5896).
+var ErrNotReplica = errors.New("apply admin: this till is not a replica (no sync.primary_url)")
+
 // ApplyAdminWithResult makes this till's admin state match the bundle, in
 // one transaction: first delete rows the primary no longer has (children
 // first; sales-referenced rows fall back to is_active=0), then upsert
 // everything. Tables absent from the bundle are left untouched. The result
 // is only meaningful when err is nil (the transaction committed).
+//
+// Refuses with ErrNotReplica, writing nothing, when this till has no
+// sync.primary_url (checked inside the transaction, so a concurrent promote
+// always wins; ut-docs#5896).
 func (r *SyncAdminRepo) ApplyAdminWithResult(ctx context.Context, bundle AdminBundle) (AdminApplyResult, error) {
 	var res AdminApplyResult
 	if err := r.applyAdmin(ctx, bundle, &res); err != nil {
@@ -1084,6 +1093,21 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		return fmt.Errorf("apply admin: %w", err)
 	}
 	defer tx.Rollback()
+
+	// ut-docs#5896: the pull tick read sync.primary_url before its HTTP round
+	// trip and asset sync. A promote (ClearReplicaIdentity) that commits in
+	// between must win: the bundle carries the OLD main till's shop-wide
+	// lan_discovery.till_id and till.name. The DB uses _txlock=immediate, so
+	// this read is serialised against promote's tx; either promote committed
+	// first (blank: refuse) or this apply commits first (promote then
+	// overwrites).
+	primaryURL, _, err := AgentSettingRaw(ctx, tx, "sync.primary_url")
+	if err != nil {
+		return fmt.Errorf("apply admin: read sync.primary_url: %w", err)
+	}
+	if strings.TrimSpace(primaryURL) == "" {
+		return ErrNotReplica
+	}
 
 	// ut-docs#1589 (found in #1554's own review): permission_actions and
 	// BUILT-IN roles are migration-seeded catalog rows nothing in this

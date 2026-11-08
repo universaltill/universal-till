@@ -70,7 +70,7 @@ func TestEntitlementRefreshLeavesAdminCursorUnchanged(t *testing.T) {
 func TestEntitlementNeverAppliedFromAdminBundle(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT OR REPLACE INTO settings (key, value) VALUES ('entitlement.plan', 'chain'), ('store.currency', 'EUR')`)
 	mustExec(t, replica, `INSERT INTO settings (key, value) VALUES ('entitlement.plan', 'shop')`)
 

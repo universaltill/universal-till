@@ -132,7 +132,7 @@ func TestUserDisplayRepo_SetUnknownUserRefusedByFK(t *testing.T) {
 func TestUserDisplaySettings_AdminDumpApplyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO users (id, username, display_name, role) VALUES ('u-alice', 'alice', 'Alice', 'manager')`)
 	if err := NewUserDisplayRepo(primary.DB).Set(ctx, "u-alice", "theme", "dark"); err != nil {

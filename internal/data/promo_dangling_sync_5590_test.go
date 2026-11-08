@@ -12,7 +12,7 @@ import (
 func TestApplyAdmin_OrphanPromoCustomerFromOldMainIsClamped(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT INTO customers (id, name) VALUES ('c-gone', 'Gone Person')`)
 	mustExec(t, primary, `INSERT INTO promotions (code, type, value, customer_id, is_active) VALUES ('ORPH', 'amount', 700, 'c-gone', 1)`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -42,7 +42,7 @@ func TestApplyAdmin_OrphanPromoCustomerFromOldMainIsClamped(t *testing.T) {
 func TestApplyAdmin_PromoWithValidCustomerNotClamped(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT INTO customers (id, name) VALUES ('c-new', 'New Person')`)
 	mustExec(t, primary, `INSERT INTO promotions (code, type, value, customer_id, is_active) VALUES ('NEWP', 'amount', 500, 'c-new', 1)`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
