@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode"
@@ -55,7 +56,7 @@ func shiftSlipDocFixture() data.ShiftCloseSlip {
 
 func shiftSlipText(t *testing.T, s data.ShiftCloseSlip) (print.Doc, string) {
 	t.Helper()
-	doc := buildShiftSlipDoc(s, "Corner Shop", "utf8")
+	doc := buildShiftSlipDoc(s, "Corner Shop", "utf8", false)
 	return doc, strings.Join(doc.Meta, "\n") + "\n" + strings.Join(doc.Footer, "\n")
 }
 
@@ -135,8 +136,8 @@ func TestBuildShiftSlipDoc_ControlRunesInFreeTextNeverReachPrinter(t *testing.T)
 	dirty := func(s string) string { return s + kick + forged }
 	clean := func(s string) string { return s + " x" }
 	for _, cs := range []string{"", "utf8", "ascii", "cp858", "win1250"} {
-		dd := buildShiftSlipDoc(slip(dirty), "Shop", cs)
-		rd := buildShiftSlipDoc(slip(clean), "Shop", cs)
+		dd := buildShiftSlipDoc(slip(dirty), "Shop", cs, false)
+		rd := buildShiftSlipDoc(slip(clean), "Shop", cs, false)
 		out, ref := print.Render(dd), print.Render(rd)
 		if n := bytes.Count(out, []byte("\x1bp")); n != 0 {
 			t.Errorf("%q: drawer-kick bytes reached the printer x%d", cs, n)
@@ -151,5 +152,37 @@ func TestBuildShiftSlipDoc_ControlRunesInFreeTextNeverReachPrinter(t *testing.T)
 		if a, b := strings.Count(txt, "\n"), strings.Count(txtRef, "\n"); a != b {
 			t.Errorf("%q: text has %d newlines, clean slip has %d", cs, a, b)
 		}
+	}
+}
+
+// ut-docs#5877: a slip printed from a History row carries one extra
+// "Reprinted <stamp>" line right after "Generated"; the close-result paper
+// (reprint=false) is unchanged.
+func TestBuildShiftSlipDoc_ReprintLineOnlyWhenReprint(t *testing.T) {
+	xdocSetup(t)
+	s := shiftSlipDocFixture()
+	orig := buildShiftSlipDoc(s, "Corner Shop", "utf8", false)
+	again := buildShiftSlipDoc(s, "Corner Shop", "utf8", false)
+	if !reflect.DeepEqual(orig, again) || strings.Contains(strings.Join(orig.Meta, "\n"), "Reprinted") {
+		t.Fatalf("reprint=false must have no marker: %q", orig.Meta)
+	}
+	re := buildShiftSlipDoc(s, "Corner Shop", "utf8", true)
+	if len(re.Meta) != len(orig.Meta)+1 {
+		t.Fatalf("meta %d vs %d", len(re.Meta), len(orig.Meta))
+	}
+	gi := -1
+	for i, l := range re.Meta {
+		if strings.HasPrefix(l, "Generated") {
+			gi = i
+		}
+	}
+	if gi < 0 || !strings.HasPrefix(re.Meta[gi+1], "Reprinted ") {
+		t.Fatalf("Reprinted must follow Generated: %q", re.Meta)
+	}
+	if n := strings.Count(strings.Join(re.Meta, "\n"), "Reprinted"); n != 1 {
+		t.Errorf("Reprinted x%d", n)
+	}
+	if !reflect.DeepEqual(re.Footer, orig.Footer) {
+		t.Error("footer must be unchanged")
 	}
 }

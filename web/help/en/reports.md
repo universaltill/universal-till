@@ -398,12 +398,18 @@ moment of the close), and then the drawer count: **Expected**, **Counted**,
 It is not a day close: it has no end-of-day number, it does not open the cash
 drawer and it changes nothing — the shift, the Z report and your exports stay
 as they were. You can print it again from the same message; each print leaves
-an entry in the audit log. The button is only on that confirmation message,
-so reload the page and it is gone.
+an entry in the audit log.
+
+Later, open **Shifts** and find the shift under **History** (the last 20
+shifts). Every closed row has a **Print slip** button that prints that shift's
+slip again; an open shift has none. A slip printed from **History** has an extra
+**Reprinted** line with the date and time, so it is not mistaken for a second
+count. The result appears next to that row, and the audit log marks the entry
+as a reprint.
 
 Printing needs the **Reports** permission; without it the till asks for a
 manager's PIN (with sign-in off, no PIN is asked). If the receipt printer is
-off or does not answer, you see "Print failed" under the button and nothing
+off or does not answer, you see "Print failed" next to the button and nothing
 is recorded.
 
 ## Cash reconciliation on the day-end report
