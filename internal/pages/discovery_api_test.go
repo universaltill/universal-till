@@ -325,3 +325,50 @@ func TestDiscoverPrimariesAPI_NeverLeaksRawErrorText(t *testing.T) {
 		t.Fatalf("response body leaks the raw driver error: %s", body)
 	}
 }
+
+// TestDiscoverPrimariesAPI_PromotedTillSeesOldMainTill covers ut-docs#5893: the
+// scan's self-filter drops a candidate whose till_id equals this till's own
+// discovery id. A promoted till used to keep its old main till's id, so it hid
+// that till; with its own fresh id the old main till's advertisement is a
+// normal candidate again.
+func TestDiscoverPrimariesAPI_PromotedTillSeesOldMainTill(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+	ctx := t.Context()
+	repo := data.NewSettingsRepo(dp.Db)
+	const oldID = "old-main-till-id"
+	if err := repo.Set(ctx, data.LANDiscoveryTillIDSettingsKey, oldID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClearReplicaIdentity(ctx); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	stubBrowse(t, []discovery.Candidate{
+		{Name: "Old Main", TillID: oldID, BaseURL: "http://192.168.1.60:8080"},
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Primaries []struct {
+				TillID string `json:"till_id"`
+			} `json:"primaries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Data.Primaries) != 1 || out.Data.Primaries[0].TillID != oldID {
+		t.Fatalf("expected the old main till listed, got: %+v", out.Data.Primaries)
+	}
+}

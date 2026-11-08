@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SettingsRepo owns all SQL for the settings table.
@@ -336,6 +338,16 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // different id (ut-docs#3307). Unlike till.name, a blank sync.till_id writes
 // nothing: there is no id to keep, and a cloud id kept by an earlier
 // promotion must not be clobbered.
+//
+// The LAN discovery id (LANDiscoveryTillIDSettingsKey) is re-minted, always,
+// in the same transaction (ut-docs#5893). It is a shop-wide setting, so a
+// joined till holds its MAIN till's id (join snapshot and every admin pull);
+// left alone, the promoted till would advertise over mDNS, sign verification
+// codes and primary proofs with, and filter "self" by an id the old main till
+// (and every till still pointed at it) also uses. The pre-join id is gone (the
+// snapshot replaced it, ADR-0033 "two till ids"), so a fresh UUID is the only
+// option; it is never "kept if present" because a present value on a joined
+// till is always the main till's. The cloud id above is unaffected.
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
@@ -387,6 +399,16 @@ ON CONFLICT(key) DO UPDATE SET
 `, TillIdentityCloudIDSettingsKey, tillID, time.Now().UTC()); err != nil {
 			return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, TillIdentityCloudIDSettingsKey)
 		}
+	}
+
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, LANDiscoveryTillIDSettingsKey, uuid.NewString(), time.Now().UTC()); err != nil {
+		return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, LANDiscoveryTillIDSettingsKey)
 	}
 
 	if _, err = tx.ExecContext(ctx,

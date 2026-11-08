@@ -4,10 +4,12 @@
 //
 // It has two halves: Advertiser (a primary announces itself on the LAN) and
 // Browse (a replica-to-be finds primaries on demand). Both sides need the
-// SAME stable per-install identifier for a primary — TillID below is that
+// SAME stable identifier for a primary — TillID below is that
 // single source of truth, shared with the pairing verification-code flow so
 // a replica that learns a primary's id off mDNS and a primary computing its
-// own verification code server-side agree on the identical value.
+// own verification code server-side agree on the identical value. The id is
+// stable until the till is promoted: promote mints a fresh one, because a
+// joined till's copy is its former main till's id (ut-docs#5893).
 package discovery
 
 import (
@@ -21,7 +23,7 @@ import (
 
 // TillIDSettingKey is the settings-table key holding this till's LAN
 // discovery identity.
-const TillIDSettingKey = "lan_discovery.till_id"
+const TillIDSettingKey = data.LANDiscoveryTillIDSettingsKey
 
 // SettingsReader is the minimal settings access TillID and ReportedTillID
 // need — satisfied by *data.SettingsRepo and by test doubles that don't
@@ -33,7 +35,8 @@ type SettingsReader interface {
 
 // TillID returns this till's LAN-discovery id, generating and persisting a
 // fresh uuid the first time it's called (get-or-create) — every caller,
-// across the whole process and across restarts, must see the same value,
+// across the whole process and across restarts, must see the same value
+// (promote replaces it in SettingsRepo.ClearReplicaIdentity, ut-docs#5893),
 // which is why this is the one function anything needing this id should
 // call rather than each generating its own.
 //
