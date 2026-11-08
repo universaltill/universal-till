@@ -38,7 +38,7 @@ func SnapshotStateForTests() (restore func()) {
 	amendments := railAmendmentsSource.Load()
 	visibility := railVisibilitySource.Load()
 	translateMode := translateModeSource.Load()
-	cross, bridge, avail := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable
+	cross, bridge, avail, planBuy := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable, PlanPurchaseAllowed
 
 	// An atomic.Value can't go back to "never stored", so a value unset at
 	// snapshot time is restored as its type's zero value — which every
@@ -66,6 +66,6 @@ func SnapshotStateForTests() (restore func()) {
 		railAmendmentsSource.Store(restoreValue(amendments, (func() []uislot.Amendment)(nil)))
 		railVisibilitySource.Store(restoreValue(visibility, (func(*http.Request, string) bool)(nil)))
 		translateModeSource.Store(restoreValue(translateMode, (func(*http.Request) bool)(nil)))
-		CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable = cross, bridge, avail
+		CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable, PlanPurchaseAllowed = cross, bridge, avail, planBuy
 	}
 }

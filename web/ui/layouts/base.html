@@ -2323,8 +2323,10 @@
          re-check) and gives focus back to the opener — the till never
          navigates. Declared before #elevation-modal so a PIN prompt raised
          from it paints on top (same z-index, later in the DOM). Managers
-         only, like its openers (ut-docs#3079). */}}
-    {{ if allowed "settings" }}
+         only, like its openers (ut-docs#3079). Not rendered on iOS at all
+         (ut-docs#5868): even closed, its purchase wording would be in the
+         DOM (App Store 3.1, ut-docs#3434). */}}
+    {{ if and (allowed "settings") planpurchaseallowed }}
     <dialog id="subscription-panel" class="modifier-modal subscription-panel" aria-labelledby="subscription-panel-title"
             data-ut-escape-close data-testid="subscription-panel">
       <div class="subscription-panel-head">
