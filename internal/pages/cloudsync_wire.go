@@ -1228,6 +1228,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 					return "", err
 				}
 			}
+			// ut-docs#5894 (follow-up F1): store.name is NOT run through
+			// config.CheckStoreName here - my.'s generic set_setting does not
+			// validate it, and refusing at directive time what my. accepted
+			// would split the till from my. (the #5860 policy). F1 tightens
+			// both sides together.
 			// settings-write:allow a cloud set_setting directive: a shop-wide key reaches this only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998); a per-till key is local by definition
 			if err := d.Settings.Set(ctx, key, value); err != nil {
 				return "", err
