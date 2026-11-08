@@ -3503,6 +3503,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "settings.retention.err_use_retention_card")
 			return
 		}
+		// ut-docs#5862 (review finding): this till's name keys take the
+		// Till name card's single-line rule here too, before the elevation
+		// gate, so the raw editor cannot store a name that card refuses.
+		if key == "till.name" || key == "sync.till_name" {
+			if _, err := data.CheckSingleLineName(value); err != nil {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), keyNameInvalidCharacters), http.StatusBadRequest)
+				return
+			}
+		}
 		// ut-docs#244: validate before persisting, not just before reflecting
 		// into RuntimeState — the old code let an unparsable value through to
 		// d.Settings.Set unchanged (silently no-op'ing only the in-memory

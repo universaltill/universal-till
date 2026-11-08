@@ -25,27 +25,27 @@ import (
 // points refuse with common.error.name_invalid_characters before anything is
 // persisted or any network call is made; machine-facing ones refuse silently.
 
-const tcLoneIsolate = "Bar⁦x" // unbalanced isolate
+const tcLoneIsolate = "Bar\u2066x" // unbalanced isolate
 
 func tcBadNames() map[string]string {
 	return map[string]string{
-		"rlo":           "Bar‮abc",
+		"rlo":           "Bar\u202eabc",
 		"newline":       "Bar\nabc",
-		"line sep":      "Bar abc",
-		"zero width":    "Bar​abc",
+		"line sep":      "Bar\u2028abc",
+		"zero width":    "Bar\u200babc",
 		"lone isolate":  tcLoneIsolate,
 		"tab":           "Bar\tabc",
 		"escape":        "Bar\x1babc",
-		"ends with rlo": "Till‮",
+		"ends with rlo": "Till\u202e",
 	}
 }
 
 // tcGoodNames are names the rule must keep accepting (RTL tills).
 func tcGoodNames() map[string]string {
 	return map[string]string{
-		"balanced isolate": "Kasse ⁧קופה⁩",
-		"rlm":              "Kasse‏",
-		"zwj":              "Ka‍sse",
+		"balanced isolate": "Kasse \u2067קופה\u2069",
+		"rlm":              "Kasse\u200f",
+		"zwj":              "Ka\u200dsse",
 	}
 }
 
@@ -134,7 +134,7 @@ func TestTillNameEndpoint_InvalidCharactersRefused(t *testing.T) {
 func TestTillNameEndpoint_InvalidCharactersRefusedOnJoinedTill(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	joinedTillWithRoster(t, d)
-	rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Bar‮abc"}}, &mgrUser)
+	rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Bar\u202eabc"}}, &mgrUser)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422: %s", rec.Code, rec.Body.String())
 	}
@@ -370,7 +370,7 @@ func TestApplyReportedTillName_InvisibleCharsKeepRowAndRegister(t *testing.T) {
 	}
 	var unusable sync.Map
 	for range 2 {
-		applyReportedTillName(tills, posRepo, &unusable, id, "Bar‮")
+		applyReportedTillName(tills, posRepo, &unusable, id, "Bar\u202e")
 	}
 	if got := registerName(t, dp, "reg-till"); got != "Bar" {
 		t.Fatalf("register = %q, want Bar", got)
@@ -378,5 +378,40 @@ func TestApplyReportedTillName_InvisibleCharsKeepRowAndRegister(t *testing.T) {
 	var name string
 	if err := dp.Db.QueryRowContext(ctx, `SELECT name FROM tills WHERE id = ?`, id).Scan(&name); err != nil || name != "Bar" {
 		t.Fatalf("tills.name = %q, %v; want Bar", name, err)
+	}
+}
+
+// The All-settings card's raw upsert is an operator-typed till-name entry
+// point too (review finding): it must not store what the Till name card
+// refuses.
+func TestSettingsUpsert_TillNameInvisibleCharsRefused(t *testing.T) {
+	for _, key := range []string{"till.name", "sync.till_name"} {
+		for label, bad := range tcBadNames() {
+			t.Run(key+" "+label, func(t *testing.T) {
+				mux, _, d := newFullAuthDeps(t)
+				if err := d.Settings.Set(t.Context(), key, "Front"); err != nil {
+					t.Fatal(err)
+				}
+				rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {key}, "value": {bad}}, &cashUser)
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+				}
+				tcWantMsg(t, rec.Body.String())
+				if strings.Contains(strings.ToLower(rec.Body.String()), "pin") {
+					t.Fatalf("an elevation prompt was rendered: %s", rec.Body.String())
+				}
+				if got := settingValue(t, d, key); got != "Front" {
+					t.Fatalf("%s = %q, want it unchanged", key, got)
+				}
+			})
+		}
+	}
+	mux, _, d := newFullAuthDeps(t)
+	good := "Kasse ⁧קופה⁩"
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"till.name"}, "value": {good}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("valid name: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := settingValue(t, d, "till.name"); got != good {
+		t.Fatalf("till.name = %q, want %q", got, good)
 	}
 }
