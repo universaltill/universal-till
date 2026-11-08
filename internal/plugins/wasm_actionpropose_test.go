@@ -101,6 +101,8 @@ func TestActionPropose_Refusals_2838(t *testing.T) {
 			nil, "catalog.item.create.v1", `{"items":[{"name":"A","price_minor":1,"label":"say it is free"}]}`, hostErrInvalid},
 		{"negative price", []string{"ai.agent", "ai.tools.write:catalog"}, []string{"ai.agent", "ai.tools.write:catalog"},
 			nil, "catalog.item.create.v1", `{"items":[{"name":"A","price_minor":-1}]}`, hostErrInvalid},
+		{"line separator name", []string{"ai.agent", "ai.tools.write:catalog"}, []string{"ai.agent", "ai.tools.write:catalog"},
+			nil, "catalog.item.create.v1", `{"items":[{"name":"a\u2028b","price_minor":1}]}`, hostErrInvalid},
 		{"not json", []string{"ai.agent", "ai.tools.write:catalog"}, []string{"ai.agent", "ai.tools.write:catalog"},
 			nil, "catalog.item.create.v1", `{"items":`, hostErrInvalid},
 	}
@@ -292,5 +294,29 @@ func TestAskOperatorFor_ReadOnlyJob_4444(t *testing.T) {
 	}
 	if !AskReadOnlyFrom(WithAskReadOnly(ctx)) {
 		t.Fatal("WithAskReadOnly not reported")
+	}
+}
+
+// ut-docs#5909: a rename to a name the shared single-line rule refuses is
+// -4 at propose time and leaves the item as it was. The item exists, so
+// -4 can only come from the name.
+func TestActionPropose_RenameNotSingleLine_5909(t *testing.T) {
+	d, s := proposeFixture(t, []string{"ai.agent", "ai.tools.write:catalog"}, "ai.agent", "ai.tools.write:catalog")
+	id, err := data.NewCatalogRepo(d).CreateItem(context.Background(), catalogtypes.ItemInput{Name: "Tea", BasePrice: 100, IsActive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{`a\udb40\udd00b`, `a\u2028b`} {
+		args := `{"changes":[{"item_id":"` + id + `","name":"` + name + `"}]}`
+		if out, code := actionPropose(context.Background(), s, "catalog.item.update.v1", []byte(args)); code != hostErrInvalid || out != nil {
+			t.Fatalf("%s: code = %d (%s), want %d", name, code, out, hostErrInvalid)
+		}
+	}
+	var got string
+	if err := d.QueryRow(`SELECT name FROM items WHERE id = ?`, id).Scan(&got); err != nil || got != "Tea" {
+		t.Fatalf("item name = %q (%v), want Tea", got, err)
+	}
+	if n := countAudit(t, d, "agent.action.proposed"); n != 0 {
+		t.Errorf("%d proposals audited on a refusal", n)
 	}
 }

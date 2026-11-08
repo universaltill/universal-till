@@ -11,7 +11,8 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 )
 
-// catalog.item.create.v1: add new items {name, price_minor, barcode?}.
+// catalog.item.create.v1: add new items {name, price_minor, barcode?};
+// name is a single line (ut-docs#5860, #5909).
 // Before is "—"; a barcode already in the catalogue is refused (-4 at
 // propose, stale at confirm). Items go through CatalogRepo.CreateItemTx —
 // the catalog screen's insert — and the barcode through AddBarcodeTx, in
@@ -58,9 +59,9 @@ func parseCreate(raw []byte) (any, error) {
 	seen := map[string]bool{}
 	for i := range a.Items {
 		it := &a.Items[i]
-		name, ok := cleanText(it.Name, itemNameMaxRunes)
-		if !ok {
-			return nil, fmt.Errorf("%w: items[%d].name", ErrInvalid, i)
+		name, err := cleanName(it.Name, itemNameMaxRunes)
+		if err != nil {
+			return nil, fmt.Errorf("items[%d].name: %w", i, err)
 		}
 		it.Name = name
 		if it.PriceMinor == nil || *it.PriceMinor < 0 || *it.PriceMinor > priceMinorMax {

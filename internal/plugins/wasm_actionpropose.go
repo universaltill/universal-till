@@ -197,6 +197,7 @@ func actionPropose(ctx context.Context, s *hostState, name string, args []byte) 
 	parsed, rows, state, err := a.Prepare(ctx, env, args)
 	switch {
 	case errors.Is(err, agentaction.ErrInvalid):
+		logging.L().Debugf("[wasm:%s] action_propose %s refused: %v", s.pluginID, name, err)
 		return nil, hostErrInvalid
 	case err != nil:
 		logging.L().Warnf("[wasm:%s] action_propose %s plan: %v", s.pluginID, name, err)

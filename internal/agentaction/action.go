@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -188,9 +189,25 @@ func decodeStrict(raw []byte, v any) error {
 	return nil
 }
 
+// cleanName is an item name an agent proposes: data.CheckSingleLineName —
+// the rule my. and the till's own screens apply (ut-docs#5860, #5909) —
+// plus non-blank and at most maxRunes. The error wraps ErrInvalid and
+// data.ErrNameInvalidCharacters when the rule refuses it.
+func cleanName(s string, maxRunes int) (string, error) {
+	n, err := data.CheckSingleLineName(s)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	if n == "" || utf8.RuneCountInString(n) > maxRunes {
+		return "", ErrInvalid
+	}
+	return n, nil
+}
+
 // cleanText trims s and checks it is 1..maxRunes of printable UTF-8: no
 // control characters and no invisible format characters (bidi overrides,
-// zero-width), which would make the confirm card show a different name.
+// zero-width), which would make the confirm card show a different value.
+// It is for ids and free text; item names use cleanName.
 func cleanText(s string, maxRunes int) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxRunes {

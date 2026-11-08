@@ -48,7 +48,7 @@ func TestUpdate_ParseBounds_4128(t *testing.T) {
 		`{"changes":[]}`,
 		`{"changes":[{"item_id":"a"}]}`,                                       // nothing to change
 		`{"changes":[{"item_id":"","name":"x"}]}`,                             // no item
-		`{"changes":[{"item_id":"a","name":"A‮"}]}`,                           // bidi override
+		`{"changes":[{"item_id":"a","name":"A\u202e"}]}`,                      // bidi override
 		`{"changes":[{"item_id":"a","price_minor":-1}]}`,                      // negative
 		`{"changes":[{"item_id":"a","barcode":"x y"}]}`,                       // bad barcode
 		`{"changes":[{"item_id":"a","name":"x"},{"item_id":"a","name":"y"}]}`, // duplicate item
