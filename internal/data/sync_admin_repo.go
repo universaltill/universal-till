@@ -724,6 +724,18 @@ func TourDoneSettingsKey(userID string) string {
 // the same id.
 const TillIdentityCloudIDSettingsKey = "till_identity.cloud_id"
 
+// TillIdentityOwnDiscoveryIDSettingsKey holds the discovery id this till
+// minted itself (ClearReplicaIdentity, or the ut-docs#5897 boot repair). Its
+// presence means lan_discovery.till_id is not inherited from a former main
+// till. Per till ("till_identity." prefix), like TillIdentityCloudIDSettingsKey.
+const TillIdentityOwnDiscoveryIDSettingsKey = "till_identity.discovery_id_own"
+
+// TillIdentityInheritedDiscoveryIDSettingsKey holds the former main till's id
+// the ut-docs#5897 boot repair replaced. Per till and kept live on a backup
+// restore (db.RestoreKeepsLivePrefixes), so a restore of a pre-repair backup,
+// which brings that id back into lan_discovery.till_id, is repaired again.
+const TillIdentityInheritedDiscoveryIDSettingsKey = "till_identity.discovery_id_inherited"
+
 // LANDiscoveryTillIDSettingsKey is the till's LAN discovery id: what the mDNS
 // advertiser announces, what verification codes and primary proofs are signed
 // with, and what the scan's "self" filter compares against

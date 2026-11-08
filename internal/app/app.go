@@ -335,6 +335,11 @@ func Run(ctx context.Context) error {
 	// already a replica here and is skipped. Best-effort, never fatal.
 	backfillItemSKUsOnPrimary(ctx, database.DB, log)
 
+	// ut-docs#5897: a till promoted before #5893 still advertises its former
+	// main till's discovery id. Re-mint once, before the advertiser and the
+	// HTTP server start. Best-effort, never fatal.
+	repairInheritedDiscoveryIDOnPrimary(ctx, database.DB, log)
+
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
 	// (cloudsync, and since ut-docs#153 also StartSyncPush/StartSyncPull/
