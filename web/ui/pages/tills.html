@@ -265,7 +265,7 @@
           var addr = hostOf(p.base_url);
           var addrPart = addr ? (' · ' + esc(i18n.resultAddress) + ': ' + esc(addr)) : '';
           return '<li style="padding:.3rem 0">' + esc(p.name)
-            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
+            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + '<bdi dir="ltr">' + esc(p.till_id) + '</bdi>' + addrPart + '</span> '
             + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
             + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name, #pairing-join-role, #pairing-replace-local" '
             // ut-docs#1540: same required-field guard as the setup wizard's
