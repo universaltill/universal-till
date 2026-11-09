@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/catimport"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	tillimport "github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
@@ -988,7 +989,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// — not a plain "ok" the operator only learns about after commit.
 			warnedPreview := false
 			if !commit && !skipped {
-				if ws := parseTimeImportWarnings(T, it); len(ws) > 0 {
+				if ws := parseTimeImportWarnings(T, locale, it); len(ws) > 0 {
 					status, warnedPreview = strings.Join(ws, "; "), true
 				}
 			}
@@ -1452,7 +1453,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				// The parse-time issues — the same composer the Preview
 				// uses, so the two can't drift (ut-docs#4520).
-				warnings = append(warnings, parseTimeImportWarnings(T, it)...)
+				warnings = append(warnings, parseTimeImportWarnings(T, locale, it)...)
 				if takeawayOnlyNoDineIn {
 					warnings = append(warnings, T("import.status.tax_takeaway_only"))
 				}
@@ -2323,7 +2324,7 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 // decode/save, barcode attach conflict, stock) stay in the commit loop.
 // Each one is warned, never silent — the same defect class as the
 // dropped-barcode fix (ut-docs#293).
-func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []string {
+func parseTimeImportWarnings(T func(string) string, locale string, it catimport.ImportItem) []string {
 	var warnings []string
 	// The source referenced an image that never turned into usable bytes
 	// (dangling path, no documents.zip, oversized entry) — the row still
@@ -2358,9 +2359,10 @@ func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []s
 		warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
 	}
 	// A present-but-invalid reorder level imports the item with none
-	// (ut-docs#2084).
-	if it.ReorderLevelIssue != "" {
-		warnings = append(warnings, translateReorderLevelIssue(T, it.ReorderLevelIssue, it.ReorderLevelIssueRaw))
+	// (ut-docs#2084). A gift voucher never stores the field (the commit
+	// skips it), so its invalid cell is noise (ut-docs#5959).
+	if it.ReorderLevelIssue != "" && it.ItemType != catalogtypes.ItemTypeGiftVoucher {
+		warnings = append(warnings, translateReorderLevelIssue(T, locale, it.ReorderLevelIssue, it.ReorderLevelIssueRaw))
 	}
 	return warnings
 }
@@ -2437,12 +2439,17 @@ func translateNetQuantityIssue(T func(string) string, code, raw string) string {
 }
 
 // translateReorderLevelIssue is translateNetQuantityIssue's counterpart for
-// ReorderLevelIssue (ut-docs#2084): the existing import-issue word plus the
-// field's own label and the file's raw cell, so no new locale key is needed.
-func translateReorderLevelIssue(T func(string) string, code, raw string) string {
+// ReorderLevelIssue (ut-docs#2084, #5959): a dedicated message saying the
+// item was imported without the level, quoting the file's raw cell and the
+// allowed range (from catalogrules). Both bounds are printed in the
+// locale's digits but ungrouped: the message tells the operator to write
+// the number without thousands separators, so it must not show any.
+func translateReorderLevelIssue(T func(string) string, locale, code, raw string) string {
 	switch code {
 	case catimport.ReorderLevelIssueInvalid:
-		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.reorder_level"), raw)
+		return fmt.Sprintf(T("import.issue.reorder_level_invalid"), raw,
+			httpx.LocalizeDigits("0", locale),
+			httpx.LocalizeDigits(strconv.Itoa(catalogrules.MaxReorderLevel), locale))
 	default:
 		log.Printf("[import] unrecognised reorder level issue reason code %q", code)
 		return T("import.status.unknown_issue")

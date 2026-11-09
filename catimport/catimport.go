@@ -450,6 +450,13 @@ func stripTrailingParen(key string) string {
 	return strings.TrimSpace(key[:open])
 }
 
+// preferredSynonym names, per field, the one synonym that outranks the
+// field's other synonyms regardless of column order (ut-docs#5959): "reorder
+// point" always means the threshold, while "low stock" or "min stock" may
+// label something else, so a file carrying both reads the reorder point.
+// Fields absent here keep first-matching-column-wins.
+var preferredSynonym = map[string]string{"reorder_level": "reorder point"}
+
 func headerIndex(headers []string) map[string]int {
 	idx := map[string]int{}
 	keys := make([]string, len(headers))
@@ -467,6 +474,16 @@ func headerIndex(headers []string) map[string]int {
 	// to claim a field before a later, unrelated header's exact match
 	// got a turn, silently importing e.g. a cost price as the retail
 	// price or a takeaway tax rate as the dine-in rate.
+	// The preferred synonym goes first within each pass, so the B1 tiers
+	// (exact before paren-stripped) still hold.
+	for field, pref := range preferredSynonym {
+		for i, key := range keys {
+			if key == pref || strings.HasPrefix(key, pref+" [") {
+				idx[field] = i
+				break
+			}
+		}
+	}
 	for i, key := range keys {
 		for field, syns := range columnSynonyms {
 			if _, taken := idx[field]; taken {
@@ -482,6 +499,17 @@ func headerIndex(headers []string) map[string]int {
 	}
 	// Pass 2: paren-stripped fallback (ut-docs#587), only for fields no
 	// header claimed exactly above.
+	for field, pref := range preferredSynonym {
+		if _, taken := idx[field]; taken {
+			continue
+		}
+		for i, key := range stripped {
+			if key == pref {
+				idx[field] = i
+				break
+			}
+		}
+	}
 	for i, key := range stripped {
 		if key == "" { // e.g. a header that's nothing but "(...)"
 			continue
