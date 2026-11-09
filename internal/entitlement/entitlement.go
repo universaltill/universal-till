@@ -86,7 +86,34 @@ const (
 	// a manager who later chooses another currency is never overridden.
 	// Per-till like the rest of "entitlement.".
 	KeyShopCurrencyAdopted = "entitlement.shop_currency_adopted"
+	// KeyStoreClaimed: "true" | "false" — whether the cloud says the store
+	// has an owner (ADR-0060 amendment 2026-11, ut-docs#3532). Written only
+	// when the block carries a JSON boolean, so a block without it (an
+	// older cloud, an owner read that failed there) keeps the last value:
+	// nothing ever clears it. No row = never told. Per-till like the rest
+	// of "entitlement."; read through StoreClaimed. Wording only: NEVER a
+	// sale gate (package doc).
+	KeyStoreClaimed = "entitlement.claimed"
 )
+
+// StoreClaimed is the cloud's last word on whether the store has an owner
+// (KeyStoreClaimed). known is true only for the exact values "true" and
+// "false"; no row, any other value or a read error is known=false and the
+// caller falls back to its own inference. No Grace check — like
+// CatalogMaster, it stays what the cloud last said.
+func StoreClaimed(ctx context.Context, r Reader) (claimed, known bool) {
+	v, found, err := r.Get(ctx, KeyStoreClaimed)
+	if err != nil || !found {
+		return false, false
+	}
+	switch v {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
+}
 
 // ShopCurrencyCode normalises a raw shop-currency value: trimmed and
 // upper-cased, kept only when it is exactly three ASCII letters; anything
@@ -384,6 +411,22 @@ type Block struct {
 	// type or an out-of-range value caches "" and never rejects the block.
 	Currency         json.RawMessage `json:"currency"`
 	CurrencyDecimals json.RawMessage `json:"currency_decimals"`
+	// Claimed says whether the store has an owner (ADR-0060 amendment
+	// 2026-11, ut-docs#3532). Raw like Currency: only a JSON boolean is
+	// cached; absent, null or a wrong type writes nothing (the last value
+	// stands) and never rejects the block.
+	Claimed json.RawMessage `json:"claimed"`
+}
+
+// claimed decodes the raw claimed field. ok only for a JSON boolean: null,
+// a string, a number or an object give ok=false.
+func (b Block) claimed() (v bool, ok bool) {
+	// A pointer so JSON null reads as absent, not as false.
+	var p *bool
+	if len(b.Claimed) == 0 || json.Unmarshal(b.Claimed, &p) != nil || p == nil {
+		return false, false
+	}
+	return *p, true
 }
 
 // shopCurrency decodes the raw currency field: a JSON string normalised by
@@ -418,9 +461,11 @@ func (b Block) catalogMaster() string {
 	return s
 }
 
-// Values validates b and returns the nine settings rows to write (the four
-// ADR-0060 §4 rows, ADR-0117 §2's cloud_link tier/mode, ADR-0162 §1's
-// catalog_master and ADR-0163's shop currency and decimals), with
+// Values validates b and returns the settings rows to write: nine always
+// (the four ADR-0060 §4 rows, ADR-0117 §2's cloud_link tier/mode, ADR-0162
+// §1's catalog_master and ADR-0163's shop currency and decimals) plus a tenth,
+// KeyStoreClaimed, only when the block carries a boolean `claimed` — leaving
+// it out is how the last value is kept (SetMany writes just the map's keys).
 // last_confirmed_at = now (UTC). An unknown plan or status is an error — the
 // caller keeps its cache. A non-RFC3339 expires_at is stored empty.
 func (b Block) Values(now time.Time) (map[string]string, error) {
@@ -445,7 +490,7 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		}
 	}
 	tier := LinkTier(b.CloudLink)
-	return map[string]string{
+	m := map[string]string{
 		KeyPlan:               string(plan),
 		KeySubscriptionStatus: status,
 		KeyExpiresAt:          expires,
@@ -457,7 +502,11 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		// a currency must clear the cache, not keep a stale one.
 		KeyShopCurrency:         b.shopCurrency(),
 		KeyShopCurrencyDecimals: b.shopCurrencyDecimals(),
-	}, nil
+	}
+	if v, ok := b.claimed(); ok {
+		m[KeyStoreClaimed] = strconv.FormatBool(v)
+	}
+	return m, nil
 }
 
 // LinkTier normalises a raw ADR-0117 §2 cloud_link wire value. Only the
@@ -501,9 +550,13 @@ type Cached struct {
 	SubscriptionStatus string `json:"subscription_status"`
 	ExpiresAt          string `json:"expires_at"`
 	LastConfirmedAt    string `json:"last_confirmed_at"`
+	// Claimed is KeyStoreClaimed relayed (ut-docs#3532); nil (omitted) when
+	// this till was never told. A relay without it leaves the receiver's
+	// own value alone.
+	Claimed *bool `json:"claimed,omitempty"`
 }
 
-// ReadCached reads the four settings rows. ok is false when the cache was
+// ReadCached reads the four settings rows, plus KeyStoreClaimed when known. ok is false when the cache was
 // never confirmed by the cloud (no last_confirmed_at) or is unreadable —
 // nothing worth relaying.
 func ReadCached(ctx context.Context, r Reader) (c Cached, ok bool) {
@@ -523,11 +576,15 @@ func ReadCached(ctx context.Context, r Reader) (c Cached, ok bool) {
 			return Cached{}, false
 		}
 	}
+	// Best-effort: an unknown or unreadable claimed never fails the relay.
+	if v, known := StoreClaimed(ctx, r); known {
+		c.Claimed = &v
+	}
 	return c, true
 }
 
 // RelayValues validates a relayed cache and returns the four settings rows
-// to write, verbatim (normalised to UTC RFC3339). Same fail-closed rules as
+// (plus KeyStoreClaimed when relayed) to write, verbatim (normalised to UTC RFC3339). Same fail-closed rules as
 // Block.Values: an unknown plan or status, or a missing/unparsable
 // confirmation time, is an error and the caller keeps its own cache; an
 // unparsable expires_at is display-only and stored empty.
@@ -548,10 +605,14 @@ func (c Cached) RelayValues() (map[string]string, error) {
 	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(c.ExpiresAt)); err == nil {
 		expires = t.UTC().Format(time.RFC3339)
 	}
-	return map[string]string{
+	m := map[string]string{
 		KeyPlan:               string(plan),
 		KeySubscriptionStatus: status,
 		KeyExpiresAt:          expires,
 		KeyLastConfirmedAt:    confirmed.UTC().Format(time.RFC3339),
-	}, nil
+	}
+	if c.Claimed != nil {
+		m[KeyStoreClaimed] = strconv.FormatBool(*c.Claimed)
+	}
+	return m, nil
 }

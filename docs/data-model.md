@@ -675,6 +675,29 @@ erDiagram
 - `POSRepo.EraseCustomer` writes the suppression hashes and turns the customer's import links into tombstones in its own transaction; a later import skips that person and counts `erased_on_till`. A customer erased with neither an email, a phone nor an import link leaves nothing to match on.
 - The directive (`import_customers`: `job_id`, `chunk_index`, `sealed`) is main-till only; the seal is HPKE to the directive key with info `universaltill/import-customers/v1` and AAD store, directive id, type, job id and chunk index (`directivekey.CustomersAAD`). No customer value is logged or audited: audit rows and the result carry ids, counts and field names.
 
+## Store claimed signal from the cloud (ut-docs#3532, ADR-0060 amendment 2026-11)
+
+The entitlement block (ADR-0060 §3; a 402 `plan_required` body's block too)
+may carry `claimed`, a JSON boolean: `true` when the store has an owner. Only
+the boolean crosses; never the owner's identity. The till uses it only to word
+a rejected credential ("pair this till again" vs "register as a new store"),
+never as a sale gate or a modal.
+
+- **Cache (settings, per-till `entitlement.` family).** `entitlement.claimed`
+  = `true` | `false`, written by `entitlement.Block.Values` **only** when the
+  block carries a JSON boolean. Absent, `null` or a wrong type writes nothing
+  and never rejects the block, so the last value stands; nothing clears it. No
+  row means "never told". Read through `entitlement.StoreClaimed`
+  (`known` only for exactly `true`/`false`).
+- **Reader.** `pages.storeHasOwner` returns the cached value when known (it
+  overrides the plan inference both ways); otherwise it falls back to the older
+  inference from `entitlement.plan` / `subscription_status`, so an older cloud
+  changes nothing.
+- **Replicas.** `entitlement.Cached` relays `claimed` on the vouch answer
+  (`omitempty`; omitted when the main till was never told). The replica
+  writes it only when relayed and only under the existing
+  newer-confirmation-wins rule; an older replica ignores the field.
+
 ## Shop currency from the cloud (ut-docs#4539, ADR-0163 amendment 2026-10-16)
 
 A store born on my. has a currency the cloud set. The `POST /v1/stores/sync`
