@@ -1353,6 +1353,9 @@ type ExportRow struct {
 	// ItemType (ut-docs#4214) mirrors items.item_type — "standard" or
 	// "gift_voucher" — so export → import round-trips it.
 	ItemType string `json:"item_type"`
+	// ReorderLevel is items.reorder_level (0 = unset), additive to the
+	// export.requested payload (ut-docs#2084).
+	ReorderLevel int `json:"reorder_level"`
 }
 
 // ExportRows reads the whole catalog for export, active items first.
@@ -1371,7 +1374,8 @@ SELECT i.name, COALESCE(i.sku, ''),
        COALESCE((SELECT SUM(v.quantity) FROM inventory v WHERE v.item_id = i.id), 0),
        i.is_active,
        t.rate_basis_points, t.takeaway_rate_basis_points,
-       i.net_quantity_value, i.net_quantity_unit, i.age_restricted, i.item_type
+       i.net_quantity_value, i.net_quantity_unit, i.age_restricted, i.item_type,
+       i.reorder_level
 FROM items i LEFT JOIN categories c ON c.id = i.category_id
              LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 ORDER BY i.is_active DESC, i.name`)
@@ -1386,7 +1390,7 @@ ORDER BY i.is_active DESC, i.name`)
 		var nqUnit sql.NullString
 		if err := rows.Scan(&e.Name, &e.SKU, &e.Barcode, &e.PriceMinor, &e.Category,
 			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive, &rate, &takeaway,
-			&nqValue, &nqUnit, &e.AgeRestricted, &e.ItemType); err != nil {
+			&nqValue, &nqUnit, &e.AgeRestricted, &e.ItemType, &e.ReorderLevel); err != nil {
 			return nil, err
 		}
 		if nqValue.Valid {
@@ -3365,14 +3369,27 @@ func (r *CatalogRepo) ItemReorderLevel(ctx context.Context, itemID string) (int,
 	return level, nil
 }
 
-// SetItemReorderLevel records the stock quantity below which this item
-// counts as low (universaltill/ut-docs#2065).
-func (r *CatalogRepo) SetItemReorderLevel(ctx context.Context, itemID string, level int) error {
+// setItemReorderLevelExec is the one UPDATE behind SetItemReorderLevel and
+// SetItemReorderLevelTx.
+func setItemReorderLevelExec(ctx context.Context, ex execer, itemID string, level int) error {
 	if itemID == "" {
 		return errors.New("id required")
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE items SET reorder_level = ?, updated_at = datetime('now') WHERE id = ?`, level, itemID)
+	_, err := ex.ExecContext(ctx, `UPDATE items SET reorder_level = ?, updated_at = datetime('now') WHERE id = ?`, level, itemID)
 	return err
+}
+
+// SetItemReorderLevel records the stock quantity below which this item
+// counts as low (universaltill/ut-docs#2065).
+func (r *CatalogRepo) SetItemReorderLevel(ctx context.Context, itemID string, level int) error {
+	return setItemReorderLevelExec(ctx, r.db, itemID, level)
+}
+
+// SetItemReorderLevelTx is SetItemReorderLevel inside the caller's
+// transaction, so a catalogue import sets it atomically with CreateItemTx
+// (ut-docs#2084).
+func (r *CatalogRepo) SetItemReorderLevelTx(ctx context.Context, tx *sql.Tx, itemID string, level int) error {
+	return setItemReorderLevelExec(ctx, tx, itemID, level)
 }
 
 func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput) error {

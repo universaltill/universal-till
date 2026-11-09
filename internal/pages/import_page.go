@@ -1263,6 +1263,21 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					failed++
 					continue
 				}
+				// ut-docs#2084: the file's reorder level is an item column, so
+				// it is written in this same transaction and a failure fails
+				// the row exactly like CreateItemTx (never a half-made item).
+				// Not carried by ItemInput: updateItemExec would then reset it
+				// on every item edit.
+				if it.HasReorderLevel && it.ItemType != catalogtypes.ItemTypeGiftVoucher {
+					if err := repo.SetItemReorderLevelTx(r.Context(), tx, itemID, it.ReorderLevel); err != nil {
+						_ = tx.Rollback()
+						log.Printf("[import] set reorder level for %q: %v", it.Name, err)
+						rows[i].Status = T("import.status.item_failed")
+						rows[i].Failed = true
+						failed++
+						continue
+					}
+				}
 				// stockWarning/stockRecorded are decided now (inside the
 				// transaction) but only turned into row status / a published
 				// event once tx.Commit() below actually lands them — same
@@ -1971,7 +1986,8 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// unit is CHECK-constrained by migration 060), so no csvSafe either.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
 		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
-		"Net quantity", "Net quantity unit", "Age restricted", "Item type"})
+		"Net quantity", "Net quantity unit", "Age restricted", "Item type",
+		"Reorder level"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -1990,11 +2006,17 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 		if e.NetQuantityValue != nil && e.NetQuantityUnit != nil {
 			nqValue, nqUnit = strconv.FormatInt(*e.NetQuantityValue, 10), *e.NetQuantityUnit
 		}
+		// "Reorder level" (ut-docs#2084): blank when 0 (= unset).
+		reorder := ""
+		if e.ReorderLevel > 0 {
+			reorder = strconv.Itoa(e.ReorderLevel)
+		}
 		_ = cw.Write([]string{
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
 			tax, takeaway, nqValue, nqUnit, yn(e.AgeRestricted), exportItemType(e.ItemType),
+			reorder,
 		})
 	}
 	cw.Flush()
@@ -2335,6 +2357,11 @@ func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []s
 	if it.NetQuantityIssue != "" {
 		warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
 	}
+	// A present-but-invalid reorder level imports the item with none
+	// (ut-docs#2084).
+	if it.ReorderLevelIssue != "" {
+		warnings = append(warnings, translateReorderLevelIssue(T, it.ReorderLevelIssue, it.ReorderLevelIssueRaw))
+	}
 	return warnings
 }
 
@@ -2405,6 +2432,19 @@ func translateNetQuantityIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.net_quantity"), raw)
 	default:
 		log.Printf("[import] unrecognised net quantity issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateReorderLevelIssue is translateNetQuantityIssue's counterpart for
+// ReorderLevelIssue (ut-docs#2084): the existing import-issue word plus the
+// field's own label and the file's raw cell, so no new locale key is needed.
+func translateReorderLevelIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.ReorderLevelIssueInvalid:
+		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.reorder_level"), raw)
+	default:
+		log.Printf("[import] unrecognised reorder level issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }
