@@ -129,13 +129,20 @@ func TestImport_InvalidReorderLevelWarnsButStillImports(t *testing.T) {
 	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if !strings.Contains(rec.Body.String(), "Reorder level: 2.5") {
+	const want = "Imported without a reorder level: “2.5” could not be read as a whole number from 0 to 1,000,000 (write it without thousands separators)."
+	if !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("preview should warn with the refused value, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "issue — Reorder level") {
+		t.Errorf("preview still uses the old wording: %s", rec.Body.String())
 	}
 
 	resp := commitReorderCSV(t, dp, csv)
-	if !strings.Contains(resp, "Reorder level: 2.5") {
+	if !strings.Contains(resp, want) {
 		t.Errorf("commit should warn with the refused value, got: %s", resp)
+	}
+	if strings.Contains(resp, "issue — Reorder level") {
+		t.Errorf("commit still uses the old wording: %s", resp)
 	}
 	if !strings.Contains(resp, `class="row-warn"`) {
 		t.Errorf("row should carry the warned treatment, got: %s", resp)
@@ -198,5 +205,58 @@ func TestCatalogExport_ReorderLevelSurvivesExportWipeReimport(t *testing.T) {
 	}
 	if got := reorderLevelOf(t, dp, "RT-2"); got != 0 {
 		t.Errorf("no-level item = %d, want 0", got)
+	}
+}
+
+// ut-docs#5959 (L5): vouchers never store a reorder level, so an invalid
+// cell on one is noise — no warning in the preview or on commit.
+func TestImport_GiftVoucherInvalidReorderLevelNoWarning(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+	csv := "Name,SKU,Price,Item type,Reorder level\nVoucher,RL-GVB,,gift_voucher,abc\nPlain,RL-PLB,1.00,,abc\n"
+	const warn = "Imported without a reorder level: “abc”"
+
+	body, ct := multipartCSV(t, csv, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	for name, out := range map[string]string{"preview": rec.Body.String(), "commit": commitReorderCSV(t, dp, csv)} {
+		if n := strings.Count(out, warn); n != 1 {
+			t.Errorf("%s: want exactly 1 reorder warning (plain row only), got %d: %s", name, n, out)
+		}
+		if n := strings.Count(out, `class="row-warn"`); n != 1 {
+			t.Errorf("%s: want exactly 1 warned row, got %d: %s", name, n, out)
+		}
+	}
+}
+
+// ut-docs#5959 (L4): a failed reorder-level write fails only its own row,
+// rolls its item back, and leaves the rest of the file imported.
+func TestImport_ReorderLevelWriteFailureFailsRowOnly(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	if _, err := dp.Db.Exec(`CREATE TRIGGER rl_fail BEFORE UPDATE OF reorder_level ON items
+		WHEN NEW.sku = 'RL-FAIL'
+		BEGIN SELECT RAISE(ABORT, 'simulated reorder failure'); END;`); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	resp := commitReorderCSV(t, dp, "Name,SKU,Price,Reorder level\nOk,RL-OK,1.00,7\nBroken,RL-FAIL,1.00,5\n")
+	if !strings.Contains(resp, "item could not be created") {
+		t.Errorf("failed row should say the item could not be created, got: %s", resp)
+	}
+	if !strings.Contains(resp, `class="muted"`) {
+		t.Errorf("failed row should render as muted, got: %s", resp)
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'RL-FAIL'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("RL-FAIL rows = %d (err %v), want 0 (rolled back)", n, err)
+	}
+	if got := reorderLevelOf(t, dp, "RL-OK"); got != 7 {
+		t.Errorf("sibling RL-OK reorder_level = %d, want 7", got)
 	}
 }

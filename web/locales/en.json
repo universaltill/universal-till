@@ -981,6 +981,7 @@
   "import.issue.name_invalid": "The name is missing or not valid.",
   "import.issue.net_quantity_invalid": "The net quantity is not valid (a whole number above 0 with g, ml or ea).",
   "import.issue.price_invalid": "The price is missing or out of range.",
+  "import.issue.reorder_level_invalid": "Imported without a reorder level: “%s” could not be read as a whole number from 0 to %s (write it without thousands separators).",
   "import.issue.row_not_object": "This row isn't a valid item.",
   "import.issue.row_not_single_object": "This row holds more than one item.",
   "import.issue.sku_duplicate": "This SKU is on more than one row.",
