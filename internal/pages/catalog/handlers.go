@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/catimport/barcode"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	tillimport "github.com/universaltill/universal-till/internal/catimport"
@@ -736,7 +737,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			// Upper bound is a sanity ceiling, same rationale as item-cost's
 			// 1_000_000 above (universaltill/ut-docs#276): nothing stops an
 			// absurd value otherwise, and it's not a real limit on shop stock.
-			if err != nil || n < 0 || n > 1_000_000 {
+			if err != nil || n < 0 || n > catalogrules.MaxReorderLevel {
 				http.Error(w, "invalid reorder level", http.StatusBadRequest)
 				return
 			}
