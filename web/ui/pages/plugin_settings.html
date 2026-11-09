@@ -95,12 +95,109 @@
       f.hidden = f.getAttribute('data-show-when-in').split(',').indexOf(v) < 0;
     });
   }
+  // ADR-0121 S5 (ut-docs#4160): an options_ask dropdown asks its plugin for
+  // the list through its own htmx fragment. No eval, no inline handlers.
+  var T = { optionsFailed: "{{ T "plugins.settings.options_failed" }}", retry: "{{ T "plugins.settings.options_retry" }}" };
+  var retryKey = null;
+  function visible(el) { return !el.closest('[hidden]'); }
+  function fire(el) { if (window.htmx) window.htmx.trigger(el, 'ps-reask'); }
+  function reask(form, target) {
+    var name = (target && target.name) || '';
+    if (name.indexOf('setting_') !== 0) return;
+    var key = name.slice(8);
+    form.querySelectorAll('[data-ps-ask]').forEach(function (el) {
+      if (el.contains(target) || !visible(el)) return;
+      if ((el.getAttribute('data-ps-ask-on') || '').split(',').indexOf(key) >= 0) fire(el);
+    });
+  }
   function onEdit(ev) {
     var form = ev.target && ev.target.closest && ev.target.closest('#ps-form');
-    if (form) apply(form);
+    if (!form) return;
+    apply(form);
+    // change only (blur for a text box), never per keystroke.
+    if (ev.type === 'change') reask(form, ev.target);
   }
   document.addEventListener('change', onEdit);
   document.addEventListener('input', onEdit);
+  function wrapperOf(ev) {
+    var e = ev.detail && ev.detail.elt;
+    return e && e.hasAttribute && e.hasAttribute('data-ps-ask') ? e : null;
+  }
+  function selectOf(w) { return w.querySelector('select'); }
+  function failed(w, status) {
+    if (status === 401) { window.location.href = '/login'; return; }
+    var msg = document.getElementById('ps-opts-msg-' + w.getAttribute('data-ps-ask'));
+    if (!msg) return;
+    msg.textContent = '';
+    var span = document.createElement('span');
+    span.textContent = T.optionsFailed;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn secondary';
+    btn.setAttribute('data-ps-ask-retry', w.getAttribute('data-ps-ask'));
+    btn.textContent = T.retry;
+    msg.appendChild(span);
+    msg.appendChild(document.createTextNode(' '));
+    msg.appendChild(btn);
+  }
+  document.addEventListener('htmx:beforeRequest', function (ev) {
+    var w = wrapperOf(ev), sel = w && selectOf(w);
+    if (!sel) return;
+    w.__psPick = sel.value;
+    sel.setAttribute('aria-busy', 'true');
+  });
+  document.addEventListener('htmx:afterRequest', function (ev) {
+    var w = wrapperOf(ev), sel = w && selectOf(w);
+    if (sel) sel.removeAttribute('aria-busy');
+  });
+  // The operator's pick wins: if the dropdown changed while the ask was in
+  // flight, drop this answer and ask again with the new pick.
+  document.addEventListener('htmx:beforeSwap', function (ev) {
+    var w = wrapperOf(ev), sel = w && selectOf(w);
+    if (!sel || w.__psPick === undefined || sel.value === w.__psPick) return;
+    ev.detail.shouldSwap = false;
+    setTimeout(function () { fire(w); }, 0);
+  });
+  document.addEventListener('htmx:responseError', function (ev) {
+    var w = wrapperOf(ev);
+    if (w) failed(w, ev.detail.xhr && ev.detail.xhr.status);
+  });
+  ['htmx:sendError', 'htmx:timeout'].forEach(function (name) {
+    document.addEventListener(name, function (ev) { var w = wrapperOf(ev); if (w) failed(w, 0); });
+  });
+  document.addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest && ev.target.closest('[data-ps-ask-retry]');
+    if (!b) return;
+    retryKey = b.getAttribute('data-ps-ask-retry');
+    var w = document.querySelector('[data-ps-ask="' + retryKey + '"]');
+    if (w) fire(w);
+  });
+  // After a retry swap removed the button that had focus, focus moves to the
+  // dropdown; nothing else ever moves focus.
+  document.addEventListener('htmx:afterSettle', function (ev) {
+    var w = wrapperOf(ev);
+    if (!w || retryKey === null || w.getAttribute('data-ps-ask') !== retryKey) return;
+    retryKey = null;
+    var a = document.activeElement;
+    var sel = selectOf(w);
+    if (sel && (!a || a === document.body || !document.contains(a))) sel.focus();
+  });
+  // A visible asked field asks once when it first appears: at page load, and
+  // after a swap that brought a fresh form (a save, a refused save). htmx.min.js
+  // is deferred and fires its first htmx:load from a timer, so the first scan
+  // waits one timer tick; askOnce keeps the two paths from asking twice.
+  function askOnce(el) {
+    if (el.__psAsked || !visible(el)) return;
+    el.__psAsked = true;
+    fire(el);
+  }
+  function scan(root) { root.querySelectorAll('[data-ps-ask]').forEach(askOnce); }
+  document.addEventListener('htmx:load', function (ev) {
+    var e = ev.detail && ev.detail.elt;
+    if (e && e.querySelectorAll) scan(e);
+  });
+  function first() { setTimeout(function () { scan(document); }, 0); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', first); else first();
 })();
 </script>
 
@@ -152,8 +249,7 @@
     {{ if .IsSet }}<label style="display:flex; gap:.4rem; align-items:center"><input type="checkbox" name="clear_setting_{{ .Key }}" value="1"> {{ T "plugins.settings.secret_remove" }}</label>{{ end }}
     {{ if .Unreadable }}<p class="muted" data-testid="ps-secret-unreadable" style="margin-block:.25rem 0">{{ T "plugins.settings.secret_unreadable" }}</p>{{ end }}
     {{ else if .Choice }}
-    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
-    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select name="setting_{{ .Key }}"{{ if .Required }} required{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}>{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
+    {{ template "plugin_settings_choice" . }}
     {{ else if .Typed }}
     <fieldset class="ps-takeaway-fieldset" style="margin-block-end:.75rem">
       <legend>{{ T "plugins.settings.takeaway.title" }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</legend>
@@ -202,3 +298,23 @@
     </div>
 </form>
 {{ end }}
+
+{{/* A choice. options_ask (ADR-0121 S5, ut-docs#4160): the wrapper asks the
+     plugin through an htmx fragment (hx-trigger "ps-reask", fired by the
+     page script on load and when a field it depends on changes) and swaps
+     its own inner HTML; the message line sits outside it so its live region
+     exists before the text does. */}}
+{{ define "plugin_settings_choice" }}{{ if .Ask }}<div class="ps-ask" data-ps-ask="{{ .Key }}" data-ps-ask-on="{{ .AskOn }}" hx-post="/api/plugins/{{ .PluginID }}/settings/{{ .Key }}/options{{ if .PerTill }}?scope=register{{ end }}" hx-trigger="ps-reask" hx-target="this" hx-swap="innerHTML" hx-sync="this:replace"{{ if .Error }} hx-vals='{"ps_ask_invalid":"1"}'{{ end }}>{{ template "plugin_settings_choice_inner" . }}</div>
+    <div class="ps-ask-msg" id="ps-opts-msg-{{ .Key }}" role="status"></div>{{ else }}{{ template "plugin_settings_choice_inner" . }}{{ end }}{{ end }}
+
+{{ define "plugin_settings_choice_inner" }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select{{ if .Ask }} id="ps-f-{{ .Key }}"{{ end }} name="setting_{{ .Key }}"{{ if .Required }} required{{ end }}{{ if .Ask }}{{ if or .Error .Invalid }} aria-invalid="true"{{ end }} aria-describedby="ps-opts-msg-{{ .Key }}{{ if or .Error .Invalid }} ps-err-{{ .Key }}{{ end }}"{{ else if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}>{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}{{ if .Asked }} dir="auto"{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
+    {{ if .Ask }}<span class="htmx-indicator ps-ask-loading">{{ T "plugins.settings.options_loading" }}</span>{{ end }}
+{{ end }}
+
+{{ define "plugin_settings_ask_msg" }}{{ if eq .AskMsg "failed" }}<span>{{ T "plugins.settings.options_failed" }}</span> <button type="button" class="btn secondary" data-ps-ask-retry="{{ .Key }}">{{ T "plugins.settings.options_retry" }}</button>{{ else if eq .AskMsg "saved_missing" }}<span>{{ T "plugins.settings.options_saved_missing" }}</span>{{ else if eq .AskMsg "empty" }}<span>{{ T "plugins.settings.options_empty" }}</span>{{ end }}{{ end }}
+
+{{/* The answer to one ask: the wrapper's new inner HTML, plus the message
+     line swapped out of band. */}}
+{{ define "plugin_settings_ask_fragment" }}{{ template "plugin_settings_choice_inner" . }}<div class="ps-ask-msg" id="ps-opts-msg-{{ .Key }}" role="status" hx-swap-oob="innerHTML">{{ template "plugin_settings_ask_msg" . }}</div>{{ end }}

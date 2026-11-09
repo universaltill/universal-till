@@ -214,6 +214,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/plugins/{id}/enable":                   true,
 	"POST /api/plugins/{id}/rollback":                 true,
 	"POST /api/plugins/{id}/settings":                 true,
+	"POST /api/plugins/{id}/settings/{key}/options":   true,
 	"POST /api/plugins/{id}/uninstall":                true,
 	"POST /api/plugins/{id}/update":                   true,
 	// Shop type: saving it runs builtinlayouts.Sync, which installs/activates

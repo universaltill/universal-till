@@ -570,33 +570,12 @@ func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	// ADR-0153 "Who is asking" (ut-docs#2838): the operator, from the
 	// session, for action_propose — never from the payload.
 	ctx = withAgentOperator(ctx)
-	actx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	type result struct {
-		raw []byte
-		ok  bool
-		err error
+	raw, ok, err := boundedAskPlugin(ctx, d, entry.PluginID, event, payload, timeout)
+	switch {
+	case err != nil:
+		return nil, vctx, err
+	case !ok:
+		return nil, vctx, errPluginNoAnswer
 	}
-	done := make(chan result, 1)
-	go func() {
-		defer logging.RecoverAndLog("pages.pluginViewAsk")
-		// Sent by a deferred call so a panicking handler still answers at
-		// once (it runs before RecoverAndLog recovers).
-		res := result{err: errors.New("plugin ask panicked")}
-		defer func() { done <- res }()
-		raw, ok, err := plugins.SharedBus(d.Db).AskPlugin(actx, entry.PluginID, event, payload)
-		res = result{raw, ok, err}
-	}()
-	select {
-	case res := <-done:
-		switch {
-		case res.err != nil:
-			return nil, vctx, res.err
-		case !res.ok:
-			return nil, vctx, errPluginNoAnswer
-		}
-		return res.raw, vctx, nil
-	case <-actx.Done():
-		return nil, vctx, fmt.Errorf("%s: %w", event, actx.Err())
-	}
+	return raw, vctx, nil
 }

@@ -14,6 +14,7 @@ func TestPageEventsHaveDataClasses(t *testing.T) {
 	for _, ev := range []string{
 		pluginViewAskEvent,
 		pluginActionAskEvent,
+		settingsOptionsAskEvent,
 		identifyEvent,
 		identifyConfirmedEvent,
 		agentActionResultEvent,

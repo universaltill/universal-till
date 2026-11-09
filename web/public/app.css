@@ -7671,3 +7671,14 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
+
+/* ---------- Plugin settings: asked options (ADR-0121 S5, ut-docs#4160) ---------- */
+.ps-ask select { inline-size: 100%; max-inline-size: 100%; min-inline-size: 0; min-block-size: 46px; }
+.ps-ask-msg { font-size: .9rem; text-align: start; overflow-wrap: anywhere; }
+.ps-ask-msg:not(:empty) { margin-block-start: .35rem; margin-block-end: .5rem; }
+.ps-ask-msg .btn { display: block; margin-block-start: .4rem; min-block-size: 46px; }
+/* The loading line appears only if the answer takes longer than 400 ms, so a
+   cache hit never flashes it. */
+.ps-ask-loading { opacity: 0; font-size: .85rem; color: var(--muted); }
+.htmx-request .ps-ask-loading { animation: ps-ask-appear 0s linear .4s forwards; }
+@keyframes ps-ask-appear { to { opacity: 1; } }

@@ -47,9 +47,11 @@ var eventDataClasses = map[string][]string{
 	"catalog.identify":           {data.DataClassCatalog},
 	"catalog.identify.confirmed": {data.DataClassCatalog},
 	// the operator's own request and page parameters
-	"ui.view.ask":           {},
-	"ui.action.ask":         {},
-	"plugin.button.pressed": {},
+	"ui.view.ask":   {},
+	"ui.action.ask": {},
+	// the plugin's own non-secret settings (ADR-0121 S5, ut-docs#4160)
+	"ui.settings.options.ask": {},
+	"plugin.button.pressed":   {},
 	// the outcome of the agent's own proposal
 	"agent.action.result": {},
 }

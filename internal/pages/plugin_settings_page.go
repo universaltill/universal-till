@@ -74,6 +74,7 @@ type choiceOptionView struct {
 	Value, Label string
 	Selected     bool
 	Unknown      bool // a stored value outside the options (show_when then hides nothing)
+	Asked        bool // supplied by the plugin (options_ask): its label is plain text, direction auto
 }
 
 // settingsFormManifest returns the plugin's installed manifest for its
@@ -99,6 +100,8 @@ type settingForm struct {
 	ShowKey string             // show_when.key; "" = always shown
 	ShowIn  string             // show_when.in, comma-joined (values carry no comma, validated)
 	Hidden  bool               // show_when not met by the stored values
+	Ask     bool               // options_ask: the plugin supplies the entries (ADR-0121 S5)
+	AskOn   string             // settings whose change re-asks (depends_on + show_when.key), comma-joined
 	order   int                // manifest declaration index; undeclared keys sort last
 }
 
@@ -133,18 +136,11 @@ func buildSettingForm(m *plugins.Manifest, key, value string, stored map[string]
 	}
 	if decl.Type == plugins.SettingTypeChoice {
 		f.Choice = true
-		switch {
-		case value == "":
-			// Unset: say so, rather than letting the browser preselect
-			// option 1 and a sibling's save silently write it.
-			f.Options = append(f.Options, choiceOptionView{Value: "", Label: httpx.T(locale, "plugins.settings.secret_empty"), Selected: true})
-		case !decl.ChoiceAllows(value):
-			// An older free-text value stays selectable as itself.
-			f.Options = append(f.Options, choiceOptionView{Value: value, Label: value, Selected: true, Unknown: true})
+		f.Ask = decl.OptionsAsk
+		if f.Ask {
+			f.AskOn = askOnKeys(decl)
 		}
-		for _, o := range decl.Options {
-			f.Options = append(f.Options, choiceOptionView{Value: o.Value, Label: httpx.T(locale, o.Label), Selected: o.Value == value})
-		}
+		f.Options = mergeChoiceOptions(decl, value, nil, locale)
 	}
 	if w := decl.ShowWhen; w != nil {
 		f.ShowKey = w.Key
@@ -429,6 +425,11 @@ type pluginSettingView struct {
 	Placeholder string // translated
 	Currency    string // money: the shop currency's code
 	Error       string // translated field error; "" = none
+	// Asked options (ADR-0121 S5, ut-docs#4160).
+	PluginID  string
+	AskFailed bool   // the plugin could not be asked / answered badly (fragment only)
+	AskMsg    string // failed|saved_missing|empty|"" — the line under the dropdown (fragment only)
+	Invalid   bool   // the save refused this field: the fragment keeps aria-invalid
 }
 
 // settingsFormState carries a refused save back into the form it re-renders
@@ -484,12 +485,12 @@ func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo,
 	for _, row := range rows {
 		v := unwrapSettingValue(row.ValueJSON)
 		decl := manifest.SettingDecl(row.Key)
-		sv := pluginSettingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key, v)}
+		sv := pluginSettingView{PluginID: pluginID, Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key, v)}
 		formValue := v
 		if decl != nil && decl.Type == plugins.SettingTypeChoice {
 			// A re-rendered choice keeps the submitted option; a value
 			// outside the options (a tampered form) shows the stored one.
-			if sub, ok := submitted(row.Key); ok && (decl.ChoiceAllows(strings.TrimSpace(sub)) || strings.TrimSpace(sub) == strings.TrimSpace(v)) {
+			if sub, ok := submitted(row.Key); ok && (decl.ChoiceAllows(strings.TrimSpace(sub)) || strings.TrimSpace(sub) == strings.TrimSpace(v) || (decl.OptionsAsk && plugins.AskedChoiceValueOK(strings.TrimSpace(sub)))) {
 				formValue = strings.TrimSpace(sub)
 			}
 		}
@@ -686,7 +687,9 @@ func validatePluginSettings(ctx context.Context, catalogRepo *data.CatalogRepo, 
 				st.errs[key] = requiredError()
 				continue
 			}
-			if !decl.ChoiceAllows(val) && val != strings.TrimSpace(unwrapSettingValue(row.ValueJSON)) {
+			// options_ask (ADR-0121 S5): the plugin supplies the entries, so
+			// any value a plugin may answer with is storable.
+			if !decl.ChoiceAllows(val) && val != strings.TrimSpace(unwrapSettingValue(row.ValueJSON)) && !(decl.OptionsAsk && plugins.AskedChoiceValueOK(val)) {
 				st.errs[key] = &fieldError{key: "plugins.settings.error.choice"}
 				continue
 			}
@@ -845,6 +848,8 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, nil))(w, r)
 	})
 
+	registerSettingsOptions(mux, d, repo)
+
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
@@ -917,6 +922,10 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		if changedKeys == nil {
 			changedKeys = []string{}
+		}
+		if len(changedKeys) > 0 {
+			// A new API key or provider changes what the plugin lists.
+			sharedSettingsOptionsCache.dropPlugin(pluginID)
 		}
 		// Keys (never values) whose stored value changed, for the audit row:
 		// a setting-bound grant moves with its setting (ut-docs#2899), so

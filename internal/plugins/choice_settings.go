@@ -3,6 +3,8 @@ package plugins
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // SettingTypeChoice (ut-docs#2832): the setting holds one of its manifest's
@@ -20,6 +22,23 @@ const (
 	maxSettingOptionValue = 64
 	maxSettingI18nKey     = 128
 )
+
+// Bounds on a plugin-supplied option (ui.settings.options.ask, ADR-0121 S5).
+const (
+	MaxAskedOptions          = maxSettingOptions
+	MaxAskedOptionValueBytes = maxSettingOptionValue
+	MaxAskedOptionLabelBytes = 128
+)
+
+// AskedChoiceValueOK reports whether v may be answered by a plugin for, and
+// saved into, an options_ask choice (ADR-0121 S5): 1..64 bytes, valid UTF-8,
+// no comma, no control character, and equal to its own TrimSpace (save trims).
+func AskedChoiceValueOK(v string) bool {
+	if v == "" || len(v) > MaxAskedOptionValueBytes || !utf8.ValidString(v) || strings.Contains(v, ",") || v != strings.TrimSpace(v) {
+		return false
+	}
+	return !strings.ContainsFunc(v, unicode.IsControl)
+}
 
 // SettingDecl returns the manifest's declaration of key, or nil when the
 // manifest (nil-safe) does not declare it.
