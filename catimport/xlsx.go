@@ -469,6 +469,7 @@ func ParseXLSXMapped(r io.ReaderAt, size int64, m Mapping, currencyDecimals int,
 				item.Stock, item.HasStock = qty, true
 			}
 		}
+		applyTrackStock(&item, get(rec, "track_stock"))
 		applyReorderLevel(&item, getNum(rowNo, rec, "reorder_level"), get(rec, "reorder_alert"))
 		if raw := get(rec, "tax"); raw != "" {
 			if bp, err := ParseTaxRateBP(raw); err == nil {
