@@ -786,15 +786,7 @@ func ParseMapped(r io.Reader, m Mapping, currencyDecimals int, enabledSymbologyI
 				item.Stock, item.HasStock = qty, true
 			}
 		}
-		// ut-docs#1843: same optional-column shape, but note it is parsed
-		// with parseYesNo and not isTruthy — isTruthy answers "is this
-		// yes?", which maps an unrecognised value and an explicit "No" onto
-		// the identical false, and here those two must stay distinguishable.
-		if raw := get(rec, "track_stock"); raw != "" {
-			if b, ok := parseYesNo(raw); ok {
-				item.TracksStock, item.HasTracksStock = b, true
-			}
-		}
+		applyTrackStock(&item, get(rec, "track_stock"))
 		applyReorderLevel(&item, get(rec, "reorder_level"), get(rec, "reorder_alert"))
 		// Tax columns are optional too, but — unlike stock — a present cell
 		// that doesn't parse is reported (TaxIssue), not dropped silently:
@@ -1064,6 +1056,21 @@ func parseNetQuantity(rawValue, rawUnit string) (value *int64, unit *string, ok 
 		return nil, nil, false
 	}
 	return &n, &u, true
+}
+
+// applyTrackStock is the track_stock row step the CSV and XLSX parsers
+// share (ut-docs#5957: XLSX once skipped it, silently dropping a workbook's
+// "Track inventory?" answer). ut-docs#1843: parsed with parseYesNo, not
+// isTruthy — isTruthy maps an unrecognised value and an explicit "No" onto
+// the same false, and here those two must stay distinguishable. A blank or
+// unrecognised cell leaves HasTracksStock false, so nothing is inferred.
+func applyTrackStock(item *ImportItem, raw string) {
+	if raw == "" {
+		return
+	}
+	if b, ok := parseYesNo(raw); ok {
+		item.TracksStock, item.HasTracksStock = b, true
+	}
 }
 
 // parseReorderLevel reads a reorder-level cell (ut-docs#2084): a whole
