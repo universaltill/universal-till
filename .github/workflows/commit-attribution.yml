@@ -21,6 +21,12 @@
 # real GitHub account than the name next to it — that check now lives in
 # scripts/ci/guard-commit-attribution.sh (testable, see the _test.sh
 # alongside it), not inline here.
+#
+# ut-docs#5943 added a second, independent check: no commit in the PR may
+# carry the reviewer skill's placeholder subject "WIP: pre-review snapshot"
+# (it reached main in every repo because the squash step kept the message).
+# Lives in guard-wip-commits.sh next to the attribution guard, with its own
+# _test.sh; only the PR range is scanned, so old commits on main don't trip it.
 
 name: commit-attribution
 
@@ -49,3 +55,16 @@ jobs:
         run: |
           set -euo pipefail
           git log --format='%H|%ae|%an' "$BASE_SHA..$HEAD_SHA" | bash scripts/ci/guard-commit-attribution.sh
+
+      - name: Run guard-wip-commits regression tests
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/guard-wip-commits_test.sh
+
+      - name: 'Reject the reviewer skill''s "WIP: pre-review snapshot" placeholder commit'
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git log --format='%h %s' "$BASE_SHA..$HEAD_SHA" | bash scripts/ci/guard-wip-commits.sh
