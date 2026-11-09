@@ -132,8 +132,10 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 // so the UI doesn't read it as the operator's own login expiring.
 //
 // hasOwner says whether the till's store has an owner (the cloud-auth chip's
-// storeHasOwner): an unclaimed till whose credential the cloud rejects is told
-// to register as a new store, not to pair (ut-docs#5187).
+// storeHasOwner, which prefers the cloud's own `claimed` signal and only
+// infers from the cached plan when the till was never told, ut-docs#3532): an
+// unclaimed till whose credential the cloud rejects is told to register as a
+// new store, not to pair (ut-docs#5187).
 func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 	var apiErr *marketplace.APIError
 	if !errors.As(err, &apiErr) || apiErr == nil {

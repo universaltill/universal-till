@@ -116,14 +116,21 @@ func TestStoreHasOwner(t *testing.T) {
 	for _, c := range []struct {
 		name         string
 		plan, status string
+		claimed      string // entitlement.claimed row; "" = never told (ut-docs#3532)
 		want         bool
 	}{
-		{"no cached entitlement", "", "", false},
-		{"free plan, no subscription", "local", "none", false},
-		{"paid plan, active", "pro", "active", true},
-		{"paid plan, lapsed", "shop", "lapsed", true},
-		{"local plan, lapsed subscription", "local", "lapsed", true},
-		{"unknown plan", "gold", "none", false},
+		{"no cached entitlement", "", "", "", false},
+		{"free plan, no subscription", "local", "none", "", false},
+		{"paid plan, active", "pro", "active", "", true},
+		{"paid plan, lapsed", "shop", "lapsed", "", true},
+		{"local plan, lapsed subscription", "local", "lapsed", "", true},
+		{"unknown plan", "gold", "none", "", false},
+		{"claimed, free plan", "local", "none", "true", true},
+		{"claimed, nothing else cached", "", "", "true", true},
+		{"unclaimed signal beats a paid plan", "pro", "active", "false", false},
+		{"unclaimed signal, free plan", "local", "none", "false", false},
+		{"garbage signal falls back: free", "local", "none", "garbage", false},
+		{"garbage signal falls back: paid", "pro", "active", "garbage", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
@@ -132,6 +139,9 @@ func TestStoreHasOwner(t *testing.T) {
 			}
 			if c.status != "" {
 				_ = d.Settings.Set(t.Context(), entitlement.KeySubscriptionStatus, c.status)
+			}
+			if c.claimed != "" {
+				_ = d.Settings.Set(t.Context(), entitlement.KeyStoreClaimed, c.claimed)
 			}
 			if got := storeHasOwner(t.Context(), d.Settings); got != c.want {
 				t.Fatalf("storeHasOwner = %t, want %t", got, c.want)
@@ -201,5 +211,22 @@ func TestCloudAuthChip_RestoredHiddenOnReplica(t *testing.T) {
 	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
 	if strings.Contains(body, "restored") {
 		t.Fatalf("the restored chip must not show on a replica: %s", body)
+	}
+}
+
+// ut-docs#3532: a claimed store that never subscribed (local/none) is told
+// to pair again, not to register a duplicate store.
+func TestCloudAuthChip_ClaimedFreeStoreSaysRepair(t *testing.T) {
+	mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{Show: true, Code: cloudsync.AuthCodeTokenRetired})
+	for k, v := range map[string]string{
+		entitlement.KeyPlan: "local", entitlement.KeySubscriptionStatus: "none", entitlement.KeyStoreClaimed: "true",
+	} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
+	if !strings.Contains(body, `data-cloud-auth="repair"`) {
+		t.Fatalf("claimed free store must see the repair chip, got %s", body)
 	}
 }

@@ -287,6 +287,17 @@ func TestSyncCloudDevice_RelaysMainTillsEntitlement(t *testing.T) {
 	if strings.Contains(strings.ToLower(rec.Body.String()), "token") {
 		t.Fatalf("answer carries a credential: %s", rec.Body.String())
 	}
+	// ut-docs#3532: never told whether the store is claimed -> no key at all.
+	if strings.Contains(rec.Body.String(), `"claimed"`) {
+		t.Fatalf("claimed relayed although never cached: %s", rec.Body.String())
+	}
+	if err := dp.Settings.Set(t.Context(), "entitlement.claimed", "true"); err != nil {
+		t.Fatal(err)
+	}
+	rec = postCloudDevice(t, mux, "token-abc", "till-replica")
+	if !strings.Contains(rec.Body.String(), `"claimed":true`) {
+		t.Fatalf("cached claimed=true not relayed: %s", rec.Body.String())
+	}
 }
 
 // ADR-0116 D3 (ut-docs#2769): the cloud's one-time redeem code for the
