@@ -1,10 +1,10 @@
 # Review: "Balance on <date>" row on a reprinted gift-voucher slip (ut-docs#6044)
 
 - **Card:** ut-docs#6044 (item 8 split from ut-docs#5744; follow-up of #5740 "Print slip").
-- **Branch:** `feat/6044-voucher-slip-balance`
+- **Branch:** `feat/6044-voucher-slip-balance-v2` (`feat/6044-voucher-slip-balance` / universal-till#2485 carries a commit with the wrong author and was closed)
 - **Pipeline:** BA, Architect (session model), UX gate, Dev (Sonnet) plus a fix round (Sonnet), Tester (separate agent), Reviewer (Opus 5.5, fresh context, separate agent). Unattended cloud cycle, lane `lane:cloud-54`.
 
-Pre-flight: web/help topic: updated (`web/help/en/vouchers.md`, the slip contents and the new note; no screenshot shows this page or the note, so no docs-shots run). `reference/`: n/a (no reference page describes the reprinted slip). README: n/a. en.json/en.meta: updated. Added `receipt.vouchers.balance_on_label` (review legal, max_length 22, the placeholder may be reordered) and `vouchers.print_slip.balance_unknown_note`. Removed `vouchers.print_slip.original_value_note`, which had no other users and no baseline entry. English only (ADR-0160). ADR: n/a (follows the main-till judgement of ut-docs#4416 and the top-up slip balance of ut-docs#5793). Plan/price, platform claim, plugin taxonomy: n/a. Follow-ups: deferred → ut-docs Backlog card (L1–L3 below). Review record: this file.
+Pre-flight: web/help topic: updated (`web/help/en/vouchers.md`, the slip contents and the new note; `make docs-shots` re-run after CI's docs-shots guard flagged the topic and surface hashes; no vouchers PNG changed, and the byte-noise PNGs of unrelated topics were restored from `main`; `manifest.json` refreshed). `reference/`: n/a (no reference page describes the reprinted slip). README: n/a. en.json/en.meta: updated. Added `receipt.vouchers.balance_on_label` (review legal, max_length 22, the placeholder may be reordered) and `vouchers.print_slip.balance_unknown_note`. Removed `vouchers.print_slip.original_value_note`, which had no other users and no baseline entry. English only (ADR-0160). ADR: n/a (follows the main-till judgement of ut-docs#4416 and the top-up slip balance of ut-docs#5793). Plan/price, platform claim, plugin taxonomy: n/a. Follow-ups: deferred → ut-docs Backlog card (L1–L3 below). Review record: this file.
 
 ## What shipped
 
