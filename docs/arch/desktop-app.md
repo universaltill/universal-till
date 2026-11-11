@@ -21,18 +21,30 @@ portable `.tar.gz` (unzip + double-click a `.command`).
   it uses the per-user dir `~/Library/Application Support/UniversalTill`
   (`internal/paths`), so it survives app replacement.
 
-## Signing & Gatekeeper (why it opens without a paid cert)
+## Signing & Gatekeeper
 
-The bundle is **ad-hoc codesigned** (`codesign --sign -`). This is required:
-Apple Silicon kills unsigned arm64 binaries on launch. Ad-hoc signing is *not*
-Apple notarization, so a **downloaded** copy is quarantined and Gatekeeper
-still asks the user to confirm the first launch. The `.dmg`
-(`packaging/macos/make-dmg.sh`) makes that easy:
+Release builds (`release.yml` `macos-app`) are **Developer ID signed and
+notarized** when the signing/notary secrets are configured
+(`MACOS_SIGN_IDENTITY`, the `MACOS_CERT_*` pair and the `MACOS_NOTARY_*`
+credentials). `packaging/macos/make-dmg.sh` then codesigns the `.dmg`,
+notarizes and staples it, and the `.dmg` is attached to the already-published
+release afterwards. A notarized download opens after macOS's one-time
+"downloaded from the internet" confirmation.
 
-- drag `Universal Till.app` to the `Applications` symlink, then either
-- **right-click the app → Open** once (the standard unsigned-app path), or
-- double-click **“Open Universal Till.command”** in the DMG, which clears the
+Builds without those secrets (forks, local builds) are **ad-hoc codesigned**
+(`codesign --sign -`) — required, as Apple Silicon kills unsigned arm64
+binaries on launch. Ad-hoc signing is *not* notarization, so a **downloaded**
+copy is quarantined and Gatekeeper blocks the first launch. On macOS 15+
+right-click → Open no longer overrides Gatekeeper (ut-docs#3803); the user
+either:
+
+- opens System Settings → Privacy & Security and chooses **Open Anyway**
+  (a one-time step), or
+- double-clicks **“Open Universal Till.command”** in the DMG, which clears the
   quarantine attribute and launches it.
+
+The portable `tar.gz` (`run-unitill.command`) is never signed and needs
+**Open Anyway** the same way.
 
 ### Hardened runtime and entitlements (ut-docs#5023)
 
