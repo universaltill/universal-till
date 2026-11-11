@@ -17,6 +17,13 @@
       body.selforder-shop { padding: 1rem; }
       .selforder-shop-header { display:flex; align-items:center; gap:1rem; margin-block-end:.75rem; }
       .selforder-cats { display:flex; flex-wrap:wrap; gap:.5rem; margin-block-end:1rem; }
+      /* ut-docs#2567: category picture on the chip, same rule as the sell
+         screen. Logical properties only; gap spaces the picture so RTL flips
+         it to the reading-start side. min-block-size = the kiosk touch floor,
+         uniform for the All chip, text-only and picture chips. */
+      .selforder-cats .cat-chip { display:inline-flex; align-items:center; gap:.4rem; min-block-size:2.75rem; }
+      .cat-chip-img { inline-size:1.5rem; block-size:1.5rem; object-fit:contain; flex:none; }
+      body.kiosk .cat-chip-img { inline-size:1.75rem; block-size:1.75rem; }
       .selforder-shop-main { display:grid; grid-template-columns:1fr 22rem; gap:1.25rem; align-items:start; }
       .selforder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
         gap:1rem; }
@@ -84,7 +91,7 @@
     <div class="selforder-cats" role="group" aria-label="{{ T "products.title" }}">
       <button type="button" class="cat-chip active" data-cat="">{{ T "selforder.all_categories" }}</button>
       {{ range .Categories }}
-      <button type="button" class="cat-chip" data-cat="{{ .ID }}">{{ .Name }}</button>
+      <button type="button" class="cat-chip" data-cat="{{ .ID }}">{{ if .ImageURL }}<img class="cat-chip-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}{{ .Name }}</button>
       {{ end }}
     </div>
     {{ end }}

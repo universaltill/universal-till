@@ -201,6 +201,21 @@ func kioskItemCode(sku string, barcodes, enabledIDs []string) string {
 	return code
 }
 
+// kioskCatChip is one category chip on the kiosk shop page (ut-docs#2567).
+// ImageURL is "" when the category has no picture (text-only chip).
+type kioskCatChip struct{ ID, Name, ImageURL string }
+
+// kioskCategoryChips maps catalog categories to chips. The picture comes
+// from ui.CategoryThumb, the sell screen's own rule (uploaded photo beats
+// built-in icon; a missing file or invalid path gives "" -> text-only).
+func kioskCategoryChips(nodes []data.CategoryNode) []kioskCatChip {
+	chips := make([]kioskCatChip, 0, len(nodes))
+	for _, c := range nodes {
+		chips = append(chips, kioskCatChip{ID: c.ID, Name: c.Name, ImageURL: ui.CategoryThumb(c.ImagePath, c.Icon)})
+	}
+	return chips
+}
+
 // registerSelfOrderShop wires the kiosk browse/search/cart flow (ADR-0020
 // Phase 3). Everything here is under /self-order or /api/self-order,
 // exempt from the auth middleware (anonymous customers) — see
@@ -214,7 +229,11 @@ func kioskItemCode(sku string, barcodes, enabledIDs []string) string {
 // drifting apart.
 func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /self-order/shop", func(w http.ResponseWriter, r *http.Request) {
-		cats, _ := data.NewCatalogRepo(d.Db).ReadLookup(r.Context(), "categories")
+		// ut-docs#2567: active categories in the sale screen's order, each
+		// with the same picture the sell screen shows (ui.CategoryThumb).
+		// A read error just drops the chips, as before.
+		nodes, _ := data.NewCatalogRepo(d.Db).ListActiveCategories(r.Context())
+		cats := kioskCategoryChips(nodes)
 		// idleResetURL (ut-docs#815 review finding, BLOCKER 2): the idle
 		// timer sends this page back to /self-order, which Reset()s the
 		// walk-up basket -- and used to drop the table a QR session bound
