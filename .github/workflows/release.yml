@@ -462,9 +462,13 @@ jobs:
   # a macOS runner for CGO/WKWebView + codesign/iconutil, so it's a separate
   # job. It never holds the release (ut-docs#2917): publish-release does not
   # need it, and the .dmg reaches the release only via macos-dmg-attach,
-  # after publish. It Developer-ID signs + notarizes when the signing secrets are
-  # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
-  # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
+  # after publish. It Developer-ID signs + notarizes; in
+  # universaltill/universal-till it refuses to build without the signing/notary
+  # secrets (ut-docs#6025, preflight step), so a release never ships an ad-hoc
+  # .dmg. Forks without secrets ad-hoc sign (Apple Silicon requires a
+  # signature; a downloaded ad-hoc app needs System Settings → Privacy &
+  # Security → Open Anyway, or the bundled "Open Universal Till.command",
+  # ut-docs#3803). See docs/arch/desktop-app.md.
   # A cancel because GitHub never gave it a runner is re-run automatically by
   # release-runner-retry.yml (ut-docs#5175); any other failure still needs
   # "Re-run failed jobs" by hand.
@@ -493,6 +497,27 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.prepare.outputs.tag }}
+      # ut-docs#6025: a release .dmg is Developer ID signed and notarized, or
+      # it is not built — the release page promises that (#6024). Fails in
+      # seconds, before the release wait and the ~15 min build, naming every
+      # missing secret (never a value). Forks (github.repository !=
+      # universaltill/universal-till) pass and build ad-hoc as before. Applies
+      # to tag pushes AND workflow_dispatch (both publish a real release).
+      # Failing here never holds the release: publish-release doesn't need
+      # macos-app (ut-docs#2917); macos-dmg-attach is just skipped.
+      - name: Refuse an unsigned or un-notarized release .dmg
+        env:
+          RELEASE_REPO: ${{ github.repository }}
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: bash scripts/ci/check-macos-release-secrets.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -511,7 +536,8 @@ jobs:
           exit 1
       # Import the Developer ID cert into a throwaway keychain when configured.
       # MACOS_CERT_P12 = base64 of the exported .p12; MACOS_CERT_PASSWORD its
-      # export password. No-ops (→ ad-hoc build) when the secret is absent.
+      # export password. The absent-cert path is reached only in forks;
+      # upstream it is refused by the preflight step (ut-docs#6025).
       # NB: the `secrets` context isn't allowed in `if:`, so the guard lives in
       # the script, not a step condition.
       - name: Import signing certificate
@@ -521,7 +547,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${MACOS_CERT_P12:-}" ]; then
-            echo "No signing certificate configured — ad-hoc build."
+            echo "No signing certificate configured — ad-hoc build (fork/local only; upstream releases are refused by the preflight step)."
             exit 0
           fi
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
@@ -566,7 +592,7 @@ jobs:
         run: bash scripts/ci/resolve-release-keys.sh
       - name: Build .app and .dmg
         env:
-          # Empty when the secrets aren't set → build scripts ad-hoc sign / skip notarize.
+          # Required upstream (preflight step, ut-docs#6025); empty only in forks → ad-hoc sign / skip notarize.
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           # App Store Connect API key, role Developer (ut-docs#2870) — preferred
           # by packaging/macos/notary-args.sh; the Apple ID trio is a fallback.
@@ -579,6 +605,10 @@ jobs:
           # Bound on `notarytool wait` (ut-docs#2917); the submission id is
           # written to this job's summary for `notarytool info <id>`.
           NOTARY_TIMEOUT: 45m
+          # ut-docs#6025: upstream, make-dmg.sh fails instead of producing an
+          # ad-hoc or signed-but-un-notarized .dmg (backs up the preflight if
+          # notary-args.sh ever disagrees with it). Empty in forks.
+          MACOS_REQUIRE_NOTARIZED: ${{ github.repository == 'universaltill/universal-till' && '1' || '' }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
@@ -1415,8 +1445,9 @@ jobs:
   # and folds its line into checksums.txt — internal/selfupdate's mac update
   # path (macapp_darwin.go) verifies the .dmg against it before mounting and
   # fails closed without it. Runs only when macos-app succeeded, so a timed
-  # out / rejected notarization attaches nothing (never an un-notarized .dmg
-  # when notary credentials exist). Needs publish-release, which needs
+  # out / rejected notarization attaches nothing (never an un-notarized .dmg:
+  # upstream, macos-app refuses to build without the signing/notary secrets,
+  # ut-docs#6025). Needs publish-release, which needs
   # checksums: the only other read-modify-write of checksums.txt is finished.
   macos-dmg-attach:
     needs: [prepare, macos-app, publish-release]

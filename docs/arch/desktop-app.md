@@ -23,15 +23,19 @@ portable `.tar.gz` (unzip + double-click a `.command`).
 
 ## Signing & Gatekeeper
 
-Release builds (`release.yml` `macos-app`) are **Developer ID signed and
-notarized** when the signing/notary secrets are configured
-(`MACOS_SIGN_IDENTITY`, the `MACOS_CERT_*` pair and the `MACOS_NOTARY_*`
-credentials). `packaging/macos/make-dmg.sh` then codesigns the `.dmg`,
+Release builds in `universaltill/universal-till` (`release.yml` `macos-app`)
+are always **Developer ID signed and notarized**. `macos-app` refuses to build
+(preflight step `scripts/ci/check-macos-release-secrets.sh`, ut-docs#6025) when
+any signing secret (`MACOS_SIGN_IDENTITY`, the `MACOS_CERT_*` pair), or a
+complete notary set (the API-key trio or the Apple-ID trio of `MACOS_NOTARY_*`),
+is missing. The job fails naming the missing secrets, the other platforms
+still publish, and no `.dmg` is attached. Fix the secret and re-run the failed
+jobs. `packaging/macos/make-dmg.sh` codesigns the `.dmg`,
 notarizes and staples it, and the `.dmg` is attached to the already-published
 release afterwards. A notarized download opens after macOS's one-time
 "downloaded from the internet" confirmation.
 
-Builds without those secrets (forks, local builds) are **ad-hoc codesigned**
+Builds without those secrets (forks and local builds only) are **ad-hoc codesigned**
 (`codesign --sign -`) — required, as Apple Silicon kills unsigned arm64
 binaries on launch. Ad-hoc signing is *not* notarization, so a **downloaded**
 copy is quarantined and Gatekeeper blocks the first launch. On macOS 15+
@@ -108,11 +112,14 @@ packaging/macos/make-dmg.sh   <version> dist/macos   # notarizes + staples the .
 (hardened runtime + secure timestamp, as notarization requires) and ad-hoc
 signs otherwise. `make-dmg.sh` notarizes + staples when the notary credentials
 are present. With neither, the current free ad-hoc behavior is unchanged.
+Setting `MACOS_REQUIRE_NOTARIZED=1` (release.yml does, upstream) makes
+`make-dmg.sh` fail instead of producing an ad-hoc or un-notarized `.dmg`.
 
 ### CI (release pipeline)
 
 The `macos-app` job in `.github/workflows/release.yml` signs + notarizes
-automatically once these **repo secrets** exist (absent → ad-hoc, as today):
+automatically once these **repo secrets** exist (absent → the job fails in its
+preflight step, ut-docs#6025; forks build ad-hoc):
 
 **Configured 2026-09-26 (ut-docs#2870).** Source of truth is the Key Vault
 `kv-unitill-dev` (`apple-devid-p12`, `apple-devid-p12-password`,
@@ -128,6 +135,9 @@ automatically once these **repo secrets** exist (absent → ad-hoc, as today):
 | `MACOS_NOTARY_KEY_ID` | its Key ID |
 | `MACOS_NOTARY_ISSUER_ID` | the Issuer ID |
 | `MACOS_NOTARY_TEAM_ID` | 10-char Team ID |
+
+`MACOS_NOTARY_TEAM_ID` alone does not count: a partial Apple-ID trio is ignored
+while the API key is complete.
 
 The API key is preferred (`packaging/macos/notary-args.sh`): scoped, revocable
 in App Store Connect, not a personal Apple ID password. It is written to a
