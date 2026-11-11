@@ -36,6 +36,10 @@ No blockers or majors. The reviewer confirmed: the Z refactor keeps the Z unchan
 - Real app driven in Chromium (Tester): en 1024x600 and 360 px, fa 1024 and 360 px, tr 360 px, print-failure path — section clearly separate from Run End of day, paper matches the Z layout, no page horizontal scroll, 51 px buttons, fa mirrors with Persian digits while the paper stays LTR.
 - Gates: gofmt clean, `go build ./...`, `go vet`, `go test ./internal/pages/... ./internal/data/... ./internal/print/...`, `golangci-lint` 0 issues, every guard in the CI build job (shellcheck not installed here; no shell script changed).
 
+## CI follow-up
+
+PR CI `test-heavy (internal/plugins)` failed `TestReservedPageRoutesCoverLiteralChildNamespaces`: the new literal child `/reports/eod/x-report` needs `/reports` in `reservedPageRoutePrefixes`, or a plugin page at `/reports/<x>` could shadow core's namespace. Fixed the way the shift X did for `/shifts` (ut-docs#5797): `/reports` added to the list and its doc comment. Reproduced red locally first, then green (`go test ./internal/plugins/ -run 'Reserved|PageRoute'`). No first-party plugin declares a `/reports` page.
+
 ## Not verified
 
 Real touch hardware, a real receipt printer (only the failure path driven), Pi/WebKit, the manager-PIN prompt in a real browser (handler-level tests only). Cosmetic: on a 360 px phone the paper font is ~8.6 px (legible); in fa the untranslated English print-failure message has its punctuation bidi-reordered until Weblate translates it.
