@@ -2894,7 +2894,7 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 // fall back a freshly imported, imageless item to a bundled generic
 // category icon rather than leaving it a blank tile; path is the caller's
 // already-resolved "/public/assets/..." value (see
-// catimport.PlaceholderIconPath) — this method does no icon selection of
+// catimport.IconMatcher.IconPath) — this method does no icon selection of
 // its own, only the existence-gated insert, same division of labor as the
 // rest of this package (catimport stays a pure, DB-free parser).
 //
