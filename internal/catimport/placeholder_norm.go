@@ -55,3 +55,9 @@ func stripArticle(w string) (string, bool) {
 	}
 	return w, false
 }
+
+// FoldForSearch is the picker search fold (ut-docs#6042): normalizeWord on
+// the whole string — separators are kept. web/public/icon-picker-filter.js
+// `fold` must return the same result for every input;
+// testdata/search_fold_parity.json pins both.
+func FoldForSearch(s string) string { return normalizeWord(s) }

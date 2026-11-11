@@ -880,7 +880,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
 			"MissingFilterKey":      missingKey,
-			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
+			"BuiltinIconGroups":     common.ShopPickerIconGroups(r.Context(), data.NewSettingsRepo(d.Db)),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 			"AICutout":              aiCutoutOffered(r),
