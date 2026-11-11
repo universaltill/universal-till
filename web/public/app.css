@@ -2682,10 +2682,14 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 /* Screen-reader-only text (aria-label is ignored on generic spans). */
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-/* Always-visible total-quantity badge next to the basket title (ut-docs#213). */
+/* Always-visible total-quantity badge next to the basket title (ut-docs#213).
+   --surface on --text, like the phone tile's in-basket badge (ut-docs#3241):
+   --accent-contrast on --accent is ~2.5-2.8:1 in amber, fresh and monarch;
+   this pair passes 4.5:1 in every theme (ut-docs#6050, pinned by
+   TestBasketCountBadgeContrast). */
 .basket-count { display: inline-flex; align-items: center; justify-content: center;
   min-width: 1.7em; padding: .08em .5em; margin-inline-start: .45rem;
-  border-radius: 999px; background: var(--accent); color: var(--accent-contrast, #fff);
+  border-radius: 999px; background: var(--text); color: var(--surface);
   font-size: .72em; font-weight: 700; font-variant-numeric: tabular-nums;
   vertical-align: middle; line-height: 1.4; }
 /* A DIV inside the item <td>, not a class on the <td> itself (ut-docs#391):
