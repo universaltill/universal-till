@@ -671,6 +671,8 @@
   "designer.categories.help": "Add, rename, recolour or deactivate the categories the strip above is built from — tap a category to edit it. To change the order, press and hold a category and drag it, or focus it and press Alt+↑ / Alt+↓. A category only appears on the sale screen once one of its items has a quick button.",
   "designer.category.deactivate_blocked_hint": "%d active item(s) still use this category — move or deactivate them in the catalog before deactivating it.",
   "designer.category.deactivate_confirm": "Deactivate “%s”? It disappears from the sale screen until you reactivate it here; its items stay in the catalog.",
+  "designer.category.edit_image": "Change picture or icon",
+  "designer.category.edit_image_for": "Change picture or icon for “%s”",
   "designer.code": "Code",
   "designer.empty": "No products yet.",
   "designer.error.recategorize_category": "That category isn't available any more. Choose another one.",
