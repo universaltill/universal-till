@@ -24,6 +24,8 @@
   {{ if not .locations }}
   <p class="muted">{{ T "locations.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="locations-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <div class="list-scroll">
   <table class="table" id="locations-table">
     <thead>
@@ -40,7 +42,7 @@
           data-record-destructive-action="/api/locations/{{ .ID }}/active"
           data-field-name="{{ .Name }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name">{{ .Name }}</span></button></td>
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="locations-row-edit-hint"><span class="record-row-name">{{ .Name }}</span></button></td>
         <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
       </tr>
       {{ end }}
