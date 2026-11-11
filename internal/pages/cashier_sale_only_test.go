@@ -45,6 +45,10 @@ var saleOnlyRoutes = []saleOnlyRoute{
 	{http.MethodGet, "/channel-orders", `channel-orders-intro`, []int{http.StatusOK}},
 	{http.MethodGet, "/channel-orders/some-order", "", []int{http.StatusNotFound}},
 	{http.MethodPost, "/api/inventory/receipt", "", []int{http.StatusBadRequest}},
+	// ut-docs#5852: the till stock-take, same gate; a manager's empty
+	// request reaches validation (400).
+	{http.MethodPost, "/api/inventory/stock-take", "", []int{http.StatusBadRequest}},
+	{http.MethodGet, "/ui/inventory/stock-take", "", []int{http.StatusBadRequest}},
 	// Review of this card: the same data/writes, left ungated.
 	{http.MethodGet, "/api/inventory/low-stock", "", []int{http.StatusOK}},
 	{http.MethodPost, "/api/settings/theme", "", []int{http.StatusOK, http.StatusNoContent, http.StatusSeeOther}},

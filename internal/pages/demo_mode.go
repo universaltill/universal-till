@@ -623,6 +623,8 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/designer/categories/{id}":            true,
 	"POST /api/designer/categories/{id}/active":     true,
 	"POST /api/inventory/receipt":                   true,
+	"POST /api/inventory/stock-take":                true,
+	"GET /ui/inventory/stock-take":                  true,
 	// Orders, kitchen display and routing (staff side, local).
 	"GET /api/orders/stream":               true,
 	"GET /kitchen-display/{station_id}":    true,

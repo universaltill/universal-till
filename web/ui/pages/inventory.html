@@ -26,6 +26,14 @@
          in the script block below. */}}
     {{ template "category_filter_popover" (dict "categories" .CategoryFilterOptions "controlID" "inventory-category-filter") }}
   </div>
+  {{/* ut-docs#5852: a stock-take is a main-till job (a replica's stock is
+         re-pulled from the main till, which would undo the count), so a
+         joined till shows a hint instead of the button. */}}
+  {{ if .IsReplica }}
+  <span class="muted" id="stocktake-replica-hint">{{ T "inventory.stocktake.replica_hint" }}</span>
+  {{ else }}
+  <button type="button" class="btn secondary" id="stocktake-start" data-default-location="{{ .StockTakeDefaultLocation }}" data-location-count="{{ with .Locations }}{{ len . }}{{ else }}0{{ end }}">{{ T "inventory.stocktake.start" }}</button>
+  {{ end }}
 </div>
 
 {{ if .SyncPrimary }}
@@ -39,6 +47,21 @@
   {{ end }}
 </div>
 {{ end }}
+
+{{/* ut-docs#5852: location picker (only offered with two or more active
+     locations), the load error and the result line of a stock-take. Inline
+     rows, never a dialog. */}}
+<div class="stocktake-picker" id="stocktake-picker" hidden>
+  <label>{{ T "inventory.stocktake.choose_location" }}
+    <select id="stocktake-location">
+      {{ range .Locations }}<option value="{{ .ID }}"{{ if eq .ID $.StockTakeDefaultLocation }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+    </select>
+  </label>
+  <button type="button" class="btn primary" id="stocktake-begin">{{ T "inventory.stocktake.begin" }}</button>
+  <button type="button" class="btn-link" id="stocktake-picker-cancel">{{ T "common.cancel" }}</button>
+</div>
+<div class="stocktake-load-error" id="stocktake-load-error" role="alert" hidden></div>
+<div class="stocktake-result" id="stocktake-result" role="status" hidden></div>
 
 <div class="catalog-layout">
   <div class="catalog-list">
@@ -74,7 +97,7 @@
       </table>
     </div>
 
-    <div class="card" style="margin-top:1rem">
+    <div class="card" id="low-stock-card" style="margin-top:1rem">
       <h2>{{ T "inventory.low_stock" }} <span id="low-stock-badge" class="tag" style="background:rgba(220,38,38,.12); color:var(--danger)">0</span></h2>
       <div id="low-stock-list" hx-get="/api/inventory/low-stock" hx-trigger="load, stock-updated from:body" hx-swap="innerHTML">
         {{ T "common.loading" }}
@@ -178,7 +201,42 @@
   // through a template-populated lookup object, same pattern as
   // bugreport_panel.html / settings.html's data-reset-btn handler, rather
   // than a hardcoded literal.
-  var T = { dialog_context: "{{ T "inventory.dialog_context" }}" };
+  var T = {
+    dialog_context: "{{ T "inventory.dialog_context" }}",
+    start: "{{ T "inventory.stocktake.start" }}",
+    loading: "{{ T "common.loading" }}",
+    load_failed: "{{ T "inventory.stocktake.load_failed" }}",
+    counted_n: "{{ T "inventory.stocktake.counted_n" }}",
+    none_counted: "{{ T "inventory.stocktake.none_counted" }}",
+    fix_rows: "{{ T "inventory.stocktake.fix_rows" }}",
+    too_many: "{{ T "inventory.stocktake.too_many" }}",
+    discard_confirm: "{{ T "inventory.stocktake.discard_confirm" }}",
+    leave_confirm: "{{ T "inventory.stocktake.leave_confirm" }}",
+    discard: "{{ T "inventory.stocktake.discard" }}",
+    leave: "{{ T "inventory.stocktake.leave" }}",
+    no_change: "{{ T "inventory.stocktake.no_change" }}",
+    applied: "{{ T "inventory.stocktake.applied" }}",
+    applying: "{{ T "inventory.stocktake.applying" }}",
+    apply: "{{ T "inventory.stocktake.apply" }}",
+    review_title: "{{ T "inventory.stocktake.review_title" }}",
+    col_item: "{{ T "basket.col.item" }}",
+    col_in_stock: "{{ T "inventory.stocktake.col_in_stock" }}",
+    col_counted: "{{ T "inventory.stocktake.col_counted" }}",
+    col_difference: "{{ T "inventory.stocktake.col_difference" }}",
+    note: "{{ T "inventory.stocktake.note" }}",
+    invalid_lines: "{{ T "inventory.stocktake.error.invalid_lines" }}",
+    save_failed: "{{ T "inventory.stocktake.error.save_failed" }}",
+    replica_use_main: "{{ T "inventory.stocktake.error.replica_use_main" }}",
+    forbidden: "{{ T "inventory.stocktake.error.forbidden" }}",
+    codes: {
+      not_countable: "{{ T "inventory.stocktake.error.code.not_countable" }}",
+      duplicate: "{{ T "inventory.stocktake.error.code.duplicate" }}",
+      target_invalid: "{{ T "inventory.stocktake.error.code.target_invalid" }}",
+      target_too_large: "{{ T "inventory.stocktake.error.code.target_too_large" }}",
+      too_many_decimals: "{{ T "inventory.stocktake.error.code.too_many_decimals" }}",
+      whole_number_required: "{{ T "inventory.stocktake.error.code.whole_number_required" }}"
+    }
+  };
 
   var items = JSON.parse(document.getElementById('inventory-items').textContent || '[]');
   var byLabel = {};
@@ -277,7 +335,7 @@
 
   document.addEventListener('click', function (ev) {
     var row = ev.target.closest('.stock-row');
-    if (!row) return;
+    if (!row || st.active) return;
     // ut-docs#2082 (independent review, F2): a variant-scoped row's
     // data-item is its PARENT item's id — this dialog has no variant_id
     // field at all, so tapping one would silently record a receipt/
@@ -352,7 +410,7 @@
   function applyStockFilter() {
     var q = search.value.toLowerCase();
     var total = 0, visible = 0;
-    document.querySelectorAll('#stock-table .stock-row').forEach(function (row) {
+    document.querySelectorAll('#stock-table .stock-row, #stocktake-table .stocktake-row').forEach(function (row) {
       total++;
       var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
       var textMatch = q === '' || hay.indexOf(q) !== -1;
@@ -370,6 +428,333 @@
   }
   search.addEventListener('input', applyStockFilter);
   document.getElementById('stock-levels-card').addEventListener('htmx:afterSwap', applyStockFilter);
+  // ---- ut-docs#5852: stock-take of one location -----------------------
+  // Counts live in st.counts (key -> number), keyed "item|variant", so the
+  // search/category filter only hides rows and never loses a typed count.
+  // Nothing here uses a <form> (the on-screen keyboard's Enter submits the
+  // enclosing form), a <dialog> or beforeunload (all would block the
+  // status bar); confirmations are an inline strip in the sticky bar.
+  var st = { active: false, mode: 'count', counts: {}, bad: {}, busy: false, pending: '', leaveHref: '', lines: [] };
+  var card = document.getElementById('stock-levels-card');
+  var startBtn = document.getElementById('stocktake-start');
+  var picker = document.getElementById('stocktake-picker');
+  var resultEl = document.getElementById('stocktake-result');
+  var loadErrEl = document.getElementById('stocktake-load-error');
+  var lowCard = document.getElementById('low-stock-card');
+  var decimalSep = document.body.dataset.numberDecimal || '.';
+  function byId(id) { return document.getElementById(id); }
+  function fmtNum(n) { return (Math.round(n * 1000) / 1000).toString().replace('.', decimalSep); }
+  function parseCount(text, row) {
+    var t = text.trim().replace(',', '.');
+    if (t === '') return { blank: true };
+    if (!/^\d+(\.\d{1,3})?$/.test(t)) return { bad: true };
+    return { value: Number(t) };
+  }
+  function countedKeys() { return Object.keys(st.counts); }
+  function setBusyStart(busy) {
+    if (!startBtn) return;
+    startBtn.disabled = busy;
+    startBtn.textContent = busy ? T.loading : T.start;
+  }
+  function showLoadError(msg) {
+    loadErrEl.textContent = msg;
+    loadErrEl.hidden = false;
+  }
+  function beginCount(locID) {
+    loadErrEl.hidden = true;
+    resultEl.hidden = true;
+    setBusyStart(true);
+    fetch('/ui/inventory/stock-take?location_id=' + encodeURIComponent(locID), { credentials: 'same-origin', headers: { 'HX-Request': 'true' } })
+      .then(function (res) {
+        return res.text().then(function (txt) { return { ok: res.ok, status: res.status, text: txt }; });
+      })
+      .then(function (r) {
+        setBusyStart(false);
+        if (!r.ok) { showLoadError(r.status === 409 ? T.replica_use_main : (r.status === 403 ? T.forbidden : T.load_failed)); return; }
+        picker.hidden = true;
+        st.active = true; st.mode = 'count'; st.counts = {}; st.bad = {}; st.pending = '';
+        card.dataset.stocktake = '1';
+        card.innerHTML = r.text;
+        startBtn.hidden = true;
+        lowCard.hidden = true;
+        var title = byId('stocktake-title');
+        if (title) title.focus();
+        applyStockFilter();
+        updateBar();
+        watchStatusBar();
+      })
+      .catch(function () { setBusyStart(false); showLoadError(T.load_failed); });
+  }
+  // The status bar is itself sticky at the bottom and stacks above the
+  // count bar: lift the count bar by its live height (it wraps at 360px
+  // and when a chip appears), or the Review/Apply buttons sit under it.
+  var sbRO = null;
+  function measureStatusBar() {
+    var sb = document.querySelector('.statusbar');
+    card.style.setProperty('--stocktake-sb-h', (sb ? sb.getBoundingClientRect().height : 0) + 'px');
+  }
+  function watchStatusBar() {
+    measureStatusBar();
+    var sb = document.querySelector('.statusbar');
+    if (sbRO || !sb || !window.ResizeObserver) return;
+    sbRO = new ResizeObserver(measureStatusBar);
+    sbRO.observe(sb);
+  }
+  function exitCount() {
+    st.active = false; st.counts = {}; st.bad = {}; st.pending = '';
+    delete card.dataset.stocktake;
+    if (startBtn) startBtn.hidden = false;
+    lowCard.hidden = false;
+    // The card's own stock-updated listener re-renders the normal table,
+    // and the low-stock list refetches on the same event.
+    document.body.dispatchEvent(new Event('stock-updated'));
+  }
+  // A background stock-updated (e.g. a sync) must not wipe typed counts.
+  card.addEventListener('htmx:beforeRequest', function (ev) {
+    if (st.active && ev.target === card) ev.preventDefault();
+  });
+
+  function setMsg(text) { var m = byId('stocktake-msg'); if (m) m.textContent = text; }
+  function updateBar() {
+    var reviewBtn = byId('stocktake-review-btn');
+    if (!reviewBtn) return;
+    var n = countedKeys().length, bads = Object.keys(st.bad).length;
+    var max = Number(byId('stocktake-root').dataset.maxLines) || 500;
+    byId('stocktake-badge').textContent = T.counted_n.replace('%d', n);
+    var msg = '';
+    if (st.mode === 'count') {
+      if (bads > 0) msg = T.fix_rows;
+      else if (n === 0) msg = T.none_counted;
+      else if (n > max) msg = T.too_many;
+      reviewBtn.disabled = msg !== '';
+    }
+    setMsg(st.mode === 'count' ? msg : '');
+  }
+  card.addEventListener('input', function (ev) {
+    var inp = ev.target.closest && ev.target.closest('.stocktake-input');
+    if (!inp) return;
+    var row = inp.closest('.stocktake-row'), key = row.dataset.key;
+    var p = parseCount(inp.value, row);
+    delete st.counts[key]; delete st.bad[key];
+    if (p.bad) st.bad[key] = true; else if (!p.blank) st.counts[key] = p.value;
+    inp.setAttribute('aria-invalid', p.bad ? 'true' : 'false');
+    row.querySelector('.stocktake-err').hidden = !p.bad;
+    updateBar();
+  });
+  card.addEventListener('keydown', function (ev) {
+    var inp = ev.target.closest && ev.target.closest('.stocktake-input');
+    if (!inp || ev.key !== 'Enter') return;
+    // Enter closes the pad / moves on; it never jumps to Review.
+    ev.preventDefault();
+    var row = inp.closest('.stocktake-row').nextElementSibling;
+    while (row && (row.hidden || !row.querySelector('.stocktake-input'))) row = row.nextElementSibling;
+    if (row) row.querySelector('.stocktake-input').focus();
+    else inp.blur();
+  });
+  // A tap on a row outside its input focuses the input (bigger target).
+  // Click, not pointerdown: the table must still pan by touch.
+  card.addEventListener('click', function (ev) {
+    var row = ev.target.closest && ev.target.closest('.stocktake-row');
+    if (!row || ev.target.closest('.stocktake-input')) return;
+    row.querySelector('.stocktake-input').focus();
+  });
+
+  function showConfirm(kind, text, goLabel) {
+    st.pending = kind;
+    byId('stocktake-confirm-text').textContent = text;
+    byId('stocktake-confirm-go').textContent = goLabel;
+    byId('stocktake-bar-main').hidden = true;
+    byId('stocktake-confirm').hidden = false;
+    byId('stocktake-keep').focus();
+  }
+  function hideConfirm() {
+    st.pending = '';
+    byId('stocktake-confirm').hidden = true;
+    byId('stocktake-bar-main').hidden = false;
+  }
+  function hasTyped() {
+    return countedKeys().length > 0 || Object.keys(st.bad).length > 0;
+  }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function collectLines() {
+    var out = [];
+    document.querySelectorAll('#stocktake-table .stocktake-row').forEach(function (row) {
+      var key = row.dataset.key;
+      if (!(key in st.counts)) return;
+      var parts = key.split('|');
+      out.push({ item_id: parts[0], variant_id: parts[1], target: st.counts[key],
+        name: row.dataset.name, stock: Number(row.dataset.stock) });
+    });
+    return out;
+  }
+  function renderReview(errLines) {
+    st.mode = 'review';
+    var lines = st.lines = collectLines();
+    var rev = byId('stocktake-review');
+    var prevNote = byId('stocktake-note') ? byId('stocktake-note').value : '';
+    rev.textContent = '';
+    var h3 = el('h3', '', T.review_title);
+    h3.tabIndex = -1; h3.id = 'stocktake-review-title';
+    rev.appendChild(h3);
+    var alertBox = el('div', 'stocktake-alert');
+    alertBox.id = 'stocktake-alert'; alertBox.setAttribute('role', 'alert'); alertBox.tabIndex = -1; alertBox.hidden = true;
+    rev.appendChild(alertBox);
+    var tbl = el('table', 'table stocktake-table');
+    var head = el('tr');
+    [T.col_item, T.col_in_stock, T.col_counted, T.col_difference].forEach(function (h, i) {
+      head.appendChild(el('th', i ? 'stocktake-num' : '', h));
+    });
+    tbl.appendChild(el('thead')).appendChild(head);
+    var tb = el('tbody');
+    var errByIdx = {};
+    (errLines || []).forEach(function (e) { errByIdx[e.index] = e.code; });
+    lines.forEach(function (l, i) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'catalog-name', l.name));
+      tr.appendChild(el('td', 'stocktake-num', fmtNum(l.stock)));
+      tr.appendChild(el('td', 'stocktake-num', fmtNum(l.target)));
+      var d = Math.round((l.target - l.stock) * 1000) / 1000;
+      var td = el('td', 'stocktake-num stocktake-diff');
+      if (d === 0) td.textContent = T.no_change;
+      else { var b = el('bdi', '', (d > 0 ? '+' : '-') + fmtNum(Math.abs(d))); td.appendChild(b); }
+      tr.appendChild(td);
+      tb.appendChild(tr);
+      if (errByIdx[i]) {
+        tr.classList.add('stocktake-row-bad');
+        var er = el('tr', 'stocktake-line-err');
+        var ec = el('td', '', '⚠ ' + (T.codes[errByIdx[i]] || T.invalid_lines));
+        ec.colSpan = 4;
+        er.appendChild(ec);
+        tb.appendChild(er);
+      }
+    });
+    tbl.appendChild(tb);
+    rev.appendChild(tbl);
+    var noteLbl = el('label', 'stocktake-note', T.note + ' ');
+    var note = el('input'); note.type = 'text'; note.id = 'stocktake-note'; note.maxLength = 200; note.value = prevNote;
+    note.setAttribute('autocomplete', 'off');
+    noteLbl.appendChild(note);
+    rev.appendChild(noteLbl);
+    byId('stocktake-count').hidden = true;
+    rev.hidden = false;
+    byId('stocktake-review-btn').hidden = true;
+    byId('stocktake-back').hidden = false;
+    byId('stocktake-apply').hidden = false;
+    byId('stocktake-badge').textContent = T.counted_n.replace('%d', lines.length);
+    setMsg('');
+    return alertBox;
+  }
+  function showAlert(msg) {
+    var a = byId('stocktake-alert');
+    if (!a) return;
+    a.textContent = msg; a.hidden = false; a.focus();
+  }
+  function backToCount() {
+    st.mode = 'count';
+    byId('stocktake-review').hidden = true;
+    byId('stocktake-count').hidden = false;
+    byId('stocktake-review-btn').hidden = false;
+    byId('stocktake-back').hidden = true;
+    byId('stocktake-apply').hidden = true;
+    updateBar();
+  }
+  function setApplyBusy(busy) {
+    st.busy = busy;
+    ['stocktake-apply', 'stocktake-back', 'stocktake-cancel'].forEach(function (id) { byId(id).disabled = busy; });
+    byId('stocktake-apply').textContent = busy ? T.applying : T.apply;
+  }
+  function applyCount() {
+    if (st.busy) return;
+    var root = byId('stocktake-root');
+    var body = {
+      location_id: root.dataset.location, started_at: root.dataset.startedAt,
+      note: byId('stocktake-note').value,
+      lines: st.lines.map(function (l) { return { item_id: l.item_id, variant_id: l.variant_id, target: l.target }; })
+    };
+    setApplyBusy(true);
+    fetch('/api/inventory/stock-take', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.json().catch(function () { return null; }).then(function (j) { return { status: res.status, json: j }; });
+    }).then(function (r) {
+      setApplyBusy(false);
+      if (r.status === 200 && r.json && r.json.data) {
+        var d = r.json.data;
+        var msg = T.applied, vals = [d.counted, d.changed, d.unchanged];
+        for (var i = 0; i < vals.length; i++) msg = msg.replace('%d', vals[i]);
+        exitCount();
+        resultEl.textContent = msg;
+        resultEl.hidden = false;
+        return;
+      }
+      var e = r.json && r.json.error && typeof r.json.error === 'object' ? r.json.error : null;
+      if (r.status === 400 && e && e.lines && e.lines.length) {
+        renderReview(e.lines);
+        showAlert(e.message || T.invalid_lines);
+      } else if (r.status === 400 && e && e.message) {
+        showAlert(e.message);
+      } else if (r.status === 409) {
+        showAlert((e && e.message) || T.replica_use_main);
+      } else if (r.status === 403) {
+        showAlert(T.forbidden);
+      } else {
+        showAlert(T.save_failed);
+      }
+    }).catch(function () { setApplyBusy(false); showAlert(T.save_failed); });
+  }
+
+  if (startBtn) {
+    startBtn.addEventListener('click', function () {
+      if (Number(startBtn.dataset.locationCount) > 1) {
+        picker.hidden = false;
+        byId('stocktake-location').focus();
+      } else {
+        beginCount(startBtn.dataset.defaultLocation || (byId('stocktake-location').value));
+      }
+    });
+    byId('stocktake-begin').addEventListener('click', function () { beginCount(byId('stocktake-location').value); });
+    byId('stocktake-picker-cancel').addEventListener('click', function () { picker.hidden = true; });
+  }
+  // Delegated: these buttons are re-created with every count screen.
+  card.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('button');
+    if (!b || !st.active) return;
+    switch (b.id) {
+      case 'stocktake-cancel':
+        if (hasTyped()) showConfirm('cancel', T.discard_confirm, T.discard); else exitCount();
+        break;
+      case 'stocktake-keep': hideConfirm(); break;
+      case 'stocktake-confirm-go':
+        if (st.pending === 'leave') { var href = st.leaveHref; st.active = false; window.location.assign(href); }
+        else exitCount();
+        break;
+      case 'stocktake-review-btn': if (!b.disabled) renderReview(null); byId('stocktake-review-title').focus(); break;
+      case 'stocktake-back': backToCount(); break;
+      case 'stocktake-apply': applyCount(); break;
+    }
+  });
+  // Leaving by a link with counts typed: ask inline. The status chip, lock
+  // and exit-to-OS are never intercepted.
+  document.addEventListener('click', function (ev) {
+    if (!st.active || !hasTyped()) return;
+    var a = ev.target.closest && ev.target.closest('a[href]');
+    if (!a || a.closest('#stock-levels-card, .statusbar, .session-lock, #osk, #bugreport-panel')) return;
+    if (a.target === '_blank' || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+    var href = a.getAttribute('href') || '';
+    if (href === '' || href.charAt(0) === '#' || /^javascript:/i.test(href)) return;
+    ev.preventDefault(); ev.stopPropagation();
+    st.leaveHref = a.href;
+    showConfirm('leave', T.leave_confirm, T.leave);
+  }, true);
+
   // ut-docs#2119 review (F1): a plain DOMContentLoaded listener never
   // fires when this page is reached via the /items rail's htmx fragment
   // swap (hx-target="#items-panel") — that event already fired long

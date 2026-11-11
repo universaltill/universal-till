@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // stockRow is one rendered row of the /inventory stock-levels table.
@@ -158,18 +159,26 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		pickerJSON, _ := json.Marshal(picker)
 
+		// ut-docs#5852: the stock-take starts at the till's register location
+		// (else Main). Counting is a main-till job: a replica's stock is
+		// re-pulled from the main till, so it hides the button.
+		stockTakeLoc, _ := pos.ResolveStockLocationID(ctx, d.Db, tillRegisterIDBestEffort(ctx, d))
+		syncPrimary := d.SyncPrimaryURL(ctx)
+
 		data := map[string]any{
-			"title":                 httpx.T(httpx.RequestLocale(r), "page.title.inventory"),
-			"theme":                 d.ResolvedTheme(r),
-			"menuItems":             d.MenuSnapshot(),
-			"StockLevels":           levels,
-			"RunningOut":            runningOut,
-			"Locations":             locations,
-			"ItemsJSON":             template.JS(pickerJSON),
-			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
-			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
-			"CategoryFilterOptions": categoryFilterOptions,
-			"CategoryNodesJSON":     inventoryCategoryNodesJSON(categoryFilterOptions),
+			"StockTakeDefaultLocation": stockTakeLoc,
+			"IsReplica":                syncPrimary != "",
+			"title":                    httpx.T(httpx.RequestLocale(r), "page.title.inventory"),
+			"theme":                    d.ResolvedTheme(r),
+			"menuItems":                d.MenuSnapshot(),
+			"StockLevels":              levels,
+			"RunningOut":               runningOut,
+			"Locations":                locations,
+			"ItemsJSON":                template.JS(pickerJSON),
+			"SyncPrimary":              syncPrimary,
+			"SyncUnreachable":          d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
+			"CategoryFilterOptions":    categoryFilterOptions,
+			"CategoryNodesJSON":        inventoryCategoryNodesJSON(categoryFilterOptions),
 		}
 		// ut-docs#1950: /inventory is one of the /items rail's five section
 		// destinations — an htmx request from that panel (NOT a stale history

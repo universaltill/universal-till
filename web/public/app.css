@@ -7671,3 +7671,44 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
+
+/* ut-docs#5852: till stock-take on /inventory. Count mode swaps the stock
+   card's contents in place (no dialog, so the status bar stays reachable).
+   Logical properties only. */
+.stocktake-picker { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; margin-block-end: .8rem; }
+/* display:flex beats the UA [hidden] rule: without this the picker shows on load. */
+.stocktake-picker[hidden] { display: none; }
+.stocktake-picker label { display: flex; flex-direction: column; gap: .2rem; }
+.stocktake-picker .btn-link { background: none; border: 0; color: inherit; text-decoration: underline;
+  cursor: pointer; min-block-size: 44px; padding-inline: .6rem; font: inherit; }
+.stocktake-load-error, .stocktake-alert { color: var(--danger); border: 1px solid var(--danger);
+  border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .6rem; }
+.stocktake-result { border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .8rem; font-weight: 600; }
+.stocktake-hint { margin-block: 0 .5rem; }
+.stocktake-table .stocktake-num { text-align: end; white-space: nowrap; }
+.stocktake-table .stocktake-diff { unicode-bidi: isolate; direction: ltr; }
+.stocktake-input { inline-size: 7rem; min-block-size: 44px; text-align: end; }
+.stocktake-input[aria-invalid="true"] { outline: 2px solid var(--danger); }
+.stocktake-err { font-size: .85rem; color: var(--danger); }
+.stocktake-line-err td, .stocktake-row-bad td { color: var(--danger); }
+.stocktake-note { display: flex; flex-direction: column; gap: .2rem; margin-block-start: .8rem; }
+.stocktake-bar { position: sticky; inset-block-end: var(--stocktake-sb-h, 0px); background: var(--surface); border-block-start: 1px solid var(--border);
+  padding-block: .5rem; margin-block-start: .8rem; z-index: 5; }
+.stocktake-bar-main, .stocktake-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.stocktake-bar .btn { min-block-size: 44px; }
+.stocktake-bar-main[hidden], .stocktake-confirm[hidden] { display: none; }
+.stocktake-primary { margin-inline-start: auto; }
+.stocktake-secondary { margin-inline-start: auto; }
+.stocktake-secondary:not([hidden]) + .stocktake-primary { margin-inline-start: 0; }
+.stocktake-msg { flex: 1 1 10rem; }
+body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17rem); }
+@media (max-width: 480px) {
+  .stocktake-table .stocktake-sku { display: none; }
+  .stocktake-table th, .stocktake-table td { padding-inline: .3rem; }
+  .stocktake-table .stocktake-num { white-space: normal; }
+  .stocktake-table .catalog-name { overflow-wrap: anywhere; }
+  /* Four uppercase headers (DIFFERENCE, COUNTED) out-measure a 360px card:
+     let them wrap so the review table stays inside it. */
+  .stocktake-table th { letter-spacing: 0; overflow-wrap: anywhere; }
+  .stocktake-input { inline-size: 4.5rem; }
+}

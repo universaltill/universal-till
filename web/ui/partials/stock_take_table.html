@@ -1,0 +1,55 @@
+{{/* ut-docs#5852: the stock-take count screen, swapped into #stock-levels-card
+     by GET /ui/inventory/stock-take. Deliberately NOT a <form> and NOT a
+     dialog: the on-screen keyboard's Enter submits the enclosing form, and a
+     modal dialog makes the status bar inert. All behaviour (counts map,
+     review, apply) lives in inventory.html's page script, which finds this
+     markup through the ids/data-* attributes below. */}}
+<h2 id="stocktake-title" tabindex="-1">{{ printf (T "inventory.stocktake.title") .LocationName }}
+  <span class="chip">{{ T "inventory.stocktake.mode_chip" }}</span></h2>
+<div id="stocktake-root" data-started-at="{{ .StartedAt }}" data-location="{{ .LocationID }}" data-max-lines="{{ .MaxLines }}">
+  {{ if .Rows }}
+  <div id="stocktake-count">
+    <p class="muted stocktake-hint">{{ T "inventory.stocktake.blank_hint" }}</p>
+    <table class="table stocktake-table" id="stocktake-table">
+      <thead><tr>
+        <th>{{ T "basket.col.item" }}</th>
+        <th class="stocktake-sku">{{ T "catalog.col.sku" }}</th>
+        <th class="stocktake-num">{{ T "inventory.stocktake.col_in_stock" }}</th>
+        <th class="stocktake-num">{{ T "inventory.stocktake.col_counted" }}</th>
+      </tr></thead>
+      <tbody>
+        {{ range .Rows }}
+        <tr class="stocktake-row" data-key="{{ if .VariantID }}|{{ .VariantID }}{{ else }}{{ .ItemID }}|{{ end }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-category="{{ .CategoryID }}" data-stock="{{ .Quantity }}" data-weighed="{{ if .IsWeighed }}1{{ else }}0{{ end }}">
+          <td class="catalog-name">{{ .Name }}{{ if .VariantName }} <span class="muted">— {{ .VariantName }}</span>{{ end }}</td>
+          <td class="muted stocktake-sku">{{ .SKU }}</td>
+          <td class="stocktake-num">{{ .Quantity }}</td>
+          <td class="stocktake-num">
+            <input type="text" class="stocktake-input" inputmode="decimal" autocomplete="off" aria-label="{{ T "inventory.stocktake.col_counted" }}: {{ .Name }}{{ if .VariantName }} — {{ .VariantName }}{{ end }}">
+            <div class="stocktake-err muted" hidden>{{ T "inventory.stocktake.bad_number" }}</div>
+          </td>
+        </tr>
+        {{ end }}
+        <tr id="stock-no-matches" hidden><td colspan="4" class="empty">{{ T "filter.no_matches" }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="stocktake-review" hidden></div>
+  {{ else }}
+  <p class="empty">{{ T "inventory.stocktake.empty" }} <a href="/catalog">{{ T "nav.catalog" }}</a></p>
+  {{ end }}
+  <div class="stocktake-bar" id="stocktake-bar">
+    <div class="stocktake-bar-main" id="stocktake-bar-main">
+      <button type="button" class="btn secondary" id="stocktake-cancel">{{ T "common.cancel" }}</button>
+      <span class="chip" id="stocktake-badge" aria-live="polite"></span>
+      <span class="muted stocktake-msg" id="stocktake-msg" aria-live="polite"></span>
+      <button type="button" class="btn primary stocktake-primary" id="stocktake-review-btn" disabled>{{ T "inventory.stocktake.review" }}</button>
+      <button type="button" class="btn secondary stocktake-secondary" id="stocktake-back" hidden>{{ T "inventory.stocktake.back" }}</button>
+      <button type="button" class="btn primary stocktake-primary" id="stocktake-apply" hidden>{{ T "inventory.stocktake.apply" }}</button>
+    </div>
+    <div class="stocktake-confirm" id="stocktake-confirm" role="alert" hidden>
+      <span id="stocktake-confirm-text"></span>
+      <button type="button" class="btn secondary" id="stocktake-keep">{{ T "inventory.stocktake.keep" }}</button>
+      <button type="button" class="btn danger" id="stocktake-confirm-go"></button>
+    </div>
+  </div>
+</div>
