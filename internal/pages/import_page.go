@@ -1100,6 +1100,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				taxCodeCache[key] = id
 				return id, created, nil
 			}
+			// ut-docs#2654: placeholder icons match the shop's languages; one
+			// settings read for the whole import, not one per row.
+			iconMatcher := common.ShopIconMatcher(r.Context(), d.Settings)
 			for i := range rows {
 				if rows[i].Skipped {
 					continue
@@ -1431,7 +1434,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if !imageSet {
-					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, tillimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, iconMatcher.IconPath(it.Name, it.Category)); err != nil {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}

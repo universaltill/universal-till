@@ -23,11 +23,10 @@ import (
 // entry wins, so a more specific keyword should sit before a broader one
 // it would otherwise be shadowed by. Extending this list needs no other
 // code change (the card's own acceptance criterion) — add a row here.
-// Known limitation (review finding F6): this table is English-only, so a
-// shop cataloguing in Persian/Arabic/Turkish (e.g. "قهوة", "Türk Kahvesi")
-// gets "generic" for everything — acceptable for Phase 1's offline,
-// zero-translation scope, but worth knowing rather than assuming full
-// multilingual coverage.
+// This table is English-only by design (ADR-0160: core ships English). The
+// shop's own languages are matched first, against the translated tile
+// labels, by IconMatcher (placeholder_lang.go, ut-docs#2654); this table is
+// the final fallback and the whole story for an English-only shop.
 var keywordIcons = []struct {
 	keyword, icon string
 }{
@@ -246,13 +245,7 @@ var keywordIcons = []struct {
 // whose own name is a house-blend number with no matching keyword (see
 // TestPlaceholderIcon_CategoryOutranksAmbiguousName).
 func PlaceholderIcon(name, category string) string {
-	if icon, ok := matchKeyword(name); ok {
-		return icon
-	}
-	if icon, ok := matchKeyword(category); ok {
-		return icon
-	}
-	return "generic"
+	return (*IconMatcher)(nil).Icon(name, category)
 }
 
 func matchKeyword(s string) (string, bool) {
@@ -332,8 +325,7 @@ func IconPath(icon string) (path string, ok bool) {
 // PlaceholderIcon only ever returns a key IconPath recognises, so the ok
 // return is dropped here.
 func PlaceholderIconPath(name, category string) string {
-	path, _ := IconPath(PlaceholderIcon(name, category))
-	return path
+	return (*IconMatcher)(nil).IconPath(name, category)
 }
 
 // BuiltinIcon is one bundled category icon offered by the catalog image

@@ -2262,7 +2262,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				categoryName = cat.Name
 			}
 		}
-		suggestedKey := tillimport.PlaceholderIcon(itm.Name, categoryName)
+		suggestedKey := common.ShopIconMatcher(r.Context(), data.NewSettingsRepo(d.Db)).Icon(itm.Name, categoryName)
 		selectedKey := ""
 		isCustom := false
 		// ut-docs#3133: the Item image tab previews the current picture from
