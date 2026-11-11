@@ -40,7 +40,7 @@ const (
 	salesAggregateLookbackDays = 14
 	// salesAggregateStaffSetting is the per-shop by_cashier toggle
 	// (ADR-0111 §4): only the exact value "true" turns it on; default off.
-	salesAggregateStaffSetting = "reports.cloud_staff_breakdown"
+	salesAggregateStaffSetting = data.CloudStaffBreakdownKey
 	salesAggregatePath         = "/v1/stores/sales-aggregates"
 )
 

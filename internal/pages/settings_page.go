@@ -443,6 +443,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
+		"settings-cloud-staff": !isManager,      // ut-docs#2557: manager-only, like the card
 		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
@@ -2233,6 +2234,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsAudit(r, posRepo, elev, "settings", "marketplace.telemetry_opt_in", "telemetry_opt_in_changed", map[string]any{"opt_in": optIn})
 		settingsRespondSaved(w, r, elev)
 	})
+
+	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 
 	// ADR-0119: this till's visual effects level, beside the interface scale.
 	registerEffectsLevel(mux, d.Settings)

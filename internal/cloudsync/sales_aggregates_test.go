@@ -198,6 +198,32 @@ func TestPushSalesAggregates_PostsOneRollupPerDayTill(t *testing.T) {
 	}
 }
 
+// ut-docs#2557: the Settings card writes an explicit "false" when unticked;
+// only the exact value "true" sends by_cashier.
+func TestPushSalesAggregates_ExplicitFalseKeepsCashierBreakdownOff(t *testing.T) {
+	noAggThrottle(t)
+	cloud := &aggCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedAggFixture(t, "agg-cashier-false.db")
+	ctx := context.Background()
+	if err := data.NewSettingsRepo(f.db).Set(ctx, data.CloudStaffBreakdownKey, "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	pushSalesAggregates(ctx, testCfg(srv.URL), f.db)
+
+	posts := cloud.since(0)
+	if len(posts) == 0 {
+		t.Fatal("no rollups posted")
+	}
+	for _, p := range posts {
+		if !strings.Contains(string(p.raw), `"by_cashier":[]`) {
+			t.Fatalf("by_cashier must be [] with the toggle explicitly false: %s", p.raw)
+		}
+	}
+}
+
 func TestPushSalesAggregates_CashierBreakdownFollowsSetting(t *testing.T) {
 	noAggThrottle(t)
 	cloud := &aggCloud{}

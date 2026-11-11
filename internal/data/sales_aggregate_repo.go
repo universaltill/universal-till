@@ -32,6 +32,11 @@ import (
 //   - no-sale drawer opens (ut-docs#2558) come from no_sale_events, keyed
 //     by the same business-date and till rules (noSaleTillKeyExpr).
 
+// CloudStaffBreakdownKey is the shop-wide setting (ADR-0111 §4, ut-docs#2557)
+// that adds the per-staff-ID by_cashier breakdown to the sales aggregates a
+// till uploads. Default off: only the exact value "true" enables it.
+const CloudStaffBreakdownKey = "reports.cloud_staff_breakdown"
+
 // tillKeyExpr resolves a sale's rollup till key; its one '?' is selfTill.
 const tillKeyExpr = `COALESCE(NULLIF(s.till_id, ''), NULLIF(s.register_id, ''), ?)`
 
