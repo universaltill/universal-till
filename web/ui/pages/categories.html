@@ -405,6 +405,33 @@
     tick('group_id', row ? row.getAttribute('data-groups') : '');
     tick('station_id', row ? row.getAttribute('data-stations') : '');
   });
+
+  // ut-docs#2568: the Till Designer links here as /categories?edit=<id> to
+  // open that category's dialog. The id is only ever compared to
+  // dataset.id (never put in a selector); the param is cleared whether or
+  // not a row matched so a reload/back never re-opens it; an unknown id or
+  // a row not in this DOM (the /items rail embed) is a silent no-op. The
+  // click goes through record-dialog.js's real row path (.show(), focus,
+  // discard guard), which is bound after this inline script on a full load,
+  // hence DOMContentLoaded.
+  function openFromQuery() {
+    var url;
+    try { url = new URL(window.location.href); } catch (e) { return; }
+    var id = url.searchParams.get('edit');
+    if (id === null) return;
+    url.searchParams.delete('edit');
+    try { history.replaceState(history.state, '', url.pathname + url.search + url.hash); } catch (e) {}
+    var rows = document.querySelectorAll('#categories-table .category-row');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.id === id) {
+        var btn = rows[i].querySelector('[data-record-edit]');
+        if (btn) btn.click();
+        return;
+      }
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', openFromQuery, { once: true });
+  else openFromQuery();
 })();
 </script>
 {{ end }}

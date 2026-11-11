@@ -6752,6 +6752,9 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
 .designer-cat-field input[type="text"] { inline-size: min(100%, 22rem); }
 .designer-cat-form-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* ut-docs#2568: the picture/icon deep link above the inline form; a 44px touch target (.btn.compact alone is 40px), may wrap in long locales. */
+.designer-cat-image-link { grid-column: 1 / -1; margin: 0; margin-block: .25rem; }
+.designer-cat-image-link .btn { min-block-size: 2.75rem; display: inline-flex; align-items: center; text-align: start; }
 /* The colour picker: the same .item-color-tile swatches catalog.html uses,
    as <label>s around a native radio (native arrow-key roving focus, no
    picker script). The radio stays visible so selection is never colour-

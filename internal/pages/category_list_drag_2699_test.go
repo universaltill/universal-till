@@ -32,6 +32,8 @@ func seed2699(t *testing.T, exec func(string, ...any) error) {
 		`INSERT INTO categories(id,name,sort_order,is_active,color) VALUES ('c-color','WithColour',3,1,'#b91c1c')`,
 		// Nothing at all.
 		`INSERT INTO categories(id,name,sort_order,is_active) VALUES ('c-none','Plain',4,1)`,
+		// Inactive rows are listed too (ut-docs#2568).
+		`INSERT INTO categories(id,name,sort_order,is_active) VALUES ('c-off','Retired',5,0)`,
 	}
 	for _, s := range stmts {
 		if err := exec(s); err != nil {
@@ -224,4 +226,40 @@ func TestDesignerCategories_Rows_NoPencilNoChevrons_DragWired_2699(t *testing.T)
 		}
 		return li
 	})
+}
+
+// ut-docs#2568: each Designer category row links to the full /categories page
+// with that category's dialog deep-linked, outside every disabled fieldset
+// (navigation stays usable while the main till is unreachable).
+func TestDesignerCategories_ImageLink_2568(t *testing.T) {
+	mux, d := newButtonsMuxRealSession(t)
+	seedOneButton(t, d)
+	seed2699(t, func(s string, a ...any) error { _, err := d.Db.Exec(s, a...); return err })
+	mgr := auth.User{ID: "m1", Role: "manager"}
+	rec := getWithUser(mux, "/ui/buttons?mode=edit", &mgr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/buttons?mode=edit: %d", rec.Code)
+	}
+	section := rowSegment(t, rec.Body.String(), `<section class="designer-categories"`, `</section>`)
+	for _, id := range []string{"c-img", "c-icon", "c-evil", "c-color", "c-none", "c-off"} {
+		li := rowSegment(t, section, `data-cat-id="`+id+`"`, `</li>`)
+		for _, want := range []string{
+			`href="/categories?edit=` + id + `"`,
+			`id="designer-cat-image-` + id + `"`,
+			`data-testid="designer-cat-image-` + id + `"`,
+			`hx-boost="false"`,
+			`Change picture or icon`,
+		} {
+			if !strings.Contains(li, want) {
+				t.Errorf("designer row %s missing %q", id, want)
+			}
+		}
+		link := strings.Index(li, `id="designer-cat-image-`+id+`"`)
+		if link < 0 {
+			continue
+		}
+		if o, c := strings.Count(li[:link], "<fieldset"), strings.Count(li[:link], "</fieldset>"); o != c {
+			t.Errorf("designer row %s: image link sits inside a fieldset (%d open, %d closed before it)", id, o, c)
+		}
+	}
 }
