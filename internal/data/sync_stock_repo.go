@@ -3,9 +3,11 @@ package data
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // SyncStockRepo serves LAN sync increment D3b (ADR-0011): the primary is the
@@ -39,7 +41,15 @@ func (b StockBundle) Fingerprint() string {
 // DumpStock aggregates on-hand per item/variant across every location —
 // the shop-wide truth on the primary, and the local view on a replica.
 func (r *SyncStockRepo) DumpStock(ctx context.Context) (StockBundle, error) {
-	rows, err := r.db.db.QueryContext(ctx, `
+	return dumpStock(ctx, r.db.db)
+}
+
+type rowsQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func dumpStock(ctx context.Context, q rowsQuerier) (StockBundle, error) {
+	rows, err := q.QueryContext(ctx, `
 SELECT COALESCE(item_id, ''), COALESCE(variant_id, ''), SUM(quantity)
 FROM inventory
 GROUP BY COALESCE(item_id, ''), COALESCE(variant_id, '')
@@ -68,8 +78,22 @@ ORDER BY COALESCE(item_id, ''), COALESCE(variant_id, '')`)
 // ensure the till's own sale journal has been fully pushed first — otherwise
 // the primary hasn't seen our latest sales and the correction would briefly
 // re-add sold stock.
-func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle, locationID string) (int, error) {
-	local, err := r.DumpStock(ctx)
+//
+// Everything runs in ONE transaction, atomic with the sync.stock_version
+// upsert (when version != ""), and refuses with ErrNotReplica, writing
+// nothing, when this till has no sync.primary_url: a promote that commits
+// while the stock answer is in flight must win (ut-docs#5903). On any error
+// nothing is kept and 0 is returned.
+func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle, locationID, version string) (int, error) {
+	tx, err := r.db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("stock sync: %w", err)
+	}
+	defer tx.Rollback()
+	if err := requireReplica(ctx, tx); err != nil {
+		return 0, err
+	}
+	local, err := dumpStock(ctx, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -83,7 +107,7 @@ func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle
 		if delta == 0 {
 			return nil
 		}
-		_, err := r.db.RecordStockMovement(ctx, nil, StockMovementInput{
+		_, err := r.db.RecordStockMovement(ctx, tx, StockMovementInput{
 			ItemID:     itemID,
 			VariantID:  variantID,
 			LocationID: locationID,
@@ -102,7 +126,7 @@ func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle
 		seen[key(loc)] = true
 		target := want[key(loc)].Quantity // absent from the primary = 0
 		if err := apply(loc.ItemID, loc.VariantID, target-loc.Quantity); err != nil {
-			return corrections, err
+			return 0, err
 		}
 	}
 	for _, row := range bundle.Rows {
@@ -110,8 +134,19 @@ func (r *SyncStockRepo) ApplyStockLevels(ctx context.Context, bundle StockBundle
 			continue
 		}
 		if err := apply(row.ItemID, row.VariantID, row.Quantity); err != nil {
-			return corrections, err
+			return 0, err
 		}
+	}
+	if version != "" {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at) VALUES ('sync.stock_version', ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			version, time.Now().UTC()); err != nil {
+			return 0, fmt.Errorf("stock sync: record version: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("stock sync: commit: %w", err)
 	}
 	return corrections, nil
 }

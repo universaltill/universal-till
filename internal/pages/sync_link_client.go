@@ -310,6 +310,22 @@ func recordMainContact(ctx context.Context, d *common.Deps, at time.Time) string
 	return s
 }
 
+// recordMainContactIfReplica is recordMainContact plus sync.last_pull_ok_at
+// (value pullOK), both written in one transaction only while this till still
+// has a sync.primary_url; otherwise data.ErrNotReplica and nothing — neither
+// the keys nor the in-memory contact — is recorded (ut-docs#5903).
+func recordMainContactIfReplica(ctx context.Context, d *common.Deps, at time.Time, pullOK string) error {
+	s := at.UTC().Format(time.RFC3339)
+	if err := d.Settings.SetIfReplica(ctx, map[string]string{
+		"sync.last_contact_at": s,
+		"sync.last_pull_ok_at": pullOK,
+	}); err != nil {
+		return err
+	}
+	d.MarkMainContact(at)
+	return nil
+}
+
 // linkContactWindow is how long after its last successful pull a linked
 // till keeps counting the link as contact: one linked floor plus one
 // unlinked interval of grace.
