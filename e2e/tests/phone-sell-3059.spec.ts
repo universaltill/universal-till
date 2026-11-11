@@ -316,3 +316,128 @@ test.describe('phone sale screen (ut-docs#3059)', () => {
     });
   }
 });
+
+// ut-docs#3241: phone item tiles show how many of that item are in the sale.
+// The number is server-rendered (#basket[data-item-counts]); app.js only copies it.
+test.describe('in-basket tile badge (ut-docs#3241)', () => {
+  test.afterEach(async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+  });
+
+  const firstTile = (page: Page) => page.locator('.pos-container .btn-tile[hx-post="/api/pos/scan"]').first();
+  const tapFirst = (page: Page) =>
+    Promise.all([page.waitForResponse((r) => r.url().includes('/api/pos/scan')), firstTile(page).click()]);
+
+  test('fresh sale has no badge; two taps read 2 from the server count; + and - follow; remove clears', async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(firstTile(page)).toBeVisible();
+    await expect(page.locator('.tile-qty-badge')).toHaveCount(0);
+    await tapFirst(page);
+    await tapFirst(page);
+    const badge = firstTile(page).locator('.tile-qty-badge');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText('2');
+    await expect(badge).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('.tile-qty-badge')).toHaveCount(1);
+    const id = (await firstTile(page).getAttribute('data-item-id'))!;
+    const counts = JSON.parse((await page.locator('#basket').getAttribute('data-item-counts'))!);
+    expect(counts).toEqual({ [id]: 2 });
+    await expect(firstTile(page).getByText('2 in basket')).toHaveCount(1);
+    expect(await firstTile(page).evaluate((b) => b.lastElementChild!.className)).toContain('tile-qty-sr');
+    // a tap on the badge's corner is still a tap on the tile
+    expect(await badge.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none');
+    expect(await badge.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe('0s');
+
+    await page.locator('.basket-phonebar').click();
+    const row = page.locator('#basket tbody tr').first();
+    await Promise.all([
+      page.waitForResponse((r) => r.request().method() === 'POST'),
+      row.locator('.qty-step-btn').last().click(),
+    ]);
+    await page.locator('.basket-sheet-close').click();
+    await expect(badge).toHaveText('3');
+    await page.locator('.basket-phonebar').click();
+    await Promise.all([
+      page.waitForResponse((r) => r.request().method() === 'POST'),
+      page.locator('#basket tbody tr').first().locator('.qty-step-btn').first().click(),
+    ]);
+    await page.locator('.basket-sheet-close').click();
+    await expect(badge).toHaveText('2');
+
+    await page.request.post('/api/pos/reset');
+    await page.goto('/');
+    await expect(page.locator('.tile-qty-badge')).toHaveCount(0);
+  });
+
+  test('qty 120 reads 99+ with the real number in the accessible name; survives a grid re-render', async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    const itemId = (await firstTile(page).getAttribute('data-item-id'))!;
+    await tapFirst(page);
+    await page.locator('.basket-phonebar').click();
+    const qty = page.locator('#basket tbody tr').first().locator('input[name="qty"]');
+    await Promise.all([
+      page.waitForResponse((r) => r.request().method() === 'POST'),
+      qty.fill('120').then(() => qty.press('Enter')),
+    ]);
+    await page.locator('.basket-sheet-close').click();
+    await expect(firstTile(page).locator('.tile-qty-badge')).toHaveText('99+');
+    await expect(page.getByRole('button', { name: /120 in basket/ })).toHaveCount(1);
+    // Re-render the grid without a basket action: badges come back at once.
+    await page.evaluate(() => (window as any).htmx.trigger(document.body, 'buttons-changed'));
+    await expect(firstTile(page).locator('.tile-qty-badge')).toHaveText('99+');
+    await page.reload();
+    await expect(firstTile(page).locator('.tile-qty-badge')).toHaveText('99+');
+    await setBrowsingMode(page, 'all_filter_chips');
+    try {
+      await page.goto('/');
+      // The All view orders tiles differently: find this item's tile by id.
+      await expect(page.locator(`.pos-container .tile-cell > .btn-tile[data-item-id="${itemId}"] .tile-qty-badge`).first()).toHaveText('99+');
+    } finally {
+      await setBrowsingMode(page, 'strip_overflow');
+    }
+  });
+
+  test('sits on the icon top inline-end corner: right in LTR, left in RTL (fa)', async ({ page }) => {
+    for (const [lang, rtl] of [['en', false], ['fa', true]] as const) {
+      await page.request.post('/api/pos/reset');
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(`/?lang=${lang}`);
+      await tapFirst(page);
+      const badge = (await firstTile(page).locator('.tile-qty-badge').boundingBox())!;
+      const icon = (await firstTile(page).locator('.tile-initials, .thumb').first().boundingBox())!;
+      expect(badge.width).toBeGreaterThanOrEqual(20);
+      if (rtl) expect(badge.x, 'fa: top-left').toBeLessThanOrEqual(icon.x + icon.width * 0.3);
+      else expect(badge.x + badge.width, 'en: top-right').toBeGreaterThanOrEqual(icon.x + icon.width * 0.7);
+      expect(badge.y, 'top').toBeLessThanOrEqual(icon.y + icon.height * 0.3);
+    }
+  });
+
+  test('hidden in jiggle mode; visible again after', async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await tapFirst(page);
+    const badge = firstTile(page).locator('.tile-qty-badge');
+    await expect(badge).toBeVisible();
+    await page.evaluate(() => document.querySelector('#buttons-grid, #buttons-grid-all')!.classList.add('jiggle-mode'));
+    await expect(badge).toBeHidden();
+    await page.evaluate(() => document.querySelector('#buttons-grid, #buttons-grid-all')!.classList.remove('jiggle-mode'));
+    await expect(badge).toBeVisible();
+  });
+
+  for (const vp of [{ width: 768, height: 1024 }, { width: 1024, height: 600 }, { width: 1280, height: 800 }]) {
+    test(`${vp.width}x${vp.height}: no badge is visible`, async ({ page }) => {
+      await page.request.post('/api/pos/reset');
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await tapFirst(page);
+      await expect(page.locator('#basket')).toHaveAttribute('data-item-counts', /\{"/);
+      await expect(page.locator('.tile-qty-badge').first()).toBeHidden();
+      await expect(page.locator('.tile-qty-sr').first()).toBeHidden();
+    });
+  }
+});

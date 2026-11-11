@@ -147,6 +147,7 @@
   "basket.title": "Basket",
   "basket.sheet.close": "Close basket",
   "basket.phonebar.items": "%d item(s)",
+  "basket.tile_in_basket": "%d in basket",
   "basket.total": "Total",
   "bluetoothdevices.access_denied": "This till's software is not allowed to use Bluetooth. Reinstall the Universal Till package to restore the permission, or contact support.",
   "bluetoothdevices.adapter_off": "Bluetooth is switched off on this till.",

@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -588,13 +589,48 @@ func hasDineInLine(lines []BasketLine, def string) bool {
 func (b Basket) ItemCount() int {
 	n := 0
 	for _, l := range b.Lines {
-		if l.IsWeighed {
-			n++
-			continue
-		}
-		n += int(l.Qty + 0.5)
+		n += lineItemCount(l)
 	}
 	return n
+}
+
+// lineItemCount is one line's contribution to ItemCount (and to the
+// per-item tile badges): weighed lines read as 1, unit lines as rounded qty.
+func lineItemCount(l BasketLine) int {
+	if l.IsWeighed {
+		return 1
+	}
+	return int(l.Qty + 0.5)
+}
+
+// ItemCountsByItem sums lineItemCount per catalog item (ut-docs#3241), for
+// the phone sale screen's "in basket" tile badges. Variant, modifier,
+// NoMerge and mixed-order-type lines all add into the parent ItemID; lines
+// without an ItemID (open price, voucher) and items netting to <= 0 are absent.
+func (b Basket) ItemCountsByItem() map[string]int {
+	m := map[string]int{}
+	for _, l := range b.Lines {
+		if l.ItemID == "" {
+			continue
+		}
+		m[l.ItemID] += lineItemCount(l)
+	}
+	for k, v := range m {
+		if v <= 0 {
+			delete(m, k)
+		}
+	}
+	return m
+}
+
+// ItemCountsJSON is ItemCountsByItem as deterministic JSON ("{}" when empty),
+// rendered into #basket's data-item-counts attribute.
+func (b Basket) ItemCountsJSON() string {
+	out, err := json.Marshal(b.ItemCountsByItem())
+	if err != nil {
+		return "{}"
+	}
+	return string(out)
 }
 
 // basketCopyLocked returns a pointer to a private copy of the current basket,

@@ -6834,6 +6834,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .nav-drawer { display: contents; }
 .nav-drawer-toggle, .nav-drawer-backdrop, .basket-phonebar,
 .basket-sheet-close, .tile-initials { display: none; }
+/* ut-docs#3241: the in-basket count badge is phone-tier only (see below). */
+.tile-qty-badge, .tile-qty-sr { display: none; }
 /* nav.html's alert chips (fiscal, diagnostic mode): a column at the rail's
    foot; an empty chip (no alert) takes no room. */
 .nav-alerts { display: flex; flex-direction: column; gap: .3rem; }
@@ -7207,6 +7209,29 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   .pos-container .btn-tile .tile-price,
   .pos-container .btn-tile.tile-colored .tile-price { color: var(--muted); font-size: .85rem; }
+  /* ut-docs#3241: "in basket" count on the icon's top inline-end corner (the
+     icon is min(100%, 6.5rem), centred). Token colours only (--text on
+     --surface passes 4.5:1 in every theme); no motion; no tap target
+     (pointer-events: none). Hidden in jiggle mode, where the four tile
+     corners belong to the edit badges. */
+  .pos-container .btn-tile { position: relative; }
+  .pos-container .btn-tile .tile-qty-badge {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; z-index: 1;
+    inset-block-start: -.25rem;
+    inset-inline-end: calc(50% - min(50%, 3.25rem) - .25rem);
+    min-inline-size: 1.375rem; block-size: 1.375rem; padding-inline: .3rem;
+    box-sizing: border-box; border-radius: 999px;
+    background: var(--text); color: var(--surface);
+    font-size: .75rem; font-weight: 700; line-height: 1;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 0 0 2px var(--surface);
+    outline: 1px solid transparent;
+    pointer-events: none;
+  }
+  .pos-container .btn-tile .tile-qty-sr { display: block; }
+  .pos-container .jiggle-mode .btn-tile .tile-qty-badge,
+  .pos-container .jiggle-mode .btn-tile .tile-qty-sr { display: none; }
 }
 
 /* ---------- Guided tour (ut-docs#3710, web/public/tour.js) ----------

@@ -1317,6 +1317,60 @@ document.addEventListener('ut-basket-resync', function(){
   if (window.htmx) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
 });
 
+// ut-docs#3241: phone item tiles show how many of that item are in the sale.
+// The counts are computed server-side (pos.Basket.ItemCountsByItem) and ride
+// every #basket render as data-item-counts; this only COPIES them onto the
+// tiles -- it never adds or subtracts on tap. afterSettle (not afterSwap): the
+// settle step restores attributes on an id-matched outerHTML swap. Covers
+// basket swaps and grid re-renders alike; coalesced because afterSettle fires
+// once per inserted element. The badge is display:none above the phone tier.
+(function utTileBasketBadges(){
+  var queued = false;
+  function apply(){
+    var b = document.getElementById('basket');
+    if (!b) return;
+    var counts = {};
+    try { counts = JSON.parse(b.dataset.itemCounts || '{}') || {}; } catch (e) { counts = {}; }
+    var fmt = b.dataset.inBasketLabel || '%d';
+    var tiles = document.querySelectorAll('.pos-container .tile-cell > .btn-tile[data-item-id]:not([data-testid="designer-tile"])');
+    for (var i = 0; i < tiles.length; i++) {
+      var tile = tiles[i];
+      var n = counts[tile.dataset.itemId] || 0;
+      var badge = tile.querySelector(':scope > .tile-qty-badge');
+      var sr = tile.querySelector(':scope > .tile-qty-sr');
+      if (n > 0) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'tile-qty-badge';
+          badge.setAttribute('aria-hidden', 'true');
+          tile.appendChild(badge);
+        }
+        if (!sr) {
+          sr = document.createElement('span');
+          sr.className = 'tile-qty-sr visually-hidden';
+        }
+        // Keep the screen-reader text the LAST child ("Latte, 2.50, 2 in basket").
+        if (tile.lastElementChild !== sr) tile.appendChild(sr);
+        var shown = n > 99 ? '99+' : String(n);
+        if (badge.textContent !== shown) badge.textContent = shown;
+        var text = fmt.replace('%d', String(n));
+        if (sr.textContent !== text) sr.textContent = text;
+      } else {
+        if (badge) badge.remove();
+        if (sr) sr.remove();
+      }
+    }
+  }
+  function schedule(){
+    if (queued) return;
+    queued = true;
+    setTimeout(function(){ queued = false; apply(); }, 0);
+  }
+  document.addEventListener('htmx:afterSettle', schedule);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', schedule);
+  else schedule();
+})();
+
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
   var btn = e.target.closest ? e.target.closest('.notice-dismiss') : null;

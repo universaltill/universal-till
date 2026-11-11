@@ -1,4 +1,5 @@
 {
+  "basket.tile_in_basket": {"description": "Phone sale screen: screen-reader text added to an item tile's name when that item is in the current sale, e.g. \"Latte, 2 in basket\". Not shown visually (the tile shows only a number badge). Read after the item's name and price.", "review": "standard", "placeholders": ["how many of this item are in the current sale"]},
   "receipt.vouchers.reprinted": {"description": "Printed on a gift-voucher slip printed again from the voucher's page, so it can be told from the slip handed over at the sale. Printed on 58/80 mm paper.", "review": "legal", "placeholders": ["date the slip was reprinted"], "max_length": 42},
   "vouchers.print_slip.button": {"description": "Button on a gift voucher's page (manager): prints that voucher's gift slip again on this till's receipt printer, without a receipt.", "review": "standard", "max_length": 24},
   "vouchers.print_slip.printing": {"description": "Shown next to Print voucher slip while the slip is being sent to the receipt printer.", "review": "standard"},
