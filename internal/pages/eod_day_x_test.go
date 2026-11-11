@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"strings"
@@ -170,9 +171,16 @@ func TestDayX_NoFiscalDevice_EvenWithOKCMarket(t *testing.T) {
 }
 
 // A real WAL, multi-connection pool (the package default is capped at one
-// connection, where HoldWriteLock is a no-op): another writer holds the lock
-// for 400 ms and the view must finish well inside that, and a sale insert made
-// while the view runs must not wait for it either.
+// connection, where HoldWriteLock is a no-op; db.Open sets _txlock=immediate
+// and busy_timeout 5000). No wall-clock threshold (ut-docs#6026): a loaded CI
+// runner can be slow without any lock involved.
+//
+//  1. Another writer holds the write lock until the view has returned. A view
+//     that took the write lock would wait out busy_timeout and fail with
+//     SQLITE_BUSY; the 30 s timer only stops a hang.
+//  2. The converse: an insert on a connection with busy_timeout 0 fails at once
+//     with SQLITE_BUSY if a view holds the write lock, instead of waiting. It
+//     runs while views run back to back, so it overlaps one.
 func TestDayX_NoWriteLock(t *testing.T) {
 	_, dp := newFileBackedEODDeps(t)
 	ctx := t.Context()
@@ -181,35 +189,68 @@ func TestDayX_NoWriteLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	released := make(chan struct{})
+	viewErr := make(chan error, 1)
 	go func() {
-		time.Sleep(400 * time.Millisecond)
+		_, err := readEODDayX(ctx, dp, "Alex")
+		viewErr <- err
+	}()
+	select {
+	case err := <-viewErr:
+		if err != nil {
+			release()
+			t.Fatalf("the view failed while another writer held the lock (it must not take the write lock): %v", err)
+		}
+	case <-time.After(30 * time.Second):
 		release()
-		close(released)
-	}()
-	start := time.Now()
-	if _, err := readEODDayX(ctx, dp, "Alex"); err != nil {
-		t.Fatal(err)
+		t.Fatal("the view did not return while another writer held the lock: it must not take the write lock")
 	}
-	if el := time.Since(start); el > 300*time.Millisecond {
-		t.Errorf("the view waited %s behind another writer: it must not take the write lock", el)
-	}
-	<-released
+	release()
 
-	// and the converse: a sale insert during a view is not held up by it
-	done := make(chan time.Duration, 1)
-	go func() {
-		st := time.Now()
-		stamp := time.Now().UTC().Format(time.RFC3339)
-		_, _ = dp.Db.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at, till_id, local_date)
-VALUES ('dx-live', 'R-DX', 'completed', 'sale', 'GBP', 500, 0, 0, 500, ?, ?, '', date(?, 'localtime'))`, stamp, stamp, stamp)
-		done <- time.Since(st)
-	}()
-	if _, err := readEODDayX(ctx, dp, "Alex"); err != nil {
+	conn, err := dp.Db.Conn(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if el := <-done; el > 100*time.Millisecond {
-		t.Errorf("a concurrent sale insert waited %s", el)
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA busy_timeout = 0`); err != nil {
+		t.Fatal(err)
+	}
+	// the connection goes back to the pool: restore db.Open's value
+	defer func() { _, _ = conn.ExecContext(context.Background(), `PRAGMA busy_timeout = 5000`) }()
+
+	stop := make(chan struct{})
+	started := make(chan struct{})
+	views := make(chan error, 1)
+	go func() {
+		for n := 0; ; n++ {
+			if n == 1 {
+				close(started) // the insert overlaps the second view onwards
+			}
+			if _, err := readEODDayX(ctx, dp, "Alex"); err != nil {
+				views <- err
+				return
+			}
+			select {
+			case <-stop:
+				views <- nil
+				return
+			default:
+			}
+		}
+	}()
+	select {
+	case <-started:
+	case err := <-views: // the first view failed before the insert could start
+		t.Fatalf("a view failed: %v", err)
+	}
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	_, insErr := conn.ExecContext(ctx, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at, till_id, local_date)
+VALUES ('dx-live', 'R-DX', 'completed', 'sale', 'GBP', 500, 0, 0, 500, ?, ?, '', date(?, 'localtime'))`, stamp, stamp, stamp)
+	close(stop)
+	if err := <-views; err != nil {
+		t.Fatalf("a view failed: %v", err)
+	}
+	if insErr != nil {
+		t.Errorf("a sale insert made while views ran could not take the write lock at once: %v", insErr)
 	}
 }
 
