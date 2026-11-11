@@ -1,0 +1,20 @@
+{{/* ut-docs#5800: the day-so-far X fragment swapped into #eod-day-x-body on
+     Reports -> End of day. .Preview is print.RenderText of the real paper;
+     .From/.To are local RFC3339 (From empty on a till's first close). Nothing
+     here is stored; Show again re-reads. */}}
+<div class="eod-day-x-result">
+  <div class="eod-day-x-bar">
+    <p><strong>{{ T "reports.eod.day_x.as_of" }}</strong> {{ datetime .To }}<br>
+      <span class="muted">{{ if .From }}{{ printf (T "reports.eod.day_x.since") (datetime .From) }}{{ else }}{{ T "reports.eod.day_x.since_first" }}{{ end }}</span></p>
+    <div class="eod-day-x-actions">
+      <button type="button" id="eod-day-x-print" class="btn secondary"
+              hx-post="/api/reports/eod/x-report/print" hx-target="#eod-day-x-print-msg" hx-swap="innerHTML"
+              hx-indicator="#eod-day-x-print-busy" hx-disabled-elt="this">{{ T "reports.eod.day_x.print" }}</button>
+      <span id="eod-day-x-print-busy" class="htmx-indicator muted" role="status">{{ T "reports.eod.day_x.printing" }}</span>
+      <button type="button" class="btn secondary" data-action="empty:eod-day-x-body focus:eod-day-x-show">{{ T "reports.eod.day_x.hide" }}</button>
+    </div>
+    <span id="eod-day-x-print-msg" class="x-report-print-msg" aria-live="polite"></span>
+  </div>
+  {{ if .Empty }}<p class="muted">{{ T "reports.eod.day_x.empty" }}</p>{{ end }}
+  <pre class="paper-preview" dir="ltr" aria-label="{{ T "reports.eod.day_x.paper_label" }}">{{ .Preview }}</pre>
+</div>

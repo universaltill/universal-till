@@ -417,6 +417,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/receipt-designer/test":              true,
 	"POST /api/reports/eod/print/{period}":         true,
 	"POST /api/shifts/{id}/x-report/print":         true, // ut-docs#5798: prints the X report
+	"POST /api/reports/eod/x-report/print":         true, // ut-docs#5800: prints the day-so-far X
 	"POST /api/shifts/{id}/close-slip/print":       true, // ut-docs#5841: prints the shift close slip
 	"POST /api/settings/printer":                   true,
 	// Fiscal devices and registers: TSE override/provisioning, Türkiye ÖKC
@@ -637,17 +638,18 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/orders/{receipt_no}/status":                      true,
 	// Journal, refunds, invoices, reports, EOD, shifts, audit (CSV exports are
 	// downloads of the visitor's own sample data).
-	"/audit":                   true,
-	"/backoffice":              true,
-	"/journal":                 true,
-	"/journal/{receipt}":       true,
-	"/reports":                 true,
-	"/shifts":                  true,
-	"POST /shifts/x-report":    true,
-	"/ui/journal":              true,
-	"/ui/reports/tab/{name}":   true,
-	"GET /api/audit/export":    true,
-	"GET /api/invoices/export": true,
+	"/audit":                     true,
+	"/backoffice":                true,
+	"/journal":                   true,
+	"/journal/{receipt}":         true,
+	"/reports":                   true,
+	"/shifts":                    true,
+	"POST /shifts/x-report":      true,
+	"POST /reports/eod/x-report": true, // ut-docs#5800: day-so-far view
+	"/ui/journal":                true,
+	"/ui/reports/tab/{name}":     true,
+	"GET /api/audit/export":      true,
+	"GET /api/invoices/export":   true,
 	"GET /api/reports/worker-allocations/export":            true,
 	"GET /invoice/{display_no}":                             true,
 	"GET /invoices":                                         true,

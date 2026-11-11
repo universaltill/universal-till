@@ -2,6 +2,13 @@
 <div class="card">
   <h2>{{ T "reports.eod.title" }}</h2>
   <p class="muted"><a class="x-report-link" href="/shifts#x-report">{{ T "reports.eod.x_report_link" }}</a></p>
+  <section class="eod-day-x" aria-labelledby="eod-day-x-h">
+    <h3 id="eod-day-x-h">{{ T "reports.eod.day_x.title" }}</h3>
+    <p class="muted">{{ T "reports.eod.day_x.intro" }}</p>
+    <button type="button" class="btn secondary" id="eod-day-x-show" hx-post="/reports/eod/x-report"
+            hx-target="#eod-day-x-body" hx-swap="innerHTML" hx-disabled-elt="this">{{ T "reports.eod.day_x.show" }}</button>
+    <div id="eod-day-x-body" aria-live="polite"></div>
+  </section>
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
     <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
     <span id="eod-msg" aria-live="polite"></span>

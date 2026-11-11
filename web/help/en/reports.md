@@ -6,7 +6,7 @@ order: 210
 public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
+keywords: [day so far, shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
 ---
 
 # Reports & end of day
@@ -17,7 +17,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in. Inside Custom, "Last 24 hours" is the rolling 24 hours up to now, not the business day — use the Today chip for that.
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), (for a manager/admin) Shrinkage & Loss, or Online channels (once this till has recorded an online order) — and that report loads when you open it.
-3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
+3. Want to see how the day stands before you close? Tap **Show day so far** in the same tab (see "Day so far" below). Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
 
@@ -342,6 +342,19 @@ If more than one register has an open shift, pick the register first; it starts 
 The **Expected** line in the cash section is the same figure the shift close counts your drawer against at that moment: opening cash, plus cash sales, plus cash tips held in the drawer, plus adjustments and payouts. Managers can also reach this page from the link at the top of Reports → Day-end (EOD).
 
 **Printing it.** With the figures shown, tap **Print X report**. The till reads the shift again at that moment and prints those figures, so the paper can be newer than the screen. It needs a receipt printer set up under Settings → Receipt printer; without one, or if the printer does not answer, a red "Print failed" message next to the button tells you to check the printer under Settings → Receipt printer and tap Print X report again; nothing is recorded. The printout is titled "X REPORT" and says it is not a day close: it has no end-of-day number and does not open the cash drawer. The same permission or manager PIN applies as for viewing, and the PIN is asked again for printing. Unlike viewing, printing leaves an audit entry (who printed it, and who approved).
+
+## Day so far (X report for the whole till)
+
+The **day so far** report shows what the next end-of-day (Z) report would contain if you ran it right now: every sale, return, void, cleared basket and no-sale on every register since your last day close, with the same layout as the end-of-day report, including the VAT-rate breakdown. It is for the whole till, not one register; for one register's open shift use the X report on Shifts above.
+
+It is not a day close. Nothing is closed, stored, reset or exported, it has no end-of-day number, it takes no fiscal-device action and it does not open the cash drawer. Your next end-of-day report covers exactly the same period as if you had never looked, and the day-so-far figures never appear in the archive list or in any export. The printed report is titled "X REPORT - DAY SO FAR" and says it is not a day close.
+
+1. Open **Reports → Day-end (EOD)**. The **Day so far (X report)** section is above Run End of day.
+2. Tap **Show day so far**. The report appears as it would print, with the time the figures are "as of" and the moment of the last day close they start from (or a note that this till has no day close yet). Tap the button again to read fresh figures. If nothing has been sold since the last close you see a note saying so.
+3. Tap **Print day so far** to print it. The till reads the figures again at that moment, so the paper can be newer than the screen. It needs a receipt printer set up under Settings → Receipt printer; without one, or if the printer does not answer, a red "Print failed" message next to the button tells you to check the printer and tap Print day so far again, and nothing is recorded.
+4. Tap **Hide day so far** to clear the figures from the screen before you step away from a till customers can see.
+
+Who can use it: roles with the **End-of-day reports** permission. For any other role the till asks for a manager PIN in the same dialog it uses for other approvals, for viewing and again for printing; with sign-in turned off there is no PIN. Viewing leaves no audit entry; printing does (who printed it, and who approved). Checkout is never held up while you look, and it works with no internet connection.
 
 ## Counting the drawer at close: skim & new float
 
