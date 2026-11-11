@@ -658,6 +658,22 @@ func (p *pullTestPrimary) hitPath(path string) bool {
 	return false
 }
 
+// promoteKeepingRole promotes d (ClearReplicaIdentity) and then puts back
+// the role the main till reports for it, so the tick's role write is a no-op
+// and the first guarded write reached is the one a test targets. A real
+// promote wipes sync.till_role, which would otherwise trip the role guard
+// first (ut-docs#5903; the role refusal has its own test).
+func promoteKeepingRole(t *testing.T, d *common.Deps, role string) {
+	t.Helper()
+	ctx := t.Context()
+	if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(ctx); err != nil {
+		t.Errorf("promote: %v", err)
+	}
+	if err := d.Settings.Set(ctx, "sync.till_role", role); err != nil {
+		t.Errorf("restore role: %v", err)
+	}
+}
+
 func (p *pullTestPrimary) hitStock() bool { return p.hitPath("/api/sync/stock") }
 
 func newPullTestReplica(t *testing.T, primaryURL string) *common.Deps {
@@ -839,12 +855,6 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The old main reports this till's role on every answer
-	// (ut-docs#2781); a promoted till must not remember it (ut-docs#5903).
-	if _, _, err := data.NewTillsRepo(primary.dp.Db).SetRole(ctx, primary.tillID, data.TillRoleSatellite); err != nil {
-		t.Fatalf("set role on primary: %v", err)
-	}
-
 	replica := newPullTestReplica(t, primary.server.URL)
 	for k, v := range map[string]string{
 		"sync.till_name":        "Till 2",
@@ -857,11 +867,9 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 	}
 	// Promote while the pull is in flight: the tick has already read
 	// primary_url/bearer, and the answer still carries the old main's bundle.
-	primary.onAdmin = func() {
-		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(ctx); err != nil {
-			t.Errorf("promote: %v", err)
-		}
-	}
+	// The role write is made a no-op so the admin apply's in-tx check is the
+	// first guarded write reached (the role refusal has its own test below).
+	primary.onAdmin = func() { promoteKeepingRole(t, replica, data.TillRoleAdditional) }
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	refreshCalls := 0
@@ -888,7 +896,7 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 	if v, _, _ := replica.Settings.Get(ctx, "till.name"); v != "Till 2" {
 		t.Fatalf("till.name = %q, want Till 2", v)
 	}
-	for _, k := range []string{"sync.pull_version", "sync.last_pull_at", "sync.last_pull_ok_at", "sync.last_contact_at", "sync.till_role"} {
+	for _, k := range []string{"sync.pull_version", "sync.last_pull_at", "sync.last_pull_ok_at", "sync.last_contact_at"} {
 		if v, _, _ := replica.Settings.Get(ctx, k); v != "" {
 			t.Fatalf("%s re-created after promote: %q", k, v)
 		}
@@ -917,28 +925,17 @@ func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
 func TestSyncPullTick_PromotedMidPullUnchanged_5903(t *testing.T) {
 	primary := newPullTestPrimary(t)
 	ctx := t.Context()
-	if _, _, err := data.NewTillsRepo(primary.dp.Db).SetRole(ctx, primary.tillID, data.TillRoleSatellite); err != nil {
-		t.Fatalf("set role on primary: %v", err)
-	}
 	replica := newPullTestReplica(t, primary.server.URL)
 	client := &http.Client{Timeout: 5 * time.Second}
 	syncPullTick(ctx, replica, client, func(context.Context) {}) // tick 1: catches up
-	if v, _, _ := replica.Settings.Get(ctx, "sync.till_role"); v == "" {
-		t.Fatal("precondition: tick 1 should have remembered the till role")
+	if v, _, _ := replica.Settings.Get(ctx, "sync.last_pull_ok_at"); v == "" {
+		t.Fatal("precondition: tick 1 should have recorded last_pull_ok_at")
 	}
 
-	// Tick 2 answers Unchanged; promote lands while it is in flight.
-	for _, k := range []string{"sync.till_role", "sync.last_contact_at", "sync.last_pull_ok_at", "sync.plugins_version", "sync.plugins_bundle", "sync.stock_version"} {
-		if err := data.NewSettingsRepo(replica.Db).Delete(ctx, k); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Tick 2 answers Unchanged; promote lands while it is in flight. The role
+	// stays set so the first guarded write reached is recordMainContactIfReplica's.
 	primary.visited = nil
-	primary.onAdmin = func() {
-		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(ctx); err != nil {
-			t.Errorf("promote: %v", err)
-		}
-	}
+	primary.onAdmin = func() { promoteKeepingRole(t, replica, data.TillRoleAdditional) }
 	logs := &syncBuffer{}
 	restoreLog := logging.CaptureForTest(logs)
 	syncPullTick(ctx, replica, client, func(context.Context) {})
@@ -949,13 +946,40 @@ func TestSyncPullTick_PromotedMidPullUnchanged_5903(t *testing.T) {
 	} else if strings.Contains(out, "[ERROR]") {
 		t.Fatalf("promote race logged an error; log:\n%s", out)
 	}
-	for _, k := range []string{"sync.till_role", "sync.last_contact_at", "sync.last_pull_ok_at", "sync.plugins_version", "sync.plugins_bundle", "sync.stock_version"} {
+	for _, k := range []string{"sync.last_contact_at", "sync.last_pull_ok_at", "sync.plugins_version", "sync.plugins_bundle", "sync.stock_version"} {
 		if v, _, _ := replica.Settings.Get(ctx, k); v != "" {
 			t.Fatalf("%s re-created after promote: %q", k, v)
 		}
 	}
 	if primary.hitPath("/api/sync/plugins") || primary.hitStock() {
 		t.Fatalf("plugins/stock pulled from the old main after promote; visited %v", primary.visited)
+	}
+}
+
+// ut-docs#5903: the role the old main reports must not be remembered by a
+// till promoted while the answer was in flight.
+func TestSyncPullTick_PromotedMidPullRoleRefused_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	if _, _, err := data.NewTillsRepo(primary.dp.Db).SetRole(ctx, primary.tillID, data.TillRoleSatellite); err != nil {
+		t.Fatalf("set role on primary: %v", err)
+	}
+	replica := newPullTestReplica(t, primary.server.URL)
+	primary.onAdmin = func() {
+		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(ctx); err != nil {
+			t.Errorf("promote: %v", err)
+		}
+	}
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, &http.Client{Timeout: 5 * time.Second}, func(context.Context) {})
+	restoreLog()
+
+	if out := logs.String(); !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Fatalf("missing not-replica skip INFO line; log:\n%s", out)
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "sync.till_role"); v != "" {
+		t.Fatalf("sync.till_role re-created after promote: %q", v)
 	}
 }
 

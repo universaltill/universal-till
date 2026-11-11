@@ -667,7 +667,7 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		return
 	}
 	if err != nil {
-		logging.L().Errorf("stock sync pull: apply failed after %d corrections: %v", corrections, err)
+		logging.L().Errorf("stock sync pull: apply failed, no corrections applied: %v", err)
 		return
 	}
 	if corrections > 0 {

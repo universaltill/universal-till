@@ -302,7 +302,8 @@ func markLinkContact(ctx context.Context, d *common.Deps) {
 // time.Now() taken when the main till answered, so its monotonic reading
 // is kept) — both sync.last_contact_at and this process's monotonic twin
 // (Deps.MarkMainContact, ut-docs#2915) — and returns the stored RFC 3339
-// value. Every write of sync.last_contact_at goes through here.
+// value. It writes unconditionally (a link hello, a push ack); the pull tick
+// uses recordMainContactIfReplica so a promoted till is left alone.
 func recordMainContact(ctx context.Context, d *common.Deps, at time.Time) string {
 	d.MarkMainContact(at)
 	s := at.UTC().Format(time.RFC3339)
@@ -320,7 +321,12 @@ func recordMainContactIfReplica(ctx context.Context, d *common.Deps, at time.Tim
 		"sync.last_contact_at": s,
 		"sync.last_pull_ok_at": pullOK,
 	}); err != nil {
-		return err
+		if errors.Is(err, data.ErrNotReplica) {
+			return err
+		}
+		// A real DB failure: the main till did answer, so the in-memory
+		// contact is still marked (the previous behaviour); log it.
+		logging.L().Warnf("sync pull: record main contact: %v", err)
 	}
 	d.MarkMainContact(at)
 	return nil
