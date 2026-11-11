@@ -391,7 +391,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			"itemColors": catalogtypes.ItemColors(),
 			// ut-docs#2500: the dialog's image picker offers the SAME
 			// built-in set as the item editor, grouped (ut-docs#2506).
-			"builtinIconGroups": catimport.BuiltinIconGroups(),
+			"builtinIconGroups": common.ShopPickerIconGroups(ctx, data.NewSettingsRepo(d.Db)),
 			// ut-docs#3127: "Remove background" under the photo picker.
 			"AICutout": aiCutoutOffered(r, d),
 			"errKey":   errKey,
