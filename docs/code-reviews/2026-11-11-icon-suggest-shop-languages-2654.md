@@ -95,3 +95,7 @@ the feature commit).
 3. German compound / head-noun matching (a suffix with a minimum stem length).
 4. Possessive and other non-suffix inflections (ar "قهوتي") are not matched by
    design. Fold them into card 1 or 3 if shops ask for them.
+
+## Post-review CI fix (2026-11-11, routine `:41`)
+
+`ci / desktop-shell` ran `guard-deadcode-baseline.sh`, which flagged `catimport.PlaceholderIcon` and `PlaceholderIconPath` as unreachable: both production callers now use `IconMatcher`. The baseline may not grow in a feature PR (`guard-deadcode-baseline-growth.sh`), so the two wrappers moved to `internal/catimport/placeholder_english_test.go`. Their bodies are unchanged (`(*IconMatcher)(nil)`, the English-only path), so `placeholder_test.go` still pins the English table without edits. Three comments that named the old functions were updated, one of them in `internal/pages/catalog/handlers.go`. That edit is comment-only, so the docs-shots surface hash was refreshed with `update-docs-shots-surface-hash.sh` (trailer `Docs-Shots-Unchanged: true`). Re-ran: gofmt, `go build ./...`, `go test` on catimport and pages/catalog, golangci-lint (0 issues), guard-docs-shots (fresh). The deadcode guard itself needs Go 1.27 and could not run in this container, so CI checks it.
