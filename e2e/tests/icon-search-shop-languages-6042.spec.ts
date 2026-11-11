@@ -108,6 +108,14 @@ test.describe('icon search in the shop languages (ut-docs#6042)', () => {
         }
       });
     }
+    test(`${label}: en+fa shop, UI en: ZWNJ is not a word boundary (ut-docs#6052)`, async ({ page }) => {
+      await setStaff(page, ['en', 'fa']);
+      const { grid, search } = await open(page, 'en');
+      for (const q of ['هاتداگ', 'هات\u200cداگ', 'هات داگ']) {
+        await search.fill(q);
+        await expect(grid.locator('[data-icon="hot-dog"]'), q).toBeVisible();
+      }
+    });
   }
 
   test('English-only shop: "kahve" finds nothing, "No image" stays', async ({ page }) => {

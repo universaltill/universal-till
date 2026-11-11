@@ -90,6 +90,17 @@ func TestPickerIconGroups_AddsShopLanguageLabels(t *testing.T) {
 	}
 }
 
+func TestPickerIconGroups_ZWNJDropped(t *testing.T) {
+	lk := stubLookup(map[string]string{"fa|catalog.builtin_icon.hot-dog": "هات\u200cداگ / سوسیس"})
+	kw := pickerKeywords(t, PickerIconGroups([]string{"fa"}, lk), "hot-dog")
+	if strings.ContainsRune(kw, '\u200c') || !hasWord(kw, "هاتداگ") {
+		t.Errorf("keywords = %q", kw)
+	}
+	if FoldForSearch("هات\u200cداگ") != FoldForSearch("هاتداگ") {
+		t.Error("query folds differ")
+	}
+}
+
 func TestPickerIconGroups_MissingLabelAddsNothing(t *testing.T) {
 	lk := stubLookup(map[string]string{"en|catalog.builtin_icon.coffee": "Coffee"})
 	g := PickerIconGroups([]string{"de"}, lk)

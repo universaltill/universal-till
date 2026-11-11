@@ -49,7 +49,7 @@
   function fold(s) {
     var lo = '';
     for (var c of rep(s || '')) lo += c.toLowerCase();
-    lo = lo.normalize('NFD').replace(/[\p{Mn}\u0640]/gu, ''); // all Mn + tatweel
+    lo = lo.normalize('NFD').replace(/[\p{Mn}\u0640\u200C\u200D]/gu, ''); // all Mn + tatweel + ZWNJ/ZWJ (ut-docs#6052)
     return rep(lo.normalize('NFC'));
   }
 
