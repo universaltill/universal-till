@@ -1308,7 +1308,7 @@ func (s *ButtonStore) Save(list []Button) error {
 // would turn the very first drag on a large catalog into a real
 // shortcut_buttons row for EVERY implicit item, most of which the operator
 // never touched (thousands of inserts, frozen labels/images, and a bloated
-// cloud heartbeat report — remoteQuickButtonsReport reads LoadButtons).
+// cloud heartbeat report — now capped by ReportableTiles, ut-docs#2562).
 // lastTouchedIndex is the LAST position where codes differs from Load()'s
 // CURRENT order; only codes at or before it are candidates for
 // materializing — a trailing run of tiles the drag never actually reordered

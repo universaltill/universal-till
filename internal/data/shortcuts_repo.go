@@ -35,12 +35,11 @@ type ShortcutButton struct {
 	Hidden bool
 }
 
-// LoadButtons returns the quick buttons as the sell screen shows them AT
-// REST: rows whose item is hidden are left out. It is what the cloud
-// heartbeat reports (cloudsync_wire.go), so sell_screen_hidden keeps meaning
-// "not on the sell screen" there (ut-docs#2698). A cloud layout directive
-// lists exactly this set, but the till applies it over LoadGridButtons so
-// hidden rows keep their slots (ut-docs#2709).
+// LoadButtons returns the explicit quick-button rows as the sell screen shows
+// them AT REST: rows whose item is hidden are left out. The cloud heartbeat no
+// longer reports this list: it reports the whole visible grid, implicit tiles
+// included (ui.ReportableTiles, ut-docs#2562). The layout directive applies
+// over LoadGridButtons' rows so hidden rows keep their slots (ut-docs#2709).
 func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, error) {
 	return r.loadButtons(ctx, "load_buttons", false)
 }

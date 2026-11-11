@@ -40,6 +40,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // rejectRemoteFiscalPostureWrite refuses key when it names either of the
@@ -542,36 +543,18 @@ func remoteTillSettingOptions() map[string][]string {
 }
 
 // cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
-// the quick-sale (shortcut) buttons from the cloud's layout panel — the
-// same ShortcutsRepo.UpdateOrder call the Designer's own move-up/move-down
-// reorder makes locally via POST /api/buttons/reorder. Gated to the primary
-// till (requirePrimaryDirective) for the same reason that LAN route is
+// the sale-screen quick buttons from the cloud's layout panel through
+// ui.ButtonStore.ApplyReportedLayout. Gated to the primary till
+// (requirePrimaryDirective) for the same reason the LAN reorder route is
 // (ut-docs#1697): shortcut_buttons syncs shop-wide as a primary-wins admin
-// table, so a write applied on a replica would vanish on the very next
-// admin pull.
+// table, so a write applied on a replica would vanish on the next admin pull.
 //
-// buttons_api.go's own reorder route documents its payload as "the FULL
-// global list" — UpdateOrder sets sort_order = index only for the barcodes
-// it's given, so a PARTIAL list leaves the omitted rows on their old
-// sort_order values, which can collide with a listed row's new one
-// (verified: an independent review's probe reproduced a real duplicate
-// sort_order from a partial payload, ut-docs#2321 review). A cloud
-// directive's payload isn't validated against the till by anything but
-// this function, so — unlike the LAN route, which trusts its own page to
-// always post the full list — this rejects a payload that doesn't cover
-// EXACTLY the till's current button set (missing or unknown barcodes
-// both refused, named in the error) rather than silently applying a
-// partial reorder.
-//
-// ut-docs#2709: "the till's current button set" is the VISIBLE set — the
-// cloud only ever sees LoadButtons (remoteQuickButtonsReport), which leaves
-// out a hidden item's tile. That tile's row is kept on purpose, holding its
-// slot for when the item is unhidden (ut-docs#2541), so it is not in the
-// payload and a payload naming it is refused. The write then covers EVERY
-// row edit mode shows (LoadGridButtons): hidden rows stay in their current
-// slots, the listed barcodes fill the other slots in the given order, and
-// the whole list is renumbered 0..n-1 — rewriting only the listed rows left
-// a hidden row's old sort_order colliding with a visible tile's new one.
+// ut-docs#2562: the payload must be exactly the set remoteQuickButtonsReport
+// sends (the visible grid head, implicit tiles included); a hidden, unknown,
+// duplicate or missing code is refused by name and nothing is written. The
+// codes are dealt into the slots those tiles hold, hidden rows keeping theirs
+// (ut-docs#2709), and implicit tiles at or before the last moved position are
+// materialised in the same transaction.
 func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
 	if len(barcodes) == 0 {
 		return "", fmt.Errorf("missing barcodes")
@@ -579,61 +562,12 @@ func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []s
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
 	}
-	repo := data.NewShortcutsRepo(d.Db)
-	grid, err := repo.LoadGridButtons(ctx)
+	n, err := cloudButtonStore(d).ApplyReportedLayout(ctx, barcodes)
 	if err != nil {
 		return "", err
 	}
-	currentSet := make(map[string]bool, len(grid))
-	hiddenSet := make(map[string]bool)
-	for _, b := range grid {
-		if b.Hidden {
-			hiddenSet[b.Barcode] = true
-			continue
-		}
-		currentSet[b.Barcode] = true
-	}
-	given := make(map[string]bool, len(barcodes))
-	for _, bc := range barcodes {
-		if given[bc] {
-			return "", fmt.Errorf("duplicate barcode %q in the new layout", bc)
-		}
-		given[bc] = true
-		if hiddenSet[bc] {
-			return "", fmt.Errorf("barcode %q is hidden on this till's sell screen — the layout lists visible quick buttons only", bc)
-		}
-		if !currentSet[bc] {
-			return "", fmt.Errorf("barcode %q is not one of this till's quick buttons", bc)
-		}
-	}
-	for bc := range currentSet {
-		if !given[bc] {
-			return "", fmt.Errorf("the new layout is missing barcode %q — it must list every current quick button", bc)
-		}
-	}
-	if err := repo.UpdateOrder(ctx, layoutWithHiddenSlots(grid, barcodes)); err != nil {
-		return "", err
-	}
 	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
-	return fmt.Sprintf("layout applied to %d buttons", len(barcodes)), nil
-}
-
-// layoutWithHiddenSlots merges a validated visible-only layout into the full
-// edit-mode list (ut-docs#2709): each hidden row keeps its index in grid,
-// every other index takes the next barcode from visible, in order. The
-// result lists every row, so UpdateOrder renumbers them all 0..n-1.
-func layoutWithHiddenSlots(grid []data.ShortcutButton, visible []string) []string {
-	out := make([]string, 0, len(grid))
-	next := 0
-	for _, b := range grid {
-		if b.Hidden {
-			out = append(out, b.Barcode)
-			continue
-		}
-		out = append(out, visible[next])
-		next++
-	}
-	return out
+	return fmt.Sprintf("layout applied to %d buttons", n), nil
 }
 
 // remoteStoreNameReport is the read side for DeviceExtra's `store_name`
@@ -691,39 +625,104 @@ func remoteCountryReport(ctx context.Context, d *common.Deps) (string, bool) {
 	return c, true
 }
 
-// remoteQuickButtonsReport is the read side for DeviceExtra: the currently
-// applied quick-sale button layout (barcode + label, in the same sort order
-// LoadButtons itself orders by, plus the item each tile points at and that
-// item's tile colour — ut-docs#2368), so the cloud's layout panel shows applied
-// state, not just what was queued — same "report what's actually there"
-// pattern as remoteTillSettingsReport above. A read error reports an empty
-// list rather than failing the whole heartbeat.
-func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]any {
-	buttons, err := data.NewShortcutsRepo(d.Db).LoadButtons(ctx)
+// quickButtonsReportByteBudget bounds the marshalled quick_buttons list
+// (ut-docs#2562). Realistic size is ~150 B per entry (about 75 KiB for the
+// 500-entry cap); a var so tests can shrink it.
+var quickButtonsReportByteBudget = 512 << 10
+
+// remoteQuickButtonsReport returns the visible sale-screen grid head for
+// DeviceExtra (ut-docs#2562): ui.ReportableTiles of LoadGrid, each entry
+// {barcode, label (ui.ReportLabel), sort_order (index in the list), item_id,
+// color}, plus total, the number of visible tiles. ok=false on a read error,
+// a degraded read (hidden tiles could be listed) or an over-budget payload:
+// the caller leaves both keys out and the cloud keeps its copy.
+func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) (list []map[string]any, total int, ok bool) {
+	grid, degraded, err := cloudButtonStore(d).LoadGrid(ctx)
 	if err != nil {
 		logging.L().Warnf("cloudsync: quick button layout report failed: %v", err)
-		return []map[string]any{}
+		return nil, 0, false
 	}
-	out := make([]map[string]any, 0, len(buttons))
-	for i, b := range buttons {
-		// sort_order mirrors this button's position in the (already
-		// sort_order-ordered) list LoadButtons returns — the cloud side
-		// decodes it into QuickButtonReport.SortOrder so a single entry is
-		// self-describing without its slice context (claims.go's own doc
-		// comment on that field), even though the panel today only reads
-		// the report's array order, not this field, to render the list.
+	if degraded {
+		logging.L().Warnf("cloudsync: quick button layout report skipped: sale-screen read degraded")
+		return nil, 0, false
+	}
+	head, total := ui.ReportableTiles(grid)
+	list = make([]map[string]any, 0, len(head))
+	for i, b := range head {
 		// item_id + color (ut-docs#2368): a tile has no colour of its own —
 		// it shows its item's items.color — so the cloud panel recolours a
-		// tile by queueing update_item_details for item_id, and reads color
-		// back as the applied state. color is always present ("" = none) so
-		// the cloud can tell an uncoloured item from an older till that
-		// doesn't report colour at all.
-		out = append(out, map[string]any{
-			"barcode": b.Barcode, "label": b.Label, "sort_order": i,
+		// tile by queueing update_item_details for item_id. color is always
+		// present ("" = none) so the cloud can tell an uncoloured item from
+		// an older till that doesn't report colour at all.
+		list = append(list, map[string]any{
+			"barcode": b.Code, "label": ui.ReportLabel(b.Label), "sort_order": i,
 			"item_id": b.ItemID, "color": b.Color,
 		})
 	}
-	return out
+	raw, err := json.Marshal(list)
+	if err != nil || len(raw) > quickButtonsReportByteBudget {
+		logging.L().Warnf("cloudsync: quick buttons report is %d bytes (budget %d, err %v); not sent", len(raw), quickButtonsReportByteBudget, err)
+		return nil, 0, false
+	}
+	return list, total, true
+}
+
+// quickButtonsReportRefresh is how often the quick_buttons report is re-sent
+// although the sell screen did not change; a var for tests.
+var quickButtonsReportRefresh = 30 * time.Minute
+
+// quickButtonsReportGate decides, per check-in, whether the `quick_buttons` /
+// `quick_buttons_total` report rides along (ut-docs#2562): only when the sell
+// screen's report version (ui.QuickButtonsReportVersion: the catalog-only sell
+// generation + enabled symbologies, not sync_admin_version, which every
+// check-in's settings rewrite bumps; two cheap reads) moved since the last
+// report that got through, or quickButtonsReportRefresh passed. Absent keys
+// mean "keep what you have". add runs in DeviceExtra, commit in AfterTick,
+// both on the check-in goroutine (the mutex covers the rest).
+type quickButtonsReportGate struct {
+	mu         sync.Mutex
+	sent       bool
+	sentVer    ui.QuickButtonsReportVersion
+	sentAt     time.Time
+	pending    bool
+	pendingVer ui.QuickButtonsReportVersion
+	// pendingTracked: pendingVer is a real version (an untracked version
+	// sends on every check-in and records nothing).
+	pendingTracked bool
+}
+
+// add puts the report into extra when it should be sent. The version is read
+// BEFORE the build, so a change in between moves it past the one recorded and
+// the next check-in re-sends. An untracked version (no row, read error) sends
+// on every check-in, as before the gate existed.
+func (g *quickButtonsReportGate) add(ctx context.Context, d *common.Deps, extra map[string]any) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pending, g.pendingTracked = false, false
+	ver, tracked, err := cloudButtonStore(d).QuickButtonsReportVersion(ctx)
+	tracked = tracked && err == nil
+	if tracked && g.sent && ver == g.sentVer && time.Since(g.sentAt) < quickButtonsReportRefresh {
+		return
+	}
+	list, total, ok := remoteQuickButtonsReport(ctx, d)
+	if !ok {
+		return
+	}
+	extra["quick_buttons"] = list
+	extra["quick_buttons_total"] = total
+	g.pending, g.pendingVer, g.pendingTracked = true, ver, tracked
+}
+
+// commit is AfterTick's half: a check-in that carried the report and got
+// through (see rolesReportGate.commit) records its version and time; any
+// other outcome leaves the gate as it was, so the next check-in re-sends.
+func (g *quickButtonsReportGate) commit(_ context.Context, contacted bool, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pending && g.pendingTracked && contacted && err == nil {
+		g.sent, g.sentVer, g.sentAt = true, g.pendingVer, time.Now()
+	}
+	g.pending = false
 }
 
 // remoteReportMaxGroupItems caps the per-group `items` list in the
@@ -1187,6 +1186,7 @@ func wireCloudLinkHooks(d *common.Deps, hooks *cloudsync.Hooks) {
 func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.Hooks {
 	configGate := &configReportGate{}
 	rolesGate := &rolesReportGate{}
+	qbGate := &quickButtonsReportGate{}
 	// The main till's directive key (reference/till-user-directives.md §1):
 	// created lazily by DeviceExtra at the first check-in as main till,
 	// opened by the user directive hooks.
@@ -1509,11 +1509,6 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// ut-docs#3390: the choices for the settings whose options
 				// only the till knows (its installed languages).
 				"till_setting_options": remoteTillSettingOptions(),
-				// The applied quick-sale button layout (barcode + label, in
-				// sort order), for the cloud's layout panel to pre-fill from
-				// real state rather than only what was queued. See
-				// remoteQuickButtonsReport.
-				"quick_buttons": remoteQuickButtonsReport(ctx, d),
 				// The shop's ISO 4217 currency and its minor-unit exponent,
 				// so the cloud formats the config report's price deltas with
 				// the right symbol and scale (ut-docs#2472). The till is the
@@ -1547,6 +1542,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// category/modifier editors to pre-fill from real state. Sent
 			// only when it changed (see configReportGate).
 			configGate.add(ctx, d, extra)
+			// The visible sale-screen grid head + total, for the cloud's
+			// layout panel (ut-docs#2562; every till reports, only the
+			// main till applies the directive). See quickButtonsReportGate.
+			qbGate.add(ctx, d, extra)
 			// ut-docs#4020: the shop's country, for the shop profile in my.
 			// See remoteCountryReport.
 			if c, ok := remoteCountryReport(ctx, d); ok {
@@ -1599,9 +1598,13 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			}
 			return extra
 		},
-		// Records whether the check-in carrying a roles report got through
-		// (rolesReportGate.commit). wireCloudLinkHooks chains onto it.
-		AfterTick: rolesGate.commit,
+		// Records whether the check-in carrying a roles / quick-buttons
+		// report got through (the gates' commit). wireCloudLinkHooks chains
+		// onto it.
+		AfterTick: func(ctx context.Context, contacted bool, err error) {
+			rolesGate.commit(ctx, contacted, err)
+			qbGate.commit(ctx, contacted, err)
+		},
 		// ADR-0163 amendment 2026-10-16 (ut-docs#4539): adopt the shop's
 		// currency from my. before the first sale, else report it.
 		ShopCurrency: func(ctx context.Context) { reconcileShopCurrency(ctx, d) },
