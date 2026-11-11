@@ -98,9 +98,30 @@ type pluginSlotView struct {
 	Panels []pluginSlotPanel
 }
 
+// pluginSlotPanelPrefix is the start of every panel id core gives slot.
+func pluginSlotPanelPrefix(slot string) string {
+	return "plugin-slot-" + strings.ReplaceAll(slot, ".", "-") + "-"
+}
+
+// pluginSlotPanelSuffixRe is what follows the prefix: a whole-slot panel's
+// index (one digit, pluginSlotMaxEntries <= 10) or a per-entry panel's
+// pluginSlotEntryID (16 hex). It has no "-", so "<panel>-alert" and
+// "<panel>-pos" never match.
+var pluginSlotPanelSuffixRe = regexp.MustCompile(`^(?:[0-9]|[0-9a-f]{16})$`)
+
+// pluginSlotPanelOf reports whether target is a panel id core gives an
+// entry of slot (ut-docs#4114). An empty slot has no panels.
+func pluginSlotPanelOf(slot, target string) bool {
+	if slot == "" || !pluginSlotPanelIDRe.MatchString(target) {
+		return false
+	}
+	rest, ok := strings.CutPrefix(target, pluginSlotPanelPrefix(slot))
+	return ok && pluginSlotPanelSuffixRe.MatchString(rest)
+}
+
 // pluginSlotPanelID is panel i's container id in slot.
 func pluginSlotPanelID(slot string, i int) string {
-	return fmt.Sprintf("plugin-slot-%s-%d", strings.ReplaceAll(slot, ".", "-"), i)
+	return fmt.Sprintf("%s%d", pluginSlotPanelPrefix(slot), i)
 }
 
 // contentSlotEntries returns the entries filling slot for this render, in
@@ -160,12 +181,7 @@ func contentSlotEntries(ctx context.Context, d *common.Deps, slot string) []data
 // whatever the plugins do. views[i] is fill[i]'s prepared view, or nil when
 // that plugin was slow, broken, invalid or silent (logged at warn).
 func askSlotEntries(ctx context.Context, d *common.Deps, slot, locale string, params map[string]string, fill []data.PageEntryRow) []*pluginview.View {
-	perm := "ui:slot:" + slot
-	p := make(map[string]string, len(params)+1)
-	for k, v := range params {
-		p[k] = v
-	}
-	p["slot"] = slot
+	p := slotParams(slot, params)
 
 	views := make([]*pluginview.View, len(fill))
 	var wg sync.WaitGroup
@@ -174,15 +190,7 @@ func askSlotEntries(ctx context.Context, d *common.Deps, slot, locale string, pa
 		go func() {
 			defer logging.RecoverAndLog("pages.askSlotEntries")
 			defer wg.Done()
-			raw, vctx, err := askPluginUIAs(ctx, d, e, perm, pluginSlotTimeout, pluginViewAskEvent, map[string]any{
-				"view":   e.View,
-				"params": p,
-				"locale": locale,
-			})
-			var doc *pluginview.Document
-			if err == nil {
-				doc, err = pluginview.DecodeViewAnswer(raw, vctx)
-			}
+			doc, err := askSlotDocument(ctx, d, slot, e, locale, p)
 			if err != nil {
 				logging.L().Warnf("plugin slot %s: %s %q skipped: %v", slot, e.PluginID, e.View, err)
 				return
@@ -197,6 +205,33 @@ func askSlotEntries(ctx context.Context, d *common.Deps, slot, locale string, pa
 	}
 	wg.Wait()
 	return views
+}
+
+// slotParams is params plus core's own "slot" (overwriting any value).
+func slotParams(slot string, params map[string]string) map[string]string {
+	p := make(map[string]string, len(params)+1)
+	for k, v := range params {
+		p[k] = v
+	}
+	p[pluginview.SlotParam] = slot
+	return p
+}
+
+// askSlotDocument asks e for its view as a panel of slot: under
+// ui:slot:<slot>, bounded by pluginSlotTimeout, with params (which must
+// already carry "slot", see slotParams -- it is added here if not). A
+// redirect answer is an error (DecodeViewAnswer). Shared by a slot's draw
+// and a panel's paging GET (ut-docs#4114), so both ask identically.
+func askSlotDocument(ctx context.Context, d *common.Deps, slot string, e data.PageEntryRow, locale string, params map[string]string) (*pluginview.Document, error) {
+	raw, vctx, err := askPluginUIAs(ctx, d, e, "ui:slot:"+slot, pluginSlotTimeout, pluginViewAskEvent, map[string]any{
+		"view":   e.View,
+		"params": slotParams(slot, params),
+		"locale": locale,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pluginview.DecodeViewAnswer(raw, vctx)
 }
 
 // contentSlotPanels asks the plugins filling slot and returns their
@@ -227,7 +262,7 @@ func pluginSlotEntryID(e data.PageEntryRow) string {
 // pluginSlotEntryPanelID is the container id of one entry's panel when a
 // host screen draws it on its own (it matches pluginSlotPanelIDRe).
 func pluginSlotEntryPanelID(slot string, e data.PageEntryRow) string {
-	return "plugin-slot-" + strings.ReplaceAll(slot, ".", "-") + "-" + pluginSlotEntryID(e)
+	return pluginSlotPanelPrefix(slot) + pluginSlotEntryID(e)
 }
 
 // pluginSlotSection is one entry of a slot its host screen lists as its
@@ -305,7 +340,14 @@ func registerPluginSlots(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
-		panels := contentSlotPanels(r.Context(), d, slot, locale, pluginViewParams(r))
+		params := pluginViewParams(r)
+		panels := contentSlotPanels(r.Context(), d, slot, locale, params)
+		// A paged table's links swap the next page into its own panel
+		// (ut-docs#4114). Not in contentSlotPanels: the setup wizard shares
+		// it and shows the indicator only.
+		for i := range panels {
+			panels[i].Body.View.LinkPagingPanel(panels[i].Body.Route, params, slot, panels[i].ID)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if len(panels) == 0 {
 			w.WriteHeader(http.StatusOK)
@@ -343,8 +385,10 @@ func registerPluginSlots(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		id := pluginSlotEntryPanelID(slot, e)
 		body := pluginViewBody{Route: e.Route, Target: id}
-		if v := askSlotEntries(r.Context(), d, slot, locale, pluginViewParams(r), fill[i:i+1])[0]; v != nil {
+		params := pluginViewParams(r)
+		if v := askSlotEntries(r.Context(), d, slot, locale, params, fill[i:i+1])[0]; v != nil {
 			body.View = *v
+			body.View.LinkPagingPanel(e.Route, params, slot, id)
 		} else {
 			body.View.Title = httpx.T(locale, e.Label)
 			body.Unavailable = true

@@ -92,7 +92,7 @@ func main() {
 		strings.Repeat("0", 64), "1.0.0", "1.0")
 	execSQL(`INSERT OR IGNORE INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES (?,?,?,?,?,1)`,
 		pluginID, pluginName, pluginVersion, "./plugin.wasm", "wasm")
-	for _, perm := range []string{"ui:page", "events:receive"} {
+	for _, perm := range []string{"ui:page", "ui:slot:reports.panels", "events:receive"} {
 		execSQL(`INSERT OR IGNORE INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?,?,?,1)`,
 			"e2e-views-"+perm, pluginID, perm)
 	}
@@ -110,6 +110,14 @@ func main() {
 			VALUES (?,?,?,?,?,?,?,?)`,
 			slug+"-"+k, pluginID, "page", k, "e2eviews."+k+".title", "main",
 			"/plugin/"+slug+"/"+k, `{"view":"e2eviews.`+k+`"}`)
+	}
+	// Two content slot panels on Reports for plugin-slot-paging-4114.spec.ts:
+	// paged_a pages over three pages, paged_b is one static table.
+	for _, k := range []string{"paged_a", "paged_b"} {
+		execSQL(`INSERT OR IGNORE INTO plugin_entries (id, plugin_id, type, key, label, menu_group, route, config_json)
+			VALUES (?,?,?,?,?,?,?,?)`,
+			slug+"-"+k, pluginID, "page", k, "e2eviews."+k+".title", "",
+			"/plugin/"+slug+"/"+k, `{"view":"e2eviews.`+k+`","content_slot":"reports.panels"}`)
 	}
 	if err := tx.Commit(); err != nil {
 		fatalf("commit: %v", err)

@@ -7332,7 +7332,25 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   border-width: 2px; }
 .plugin-view-paging { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
   padding-block: .6rem; padding-inline: .6rem; }
-.plugin-view-paging-pos { font-variant-numeric: tabular-nums; }
+.plugin-view-paging-pos { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plugin-view-paging .btn-touch { min-inline-size: 46px; justify-content: center; }
+/* ut-docs#4114: a panel page is loading (htmx-request on the panel via
+   hx-indicator). The old page dims, both links stop taking taps (hx-sync
+   drops repeats anyway), and the tapped link shows a busy ring (#5291; the
+   link carries data-ut-busy from app.js, as hx-indicator moves htmx's own
+   .htmx-request class from the link to the panel). */
+.plugin-view.htmx-request .plugin-view-table tbody { opacity: .55; transition: opacity .15s; }
+.plugin-view.htmx-request .plugin-view-paging a { opacity: .6; pointer-events: none; cursor: progress; }
+.plugin-view-paging a[data-ut-busy]::after {
+  content: ""; display: inline-block; inline-size: .9em; block-size: .9em;
+  margin-inline-start: .5em; vertical-align: -.125em;
+  border: 2px solid currentColor; border-block-start-color: transparent; border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-view-paging a[data-ut-busy]::after { animation: none; }
+  .plugin-view.htmx-request .plugin-view-table tbody { transition: none; }
+}
 /* The chat component (ut-docs#4132, ADR-0121 amendment 2026-10-11). The
    transcript scrolls inside the card; column-reverse on the scroller keeps
    it pinned to the newest turn without script while the inner log keeps

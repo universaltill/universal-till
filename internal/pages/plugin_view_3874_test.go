@@ -48,6 +48,9 @@ func TestPluginView_QRWizardPagingRender_3874(t *testing.T) {
 			t.Errorf("rendered view missing %q", want)
 		}
 	}
+	if i := strings.Index(body, `rel="next"`); i < 0 || strings.Contains(body[strings.LastIndex(body[:i], "<a "):i], "hx-") {
+		t.Error("a page's paging links are plain links, not panel swaps (ut-docs#4114)")
+	}
 	if strings.Contains(body, "<script>\"") || strings.Contains(body, "pair?c=1") {
 		t.Error("the qr data reached the page as text or a URL")
 	}
@@ -77,25 +80,5 @@ func TestPluginView_PagingAfterAction_3874(t *testing.T) {
 	}
 	if !strings.Contains(body, ">Page 1<") {
 		t.Error("indicator without a total missing")
-	}
-}
-
-// A content slot panel has no GET swap of its own, so a paged table there
-// shows its page indicator without links (ut-docs#3874 non-goal, follow-up
-// card), and the panel's other output is unchanged.
-func TestPluginSlot_PagedTableHasNoLinks_3874(t *testing.T) {
-	h := newSlotHarness(t)
-	h.answerWith(`{"document":{"version":1,"components":[
-		{"type":"table","columns":[{"label":{"literal":"Item"},"kind":"text"}],"rows":[["Tea"]],"paging":{"page":2,"pages":3}}]}}`)
-	rec := h.do(http.MethodGet, "/ui/slot/reports.panels?days=7&page=2", nil, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET = %d: %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Page 2 of 3") {
-		t.Errorf("indicator missing:\n%s", body)
-	}
-	if strings.Contains(body, "rel=\"prev\"") || strings.Contains(body, "rel=\"next\"") {
-		t.Errorf("a slot panel drew paging links:\n%s", body)
 	}
 }

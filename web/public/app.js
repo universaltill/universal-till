@@ -1212,6 +1212,55 @@ document.addEventListener('htmx:afterRequest', function (evt) {
   t.focus({ preventScroll: true });
 });
 
+// ut-docs#4114: a paging link inside a content slot panel swaps just that
+// panel (innerHTML), so the tapped <a> is destroyed and focus would fall to
+// <body>, throwing a keyboard or switch user back above the nav rail. Remember
+// the request (per xhr, like disabledFocus), mark the panel busy for a screen
+// reader (aria-busy; the visual busy state is .htmx-request via hx-indicator),
+// and after a successful swap put focus back inside the panel: the link with
+// the same rel (Next stays on Next), else the other link (the last page has no
+// Next), else the page indicator, else the panel itself. Only when focus really
+// fell to <body> or was removed with the old content: a deliberate move
+// mid-request is left alone. A failed request swaps nothing, so focus stays on
+// the link (Enter retries) and only the busy mark is cleared. No strings here.
+var pagingFocus = new WeakMap();
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  if (!d.xhr || !d.elt || !d.elt.matches || !d.elt.matches('.plugin-view-paging a[rel]')) return;
+  pagingFocus.set(d.xhr, { rel: d.elt.getAttribute('rel'), panel: d.target });
+  d.elt.setAttribute('data-ut-busy', '1');
+  if (d.target && d.target.setAttribute) d.target.setAttribute('aria-busy', 'true');
+});
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && pagingFocus.get(d.xhr);
+  if (!rec || !d.target || d.xhr.status >= 400) return;
+  var panel = d.target;
+  var a = document.activeElement;
+  if (a && a !== document.body && a.isConnected) return; // operator moved on
+  var other = rec.rel === 'next' ? 'prev' : 'next';
+  var el = panel.querySelector('.plugin-view-paging a[rel="' + rec.rel + '"]') ||
+    panel.querySelector('.plugin-view-paging a[rel="' + other + '"]') ||
+    panel.querySelector('.plugin-view-paging-pos');
+  if (!el) {
+    el = panel;
+    if (!el.hasAttribute('tabindex')) {
+      el.setAttribute('tabindex', '-1');
+      el.addEventListener('blur', function () { el.removeAttribute('tabindex'); }, { once: true });
+    }
+  }
+  el.focus({ preventScroll: true });
+  if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+});
+document.addEventListener('htmx:afterRequest', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && pagingFocus.get(d.xhr);
+  if (!rec) return;
+  pagingFocus.delete(d.xhr);
+  if (d.elt && d.elt.removeAttribute) d.elt.removeAttribute('data-ut-busy');
+  if (rec.panel && rec.panel.removeAttribute) rec.panel.removeAttribute('aria-busy');
+});
+
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
 // on a full-page response — an in-panel swap (/items, /admin,
 // /help/{topic}) never touches document.title at all, so the browser tab

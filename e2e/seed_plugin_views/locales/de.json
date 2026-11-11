@@ -16,5 +16,7 @@
   "e2eviews.job.intro": "Eine lange Beispielaufgabe starten.",
   "e2eviews.job.run": "Aufgabe starten",
   "e2eviews.job.progress": "Beispielaufgabe zur Hälfte",
-  "e2eviews.job.done": "Beispielaufgabe erledigt"
+  "e2eviews.job.done": "Beispielaufgabe erledigt",
+  "e2eviews.paged_a.title": "Seitentabelle A",
+  "e2eviews.paged_b.title": "Seitentabelle B"
 }

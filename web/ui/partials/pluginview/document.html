@@ -124,5 +124,6 @@
      live region nested in another is announced twice). */}}
 {{ define "pluginview_alert" }}<div id="{{ if .ID }}{{ .ID }}{{ else }}plugin-view-alert{{ end }}" class="plugin-view-alert" aria-live="polite"{{ if .OOB }} hx-swap-oob="innerHTML"{{ end }}>
 {{- if .Busy }}<div class="plugin-view-notice warn">{{ T "plugin.job.busy" }}</div>
+{{- else if .PageFailed }}<div class="plugin-view-notice warn">{{ T "plugin.view.page_failed" }}</div>
 {{- else if .Failed }}<div class="plugin-view-notice warn">{{ T "plugin.view.action_failed" }}</div>
 {{- end }}</div>{{ end }}

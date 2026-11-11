@@ -128,6 +128,9 @@ type ViewPaging struct {
 	HasNext          bool
 	Text             string
 	PrevURL, NextURL string
+	// Target is the content slot panel the links swap into ("" = plain page
+	// links, ut-docs#4114).
+	Target string
 }
 
 // qrModulePixels: a negative size makes go-qrcode draw each module this
@@ -373,32 +376,51 @@ func preparePaging(p *Paging, locale string) *ViewPaging {
 	return vp
 }
 
+// SlotParam is the params key core sets to a content slot panel's slot
+// (ut-docs#3872); a panel's paging link always keeps it (ut-docs#4114).
+const SlotParam = "slot"
+
 // LinkPaging gives every paged table its Previous/Next links: route (the
 // entry's own) with params (the query the view was asked with, already
 // bounded by the caller) and the table's own param set to the page
-// before/after. A view drawn where a link has nowhere to go (a content
-// slot panel, the read-only setup wizard) skips this and shows the
-// indicator alone.
+// before/after. A view drawn where a link has nowhere to go (the read-only
+// setup wizard, the overlay, an action's answer in a panel) skips this and
+// shows the indicator alone; a content slot panel uses LinkPagingPanel.
 //
 // A link never carries a reserved "_" key (core's own, such as the job
 // poll's _job) and holds at most MaxParams keys: the table's param plus
 // the first MaxParams-1 others by sorted key, so the next ask still
 // forwards the page.
 func (v *View) LinkPaging(route string, params map[string]string) {
+	v.linkPaging(route, params, nil, "")
+}
+
+// LinkPagingPanel is LinkPaging for a table in content slot panel target
+// of slot (ut-docs#4114): the links carry params (the host query the panel
+// was asked with) plus core's "slot", and htmx swaps the answer into the
+// panel. A table whose own param is "slot" gets the indicator alone.
+func (v *View) LinkPagingPanel(route string, params map[string]string, slot, target string) {
+	v.linkPaging(route, params, map[string]string{SlotParam: slot}, target)
+}
+
+func (v *View) linkPaging(route string, params, pinned map[string]string, target string) {
 	link := func(param string, page int64) string {
 		keys := make([]string, 0, len(params))
 		for k := range params {
-			if k != param && k != "" && !strings.HasPrefix(k, "_") {
+			if _, pin := pinned[k]; k != param && !pin && k != "" && !strings.HasPrefix(k, "_") {
 				keys = append(keys, k)
 			}
 		}
 		sort.Strings(keys)
-		if len(keys) > MaxParams-1 {
-			keys = keys[:MaxParams-1]
+		if room := MaxParams - 1 - len(pinned); len(keys) > room {
+			keys = keys[:room]
 		}
 		q := url.Values{}
 		for _, k := range keys {
 			q.Set(k, params[k])
+		}
+		for k, val := range pinned {
+			q.Set(k, val)
 		}
 		q.Set(param, strconv.FormatInt(page, 10))
 		u := url.URL{Path: route, RawQuery: q.Encode()}
@@ -410,6 +432,10 @@ func (v *View) LinkPaging(route string, params map[string]string) {
 			continue
 		}
 		p.PrevURL, p.NextURL = "", ""
+		p.Target = target
+		if _, pin := pinned[p.Param]; pin {
+			continue
+		}
 		if p.Page > 1 {
 			p.PrevURL = link(p.Param, p.Page-1)
 		}

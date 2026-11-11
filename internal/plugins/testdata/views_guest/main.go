@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/universaltill/universal-till/sdk/plugin"
@@ -24,6 +25,8 @@ const (
 	chatEvent = "com.example.e2e-views.chat"
 	workEvent = "com.example.e2e-views.work"
 	maxTurns  = 10
+
+	pagedPages = 3 // e2eviews.paged_a (ut-docs#4114)
 )
 
 type payload struct {
@@ -31,6 +34,8 @@ type payload struct {
 	Action string         `json:"action"`
 	Form   map[string]any `json:"form"`
 	Turns  []turn         `json:"turns"`
+	// Params is the view ask's host query (+ core's "slot" in a panel).
+	Params map[string]string `json:"params"`
 }
 
 type turn struct {
@@ -90,6 +95,17 @@ func wizardDoc(n int) map[string]any {
 	return doc("e2eviews.wizard.title", comps...)
 }
 
+// pagedDoc is a table paged over pagedPages pages for the content slot
+// panel paging spec (ut-docs#4114): the rows say which page they are.
+func pagedDoc(title, row string, page int) map[string]any {
+	return doc(title, map[string]any{
+		"type":    "table",
+		"columns": []any{map[string]any{"label": literal("Row"), "kind": "text"}},
+		"rows":    []any{[]any{fmt.Sprintf("%s p.%d", row, page)}},
+		"paging":  map[string]any{"page": page, "pages": pagedPages},
+	})
+}
+
 func jobDoc() map[string]any {
 	return doc("e2eviews.job.title",
 		map[string]any{"type": "text", "text": key("e2eviews.job.intro")},
@@ -114,6 +130,18 @@ func handle(ev plugin.Event) (any, error) {
 			return wizardDoc(1), nil
 		case "e2eviews.job":
 			return jobDoc(), nil
+		case "e2eviews.paged_a":
+			page := 1
+			if n, err := strconv.Atoi(p.Params["page"]); err == nil && n >= 1 && n <= pagedPages {
+				page = n
+			}
+			return pagedDoc("e2eviews.paged_a.title", "A row", page), nil
+		case "e2eviews.paged_b":
+			return doc("e2eviews.paged_b.title", map[string]any{
+				"type":    "table",
+				"columns": []any{map[string]any{"label": literal("Row"), "kind": "text"}},
+				"rows":    []any{[]any{"B row"}},
+			}), nil
 		}
 	case "ui.action.ask":
 		switch {
