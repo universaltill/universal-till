@@ -1,6 +1,8 @@
 {{/* ut-docs#3661: adopts the ut-docs#2010 list/edit dialog standard
      (ut-docs/reference/list-and-dialog-pattern.md), copying locations.html's
-     shape. The row holds only the Edit pencil; every field lives in the
+     shape. The whole row opens the dialog (data-record-open); the name is a real
+     button carrying data-record-edit — the keyboard path and the focus-return
+     target (ut-docs#6046). Every field lives in the
      record dialog, prefilled client-side from the row's data-field-*
      attributes (so it opens instantly and works offline). Starts/Ends share
      one "Valid" column so the table fits 1024x600 without a sideways scroll. */}}
@@ -35,7 +37,6 @@
         <th>{{ T "promotions.col.dates" }}</th>
         <th>{{ T "promotions.field.customer" }}</th>
         <th>{{ T "promotions.col.status" }}</th>
-        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -54,23 +55,17 @@
           data-field-customer_id="{{ .CustomerID }}"
           data-promo-customer-label="{{ .CustomerLabel }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td><bdi dir="ltr">{{ .Code }}</bdi></td>
+        <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name"><bdi dir="ltr">{{ .Code }}</bdi></span></button></td>
         <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
         <td>{{ .ValueDisplay }}</td>
         <td class="promo-wrap"><bdi dir="auto">{{ .Description }}</bdi></td>
         <td class="promo-dates"><span class="promo-date">{{ or .StartsAtDate "–" }}</span><span class="promo-date">{{ or .EndsAtDate "–" }}</span></td>
         <td class="promo-wrap" data-card-keep>{{ if not .CustomerID }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ else if .CustomerMissing }}<span class="muted">{{ T "promotions.customer.deleted" }}</span>{{ else }}<bdi dir="auto">{{ .CustomerName }}</bdi>{{ end }}</td>
         <td data-card-keep>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
-        <td class="list-actions">
-          <button type="button" class="btn secondary btn-icon" data-record-edit
-                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-          </button>
-        </td>
       </tr>
       {{ end }}
       <tr id="promotions-no-results" class="list-empty-row" hidden>
-        <td colspan="8">{{ T "common.no_results" }}</td>
+        <td colspan="7">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>

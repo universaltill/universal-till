@@ -569,7 +569,7 @@ func TestKitchenStationsPage_RendersListHeaderAndRecordDialog(t *testing.T) {
 		`data-field-destination_type="both"`,
 		`data-field-printer_address="tcp://10.0.0.5:9100"`,
 		`data-field-active="1"`,
-		`data-record-edit`,
+		`class="record-row-open" data-record-edit`,
 		`data-record-when="active=1"`,
 		`data-record-when="active=0"`,
 		`<dialog id="kitchen-station-dialog"`,

@@ -551,9 +551,12 @@ func TestPromotionsPageList_DialogSlotContract(t *testing.T) {
 			t.Errorf("page missing %q", want)
 		}
 	}
-	// The pencil is icon-only: aria-label + title.
-	if !regexp.MustCompile(`(?s)data-record-edit[^>]*aria-label="Edit"[^>]*title="Edit"`).MatchString(body) {
-		t.Errorf("row pencil lacks aria-label+title")
+	// The code is the row's real button (ut-docs#6046); no pencil, no aria-label.
+	if !regexp.MustCompile(`(?s)class="record-row-open" data-record-edit>.*?NAMED.*?</button>`).MatchString(body) {
+		t.Errorf("row lacks the code name-button")
+	}
+	if strings.Contains(body, `aria-label="Edit"`) {
+		t.Errorf("row still carries an Edit pencil")
 	}
 
 	i := strings.Index(body, `<form id="promotion-form"`)

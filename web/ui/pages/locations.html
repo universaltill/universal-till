@@ -30,7 +30,6 @@
       <tr>
         <th>{{ T "locations.col.name" }}</th>
         <th>{{ T "locations.col.status" }}</th>
-        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -41,18 +40,12 @@
           data-record-destructive-action="/api/locations/{{ .ID }}/active"
           data-field-name="{{ .Name }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td>{{ .Name }}</td>
+        <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name">{{ .Name }}</span></button></td>
         <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
-        <td class="list-actions">
-          <button type="button" class="btn secondary btn-icon" data-record-edit
-                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-          </button>
-        </td>
       </tr>
       {{ end }}
       <tr id="locations-no-results" class="list-empty-row" hidden>
-        <td colspan="3">{{ T "common.no_results" }}</td>
+        <td colspan="2">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>
