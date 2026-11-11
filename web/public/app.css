@@ -959,6 +959,13 @@ body.sale-screen .session-admin-link { display: none; }
 .x-report-print-msg { flex-basis: 100%; min-block-size: 1.3rem; margin-block-end: .4rem; }
 .x-report-print-msg .error { margin-block: 0; color: var(--danger); }
 .x-report-print-msg .error::before { content: "⚠ "; }
+/* ut-docs#5800: day-so-far X report (Reports -> End of day) and the shared paper preview */
+.eod-day-x { padding-block-end: .8rem; margin-block-end: .8rem; border-block-end: 1px solid var(--border, #d1d5db); }
+.eod-day-x h3 { margin-block: 0 .3rem; }
+.eod-day-x-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-block: .6rem; }
+.eod-day-x-bar p { margin: 0; }
+.eod-day-x-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.paper-preview { background: #fff; color: #111; border: 1px dashed var(--border, #d1d5db); padding: .8rem; font-size: min(.78rem, 2.4vw); line-height: 1.25; overflow-x: auto; max-inline-size: 100%; box-sizing: border-box; }
 .x-report-link { display: inline-block; min-block-size: 44px; padding-block: .6rem; box-sizing: border-box; }
 /* ut-docs#2781: the roster gained a Role column and a per-till Change role
    button; with the link/version columns and a long (tr/ar) label it can
