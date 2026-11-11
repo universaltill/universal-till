@@ -79,6 +79,11 @@ func NewIconMatcher(locales []string, lookup LabelLookup) *IconMatcher {
 					continue
 				}
 				rows = append(rows, labelRow{icon: d.Key, words: w, joined: " " + strings.Join(w, " ") + " "})
+				if hasZWNJ(alt) {
+					if jw := joinedWords(alt); len(jw) > 0 && strings.Join(jw, " ") != strings.Join(w, " ") {
+						rows = append(rows, labelRow{icon: d.Key, words: jw, joined: " " + strings.Join(jw, " ") + " "})
+					}
+				}
 			}
 		}
 		sort.SliceStable(rows, func(i, j int) bool {
@@ -122,16 +127,27 @@ func (m *IconMatcher) match(s string) (string, bool) {
 	if m == nil || len(m.passes) == 0 {
 		return matchKeyword(s)
 	}
-	words := normalizedWords(s)
-	joined := " " + strings.Join(words, " ") + " "
-	// Tokens to try for single-word labels: each word, plus the word with
-	// an Arabic article stripped.
-	tokens := make([]string, 0, len(words)*2)
-	for _, w := range words {
-		tokens = append(tokens, w)
-		if st, ok := stripArticle(w); ok {
-			tokens = append(tokens, st)
+	// Views of the name: the ZWNJ-split form, plus the joined form when the
+	// name has a ZWNJ (ut-docs#6052). Either may hit a row.
+	type view struct {
+		joined string
+		tokens []string
+	}
+	mk := func(words []string) view {
+		// Tokens to try for single-word labels: each word, plus the word
+		// with an Arabic article stripped.
+		tokens := make([]string, 0, len(words)*2)
+		for _, w := range words {
+			tokens = append(tokens, w)
+			if st, ok := stripArticle(w); ok {
+				tokens = append(tokens, st)
+			}
 		}
+		return view{joined: " " + strings.Join(words, " ") + " ", tokens: tokens}
+	}
+	views := []view{mk(normalizedWords(s))}
+	if hasZWNJ(s) {
+		views = append(views, mk(joinedWords(s)))
 	}
 	englishDone := false
 	for _, p := range m.passes {
@@ -143,15 +159,17 @@ func (m *IconMatcher) match(s string) (string, bool) {
 			continue
 		}
 		for _, r := range p.rows {
-			if len(r.words) > 1 {
-				if strings.Contains(joined, r.joined) {
-					return r.icon, true
+			for _, v := range views {
+				if len(r.words) > 1 {
+					if strings.Contains(v.joined, r.joined) {
+						return r.icon, true
+					}
+					continue
 				}
-				continue
-			}
-			for _, t := range tokens {
-				if labelWordMatches(r.words[0], t) {
-					return r.icon, true
+				for _, t := range v.tokens {
+					if labelWordMatches(r.words[0], t) {
+						return r.icon, true
+					}
 				}
 			}
 		}

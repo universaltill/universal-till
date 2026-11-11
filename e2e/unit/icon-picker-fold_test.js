@@ -20,6 +20,12 @@ for (const r of rows) {
   });
 }
 
+test('wordMatches: ZWNJ is not a word boundary, both directions (ut-docs#6052)', () => {
+  assert.ok(wordMatches(fold('تخم\u200cمرغ'), fold('تخممرغ')));
+  assert.ok(wordMatches(fold('تخممرغ'), fold('تخم\u200cمرغ')));
+  // a real substring match: a partial query without the ZWNJ, inside a longer haystack
+  assert.ok(wordMatches('egg ' + fold('تخم\u200cمرغ') + ' breakfast', fold('خممر')));
+});
 test('wordMatches: Arabic article is stripped for words of 4+ code points', () => {
   assert.ok(wordMatches('coffee قهوه', fold('القهوة')));
 });
