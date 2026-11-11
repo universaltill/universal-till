@@ -509,7 +509,7 @@ func optionSetInUseMessage(setName string, items []data.AssignedItem) string {
 // cloudsync has already checked the payload's shape; this checks the id is
 // on this till BEFORE fetching anything, then writes through the same
 // functions the till's own upload and Remove use (catalog.StoreItemPhoto /
-// ClearItemPicture, storeCategoryPhoto / clearCategoryPicture), so the file,
+// ClearItemPhoto, storeCategoryPhoto / clearCategoryPicture), so the file,
 // the item_images row or categories.image_path, and what the sale screen
 // shows are exactly what a local upload produces. Satellites get the file
 // through the existing asset sync (/api/sync/assets, #2566/#2785); the
@@ -532,9 +532,10 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 	if !safeCategoryID(img.ID) {
 		return "", notHere
 	}
-	// current is what the entity shows now: its item_images path or its
-	// categories.image_path/icon ("" = no picture at all).
-	var name, current string
+	// curImage is the entity's stored image (item_images path /
+	// categories.image_path); the icon is kept by both set and clear
+	// (ut-docs#3585, #3601), so only the image decides a replay.
+	var name, curImage string
 	if img.Entity == "item" {
 		l, ok, err := repo.GetItemLabel(ctx, img.ID)
 		if err != nil {
@@ -544,15 +545,9 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 			return "", notHere
 		}
 		name = l.Name
-		if current, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
+		if curImage, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
 			return "", err
 		}
-		// ut-docs#3584: an icon id is the item's picture too.
-		icon, err := repo.ItemIcon(ctx, img.ID)
-		if err != nil {
-			return "", err
-		}
-		current += icon
 	} else {
 		c, ok, err := repo.CategoryPicture(ctx, img.ID)
 		if err != nil {
@@ -561,7 +556,7 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		if !ok {
 			return "", notHere
 		}
-		name, current = c.Name, c.ImagePath+c.Icon
+		name, curImage = c.Name, c.ImagePath
 	}
 	target := catalog.ItemThumbURL(img.ID)
 	if img.Entity == "category" {
@@ -577,12 +572,12 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 	if img.Clear {
 		msg := fmt.Sprintf("image removed from %s %s", img.Entity, name)
 		// Nothing shown and no stray photo file: a replay, or never set.
-		if current == "" && cloudsync.ServedImageSHA256(target) == "" {
+		if curImage == "" && cloudsync.ServedImageSHA256(target) == "" {
 			return msg, nil
 		}
 		var err error
 		if img.Entity == "item" {
-			err = catalog.ClearItemPicture(ctx, repo, img.ID)
+			err = catalog.ClearItemPhoto(ctx, repo, img.ID)
 		} else {
 			err = clearCategoryPicture(ctx, repo, img.ID)
 		}
@@ -611,7 +606,7 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		return "", errors.New("the image from the cloud could not be read as a PNG or JPEG")
 	}
 	before := ""
-	if current == target {
+	if curImage == target {
 		before = cloudsync.ServedImageSHA256(target)
 	}
 	if img.Entity == "item" {

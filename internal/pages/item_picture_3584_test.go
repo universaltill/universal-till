@@ -44,10 +44,9 @@ func TestCloudSaveItem_IconReplacesUploadedPhoto(t *testing.T) {
 	}
 }
 
-// set_catalog_image's clear on an item that shows an icon (no thumbnail
-// row) is not a no-op replay: the icon is the item's picture, and "remove"
-// takes it away, as for a category.
-func TestCloudSetCatalogImage_ClearRemovesItemIcon(t *testing.T) {
+// ut-docs#3601 reverses #3584 here: set_catalog_image clear removes only the
+// image, as for a category. On an icon-only item it is a no-op (no audit).
+func TestCloudSetCatalogImage_ClearKeepsIconOnlyItem(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
 	repo := data.NewCatalogRepo(dp.Db)
@@ -58,10 +57,10 @@ func TestCloudSetCatalogImage_ClearRemovesItemIcon(t *testing.T) {
 	if err != nil || msg != "image removed from item Apple" {
 		t.Fatalf("clear: %q %v", msg, err)
 	}
-	if icon, _ := repo.ItemIcon(ctx, "itm1"); icon != "" {
-		t.Fatalf("icon = %q after clear, want none", icon)
+	if icon, _ := repo.ItemIcon(ctx, "itm1"); icon != "lucide:beer" {
+		t.Fatalf("icon = %q after clear, want lucide:beer kept", icon)
 	}
-	if n := cloudAuditCount(t, dp, "cloud_catalog_image_cleared", "itm1"); n != 1 {
-		t.Fatalf("clear audit rows = %d, want 1", n)
+	if n := cloudAuditCount(t, dp, "cloud_catalog_image_cleared", "itm1"); n != 0 {
+		t.Fatalf("clear audit rows = %d, want 0", n)
 	}
 }

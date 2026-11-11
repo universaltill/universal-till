@@ -1358,9 +1358,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// resolved from the .bkp archive's documents.zip is
 				// decoded/re-encoded and written exactly the way a manual
 				// upload does (POST /api/catalog/item/image), then recorded
-				// with the unconditional-overwrite SetItemThumbnail — this
-				// genuinely is "a real photo" (see that method's own doc
-				// comment for why that's the right one, not
+				// with SetItemPhoto — this genuinely is "a real photo": it
+				// overwrites the thumbnail and keeps the icon (ut-docs#3601;
+				// see SetItemThumbnail's doc comment for why that's the right
+				// kind of write, not
 				// EnsureDefaultThumbnail). Falls back to the ut-docs#1189
 				// placeholder icon whenever there's no image, or it fails to
 				// decode — same best-effort, never-fail-the-row spirit as
@@ -1413,7 +1414,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 								}
 								return fmt.Errorf("close thumbnail file: %w", closeErr)
 							}
-							return repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
+							return repo.SetItemPhoto(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
 						}()
 						if writeErr != nil {
 							// A resolvable photo that then failed to save

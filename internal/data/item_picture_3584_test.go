@@ -8,10 +8,11 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 )
 
-// ut-docs#3584: an item gets the same one-picture rule a category has
-// (ut-docs#2717) — a thumbnail path in item_images (an uploaded photo or a
-// library tile the till picked) OR an icon id in items.icon (migration
-// 066), never both. The last writer wins, whichever side it comes from.
+// ut-docs#3584 gave an item the one-picture rule a category had; ut-docs#3601
+// relaxes it the way ut-docs#3585 did for categories: a thumbnail path in
+// item_images and an icon id in items.icon (migration 066) may both be
+// stored, the photo wins on display (iconid.Resolve), and each write sets
+// exactly the pair it is given.
 
 const (
 	itemPhoto3584 = "/public/assets/items/itm1/thumb.png"
@@ -25,7 +26,7 @@ func (f saveFixture) picture(t *testing.T) string {
 	                     || '|' || COALESCE((SELECT icon FROM items WHERE id = 'itm1'), '-')`)
 }
 
-func TestSetItemPicture_ImageXorIcon(t *testing.T) {
+func TestSetItemPicture_LastWriterPerColumn(t *testing.T) {
 	f := newSaveFixture(t)
 	ctx := context.Background()
 
@@ -57,20 +58,24 @@ func TestSetItemPicture_ImageXorIcon(t *testing.T) {
 	if err := f.catalog.SetItemPicture(ctx, "itm1", "", "not an id"); err == nil {
 		t.Fatal("a malformed icon id must be refused")
 	}
-	if err := f.catalog.SetItemPicture(ctx, "itm1", itemPhoto3584, "lucide:beer"); err == nil {
-		t.Fatal("a path and an icon together must be refused")
-	}
 	if err := f.catalog.SetItemPicture(ctx, "nope", "", "lucide:beer"); !errors.Is(err, data.ErrItemNotFound) {
 		t.Fatalf("unknown item: %v, want ErrItemNotFound", err)
 	}
 	if got := f.picture(t); got != "-|-" {
 		t.Fatalf("refused writes changed the item: %q", got)
 	}
+	// ut-docs#3601: a path and an icon together are now stored (photo wins).
+	if err := f.catalog.SetItemPicture(ctx, "itm1", itemPhoto3584, "lucide:beer"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.picture(t); got != itemPhoto3584+"|lucide:beer" {
+		t.Fatalf("both: %q", got)
+	}
 }
 
-// The till's own photo upload and library pick (SetItemThumbnail) and its
-// "No image" (ClearItemThumbnail) write through the same rule, so an icon
-// from my. never hides behind — or lingers under — a picture set on the till.
+// The till picker's library pick (SetItemThumbnail) and "No image"
+// (ClearItemThumbnail) replace / clear both columns — unchanged by
+// ut-docs#3601; uploaded photos go through SetItemPhoto, which keeps the icon.
 func TestItemThumbnailWrites_ClearTheIcon(t *testing.T) {
 	f := newSaveFixture(t)
 	ctx := context.Background()
@@ -103,6 +108,8 @@ func TestItemThumbnailWrites_ClearTheIcon(t *testing.T) {
 	}
 }
 
+// save_item's icon still replaces an uploaded photo; letting a photo keep it
+// is ut-docs#6028 (cross-repo with my./ut-cloud).
 func TestSaveItem_Icon(t *testing.T) {
 	f := newSaveFixture(t)
 	ctx := context.Background()
