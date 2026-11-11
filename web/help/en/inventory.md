@@ -43,7 +43,7 @@ Locations (manager only) are the separate physical places you hold stock — a s
 
 1. Open **Locations** from the menu (manager only) to see every location and whether it's active.
 2. To add one, tap the **+** button above the list, type its name in the popup and press **Save** — it appears in the list immediately, active by default. A name that's already used is refused.
-3. To rename one, tap its row (or its pencil button) to reopen the same popup prefilled with its name, change it and press **Save**.
+3. To rename one, tap its row (or Tab to its name and press Enter) to reopen the same popup prefilled with its name, change it and press **Save**.
 4. To retire one, tap its row to open the popup and press the trash icon — it drops off the receive/adjust dialog's Location picker so nothing new gets recorded against it, but its history stays intact either way. It's refused only while the location still holds stock or has an active register assigned: clear its stock to zero (or move it to another location first) and unassign or retire its register, then deactivating goes through. A shop must always keep at least one active location; deactivating the last one is refused too, though with a different message than the in-use refusal above. **Activate** (in the same popup) brings a retired location back, and it reappears in the receive/adjust picker immediately.
 5. Creating, renaming, activating or deactivating a location only works from the **main till** — on a joined till, any of the four shows a message pointing you back to the main till instead of taking effect locally.
 

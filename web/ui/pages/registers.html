@@ -32,7 +32,6 @@
         <th>{{ T "registers.col.name" }}</th>
         <th>{{ T "registers.col.location" }}</th>
         <th>{{ T "registers.col.status" }}</th>
-        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -45,14 +44,14 @@
     {{ if .inactive }}
     <tbody class="registers-inactive">
       <tr>
-        <td colspan="4" class="muted">{{ T "registers.inactive" }} ({{ len .inactive }})</td>
+        <td colspan="3" class="muted">{{ T "registers.inactive" }} ({{ len .inactive }})</td>
       </tr>
       {{ range .inactive }}{{ template "register_row" . }}{{ end }}
     </tbody>
     {{ end }}
     <tbody>
       <tr id="registers-no-results" class="list-empty-row" hidden>
-        <td colspan="4">{{ T "common.no_results" }}</td>
+        <td colspan="3">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>
@@ -122,17 +121,11 @@
     data-field-name="{{ .Name }}"
     data-field-location_id="{{ .LocationValue }}"
     data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-  <td>{{ if .IsActive }}{{ .Name }}{{ else }}<span class="muted">{{ .Name }}</span>{{ end }}</td>
+  <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name">{{ if .IsActive }}{{ .Name }}{{ else }}<span class="muted">{{ .Name }}</span>{{ end }}</span></button></td>
   <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.new.location_none" }}</span>{{ end }}</td>
   <td>
     {{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}
     {{ if .InUse }}<br /><span class="muted">{{ T "registers.in_use_hint" }}</span>{{ end }}
-  </td>
-  <td class="list-actions">
-    <button type="button" class="btn secondary btn-icon" data-record-edit
-            aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-      <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-    </button>
   </td>
 </tr>
 {{ end }}

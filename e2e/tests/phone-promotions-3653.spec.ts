@@ -28,17 +28,19 @@ test.beforeAll(async ({ request }) => {
 
 for (const width of [360, 440]) {
   for (const lang of ['en', 'fa']) {
-    test(`/promotions at ${width}px (${lang}): the card holds only the Edit pencil, and the dialog fits`, async ({ page }) => {
+    test(`/promotions at ${width}px (${lang}): the card's title is the code button, and the dialog fits`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       await page.goto(`/promotions?lang=${lang}`);
       const card = page.locator('table.t-cards tr.t-cards-row', { hasText: CODE });
       await expect(card).toBeVisible();
       const r = await card.evaluate((tr) => {
         const box = tr.getBoundingClientRect();
-        const pencil = tr.querySelector('[data-record-edit]')!.getBoundingClientRect();
+        const nameBtn = tr.querySelector('[data-record-edit]')!.getBoundingClientRect();
+        const inTitle = !!tr.querySelector('.t-cards-title [data-record-edit]');
         return {
           left: box.left, right: box.right,
-          pencil: { left: Math.round(pencil.left), right: Math.round(pencil.right) },
+          codeBtn: { left: Math.round(nameBtn.left), right: Math.round(nameBtn.right) },
+          inTitle,
           // ut-docs#3661: no inline edit form is left in the row.
           inlineControls: tr.querySelectorAll('form, select, input').length,
           sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
@@ -46,7 +48,14 @@ for (const width of [360, 440]) {
       });
       expect(r.sw, 'page must not scroll horizontally').toBeLessThanOrEqual(r.cw);
       expect(r.inlineControls, 'no inline edit form in the card').toBe(0);
-      expect(r.pencil.left >= r.left - 1 && r.pencil.right <= r.right + 1, `pencil [${r.pencil.left}, ${r.pencil.right}] outside card [${r.left}, ${r.right}]`).toBe(true);
+      expect(r.inTitle, 'the code button is the card title').toBe(true);
+      expect(r.codeBtn.left >= r.left - 1 && r.codeBtn.right <= r.right + 1, `code button [${r.codeBtn.left}, ${r.codeBtn.right}] outside card [${r.left}, ${r.right}]`).toBe(true);
+
+      // The More toggle never opens the dialog; the card title (code button) does.
+      const toggle = card.locator('.t-cards-toggle');
+      await expect(toggle).toHaveCount(1);
+      await toggle.click();
+      await expect(page.locator('#promotion-dialog')).toBeHidden();
 
       // The edit controls moved into the record dialog: open it and check
       // the dates are wide enough to show the whole year.
