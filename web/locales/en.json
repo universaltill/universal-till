@@ -2606,6 +2606,7 @@
   "settings.display.exit_to_os_success": "Exited to OS.",
   "settings.display.exit_to_os_title": "Exit to OS window",
   "settings.display.exit_to_os_unavailable": "This till's window can't be reached, so it can't be closed from here. Nothing changed.",
+  "settings.display.f11_kiosk_locked": "Kiosk mode is locked. Use Exit to OS window in Settings.",
   "settings.display.help": "Scale the whole interface for this till's screen. Small touch panels: 70–80%. Large displays: 130%+.",
   "settings.display.large": "large displays",
   "settings.display.launch_on_startup_label": "Launch on startup",
