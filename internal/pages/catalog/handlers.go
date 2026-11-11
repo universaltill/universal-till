@@ -1407,7 +1407,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if err := saveLookupImage(r.Context(), lookupClient, itemID, imgURL); err != nil {
 				log.Printf("[catalog] lookup image for item %s skipped: %v", itemID, err)
 			} else {
-				if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
+				if err := repo.SetItemPhoto(r.Context(), itemID, ItemThumbURL(itemID)); err != nil {
 					// Same review-F2 reasoning as the manual upload handler
 					// above: the photo is safely on disk regardless, this only
 					// keeps item_images (POS grid/basket/self-order/
@@ -2874,24 +2874,36 @@ var ErrItemThumbRow = errors.New("item photo saved but its item_images thumbnail
 // the item's thumbnail and points item_images at it — the one write path
 // for the till's own upload and the cloud's set_catalog_image directive
 // (ut-docs#3139). The file must be written first: every surface that
-// resolves the photo by its path convention checks the file. itemID must
-// already be validated (no "/", "\" or ".").
+// resolves the photo by its path convention checks the file. The item's
+// stored icon id is kept (ut-docs#3601). itemID must already be validated
+// (no "/", "\" or ".").
 func StoreItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string, img image.Image) error {
 	if err := imaging.WriteThumbPNG(img, itemThumbFile(itemID)); err != nil {
 		return err
 	}
-	if err := repo.SetItemThumbnail(ctx, itemID, ItemThumbURL(itemID)); err != nil {
+	if err := repo.SetItemPhoto(ctx, itemID, ItemThumbURL(itemID)); err != nil {
 		return fmt.Errorf("%w (%s): %v", ErrItemThumbRow, itemID, err)
 	}
 	return nil
 }
 
 // ClearItemPicture is the till's own "no image" (the icon picker's none):
-// the item_images thumbnail row goes, then any uploaded photo file.
-// Shared with set_catalog_image's clear (ut-docs#3139). itemID must
-// already be validated.
+// it clears both the item_images thumbnail row and items.icon, then any
+// uploaded photo file. itemID must already be validated.
 func ClearItemPicture(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
 	if err := repo.ClearItemThumbnail(ctx, itemID); err != nil {
+		return err
+	}
+	removeUploadedThumbnail(itemID)
+	return nil
+}
+
+// ClearItemPhoto is set_catalog_image's clear (my.'s "remove the image",
+// ut-docs#3601): the thumbnail row and the uploaded file go, the stored
+// icon id stays, so the item falls back to its icon. Mirrors
+// clearCategoryPicture. itemID must already be validated.
+func ClearItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
+	if err := repo.ClearItemPhoto(ctx, itemID); err != nil {
 		return err
 	}
 	removeUploadedThumbnail(itemID)

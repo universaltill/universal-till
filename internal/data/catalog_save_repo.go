@@ -522,6 +522,9 @@ func saveItemSellScreenTx(ctx context.Context, tx *sql.Tx, p ItemPatch, res *Ite
 	return nil
 }
 
+// save_item still replaces an uploaded photo with an icon; letting a photo
+// keep a save_item icon is ut-docs#6028 (cross-repo with my./ut-cloud).
+//
 // saveItemIconTx applies save_item's icon (ut-docs#3584) with the
 // one-picture rule SaveCategory applies to a category's (ut-docs#2717): an
 // icon set from my. replaces whatever thumbnail the till had — a library

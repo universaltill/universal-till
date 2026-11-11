@@ -2919,8 +2919,8 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	// OR IGNORE turns that violation into exactly this function's own
 	// "already has a thumbnail — never overwrite it" no-op.
 	//
-	// ut-docs#3584: an item that already shows an icon id (items.icon) has
-	// a picture too, so the placeholder skips it — one picture per item.
+	// ut-docs#3584: an item that already has an icon id (items.icon) has a
+	// picture, so the placeholder fills only an item with none.
 	if _, err := r.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO item_images (id, item_id, path, role)
 		 SELECT ?, ?, ?, 'thumbnail'
@@ -2986,9 +2986,10 @@ func (r *CatalogRepo) ItemThumbnailsFor(ctx context.Context, itemIDs []string) (
 // SetItemThumbnail unconditionally sets an item's thumbnail (item_images,
 // role=thumbnail) to path — updating an existing row if one exists,
 // inserting one if not. Unlike EnsureDefaultThumbnail above, this DOES
-// overwrite: it's what a real photo (manual upload, or a barcode-lookup
-// match) is supposed to do — replace whatever placeholder or older photo
-// was there. Review finding F2/F7 (ut-docs#1189): before this method
+// overwrite — what a real photo (manual upload, or a barcode-lookup match)
+// is supposed to do, replacing whatever placeholder or older photo was
+// there; photos now go through SetItemPhoto (ut-docs#3601), which also keeps
+// the icon. Review finding F2/F7 (ut-docs#1189): before this method
 // existed, the manual upload handler
 // (internal/pages/catalog/handlers.go's POST /api/catalog/item/image and
 // saveLookupImage) wrote ONLY the thumb.png file, never touching
@@ -3001,9 +3002,11 @@ func (r *CatalogRepo) ItemThumbnailsFor(ctx context.Context, itemIDs []string) (
 // clear it. See internal/data/shortcuts_repo.go's own doc comment for the
 // same gap independently observed from the shortcuts-button angle.
 //
-// ut-docs#3584: an item has one picture, so this goes through
-// SetItemPicture — the photo or library tile replaces any icon id my. set
-// (items.icon is cleared in the same transaction).
+// ut-docs#3601: this is the till picker's library pick, so it replaces BOTH
+// the thumbnail and items.icon (SetItemPicture(path, "")) — it must not
+// leave an older icon drawn over the tile it chose (iconid.Resolve: tile +
+// icon → icon). An uploaded photo goes through SetItemPhoto, which keeps the
+// icon.
 func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string) error {
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
@@ -3011,23 +3014,80 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	return r.SetItemPicture(ctx, itemID, path, "")
 }
 
-// SetItemPicture stores an item's one picture (ut-docs#3584, the item
-// counterpart of SetCategoryPicture's ut-docs#2717 rule): an image path in
-// its item_images thumbnail row (an uploaded photo's
-// /public/assets/items/<id>/thumb.png, or a library tile the till's picker
-// chose) OR an icon id in items.icon ("lucide:beer", contract §0.12) — the
-// other side is cleared in the same transaction, so the last writer wins
-// whether it is this till's editor or a save_item directive from my. Both
-// "" clears the picture (no thumbnail row, NULL icon). A malformed icon id
-// is refused; an unknown item is ErrItemNotFound. Validating the path (a
+// SetItemPhoto stores an uploaded photo (/public/assets/items/<id>/thumb.png)
+// as the item's thumbnail and KEEPS its icon id (ut-docs#3601, the item
+// counterpart of storeCategoryPhoto's ut-docs#3585 rule): the photo shows,
+// the icon is the fallback once the photo is removed. A lone library tile
+// in the thumbnail row (an older pick or the importer's placeholder) is
+// carried into items.icon as its id, or uploading over it would lose it.
+// path must be a photo, not a library tile (refused when it maps to an icon
+// id: a tile path with an icon kept would draw the icon instead). The till
+// picker's library pick still uses SetItemThumbnail, which replaces both.
+func (r *CatalogRepo) SetItemPhoto(ctx context.Context, itemID, path string) error {
+	path = strings.TrimSpace(path)
+	if itemID == "" || path == "" {
+		return errors.New("itemID and path required")
+	}
+	if iconid.IDForAssetPath(path) != "" {
+		return fmt.Errorf("%q is a library tile, not a photo", path)
+	}
+	return r.writeItemPhotoKeepingIcon(ctx, itemID, path)
+}
+
+// ClearItemPhoto removes the item's thumbnail row and keeps its icon id
+// (the same carry-over of a lone library tile's id) — set_catalog_image's
+// clear, my.'s "remove the image" (ut-docs#3601). The till's own "No image"
+// is ClearItemThumbnail, which clears both. Unknown item: ErrItemNotFound.
+func (r *CatalogRepo) ClearItemPhoto(ctx context.Context, itemID string) error {
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	return r.writeItemPhotoKeepingIcon(ctx, itemID, "")
+}
+
+// writeItemPhotoKeepingIcon is both: one tx reading the item's icon and
+// thumbnail, then setItemPictureExec(path, keptIcon).
+func (r *CatalogRepo) writeItemPhotoKeepingIcon(ctx context.Context, itemID, path string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("item photo: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var icon, thumb string
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(icon,''),
+	        COALESCE((SELECT path FROM item_images WHERE item_id = items.id AND role = 'thumbnail' LIMIT 1), '')
+	        FROM items WHERE id = ?`, itemID).Scan(&icon, &thumb)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrItemNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("item photo: read: %w", err)
+	}
+	keep := icon
+	if keep == "" {
+		keep = iconid.IDForAssetPath(thumb)
+	}
+	if err := setItemPictureExec(ctx, tx, itemID, path, keep); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("item photo: commit: %w", err)
+	}
+	return nil
+}
+
+// SetItemPicture stores an item's picture columns in one transaction
+// (ut-docs#3584, the item counterpart of SetCategoryPicture): an image path
+// in its item_images thumbnail row and an icon id in items.icon ("lucide:beer",
+// contract §0.12). Both may be set (ut-docs#3585, #3601); each "" clears
+// that side, so both "" clears the picture (no thumbnail row, NULL icon).
+// Display is decided by iconid.Resolve / Picture. A malformed icon id is
+// refused; an unknown item is ErrItemNotFound. Validating the path (a
 // written upload, a library key) is the handler's job.
 func (r *CatalogRepo) SetItemPicture(ctx context.Context, itemID, imagePath, icon string) error {
 	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
 	if icon != "" && !iconid.ValidFormat(icon) {
 		return fmt.Errorf("icon %q is not a valid icon id", icon)
-	}
-	if imagePath != "" && icon != "" {
-		return errors.New("an item has one picture: an image path or an icon id, not both")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -3169,8 +3229,9 @@ func (r *CatalogRepo) ItemThumbnailPath(ctx context.Context, itemID string) (pat
 // when the item already has no thumbnail row (a double-click, a stale
 // picker state).
 //
-// ut-docs#3584: "no picture" clears an icon id my. set too (SetItemPicture
-// with both ""), the way the category editor's "No image" does.
+// ut-docs#3584: this is the till picker's "No image": it clears an icon id
+// my. set too (SetItemPicture with both ""), the way the category editor's
+// does. The cloud's clear keeps the icon: ClearItemPhoto (ut-docs#3601).
 func (r *CatalogRepo) ClearItemThumbnail(ctx context.Context, itemID string) error {
 	if itemID == "" {
 		return errors.New("itemID required")
