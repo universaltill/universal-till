@@ -78,6 +78,7 @@ func paperKVs(in []KV) []KV {
 func paperVoucher(v VoucherBlock) VoucherBlock {
 	v.Label, v.Amount, v.Holder = paperText(v.Label), paperText(v.Amount), paperText(v.Holder)
 	v.Balance, v.Code, v.Void = paperText(v.Balance), paperText(v.Code), paperText(v.Void)
+	v.BalanceLabel, v.BalanceAmount = paperText(v.BalanceLabel), paperText(v.BalanceAmount)
 	return v
 }
 

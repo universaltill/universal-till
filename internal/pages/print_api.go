@@ -323,7 +323,7 @@ func receiptDocEncodable(doc print.Doc) bool {
 		texts = append(texts, kv.Label, kv.Amount)
 	}
 	for _, v := range doc.Vouchers {
-		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.Void)
+		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.BalanceLabel, v.BalanceAmount, v.Void)
 	}
 	for _, t := range texts {
 		if !print.Encodable(t, doc.Charset) {

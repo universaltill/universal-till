@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,11 +13,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/print"
 )
 
 // ut-docs#5740: "Print voucher slip" on /vouchers/{id} — one slip, no
@@ -88,14 +92,145 @@ func TestVoucherSlipReprint_PrintsOneSlipNoReceipt(t *testing.T) {
 	if bytes.Contains(job, []byte{0x1b, 0x70}) {
 		t.Error("drawer kick in a slip job")
 	}
+	if bytes.Contains(job, []byte(balancePrefix())) {
+		t.Error("balance line on an untouched voucher")
+	}
 	rows := slipAuditRows(t, dp, "GV-A")
-	if len(rows) != 1 || rows[0]["ok"] != true || rows[0]["actor"] != "m1" {
+	if len(rows) != 1 || rows[0]["ok"] != true || rows[0]["actor"] != "m1" || rows[0]["balance_printed"] != false {
 		t.Fatalf("audit = %v", rows)
 	}
 	var bal int64
 	_ = dp.Db.QueryRow(`SELECT balance FROM vouchers WHERE id='GV-A'`).Scan(&bal)
 	if bal != 2500 || countRows(t, dp, `SELECT COUNT(*) FROM voucher_transactions`) != txBefore {
 		t.Error("printing must not touch the balance or ledger")
+	}
+}
+
+// wantBalanceLine is the slip's balance line for minor on today's date
+// (a run crossing midnight between print and assert is a negligible risk).
+func wantBalanceLine(dp *common.Deps, minor int64) string {
+	loc := httpx.DefaultLocale()
+	cs := printerConfig(context.Background(), dp).Charset
+	label := fmt.Sprintf(httpx.T(loc, "receipt.vouchers.balance_on_label"), httpx.FormatDateLatin(time.Now().Local(), loc))
+	amount := httpx.FormatMoneyPrint(minor, loc, cs)
+	// The slip prints label and amount as one right-aligned row (kvRow).
+	return label + strings.Repeat(" ", print.Width-utf8.RuneCountInString(label)-utf8.RuneCountInString(amount)) + amount
+}
+
+// balancePrefix is "Balance on " — for absence checks.
+func balancePrefix() string {
+	return strings.SplitN(httpx.T(httpx.DefaultLocale(), "receipt.vouchers.balance_on_label"), "%", 2)[0]
+}
+
+func moneyPrint(dp *common.Deps, minor int64) string {
+	return httpx.FormatMoneyPrint(minor, httpx.DefaultLocale(), printerConfig(context.Background(), dp).Charset)
+}
+
+func TestVoucherSlipReprint_BalanceLinePartlyUsed(t *testing.T) {
+	mux, dp := newVoucherImportTestMux(t)
+	vSeed(t, data.NewPOSRepo(dp.Db), data.Voucher{ID: "GV-P", OriginalAmountMinor: 2500, BalanceMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
+	dev := slipDevice(t, dp, "")
+	if rec := vPrintSlip(t, mux, "GV-P", &vManager); rec.Code != http.StatusOK {
+		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
+	}
+	job := readJob(t, dev)
+	for _, want := range []string{"Gift voucher", moneyPrint(dp, 2500), wantBalanceLine(dp, 1000), "Reprinted "} {
+		if !bytes.Contains(job, []byte(want)) {
+			t.Errorf("job lacks %q", want)
+		}
+	}
+	if n := bytes.Count(job, feedCut); n != 1 {
+		t.Errorf("feed+cut count = %d, want 1", n)
+	}
+	if rows := slipAuditRows(t, dp, "GV-P"); len(rows) != 1 || rows[0]["balance_printed"] != true {
+		t.Fatalf("audit = %v", rows)
+	}
+}
+
+func TestVoucherSlipReprint_BalanceLineToppedUp(t *testing.T) {
+	mux, dp := newVoucherImportTestMux(t)
+	vSeed(t, data.NewPOSRepo(dp.Db), data.Voucher{ID: "GV-T", OriginalAmountMinor: 2500, BalanceMinor: 4500, CreatedAt: "2026-10-01T10:00:00Z"})
+	dev := slipDevice(t, dp, "")
+	if rec := vPrintSlip(t, mux, "GV-T", &vManager); rec.Code != http.StatusOK {
+		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
+	}
+	job := readJob(t, dev)
+	for _, want := range []string{wantBalanceLine(dp, 4500), moneyPrint(dp, 2500)} {
+		if !bytes.Contains(job, []byte(want)) {
+			t.Errorf("job lacks %q", want)
+		}
+	}
+}
+
+func TestVoucherSlipReprint_ReplicaPrintsMainTillBalance(t *testing.T) {
+	mux, dp := newVoucherImportTestMux(t)
+	primary, _, primaryRepo := newVoucherPrimaryServer(t, "b-replica")
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-replica")
+	vSeed(t, data.NewPOSRepo(dp.Db), data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 1500, CreatedAt: "2026-10-01T10:00:00Z"})
+	vSeed(t, primaryRepo, data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
+	dev := slipDevice(t, dp, "")
+	if rec := vPrintSlip(t, mux, "GV-A", &vManager); rec.Code != http.StatusOK {
+		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
+	}
+	job := readJob(t, dev)
+	if !bytes.Contains(job, []byte(wantBalanceLine(dp, 1000))) {
+		t.Error("slip lacks the main till's balance")
+	}
+	if bytes.Contains(job, []byte(moneyPrint(dp, 1500))) {
+		t.Error("slip shows the lagging local balance")
+	}
+}
+
+func TestVoucherSlipReprint_ReplicaMainTillSilent_NoBalanceLine(t *testing.T) {
+	mux, dp := newVoucherImportTestMux(t)
+	primary, _, _ := newVoucherPrimaryServer(t, "b-replica") // has no GV-A row: 404
+	vSeed(t, data.NewPOSRepo(dp.Db), data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
+	dev := slipDevice(t, dp, "")
+	for name, url := range map[string]string{"unreachable": unreachableURL(), "not found": primary.URL} {
+		t.Run(name, func(t *testing.T) {
+			setReplicaSettings(t, dp.Settings, url, "b-replica")
+			before := len(slipAuditRows(t, dp, "GV-A"))
+			if rec := vPrintSlip(t, mux, "GV-A", &vManager); rec.Code != http.StatusOK {
+				t.Fatalf("status %d %s", rec.Code, rec.Body.String())
+			}
+			job := readJob(t, dev) // the device file holds the latest job only
+			if !bytes.Contains(job, []byte("GV-A")) {
+				t.Error("slip not printed")
+			}
+			if bytes.Contains(job, []byte(balancePrefix())) || bytes.Contains(job, []byte(moneyPrint(dp, 1000))) {
+				t.Error("a local (possibly stale) balance was printed")
+			}
+			rows := slipAuditRows(t, dp, "GV-A")
+			if len(rows) != before+1 || rows[len(rows)-1]["balance_printed"] != false {
+				t.Fatalf("audit = %v", rows)
+			}
+		})
+	}
+}
+
+func TestVoucherDetail_SlipNoteOnlyWhenBalanceUnknown(t *testing.T) {
+	mux, dp := newVoucherImportTestMux(t)
+	primary, _, primaryRepo := newVoucherPrimaryServer(t, "b-replica")
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-replica")
+	vSeed(t, data.NewPOSRepo(dp.Db), data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
+	vSeed(t, primaryRepo, data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
+	slipDevice(t, dp, "")
+	note := html.EscapeString(httpx.T("en", "vouchers.print_slip.balance_unknown_note")) // the template escapes the apostrophe
+	page := func() string { return vGet(t, mux, "/vouchers/GV-A?lang=en", &vManager, false).Body.String() }
+
+	if b := page(); !strings.Contains(b, `data-testid="voucher-print-slip"`) || strings.Contains(b, note) {
+		t.Error("main till answering: want the button and no note")
+	}
+	setReplicaSettings(t, dp.Settings, unreachableURL(), "b-replica")
+	if !strings.Contains(page(), note) {
+		t.Error("main till unreachable: want the note")
+	}
+	// A lagging mirror that still looks untouched is the case the note exists for.
+	if _, err := dp.Db.Exec(`UPDATE vouchers SET balance=2500 WHERE id='GV-A'`); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(page(), note) {
+		t.Error("untouched local row, main till unreachable: want the note")
 	}
 }
 
@@ -238,8 +373,8 @@ func TestVoucherDetail_PrintSlipButton(t *testing.T) {
 	vSeed(t, repo, data.Voucher{ID: "GV-PART", OriginalAmountMinor: 2500, BalanceMinor: 500, CreatedAt: "2026-10-01T10:00:00Z"})
 	vSeed(t, repo, data.Voucher{ID: "GV-VOID", OriginalAmountMinor: 500, BalanceMinor: 0, Status: "void", CreatedAt: "2026-10-01T10:00:00Z"})
 	vSeed(t, repo, data.Voucher{ID: "GV-USED", OriginalAmountMinor: 500, BalanceMinor: 0, Status: "redeemed", CreatedAt: "2026-10-01T10:00:00Z"})
-	slipDevice(t, dp, "") // slip setting off: the button shows regardless
-	note := httpx.T("en", "vouchers.print_slip.original_value_note")
+	slipDevice(t, dp, "")                                                                // slip setting off: the button shows regardless
+	note := html.EscapeString(httpx.T("en", "vouchers.print_slip.balance_unknown_note")) // the template escapes the apostrophe
 
 	body := vGet(t, mux, "/vouchers/GV-A?lang=en", &vManager, false).Body.String()
 	for _, want := range []string{
@@ -253,8 +388,10 @@ func TestVoucherDetail_PrintSlipButton(t *testing.T) {
 	if strings.Contains(body, note) {
 		t.Error("original-value note shown at full balance")
 	}
-	if body := vGet(t, mux, "/vouchers/GV-PART?lang=en", &vManager, false).Body.String(); !strings.Contains(body, note) || !strings.Contains(body, `data-testid="voucher-print-slip"`) {
-		t.Error("part-spent page lacks note or button")
+	// ut-docs#6044: the standalone till's balance is the ledger's, so the
+	// slip prints it and the original-value-only note is gone.
+	if body := vGet(t, mux, "/vouchers/GV-PART?lang=en", &vManager, false).Body.String(); strings.Contains(body, note) || !strings.Contains(body, `data-testid="voucher-print-slip"`) {
+		t.Error("part-spent page shows the note or lacks the button")
 	}
 	for _, id := range []string{"GV-VOID", "GV-USED"} {
 		b := vGet(t, mux, "/vouchers/"+id+"?lang=en", &vManager, false).Body.String()
@@ -305,5 +442,43 @@ func TestVoucherSlipReprint_AuditSurvivesClientCancel(t *testing.T) {
 	rows := slipAuditRows(t, dp, "GV-A")
 	if len(rows) != 1 || rows[0]["ok"] != false {
 		t.Fatalf("audit = %v, want one ok=false row after the client went away", rows)
+	}
+}
+
+// ut-docs#6044: the balance line is built from the authoritative balance,
+// dated with Latin digits under an Arabic-digit locale, and omitted when
+// unknown or equal to the value row.
+func TestVoucherSlipFor_BalanceLine(t *testing.T) {
+	defer httpx.SnapshotStateForTests()()
+	_, dp := newVoucherImportTestMux(t)
+	// After the mux: building it resets the default locale to en, which made
+	// the Latin-digit checks below vacuous (tester, ut-docs#6044).
+	httpx.SetDefaultLocale("fa")
+	if httpx.DefaultLocale() != "fa" {
+		t.Fatalf("default locale = %q, want fa", httpx.DefaultLocale())
+	}
+	now := time.Now()
+	v := data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 2500}
+	ctx := context.Background()
+
+	got := voucherSlipFor(ctx, dp, v, slipBalance{Minor: 1000, Known: true}, print.Config{}, now).Voucher
+	if !strings.Contains(got.BalanceLabel, httpx.FormatDateLatin(now.Local(), "fa")) {
+		t.Errorf("balance label %q lacks the Latin-digit date", got.BalanceLabel)
+	}
+	if want := httpx.FormatMoneyPrint(1000, "fa", ""); got.BalanceAmount != want {
+		t.Errorf("balance amount = %q, want %q", got.BalanceAmount, want)
+	}
+	for _, r := range got.BalanceLabel + got.BalanceAmount {
+		if (r >= 0x660 && r <= 0x669) || (r >= 0x6f0 && r <= 0x6f9) {
+			t.Errorf("balance row has a non-Latin digit %q", r)
+		}
+	}
+	if want := httpx.FormatMoneyPrint(2500, "fa", ""); got.Amount != want {
+		t.Errorf("value row = %q, want the original %q", got.Amount, want)
+	}
+	for name, b := range map[string]slipBalance{"unknown": {Minor: 1000}, "equal": {Minor: 2500, Known: true}} {
+		if bal := voucherSlipFor(ctx, dp, v, b, print.Config{}, now).Voucher; bal.BalanceLabel != "" || bal.BalanceAmount != "" {
+			t.Errorf("%s: balance row = %q/%q, want empty", name, bal.BalanceLabel, bal.BalanceAmount)
+		}
 	}
 }

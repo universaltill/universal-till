@@ -257,3 +257,31 @@ func TestRenderVoucherSlip_ControlRunesNeverReachPrinter(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6044: the reprint's balance row clips only its label, never the amount.
+func TestRenderVoucherSlip_BalanceRowKeepsAmountWhole(t *testing.T) {
+	s := VoucherSlip{
+		StoreName: "Cafe Muster", Charset: "utf8",
+		Voucher: VoucherBlock{
+			Label: "Gift voucher", Amount: "25.00", Code: "GV-P", Slip: true,
+			BalanceLabel:  "Verbleibendes Guthaben am Elften November Zweitausendsechsundzwanzig",
+			BalanceAmount: "1.234,56 EUR",
+		},
+	}
+	var row string
+	for _, l := range strings.Split(RenderVoucherSlipText(s), "\n") {
+		if strings.HasSuffix(l, "1.234,56 EUR") {
+			row = l
+		}
+	}
+	if row == "" || displayWidth(row) != Width {
+		t.Fatalf("no full-width row ending in the whole amount: %q", row)
+	}
+	if !bytes.Contains(RenderVoucherSlip(s), []byte("1.234,56 EUR")) {
+		t.Error("ESC/POS slip lost the amount")
+	}
+	// Top-up slips (Balance field) are unchanged.
+	if !strings.Contains(RenderVoucherSlipText(VoucherSlip{Charset: "utf8", Voucher: VoucherBlock{Label: "x", Amount: "1", Balance: "New balance 35.00", Code: "C"}}), "New balance 35.00\n") {
+		t.Error("Balance field output changed")
+	}
+}

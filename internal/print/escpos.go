@@ -79,9 +79,15 @@ type VoucherBlock struct {
 	Holder string // "For: Anna"; empty = no row
 	// Balance is the voucher's balance after a top-up (ut-docs#4252),
 	// pre-formatted with its label ("New balance £35.00"); empty = no row
-	// (every newly issued voucher — its balance is its value).
+	// (every newly issued voucher — its balance is its value). A slip
+	// reprinted from the voucher's page uses BalanceLabel/BalanceAmount
+	// instead (ut-docs#6044).
 	Balance string
-	Code    string
+	// BalanceLabel/BalanceAmount print as one right-aligned row
+	// ("Balance on <date>   10.00") when BalanceAmount is set; only the
+	// label is ever clipped, so a long translation can't cut the amount.
+	BalanceLabel, BalanceAmount string
+	Code                        string
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
@@ -386,6 +392,9 @@ func writeVoucherESC(b *bytes.Buffer, line func(string), v VoucherBlock) {
 	if v.Balance != "" {
 		line(clip(v.Balance, Width))
 	}
+	if v.BalanceAmount != "" {
+		line(kvRow(v.BalanceLabel, v.BalanceAmount))
+	}
 	b.Write(cmdAlignMid)
 	if v.Void != "" {
 		line(clip(v.Void, Width))
@@ -408,6 +417,9 @@ func writeVoucherText(b *strings.Builder, center func(string), v VoucherBlock) {
 	}
 	if v.Balance != "" {
 		b.WriteString(clip(v.Balance, Width) + "\n")
+	}
+	if v.BalanceAmount != "" {
+		b.WriteString(kvRow(v.BalanceLabel, v.BalanceAmount) + "\n")
 	}
 	if v.Void != "" {
 		center(v.Void)
