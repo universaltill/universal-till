@@ -19,6 +19,10 @@ import (
 	"strings"
 	"testing"
 
+	"testing/fstest"
+
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
@@ -358,5 +362,36 @@ func TestChooseIcon_NoUploadedFileIsNotAnError(t *testing.T) {
 	rec := postForm(t, mux, "/api/catalog/item/icon", "item_id=itm1&icon=drink")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("choose icon: code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#2654: the suggestion matches the shop's languages, English last.
+func TestIconState_SuggestsFromShopLanguage(t *testing.T) {
+	restore := httpx.SnapshotStateForTests()
+	t.Cleanup(restore)
+	i, err := config.NewI18nFS(fstest.MapFS{
+		"en.json": {Data: []byte(`{"catalog.builtin_icon.coffee":"Coffee"}`)},
+		"tr.json": {Data: []byte(`{"catalog.builtin_icon.coffee":"Kahve"}`)},
+	}, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ shop, name, want string }{
+		{"tr", "Türk Kahvesi", "coffee"},
+		{"en", "Türk Kahvesi", "generic"},
+		{"en", "Pasta", "bowl"},
+	}
+	for _, c := range cases {
+		httpx.InitI18n(i, c.shop)
+		mux, db := newCatalogMux(t)
+		testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: c.name, BasePrice: 250, IsActive: true})
+		rec := get(t, mux, "/api/catalog/item/icon-state?item_id=itm1")
+		var body iconStateBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+		}
+		if body.Data.SuggestedKey != c.want {
+			t.Errorf("shop %s %q: suggested_key = %q, want %q", c.shop, c.name, body.Data.SuggestedKey, c.want)
+		}
 	}
 }

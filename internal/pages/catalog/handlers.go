@@ -2224,7 +2224,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Built-in icon picker (ut-docs#1844): a bundled category icon
-	// (catimport.BuiltinIcons — the same library PlaceholderIcon already
+	// (catimport.BuiltinIcons — the same library the import matcher already
 	// picks from for imageless imports) is a valid alternative to an
 	// uploaded photo, stored through the identical item_images/thumbnail
 	// row so every existing reader (POS grid, basket, self-order,
@@ -2235,7 +2235,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// current thumbnail is instead a custom upload (a built-in choice and a
 	// custom photo are mutually exclusive — picking one always replaces
 	// the other, same as the existing upload-over-placeholder behaviour),
-	// and which key PlaceholderIcon's own keyword match would suggest for
+	// and which key the shop-language IconMatcher would suggest for
 	// this item's actual name/category — so a still-imageless item shows a
 	// sensible preselected tile instead of nothing.
 	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
@@ -2262,7 +2262,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				categoryName = cat.Name
 			}
 		}
-		suggestedKey := tillimport.PlaceholderIcon(itm.Name, categoryName)
+		suggestedKey := common.ShopIconMatcher(r.Context(), data.NewSettingsRepo(d.Db)).Icon(itm.Name, categoryName)
 		selectedKey := ""
 		isCustom := false
 		// ut-docs#3133: the Item image tab previews the current picture from

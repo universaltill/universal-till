@@ -127,6 +127,17 @@ func (i *I18n) T(locale, key string) string {
 	return key
 }
 
+// Lookup returns key's translation in exactly locale (or its base language),
+// through every layer including shop overrides, with no fallback to the
+// default or English and no key echo — ok is false when that language has no
+// value. For matching against a language's own words (ut-docs#2654).
+func (i *I18n) Lookup(locale, key string) (string, bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	v, _, ok := i.resolveLocked([]string{locale, baseLang(locale)}, key)
+	return v, ok
+}
+
 // resolveLocked walks locales in order and returns the first value for key
 // and the locale it came from, trying each locale's layers in T's order
 // (layerLookupLocked).
