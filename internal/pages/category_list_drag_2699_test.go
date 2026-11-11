@@ -3,6 +3,7 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -185,7 +186,7 @@ func TestDesignerCategories_Rows_NoPencilNoChevrons_DragWired_2699(t *testing.T)
 	// buttons-changed re-render, which repainted the whole root and lost the
 	// operator's scroll position.
 	if strings.Contains(section, `data-reorder-refresh`) {
-		t.Errorf("designer category list still asks for a re-render after a reorder (data-reorder-refresh)")
+		t.Errorf("designer category list sets data-reorder-refresh; the hook no longer exists (#2713)")
 	}
 	// The help text describes the LIST once, never each row's button.
 	if !strings.Contains(section, `<ol class="designer-cat-list" aria-describedby="designer-categories-help"`) {
@@ -224,4 +225,25 @@ func TestDesignerCategories_Rows_NoPencilNoChevrons_DragWired_2699(t *testing.T)
 		}
 		return li
 	})
+}
+
+// TestListReorderJS_NoRefreshHook (ut-docs#2713): the data-reorder-refresh /
+// refreshAfterSave hook had no setter since #3074; it is gone, while the
+// events pages react to are still dispatched.
+func TestListReorderJS_NoRefreshHook(t *testing.T) {
+	b, err := os.ReadFile("web/public/list-reorder.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, gone := range []string{"data-reorder-refresh", "refreshAfterSave"} {
+		if strings.Contains(js, gone) {
+			t.Errorf("list-reorder.js still contains %q", gone)
+		}
+	}
+	for _, want := range []string{"list-reorder:saved", "list-reorder:reverted"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("list-reorder.js lost %q", want)
+		}
+	}
 }

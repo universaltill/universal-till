@@ -149,8 +149,10 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 	// Go 1.22's mux picks the more specific literal pattern regardless of
 	// registration order (same pair categories_page.go registers). Body
 	// shape mirrors /api/categories/reorder and /api/buttons/reorder:
-	// repeated "ids" in display order, or one comma-joined field (what the
-	// Designer's own page script posts via htmx.ajax).
+	// repeated "ids" in display order (what list-reorder.js posts); one
+	// comma-joined field is still accepted for compatibility. Answers 204
+	// with no HX-Trigger: its only caller is list-reorder.js fetch(); the
+	// Designer updates in place off list-reorder:saved (ut-docs#3074, #2713).
 	mux.HandleFunc("POST /api/designer/categories/reorder", func(w http.ResponseWriter, r *http.Request) {
 		actor, allowed := gate(w, r)
 		if !allowed {
@@ -180,7 +182,7 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		audit(r, actor.ID, strings.Join(clean, ","), "category_reorder")
-		ok(w)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("POST /api/designer/categories/{id}", func(w http.ResponseWriter, r *http.Request) {
