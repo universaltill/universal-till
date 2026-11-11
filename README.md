@@ -230,7 +230,14 @@ dedicated (no-desktop) kiosk on a box that didn't get it at install time.
 **Windows**: download the `windows_amd64.zip`, extract anywhere,
 double-click `run-unitill.bat`.
 
-**macOS / manual Linux**: download the `.tar.gz`, extract, and run
+**macOS** (Apple Silicon): download `unitill-pos-<version>-macOS-arm64.dmg`,
+open it and drag Universal Till to Applications. The `.dmg` is attached
+shortly after the release is published. Portable alternative: the macOS
+`.tar.gz`, extracted, then double-click `run-unitill.command` — it is not
+signed, so if macOS blocks it, use System Settings → Privacy & Security →
+**Open Anyway**.
+
+**Manual Linux**: download the `.tar.gz`, extract, and run
 `./unitill-pos` from inside the extracted folder (it needs the bundled
 `web/` directory next to it).
 
@@ -669,7 +676,7 @@ We'll even link to notable forks in this README! 🎉
 
 - **Linux** (x64, ARM, ARM64) ✅
 - **Windows** (x64, ARM64) ✅
-- **macOS** (Intel, Apple Silicon) ✅
+- **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
 - **Android** (tablets, POS terminals) ✅
 - **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
