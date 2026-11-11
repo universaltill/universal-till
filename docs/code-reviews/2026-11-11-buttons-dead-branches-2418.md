@@ -45,7 +45,7 @@ no transition, and that every `cat-panel-X` always has a `cat-tab-X`
 3. Minor, out of scope: the `x-show="q"` headers and ancestor span in
    `category-group` / `category-group-body-tabbed`, and a stale "search
    open in edit mode" comment, are the same family of dead code.
-   **Deferred** → Backlog card (filed with this cycle's close-out).
+   **Deferred** → ut-docs#6040.
 
 ## Verification
 
@@ -71,4 +71,4 @@ hash refreshed with `update-docs-shots-surface-hash.sh`, no PNG change);
 `reference/` — n/a; README — n/a; en.json/en.meta — n/a (no key added or
 removed; `products.no_matches` still used elsewhere); ADR — n/a;
 plan/price, platform claim, plugin taxonomy — n/a; follow-up dead `q`
-headers — deferred → Backlog card; review record — this file.
+headers — deferred → ut-docs#6040; review record — this file.
