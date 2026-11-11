@@ -1,5 +1,10 @@
 {
   "receipt.vouchers.reprinted": {"description": "Printed on a gift-voucher slip printed again from the voucher's page, so it can be told from the slip handed over at the sale. Printed on 58/80 mm paper.", "review": "legal", "placeholders": ["date the slip was reprinted"], "max_length": 42},
+  "settings.cloud_staff.enable": {"description": "Checkbox label that turns on sending per-staff sales figures to cloud reports for the whole shop.", "review": "standard"},
+  "settings.cloud_staff.help": {"description": "Help text of the manager-only Settings card for per-staff sales in cloud reports: staff are identified by staff ID, never by name, and it is off by default.", "review": "standard"},
+  "settings.cloud_staff.title": {"description": "Title of the manager-only Settings card that controls whether per-staff sales figures are sent to the shop's cloud reports.", "review": "standard"},
+  "settings.cloud_staff.window_note": {"description": "Note above the Save button: changing the switch re-sends or clears per-staff figures for the last 14 days, while figures already sent for older days stay in the cloud reports.", "review": "standard"},
+  "settings.cloud_staff.works_council": {"description": "Factual note under the checkbox: per-staff figures can show how individual staff work, and in Germany a works council may need to agree first. Keep the conditional wording (\"may need to agree\"); never turn it into \"must\" or claim the shop is compliant.", "review": "legal"},
   "vouchers.print_slip.button": {"description": "Button on a gift voucher's page (manager): prints that voucher's gift slip again on this till's receipt printer, without a receipt.", "review": "standard", "max_length": 24},
   "vouchers.print_slip.printing": {"description": "Shown next to Print voucher slip while the slip is being sent to the receipt printer.", "review": "standard"},
   "vouchers.print_slip.done": {"description": "Inline confirmation after Print voucher slip on a gift voucher's page succeeded.", "review": "standard"},

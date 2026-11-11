@@ -49,6 +49,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-sell-screen":                    common.KeyBrowsingMode,                     // POST /api/settings/browsing-mode
 	"settings-stock-tracking":                 common.KeyAllowNegativeInventory,           // POST /api/settings/allow-negative-inventory
 	"settings-retention":                      common.KeyReportRetentionMode,              // POST /api/settings/report-retention
+	"settings-cloud-staff":                    data.CloudStaffBreakdownKey,                // POST /api/settings/cloud-staff-breakdown
 	"settings-invoice":                        keyInvoiceSellerName,                       // POST /api/settings/invoice (invoice.seller_*)
 	"settings-idle-lock":                      common.KeyIdleLock,                         // POST /api/settings/idle-lock
 	"settings-kiosk-idle-reset":               common.KeyKioskIdleReset,                   // POST /api/settings/kiosk-idle-reset

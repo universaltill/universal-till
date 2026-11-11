@@ -2499,6 +2499,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gateElevation},
 		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gateElevation},
 		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
+		{"cloud-staff-breakdown", http.MethodPost, "/api/settings/cloud-staff-breakdown", url.Values{"enabled": {"on"}}, gate403}, // ut-docs#2557
 		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gateElevation},
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
 		{"store-name", http.MethodPost, "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}, gateElevation},
