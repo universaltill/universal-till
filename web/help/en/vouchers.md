@@ -135,9 +135,9 @@ A customer who lost the gift slip they were handed can have it printed again, wi
 1. Open **Menu → Gift vouchers** and tap the voucher's card number.
 2. Tap **Print voucher slip**. The slip comes out on this till's receipt printer, and the page shows "Slip sent to the printer."
 
-The button shows for an **Active** voucher with a balance when a receipt printer is set up — whether or not **Print each gift voucher on its own slip** is on. The slip carries the shop name and the receipt's header lines (and logo, if your receipt shows one), **Gift voucher** and its value, **For …** when a name was entered, the barcode (on a Regular printer the number prints as text instead), and a line **Reprinted** with today's date, so it can be told from the slip handed over at the sale. No receipt prints and the cash drawer doesn't open.
+The button shows for an **Active** voucher with a balance when a receipt printer is set up — whether or not **Print each gift voucher on its own slip** is on. The slip carries the shop name and the receipt's header lines (and logo, if your receipt shows one), **Gift voucher** and its value, **For …** when a name was entered, a **Balance on** row with today's date and what is left on the voucher when that differs from its value, the barcode (on a Regular printer the number prints as text instead), and a line **Reprinted** with today's date, so it can be told from the slip handed over at the sale. No receipt prints and the cash drawer doesn't open.
 
-The slip shows the voucher's **original value**, not what is left on it. When the two differ, the page says so above the button — check the current balance on the voucher's page before you hand the slip over.
+The value on the slip is always the voucher's **original value**. When the voucher has been part used, topped up or corrected, the **Balance on** row shows its balance on the day you print. On an additional till the balance comes from the main till; if the main till can't be reached, the slip still prints but without the balance row, and the page says so above the button ("The main till can't be reached, so the slip shows the original value only"). Check the balance on the main till before you hand that slip over.
 
 What can go wrong:
 

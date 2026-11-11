@@ -108,32 +108,51 @@ func journalHref(receiptNo string) string {
 	return "/journal/" + url.PathEscape(receiptNo)
 }
 
+// voucherPageRows is what /vouchers/{id} and its actions decide on.
+type voucherPageRows struct {
+	Shown, Judged data.Voucher
+	FromPrimary   bool
+	// BalanceKnown: Judged.BalanceMinor is the ledger of record's balance,
+	// i.e. this till is not a replica (main/standalone: the ledger is local)
+	// or the main till answered. False when the main till was asked and did
+	// not answer (unreachable, non-200, 404) or was not asked at all
+	// (askPrimary=false with a local row). A lagging local mirror is never
+	// "known" (ut-docs#6044).
+	BalanceKnown bool
+}
+
 // voucherForPage resolves /vouchers/{id}: the local row, else (additional
-// till) the main till's; judged is the row decisions are made on — the main
+// till) the main till's; Judged is the row decisions are made on — the main
 // till's when it answered (ut-docs#4416), else the local one. A voucher this
 // till has no row for always asks the main till; askPrimary also asks when
 // the local row exists. On the main till / a standalone till the lookup
 // returns primaryLookupNotReplica without touching the network.
-func voucherForPage(ctx context.Context, d *common.Deps, repo *data.POSRepo, id string, askPrimary bool) (shown, judged data.Voucher, fromPrimary bool, err error) {
-	shown, err = repo.GetVoucherBalance(ctx, nil, id)
+func voucherForPage(ctx context.Context, d *common.Deps, repo *data.POSRepo, id string, askPrimary bool) (voucherPageRows, error) {
+	shown, err := repo.GetVoucherBalance(ctx, nil, id)
+	var rows voucherPageRows
 	var primary data.Voucher
-	var primaryAnswered bool
+	var primaryAnswered, asked bool
+	var outcome primaryLookup
 	if errors.Is(err, data.ErrVoucherNotFound) || (err == nil && askPrimary) {
-		if pv, _, outcome := lookupVoucherOnPrimary(ctx, d, voucherProxyClient, id); outcome == primaryLookupAnswered {
+		var pv data.Voucher
+		pv, _, outcome = lookupVoucherOnPrimary(ctx, d, voucherProxyClient, id)
+		asked = true
+		if outcome == primaryLookupAnswered {
 			primary, primaryAnswered = pv, true
 		}
 	}
 	if errors.Is(err, data.ErrVoucherNotFound) && primaryAnswered {
-		shown, err, fromPrimary = primary, nil, true
+		shown, err, rows.FromPrimary = primary, nil, true
 	}
 	if err != nil {
-		return data.Voucher{}, data.Voucher{}, false, err
+		return voucherPageRows{}, err
 	}
-	judged = shown
+	rows.Shown, rows.Judged = shown, shown
 	if primaryAnswered {
-		judged = primary
+		rows.Judged = primary
 	}
-	return shown, judged, fromPrimary, nil
+	rows.BalanceKnown = asked && (outcome == primaryLookupNotReplica || outcome == primaryLookupAnswered)
+	return rows, nil
 }
 
 func registerVouchers(mux *http.ServeMux, d *common.Deps) {
@@ -242,7 +261,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		// one top-ups and corrections are judged on, so it decides what the
 		// page offers; a voucher this till has no row for yet is shown from
 		// it (with this till's history, which is then empty).
-		v, judged, fromPrimary, err := voucherForPage(r.Context(), d, repo, id, canPerform(d, r, "settings"))
+		rows, err := voucherForPage(r.Context(), d, repo, id, canPerform(d, r, "settings"))
 		if errors.Is(err, data.ErrVoucherNotFound) {
 			httpx.RenderError(w, r, http.StatusNotFound, "vouchers.error.not_found", nil)
 			return
@@ -251,6 +270,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
+		v, judged, fromPrimary := rows.Shown, rows.Judged, rows.FromPrimary
 		var hist []data.VoucherHistoryRow
 		if !fromPrimary {
 			hist, err = repo.VoucherTransactions(r.Context(), id)
@@ -292,6 +312,10 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 				"possible": judged.Status == "active" && judged.BalanceMinor > 0,
 				"printer":  printerConfig(r.Context(), d).Enabled(),
 				"href":     "/vouchers/" + url.PathEscape(id) + "/print-slip",
+				// ut-docs#6044: the slip prints a balance line only when the
+				// balance is the ledger of record's; otherwise warn it shows
+				// the original value only.
+				"originalOnly": !rows.BalanceKnown,
 			},
 			"adjust": map[string]any{
 				"allowed":  allowed,
@@ -390,7 +414,8 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 	// POST /vouchers/{id}/print-slip — print this voucher's gift slip again,
 	// on its own, without a receipt (ut-docs#5740). Same gate as /adjust;
 	// printability is judged on the main till's row when it answers
-	// (voucherForPage), the slip's content on the shown row. Outcome is an
+	// (voucherForPage), the slip's content on the shown row plus the
+	// authoritative balance when known (ut-docs#6044). Outcome is an
 	// inline fragment; every attempt that reached the printer (or was refused
 	// by ADR-0124) is audited as voucher/<id>/slip_printed.
 	mux.HandleFunc("POST /vouchers/{id}/print-slip", func(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +424,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		id := r.PathValue("id")
-		shown, judged, _, err := voucherForPage(r.Context(), d, repo, id, true)
+		rows, err := voucherForPage(r.Context(), d, repo, id, true)
 		if errors.Is(err, data.ErrVoucherNotFound) {
 			voucherAdjustMessage(w, r, http.StatusNotFound, "vouchers.error.not_found")
 			return
@@ -409,13 +434,14 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			voucherAdjustMessage(w, r, http.StatusInternalServerError, "common.error.server")
 			return
 		}
-		if judged.Status != "active" || judged.BalanceMinor <= 0 {
+		if rows.Judged.Status != "active" || rows.Judged.BalanceMinor <= 0 {
 			voucherAdjustMessage(w, r, http.StatusConflict, "vouchers.print_slip.not_printable")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		err = printVoucherSlipIn(ctx, d, shown, time.Now())
+		bal := slipBalance{Minor: rows.Judged.BalanceMinor, Known: rows.BalanceKnown}
+		err = printVoucherSlipIn(ctx, d, rows.Shown, bal, time.Now())
 		now := time.Now().UTC().Format(time.RFC3339)
 		actor := getSessionUserID(r)
 		// The attempt is audited even when the operator left the page
@@ -434,7 +460,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = repo.InsertAudit(actx, nil, actor, "voucher", id, "slip_printed",
-			map[string]any{"ok": err == nil}, now, "")
+			map[string]any{"ok": err == nil, "balance_printed": balanceLinePrinted(rows.Shown, bal)}, now, "")
 		if err != nil {
 			logging.L().Warnf("voucher slip %s: print failed: %v", id, err)
 			voucherAdjustMessage(w, r, http.StatusBadGateway, "settings.printer.test_failed")

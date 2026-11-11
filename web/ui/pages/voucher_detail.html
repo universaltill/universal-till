@@ -20,7 +20,7 @@
        Inline, never a modal; outcome swaps into #voucher-slip-msg. */}}
   <div class="voucher-slip" style="margin-block-start:.8rem">
     {{ if $s.printer }}
-    {{ if ne $v.BalanceMinor $v.OriginalAmountMinor }}<p class="muted" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.original_value_note" }}</p>{{ end }}
+    {{ if $s.originalOnly }}<p class="muted" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.balance_unknown_note" }}</p>{{ end }}
     <form hx-post="{{ $s.href }}" hx-target="#voucher-slip-msg" hx-swap="innerHTML"
           hx-disabled-elt="find button[type=submit]" hx-indicator="#voucher-slip-busy"
           action="{{ $s.href }}" method="post" style="margin:0">
