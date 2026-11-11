@@ -1,7 +1,7 @@
 # Review: an item keeps its icon when a photo is written (ut-docs#3601)
 
 - **Card:** ut-docs#3601 extends #3585's category rule to items: the photo shows if there is one, otherwise the icon, and both are stored. It was cut to the till-local half. The my.-driven half (`save_item` icon, snapshot `icon_stored`, ut-cloud, the my. inspector) is ut-docs#6028.
-- **Branch:** `fix/3601-item-photo-keeps-icon`; ut-docs `docs/3601-item-photo-keeps-icon` (§0.12 of `reference/manage-shop-catalog-api.md`).
+- **Branch:** `fix/3601-item-photo-keeps-icon-v2` (`fix/3601-item-photo-keeps-icon` holds only the pre-review WIP snapshot); ut-docs `docs/3601-item-photo-keeps-icon` (§0.12 of `reference/manage-shop-catalog-api.md`).
 - **Pipeline:**
   - BA and Tester: Opus, separate agents.
   - Architect: Opus.
