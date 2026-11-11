@@ -1,7 +1,7 @@
 # Review: manager-only toggle for staff sales in cloud reports (ut-docs#2557)
 
 - **Card:** ut-docs#2557 (split from #2535, epic #2493, ADR-0111 §4)
-- **Branch:** `feat/2557-cloud-staff-breakdown-toggle`
+- **Branch:** `feat/2557-cloud-staff-breakdown-toggle-v2` (`feat/2557-cloud-staff-breakdown-toggle`, PR #2480, closed: one of its commits carried an AI author after the git identity reverted mid-cycle, #1185, and a force-push was not available)
 - **Pipeline:** BA + Architect + UX (Opus, design note), Dev (Sonnet), Tester (Opus, separate agent), Reviewer (Opus, separate agent, fresh context), review fixes (orchestrator). Unattended cloud cycle, lane `lane:cloud-41`.
 
 Pre-flight: web/help topic — updated (`web/help/en/reports.md` new "Staff sales in cloud reports" section + keywords; docs-shots: the new card is in no captured screenshot; first CI run went red on `guard-docs-shots_test.sh` (stale manifest), `make docs-shots` re-run, regenerated PNGs were byte-noise only (restored from `main`), `manifest.json` topic + surface hash refreshed); `reference/` — n/a (ADR-0111 §4 already describes the setting and its default; no ut-docs page described the missing UI); README — n/a (no text went stale); en.json/en.meta — updated (5 `settings.cloud_staff.*` keys with meta, `works_council` is `review: legal`; English only, ADR-0160); ADR — n/a (follows ADR-0111 §4 and the existing manager-only card pattern); plan/price, platform claim, plugin taxonomy/host function — n/a; review record — this file.
