@@ -87,12 +87,14 @@ func TestButtonsHTTPList_StripFirstCategoryTabIsDefaultSelected(t *testing.T) {
 		if strings.Contains(tag, "x-cloak") != wantCloak {
 			t.Fatalf("panel %s x-cloak = %v, want %v; tag: %s", marker, !wantCloak, wantCloak, tag)
 		}
-		if !strings.Contains(tag, `:role="q ? 'group' : 'tabpanel'"`) {
-			t.Fatalf("panel %s role must key off the query alone now, tag: %s", marker, tag)
+		// #buttons-grid hides while a query is active (x-show="!q"), so a
+		// panel is always a real tabpanel owned by its tab (ut-docs#2418).
+		if !strings.Contains(tag, `role="tabpanel"`) || !strings.Contains(tag, `aria-labelledby="cat-tab-`) || strings.Contains(tag, `:role=`) {
+			t.Fatalf("panel %s must be a static tabpanel labelled by its tab, tag: %s", marker, tag)
 		}
 	}
-	if !strings.Contains(body, `panelVisible(id, panelEl) {
-        return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
+	if !strings.Contains(body, `panelVisible(id) {
+        return this.tab === id;
       },`) {
 		t.Fatalf("expected panelVisible's no-query branch to check ONLY the panel's own tab, got: %s", body)
 	}

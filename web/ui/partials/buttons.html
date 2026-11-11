@@ -171,33 +171,14 @@
          cat_* seed literals — never caller-supplied text. If a category
          ID ever becomes user-editable, this needs SearchResult.AddVals()
          's treatment (marshal server-side), not raw interpolation. */}}
-    {{/* matches: the same per-tile "!q or data-name substring" check
-         product-tile already applied inline, now shared. sectionHasMatch:
-         does ANY .btn-tile anywhere under el (a category-group section, or
-         a whole tab panel, or the whole #buttons-grid) currently match —
-         used to hide a subcategory's header once search empties it
-         (ut-docs#422's stranded-header gap), to decide whether a whole tab
-         panel has anything to show while a cross-category search is open
-         (panelVisible below, ut-docs#2181), and to show the single
-         "no matches" message when nothing in the WHOLE catalogue matches
-         (also ut-docs#2181 — see the note lower in this file on why that
-         message now sits outside the tab-panel loop). Re-queries the DOM
-         on every keystroke rather than tracking a reactive count — fine at
-         the tile counts a category screen actually has. panelVisible(id,
-         panelEl): ut-docs#2181 — with no query, a tab panel shows only when it's the
-         active tab (unchanged); with a query, EVERY panel that has a match
-         anywhere inside it (own buttons or nested subcategories) shows at
-         once, so an item is findable regardless of which tab happened to
-         be active when the search started. Takes the panel element as an
-         explicit $el argument from its own x-show call (same convention
-         sectionHasMatch($el) already uses elsewhere in this file) rather
-         than reading this.$el inside the method — Alpine's $el magic
-         resolves to whichever element the CURRENT expression is bound to,
-         which here IS the panel itself, so this.$el.querySelector(...)
-         would only ever search the panel's descendants, never find the
-         panel's own id, and always miss (caught live: the panel's own
-         inline style stayed display:none after a query started matching,
-         because the miss made panelVisible fall through to false). */}}
+    {{/* matches: the per-tile "!q or data-name substring" check.
+         sectionHasMatch: does ANY .btn-tile under el (a category-group
+         section) currently match -- hides a subcategory's header once a
+         query empties it (ut-docs#422). While q is non-empty #buttons-grid
+         itself is hidden (x-show="!q"; the server-rendered #search-results
+         shows instead, ut-docs#2294), so these only ever evaluate with q
+         empty on the sale screen. Re-queries the DOM on every keystroke
+         rather than tracking a reactive count. */}}
     {{/* Focus handling on open/close (ut-docs#2173 review finding F2), and
          two things that cost this cycle real time -- both verified, not
          reasoned about.
@@ -278,10 +259,11 @@
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
       sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
-      {{/* A category panel is visible only for its own tab, or -- while a
-           query is active -- whenever it has a match (ut-docs#2181). */}}
-      panelVisible(id, panelEl) {
-        return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
+      {{/* A category panel is visible only for its own tab. While a query
+           is active #buttons-grid is hidden (x-show="!q"), so no panel is
+           ever shown then. */}}
+      panelVisible(id) {
+        return this.tab === id;
       },
       searching: false,
       {{/* ut-docs#2698 review F2: a .tab-hidden-only tab (every tile in
@@ -998,15 +980,9 @@
           {{ template "all-more-fragment" (dict "Buttons" .AllButtons "HasMore" .AllHasMore "NextOffset" .AllNextOffset "Category" .Chip "Filtered" .ChipFiltered) }}
         </div>
         {{ else if $flat }}
-        {{/* No category-group wrapper here to inherit #422's
-             sectionHasMatch($el) wiring from, so the no-matches message
-             is wired the same way the no-tab-bar branch's is: against
-             $el.parentElement, which resolves to #buttons-grid itself
-             (this branch's only content). */}}
         <div class="grid" data-grid-cat="">
           {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
         </div>
-        <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else if $hasTabs }}
         {{ range $g := .Groups }}
         {{/* ut-docs#2294: a category panel is x-cloak'd unless it's the
@@ -1025,60 +1001,20 @@
              "category-group", carries its own regardless). The tab button
              and this panel are siblings, not ancestor/descendant, so the
              tab's own --cat-color never reaches down into it on its own. */}}
-        {{/* :role/:aria-labelledby (ut-docs#2181 review finding F3): the
-             WAI-ARIA tabs pattern (focusTab's own comment above cites the
-             APG) requires exactly one visible tabpanel, owned by the one
-             selected tab — true whenever there's no query, but broken the
-             moment a query makes panelVisible() show several panels at
-             once while the tablist itself is hidden (x-show="!searching"
-             on .tab-bar) and exactly one tab still claims
-             aria-selected="true". Measured live: a screen reader then
-             finds two "tab panel"s under a tablist that isn't rendered,
-             one of them not the one it was told is selected. So while a
-             query is active this is no longer a tab's panel at all — just
-             a labeled group of results — and drops both attributes rather
-             than assert a relationship that no longer holds; Alpine
-             removes an :attr bound to null/false, it doesn't render the
-             literal string. */}}
-        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="q ? 'group' : 'tabpanel'" :aria-labelledby="q ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)" {{ if ne $g.ID $defaultTab }}x-cloak{{ end }}>
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" role="tabpanel" aria-labelledby="cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}')" {{ if ne $g.ID $defaultTab }}x-cloak{{ end }}>
           {{ template "category-group-body-tabbed" $g }}
         </div>
         {{ end }}
-        {{/* ut-docs#2181: one "no matches" message for the whole tabbed
-             view, not one per panel — since a query can now show several
-             panels at once (panelVisible above), a per-panel message would
-             either duplicate across every visible panel or never fire
-             right (a panel with zero matches is already hidden, so its own
-             message would never be seen anyway). $el.parentElement here is
-             #buttons-grid, which contains every tab panel regardless of
-             which is currently visible (x-show never removes them from the
-             DOM), so sectionHasMatch($el.parentElement) is exactly "does
-             anything in the WHOLE catalogue match" — the same idiom the
-             $flat/no-tab-bar branches below already use for their own
-             (single-section) case. */}}
-        <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else }}
         {{/* Exactly one real category, nothing uncategorized: no tab bar
              (nothing to switch between), but its name/color still show
-             via the normal headed group template. This branch reuses
-             "category-group" too, so it inherits that template's
-             x-show="sectionHasMatch($el)" (ut-docs#422) the same as any
-             tabbed subcategory — a search matching nothing here now hides
-             the section same as it would under a tab, and without this
-             message that would leave a fully blank panel with less
-             feedback than even the pre-#422 behavior (which at least kept
-             the header visible). $el.parentElement here is #buttons-grid
-             itself (this branch's only content, per the if/else-if/else
-             above), the same "the whole current panel" pattern the tabbed
-             branch's own message uses one level up against
-             .products-tab-panel. */}}
+             via the normal headed group template. */}}
         {{ range .Groups }}{{ template "category-group" . }}{{ end }}
         {{/* ut-docs#2174: the Designer with no quick buttons yet lands in
              this branch (the empty state above is skipped in edit mode);
              the message the retired flat grid used to show, so the search
              box above it still has a clear "add your first one" cue. */}}
         {{ if and .EditMode (not .Groups) }}<p class="empty" data-testid="designer-empty">{{ T "designer.empty" }}</p>{{ end }}
-        <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ end }}
       </div>
       {{ if .EditMode }}{{ template "designer-categories" . }}{{ template "designer-hidden" . }}{{ end }}
@@ -1359,20 +1295,13 @@
 
 {{/* A top-level tab's own content: its own buttons (if any), then its
      nested subcategories, rendered with their own always-visible headers
-     via the recursive "category-group" template below — same markup a
-     subcategory always used. The top-level bucket's own buttons get a
-     "category-group" wrapper too, but with its header shown only while a
-     query is active (ut-docs#2181) — otherwise the active tab already names
-     the category, so a permanent header here would be redundant noise; but
-     once a query makes panelVisible() (above) show more than one tab's
-     panel at once, the tab bar (hidden while searching) can no longer tell
-     the operator which category a result came from, and the header is what
-     does instead. (ut-docs#2613 retired the strip's All tab, the other
-     case that used to show it.) Nested subcategories don't need this
-     treatment — "category-group" below already carries its own
-     always-visible header regardless of search state, which is
-     exactly what already keeps a Dairy/Bakery-style result unambiguous
-     today. */}}
+     via the recursive "category-group" template below. The top-level
+     bucket's own buttons get a "category-group" wrapper too; its header is
+     bound to x-show="q" (ut-docs#2181), but #buttons-grid is hidden while q
+     is set (search results are the server-rendered #search-results,
+     ut-docs#2294), so it never shows -- a leftover of the same family as
+     ut-docs#2418, kept here only to keep that card's scope to
+     panelVisible/the panel ARIA/the no-matches <p>s. */}}
 {{ define "category-group-body-tabbed" }}
   {{ if .Buttons }}
   <section class="category-group" x-show="sectionHasMatch($el)">
