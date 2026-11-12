@@ -45,7 +45,7 @@ A restored backup brings back products, sales, receipts, staff with their PINs, 
 
 ## Replacing a till
 
-A backup is the only way to bring sales, receipts, customers and staff PINs back on a new till: the cloud does not keep them on any plan. Keep a recent copy off the till. Managers see **No backup copied off this till in 7 days** in the status bar until a backup has been saved off it.
+A backup is the only way to bring sales, receipts, customers and staff PINs back on a new till: the cloud does not keep them on any plan. Keep a recent copy off the till. Managers see **No backup copied off this till in 7 days** in the status bar until a backup has been saved off it; the reminder disappears as soon as a copy is saved.
 
 Where the till keeps its backups (the last 7 days by default):
 
