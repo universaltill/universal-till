@@ -122,6 +122,7 @@
   "basket.discount_hint": "Discount (minor units)",
   "basket.discount_short": "Disc.",
   "basket.discount_too_large": "The discount can't be more than this line's total (%s).",
+  "basket.line_changed": "This line changed while your edit was being saved, so your edit wasn't applied. Check it and try again.",
   "basket.empty": "No items",
   "basket.error.server": "Something went wrong. Please try again.",
   "basket.gift_voucher.for": "For %s",

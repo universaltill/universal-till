@@ -1623,6 +1623,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
+		if lineSnapshotTestHook != nil {
+			lineSnapshotTestHook()
+		}
 		// ut-docs#5411: lowering a priced line's quantity (the − stepper, the
 		// qty field, qty=0) takes value off the sale exactly like removing
 		// it, so it goes through the same void_comp_waste gate, reason
@@ -1636,81 +1639,89 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// loss is the line-total delta so micro-steps sum to the real loss.
 		// A discount the engine will refuse (LineDiscountTooLargeError)
 		// changes nothing, so it is neither gated nor recorded.
-		if cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
-			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount))) {
-			reducedBy := cur.Qty - qty
-			{
-				lost := pos.AmountForQuantity(cur.PriceCents, cur.Qty).Sub(pos.AmountForQuantity(cur.PriceCents, qty))
-				locale := httpx.ResolveLocale(w, r)
-				reason := r.Form.Get("reason")
-				if reason == "" {
-					reason = pos.ShrinkageReasonVoid
+		reduction := cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
+			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount)))
+		reason := r.Form.Get("reason")
+		var elev elevationCheck
+		if reduction {
+			locale := httpx.ResolveLocale(w, r)
+			if reason == "" {
+				reason = pos.ShrinkageReasonVoid
+			}
+			if !pos.ValidShrinkageReason(reason) {
+				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
+				return
+			}
+			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+			if elev.Outcome == needsElevation {
+				// Replay the ABSOLUTE target qty (not delta): the approver
+				// confirms the exact result shown in the summary.
+				hidden := []elevationHiddenField{
+					{Name: "reason", Value: reason},
+					{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
+					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
 				}
-				if !pos.ValidShrinkageReason(reason) {
-					http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
-					return
+				if key != "" {
+					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+				} else {
+					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
 				}
-				elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
-				if elev.Outcome == needsElevation {
-					// Replay the ABSOLUTE target qty (not delta): the approver
-					// confirms the exact result shown in the summary.
-					hidden := []elevationHiddenField{
-						{Name: "reason", Value: reason},
-						{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
-						{Name: "discount", Value: strconv.FormatInt(discount, 10)},
-					}
-					if key != "" {
-						hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
-					} else {
-						hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
-					}
-					// The stepper/qty field target #basket (outerHTML); the
-					// prompt's hint must land in the small hint slot instead,
-					// or it would replace the whole basket (as /api/pos/remove).
-					w.Header().Set("HX-Retarget", "#shrinkage-hint")
-					w.Header().Set("HX-Reswap", "innerHTML")
-					w.Header().Set("HX-Trigger", "ut-basket-resync")
-					renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint",
-						fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
-							strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
-							httpx.T(locale, "shrinkage.reason."+reason)),
-						hidden, elev)
-					return
-				}
-				now := time.Now().UTC().Format(time.RFC3339)
-				registerID := tillRegisterIDBestEffort(r.Context(), d)
-				if err := repo.InsertShrinkageEvent(r.Context(), nil, reason, cur.ItemID, cur.Name, cur.SKU, reducedBy,
-					cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
-					logging.L().Errorf("insert shrinkage event: %v", err)
-				}
-				detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
-				if elev.Outcome == elevated {
-					if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
-						logging.L().Errorf("insert elevated line-reduction audit: %v", err)
-					}
-				} else if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
-					logging.L().Errorf("insert line-reduction audit: %v", err)
-				}
-				// The elevation dialog's retry may have landed in the hint
-				// slot; put the result back on the basket.
-				w.Header().Set("HX-Retarget", "#basket")
-				w.Header().Set("HX-Reswap", "outerHTML")
+				// The stepper/qty field target #basket (outerHTML); the
+				// prompt's hint must land in the small hint slot instead,
+				// or it would replace the whole basket (as /api/pos/remove).
+				w.Header().Set("HX-Retarget", "#shrinkage-hint")
+				w.Header().Set("HX-Reswap", "innerHTML")
+				// After settle (ut-docs#5417): the resync replaces #basket,
+				// hint slot included; it must run once the hint is in the
+				// DOM so app.js can carry it across.
+				w.Header().Set("HX-Trigger-After-Settle", "ut-basket-resync")
+				renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint",
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
+						strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
+						httpx.T(locale, "shrinkage.reason."+reason)),
+					hidden, elev)
+				return
 			}
 		}
+		// The elevation dialog's retry may have targeted the hint slot; the
+		// result (or a conflict) always goes back on the basket.
+		w.Header().Set("HX-Retarget", "#basket")
+		w.Header().Set("HX-Reswap", "outerHTML")
+		// ut-docs#5417: compare-and-set against the qty the gate saw, so a
+		// concurrent writer between the read above and this update cannot
+		// turn the post into an ungated reduction. No lock is held across the
+		// elevation round trip; the retry is a fresh request.
 		var updateErr error
-		if key != "" {
+		if cur != nil {
 			// qty→0 voids the line; if it was the last dine-in line the
 			// table clears (ADR-0073 D5) and its claim must go (ut-docs#1390).
 			prevTable := d.Engine.TableID()
-			updateErr = d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
+			updateErr = d.Engine.UpdateLineByKeyIfQty(cur.LineKey, cur.Qty, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
-		} else {
-			prevTable := d.Engine.TableID()
-			updateErr = d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
-			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), d, repo, prevTable)
+		} else if key != "" {
+			// ut-docs#5417 review R1: the keyed line was already gone when the
+			// basket was read; say so instead of a silent no-op 200.
+			updateErr = pos.ErrLineChanged
+		}
+		if reduction && updateErr == nil {
+			// Record only a reduction the engine actually applied.
+			reducedBy := cur.Qty - qty
+			lost := pos.AmountForQuantity(cur.PriceCents, cur.Qty).Sub(pos.AmountForQuantity(cur.PriceCents, qty))
+			now := time.Now().UTC().Format(time.RFC3339)
+			registerID := tillRegisterIDBestEffort(r.Context(), d)
+			if err := repo.InsertShrinkageEvent(r.Context(), nil, reason, cur.ItemID, cur.Name, cur.SKU, reducedBy,
+				cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
+				logging.L().Errorf("insert shrinkage event: %v", err)
+			}
+			detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
+			if elev.Outcome == elevated {
+				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
+					logging.L().Errorf("insert elevated line-reduction audit: %v", err)
+				}
+			} else if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
+				logging.L().Errorf("insert line-reduction audit: %v", err)
 			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -1723,6 +1734,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if errors.As(updateErr, &tooLarge) {
 			b.DiscountErrorKey = tooLarge.LineKey
 			b.DiscountErrorLimit = tooLarge.Limit
+		}
+		// ut-docs#5417: the line changed (or went) since it was read, so the
+		// edit was not applied: 409 with the current basket and a note.
+		if errors.Is(updateErr, pos.ErrLineChanged) {
+			b.LineChangedKey = key
+			if cur != nil {
+				b.LineChangedKey = cur.LineKey
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
 		}
 		_ = basketView.Render(w, b)
 	})
@@ -3520,3 +3541,9 @@ func isISO4217Code(c string) bool {
 	}
 	return true
 }
+
+// lineSnapshotTestHook (tests only, ut-docs#5417) runs in /api/pos/line
+// between reading the line and applying the change, so a test can land a
+// concurrent writer in exactly that window. Tests that set it must not run
+// in parallel.
+var lineSnapshotTestHook func()

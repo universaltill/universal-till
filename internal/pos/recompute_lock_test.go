@@ -266,7 +266,7 @@ func TestRecomputeConcurrentMutationsWithSlowAsker(t *testing.T) {
 	})
 	worker(func(i int) {
 		s.Remove("A")
-		s.UpdateLine("B", 0, 0)
+		updateLineByCode(s, "B", 0, 0)
 		snap := s.Snapshot()
 		s.RestoreHeld(snap, HeldOrigin{})
 	})
