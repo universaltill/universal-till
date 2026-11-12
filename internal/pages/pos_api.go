@@ -1593,6 +1593,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "key required: several lines share this code", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#6113: an elevation retry replays from_qty, the qty the
+		// approver saw in "Reduce X from <from_qty> to <qty>". If the line is no
+		// longer at that qty (or is gone) the approval is for a different
+		// reduction than the one now pending: refuse it as a changed line
+		// BEFORE the elevation check, so a stale approval neither validates a
+		// PIN into an action nor records shrinkage/audit. Absent on ordinary
+		// stepper/qty posts, which are unaffected.
+		staleFromQty := false
+		if v := strings.TrimSpace(r.Form.Get("from_qty")); v != "" {
+			fromQty, err := strconv.ParseFloat(v, 64)
+			if err != nil || fromQty < 0 || math.IsNaN(fromQty) || math.IsInf(fromQty, 0) {
+				http.Error(w, "invalid from_qty", http.StatusBadRequest)
+				return
+			}
+			staleFromQty = cur == nil || cur.Qty != fromQty
+		}
 		qty := 0.0
 		if cur != nil {
 			qty = cur.Qty
@@ -1639,7 +1655,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// loss is the line-total delta so micro-steps sum to the real loss.
 		// A discount the engine will refuse (LineDiscountTooLargeError)
 		// changes nothing, so it is neither gated nor recorded.
-		reduction := cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
+		reduction := !staleFromQty && cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
 			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount)))
 		reason := r.Form.Get("reason")
 		var elev elevationCheck
@@ -1659,6 +1675,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				hidden := []elevationHiddenField{
 					{Name: "reason", Value: reason},
 					{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
+					// ut-docs#6113: also replay the qty the summary shows as the
+					// starting point, so the retry is refused if the line moved.
+					{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
 					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
 				}
 				if key != "" {
@@ -1692,7 +1711,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// turn the post into an ungated reduction. No lock is held across the
 		// elevation round trip; the retry is a fresh request.
 		var updateErr error
-		if cur != nil {
+		if staleFromQty {
+			// ut-docs#6113: nothing applied; same 409 + note as a lost CAS.
+			updateErr = pos.ErrLineChanged
+		} else if cur != nil {
 			// qty→0 voids the line; if it was the last dine-in line the
 			// table clears (ADR-0073 D5) and its claim must go (ut-docs#1390).
 			prevTable := d.Engine.TableID()
@@ -1741,6 +1763,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			b.LineChangedKey = key
 			if cur != nil {
 				b.LineChangedKey = cur.LineKey
+			} else if key == "" {
+				// ut-docs#6113 review F1: a code-addressed line that is gone
+				// has no key; any non-line value renders the basket-level note.
+				b.LineChangedKey = "code:" + code
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusConflict)
