@@ -137,7 +137,7 @@
             title="{{ printf (T "open_orders.cancel.action_named") .Label }}"
             hx-post="/api/pos/held/cancel" hx-vals='{{ jsonVals "id" .ID "view" "parked-orders" }}'
             hx-include="#offline-flag"
-            hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}" data-confirm-ok="{{ T "open_orders.cancel.action" }}" data-confirm-dismiss="{{ T "confirm.keep_order" }}"
+            hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}"
             hx-target="#parked-orders-hint" hx-swap="innerHTML"
             data-before-request="remember-focus:parked-orders-body,parked-orders-tab-{{ $tab }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>

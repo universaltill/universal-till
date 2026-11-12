@@ -78,7 +78,7 @@
                 aria-label="{{ printf (T "catalog.option_sets.move_down") .Value }}" title="{{ printf (T "catalog.option_sets.move_down") .Value }}">↓</button>
         <button type="button" id="osv-remove-{{ .ID }}" class="option-set-chip-btn"
                 hx-post="/api/catalog/option-set-value/remove" hx-vals='{{ jsonVals "optionSetId" $set.ID "valueId" .ID }}'
-                hx-confirm="{{ T "catalog.option_sets.remove_value_confirm" }}" data-confirm-ok="{{ T "confirm.remove" }}"
+                hx-confirm="{{ T "catalog.option_sets.remove_value_confirm" }}"
                 hx-target="#option-sets-list" hx-swap="outerHTML"
                 aria-label="{{ printf (T "catalog.option_sets.remove_value") .Value }}" title="{{ printf (T "catalog.option_sets.remove_value") .Value }}">×</button>
       </li>
@@ -113,7 +113,7 @@
       {{ else }}
       <button type="button" class="btn secondary option-set-delete-btn"
               hx-post="/api/catalog/option-set/delete" hx-vals='{{ jsonVals "optionSetId" .ID }}'
-              hx-confirm="{{ T "catalog.option_sets.delete_confirm" }}" data-confirm-ok="{{ T "confirm.delete" }}"
+              hx-confirm="{{ T "catalog.option_sets.delete_confirm" }}"
               hx-target="#option-sets-list" hx-swap="outerHTML">{{ T "catalog.option_sets.delete" }}</button>
       {{ end }}
     </div>

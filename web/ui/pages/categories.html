@@ -625,7 +625,7 @@
 {{ define "record_dialog_destructive" }}
 <fieldset data-main-till-lock{{ if .root.SyncUnreachable }} disabled{{ end }}>
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "categories.deactivate_confirm" }}" data-confirm-ok="{{ T "categories.deactivate" }}"
+      hx-confirm="{{ T "categories.deactivate_confirm" }}"
       hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"

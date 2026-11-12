@@ -3148,13 +3148,7 @@ utSellCamera(function(){
     e.preventDefault();
     var q = e.detail.question;
     var ask = (q && window.UT && window.UT.confirm && document.getElementById('ut-confirm'))
-      ? window.UT.confirm(q, {
-        opener: elt,
-        // Same labels as the till-confirm.js handler gives this opener (ut-docs#6117).
-        tone: (elt.closest('[data-confirm-tone]') || elt).getAttribute('data-confirm-tone') === 'neutral' ? 'neutral' : 'danger',
-        ok: (elt.closest('[data-confirm-ok]') || elt).getAttribute('data-confirm-ok') || '',
-        dismiss: (elt.closest('[data-confirm-dismiss]') || elt).getAttribute('data-confirm-dismiss') || ''
-      })
+      ? window.UT.confirm(q, { opener: elt })
       : Promise.resolve(!q || window.confirm(q)); // native-confirm:allow script/shell missing: native fallback (ut-docs#5524)
     ask.then(function (ok) {
       if (!ok) return; // Cancel: the reorder stays dirty, the tile stays

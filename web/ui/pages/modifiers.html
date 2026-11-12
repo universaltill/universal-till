@@ -83,7 +83,7 @@
     <button type="button" class="btn secondary"
             hx-post="/api/catalog/modifier-group/delete-unassigned"
             hx-vals='{{ jsonVals "expectedCount" .UnassignedCount }}'
-            hx-confirm="{{ printf (T "modifiers.delete_unassigned_confirm") .UnassignedCount }}" data-confirm-ok="{{ T "confirm.delete" }}"
+            hx-confirm="{{ printf (T "modifiers.delete_unassigned_confirm") .UnassignedCount }}"
             hx-target="#modifiers-list" hx-swap="outerHTML">{{ T "modifiers.delete_unassigned" }}</button>
   </div>
   {{ end }}
@@ -209,7 +209,7 @@
               <button type="button" class="modifier-chip-remove"
                       hx-post="/api/catalog/modifier-group/detach"
                       hx-vals='{{ jsonVals "itemId" .ID "groupId" $group.ID }}'
-                      hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}" data-confirm-ok="{{ T "confirm.remove" }}"
+                      hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
                       hx-target="#modifiers-list" hx-swap="outerHTML"
                       aria-label="{{ T "modifiers.remove_item" }}" title="{{ T "modifiers.remove_item" }}">×</button>
             </span>
@@ -245,7 +245,7 @@
         <button type="button" class="btn secondary modifier-delete-btn"
                 hx-post="/api/catalog/modifier-group/delete"
                 hx-vals='{{ jsonVals "groupId" .ID }}'
-                hx-confirm="{{ T "modifiers.delete_confirm" }}" data-confirm-ok="{{ T "confirm.delete" }}"
+                hx-confirm="{{ T "modifiers.delete_confirm" }}"
                 hx-target="#modifiers-list" hx-swap="outerHTML">{{ T "modifiers.delete" }}</button>
       </div>
     </div>
