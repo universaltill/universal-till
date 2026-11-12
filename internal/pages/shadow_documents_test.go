@@ -153,7 +153,7 @@ func TestPrinterConfig_ShadowMarketForcesNeverOverPluginAlways(t *testing.T) {
 func TestPrintReceipt_ShadowMarketReturnsSentinelAndPrintsNothing(t *testing.T) {
 	h := newShadowDocsHarness(t, "PT", receiptPolicyAlways)
 	seedReceiptSale(t, h.dp, "sale-sd-1", "R-SD-1", "sale", "", 120, 0, 0)
-	err := printReceiptIn(context.Background(), h.dp, "R-SD-1", "")
+	_, err := printReceiptIn(context.Background(), h.dp, "R-SD-1", "")
 	if !errors.Is(err, errCustomerDocumentsSuppressed) {
 		t.Fatalf("printReceiptIn err = %v, want errCustomerDocumentsSuppressed", err)
 	}

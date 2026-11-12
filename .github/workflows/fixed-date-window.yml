@@ -1,0 +1,25 @@
+name: fixed-date-window
+
+# ut-docs#5467: a fixed date in a test fixture is a time bomb. The PR guard
+# (scripts/ci/guard-fixed-dates.sh) only runs when someone pushes, so a date
+# drifting into the 60-day window during a quiet period would first show up as
+# a red, unrelated PR. This runs the same guard daily on main to warn ~60 days
+# before detonation (GitHub's default scheduled-failure email).
+#
+# NON-BLOCKING by construction: schedule/workflow_dispatch only (no push or
+# pull_request trigger). Never make this a required status check.
+on:
+  schedule:
+    - cron: '23 2 * * *' # 02:23 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fixed-date fixture guard (ut-docs#5467)
+        run: bash scripts/ci/guard-fixed-dates.sh

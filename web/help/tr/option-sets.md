@@ -3,6 +3,7 @@ id: option-sets
 title: Seçenek setleri
 section: Dükkanı kurma
 order: 112
+public: true
 summary: "Yeniden kullanılabilir bir değer listesini bir kez tanımlayın — Boyut: S / M / L — ve istediğiniz sayıda üründe, ürünün varyantlarını tek adımda ondan oluşturun."
 routes: [/catalog/option-sets]
 keywords: [seçenek setleri, varyantlar, boyut, renk, oluştur, sku]

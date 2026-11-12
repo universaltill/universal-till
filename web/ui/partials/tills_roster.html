@@ -39,11 +39,11 @@
       {{/* ut-docs#405: PrimaryTillName is always populated (till.name syncs
            down like any other setting), so this row renders on a replica
            too — there it's the PRIMARY's row, not "this till". */}}
-      {{ if .SyncPrimary }}
-      <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.the_primary" }})</span></td>
-      {{ else }}
-      <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
-      {{ end }}
+      {{/* ut-docs#1294: the same "Till ID: <uuid>" the LAN scan prints for
+           this main till (tills.html/setup.html scan list), so an operator
+           can match the two by eye. Blank = not known yet. */}}
+      <td>{{ .PrimaryTillName }} {{ if .SyncPrimary }}<span class="muted">({{ T "tills.the_primary" }})</span>{{ else }}<span class="muted">({{ T "tills.this_till" }})</span>{{ end }}
+        <br><small class="muted till-id" data-testid="tills-main-discovery-id">{{ T "tills.discovery.result_name" }}: {{ if .MainTillDiscoveryID }}<bdi dir="ltr">{{ .MainTillDiscoveryID }}</bdi>{{ else }}—{{ end }}</small></td>
       <td>—</td>
       {{ if .LinkInfo }}<td>—</td><td>{{ .MainVersion }}</td>{{ end }}
       <td>—</td>

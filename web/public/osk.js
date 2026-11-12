@@ -252,6 +252,8 @@
           if (node.nodeType !== 1) continue; // element nodes only
           guardField(node);
           if (node.querySelectorAll) guardSweep(node);
+          // ut-docs#5300: hand-inserted dialogs get no htmx:load.
+          if (enabled) updateToggles(node);
         }
       }
     }).observe(document.documentElement, {
@@ -607,7 +609,46 @@
     // OSK sheet itself, which swallows the tap silently (caught as a
     // ~40% e2e flake in settings-osk.spec.ts once sale-screen-213.spec.ts
     // ran before it).
-    setTimeout(function () { el.scrollIntoView({ block: 'center' }); }, 60);
+    setTimeout(function () {
+      el.scrollIntoView({ block: 'center' });
+      clearKeyboard(el);
+    }, 60);
+  }
+
+  // ut-docs#5775: scrollIntoView({block:'center'}) centres the field in the
+  // FULL viewport, but the keyboard covers the bottom ~288px, so on a short
+  // viewport (1024x600) a ~48px field centred at 300px ends under the sheet
+  // (which starts ~312px). Measure the real overlap and scroll it away —
+  // instant (see above), vertical only, never past the field's own top edge.
+  var OSK_GAP = 8;
+  function clearKeyboard(el) {
+    // hide() or a focus move inside the 60ms window: a hidden #osk reads
+    // top=0, which would scroll the field to the top for nothing.
+    if (!osk || !el.isConnected || current !== el || !osk.classList.contains('osk-open')) return;
+    var oskTop = osk.getBoundingClientRect().top;
+    var remaining = el.getBoundingClientRect().bottom - (oskTop - OSK_GAP);
+    for (var a = el.parentElement; a && remaining > 0; a = a.parentElement) {
+      var cs = getComputedStyle(a);
+      var oy = cs.overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && a.scrollHeight > a.clientHeight) {
+        // A field taller than the free space: keep its top inside this
+        // container's visible top edge (and the viewport's).
+        var r = el.getBoundingClientRect();
+        var step = Math.min(remaining, r.top - Math.max(0, a.getBoundingClientRect().top) - OSK_GAP);
+        if (step > 0) {
+          var before = a.scrollTop;
+          a.scrollTop = before + step;
+          remaining -= a.scrollTop - before;
+        }
+      }
+      // Inside a fixed overlay (item-form-modal, record-dialog…) scrolling
+      // the page behind it can't move the field.
+      if (cs.position === 'fixed') return;
+    }
+    if (remaining > 0) {
+      var top = el.getBoundingClientRect().top;
+      window.scrollBy(0, Math.min(remaining, top - OSK_GAP));
+    }
   }
 
   function hide() {
@@ -836,12 +877,16 @@
   // On-demand affordance: reveal any data-osk-toggle buttons (they ship
   // hidden) whenever the OSK is available at all. Mode 'off' never reaches
   // here, so the buttons stay hidden there.
-  function updateToggles() {
-    var btns = document.querySelectorAll('[data-osk-toggle]');
+  // ut-docs#5300: optional root (also matched itself); the observer calls it
+  // for hand-inserted nodes such as the utPostWithElevation PIN dialog.
+  function updateToggles(root) {
+    root = root || document;
+    if (root.matches && root.matches('[data-osk-toggle]')) root.hidden = !enabled;
+    var btns = root.querySelectorAll('[data-osk-toggle]');
     for (var i = 0; i < btns.length; i++) btns[i].hidden = !enabled;
   }
   updateToggles();
   // ut-docs#3807: a menu link swaps #ut-page (ADR-0098), bringing the sell
   // page's toggle back hidden; reveal it again on every swap.
-  document.addEventListener('htmx:load', updateToggles);
+  document.addEventListener('htmx:load', function () { updateToggles(); });
 })();

@@ -3,6 +3,7 @@ id: elevation
 title: Manager approval on the spot
 section: Connecting & extending
 order: 341
+public: true
 summary: When a screen tells you manager approval is required, a manager or admin can approve it right there with their PIN — no need to sign out and back in.
 keywords: [pin, approval, manager pin, override, elevation, permission]
 ---
@@ -26,7 +27,15 @@ PIN prompt right there.
    or switches accounts.
 4. A wrong PIN, too many attempts, or a PIN that belongs to someone who
    still isn't allowed to do that particular action all show a clear reason
-   in the same dialog, so you know what to try next.
+   in the same dialog, so you know what to try next. To back out instead,
+   tap Cancel or press Esc: nothing is done, and you're back on the field
+   or button you started from. While the PIN is being checked, the buttons are
+   greyed out, a spinner shows, and Cancel waits for the answer.
+   If the connection drops while it's being checked, or the till doesn't
+   answer within 30 seconds, the dialog closes with a
+   message that the action may or may not have been done: check before you try
+   it again. Nothing is retried for you. A backup or restore you approve
+   here is never cut off this way: it waits for the till's answer.
 
 ## What gets recorded
 

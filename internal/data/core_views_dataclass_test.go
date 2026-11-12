@@ -30,12 +30,15 @@ func TestCoreViews_DataClassPerView(t *testing.T) {
 		"sales.receipts.v1":     DataClassSales,
 		"catalog.items.v1":      DataClassCatalog,
 		"catalog.photos.v1":     DataClassCatalog,
+		"catalog.gaps.v1":       DataClassCatalog,
 		"stock.levels.v1":       DataClassStock,
 		"users.list.v1":         DataClassStaff,
 		// Activity rows carry actor_id: staff outranks till_health.
 		"audit.summary.v1": DataClassStaff,
 		"shop.context.v1":  DataClassShop,
 		"shop.context.v2":  DataClassShop,
+		// ut-docs#4129: shop facts and setting explanations, no secrets.
+		"settings.describe.v1": DataClassShop,
 	}
 	if len(want) != len(coreViews) {
 		t.Fatalf("%d views registered, %d classified here: classify the new view", len(coreViews), len(want))

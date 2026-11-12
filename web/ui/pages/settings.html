@@ -164,7 +164,7 @@
        registration state, and the POST is elevation-wired (ut-docs#867). -->
   <div class="set-divider">
     <h3 style="margin:0 0 .3rem">{{ T "settings.enrol.pair_title" }}</h3>
-    <p class="muted">{{ T "settings.enrol.pair_help" }}</p>
+    <p class="muted">{{ T "settings.enrol.pair_help_2" }}</p>
     <!-- Pair is destructive and not idempotent: it clears this till's cloud
          identity before the (single-use) code reaches the cloud, so a second
          submit of the same code — a double-tap on the touchscreen, which htmx
@@ -462,7 +462,7 @@
   <p class="muted">{{ T "settings.theme.help_per_till" }}</p>
   <form hx-post="/api/settings/theme" hx-swap="none" data-after-request="ok reload:settings-theme; fail save-error:settings-save-error">
     <select name="theme">
-      {{ $current := .theme }}
+      {{ $current := .tillTheme }}
       {{ range .themes }}
       <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ T .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
       {{ end }}
@@ -522,6 +522,27 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  <!-- ut-docs#5620: Android only. The shell keeps the display on while the
+       till is in front and lets the OS sleep it after this much idle time. The
+       row stays hidden on any till without window.AndroidKiosk (browser, Pi,
+       desktop); the choice is per device and lives in the app, not the shop
+       settings. -->
+  <form id="screen-awake-form" class="set-gap" hidden data-testid="screen-awake">
+    <label class="set-row">{{ T "settings.display.awake" }}
+      <select id="screen-awake-select" name="minutes">
+        <option value="0">{{ T "settings.display.awake_never" }}</option>
+        <option value="15">{{ printf (T "settings.display.awake_minutes") 15 }}</option>
+        <option value="30">{{ printf (T "settings.display.awake_minutes") 30 }}</option>
+        <option value="60">{{ printf (T "settings.display.awake_minutes") 60 }}</option>
+        <option value="120">{{ printf (T "settings.display.awake_hours") 2 }}</option>
+        <option value="240">{{ printf (T "settings.display.awake_hours") 4 }}</option>
+        <option value="480">{{ printf (T "settings.display.awake_hours") 8 }}</option>
+      </select>
+    </label>
+    <p class="muted">{{ T "settings.display.awake_help" }}</p>
+    <span id="screen-awake-msg" aria-live="polite" class="muted"></span>
+  </form>
+  <script src="/public/screen-awake.js?v={{ assetv "public/screen-awake.js" }}" defer></script>
   <!-- ut-docs#2308: the sell-screen basket/products divider's own reset --
        the drag itself lives on the sell screen (a live, no-reload
        fetch() POST, see index.html), so this is only the "I want the
@@ -688,7 +709,7 @@
     kioskAppliance: "{{ T "settings.display.exit_to_os_kiosk_appliance" }}",
     // ut-docs#1104: the same device-wide PIN lockout keypad login uses
     // (auth.error.locked) -- reused, not a new key, since it's the exact
-    // same fact ("too many attempts, wait 30s"), just reached via this
+    // same fact ("too many attempts, try again shortly"), just reached via this
     // form instead of the login screen.
     locked: "{{ T "auth.error.locked" }}"
   };
@@ -853,7 +874,7 @@
        own label (caught by actually screenshotting this section — see
        settings.telemetry.enable for the same plain-<label> precedent this
        follows instead). -->
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <!-- ut-docs#935 review BLOCKER 1: a `js:` hx-vals expression is
          evaluated as a bare `Function(...)()` call (see htmx's own
          source) — it has no `this` binding, so `this` inside it is
@@ -907,7 +928,7 @@
   <h2>{{ T "settings.catalog_import_barcode_default.title" }} {{ helpLink "catalog" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-catalog-import-barcode-default"{{ if index $.lockedRegions "settings-catalog-import-barcode-default" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-catalog-import-barcode-default" }}{{ template "set-lock-note" }}{{ end }}
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
            hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-import-barcode-default-cb').checked}"
@@ -942,7 +963,7 @@
   <h2>{{ T "settings.catalog_pre_pack_unit_price.title" }} {{ helpLink "catalog" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-catalog-pre-pack-unit-price"{{ if index $.lockedRegions "settings-catalog-pre-pack-unit-price" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-catalog-pre-pack-unit-price" }}{{ template "set-lock-note" }}{{ end }}
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <input type="checkbox" id="catalog-pre-pack-unit-price-cb" name="enabled"
            hx-post="/api/settings/catalog-pre-pack-unit-price" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-pre-pack-unit-price-cb').checked}"
@@ -1035,7 +1056,7 @@
   <h2>{{ T "settings.stock_tracking.title" }} {{ helpLink "inventory" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-stock-tracking"{{ if index $.lockedRegions "settings-stock-tracking" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-stock-tracking" }}{{ template "set-lock-note" }}{{ end }}
-  <label style="display:block; margin:.35rem 0">
+  <label class="set-block">
     <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
            hx-post="/api/settings/allow-negative-inventory" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('allow-negative-inventory-cb').checked}"
@@ -1089,11 +1110,11 @@
     <tbody>
       {{ range .backups }}
       <tr>
-        <td style="font-family:monospace">{{ .Name }}</td>
+        <td style="font-family:monospace">{{ .Name }}{{ if .Newest }} <span class="muted" style="font-family:inherit" data-testid="backup-newest-{{ .Name }}">· {{ T "settings.backup.newest_kept" }}</span>{{ end }}</td>
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
-        <td style="display:flex; gap:.3rem">
-          <button class="btn secondary" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+        <td style="display:flex; gap:.3rem; flex-wrap:wrap">
+          <button class="btn secondary" data-backup-save="{{ .Name }}" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
                the old typed RESTORE word — the elevation dialog's own OOB
                swap (elevation_prompt.html) handles the rest via this same
@@ -1103,6 +1124,14 @@
             <input type="hidden" name="name" value="{{ .Name }}">
             <button class="btn secondary" type="submit">{{ T "settings.backup.restore" }}</button>
           </form>
+          {{/* ut-docs#3092: Delete, with a confirm; the newest backup is always
+               kept (no button, and the server refuses it). Refreshes only
+               this card, like Backup now. */}}
+          {{ if not .Newest }}
+          <button class="btn secondary" type="button" data-testid="backup-delete-{{ .Name }}"
+                  hx-post="/api/backup/delete" hx-vals='{{ jsonVals "name" .Name }}' hx-target="#backup-dl-msg" hx-swap="innerHTML"
+                  hx-confirm="{{ T "settings.backup.delete_confirm" }}" data-after-request="ut-ok refresh-region">{{ T "settings.backup.delete" }}</button>
+          {{ end }}
         </td>
       </tr>
       {{ end }}
@@ -1113,8 +1142,50 @@
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
+  {{/* ut-docs#3092: how long backups are kept (per till). */}}
+  <form class="set-row set-below" id="backup-retention-form" hx-post="/api/backup/retention" hx-target="#backup-retention-msg" hx-swap="innerHTML">
+    <label for="backup-retention-days">{{ T "settings.backup.retention_days" }}</label>
+    <input id="backup-retention-days" type="number" name="days" min="1" max="365" step="1" inputmode="numeric" value="{{ .backupRetentionDays }}" required>
+    <button class="btn secondary" type="submit">{{ T "settings.backup.retention_save" }}</button>
+    <span id="backup-retention-msg" aria-live="polite"></span>
+  </form>
+  <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
   {{ end }}
   </div>
+  <script>
+  // ut-docs#5619: in the Android app the till process cannot write Downloads
+  // (scoped storage; the storage may be a USB drive), so Save to Downloads
+  // opens the system save picker through the app's bridge instead of the
+  // server-side copy. It sits outside the refreshable backup region (a region
+  // refresh does not run scripts). Anywhere else the htmx button above does the copy.
+  (function () {
+    var K = window.AndroidKiosk;
+    if (!K || typeof K.saveBackupCopy !== 'function' || window.utBackupSaveResult) return;
+    var T = {
+      saved: "{{ T "settings.backup.picker_saved" }}",
+      cancelled: "{{ T "settings.backup.picker_cancelled" }}",
+      failed: "{{ T "settings.backup.picker_failed" }}",
+      no_space: "{{ T "settings.backup.picker_no_space" }}"
+    };
+    function say(text, ok) {
+      var el = document.getElementById('backup-dl-msg');
+      if (el) el.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
+    }
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-backup-save]');
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();
+      K.saveBackupCopy(b.getAttribute('data-backup-save'));
+    }, true);
+    window.utBackupSaveResult = function (code, name) {
+      say(T[code] || T.failed, code === 'saved');
+      if (code === 'saved' && window.htmx) {
+        window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
+      }
+    };
+  })();
+  </script>
   {{ if .isManager }}
   {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
        stick, another computer or the Downloads folder (a new or
@@ -1415,7 +1486,7 @@
     // button disabled forever on a network drop -- on an offline-first
     // product, the likeliest failure of all. Same tail as this file's other
     // utPostWithElevation caller (the report-archive export below).
-      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
+      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 (function () {
@@ -1460,7 +1531,7 @@
           if (r.ok) removeRowIfEmpty(row);
         }); },
         function () { restoreBtn.disabled = false; msg.textContent = ''; }
-      ).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', e); });
+      ).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
       return;
     }
     var purgeBtn = ev.target.closest('[data-purge-batch]');
@@ -1479,7 +1550,7 @@
           if (r.ok) removeRowIfEmpty(prow);
         }); },
         function () { purgeBtn.disabled = false; msg.textContent = ''; }
-      ).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', e); });
+      ).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
     }
   });
 })();
@@ -1541,7 +1612,7 @@
         renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
         if (r.ok) { row.remove(); } else { b.disabled = false; }
       });
-    }, function () { b.disabled = false; }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', e); });
+    }, function () { b.disabled = false; }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 (function () {
@@ -1614,7 +1685,7 @@
         else { run.disabled = false; }
       });
     }, function () { run.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { run.disabled = false; renderNotice(msg, 'error', e); });
+      .catch(function (e) { run.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 (function () {
@@ -1807,7 +1878,7 @@
           renderNotice(msg, 'error', t || ('HTTP ' + r.status));
         });
       }, function () { btn.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
+      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', window.utElevationErrorText(e)); });
   });
 })();
 </script>
@@ -1904,6 +1975,10 @@
     {{ if .receiptPolicyAdvisoryDE }}
     <p class="muted receipt-policy-advisory-de" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.advisory_de" }}</p>
     {{ end }}
+    <!-- ut-docs#4247: optional stand-alone slip per gift voucher a sale issued,
+         printed after the receipt in the same job. Default off. -->
+    <label><input type="checkbox" name="voucherSlip" value="true" data-testid="printer-voucher-slip" {{ if $p.VoucherSlip }}checked{{ end }}> {{ T "settings.printer.voucher_slip" }}</label>
+    <p class="muted" style="margin:.2rem 0 0">{{ T "settings.printer.voucher_slip_hint" }}</p>
     <!-- ut-docs#2168: kitchen printer moved into its own fieldset/legend,
          after every receipt-printer control (mode/charset/address/device/
          discovery/drawer pin/system hint/receipt policy — all under this
@@ -2160,6 +2235,17 @@
   </form>
   </fieldset>
 </div>
+{{/* ut-docs#3208: Users (PINs) and Permissions live on their own pages; this card links them from Staff & security. Each link follows its page's own gate; the card renders only when at least one does (filterSettingsNavForRender drops the sidebar row the same way). */}}
+{{ if or .canManageUsers .canEditPermissions }}
+<div class="card" id="settings-staff-links">
+  <h2>{{ T "settings.staff_links.title" }} {{ helpLink "users" }}</h2>
+  <p class="muted">{{ T "settings.staff_links.help" }}</p>
+  <div class="set-row set-gap-s">
+    {{ if .canManageUsers }}<a class="btn secondary" href="/users">{{ T "users.title" }}</a>{{ end }}
+    {{ if .canEditPermissions }}<a class="btn secondary" href="/users/permissions">{{ T "permissions.title" }}</a>{{ end }}
+  </div>
+</div>
+{{ end }}
 <div class="card" id="settings-kiosk-idle-reset">
   <h2>{{ T "settings.kiosk_idle_reset.title" }}</h2>
   <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
@@ -2218,6 +2304,19 @@
   </fieldset>
   </div>
 </div>
+<!-- ADR-0176 (ut-docs#5366): notices from Universal Till and partners. A
+     per-till switch, off by default; off means no bell, no inbox and no extra
+     cloud request, and the held notices are erased. -->
+<div class="card" id="settings-notices">
+  <h2>{{ T "settings.notices.title" }}</h2>
+  <p class="muted">{{ T "settings.notices.help" }}</p>
+  <form hx-post="/api/settings/notices" hx-swap="none" data-after-request="ok reload:settings-notices; fail save-error:settings-save-error">
+    <label><input type="checkbox" name="enabled" data-testid="notices-enabled" {{ if eq (index .settingsMap "notices.enabled") "true" }}checked{{ end }}> {{ T "settings.notices.enable" }}</label>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "settings.notices.save" }}</button>
+    </div>
+  </form>
+</div>
 <!-- ut-docs#3115: the shop's name (store.name), editable after setup.
      Elevation-wired like Shop type below, so it renders for every session.
      A plain text input: osk.js's guardSweep gives it inputmode="none" when
@@ -2237,7 +2336,7 @@
   {{ if index $.lockedRegions "settings-store-name" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
     <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
-    <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
+    <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="{{ maxStoreNameRunes }}" dir="auto" autocomplete="off" data-testid="store-name-input">
     <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
     <span id="store-name-msg" aria-live="polite" data-testid="store-name-msg"></span>
   </form>
@@ -2264,6 +2363,38 @@
     <span id="settings-save-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  <!-- ut-docs#5410: how amounts write the shop currency (auto/symbol/code).
+       Its own lock region, like the language card; options are built in Go
+       ("Symbol (£12.50)") so no digits sit in translation strings. -->
+  <div id="settings-currency-display">
+  <fieldset class="set-lock" data-lock-region="settings-currency-display"{{ if index $.lockedRegions "settings-currency-display" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-currency-display" }}{{ template "set-lock-note" }}{{ end }}
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail save-error:settings-save-error">
+    <label class="set-row" for="currency-display"><span id="currency-display-title">{{ T "settings.currency_display.title" }}</span>
+      <select id="currency-display" name="currency_display" class="currency-display-select" aria-describedby="currency-display-help currency-display-example">
+        {{ range .currencyDisplayOptions }}
+        <option value="{{ .Value }}" data-example="{{ .Example }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <p class="muted" id="currency-display-help">{{ T "settings.currency_display.help" }}</p>
+    <p class="muted" id="currency-display-example" data-testid="currency-display-example"><bdi>{{ range .currencyDisplayOptions }}{{ if .Selected }}{{ .Example }}{{ end }}{{ end }}</bdi></p>
+    <button class="btn btn-touch" type="submit" id="currency-display-apply" aria-labelledby="currency-display-apply currency-display-title">{{ T "settings.currency.apply" }}</button>
+  </form>
+  </fieldset>
+  </div>
+  <script>
+  (function () {
+    var sel = document.getElementById('currency-display');
+    var ex = document.getElementById('currency-display-example');
+    if (!sel || !ex) return;
+    sel.addEventListener('change', function () {
+      var o = sel.options[sel.selectedIndex];
+      var b = ex.querySelector('bdi');
+      if (o && b) b.textContent = o.getAttribute('data-example') || '';
+    });
+  })();
+  </script>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
 <!-- ut-docs#861: the shop's default locale — used for anything with no
@@ -2566,7 +2697,7 @@
   var current = null;
 
   // showSection: hide every card but the target, mark its nav entry, and
-  // (phone width only, via CSS) swap the visible pane. At tablet+ width the
+  // (900px wide or less, via CSS) swap the visible pane. Wider than 900px the
   // .has-selection class has no effect — both panes are always side by side.
   function showSection(id, opts) {
     opts = opts || {};
@@ -2663,7 +2794,7 @@
     return navItems.length ? navItems[0].id : cards[0].id;
   }
 
-  // Open a category (or Advanced) on its list: at phone width a section
+  // Open a category (or Advanced) on its list: at narrow width (900px or less) a section
   // left open earlier (has-selection) must not carry over (review of
   // ut-docs#3090). After a tile tap, focus moves to the category's title so
   // keyboard and screen-reader users land where the content now is.
@@ -2721,7 +2852,8 @@
     }
     if (hasCategories) setMode(catForSection(r.id));
     var id = r.id || cards[0].id;
-    // Phone width, list-first (CSS keys off .has-selection below 40rem): with
+    // Narrow width (phone or portrait tablet), list-first (CSS keys off
+    // .has-selection at 56.25rem / 900px or less): with
     // no real deep link, arrive on the section list and wait for a tap. With
     // a hash the operator explicitly navigated somewhere — show it directly.
     showSection(id, { select: r.hadHash || fromEvent, focusPanel: !!fromEvent });
@@ -2787,7 +2919,7 @@
 
   if (back) {
     back.addEventListener('click', function () {
-      // Phone-width list-first return; a no-op at tablet+ width where the
+      // Narrow-width list-first return; a no-op wider than 900px where the
       // CSS ignores .has-selection.
       shell.classList.remove('has-selection');
       if (search) search.focus();

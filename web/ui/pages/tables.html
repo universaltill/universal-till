@@ -3,7 +3,7 @@
   <h1>{{ T "tables.title" }}</h1>
 </div>
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
 <style>
   /* Floor plan (ut-docs#814, ADR-0054): first SVG positional editor in the
@@ -75,7 +75,7 @@
     </button>
   </div>
   <p class="muted" id="tables-edit-hint" hidden>{{ T "tables.edit.hint" }}</p>
-  <p class="login-error" id="tables-status" hidden></p>
+  <p class="login-error" role="alert" id="tables-status" hidden></p>
 
   {{ if not .tables }}
   {{/* Soft gate (ADR-0054): zero tables configured is a valid state — an

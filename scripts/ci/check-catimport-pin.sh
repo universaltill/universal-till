@@ -15,6 +15,9 @@
 # Args: <pinned version, e.g. v0.1.0> [universal-till checkout, default .]
 set -euo pipefail
 
+# shellcheck source=scripts/ci/catimport-version-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/catimport-version-lib.sh"
+
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   echo "usage: $0 <pinned-version> [universal-till-dir]" >&2
   exit 2
@@ -31,12 +34,11 @@ if ! git -C "${REPO}" rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/d
   echo "❌ catimport pin: tag ${TAG} not found in ${REPO} (is it pushed, and were tags fetched?)" >&2
   exit 1
 fi
-# Only what a consumer compiles counts: Go source and the module files (a
-# README edit needs no release).
-changed="$(git -C "${REPO}" diff --name-only "${TAG}" HEAD -- \
-  ':(glob)catimport/**/*.go' catimport/go.mod catimport/go.sum)"
+# Only what a consumer compiles counts (catimport-version-lib.sh owns the
+# pathspec: a README edit needs no release).
+changed="$(catimport_changed "${REPO}" "${TAG}" HEAD)"
 if [[ -n "${changed}" ]]; then
-  echo "❌ catimport pin: universal-till's catimport/ changed since ${TAG} — tag the next catimport/vX.Y.Z and bump the pin:" >&2
+  echo "❌ catimport pin: universal-till's catimport/ changed since ${TAG} — bump catimport/VERSION in universal-till (CI tags it on merge), then bump the pin:" >&2
   printf '%s\n' "${changed}" | sed 's/^/  /' >&2
   exit 1
 fi

@@ -3,16 +3,56 @@ name: UI E2E
 # Real-browser Playwright suite: boots a throwaway till and drives Chromium
 # through the operator flows (sale, settings/OSK, RTL, page smokes). Catches
 # the JS/htmx layer Go tests can't see.
+#
+# ut-docs#4629: German is a language-pack plugin, not a core locale, so a
+# till without the pack renders `?lang=de` in English and the long-locale
+# layout specs (portrait-no-clip-sweep-3060, settings-tablet-portrait-4628)
+# would only ever test English. This job therefore checks out
+# ut-plugin-language-de (public repo, `ref: main` so the suite sees what a
+# shop installing the pack gets today -- same choice as
+# locale-render-audit.yml) and passes its locales dir to the default
+# project's worker tills via UT_E2E_I18N_OVERLAY_DIR (read only by
+# e2e/tests/worker-till.ts, which maps it to the till's
+# UT_TEST_I18N_OVERLAY_DIR). It is deliberately NOT a job-level
+# UT_TEST_I18N_OVERLAY_DIR: webServer tills inherit process.env, so that
+# would reach every project (auth, layout, diagnostics, ...). With the var
+# set the two specs ASSERT real German rendered. If pack main ever breaks
+# this run, pin `--branch` to the last good tag (e.g. v1.1.286) and file a card; never
+# continue-on-error. Least privilege: contents read, no persisted credentials.
+#
+# ut-docs#3734: the `webkit-phone` job runs the phone-layout specs under
+# Playwright WebKit (iOS WKWebView and the Pi's WebKitGTK render in WebKit,
+# which the Chromium job never sees) via e2e/playwright.webkit.config.ts. It
+# runs in parallel with `playwright`, so wall-clock is the longer of the two.
+# It skips itself with an in-job `git diff` (on a PR it runs only if web/**,
+# e2e/** or this workflow file changed; always on push to main) rather than a workflow-level `paths:` filter, which
+# would also drop the Chromium job -- same pattern as android-ci.yml. The job
+# always concludes success on a skip; never a required check, no
+# continue-on-error.
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   playwright:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # A plain anonymous clone, not actions/checkout: the pack is public,
+      # so no token is sent at all, and a stray gitlink in the pack
+      # (ut-docs#5289: `.worktrees/ai-4129` with no .gitmodules) makes
+      # actions/checkout fail with "No url found for submodule path", while
+      # `git clone` without --recurse-submodules ignores it.
+      - name: Fetch ut-plugin-language-de (main)
+        run: git clone --depth 1 --branch main https://github.com/universaltill/ut-plugin-language-de.git ut-plugin-language-de
+      - name: Require the German pack locales
+        run: test -f ut-plugin-language-de/locales/de.json
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -39,9 +79,88 @@ jobs:
         run: npx playwright test
         env:
           CI: "1"
+          UT_E2E_I18N_OVERLAY_DIR: ${{ github.workspace }}/ut-plugin-language-de/locales
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
           path: e2e/playwright-report/
+          retention-days: 7
+
+  webkit-phone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Fetch diff base
+        # `|| true`: no fetchable base (new branch, force-push) is handled
+        # below as "can't prove it's unrelated", never as a skip.
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          git fetch --depth=1 origin "$BASE" || true
+      - name: Determine whether this change touches web/**, e2e/** or e2e.yml
+        id: filter
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "push to main: always run"
+            echo "match=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "$BASE" "${{ github.sha }}")"
+          else
+            # No base to diff against: never silently skip.
+            changed="web/unknown-cannot-diff"
+          fi
+          echo "$changed"
+          # e2e.yml itself too, so an edit to this job is exercised on its PR.
+          if grep -qE '^(web|e2e)/|^\.github/workflows/e2e\.yml$' <<<"$changed"; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped: no web/e2e/e2e.yml change"
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@v7
+        if: steps.filter.outputs.match == 'true'
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.match == 'true'
+        with:
+          node-version: 26
+      # Own cache key, deliberately NOT under the `<os>-playwright-` prefix:
+      # the Chromium job's restore-keys fallback would otherwise prefix-match
+      # this WebKit-only cache on a lockfile change.
+      - uses: actions/cache@v6
+        if: steps.filter.outputs.match == 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-pw-webkit-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pw-webkit-
+      - name: Install deps
+        if: steps.filter.outputs.match == 'true'
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps webkit
+      - name: Run phone specs in WebKit
+        if: steps.filter.outputs.match == 'true'
+        working-directory: e2e
+        run: npx playwright test -c playwright.webkit.config.ts
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report-webkit
+          path: e2e/playwright-report-webkit/
           retention-days: 7

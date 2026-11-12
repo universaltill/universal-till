@@ -259,7 +259,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 
 		fiscalRegisterData := map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.fiscal_register"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"groups":    out,
 			"registers": registers,

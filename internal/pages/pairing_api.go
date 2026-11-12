@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -28,6 +29,37 @@ import (
 // is the backend surface only, verified over HTTP.
 
 const pairingRequestTTL = 10 * time.Minute
+
+// pairingExpiryAfter is time.AfterFunc; a var so tests capture the delay and
+// fire at once (ut-docs#2743).
+var pairingExpiryAfter = time.AfterFunc
+
+// publishPairingChange nudges the manager's pairing-queue streams (ut-docs#2743).
+func publishPairingChange(d *common.Deps) {
+	if d.PairingPush != nil {
+		d.PairingPush.Publish()
+	}
+}
+
+// resolvePendingLink tells the joining till's pending link (if one is open)
+// how its request ended. Targeted and O(1), unlike PairingPush's fan-out.
+func resolvePendingLink(d *common.Deps, id, status string) {
+	if d.PendingLinks != nil {
+		d.PendingLinks.Resolve(id, status)
+	}
+}
+
+// schedulePairingExpiryNudge nudges once the request's TTL has passed. Expiry
+// is purely time-based (no write happens), so the stream needs its own timer.
+// +1s: expires_at is second-precision and the fragment reads keep rows with
+// expires_at >= now, so the re-fetch at TTL+1s already excludes the row.
+func schedulePairingExpiryNudge(d *common.Deps, after time.Duration) {
+	if d.PairingPush == nil {
+		return
+	}
+	push := d.PairingPush
+	pairingExpiryAfter(after+time.Second, push.Publish)
+}
 
 // pairRateLimiter caps pair-request bursts per source (ADR-0033 §8's
 // inbound mitigation — nothing under internal/ rate-limits today, so this
@@ -175,6 +207,13 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#5862, #5875: the name shows on the manager's approval card
+		// and becomes the till's name (one line, at most maxTillNameRunes);
+		// no pending row for a refused one.
+		if key := tillNameRefusalKey(in.DeviceName); key != "" {
+			common.LocalizedError(w, r, http.StatusBadRequest, key)
+			return
+		}
 		// The pin this till served on THIS connection ("" over plain
 		// HTTP) — what the joining till saw, unless something in between
 		// presented its own certificate (ut-docs#4091).
@@ -184,8 +223,10 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		publishPairingChange(d)
+		schedulePairingExpiryNudge(d, pairingRequestTTL)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": id}, "error": nil})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": id, "pending_link": true}, "error": nil})
 	})
 
 	// Manager-gated (session role, same as the Tills page itself) list of
@@ -270,6 +311,8 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		publishPairingChange(d)
+		resolvePendingLink(d, id, fleetlink.PairingApproved)
 		var approvedPayload any
 		if finalRole != "" {
 			approvedPayload = map[string]any{"role": finalRole}
@@ -300,6 +343,8 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		publishPairingChange(d)
+		resolvePendingLink(d, id, fleetlink.PairingDenied)
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_denied",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		w.Header().Set("HX-Trigger", "tills-changed") // see approve above
@@ -328,7 +373,13 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "too many requests"})
 			return
 		}
-		secret := r.URL.Query().Get("request_secret")
+		// The secret travels in a header (ADR-0114 amendment 2026-11-03,
+		// ut-docs#5297); the query form stays for joining tills older than
+		// that, until the removal card ships.
+		secret := r.Header.Get(fleetlink.HeaderPairRequestSecret)
+		if secret == "" {
+			secret = r.URL.Query().Get("request_secret")
+		}
 		row, ok, err := repo.GetByID(r.Context(), r.PathValue("id"))
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)

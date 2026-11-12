@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ut-docs#1246: the ONLY path this app's FileProvider exposes — the
-     app-private external files dir that downloadAndInstallUpdate() writes the
-     release APK into. Deliberately not the shared Downloads collection: a
-     narrower grant, no storage permission needed, and a half-written APK never
-     appears in the operator's Files app. -->
+<!-- ut-docs#1246 / ut-docs#5436: the ONLY path this app's FileProvider
+     exposes: filesDir/updates/, the app-private directory holding the
+     COPY of the downloaded release APK that verifyThenInstall() checked
+     (APK signer pin, ADR-0179). Not the external Download/ dir: that is
+     writable by other apps on API 29 and below, so the bytes checked could be
+     swapped before the installer reads them. Private storage, no storage
+     permission. -->
 <paths>
-    <external-files-path
+    <files-path
         name="updates"
-        path="Download/" />
+        path="updates/" />
 </paths>

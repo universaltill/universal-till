@@ -383,7 +383,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		}
 		categoriesData := map[string]any{
 			"title":      httpx.T(httpx.RequestLocale(r), "page.title.categories"),
-			"theme":      d.CurrentState().Theme,
+			"theme":      d.ResolvedTheme(r),
 			"menuItems":  d.MenuSnapshot(),
 			"categories": catRows,
 			"groups":     groups,
@@ -391,7 +391,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			"itemColors": catalogtypes.ItemColors(),
 			// ut-docs#2500: the dialog's image picker offers the SAME
 			// built-in set as the item editor, grouped (ut-docs#2506).
-			"builtinIconGroups": catimport.BuiltinIconGroups(),
+			"builtinIconGroups": common.ShopPickerIconGroups(ctx, data.NewSettingsRepo(d.Db)),
 			// ut-docs#3127: "Remove background" under the photo picker.
 			"AICutout": aiCutoutOffered(r, d),
 			"errKey":   errKey,
@@ -666,6 +666,9 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
+			if errors.Is(err, data.ErrNameInvalidCharacters) {
+				key = "common.error.name_invalid_characters"
+			}
 			renderCategoryDialogError(w, r, key, 0)
 			return
 		}
@@ -704,11 +707,13 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		// The hidden flag rides in the same UPDATE (review finding 6).
 		if err := catRepo.UpdateCategoryWithHidden(r.Context(), id, f.name, f.color, f.hidden); err != nil {
 			key := "categories.error.rename"
-			switch err {
-			case data.ErrCategoryNameRequired:
+			switch {
+			case err == data.ErrCategoryNameRequired:
 				key = "categories.error.name_required"
-			case data.ErrCategoryNotFound:
+			case err == data.ErrCategoryNotFound:
 				key = "categories.error.not_found"
+			case errors.Is(err, data.ErrNameInvalidCharacters):
+				key = "common.error.name_invalid_characters"
 			}
 			renderCategoryDialogError(w, r, key, 0)
 			return

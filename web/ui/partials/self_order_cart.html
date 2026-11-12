@@ -29,6 +29,10 @@
   <ul class="selforder-cart-lines">
     {{ range .Basket.Lines }}
     <li class="selforder-cart-line">
+      {{/* ut-docs#4959: the item photo, as on the cashier basket row
+           (#4838). An empty placeholder keeps the column so rows stay
+           aligned; never an empty <img>. Decorative: the name follows. */}}
+      {{ if .ImageURL }}<img class="selforder-cart-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="selforder-cart-thumb selforder-cart-thumb-empty"></span>{{ end }}
       <div class="selforder-cart-line-info">
         <span class="selforder-cart-line-name">{{ .Name }}</span>
         {{ if .Modifiers }}

@@ -142,6 +142,10 @@ const (
 	// drop is never silent (a missing net quantity also drops the shelf
 	// label's unit price, Price Marking Order 2004, ut-docs#3391).
 	NetQuantityIssueInvalid = "invalid"
+	// ReorderLevelIssueInvalid (ut-docs#2084): the row carried a reorder-level
+	// cell that is not a whole number from 0 to catalogrules.MaxReorderLevel.
+	// Non-blocking, like NetQuantityIssueInvalid.
+	ReorderLevelIssueInvalid = "invalid"
 )
 
 // ImportItem is one parsed catalog row, prices in minor units.
@@ -267,6 +271,16 @@ type ImportItem struct {
 	// present net quantity didn't validate. Never blocks the row.
 	NetQuantityIssue    string
 	NetQuantityIssueRaw string
+	// ReorderLevel is items.reorder_level from the file (ut-docs#2084):
+	// 0..catalogrules.MaxReorderLevel. HasReorderLevel says the file carried
+	// a valid one, so "the column said 0" stays distinct from "no column".
+	ReorderLevel    int
+	HasReorderLevel bool
+	// ReorderLevelIssue/ReorderLevelIssueRaw mirror NetQuantityIssue: set
+	// (with the raw cell) when a present cell didn't validate. Never blocks
+	// the row.
+	ReorderLevelIssue    string
+	ReorderLevelIssueRaw string
 
 	// Row is the 1-based record number in the file, header = 1, so the
 	// first item is row 2 (ut-docs#4747). Set by ParseProducts (and
@@ -335,6 +349,15 @@ var columnSynonyms = map[string][]string{
 	// relying on one of the two passes. A file without this column is
 	// unchanged: absent ⇒ HasTracksStock false ⇒ nothing is inferred.
 	"track_stock": {"track inventory", "track inventory?", "track stock", "track stock?", "tracks stock", "inventory tracking", "stock control", "enable stock control"},
+	// ut-docs#2084: the low-stock threshold. "low stock" and "stock alert
+	// count" also catch Loyverse's "Low stock [Store]" and Square's
+	// "Stock Alert Count [Loc]" through headerIndex's "<syn> [" rule.
+	// "low stock alert" is deliberately absent: a Y/N header of that name
+	// would warn on every row.
+	"reorder_level": {"reorder level", "reorder_level", "reorder point", "reorder at", "low stock", "low stock threshold", "low stock level", "stock alert count", "min stock", "minimum stock"},
+	// Neutral "is the low-stock alert switched on?" gate (Square writes one);
+	// a recognised No drops the count (ut-docs#2084, the #1843 rule).
+	"reorder_alert": {"stock alert enabled", "low stock alert enabled", "reorder alert enabled"},
 	// Tax columns (ut-docs#512): optional, ignored when absent so existing
 	// Loyverse/Square exports are unchanged. "takeaway tax" carries the
 	// off-premises rate where the source distinguishes one (§12 UStG). A
@@ -763,15 +786,8 @@ func ParseMapped(r io.Reader, m Mapping, currencyDecimals int, enabledSymbologyI
 				item.Stock, item.HasStock = qty, true
 			}
 		}
-		// ut-docs#1843: same optional-column shape, but note it is parsed
-		// with parseYesNo and not isTruthy — isTruthy answers "is this
-		// yes?", which maps an unrecognised value and an explicit "No" onto
-		// the identical false, and here those two must stay distinguishable.
-		if raw := get(rec, "track_stock"); raw != "" {
-			if b, ok := parseYesNo(raw); ok {
-				item.TracksStock, item.HasTracksStock = b, true
-			}
-		}
+		applyTrackStock(&item, get(rec, "track_stock"))
+		applyReorderLevel(&item, get(rec, "reorder_level"), get(rec, "reorder_alert"))
 		// Tax columns are optional too, but — unlike stock — a present cell
 		// that doesn't parse is reported (TaxIssue), not dropped silently:
 		// the row still imports at the till's default rate, and the pages
@@ -1040,6 +1056,51 @@ func parseNetQuantity(rawValue, rawUnit string) (value *int64, unit *string, ok 
 		return nil, nil, false
 	}
 	return &n, &u, true
+}
+
+// applyTrackStock is the track_stock row step the CSV and XLSX parsers
+// share (ut-docs#5957: XLSX once skipped it, silently dropping a workbook's
+// "Track inventory?" answer). ut-docs#1843: parsed with parseYesNo, not
+// isTruthy — isTruthy maps an unrecognised value and an explicit "No" onto
+// the same false, and here those two must stay distinguishable. A blank or
+// unrecognised cell leaves HasTracksStock false, so nothing is inferred.
+func applyTrackStock(item *ImportItem, raw string) {
+	if raw == "" {
+		return
+	}
+	if b, ok := parseYesNo(raw); ok {
+		item.TracksStock, item.HasTracksStock = b, true
+	}
+}
+
+// parseReorderLevel reads a reorder-level cell (ut-docs#2084): a whole
+// number from 0 to catalogrules.MaxReorderLevel; "5.0" is 5. "," grouping is
+// deliberately not stripped (a European "1,5" must never become 15).
+func parseReorderLevel(raw string) (int, bool) {
+	f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || !(f >= 0 && f <= catalogrules.MaxReorderLevel) || f != math.Trunc(f) {
+		return 0, false
+	}
+	return int(f), true
+}
+
+// applyReorderLevel is the one row step the CSV and XLSX parsers share, so
+// they cannot drift. raw is the reorder_level cell, rawAlert the
+// reorder_alert cell: a recognised "No" there means the source switched the
+// alert off, so the count is not recorded and no warning is raised.
+func applyReorderLevel(item *ImportItem, raw, rawAlert string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	if on, ok := parseYesNo(rawAlert); ok && !on {
+		return
+	}
+	if n, ok := parseReorderLevel(raw); ok {
+		item.ReorderLevel, item.HasReorderLevel = n, true
+		return
+	}
+	item.ReorderLevelIssue, item.ReorderLevelIssueRaw = ReorderLevelIssueInvalid, raw
 }
 
 // normalizeBarcode matches a raw CSV barcode cell against enabledIDs via

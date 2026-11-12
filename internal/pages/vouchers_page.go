@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -37,7 +38,10 @@ import (
 // "settings", the same action the import always used, server-side on every
 // route. POST /vouchers/{id}/top-up (ut-docs#4252) writes nothing: it adds a
 // top-up line to the cashier's basket, and the sale that pays for it credits
-// the voucher (pos.CompleteSale → data.TopUpVoucher).
+// the voucher (pos.CompleteSale → data.TopUpVoucher). On an additional till
+// (ut-docs#4416) the voucher is first looked up on the main till, which
+// must answer and accept top-ups; the till's own sale then books the credit
+// locally and the journal replays it on the main till.
 //
 // Offline-first: everything reads the local database. On an additional
 // till that local view is only the vouchers this till has seen (issued
@@ -104,6 +108,34 @@ func journalHref(receiptNo string) string {
 	return "/journal/" + url.PathEscape(receiptNo)
 }
 
+// voucherForPage resolves /vouchers/{id}: the local row, else (additional
+// till) the main till's; judged is the row decisions are made on — the main
+// till's when it answered (ut-docs#4416), else the local one. A voucher this
+// till has no row for always asks the main till; askPrimary also asks when
+// the local row exists. On the main till / a standalone till the lookup
+// returns primaryLookupNotReplica without touching the network.
+func voucherForPage(ctx context.Context, d *common.Deps, repo *data.POSRepo, id string, askPrimary bool) (shown, judged data.Voucher, fromPrimary bool, err error) {
+	shown, err = repo.GetVoucherBalance(ctx, nil, id)
+	var primary data.Voucher
+	var primaryAnswered bool
+	if errors.Is(err, data.ErrVoucherNotFound) || (err == nil && askPrimary) {
+		if pv, _, outcome := lookupVoucherOnPrimary(ctx, d, voucherProxyClient, id); outcome == primaryLookupAnswered {
+			primary, primaryAnswered = pv, true
+		}
+	}
+	if errors.Is(err, data.ErrVoucherNotFound) && primaryAnswered {
+		shown, err, fromPrimary = primary, nil, true
+	}
+	if err != nil {
+		return data.Voucher{}, data.Voucher{}, false, err
+	}
+	judged = shown
+	if primaryAnswered {
+		judged = primary
+	}
+	return shown, judged, fromPrimary, nil
+}
+
 func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 
@@ -120,6 +152,15 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		truncated := len(rows) > vouchersPageLimit
 		if truncated {
 			rows = rows[:vouchersPageLimit]
+		}
+		// ut-docs#4416: an additional till lists only the vouchers it holds a
+		// row for. A search that finds nothing here asks the main till for
+		// that exact number, so a voucher sold elsewhere can still be opened
+		// (and topped up or corrected) from this till.
+		if len(rows) == 0 && strings.TrimSpace(f.Query) != "" {
+			if pv, _, outcome := lookupVoucherOnPrimary(r.Context(), d, voucherProxyClient, strings.TrimSpace(f.Query)); outcome == primaryLookupAnswered && (f.Status == "" || pv.Status == f.Status) {
+				rows = append(rows, data.VoucherListRow{Voucher: pv})
+			}
 		}
 		views := make([]voucherRowView, 0, len(rows))
 		for _, row := range rows {
@@ -154,7 +195,7 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		}
 		page := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "vouchers.title"),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
 			"q":           f.Query,
@@ -197,7 +238,11 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		// The id is operator-typed text: it only ever reaches SQL as a bound
 		// parameter and the page through html/template's escaping.
 		id := r.PathValue("id")
-		v, err := repo.GetVoucherBalance(r.Context(), nil, id)
+		// ut-docs#4416: on an additional till the main till's row is the
+		// one top-ups and corrections are judged on, so it decides what the
+		// page offers; a voucher this till has no row for yet is shown from
+		// it (with this till's history, which is then empty).
+		v, judged, fromPrimary, err := voucherForPage(r.Context(), d, repo, id, canPerform(d, r, "settings"))
 		if errors.Is(err, data.ErrVoucherNotFound) {
 			httpx.RenderError(w, r, http.StatusNotFound, "vouchers.error.not_found", nil)
 			return
@@ -206,7 +251,10 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
-		hist, err := repo.VoucherTransactions(r.Context(), id)
+		var hist []data.VoucherHistoryRow
+		if !fromPrimary {
+			hist, err = repo.VoucherTransactions(r.Context(), id)
+		}
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
@@ -220,34 +268,35 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		// that is the main till's live balance when it answers (the
 		// correction is made on its ledger, and a lagging local mirror
 		// would otherwise refuse every correction as "balance changed").
-		possible := v.Status != "void" && v.Purpose == data.VoucherPurposeMulti
+		possible := judged.Status != "void" && judged.Purpose == data.VoucherPurposeMulti
 		allowed := canPerform(d, r, "settings")
-		expected := v.BalanceMinor
-		if possible && allowed {
-			if pv, ok := fetchVoucherFromPrimary(r.Context(), d, voucherProxyClient, id); ok {
-				expected = pv.BalanceMinor
-			}
-		}
+		expected := judged.BalanceMinor
 		httpx.Render("ui/pages/voucher_detail.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "vouchers.title"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"voucher":   v,
 			"history":   views,
 			// ut-docs#4252: the Top up section. Same gate and the same
-			// "possible" rule as the correction; an additional till gets a
-			// note instead of the form (top-ups are main-till only).
+			// "possible" rule as the correction; an additional till shows the
+			// form too (ut-docs#4416) — the POST asks the main till.
 			"topUp": map[string]any{
 				"allowed":  allowed,
 				"possible": possible,
-				"void":     v.Status == "void",
-				"replica":  d.SyncPrimaryURL(r.Context()) != "",
+				"void":     judged.Status == "void",
 				"href":     "/vouchers/" + url.PathEscape(id) + "/top-up",
+			},
+			// ut-docs#5740: print this voucher's gift slip again.
+			"slip": map[string]any{
+				"allowed":  allowed,
+				"possible": judged.Status == "active" && judged.BalanceMinor > 0,
+				"printer":  printerConfig(r.Context(), d).Enabled(),
+				"href":     "/vouchers/" + url.PathEscape(id) + "/print-slip",
 			},
 			"adjust": map[string]any{
 				"allowed":  allowed,
 				"possible": possible,
-				"void":     v.Status == "void",
+				"void":     judged.Status == "void",
 				"id":       uuid.NewString(),
 				"expected": expected,
 				"done":     r.URL.Query().Get("adjusted") == "1",
@@ -338,6 +387,64 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
 
+	// POST /vouchers/{id}/print-slip — print this voucher's gift slip again,
+	// on its own, without a receipt (ut-docs#5740). Same gate as /adjust;
+	// printability is judged on the main till's row when it answers
+	// (voucherForPage), the slip's content on the shown row. Outcome is an
+	// inline fragment; every attempt that reached the printer (or was refused
+	// by ADR-0124) is audited as voucher/<id>/slip_printed.
+	mux.HandleFunc("POST /vouchers/{id}/print-slip", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "settings") || (!auth.Disabled(os.Getenv("UT_AUTH")) && strings.TrimSpace(getSessionUserID(r)) == "") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		id := r.PathValue("id")
+		shown, judged, _, err := voucherForPage(r.Context(), d, repo, id, true)
+		if errors.Is(err, data.ErrVoucherNotFound) {
+			voucherAdjustMessage(w, r, http.StatusNotFound, "vouchers.error.not_found")
+			return
+		}
+		if err != nil {
+			logging.L().Errorf("voucher slip %s: %v", id, err)
+			voucherAdjustMessage(w, r, http.StatusInternalServerError, "common.error.server")
+			return
+		}
+		if judged.Status != "active" || judged.BalanceMinor <= 0 {
+			voucherAdjustMessage(w, r, http.StatusConflict, "vouchers.print_slip.not_printable")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		err = printVoucherSlipIn(ctx, d, shown, time.Now())
+		now := time.Now().UTC().Format(time.RFC3339)
+		actor := getSessionUserID(r)
+		// The attempt is audited even when the operator left the page
+		// mid-print (request context cancelled) — the slip may already be
+		// on paper (review of ut-docs#5740; cf. recordPrintFailureCtx).
+		actx, acancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+		defer acancel()
+		switch {
+		case errors.Is(err, errCustomerDocumentsSuppressed):
+			_ = repo.InsertAudit(actx, nil, actor, "voucher", id, "slip_printed",
+				map[string]any{"ok": false, "refused": "shadow_customer_documents"}, now, "")
+			writeCustomerDocumentsRefused(w, r)
+			return
+		case errors.Is(err, errNoReceiptPrinter):
+			voucherAdjustMessage(w, r, http.StatusConflict, "vouchers.print_slip.no_printer")
+			return
+		}
+		_ = repo.InsertAudit(actx, nil, actor, "voucher", id, "slip_printed",
+			map[string]any{"ok": err == nil}, now, "")
+		if err != nil {
+			logging.L().Warnf("voucher slip %s: print failed: %v", id, err)
+			voucherAdjustMessage(w, r, http.StatusBadGateway, "settings.printer.test_failed")
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<span class="tag ok" role="status">✓ %s</span>`,
+			html.EscapeString(httpx.T(httpx.RequestLocale(r), "vouchers.print_slip.done")))
+	})
+
 	// POST /vouchers/{id}/top-up — add value to an existing voucher as a
 	// sale (ut-docs#4252). It checks the voucher BEFORE touching the basket,
 	// then adds a top-up gift-voucher line (Code = this voucher, Price = the
@@ -346,18 +453,20 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 	// Nothing is credited here: the paying sale does that in its own
 	// transaction (pos.CompleteSale → data.TopUpVoucher, which re-checks
 	// every rule). Errors are an inline fragment, like /adjust.
+	//
+	// An additional till (ut-docs#4416) asks the MAIN till for the voucher
+	// and judges the main till's row (its balance), refusing with the
+	// replica note when the main till is unreachable, doesn't know the
+	// voucher is a top-up target (an older version omits accepts_top_up),
+	// or answers anything unreadable; an unknown voucher is a 404. It then
+	// seeds the local mirror so this till's own sale finds the voucher. The
+	// sale credits the local mirror with a forced top-up and journals it;
+	// the main till force-credits it on replay (applyJournal).
 	mux.HandleFunc("POST /vouchers/{id}/top-up", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.RequestLocale(r)
 		fail := func(status int, msg string) { voucherInlineMessage(w, status, msg) }
 		if !canPerform(d, r, "settings") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-			return
-		}
-		// An additional till can't top up yet: its sale would have to
-		// credit the main till's ledger (follow-up card). Checkout itself is
-		// untouched — this only refuses adding the line.
-		if d.SyncPrimaryURL(r.Context()) != "" {
-			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.replica_note"))
 			return
 		}
 		if d.Engine == nil {
@@ -376,7 +485,22 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusBadRequest, amountMsg)
 			return
 		}
-		v, err := repo.GetVoucherBalance(r.Context(), nil, id)
+		var v data.Voucher
+		isReplica := d.SyncPrimaryURL(r.Context()) != ""
+		if isReplica {
+			pv, acceptsTopUp, outcome := lookupVoucherOnPrimary(r.Context(), d, voucherProxyClient, id)
+			switch {
+			case outcome == primaryLookupNotFound:
+				err = data.ErrVoucherNotFound
+			case outcome != primaryLookupAnswered, !acceptsTopUp:
+				fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.replica_note"))
+				return
+			default:
+				v = pv
+			}
+		} else {
+			v, err = repo.GetVoucherBalance(r.Context(), nil, id)
+		}
 		switch {
 		case errors.Is(err, data.ErrVoucherNotFound):
 			fail(http.StatusNotFound, httpx.T(locale, "vouchers.error.not_found"))
@@ -402,6 +526,17 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		if countGiftVoucherLines(d.Engine.Lines()) >= pos.MaxVoucherIssuesPerSale {
 			fail(http.StatusConflict, fmt.Sprintf(httpx.T(locale, "pos.gift_voucher.error.too_many"), pos.MaxVoucherIssuesPerSale))
 			return
+		}
+		// Last refusal passed: give this till's own sale a voucher row to
+		// credit (INSERT OR IGNORE — a row this till already has, even a
+		// stale or void one, is left alone; the forced top-up in
+		// completeTender copes with it).
+		if isReplica {
+			if err := repo.EnsureVoucherLocalRow(r.Context(), nil, v); err != nil {
+				logging.L().Errorf("voucher top-up %s: seed local mirror: %v", id, err)
+				fail(http.StatusInternalServerError, httpx.T(locale, "common.error.server"))
+				return
+			}
 		}
 		// The line's base is the shop's gift voucher item, resolved the way
 		// the sale screen resolves a tile (its item-id code), so the line

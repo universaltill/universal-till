@@ -3,8 +3,10 @@ id: claim
 title: Geschäftsregistrierung & Beanspruchung
 section: Verbinden & erweitern
 order: 320
+public: true
 summary: Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Beanspruchung verknüpft das Geschäft mit IHREM Konto, sodass Sie das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen erhalten.
 keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft, abonnement, tarif, koppeln, kopplungscode, neu koppeln]
+routes: [/settings/cloud/move/{id}]
 ---
 
 # Geschäftsregistrierung & Beanspruchung
@@ -32,28 +34,33 @@ Einstellungen → Abonnement (nur für Manager) zeigt Ihren Tarif so, wie diese 
 - Lokal (kostenlos): Nichts zu tun, die Karte zeigt nur, dass Sie den kostenlosen Tarif nutzen.
 - Aktiv: Ihr Tarif, das Verlängerungsdatum und die letzte Bestätigung.
 - Abonnement nicht bestätigt: Die Kasse konnte Ihren Tarif seit mehr als 7 Tagen nicht bei der Cloud bestätigen, daher sind kostenpflichtige Funktionen (etwa Cloud-Synchronisierung, Artikelverwaltung im Browser und die Einrichtung der verwalteten TSE) pausiert. Prüfen Sie die Internetverbindung der Kasse; der Hinweis verschwindet von selbst, sobald sie verbunden ist.
-- Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis Sie es in Ihrem Universal-Till-Konto verlängern. Bis 90 Tage nach der letzten Zahlung meldet sich eine Kasse mit beendetem Abonnement einmal pro Stunde von selbst bei der Cloud und erfährt so meist innerhalb einer Stunde von einer Verlängerung. Um es sofort zu sehen, tippen Sie auf dieser Karte oder im Hinweis zu pausierten Funktionen unter Einstellungen → Kassenregistrierung auf „Jetzt prüfen“ (nur Manager und Administratoren): Die Kasse fragt bei der Cloud nach und zeigt die Antwort direkt an, entweder das Datum, bis zu dem der Tarif jetzt bezahlt ist, oder dass er noch nicht verlängert wurde. Auf einer Kasse, die über die Hauptkasse registriert ist, tippen Sie an der Hauptkasse darauf: Diese Kasse erhält die Verlängerung von dort.
+- Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis es wieder aktiv ist. Bis 90 Tage nach der letzten Zahlung meldet sich eine Kasse mit beendetem Abonnement einmal pro Stunde von selbst bei der Cloud und erfährt so meist innerhalb einer Stunde von einer Verlängerung. Um es sofort zu sehen, tippen Sie auf dieser Karte oder im Hinweis zu pausierten Funktionen unter Einstellungen → Kassenregistrierung auf „Jetzt prüfen“ (nur Manager und Administratoren): Die Kasse fragt bei der Cloud nach und zeigt die Antwort direkt an, entweder das Datum, bis zu dem der Tarif jetzt bezahlt ist, oder dass er noch nicht verlängert wurde. Auf einer Kasse, die über die Hauptkasse registriert ist, tippen Sie an der Hauptkasse darauf: Diese Kasse erhält die Verlängerung von dort.
 
-In den beiden letzten Fällen öffnet ein Hinweis in der Statusleiste das unten beschriebene Fenster, und Kassenregistrierung sowie Belegsignierung (TSE) zeigen direkt an, welche ihrer Funktionen pausiert sind. Nichts wird ausgeblendet, und eine bereits eingerichtete TSE signiert weiterhin Belege.
+In den beiden letzten Fällen erscheint ein Hinweis in der Statusleiste, und Kassenregistrierung sowie Belegsignierung (TSE) zeigen direkt an, welche ihrer Funktionen pausiert sind. Nichts wird ausgeblendet, und eine bereits eingerichtete TSE signiert weiterhin Belege.
+
+<!-- plan-purchase -->
 
 **Tarif verlängern oder ändern** (nur für Manager und Administratoren) finden Sie auf dieser Karte, im Hinweis zu pausierten Funktionen unter Kassenregistrierung und im Hinweis in der Statusleiste. Es öffnet ein Fenster über dem Bildschirm, auf dem Sie gerade sind. Die Kasse fragt zuerst die Cloud nach Ihrem aktuellen Tarif: Wurde er bereits verlängert (zum Beispiel in Ihrem Universal-Till-Konto), zeigt das Fenster sofort das Datum, bis zu dem er bezahlt ist, und bietet Tarif ändern an, falls Sie einen anderen möchten. Andernfalls wählen Sie Aktuellen Tarif verlängern oder Tarif auswählen und scannen den QR-Code mit Ihrem Telefon: Bezahlt wird auf dem Telefon, nie an der Kasse. Solange der Code angezeigt wird, prüft die Kasse alle 20 Sekunden, höchstens 10 Minuten lang, und wechselt zum neuen Tarif, sobald er ankommt. Schließen (oder Escape) bringt Sie genau dorthin zurück, wo Sie waren. Eine über die Hauptkasse registrierte Kasse wird über die Hauptkasse verlängert.
 
+<!-- /plan-purchase -->
+
 ## Die Cloud-Synchronisierung gehört zu den kostenpflichtigen Tarifen
 
-Registrieren und Beanspruchen sind kostenlos, ebenso der Plugin-Store. Die Kasse mit Ihrem Online-Konto synchron zu halten (Umsatzzahlen, Artikelliste, Änderungen auf der Cloud-Verwaltungsseite des Geschäfts) gehört zu den kostenpflichtigen Tarifen. Solange das Geschäft keinen davon hat, synchronisiert die Kasse nicht mit der Cloud, und Einstellungen → Kassenregistrierung zeigt an, dass die Cloud-Synchronisierung aus ist. Sie meldet sich nur kurz bei der Cloud: bei der Installation, nach einem Update und beim ersten Start jedes Tages.
+Registrieren und Beanspruchen sind kostenlos, ebenso der Plugin-Store. Die Kasse mit Ihrem Online-Konto synchron zu halten (Umsatzzahlen, Artikelliste, Änderungen auf my.universaltill.com) gehört zu den kostenpflichtigen Tarifen. Solange das Geschäft keinen davon hat, synchronisiert die Kasse nicht mit der Cloud, und Einstellungen → Kassenregistrierung zeigt an, dass die Cloud-Synchronisierung aus ist. Sie meldet sich nur kurz bei der Cloud: bei der Installation, nach einem Update und beim ersten Start jedes Tages.
 
 1. Sobald das Geschäft einen kostenpflichtigen Tarif hat, erfährt die Kasse das beim nächsten Start an einem neuen Tag oder schon früher, wenn jemand an ihr registriert, koppelt, ein Plugin installiert oder einen Beanspruchungscode erzeugt. Sie können auch unter Einstellungen → Kassenregistrierung auf **Nach einem kostenpflichtigen Tarif suchen** tippen (ein Manager oder Admin bestätigt das). Die Cloud-Synchronisierung startet dann innerhalb einer Minute und läuft von selbst weiter.
 2. Endet der Tarif, stoppt die Cloud-Synchronisierung nach dem nächsten Abgleich der Kasse mit der Cloud. Der Verkauf hängt nie davon ab: Jeder Verkauf funktioniert so oder so offline.
 
 ## Wenn die Cloud diese Kasse nicht mehr annimmt
 
-Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab, erscheint ein Hinweis in der Statusleiste. Er blockiert nie einen Verkauf: Die Kasse verkauft offline weiter, versucht es einmal pro Stunde erneut bei der Cloud und behält alles, was sie noch senden muss, bis sie wieder verbunden ist. Der Hinweis lautet:
+Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab oder wurden die Daten dieser Kasse auf einem neuen Gerät wiederhergestellt, erscheint ein Hinweis in der Statusleiste. Er blockiert nie einen Verkauf: Die Kasse verkauft offline weiter, versucht es einmal pro Stunde erneut bei der Cloud und behält alles, was sie noch senden muss, bis sie wieder verbunden ist. Der Hinweis lautet:
 
 - **Aus dem Cloud-Konto des Geschäfts entfernt**: Der Inhaber hat diese Kasse online aus dem Geschäft entfernt.
 - **Diese Kasse muss neu gekoppelt werden**: Die Cloud-Zugangsdaten der Kasse gelten nicht mehr; die Kasse muss erneut mit dem Geschäft gekoppelt werden.
 - **Als neues Geschäft registrieren**: Das Geschäft hat kein Inhaberkonto, daher kann die Kasse nicht gekoppelt werden. Registrieren Sie sie neu als neues Geschäft; nur der alte Kassenverlauf geht verloren.
+- **Auf einem neuen Gerät wiederhergestellt — erneut verbinden**: Die Daten dieser Kasse wurden aus einer Telefon- oder iCloud-Sicherung (oder durch Kopieren) auf ein neues Gerät übernommen, daher wurde ihre Cloud-Verbindung zurückgesetzt; die Verkäufe an der Kasse bleiben unberührt. Koppeln Sie sie unter Einstellungen → Kassenregistrierung erneut mit dem Geschäft oder registrieren Sie sie als neues Geschäft. Das alte Gerät behält seine eigene Verbindung.
 
-Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud.
+Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud. Der Hinweis zur Wiederherstellung verschwindet, sobald die Kasse erneut gekoppelt oder registriert ist.
 
 ## Wenn „Jetzt registrieren“ oder „Dieses Geschäft übernehmen“ fehlschlägt
 
@@ -72,10 +79,27 @@ Die Karte nennt die Ursache in einer Zeile; der Verkauf ist nie betroffen:
 
 Verwenden Sie dies, wenn das Geschäft bereits in der Universal-Till-Cloud existiert und diese Kasse ihm beitreten soll, oder wenn eine Kasse aus dem Cloud-Konto des Geschäfts entfernt wurde bzw. meldet, dass sie neu gekoppelt werden muss.
 
-1. Wählen Sie im Cloud-Konto des Geschäfts „Kasse hinzufügen oder neu koppeln“, um einen Kopplungscode zu erhalten (8 Zeichen, 15 Minuten gültig, einmal verwendbar).
-2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang.
+1. Wählen Sie im Cloud-Konto des Geschäfts „Kasse koppeln“ (oder „Erneut koppeln“ für eine bereits aufgeführte Kasse), um einen Kopplungscode zu erhalten (8 Zeichen, 15 Minuten gültig, einmal verwendbar).
+2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang. Ist diese Kasse bereits mit einem Geschäft verbunden, fragt sie zuerst, ob Sie diese Verbindung ersetzen möchten, und zeigt den eingegebenen Code zur Kontrolle an; „Abbrechen“ ändert nichts.
 3. Die Kasse ersetzt nur ihre eigene Cloud-Verbindung: Sie erhält eine neue Geräte-ID und eigene Zugangsdaten. Verkäufe, Artikel und Einstellungen bleiben auf der Kasse, und der Verkauf funktioniert die ganze Zeit offline weiter.
-4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln.
+4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln. Auch auf einer mit einem Geschäft verbundenen Kasse bleibt die Kasse nach einem falschen Code getrennt, bis Sie sie mit einem neuen Code koppeln (deshalb fragt die Kasse vorher nach); eine verbundene Nebenkasse wird über ihre Hauptkasse wieder registriert.
+
+## Diese Kasse in ein anderes Geschäft umziehen
+
+Wo die Universal-Till-Cloud es anbietet, **zieht** das Koppeln einer Kasse, die bereits zu einem Geschäft gehört, mit dem Code eines anderen Geschäfts, das Ihnen gehört, die Kasse in dieses Geschäft um, statt sie als zweite Kasse hinzuzufügen. Die Kasse behält ihre Identität, und ihr Verkaufsverlauf, ihre Produkte und Einstellungen kommen mit: Aus beiden Geschäften wird eines. Es zieht nichts um, bevor ein Manager oder Admin den Umzug an der Kasse selbst freigibt.
+
+1. Geben Sie den Code unter „Mit einem Geschäft koppeln“ ein und tippen Sie auf Koppeln. Die Kasse fragt, ob Sie den Umzug wollen, und zeigt dann die Umzugsseite. Solange der Umzug wartet, bleibt die Kasse in ihrem Geschäft und verkauft weiter.
+2. Prüfen Sie auf der Umzugsseite das Ziel-Geschäft und die Zeit, bis zu der die Anfrage gilt (etwa einen Tag). Zum Freigeben geben Sie den Namen dieses Geschäfts ein, tippen auf **Umzug freigeben** und geben die PIN eines Managers oder Admins ein. Auch **Ablehnen** verlangt eine PIN. Kassierer sehen die Anfrage nie.
+3. Bis jemand entscheidet, sehen Manager und Admins auf jeder Seite außer dem Verkaufsbildschirm einen Hinweis: „*Geschäft* möchte diese Kasse in seinen Shop umziehen“. **Prüfen** öffnet die Umzugsseite.
+4. Nach der Freigabe meldet die Kasse „In *Geschäft* umgezogen“; das Cloud-Konto zeigt den zusammengeführten Verlauf nach wenigen Minuten. Der Verkauf hält nie an.
+
+Gut zu wissen:
+
+- Mit der Freigabe geht der gesamte Verkaufsverlauf dieses Geschäfts an das andere Konto. Der Support bittet Sie nie darum; lehnen Sie einen Umzug ab, den Sie nicht angefragt haben.
+- Zum Freigeben oder Ablehnen muss die Kasse online sein. Offline sind die Schaltflächen aus, und später wird nichts gesendet.
+- Drei falsche PINs lehnen den Umzug ab. Bricht der Inhaber ihn im Cloud-Konto ab oder entscheidet niemand rechtzeitig, sagt der Hinweis das, und es ändert sich nichts.
+- Ein Umzug wird abgelehnt, ohne dass sich etwas ändert, wenn das Geschäft dieser Kasse weitere Kassen, ein Fiskalgerät, einen bezahlten Tarif oder einen anderen Inhaber hat, wenn die beiden Geschäfte verschiedene Währungen verwenden oder wenn der Code nicht vom Inhaber des anderen Geschäfts stammt. Die Meldung nennt den Grund.
+- „Der Freigabeschlüssel dieser Kasse hat sich geändert“ heißt, dass die Kasse keine Umzüge signieren kann: Wenden Sie sich an den Support. Eine Kasse, die ihr altes Geschäft nicht mehr erkennt und Verkäufe hat, wird nicht als neue Kasse gekoppelt (ihre Verkäufe blieben zurück); wenden Sie sich an den Support, um sie zusammenzuführen.
 
 ## Die Währung des Geschäfts
 

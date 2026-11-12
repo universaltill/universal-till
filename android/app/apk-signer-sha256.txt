@@ -1,0 +1,5 @@
+# ut-docs#5436 / ADR-0179: SHA-256 of the DER signing certificate the in-app
+# updater accepts (`apksigner verify --print-certs` "SHA-256 digest").
+# 1-4 lines, 64 lowercase hex each; '#' starts a comment. Public, not a secret.
+# Rotation (v3 lineage): keep the old digest while API 24-27 tills exist (RELEASING.md).
+8bd8e604f8350722aa89aa1f73dbeb6ef6d340ba407e309419d256445e160db4

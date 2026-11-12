@@ -1,6 +1,10 @@
 package catimport
 
-import "github.com/universaltill/universal-till/internal/iconid"
+import (
+	"strings"
+
+	"github.com/universaltill/universal-till/internal/iconid"
+)
 
 // Built-in category/item icon library (ut-docs#2506, first cut).
 //
@@ -109,4 +113,43 @@ func BuiltinIconGroups() []BuiltinIconGroup {
 		})
 	}
 	return out
+}
+
+// PickerIconGroups is BuiltinIconGroups with each icon's Keywords replaced by
+// its search text for the picker filter (ut-docs#6042): the folded,
+// once-each words of its English keywords, its English label and its label
+// in each of locales (shop languages, default first), all via lookup
+// (exact locale, no fallback). A locale with no label adds nothing.
+func PickerIconGroups(locales []string, lookup LabelLookup) []BuiltinIconGroup {
+	groups := BuiltinIconGroups()
+	for gi := range groups {
+		for ii := range groups[gi].Icons {
+			ic := &groups[gi].Icons[ii]
+			sources := []string{ic.Keywords}
+			if lookup != nil {
+				seenLoc := map[string]bool{}
+				for _, loc := range append([]string{"en"}, locales...) {
+					if seenLoc[loc] {
+						continue
+					}
+					seenLoc[loc] = true
+					if v, ok := lookup(loc, ic.I18nKey); ok && strings.TrimSpace(v) != "" {
+						sources = append(sources, v)
+					}
+				}
+			}
+			seen := map[string]bool{}
+			var words []string
+			for _, src := range sources {
+				for _, w := range strings.Fields(FoldForSearch(src)) {
+					if !seen[w] {
+						seen[w] = true
+						words = append(words, w)
+					}
+				}
+			}
+			ic.Keywords = strings.Join(words, " ")
+		}
+	}
+	return groups
 }

@@ -3,6 +3,7 @@ id: support-partner
 title: Destek iş ortağı
 section: Bağlantı ve eklentiler
 order: 362
+public: true
 summary: "Destek ortağı, dükkânınıza Universal Till konusunda yardım eden bir şirkettir. Dükkânın sahibi onu my.universaltill.com üzerinde Mağazayı yönet bölümünden bağlar veya ayırır; kasanın kendisinden asla."
 keywords: [ortak, bayi, destek, yardım, onay, sahip, ortak kodu, bağlantıyı kes]
 ---

@@ -3,6 +3,7 @@ id: elevation
 title: Anında yönetici onayı
 section: Bağlantı ve eklentiler
 order: 341
+public: true
 summary: Bir ekran yönetici onayı istediğinde, bir yönetici veya admin oturumu kapatıp yeniden açmadan orada PIN'iyle onaylayabilir.
 keywords: [pin, onay, yönetici pin, geçersiz kılma, izin]
 ---
@@ -26,7 +27,12 @@ reddetmez: hemen orada küçük bir PIN penceresi açar.
    kapatıp hesap değiştirmez.
 4. Yanlış bir PIN, çok fazla deneme veya hâlâ bu belirli işleme yetkisi
    olmayan birine ait bir PIN — hepsi aynı pencerede açık bir neden
-   gösterir, böylece sonraki adımı bilirsiniz.
+   gösterir, böylece sonraki adımı bilirsiniz. PIN denetlenirken düğmeler soluk görünür, bir yükleme halkası çıkar
+   ve «İptal» yanıtı bekler.
+   Bu sırada bağlantı koparsa ya da kasa 30 saniye içinde yanıt vermezse pencere kapanır ve işlemin yapılmış olabileceğini
+   ya da yapılmamış olabileceğini belirten bir ileti görünür: tekrar denemeden
+   önce kontrol edin. Sizin yerinize hiçbir şey yeniden denenmez. Burada onayladığınız bir yedekleme
+   veya geri yükleme bu şekilde asla yarıda kesilmez: kasanın yanıtını bekler.
 
 ## Neler kaydedilir
 

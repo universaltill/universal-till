@@ -26,7 +26,8 @@
 // types (strings, ints, bools, []byte, error, and a few others — no generics,
 // no complex struct fields crossing directly) — this package's exported
 // surface is deliberately minimal for that reason: three lifecycle
-// functions plus a few setters; SetBluetoothBridge, SetDiscoveryBridge and
+// functions plus a few setters and reporters (SetKioskPinned,
+// ReportAndroidUpdateRefused/Accepted); SetBluetoothBridge, SetDiscoveryBridge and
 // SetKioskBridge take the exported interface types declared IN this package,
 // BluetoothBridge (ADR-0080), DiscoveryBridge (ut-docs#3218) and KioskBridge
 // (ut-docs#3466). Each must
@@ -68,6 +69,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -591,6 +593,21 @@ func SetKioskBridge(b KioskBridge) {
 // the check-in reports it as DeviceExtra's kiosk_pinned.
 func SetKioskPinned(pinned bool) {
 	kiosk.SetKioskPinned(pinned)
+}
+
+// ReportAndroidUpdateRefused tells the fleet roster that MainActivity refused
+// a downloaded update APK (ut-docs#5446, ADR-0179). Kotlin passes only the
+// closed reason class (UpdateLogic.RefuseClass.wire), never the detailed
+// reason; internal/androidupdate validates it and raises the keyed problem
+// that rides the heartbeat. It needs no running server.
+func ReportAndroidUpdateRefused(reasonClass string) {
+	androidupdate.ReportRefused(reasonClass)
+}
+
+// ReportAndroidUpdateAccepted resolves an earlier ReportAndroidUpdateRefused:
+// a later update APK passed the signer check.
+func ReportAndroidUpdateAccepted() {
+	androidupdate.ReportAccepted()
 }
 
 // defaultListenPort is the port a till with nothing persisted asks for

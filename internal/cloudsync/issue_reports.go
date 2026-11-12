@@ -319,6 +319,12 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 	// hand it to Whisper. Always sent — an empty string means "no locale
 	// known, auto-detect" on the cloud side, so don't skip the field.
 	_ = w.WriteField("locale", b.Meta.Locale)
+	// Capture-time till build (ut-docs#2605). Omitted — never sent empty or
+	// back-filled with the current build — for bundles saved before the field
+	// existed.
+	if b.Meta.AppVersion != "" {
+		_ = w.WriteField("app_version", b.Meta.AppVersion)
+	}
 	_ = w.WriteField("created_at", b.Meta.CreatedAt.Format("2006-01-02T15:04:05.000000000Z07:00"))
 	if b.AudioPath != "" {
 		// audio.webm or audio.m4a (iOS MP4, ut-docs#3416) — the stored

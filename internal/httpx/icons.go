@@ -282,6 +282,17 @@ var railIcons = map[string]string{
 	// lucide-static v1.48.0 paths as the item-icon library's "gift"
 	// (internal/catimport/iconsrc/lucide/gift.svg).
 	"gift": `<path d="M12 7v14"/><path d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M7.5 7a1 1 0 0 1 0-5A4.8 8 0 0 1 12 7a4.8 8 0 0 1 4.5-5 1 1 0 0 1 0 5"/><rect x="3" y="7" width="18" height="4" rx="1"/>`,
+	// Notices (ut-docs#5366, ADR-0176). notice-bell is Lucide bell (the
+	// "bell" entry above is the Orders concierge bell). The three severity
+	// glyphs differ in SHAPE, not only colour: circle (info), triangle
+	// (important), octagon (critical).
+	"notice-bell":      `<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`,
+	"notice-empty":     `<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m9 11.5 2 2 4-4"/>`,
+	"notice-info":      `<circle cx="12" cy="12" r="9.5"/><path d="M12 11v6"/><path d="M12 7.5v.01"/>`,
+	"notice-important": `<path d="M12 3 22 20H2z"/><path d="M12 10v5"/><path d="M12 17.5v.01"/>`,
+	"notice-critical":  `<path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"/><path d="M12 7v6"/><path d="M12 16v.01"/>`,
+	"notice-building":  `<path d="M4 21V5l8-2v18"/><path d="M12 9h8v12"/><path d="M7 8v.01"/><path d="M7 12v.01"/><path d="M7 16v.01"/><path d="M16 13v.01"/><path d="M16 17v.01"/>`,
+	"notice-ut":        `<rect x="2" y="2" width="20" height="20" rx="5"/><path d="M7 7v6a5 5 0 0 0 10 0V7"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

@@ -593,6 +593,11 @@
             var top = scrimSet[scrimSet.length - 1];
             if (!top || top.tagName !== 'DIALOG' || !top.hasAttribute('data-ut-escape-close')) return;
             e.preventDefault();
+            // ut-docs#5288: a prompt whose own request is in flight can't be
+            // cancelled -- the action may already be done and its answer
+            // must still show. htmx marks the requesting form .htmx-request
+            // until the request ends, then Escape works again.
+            if (top.hasAttribute('data-ut-prompt') && top.querySelector('form.htmx-request')) return;
             var cancel = new Event('cancel', { cancelable: true });
             if (top.dispatchEvent(cancel)) top.close();
           } catch (err) { /* escape only */ }
@@ -1393,6 +1398,7 @@
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
+    <script defer src="/public/pairing-stream.js?v={{ assetv "public/pairing-stream.js" }}"></script>
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
     <!-- ut-docs#400: guard-autofill-suppression.sh requires every standalone
@@ -1404,6 +1410,10 @@
          design (login.html/setup.html/self_order*.html are a documented
          gap, not an oversight). -->
     <script defer src="/public/input-heartbeat.js?v={{ assetv "public/input-heartbeat.js" }}"></script>
+    <!-- ut-docs#3735: F11 toggles the desktop shell's live window mode
+         (fullscreen <-> normal) for a manager; inert unless <body> carries
+         data-window-toggle — see web/public/window-toggle.js. -->
+    <script defer src="/public/window-toggle.js?v={{ assetv "public/window-toggle.js" }}"></script>
     <!-- ut-docs#2010: the app-wide list/edit standard's behaviour (record
          dialog open/close/Escape/discard guard + list-header search filter),
          attribute-driven and a no-op on any page without that markup — see
@@ -1437,6 +1447,10 @@
          background-removal service is configured), a no-op on any page
          without that markup, same pattern as above. -->
     <script defer src="/public/photo-cutout.js?v={{ assetv "public/photo-cutout.js" }}"></script>
+    <!-- ut-docs#1103/#5553: roving-tabindex arrow keys for WAI-ARIA radio groups
+         (opt-in via data-roving-radiogroup) — colour pickers, photo-cutout
+         background, basket order type; a no-op on any page without that markup. -->
+    <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
     <!-- ut-docs#2342: the bug-report panel's draft store (sessionStorage +
          IndexedDB) so an open report survives a full document load. Deferred
          like the rest; the panel reads it from UT.ready on. -->
@@ -1475,7 +1489,8 @@
         data-show-more="{{ T "common.show_more" }}" data-show-less="{{ T "common.show_less" }}"
         data-money-invalid="{{ if eq currency.Decimals 0 }}{{ T "common.money.invalid_whole" }}{{ else }}{{ T "common.money.invalid" }}{{ end }}"
         data-percent-invalid="{{ T "common.percent.invalid" }}"
-        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
+        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}
+        {{ if windowtoggle }}data-window-toggle="1" data-f11-kiosk-locked="{{ T "settings.display.f11_kiosk_locked" }}"{{ end }}>
     <!-- ut-docs#2224 / ADR-0098: everything a navigation changes lives in
          this one region; an <a> inside it is boosted and the response's own
          #ut-page replaces this one (outerHTML). The head, the scripts,
@@ -1490,6 +1505,16 @@
          onsubmit guards and turns a POST error into a re-GET.
          `hx-history-elt` + `hx-history="false"`: htmx snapshots nothing. -->
     <div id="ut-page" hx-boost="true" hx-history-elt hx-history="false">
+    {{/* ADR-0176 (ut-docs#5366): the critical-notice strip. In flow at the top
+         of the main region on every page, never an overlay, never blocks
+         checkout. The mount is a persistent polite live region (so the strip
+         is announced when it appears) and is empty unless the flag is on and
+         a critical platform notice is unacknowledged; GET /notices/strip
+         reads local data only. Cashiers see it read-only. It sits BEFORE the
+         nav in the DOM so its Open/Acknowledge are the first keyboard stops,
+         as they are the first thing on screen (the rail is position: fixed,
+         so the visual placement is the same either way). */}}
+    <div id="notices-strip" class="notices-strip-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/strip" hx-trigger="load, every 30s, notices-changed from:body"></div>
     {{ template "nav" . }}
     <!-- ut-docs#1551: nav-level dismissible notice for a pending pairing
          request -- a sibling of <nav>/<main>, not squeezed into the icon
@@ -1549,6 +1574,12 @@
          innerHTML-swap placeholder shape and reasons as the mounts above;
          the state changes at most once, so 60s is plenty. -->
     <div id="replaced-banner-mount" hx-get="/ui/replaced-banner" hx-trigger="load, every 60s" hx-preserve></div>
+    <!-- ut-docs#5127 UT-1b: "<shop> asked to move this till into their
+         shop. Review" -- GET /ui/move-approval-notice (move_approval.go,
+         move_approval_notice.html), empty for a cashier, on a joined till,
+         on the sale screen, or when no move waits. Same innerHTML-swap
+         placeholder shape and reasons as the mounts above. -->
+    <div id="move-approval-notice-mount" hx-get="/ui/move-approval-notice" hx-trigger="load, every 30s" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme
@@ -1663,8 +1694,10 @@
            who may manage backups only. A status chip, never a modal; it
            does not bring the status bar onto the sale screen (app.css).
            Filled by GET /ui/backup-copy-chip on load and every 10 min;
-           empty body otherwise. -->
-      <span id="sb-backup-copy-mount" hx-preserve hx-get="/ui/backup-copy-chip" hx-trigger="load, every 600s"></span>
+           empty body otherwise. ut-docs#5615: also refreshes at once on the
+           backup-copied event a successful copy save sends (HX-Trigger),
+           so the reminder clears right after "Saved". -->
+      <span id="sb-backup-copy-mount" hx-preserve hx-get="/ui/backup-copy-chip" hx-trigger="load, every 600s, backup-copied from:body"></span>
       <!-- ut-docs#4539 (ADR-0163 amendment 2026-10-16): the shop's currency
            on my. differs from this till's and the till did not adopt it
            (it already has sales, or doesn't know the code) — "Currency
@@ -1966,8 +1999,14 @@
           }
           if (state && state !== lockState) {
             lockState = state;
-            applyMainTillLock(document, state === 'unreachable');
+            applyMainTillLock(document, mainTillLocks(state));
           }
+        }
+        // ut-docs#5162 review: a restored copy that must join again
+        // ("rejoin") is as cut off from its main till as an unreachable one,
+        // so the catalogue stays locked the way the server rendered it.
+        function mainTillLocks(state) {
+          return state === 'unreachable' || state === 'rejoin';
         }
         document.body.addEventListener('htmx:afterSwap', function (e) {
           if (e.target === mount) followChip();
@@ -1975,7 +2014,7 @@
         document.body.addEventListener('htmx:load', function (e) {
           var el = e.detail && e.detail.elt;
           if (!lockState || !el || !el.querySelectorAll || (mount && mount.contains(el))) return;
-          applyMainTillLock(el, lockState === 'unreachable');
+          applyMainTillLock(el, mainTillLocks(lockState));
         });
         followChip();
       })();
@@ -2291,8 +2330,10 @@
          re-check) and gives focus back to the opener — the till never
          navigates. Declared before #elevation-modal so a PIN prompt raised
          from it paints on top (same z-index, later in the DOM). Managers
-         only, like its openers (ut-docs#3079). */}}
-    {{ if allowed "settings" }}
+         only, like its openers (ut-docs#3079). Not rendered on iOS at all
+         (ut-docs#5868): even closed, its purchase wording would be in the
+         DOM (App Store 3.1, ut-docs#3434). */}}
+    {{ if and (allowed "settings") planpurchaseallowed }}
     <dialog id="subscription-panel" class="modifier-modal subscription-panel" aria-labelledby="subscription-panel-title"
             data-ut-escape-close data-testid="subscription-panel">
       <div class="subscription-panel-head">
@@ -2333,11 +2374,11 @@
       })();
     </script>
     {{ end }}
-    <dialog id="elevation-modal" class="modifier-modal" data-ut-focus-trap></dialog>
+    <dialog id="elevation-modal" class="modifier-modal" data-ut-focus-trap data-ut-escape-close></dialog>
     <!-- ut-docs#2781: the PIN-less confirm dialog (confirm_prompt.go's
          renderConfirmPrompt), OOB-swapped in here for the same no-nested-
          form reason as #elevation-modal above. -->
-    <dialog id="confirm-modal" class="modifier-modal" data-ut-focus-trap></dialog>
+    <dialog id="confirm-modal" class="modifier-modal" data-ut-focus-trap data-ut-escape-close></dialog>
     <!-- ut-docs#2873: the ONE shared backdrop behind every non-modal popup
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css

@@ -91,7 +91,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     await page.locator(CURRENCY).fill('EUR');
     await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
 
-    // Tap the row (not just the pencil button) to open edit mode, prefilled
+    // Tap the row (not just the name button) to open edit mode, prefilled
     // from the row's data-field-* attributes.
     await row(page, code).click();
     await expect(dlg).toBeVisible();
@@ -245,4 +245,29 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
       assertClean();
     });
   }
+
+  // ut-docs#6046: the name is the keyboard path; focus returns to it on close.
+  test('name button opens on Enter and Space; a non-name cell tap opens; focus returns to the name', async ({ page }) => {
+    await page.goto('/country-settings?all=1');
+    await page.locator('#country-settings-new').click();
+    const code = newCode();
+    await page.locator(CODE).fill(code);
+    await page.locator(CURRENCY).fill('EUR');
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
+    const nameBtn = row(page, code).locator('.record-row-open');
+    for (const key of ['Enter', ' ']) {
+      await nameBtn.focus();
+      await page.keyboard.press(key);
+      await expect(page.locator(DIALOG)).toBeVisible();
+      await expect(page.locator(CODE)).toHaveValue(code);
+      await page.keyboard.press('Escape');
+      await expect(page.locator(DIALOG)).toBeHidden();
+      await expect(nameBtn).toBeFocused();
+    }
+    await row(page, code).locator('td').nth(1).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(nameBtn).toBeFocused();
+  });
 });

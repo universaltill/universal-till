@@ -23,11 +23,10 @@ import (
 // entry wins, so a more specific keyword should sit before a broader one
 // it would otherwise be shadowed by. Extending this list needs no other
 // code change (the card's own acceptance criterion) — add a row here.
-// Known limitation (review finding F6): this table is English-only, so a
-// shop cataloguing in Persian/Arabic/Turkish (e.g. "قهوة", "Türk Kahvesi")
-// gets "generic" for everything — acceptable for Phase 1's offline,
-// zero-translation scope, but worth knowing rather than assuming full
-// multilingual coverage.
+// This table is English-only by design (ADR-0160: core ships English). The
+// shop's own languages are matched first, against the translated tile
+// labels, by IconMatcher (placeholder_lang.go, ut-docs#2654); this table is
+// the final fallback and the whole story for an English-only shop.
 var keywordIcons = []struct {
 	keyword, icon string
 }{
@@ -237,24 +236,6 @@ var keywordIcons = []struct {
 	{"blade", "blades"},
 }
 
-// PlaceholderIcon picks an icon key for an item with no source image,
-// matching (case-insensitively, whole-word) against the item's name first,
-// then falling back to its category, then to "generic" when nothing
-// matches either. Name is checked first because it's the more specific
-// signal — a "Chai Latte" in an uncategorised import still resolves to
-// coffee, but a recognised category (e.g. "Coffee") still catches an item
-// whose own name is a house-blend number with no matching keyword (see
-// TestPlaceholderIcon_CategoryOutranksAmbiguousName).
-func PlaceholderIcon(name, category string) string {
-	if icon, ok := matchKeyword(name); ok {
-		return icon
-	}
-	if icon, ok := matchKeyword(category); ok {
-		return icon
-	}
-	return "generic"
-}
-
 func matchKeyword(s string) (string, bool) {
 	if s == "" {
 		return "", false
@@ -325,20 +306,9 @@ func IconPath(icon string) (path string, ok bool) {
 	return categoryIconPublicDir + icon + ".svg", true
 }
 
-// PlaceholderIconPath is PlaceholderIcon plus IconPath in one call — what
-// callers actually want: a path ready to store as an item_images.path
-// value (see data.CatalogRepo.EnsureDefaultThumbnail), through the same
-// "/public/assets/..." convention the manual upload path already uses.
-// PlaceholderIcon only ever returns a key IconPath recognises, so the ok
-// return is dropped here.
-func PlaceholderIconPath(name, category string) string {
-	path, _ := IconPath(PlaceholderIcon(name, category))
-	return path
-}
-
 // BuiltinIcon is one bundled category icon offered by the catalog image
 // picker (ut-docs#1844): Key is the stored identifier (matches the asset
-// filename and what IconPath/PlaceholderIcon return), Path its public
+// filename and what IconPath/IconMatcher.Icon return), Path its public
 // asset path, and I18nKey the locale key for its display label — the
 // picker template renders {{ T .I18nKey }}, never a hardcoded label
 // (universal-till/CLAUDE.md's i18n rule). Group is its picker section

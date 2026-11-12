@@ -947,6 +947,10 @@ func windowArgs(from, to time.Time) (string, string) {
 // Bound params are rendered by windowArgs, same as every other window query
 // in this file.
 //
+// The column passed for the Z is the ARRIVAL time (saleArrivalCol /
+// eventArrivalCol, ADR-0066 amendment, ut-docs#5769), not the origin time: a
+// row counts in the Z whose window contains when this till recorded it.
+//
 // A zero `from` is the till's first-ever close (ADR-0066 Decision 3): the
 // lower bound is omitted ENTIRELY — "since the beginning of recorded
 // history" — never backfilled with a synthetic epoch/install date, so every
@@ -964,6 +968,32 @@ func instantWindow(col string, from, to time.Time) (string, []any) {
 	// wrong precedence.
 	return "(datetime(" + col + ") >= datetime(?) AND datetime(" + col + ") < datetime(?))",
 		[]any{fromStr, toStr}
+}
+
+// ADR-0066 amendment (ut-docs#5769): a row counts in the Z whose window
+// contains the time THIS till recorded it. Own sales: completed_at ==
+// created_at (CompleteSale stamps both from one clock read). Journaled sales:
+// created_at is the origin time and completed_at the apply time. A NULL
+// completed_at (seed/legacy row) falls back to created_at. recorded_at
+// (migration 099, ut-docs#5777) is set only on a promoted till's own sale that
+// the previous main till applied after its last close: that till's recording
+// time wins, so the sale counts once in the promoted till's next Z while its
+// created_at / completed_at stay untouched.
+func saleArrivalCol(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	return "COALESCE(" + alias + "recorded_at, " + alias + "completed_at, " + alias + "created_at)"
+}
+
+// eventArrivalCol is the same rule for no_sale_events / cleared_baskets:
+// received_at is stamped only when a journaled row is applied; NULL (own row,
+// or stored before migration 098) counts by created_at. alias "" or "e".
+func eventArrivalCol(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	return "COALESCE(" + alias + "received_at, " + alias + "created_at)"
 }
 
 type DailySales struct {
@@ -1117,7 +1147,7 @@ ORDER BY revenue DESC`, day)
 // untouched for EndOfDayRange, per the ADR's "parallel siblings, not a
 // retrofit" decision.
 func (r *POSRepo) DepartmentsForInstantWindow(ctx context.Context, from, to time.Time) ([]DeptSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
 SELECT COALESCE(dr.root_name, '') AS department,
        SUM(sl.quantity) AS qty,
@@ -1200,7 +1230,9 @@ ORDER BY gross DESC`, day)
 
 // ArticleGroupsForInstantWindow is ArticleGroupsForDay's close-to-close
 // sibling (ADR-0066, ut-docs#1010/#1141's own EODInstant path), matched on
-// the same half-open instantWindow(s.created_at) [from, to) range
+// the same half-open instantWindow(saleArrivalCol("s")) [from, to) range
+// (ADR-0066 amendment, ut-docs#5769: a sale counts by the time this till
+// recorded it, COALESCE(recorded_at, completed_at, created_at))
 // dateRangeSummaryInstant/DepartmentsForInstantWindow use, rather than one
 // local calendar day. This is what the LIVE "Run end-of-day" endpoint
 // actually calls (internal/pages' generateEOD → EndOfDayInstant →
@@ -1208,7 +1240,7 @@ ORDER BY gross DESC`, day)
 // that path (EndOfDay/EndOfDayRange are the scheduler-tick/ad-hoc-range
 // callers only).
 func (r *POSRepo) ArticleGroupsForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleGroupSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(c.name, '') AS article_group,
        SUM(sl.quantity) AS qty,
@@ -1292,7 +1324,7 @@ ORDER BY gross DESC`, day)
 // Still no LIMIT. Grouped by sl.name_snapshot, same as ArticleSalesForDay/
 // TopItems.
 func (r *POSRepo) ArticleSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sl.name_snapshot,
        SUM(sl.quantity) AS qty,
@@ -1389,7 +1421,7 @@ ORDER BY 1 ASC`, day)
 // (not OrderTypeSalesForDay) is the one the live EOD endpoint actually
 // calls. Same normalizing CASE and deliberate ASC order as OrderTypeSalesForDay.
 func (r *POSRepo) OrderTypeSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OrderTypeSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order_type,
        SUM(sl.quantity) AS qty,
@@ -1497,7 +1529,7 @@ ORDER BY gross DESC`, day)
 // elevation actor/blocked-actor pair) — see OperatorSalesForDay's doc
 // comment.
 func (r *POSRepo) OperatorSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OperatorSales, error) {
-	win, args := instantWindow("s.created_at", from, to)
+	win, args := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(s.cashier_id, '') AS cashier_id,
        COALESCE(NULLIF(u.display_name, ''), u.username, s.cashier_id, '') AS display_name,
@@ -2368,8 +2400,10 @@ type EODMethod struct {
 
 // CashReconciliation is the day-level cash-drawer reconciliation on the
 // Z-report (ut-docs#1006, German pilot): every shift CLOSED on the shop-local
-// day, summed. All amounts are minor units. Skim and PayOuts are stored as
-// the (negative) amounts recorded — cash that left the drawer.
+// day, summed. Same cash-tip rule as the shift close and X report: see
+// ShiftCashBreakdown (ut-docs#5801). All amounts are minor units. Skim and
+// PayOuts are stored as the (negative) amounts recorded — cash that left the
+// drawer.
 //
 // CashSales is taken from EODMethod{Method:"cash"}.In (see dateRangeSummary)
 // MINUS any cash tip_amount for the day (ut-docs#1046) — EODTip's own doc
@@ -2496,8 +2530,20 @@ type EODReport struct {
 	// informational: never folded into Gross/Net/Refunds/Cancel*.
 	ClearedBasketCount int   `json:"cleared_basket_count"`
 	ClearedBasketTotal int64 `json:"cleared_basket_total"`
-	Net                int64 `json:"net"`
-	TaxNet             int64 `json:"tax_net"`
+	// NoSaleCount / NoSaleOperators (ut-docs#5753): "No sale" drawer opens
+	// (no_sale_events, #2558) of EVERY till (replica opens once journaled,
+	// #3562), same window as ClearedBasketCount. No money moved: never in
+	// Gross/Net/Refund*/Cancel*/Methods/CashReconciliation. Per-cashier is
+	// single-day only on the date path (like Operators), always on the
+	// instant path.
+	NoSaleCount     int              `json:"no_sale_count,omitempty"`
+	NoSaleOperators []NoSaleOperator `json:"no_sale_operators,omitempty"`
+	// LateEntries (ut-docs#5769, ADR-0066 amendment): rows journaled from
+	// other tills, made before this Z's `from` and recorded after it. Nil
+	// when there are none and on a till's first-ever close.
+	LateEntries *EODLateEntries `json:"late_entries,omitempty"`
+	Net         int64           `json:"net"`
+	TaxNet      int64           `json:"tax_net"`
 	// TaxBands is the per-VAT-rate net/tax/gross breakdown (ut-docs#1003).
 	// Filled by internal/pages' attachEODTaxBands, NOT by EndOfDay/
 	// EndOfDayRange themselves — the banding math (discount proration +
@@ -2882,6 +2928,10 @@ WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&rep.ClearedBasket
 	if err != nil {
 		return rep, fmt.Errorf("eod cleared baskets: %w", err)
 	}
+	// No-sale drawer opens (ut-docs#5753): best-effort, never fails the close.
+	if n, nerr := r.NoSaleCountForDateRange(ctx, from, to); nerr == nil {
+		rep.NoSaleCount = n
+	}
 
 	// Voucher flows (ut-docs#1008) — same local-calendar-day window as the
 	// totals query above, range-capable like Methods (not gated on from==to).
@@ -2900,8 +2950,8 @@ WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&rep.ClearedBasket
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
-  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
+  `+tenderInSQL+`,
+  `+tenderOutSQL+`
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
 WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
@@ -3000,6 +3050,9 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 		if operators, err := r.OperatorSalesForDay(ctx, from); err == nil {
 			rep.Operators = operators
 		}
+		if ns, err := r.NoSaleOperatorsForDay(ctx, from); err == nil {
+			rep.NoSaleOperators = ns
+		}
 		if orderTypes, err := r.OrderTypeSalesForDay(ctx, from); err == nil {
 			rep.OrderTypes = orderTypes
 		}
@@ -3084,6 +3137,11 @@ GROUP BY s.till_id ORDER BY 4 DESC`, from)
 // wrapper formatting the instants back into date strings would silently
 // re-introduce calendar-day bucketing.
 //
+// Sales and no-sale/cleared events window on their ARRIVAL time — when this
+// till recorded them (saleArrivalCol / eventArrivalCol, ADR-0066 amendment,
+// ut-docs#5769) — so a sale journaled in from another till after a Z lands in
+// the next Z instead of vanishing.
+//
 // Two deliberate differences from dateRangeSummary beyond the comparison
 // form:
 //   - The cancellations query still windows on COALESCE(voided_at,
@@ -3108,7 +3166,7 @@ GROUP BY s.till_id ORDER BY 4 DESC`, from)
 // calendar-day banding).
 func (r *POSRepo) dateRangeSummaryInstant(ctx context.Context, from, to time.Time) (EODReport, error) {
 	rep := EODReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
-	win, args := instantWindow("created_at", from, to)
+	win, args := instantWindow(saleArrivalCol(""), from, to)
 	err := r.db.QueryRowContext(ctx, `
 SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN 1 END), 0),
@@ -3141,13 +3199,24 @@ WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.Cancel
 
 	// Cleared baskets (ut-docs#1122) — same separate scan as
 	// dateRangeSummary, instant-windowed on created_at like the totals.
-	cwin, cargs := instantWindow("created_at", from, to)
+	cwin, cargs := instantWindow(eventArrivalCol(""), from, to)
 	err = r.db.QueryRowContext(ctx, `
 SELECT COUNT(*), COALESCE(SUM(total_minor), 0)
 FROM cleared_baskets
 WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod instant cleared baskets: %w", err)
+	}
+	// Late entries (ut-docs#5769): fiscal disclosure, so a hard error here
+	// fails the close (the archive is write-once).
+	late, err := r.LateEntriesForInstantWindow(ctx, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant late entries: %w", err)
+	}
+	rep.LateEntries = late
+	// No-sale drawer opens (ut-docs#5753): best-effort, never fails the close.
+	if n, nerr := r.NoSaleCountForInstantWindow(ctx, from, to); nerr == nil {
+		rep.NoSaleCount = n
 	}
 
 	// Voucher flows (ut-docs#1008) — the instant sibling lives in
@@ -3166,11 +3235,11 @@ WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
 	rep.VouchersAdjustedCount = vouchers.AdjustedCount
 	rep.VouchersAdjusted = vouchers.AdjustedMinor
 
-	mwin, margs := instantWindow("s.created_at", from, to)
+	mwin, margs := instantWindow(saleArrivalCol("s"), from, to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
-  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
+  `+tenderInSQL+`,
+  `+tenderOutSQL+`
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
 WHERE s.status = 'completed' AND `+mwin+`
@@ -3234,6 +3303,9 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 	}
 	if operators, err := r.OperatorSalesForInstantWindow(ctx, from, to); err == nil {
 		rep.Operators = operators
+	}
+	if ns, err := r.NoSaleOperatorsForInstantWindow(ctx, from, to); err == nil {
+		rep.NoSaleOperators = ns
 	}
 	if orderTypes, err := r.OrderTypeSalesForInstantWindow(ctx, from, to); err == nil {
 		rep.OrderTypes = orderTypes
@@ -3557,7 +3629,7 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, args...)
 // SalesForTaxBands so a rate-carrying zero-money line can't invent a
 // spurious band.
 func (r *POSRepo) SalesForTaxBandsInstant(ctx context.Context, from, to time.Time) ([]EODTaxBandSale, error) {
-	win, args := instantWindow("created_at", from, to)
+	win, args := instantWindow(saleArrivalCol(""), from, to)
 	saleRows, err := r.db.QueryContext(ctx, `
 SELECT id, sale_type, subtotal, discount_total, tax_total, total,
        service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
@@ -3583,7 +3655,7 @@ ORDER BY created_at, id`, args...)
 		return nil, err
 	}
 
-	swin, sargs := instantWindow("s.created_at", from, to)
+	swin, sargs := instantWindow(saleArrivalCol("s"), from, to)
 	lineRows, err := r.db.QueryContext(ctx, `
 SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
 FROM sale_lines sl
@@ -4568,7 +4640,19 @@ func (r *POSRepo) ListRegisters(ctx context.Context) ([]Register, error) {
 // CreateRegister adds a new, active register (a till/checkout station).
 // The schema's UNIQUE constraint on name rejects duplicates. locationID is
 // optional (nil leaves the register unassigned to any stock location).
+//
+// Admin-screen entry point: refuses control/invisible characters in name
+// (ErrNameInvalidCharacters, ut-docs#5858) and stores it trimmed.
+// CreateRegisterForEnrolment checks too and refuses (ut-docs#5862).
 func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *string) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
+	return r.createRegister(ctx, name, locationID)
+}
+
+func (r *POSRepo) createRegister(ctx context.Context, name string, locationID *string) (string, error) {
 	id := uuid.NewString()
 	if _, err := r.db.ExecContext(ctx,
 		`INSERT INTO registers (id, name, location_id, is_active) VALUES (?, ?, ?, 1)`, id, name, locationID); err != nil {
@@ -4586,14 +4670,22 @@ func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *s
 // UNIQUE violation this retries with "<baseName> (2)", "<baseName> (3)", …
 // up to a bounded number of attempts. Returns the id and the (possibly
 // suffixed) name actually used.
+//
+// A baseName with control or invisible characters is refused with
+// ErrNameInvalidCharacters (ut-docs#5862); the enroll handler fails open on
+// any error here and enrols the till without a register.
 func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName string) (string, string, error) {
 	const maxAttempts = 50
+	baseName, err := CheckSingleLineName(baseName)
+	if err != nil {
+		return "", "", err
+	}
 	name := baseName
 	for i := 1; i <= maxAttempts; i++ {
 		if i > 1 {
 			name = fmt.Sprintf("%s (%d)", baseName, i)
 		}
-		id, err := r.CreateRegister(ctx, name, nil)
+		id, err := r.createRegister(ctx, name, nil)
 		if err == nil {
 			return id, name, nil
 		}
@@ -4607,6 +4699,10 @@ func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName strin
 // RenameRegister changes a register's display name; the id (and every
 // shift/sale row keyed by it) is unaffected.
 func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error {
+	newName, err := CheckSingleLineName(newName)
+	if err != nil {
+		return err
+	}
 	res, err := r.db.ExecContext(ctx, `UPDATE registers SET name = ? WHERE id = ?`, newName, id)
 	if err != nil {
 		return fmt.Errorf("rename register: %w", err)
@@ -4621,8 +4717,13 @@ func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error 
 // register keeps its till's name when the till is renamed (ut-docs#4022).
 // Best-effort by design: a name another register already holds is left
 // alone (renamed=false, no error) — the till rename itself must never fail
-// over its register — and so is an unknown id or an unchanged name.
+// over its register — and so is an unknown id, an unchanged name, or a name
+// CheckSingleLineName refuses (ut-docs#5862; renamed=false, no error).
 func (r *POSRepo) RenameRegisterToFollowTill(ctx context.Context, id, newName string) (bool, error) {
+	newName, err := CheckSingleLineName(newName)
+	if err != nil {
+		return false, nil
+	}
 	res, err := r.db.ExecContext(ctx, `
 UPDATE registers SET name = ?
 WHERE id = ? AND name IS NOT ?
@@ -5290,6 +5391,7 @@ func (r *POSRepo) NextDisplayNo(ctx context.Context, tx *sql.Tx) (string, error)
 	var prefix string
 	_ = exec.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&prefix)
+	prefix = customerFacingPrefix(prefix)
 	var scheme string
 	_ = exec.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = ?`, SaleDisplayNoSchemeKey).Scan(&scheme)
@@ -6583,9 +6685,61 @@ ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 	return out, rows.Err()
 }
 
+// likeLiteral escapes LIKE's wildcards (and the escape char itself) for a
+// `LIKE ? ESCAPE '\'` pattern, so user input matches literally.
+var likeLiteral = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// CustomerPick is a promotion-dialog picker row (ut-docs#5589): only what the
+// picker renders. No email by construction.
+type CustomerPick struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
+// SearchCustomersForPicker finds customers by name (SearchFold) or phone for
+// the promotion dialog's customer picker (ut-docs#5589). Unlike
+// SearchCustomers (the GDPR erasure picker) it neither selects nor matches
+// email, so a role holding only "settings" cannot probe whether an email
+// belongs to a customer. A blank query returns an empty, non-nil slice, and
+// LIKE wildcards in q match themselves (likeLiteral), so q="%" or "_" cannot
+// slip past that guard and list every customer with a phone.
+func (r *POSRepo) SearchCustomersForPicker(ctx context.Context, q string, limit int) ([]CustomerPick, error) {
+	out := make([]CustomerPick, 0)
+	trimmed := strings.TrimSpace(q)
+	if trimmed == "" {
+		return out, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(phone,'')
+FROM customers
+WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? ESCAPE '\')
+ORDER BY name LIMIT ?`, SearchFold(q), "%"+likeLiteral.Replace(trimmed)+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("search customers for picker: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c CustomerPick
+		if err := rows.Scan(&c.ID, &c.Name, &c.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // EraseCustomer removes a customer's personal data (GDPR right to erasure):
 // it unlinks the customer from sales (live AND archived) and promotions
-// (keeping the sales, which are financial records, but anonymous), strips
+// (keeping the sales, which are financial records, but anonymous), and
+// DEACTIVATES every promotion bound to them in the same statement as the
+// unlink: a NULL customer_id means "any customer", so unlinking alone would
+// widen a customer-only discount to everyone (ut-docs#5591; same rule as
+// migration 097 / ut-docs#5590). The 023 trigger bumps sync_admin_version
+// on that row change, so replicas follow. Strips
 // the customer from parked baskets (live AND archived, ut-docs#3253 —
 // stripCustomerFromHeldSales) and deletes the customer row. Audited.
 // Returns false if no such customer. LAN replicas follow on their next
@@ -6643,7 +6797,9 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 	for _, q := range []string{
 		`UPDATE sales SET customer_id = NULL WHERE customer_id = ?`,
 		`UPDATE sales_archive SET customer_id = NULL WHERE customer_id = ?`,
-		`UPDATE promotions SET customer_id = NULL WHERE customer_id = ?`,
+		// ut-docs#5591: NULL customer_id means "any customer", so unlink AND
+		// deactivate in one statement (same rule as migration 097).
+		`UPDATE promotions SET is_active = 0, customer_id = NULL WHERE customer_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return false, fmt.Errorf("erase customer unlink: %w", err)
@@ -7117,29 +7273,71 @@ SELECT 1 FROM shifts WHERE id = ? AND closed_at IS NULL
 	return true, nil
 }
 
-// SumCashPaymentsForShift sums cash payments in shift window for a register.
-func (r *POSRepo) SumCashPaymentsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
-	timeFilter := `s.completed_at >= ?`
-	args := []any{registerID, openedAt.String}
-	if closedAt.Valid {
-		timeFilter += ` AND s.completed_at <= ?`
+// tenderInSQL / tenderOutSQL: a payment row's cash-in (sale) and cash-out
+// (return) amount, net of change. One definition for the EOD In/Out split,
+// the cloud aggregate and the shift sum, so they cannot drift (ut-docs#5803).
+const (
+	tenderInSQL  = `COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0)`
+	tenderOutSQL = `COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)`
+)
+
+// shiftWindow is the one shift-window predicate (ut-docs#5796): col at or after
+// opened_at and, once closed, at or before closed_at (inclusive both ends, as
+// noSaleShiftWhere). Both sides go through datetime() so a legacy
+// 'YYYY-MM-DD HH:MM:SS' opened_at orders correctly against RFC 3339 columns
+// (a text compare puts '...T08' after '... 10' on the same day). An open
+// shift (closed_at NULL or ”) is unbounded above. col must be spelled as the
+// index expression expects, e.g. "s.completed_at" -> idx_sales_register_completed_dt.
+// A value datetime() cannot parse is NULL, so that row falls outside the window.
+func shiftWindow(col string, openedAt, closedAt sql.NullString) (string, []any) {
+	w := "datetime(" + col + ") >= datetime(?)"
+	args := []any{openedAt.String}
+	if closedAt.Valid && closedAt.String != "" {
+		w += " AND datetime(" + col + ") <= datetime(?)"
 		args = append(args, closedAt.String)
 	}
-	query := fmt.Sprintf(`
-SELECT COALESCE(SUM(p.amount - p.change_given), 0)
+	return "(" + w + ")", args
+}
+
+// shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
+// sums of a shift window on a register, so cash takings and cash tips can
+// never use different windows (ut-docs#5801). The window goes through
+// shiftWindow (datetime() on both sides, as noSaleShiftWhere).
+func shiftCashWindow(registerID string, openedAt, closedAt sql.NullString) (string, []any) {
+	win, wargs := shiftWindow("s.completed_at", openedAt, closedAt)
+	args := append([]any{registerID}, wargs...)
+	return `
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
 JOIN payment_methods pm ON pm.id = p.method_id
 WHERE pm.type = 'cash'
   AND s.status = 'completed'
   AND s.register_id = ?
-  AND %s
-`, timeFilter)
+  AND ` + win + "\n", args
+}
+
+// SumCashPaymentsForShift sums cash payments in shift window for a register:
+// cash taken net of change, sales minus refunds (sale_type='return' rows
+// subtract, as the EOD In/Out split). It INCLUDES cash tips (payments.amount
+// already carries tip_amount); see ShiftCashBreakdown.
+func (r *POSRepo) SumCashPaymentsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
+	from, args := shiftCashWindow(registerID, openedAt, closedAt)
 	var cashPayments int64
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&cashPayments); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT `+tenderInSQL+` - `+tenderOutSQL+from, args...).Scan(&cashPayments); err != nil {
 		return 0, fmt.Errorf("sum cash payments: %w", err)
 	}
 	return cashPayments, nil
+}
+
+// SumCashTipsForShift sums tip_amount on cash payments in the shift window
+// for a register: same joins, filter and window as SumCashPaymentsForShift.
+func (r *POSRepo) SumCashTipsForShift(ctx context.Context, registerID string, openedAt, closedAt sql.NullString) (int64, error) {
+	from, args := shiftCashWindow(registerID, openedAt, closedAt)
+	var tips int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(p.tip_amount), 0)`+from, args...).Scan(&tips); err != nil {
+		return 0, fmt.Errorf("sum cash tips: %w", err)
+	}
+	return tips, nil
 }
 
 // SumShiftAdjustments returns total adjustments for a shift.
@@ -7159,29 +7357,15 @@ WHERE entity_type = 'shift'
 	return adjustments, nil
 }
 
-// ComputeExpectedCash calculates expected cash for a shift.
+// ComputeExpectedCash calculates expected cash for a shift: opening + cash
+// sales + cash tips + adjustments (tips are in the drawer), i.e.
+// ShiftCashBreakdown(...).Expected (ut-docs#5801).
 func (r *POSRepo) ComputeExpectedCash(ctx context.Context, shiftID string, openingCash int64) (int64, error) {
-	if shiftID == "" {
-		return 0, errors.New("shift_id required")
-	}
-	var openedAt, closedAt sql.NullString
-	var registerID string
-	if err := r.db.QueryRowContext(ctx, `
-SELECT register_id, opened_at, closed_at
-FROM shifts
-WHERE id = ?
-`, shiftID).Scan(&registerID, &openedAt, &closedAt); err != nil {
-		return 0, fmt.Errorf("query shift: %w", err)
-	}
-	cashPayments, err := r.SumCashPaymentsForShift(ctx, registerID, openedAt, closedAt)
+	b, err := r.ShiftCashBreakdown(ctx, shiftID, openingCash)
 	if err != nil {
 		return 0, err
 	}
-	adjustments, err := r.SumShiftAdjustments(ctx, shiftID)
-	if err != nil {
-		return 0, err
-	}
-	return openingCash + cashPayments + adjustments, nil
+	return b.Expected.Minor(), nil
 }
 
 // LookupCustomer resolves a customer by id/loyalty/phone.
@@ -7266,6 +7450,14 @@ func isUniqueViolation(err error) bool {
 // failure.
 var ErrPromotionCodeExists = errors.New("promotion code already exists")
 
+// ErrPromotionCustomerUnknown is returned by CreatePromotion/UpdatePromotion
+// when the chosen customer is not a live, named customer on this till
+// (ut-docs#5574): never surface the raw FK failure to the operator.
+var ErrPromotionCustomerUnknown = errors.New("promotion customer not found")
+
+// ErrPromotionNotFound is returned by UpdatePromotion for an unknown code.
+var ErrPromotionNotFound = errors.New("promotion not found")
+
 // PromotionInput is the editable shape of a promo code -- everything except
 // the code itself (the PRIMARY KEY, immutable once created). Value is a raw
 // int64 at rest: minor currency units when Type is "amount", basis points
@@ -7279,13 +7471,46 @@ type PromotionInput struct {
 	StartsAt    string
 	EndsAt      string
 	CustomerID  string
+	// KeepCustomer leaves promotions.customer_id untouched on update and
+	// ignores CustomerID (ut-docs#5574). Ignored on create.
+	KeepCustomer bool
+}
+
+// liveCustomerExists reports whether id names a live, named customer (exact
+// id only; a retired shell has name ”). ut-docs#5574.
+func liveCustomerExists(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, id string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM customers WHERE id = ? AND name <> '' LIMIT 1`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CreatePromotion adds a new, active promo code. Real merchant-created rows
 // are never sample data -- is_sample_data (migration 038) is left at its
 // column default (0) here, deliberately untouched.
 func (r *POSRepo) CreatePromotion(ctx context.Context, code string, in PromotionInput) error {
-	_, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("create promotion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if in.CustomerID != "" {
+		ok, err := liveCustomerExists(ctx, tx, in.CustomerID)
+		if err != nil {
+			return fmt.Errorf("create promotion: %w", err)
+		}
+		if !ok {
+			return ErrPromotionCustomerUnknown
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO promotions (code, type, value, description, starts_at, ends_at, customer_id, is_active)
 VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
 		strings.TrimSpace(code), in.Type, in.Value, nullIfEmpty(in.Description),
@@ -7296,25 +7521,106 @@ VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
 		}
 		return fmt.Errorf("create promotion: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("create promotion: %w", err)
+	}
 	return nil
+}
+
+// PromotionFieldChange is one edited column's stored value before and after
+// (ut-docs#5588). Values are the stored forms: string, or int64 for value
+// (minor units for type=amount, basis points for type=percent).
+type PromotionFieldChange struct {
+	From any `json:"from"`
+	To   any `json:"to"`
+}
+
+// PromotionChanges maps a promotions column name (type, value, description,
+// starts_at, ends_at, customer_id) to its change. Empty (non-nil) = no-op edit.
+type PromotionChanges map[string]PromotionFieldChange
+
+// promotionDiff compares the stored row with the edit input. customer_id is
+// only considered when the edit rewrites it (!keep). NULL and "" are equal.
+func promotionDiff(old, in PromotionInput, keep bool) PromotionChanges {
+	ch := PromotionChanges{}
+	if old.Type != in.Type {
+		ch["type"] = PromotionFieldChange{From: old.Type, To: in.Type}
+	}
+	if old.Value != in.Value {
+		ch["value"] = PromotionFieldChange{From: old.Value, To: in.Value}
+	}
+	if old.Description != in.Description {
+		ch["description"] = PromotionFieldChange{From: old.Description, To: in.Description}
+	}
+	if old.StartsAt != in.StartsAt {
+		ch["starts_at"] = PromotionFieldChange{From: old.StartsAt, To: in.StartsAt}
+	}
+	if old.EndsAt != in.EndsAt {
+		ch["ends_at"] = PromotionFieldChange{From: old.EndsAt, To: in.EndsAt}
+	}
+	if !keep && old.CustomerID != in.CustomerID {
+		ch["customer_id"] = PromotionFieldChange{From: old.CustomerID, To: in.CustomerID}
+	}
+	return ch
 }
 
 // UpdatePromotion edits an existing promotion's type/value/description/
 // dates/customer target. The code (PRIMARY KEY) is the promo's identity and
-// is never rewritten here.
-func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) error {
-	res, err := r.db.ExecContext(ctx, `
+// is never rewritten here. When the customer binding is unchanged (or
+// KeepCustomer) customer_id is left OUT of the SET list: SQLite FK-checks a
+// child column named in SET even when the value is identical, so a legacy
+// dangling id would otherwise make every edit fail (ut-docs#5574).
+//
+// On success it returns the stored-before/after diff of the edited columns,
+// computed from the row read inside the same tx (ut-docs#5588); a no-op edit
+// returns an empty, non-nil map. On any error the changes are nil.
+func (r *POSRepo) UpdatePromotion(ctx context.Context, code string, in PromotionInput) (PromotionChanges, error) {
+	code = strings.TrimSpace(code)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("update promotion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var old PromotionInput
+	if err := tx.QueryRowContext(ctx, `
+SELECT type, value, COALESCE(description,''), COALESCE(starts_at,''), COALESCE(ends_at,''), COALESCE(customer_id,'')
+FROM promotions WHERE code = ?`, code).Scan(&old.Type, &old.Value, &old.Description, &old.StartsAt, &old.EndsAt, &old.CustomerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPromotionNotFound
+		}
+		return nil, fmt.Errorf("update promotion: %w", err)
+	}
+	keep := in.KeepCustomer || in.CustomerID == old.CustomerID
+	if !keep && in.CustomerID != "" {
+		ok, err := liveCustomerExists(ctx, tx, in.CustomerID)
+		if err != nil {
+			return nil, fmt.Errorf("update promotion: %w", err)
+		}
+		if !ok {
+			return nil, ErrPromotionCustomerUnknown
+		}
+	}
+	if keep {
+		_, err = tx.ExecContext(ctx, `
+UPDATE promotions SET type = ?, value = ?, description = ?, starts_at = ?, ends_at = ?
+WHERE code = ?`,
+			in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
+			nullIfEmpty(in.EndsAt), code)
+	} else {
+		_, err = tx.ExecContext(ctx, `
 UPDATE promotions SET type = ?, value = ?, description = ?, starts_at = ?, ends_at = ?, customer_id = ?
 WHERE code = ?`,
-		in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
-		nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID), strings.TrimSpace(code))
+			in.Type, in.Value, nullIfEmpty(in.Description), nullIfEmpty(in.StartsAt),
+			nullIfEmpty(in.EndsAt), nullIfEmpty(in.CustomerID), code)
+	}
 	if err != nil {
-		return fmt.Errorf("update promotion: %w", err)
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("update promotion: %s not found", code)
+	changes := promotionDiff(old, in, keep)
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("update promotion: %w", err)
 	}
-	return nil
+	return changes, nil
 }
 
 // SetPromotionActive soft-deactivates/reactivates a promo code -- mirrors
@@ -7348,6 +7654,11 @@ type PromotionAdmin struct {
 	EndsAt      string
 	CustomerID  string
 	IsActive    bool
+	// CustomerName is the bound customer's name ("" when unbound or missing).
+	CustomerName string
+	// CustomerMissing: bound, but no live named customer row (replica shell
+	// or legacy dangling id). ut-docs#5574.
+	CustomerMissing bool
 }
 
 // ListPromotionsForAdmin returns every promo code (active and inactive),
@@ -7355,9 +7666,11 @@ type PromotionAdmin struct {
 // FindActivePromo's own query is separate and untouched by this addition.
 func (r *POSRepo) ListPromotionsForAdmin(ctx context.Context) ([]PromotionAdmin, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT code, type, value, COALESCE(description,''), COALESCE(starts_at,''), COALESCE(ends_at,''), COALESCE(customer_id,''), is_active
-FROM promotions
-ORDER BY is_active DESC, code ASC`)
+SELECT p.code, p.type, p.value, COALESCE(p.description,''), COALESCE(p.starts_at,''), COALESCE(p.ends_at,''),
+       COALESCE(p.customer_id,''), COALESCE(c.name,''), p.is_active
+FROM promotions p
+LEFT JOIN customers c ON c.id = p.customer_id
+ORDER BY p.is_active DESC, p.code ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list promotions for admin: %w", err)
 	}
@@ -7366,9 +7679,10 @@ ORDER BY is_active DESC, code ASC`)
 	for rows.Next() {
 		var p PromotionAdmin
 		var active int
-		if err := rows.Scan(&p.Code, &p.Type, &p.Value, &p.Description, &p.StartsAt, &p.EndsAt, &p.CustomerID, &active); err != nil {
+		if err := rows.Scan(&p.Code, &p.Type, &p.Value, &p.Description, &p.StartsAt, &p.EndsAt, &p.CustomerID, &p.CustomerName, &active); err != nil {
 			return nil, fmt.Errorf("scan promotion admin: %w", err)
 		}
+		p.CustomerMissing = p.CustomerID != "" && p.CustomerName == ""
 		p.IsActive = active == 1
 		out = append(out, p)
 	}
@@ -7773,10 +8087,11 @@ type SaleDetailVoucherIssue struct {
 	VATRateBP *int   `json:"vat_rate_bp,omitempty"`
 	// TopUp (ut-docs#4252): this entry ADDED Amount to the existing voucher
 	// VoucherID (a 'top_up' ledger row) rather than issuing it. omitempty
-	// keeps every issue byte-identical on the wire. Replicas can't make
-	// top-ups yet (main till only), so no journal carries one today;
-	// applyJournal maps it through so a future replica top-up replays as a
-	// credit, never as a second issue of the same number.
+	// keeps every issue byte-identical on the wire. An additional till makes
+	// top-ups too (ut-docs#4416, gated on the main till accepting them);
+	// applyJournal maps it through so a replica top-up replays as a forced
+	// credit of the main till's voucher, never as a second issue of the
+	// same number.
 	TopUp bool `json:"top_up,omitempty"`
 }
 

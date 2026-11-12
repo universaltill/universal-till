@@ -57,7 +57,7 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 		current := sections[0].Href
 		data := map[string]any{
 			"title":       httpx.T(locale, "page.title.items"),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"Sections":    sections,
 			"CurrentHref": current,

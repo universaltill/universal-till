@@ -144,3 +144,69 @@ func BenchmarkSearchItemsForShortcuts10k(b *testing.B) {
 		})
 	}
 }
+
+func TestSearchCustomersForPicker_NameFoldAndPhone(t *testing.T) {
+	d := b8OpenDB(t, "customer-picker-fold.db")
+	mustExec(t, d, `INSERT INTO customers (id, name, phone, email) VALUES
+		('c-m', 'Hans Müller', '555-0101', 'hans@example.com'),
+		('c-o', 'Other Person', '777-0202', 'other@example.com')`)
+	repo := NewPOSRepo(d.DB)
+	ctx := context.Background()
+	for q, want := range map[string]string{"MÜLLER": "c-m", nfdMuller: "c-m", "0202": "c-o"} {
+		got, err := repo.SearchCustomersForPicker(ctx, q, 25)
+		if err != nil {
+			t.Fatalf("%q: %v", q, err)
+		}
+		if len(got) != 1 || got[0].ID != want {
+			t.Fatalf("%q: want [%s], got %+v", q, want, got)
+		}
+	}
+	if got, _ := repo.SearchCustomersForPicker(ctx, "Hans", 25); len(got) != 1 || got[0].Phone != "555-0101" {
+		t.Fatalf("phone not returned: %+v", got)
+	}
+}
+
+// ut-docs#5589: a settings-only role must not probe "is this email a customer".
+func TestSearchCustomersForPicker_NoEmailMatch(t *testing.T) {
+	d := b8OpenDB(t, "customer-picker-noemail.db")
+	mustExec(t, d, `INSERT INTO customers (id, name, phone, email) VALUES ('c-o', 'Other Person', '777-0202', 'other@example.com')`)
+	got, err := NewPOSRepo(d.DB).SearchCustomersForPicker(context.Background(), "other@", 25)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("email matched: %+v %v", got, err)
+	}
+}
+
+func TestSearchCustomersForPicker_BlankQuery(t *testing.T) {
+	d := b8OpenDB(t, "customer-picker-blank.db")
+	mustExec(t, d, `INSERT INTO customers (id, name) VALUES ('c-o', 'Other Person')`)
+	got, err := NewPOSRepo(d.DB).SearchCustomersForPicker(context.Background(), "  ", 25)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("blank query: %#v %v", got, err)
+	}
+}
+
+// ut-docs#5589 review: LIKE wildcards in the term must match themselves, or
+// q="%" / q="_" slips past the blank-query guard and lists every customer
+// with a phone to a settings-only role.
+func TestSearchCustomersForPicker_WildcardsAreLiteral(t *testing.T) {
+	d := b8OpenDB(t, "customer-picker-wildcard.db")
+	mustExec(t, d, `INSERT INTO customers (id, name, phone) VALUES
+		('c-a', 'Anna Alpha', '555-0101'),
+		('c-b', 'Ben Beta', '777-0202')`)
+	repo := NewPOSRepo(d.DB)
+	ctx := context.Background()
+	for _, q := range []string{"%", "_", "%%", "5_5", `\`} {
+		got, err := repo.SearchCustomersForPicker(ctx, q, 25)
+		if err != nil {
+			t.Fatalf("%q: %v", q, err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("%q matched as a wildcard: %+v", q, got)
+		}
+	}
+	// A literal '%' still finds the phone that contains it.
+	mustExec(t, d, `INSERT INTO customers (id, name, phone) VALUES ('c-p', 'Pct Person', '50%-off')`)
+	if got, _ := repo.SearchCustomersForPicker(ctx, "0%", 25); len(got) != 1 || got[0].ID != "c-p" {
+		t.Fatalf("literal %%: %+v", got)
+	}
+}

@@ -3,6 +3,7 @@ id: translations
 title: Çeviri düzenleyici
 section: Dükkanı kurma
 order: 150
+public: true
 summary: Yöneticiler kasadaki her etiketi veya mesajı, kasanın dillerinden herhangi birinde yeniden yazabilir.
 routes: [/translations]
 ---

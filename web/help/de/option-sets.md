@@ -3,6 +3,7 @@ id: option-sets
 title: Optionssets
 section: Ihr Geschäft einrichten
 order: 112
+public: true
 summary: "Eine wiederverwendbare Werteliste einmal anlegen — Größe: S / M / L — und daraus die Varianten eines Artikels in einem Schritt erzeugen, für beliebig viele Artikel."
 routes: [/catalog/option-sets]
 keywords: [optionssets, varianten, größe, farbe, erzeugen, sku]

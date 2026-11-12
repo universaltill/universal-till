@@ -50,6 +50,14 @@ func TestSeedDemoCatalogue(t *testing.T) {
 		}
 	}
 
+	var withImagePath int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM shortcut_buttons WHERE image_path IS NOT NULL`).Scan(&withImagePath); err != nil {
+		t.Fatal(err)
+	}
+	if withImagePath != 0 {
+		t.Errorf("seeded shortcut_buttons with image_path = %d, want 0 (ut-docs#6097)", withImagePath)
+	}
+
 	var unflagged int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE is_sample_data != 1`).Scan(&unflagged); err != nil {
 		t.Fatal(err)

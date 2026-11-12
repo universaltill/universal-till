@@ -134,7 +134,10 @@ ORDER BY option_set_id, sort_order, value`)
 // CreateOptionSet adds a shop-wide option set and returns its new id.
 // A name collision surfaces as ErrOptionSetExists.
 func (r *OptionSetRepo) CreateOptionSet(ctx context.Context, name string) (string, error) {
-	name = strings.TrimSpace(name)
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	if name == "" {
 		return "", errors.New("name required")
 	}
@@ -153,7 +156,10 @@ func (r *OptionSetRepo) CreateOptionSet(ctx context.Context, name string) (strin
 // set surfaces as ErrOptionSetValueExists.
 func (r *OptionSetRepo) AddOptionSetValue(ctx context.Context, optionSetID, value string) (string, error) {
 	optionSetID = strings.TrimSpace(optionSetID)
-	value = strings.TrimSpace(value)
+	value, err := CheckSingleLineName(value)
+	if err != nil {
+		return "", err
+	}
 	if optionSetID == "" {
 		return "", errors.New("option_set_id required")
 	}

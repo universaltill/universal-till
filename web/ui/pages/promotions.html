@@ -1,102 +1,145 @@
+{{/* ut-docs#3661: adopts the ut-docs#2010 list/edit dialog standard
+     (ut-docs/reference/list-and-dialog-pattern.md), copying locations.html's
+     shape. The whole row opens the dialog (data-record-open); the name is a real
+     button carrying data-record-edit — the keyboard path and the focus-return
+     target (ut-docs#6046). Every field lives in the
+     record dialog, prefilled client-side from the row's data-field-*
+     attributes (so it opens instantly and works offline). Starts/Ends share
+     one "Valid" column so the table fits 1024x600 without a sideways scroll. */}}
 {{ define "content" }}
 <div class="page-head">
-  <h1>{{ T "promotions.title" }}</h1>
+  <h1>{{ T "promotions.title" }} {{ helpLink "promotions" }}</h1>
 </div>
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
-<div class="users-layout">
-  <div class="card users-list">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>{{ T "promotions.col.code" }}</th>
-          <th>{{ T "promotions.col.type" }}</th>
-          <th>{{ T "promotions.col.value" }}</th>
-          <th>{{ T "promotions.field.description" }}</th>
-          <th>{{ T "promotions.field.starts_at" }}</th>
-          <th>{{ T "promotions.field.ends_at" }}</th>
-          <th>{{ T "promotions.field.customer" }}</th>
-          <th>{{ T "promotions.col.status" }}</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .promotions }}
-        <tr>
-          <td>{{ .Code }}</td>
-          <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
-          <td>{{ .ValueDisplay }}</td>
-          <td>{{ .Description }}</td>
-          <td>{{ .StartsAtDate }}</td>
-          <td>{{ .EndsAtDate }}</td>
-          <td>{{ if .CustomerID }}{{ .CustomerID }}{{ else }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ end }}</td>
-          <td>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
-          <td class="users-actions">
-            <form method="post" action="/api/promotions/{{ .Code }}/edit" class="users-inline" x-data="{ type: '{{ .Type }}' }">
-              <select name="type" x-model="type">
-                <option value="amount">{{ T "promotions.type.amount" }}</option>
-                <option value="percent">{{ T "promotions.type.percent" }}</option>
-              </select>
-              <!-- ut-docs#1275: type="number" silently resets .value to ""
-                   on a momentarily-invalid decimal string while osk.js types
-                   it in (same root cause as ut-docs#1249/#1272) -- switching
-                   to text+inputmode="decimal" avoids that; range/positivity
-                   is already enforced server-side (parsePromotionForm). -->
-              <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" x-show="type === 'amount'" value="{{ majorlocal .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
-              <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
-              <input type="text" name="description" value="{{ .Description }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
-              <input type="date" name="starts_at" value="{{ .StartsAtDate }}" />
-              <input type="date" name="ends_at" value="{{ .EndsAtDate }}" />
-              <input type="hidden" name="customer_id" value="{{ .CustomerID }}" />
-              <button type="submit" class="btn secondary">{{ T "promotions.edit" }}</button>
-            </form>
-            <form method="post" action="/api/promotions/{{ .Code }}/active" class="users-inline">
-              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
-              <button type="submit" class="btn secondary">
-                {{ if .IsActive }}{{ T "promotions.deactivate" }}{{ else }}{{ T "promotions.activate" }}{{ end }}
-              </button>
-            </form>
-          </td>
-        </tr>
-        {{ else }}
-        <tr><td colspan="9" class="muted">{{ T "promotions.list_empty" }}</td></tr>
-        {{ end }}
-      </tbody>
-    </table>
-  </div>
+{{ template "list_header" (dict
+     "searchID"       "promotions-search"
+     "searchLabelKey" "promotions.search_placeholder"
+     "filterTarget"   "#promotions-table .promotion-row"
+     "emptyTarget"    "#promotions-no-results"
+     "newID"          "promotions-new"
+     "newLabelKey"    "promotions.new.title"
+     "dialogID"       "promotion-dialog") }}
 
-  <div class="card users-form" x-data="{ type: 'amount' }">
-    <h3>{{ T "promotions.new.title" }}</h3>
-    <form method="post" action="/api/promotions" autocomplete="off">
-      <label>{{ T "promotions.col.code" }} <input type="text" name="code" required /></label>
-      <label>{{ T "promotions.col.type" }}
-        <select name="type" x-model="type">
-          <option value="amount">{{ T "promotions.type.amount" }}</option>
-          <option value="percent">{{ T "promotions.type.percent" }}</option>
-        </select>
-      </label>
-      <label x-show="type === 'amount'">{{ T "promotions.col.value" }} <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" /></label>
-      <label x-show="type === 'percent'">{{ T "promotions.col.value" }} <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" /></label>
-      <label>{{ T "promotions.field.description" }} <input type="text" name="description" /></label>
-      <label>{{ T "promotions.field.starts_at" }} <input type="date" name="starts_at" /></label>
-      <label>{{ T "promotions.field.ends_at" }} <input type="date" name="ends_at" /></label>
-      <label>{{ T "promotions.field.customer" }}
-        <input type="text" id="promo-cust-q" placeholder="{{ T "promotions.customer.search_ph" }}" autocomplete="off" />
-      </label>
-      <div id="promo-cust-results" class="set-gap-s"></div>
-      <input type="hidden" name="customer_id" id="promo-cust-id" value="" />
-      <button type="submit" class="btn primary" style="width:100%">{{ T "promotions.new.submit" }}</button>
-    </form>
+<div class="card list-card">
+  {{ if not .promotions }}
+  <p class="muted">{{ T "promotions.empty" }}</p>
+  {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="promotions-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
+  <div class="list-scroll">
+  <table class="table" id="promotions-table">
+    <thead>
+      <tr>
+        <th>{{ T "promotions.col.code" }}</th>
+        <th>{{ T "promotions.col.type" }}</th>
+        <th>{{ T "promotions.col.value" }}</th>
+        <th>{{ T "promotions.field.description" }}</th>
+        <th>{{ T "promotions.col.dates" }}</th>
+        <th>{{ T "promotions.field.customer" }}</th>
+        <th>{{ T "promotions.col.status" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .promotions }}
+      <tr class="promotion-row" data-id="{{ .Code }}"
+          data-record-open="promotion-dialog"
+          data-record-action="/api/promotions/{{ .PathCode }}/edit"
+          data-record-destructive-action="/api/promotions/{{ .PathCode }}/active"
+          data-field-code="{{ .Code }}"
+          data-field-type="{{ .Type }}"
+          data-field-value_amount="{{ majorlocal .ValueAmountMajor }}"
+          data-field-value_percent="{{ .ValuePercent }}"
+          data-field-description="{{ .Description }}"
+          data-field-starts_at="{{ .StartsAtDate }}"
+          data-field-ends_at="{{ .EndsAtDate }}"
+          data-field-customer_id="{{ .CustomerID }}"
+          data-promo-customer-label="{{ .CustomerLabel }}"
+          data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="promotions-row-edit-hint"><span class="record-row-name"><bdi dir="ltr">{{ .Code }}</bdi></span></button></td>
+        <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
+        <td>{{ .ValueDisplay }}</td>
+        <td class="promo-wrap"><bdi dir="auto">{{ .Description }}</bdi></td>
+        <td class="promo-dates"><span class="promo-date">{{ or .StartsAtDate "–" }}</span><span class="promo-date">{{ or .EndsAtDate "–" }}</span></td>
+        <td class="promo-wrap" data-card-keep>{{ if not .CustomerID }}<span class="muted">{{ T "promotions.customer.any" }}</span>{{ else if .CustomerMissing }}<span class="muted">{{ T "promotions.customer.deleted" }}</span>{{ else }}<bdi dir="auto">{{ .CustomerName }}</bdi>{{ end }}</td>
+        <td data-card-keep>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
+      </tr>
+      {{ end }}
+      <tr id="promotions-no-results" class="list-empty-row" hidden>
+        <td colspan="7">{{ T "common.no_results" }}</td>
+      </tr>
+    </tbody>
+  </table>
   </div>
+  {{ end }}
 </div>
+
+{{ template "record_dialog" (dict
+     "id"             "promotion-dialog"
+     "formID"         "promotion-form"
+     "createTitleKey" "promotions.new.title"
+     "editTitleKey"   "promotions.edit_title"
+     "createAction"   "/api/promotions"
+     "root"           .) }}
 
 <script>
 (function () {
+  var dlg = document.getElementById('promotion-dialog');
+  var typeSel = document.getElementById('promo-type');
+  if (!dlg || !typeSel) return;
+  // Show only the value input that matches the type, and disable the other
+  // so a stale, pattern-invalid hidden value can never block the submit (the
+  // handler reads only the matching name).
+  function syncType() {
+    var labels = dlg.querySelectorAll('[data-promo-value]');
+    for (var i = 0; i < labels.length; i++) {
+      var on = labels[i].getAttribute('data-promo-value') === typeSel.value;
+      labels[i].hidden = !on;
+      var inp = labels[i].querySelector('input');
+      if (inp) inp.disabled = !on;
+    }
+  }
+  typeSel.addEventListener('change', syncType);
+  // Listened on document.body (survives any swap of the dialog's ancestors).
+  // record-dialog:open fires after the generic data-field-* prefill and
+  // before the discard-guard snapshot, so nothing done here reads as dirty.
+  document.body.addEventListener('record-dialog:open', function (ev) {
+    if (!ev.target || ev.target.id !== 'promotion-dialog') return;
+    var edit = ev.detail && ev.detail.mode === 'edit';
+    var code = document.getElementById('promo-code');
+    var q = document.getElementById('promo-cust-q');
+    var res = document.getElementById('promo-cust-results');
+    syncType();
+    // Results stay visible in edit mode too: the customer can be searched
+    // and changed (ut-docs#5574). Only the code is fixed once created.
+    if (res) { res.innerHTML = ''; res.hidden = false; }
+    q.removeAttribute('aria-invalid');
+    q.removeAttribute('aria-describedby');
+    if (edit) {
+      code.setAttribute('readonly', '');
+      // The name (or "Deleted customer") of the stored binding; empty shows
+      // the "Search customers…" placeholder. The hidden id was already
+      // prefilled from data-field-customer_id.
+      var row = ev.detail && ev.detail.row;
+      q.value = (row && row.getAttribute('data-promo-customer-label')) || '';
+    } else {
+      code.removeAttribute('readonly');
+      q.value = '';
+    }
+    if (typeof window.promoCustSync === 'function') window.promoCustSync();
+  });
+})();
+
+(function () {
   var q = document.getElementById('promo-cust-q');
   if (!q) return;
+  var T = { unpicked: "{{ T "promotions.customer.unpicked" }}" };
   var out = document.getElementById('promo-cust-results');
   var hidden = document.getElementById('promo-cust-id');
+  var clear = document.getElementById('promo-cust-clear');
+  var form = document.getElementById('promotion-form');
+  var msg = document.getElementById('promotion-dialog-msg');
   // Text-node escaping alone leaves quotes intact, which is fine between
   // tags but breaks out of a double-quoted attribute -- and a customer's
   // name is free text they chose. Escape the quotes too, so esc() is safe
@@ -106,14 +149,26 @@
     d.textContent = s || '';
     return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
+  function clearInvalid() {
+    q.removeAttribute('aria-invalid');
+    q.removeAttribute('aria-describedby');
+  }
+  // The x button shows whenever there is a binding or typed text, and is
+  // hidden (never just invisible) otherwise so it is never tabbable.
+  function syncClear() {
+    if (clear) clear.hidden = !(hidden.value || q.value.trim());
+  }
+  window.promoCustSync = syncClear;
   var timer;
   q.addEventListener('input', function () {
     clearTimeout(timer);
     hidden.value = '';
+    clearInvalid();
+    syncClear();
     var term = q.value.trim();
     if (!term) { out.innerHTML = ''; return; }
     timer = setTimeout(function () {
-      fetch('/api/data/customers?q=' + encodeURIComponent(term))
+      fetch('/api/promotions/customers?q=' + encodeURIComponent(term))
         .then(function (r) {
           // ut-docs#2157: a session-expired 401 answers with the auth
           // middleware's {code,message} error object — j.data below would
@@ -125,15 +180,15 @@
         .then(function (j) {
           if (!j) return;
           // ut-docs#2157 review finding: dataAPIRespond's real (non-401)
-          // errors (403 manager-only, 500) are plain-string JSON, unlike
-          // the auth middleware's 401 object — without this check they
-          // read as j.data being null and silently render an empty
-          // results list instead of the actual problem.
+          // errors (403, 500) are plain-string JSON with a translated
+          // message, unlike the auth middleware's 401 object — without
+          // this check they read as j.data being null and silently render
+          // an empty results list instead of the actual problem.
           if (j.error) { renderNotice(out, 'error', j.error); return; }
           var list = (j.data && j.data.customers) || [];
           out.innerHTML = list.map(function (c) {
-            return '<button type="button" class="btn secondary" data-cust-pick="' + esc(c.ID) + '" data-cust-name="' + esc(c.Name) + '">'
-              + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + '</button>';
+            return '<button type="button" class="btn secondary" data-cust-pick="' + esc(c.id) + '" data-cust-name="' + esc(c.name) + '">'
+              + esc(c.name) + (c.phone ? ' · ' + esc(c.phone) : '') + '</button>';
           }).join(' ');
         });
     }, 250);
@@ -141,10 +196,114 @@
   out.addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-cust-pick]');
     if (!b) return;
+    clearTimeout(timer);
     hidden.value = b.getAttribute('data-cust-pick');
     q.value = b.getAttribute('data-cust-name');
     out.innerHTML = '';
+    clearInvalid();
+    syncClear();
+    // The picked button just left the DOM; keep keyboard focus in the dialog.
+    q.focus();
   });
+  if (clear) clear.addEventListener('click', function () {
+    clearTimeout(timer);
+    hidden.value = '';
+    q.value = '';
+    out.innerHTML = '';
+    clearInvalid();
+    syncClear();
+    // The button just hid itself; focus must land somewhere.
+    q.focus();
+  });
+  // Typed text with no picked result must neither clear nor rebind silently:
+  // refuse the save and say why. Nothing is posted.
+  function refuseUnpicked(ev) {
+    if (q.value.trim() === '' || hidden.value !== '') return false;
+    ev.preventDefault();
+    if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    q.setAttribute('aria-invalid', 'true');
+    q.setAttribute('aria-describedby', 'promotion-dialog-msg');
+    renderNotice(msg, 'error', T.unpicked);
+    // The customer field is the last one, so the body is scrolled down: bring
+    // the message (top of the body) into view or Save looks like a no-op.
+    if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+  if (form) {
+    form.addEventListener('htmx:beforeRequest', refuseUnpicked);
+    form.addEventListener('submit', refuseUnpicked, true);
+  }
+  syncClear();
 })();
+
 </script>
+{{ end }}
+
+{{/* The two slots record_dialog.html owes to this page. */}}
+{{ define "record_dialog_fields" }}
+<form id="promotion-form" method="post" action="/api/promotions" autocomplete="off"
+      hx-boost="true" hx-target="#promotion-dialog-msg" hx-swap="innerHTML">
+  <label>{{ T "promotions.col.code" }}
+    <input type="text" id="promo-code" name="code" required dir="ltr" />
+  </label>
+  <label>{{ T "promotions.col.type" }}
+    <select id="promo-type" name="type">
+      <option value="amount">{{ T "promotions.type.amount" }}</option>
+      <option value="percent">{{ T "promotions.type.percent" }}</option>
+    </select>
+  </label>
+  {{/* ut-docs#1275: text+inputmode="decimal", not type="number" (osk.js
+       types a momentarily-invalid decimal that a number input resets to ""). */}}
+  <label data-promo-value="amount">{{ T "promotions.col.value" }}
+    <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" />
+  </label>
+  <label data-promo-value="percent" hidden>{{ T "promotions.col.value" }}
+    <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" disabled />
+  </label>
+  <label>{{ T "promotions.field.description" }}
+    <input type="text" name="description" dir="auto" />
+  </label>
+  <label>{{ T "promotions.field.starts_at" }}
+    <input type="date" name="starts_at" />
+  </label>
+  <label>{{ T "promotions.field.ends_at" }}
+    <input type="date" name="ends_at" />
+  </label>
+  <div data-promo-customer>
+    <label for="promo-cust-q">{{ T "promotions.field.customer" }}</label>
+    {{/* The x sits OUTSIDE the label so a tap on it can never be retargeted
+         to focus the input and pop the OSK. */}}
+    <div class="promo-cust-row">
+      <input type="text" id="promo-cust-q" dir="auto" placeholder="{{ T "promotions.customer.search_ph" }}" autocomplete="off" />
+      <button type="button" id="promo-cust-clear" class="btn secondary btn-icon" hidden
+              aria-controls="promo-cust-q"
+              aria-label="{{ T "promotions.customer.clear" }}" title="{{ T "promotions.customer.clear" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+      </button>
+    </div>
+    <div id="promo-cust-results" class="set-gap-s"></div>
+  </div>
+  <input type="hidden" name="customer_id" id="promo-cust-id" value="" />
+</form>
+{{ end }}
+
+{{/* Deactivate, never erase: the trash icon posts active=0; an inactive
+     promotion gets Activate instead (record-dialog.js shows whichever
+     data-record-when="active=…" matches the opened row). hx-confirm, as in
+     locations.html. */}}
+{{ define "record_dialog_destructive" }}
+<form method="post" data-record-destructive-form data-record-when="active=1"
+      hx-confirm="{{ T "promotions.deactivate_confirm" }}"
+      hx-boost="true" hx-target="#promotion-dialog-msg" hx-swap="innerHTML">
+  <input type="hidden" name="active" value="0" />
+  <button type="submit" class="btn secondary btn-icon btn-icon-danger"
+          aria-label="{{ T "promotions.deactivate" }}" title="{{ T "promotions.deactivate" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+  </button>
+</form>
+<form method="post" data-record-destructive-form data-record-when="active=0"
+      hx-boost="true" hx-target="#promotion-dialog-msg" hx-swap="innerHTML">
+  <input type="hidden" name="active" value="1" />
+  <button type="submit" class="btn secondary">{{ T "promotions.activate" }}</button>
+</form>
 {{ end }}

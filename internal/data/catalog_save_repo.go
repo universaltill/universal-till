@@ -91,9 +91,9 @@ type ItemSaveResult struct {
 	Name    string
 	// Changed lists the patch's fields that were present, for the audit row.
 	Changed []string
-	// ClearedImagePath is the thumbnail path a non-empty icon replaced
-	// (ut-docs#3584, as CategorySaveResult's), "" when none was cleared —
-	// the caller deletes a superseded upload's file.
+	// ClearedImagePath is the library tile a non-empty icon replaced, "" when
+	// none was cleared. Never an uploaded photo since ut-docs#6028, which an
+	// icon keeps; the caller's upload-file removal is defensive.
 	ClearedImagePath string
 }
 
@@ -337,7 +337,11 @@ func (r *CatalogRepo) saveItemTx(ctx context.Context, tx *sql.Tx, p ItemPatch, b
 	// the local item editor uses.
 	oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, p.ID, "")
 	if p.Name != nil {
-		cur.Name = *p.Name
+		n, err := checkReceivedName(&cur.Name, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		cur.Name = n
 		res.Changed = append(res.Changed, "name")
 	}
 	if p.PriceMinor != nil {
@@ -518,13 +522,14 @@ func saveItemSellScreenTx(ctx context.Context, tx *sql.Tx, p ItemPatch, res *Ite
 	return nil
 }
 
-// saveItemIconTx applies save_item's icon (ut-docs#3584) with the
-// one-picture rule SaveCategory applies to a category's (ut-docs#2717): an
-// icon set from my. replaces whatever thumbnail the till had — a library
-// tile or an uploaded photo — or it would stay hidden behind it on the sale
-// screen. A cleared icon ("") leaves an uploaded photo alone, but a library
-// tile in the thumbnail row IS the item's icon (it renders and is reported
-// as its id), so clearing the icon clears that tile too.
+// saveItemIconTx applies save_item's icon (ut-docs#3584) with the rule
+// SaveCategory applies to a category's (ut-docs#3585, ut-docs#6028): an
+// uploaded photo is kept — it shows, and the icon is its fallback once the
+// photo is removed — while a library tile (named or the generic one) is
+// dropped, since the icon replaces it. A cleared icon ("") leaves a photo
+// alone, but a library tile in the thumbnail row IS the item's icon (it
+// renders and is reported as its id), so clearing the icon clears that tile
+// too.
 func saveItemIconTx(ctx context.Context, tx *sql.Tx, itemID, icon string, res *ItemSaveResult) error {
 	var thumb string
 	err := tx.QueryRowContext(ctx, `SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID).Scan(&thumb)
@@ -532,15 +537,20 @@ func saveItemIconTx(ctx context.Context, tx *sql.Tx, itemID, icon string, res *I
 		return fmt.Errorf("save item: read thumbnail: %w", err)
 	}
 	keep := thumb
-	if icon != "" && thumb != "" {
-		res.ClearedImagePath, keep = thumb, ""
-	} else if icon == "" && iconid.IDForAssetPath(thumb) != "" {
+	if icon != "" {
+		// iconid.Resolve draws a set icon over a library tile, so the tile
+		// is redundant; an uploaded photo wins and is kept.
+		if path, _ := iconid.Resolve(thumb, icon); path == "" && thumb != "" {
+			keep = ""
+			res.ClearedImagePath = thumb // a tile has no file to remove
+		}
+	} else if iconid.IDForAssetPath(thumb) != "" {
 		keep = ""
 	}
-	if keep != "" && keep == thumb {
-		// The photo stays: write only the icon column, leaving the
+	if thumb != "" && keep == thumb {
+		// The thumbnail stays: write only the icon column, leaving the
 		// thumbnail row (and the sell-screen generation it drives) alone.
-		if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = NULL WHERE id = ?`, itemID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = ? WHERE id = ?`, nullableString(icon), itemID); err != nil {
 			return fmt.Errorf("save item: icon: %w", err)
 		}
 		return nil
@@ -815,6 +825,11 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 		if p.Name == nil {
 			return res, errors.New("a new category needs a name")
 		}
+		n, err := checkReceivedName(nil, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		p.Name = &n
 		var maxOrder sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `SELECT MAX(sort_order) FROM categories`).Scan(&maxOrder); err != nil {
 			return res, fmt.Errorf("save category: sort order: %w", err)
@@ -832,6 +847,13 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 	}
 
 	if p.Name != nil {
+		if !res.Created {
+			n, err := checkReceivedName(&name, *p.Name)
+			if err != nil {
+				return res, err
+			}
+			p.Name = &n
+		}
 		if active {
 			var other string
 			err := tx.QueryRowContext(ctx, `SELECT name FROM categories WHERE is_active = 1 AND id <> ? AND lower(name) = lower(?) LIMIT 1`, p.ID, *p.Name).Scan(&other)

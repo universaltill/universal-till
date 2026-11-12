@@ -230,7 +230,7 @@ func registerTillRole(mux *http.ServeMux, d *common.Deps) {
 	// A joined till reports its own new role (reportOwnRoleToMain). The
 	// bearer is the auth, and it can only ever change the caller's OWN row.
 	mux.HandleFunc("POST /api/sync/till-role", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

@@ -3,6 +3,7 @@ id: age-restricted-sales
 title: Altersbeschränkte Verkäufe
 section: Täglicher Verkauf
 order: 27
+public: true
 summary: Markieren Sie Artikel, für die eine Ausweiskontrolle nötig ist (Alkohol, Tabak, E-Zigaretten und Ähnliches). Die Kasse verlangt dann vor der Zahlung, dass die Kassiererin die Ausweiskontrolle erfasst, und das Selbstbedienungsterminal schickt die Kundschaft zur Kasse.
 keywords: [alter, altersbeschränkt, ausweiskontrolle, ausweis, alkohol, tabak, e-zigarette, ablehnung, altersnachweis, jugendschutz]
 ---
@@ -47,7 +48,7 @@ diesen Artikel. Es wird nichts belastet, und der Warenkorb bleibt unverändert.
 
 Eine Ausweiskontrolle gilt für eine Kundin oder einen Kunden: Sie wird
 gelöscht, wenn der Verkauf abgeschlossen oder der Warenkorb geleert wird, und
-ein geparkter Vorgang fragt beim Fortsetzen erneut.
+eine geparkte Bestellung fragt beim Fortsetzen erneut.
 
 ## Am Selbstbedienungsterminal
 

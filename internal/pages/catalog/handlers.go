@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/catimport/barcode"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	tillimport "github.com/universaltill/universal-till/internal/catimport"
@@ -736,7 +737,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			// Upper bound is a sanity ceiling, same rationale as item-cost's
 			// 1_000_000 above (universaltill/ut-docs#276): nothing stops an
 			// absurd value otherwise, and it's not a real limit on shop stock.
-			if err != nil || n < 0 || n > 1_000_000 {
+			if err != nil || n < 0 || n > catalogrules.MaxReorderLevel {
 				http.Error(w, "invalid reorder level", http.StatusBadRequest)
 				return
 			}
@@ -766,6 +767,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
+		}
+		// ut-docs#4128: ?missing=<mask> narrows the list to items with a gap.
+		missingKey := ""
+		if mask := missingMask(r.URL.Query().Get("missing")); mask != 0 {
+			gaps, err := repo.CatalogGapIDs(r.Context(), mask)
+			if err != nil {
+				httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+				return
+			}
+			kept := items[:0:0]
+			for _, it := range items {
+				if gaps[it.ID] {
+					kept = append(kept, it)
+				}
+			}
+			items, missingKey = kept, missingFilterKey(mask)
 		}
 		cats, brands, err := listLookups(r.Context(), repo)
 		if err != nil {
@@ -852,7 +869,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		data := map[string]any{
 			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
 			"menuItems":             d.MenuSnapshot(),
-			"theme":                 d.CurrentState().Theme,
+			"theme":                 d.ResolvedTheme(r),
 			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, icons, currentPrices, updatedAts),
 			"Categories":            cats,
 			"CategoryFilterOptions": categoryFilterOptions,
@@ -862,7 +879,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
-			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
+			"MissingFilterKey":      missingKey,
+			"BuiltinIconGroups":     common.ShopPickerIconGroups(r.Context(), data.NewSettingsRepo(d.Db)),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 			"AICutout":              aiCutoutOffered(r),
@@ -922,7 +940,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// internal/pages/catalog/. Same page-title bug, same fix.
 		modifiersData["title"] = httpx.T(httpx.RequestLocale(r), "modifiers.title")
 		modifiersData["menuItems"] = d.MenuSnapshot()
-		modifiersData["theme"] = d.CurrentState().Theme
+		modifiersData["theme"] = d.ResolvedTheme(r)
 		modifiersData["InItemsShell"] = httpx.IsFragmentSwap(w, r)
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
@@ -954,7 +972,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		optionSetsData := map[string]any{
 			"title":        httpx.T(httpx.RequestLocale(r), "items.option_sets.name"),
 			"menuItems":    d.MenuSnapshot(),
-			"theme":        d.CurrentState().Theme,
+			"theme":        d.ResolvedTheme(r),
 			"Sets":         optionSetCards(sets),
 			"InItemsShell": httpx.IsFragmentSwap(w, r),
 			"ErrorSetID":   "",
@@ -1004,6 +1022,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	optionSetRefusal := func(w http.ResponseWriter, r *http.Request, setID string, err error) {
 		loc := httpx.ResolveLocale(w, r)
 		switch {
+		case errors.Is(err, data.ErrNameInvalidCharacters):
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(loc, "common.error.name_invalid_characters"))
 		case errors.Is(err, data.ErrOptionSetNotFound):
 			renderOptionSetsListStatus(w, r, http.StatusNotFound, "", httpx.T(loc, "catalog.option_sets.not_found"))
 		case errors.Is(err, data.ErrOptionSetExists):
@@ -1212,6 +1232,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if _, err := data.NewOptionSetRepo(d.Db).CreateOptionSet(r.Context(), name); err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) && strings.TrimSpace(r.Form.Get("panelItem")) == "" {
+				// text/html through the list's own error line: a text/plain
+				// 400 would be dropped for the generic banner (app.js).
+				renderOptionSetsListStatus(w, r, http.StatusBadRequest, "", httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+				return
+			}
 			optionSetAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -1238,6 +1264,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if _, err := data.NewOptionSetRepo(d.Db).AddOptionSetValue(r.Context(), setID, value); err != nil {
+			if errors.Is(err, data.ErrNameInvalidCharacters) && strings.TrimSpace(r.Form.Get("panelItem")) == "" {
+				// text/html through the list's own error line: a text/plain
+				// 400 would be dropped for the generic banner (app.js).
+				renderOptionSetsListStatus(w, r, http.StatusBadRequest, "", httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+				return
+			}
 			optionSetAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -1375,7 +1407,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if err := saveLookupImage(r.Context(), lookupClient, itemID, imgURL); err != nil {
 				log.Printf("[catalog] lookup image for item %s skipped: %v", itemID, err)
 			} else {
-				if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
+				if err := repo.SetItemPhoto(r.Context(), itemID, ItemThumbURL(itemID)); err != nil {
 					// Same review-F2 reasoning as the manual upload handler
 					// above: the photo is safely on disk regardless, this only
 					// keeps item_images (POS grid/basket/self-order/
@@ -1605,6 +1637,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if groupID == "" {
 			newID := uuid.NewString()
 			if _, err := modRepo.CreateGroup(r.Context(), newID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
@@ -1621,6 +1657,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 		} else {
 			if err := modRepo.UpdateGroup(r.Context(), groupID, name, required, minSelect, maxSelect, sortOrder, active); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
@@ -1678,11 +1718,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		optionID := strings.TrimSpace(r.Form.Get("id"))
 		if optionID == "" {
 			if _, err := modRepo.CreateOption(r.Context(), uuid.NewString(), groupID, name, priceDeltaMinor, sortOrder); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
 		} else {
 			if err := modRepo.UpdateOption(r.Context(), optionID, name, priceDeltaMinor, sortOrder, active); err != nil {
+				if errors.Is(err, data.ErrNameInvalidCharacters) {
+					renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.ResolveLocale(w, r), "common.error.name_invalid_characters"))
+					return
+				}
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
 			}
@@ -2176,7 +2224,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Built-in icon picker (ut-docs#1844): a bundled category icon
-	// (catimport.BuiltinIcons — the same library PlaceholderIcon already
+	// (catimport.BuiltinIcons — the same library the import matcher already
 	// picks from for imageless imports) is a valid alternative to an
 	// uploaded photo, stored through the identical item_images/thumbnail
 	// row so every existing reader (POS grid, basket, self-order,
@@ -2187,7 +2235,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// current thumbnail is instead a custom upload (a built-in choice and a
 	// custom photo are mutually exclusive — picking one always replaces
 	// the other, same as the existing upload-over-placeholder behaviour),
-	// and which key PlaceholderIcon's own keyword match would suggest for
+	// and which key the shop-language IconMatcher would suggest for
 	// this item's actual name/category — so a still-imageless item shows a
 	// sensible preselected tile instead of nothing.
 	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
@@ -2214,7 +2262,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				categoryName = cat.Name
 			}
 		}
-		suggestedKey := tillimport.PlaceholderIcon(itm.Name, categoryName)
+		suggestedKey := common.ShopIconMatcher(r.Context(), data.NewSettingsRepo(d.Db)).Icon(itm.Name, categoryName)
 		selectedKey := ""
 		isCustom := false
 		// ut-docs#3133: the Item image tab previews the current picture from
@@ -2786,9 +2834,11 @@ func itemThumbFile(itemID string) string {
 // none) onto the open sale's basket rows, so a photo added, replaced or
 // removed mid-sale shows on the next render instead of only on a fresh sale
 // (ut-docs#4838). Best-effort: the write already succeeded, so a read error
-// logs. The cashier engine only — never the self-order kiosk's.
+// logs. Reaches the cashier engine, the self-order kiosk's basket and every
+// table session's basket (ut-docs#4959: the self-order cart shows the photo
+// too). Only the image is pushed; no basket is read across engines.
 func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogRepo, itemID string) {
-	if d == nil || d.Engine == nil {
+	if d == nil || (d.Engine == nil && d.KioskEngine == nil && d.SelfOrderSessions == nil) {
 		return
 	}
 	path, err := repo.ItemThumbnailFor(ctx, itemID)
@@ -2804,7 +2854,14 @@ func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogR
 		log.Printf("[catalog] refresh basket icon %s: %v", itemID, err)
 		icon = ""
 	}
-	d.Engine.SetItemImage(itemID, ui.ItemThumb(path, icon))
+	img := ui.ItemThumb(path, icon)
+	if d.Engine != nil {
+		d.Engine.SetItemImage(itemID, img)
+	}
+	if d.KioskEngine != nil {
+		d.KioskEngine.SetItemImage(itemID, img)
+	}
+	d.SelfOrderSessions.SetItemImage(itemID, img) // nil-receiver-safe
 }
 
 // ErrItemThumbRow marks a StoreItemPhoto whose file was written but whose
@@ -2817,24 +2874,36 @@ var ErrItemThumbRow = errors.New("item photo saved but its item_images thumbnail
 // the item's thumbnail and points item_images at it — the one write path
 // for the till's own upload and the cloud's set_catalog_image directive
 // (ut-docs#3139). The file must be written first: every surface that
-// resolves the photo by its path convention checks the file. itemID must
-// already be validated (no "/", "\" or ".").
+// resolves the photo by its path convention checks the file. The item's
+// stored icon id is kept (ut-docs#3601). itemID must already be validated
+// (no "/", "\" or ".").
 func StoreItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string, img image.Image) error {
 	if err := imaging.WriteThumbPNG(img, itemThumbFile(itemID)); err != nil {
 		return err
 	}
-	if err := repo.SetItemThumbnail(ctx, itemID, ItemThumbURL(itemID)); err != nil {
+	if err := repo.SetItemPhoto(ctx, itemID, ItemThumbURL(itemID)); err != nil {
 		return fmt.Errorf("%w (%s): %v", ErrItemThumbRow, itemID, err)
 	}
 	return nil
 }
 
 // ClearItemPicture is the till's own "no image" (the icon picker's none):
-// the item_images thumbnail row goes, then any uploaded photo file.
-// Shared with set_catalog_image's clear (ut-docs#3139). itemID must
-// already be validated.
+// it clears both the item_images thumbnail row and items.icon, then any
+// uploaded photo file. itemID must already be validated.
 func ClearItemPicture(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
 	if err := repo.ClearItemThumbnail(ctx, itemID); err != nil {
+		return err
+	}
+	removeUploadedThumbnail(itemID)
+	return nil
+}
+
+// ClearItemPhoto is set_catalog_image's clear (my.'s "remove the image",
+// ut-docs#3601): the thumbnail row and the uploaded file go, the stored
+// icon id stays, so the item falls back to its icon. Mirrors
+// clearCategoryPicture. itemID must already be validated.
+func ClearItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
+	if err := repo.ClearItemPhoto(ctx, itemID); err != nil {
 		return err
 	}
 	removeUploadedThumbnail(itemID)
@@ -3126,11 +3195,25 @@ func files(paths ...string) []string { return paths }
 // barcode conflicts via FriendlyBarcodeConflict. Anything else still goes
 // through the generic translated+logged path.
 func skuAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if nameCharsError(w, r, err) {
+		return
+	}
 	if errors.Is(err, data.ErrSKUExists) {
 		common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.sku_exists")
 		return
 	}
 	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}
+
+// nameCharsError answers a name refused by data.CheckSingleLineName (control
+// or invisible characters, ut-docs#5858) with a translated 400 and reports
+// whether it did. Callers try it before their generic error path.
+func nameCharsError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, data.ErrNameInvalidCharacters) {
+		return false
+	}
+	common.LocalizedError(w, r, http.StatusBadRequest, "common.error.name_invalid_characters")
+	return true
 }
 
 // optionSetUsedByMax caps how many items an option-set card's "Used by"
@@ -3166,6 +3249,9 @@ func optionSetCards(sets []data.OptionSetAdmin) []optionSetCard {
 // the one mistake an operator actually makes here, so it gets its own
 // actionable message; anything else takes the generic translated+logged path.
 func optionSetAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if nameCharsError(w, r, err) {
+		return
+	}
 	if errors.Is(err, data.ErrOptionSetExists) || errors.Is(err, data.ErrOptionSetValueExists) {
 		common.LocalizedError(w, r, status, "catalog.option_sets.exists")
 		return
@@ -3221,4 +3307,30 @@ func itemRoutingData(ctx context.Context, repo *data.CatalogRepo, posRepo *data.
 		}
 	}
 	return checks, strings.Join(categoryNames, ", "), len(itemRoutes) > 0
+}
+
+// missingMask reads the catalog page's ?missing= gap mask (data.GapBarcode…);
+// anything outside 1..GapAll is "no filter".
+func missingMask(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 1 || n > data.GapAll {
+		return 0
+	}
+	return n
+}
+
+// missingFilterKey is the banner's locale key for a mask: one key per
+// single gap, one shared key for a combination.
+func missingFilterKey(mask int) string {
+	switch mask {
+	case data.GapBarcode:
+		return "catalog.missing.barcode"
+	case data.GapImage:
+		return "catalog.missing.image"
+	case data.GapPrice:
+		return "catalog.missing.price"
+	case data.GapCategory:
+		return "catalog.missing.category"
+	}
+	return "catalog.missing.several"
 }

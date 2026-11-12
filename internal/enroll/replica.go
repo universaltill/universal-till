@@ -99,6 +99,9 @@ var (
 	ErrBadDeviceRequest = errors.New("enrol: invalid replica device request")
 	// errPrimaryUnsupported: the main till predates the vouch endpoint.
 	errPrimaryUnsupported = errors.New("enrol: main till has no cloud-device endpoint")
+	// errNotPairedReplica: no main-till URL or bearer is held (a restored
+	// copy until it joins again, ut-docs#5162). Steady state, not a failure.
+	errNotPairedReplica = errors.New("not a paired replica")
 
 	// vouchInterval is how often a replica re-asks after a success (or after
 	// finding a pre-fix main till), so the cloud's record of its version and
@@ -271,7 +274,14 @@ func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Ca
 			return
 		}
 	}
-	for _, k := range []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt, entitlement.KeyLastConfirmedAt} {
+	// KeyStoreClaimed (ut-docs#3532) is written only when relayed: an absent
+	// value leaves the replica's own row alone.
+	keys := []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt}
+	if _, ok := vals[entitlement.KeyStoreClaimed]; ok {
+		keys = append(keys, entitlement.KeyStoreClaimed)
+	}
+	keys = append(keys, entitlement.KeyLastConfirmedAt)
+	for _, k := range keys {
 		if err := kv.Set(ctx, k, vals[k]); err != nil {
 			logging.L().Warnf("enrolment: persist relayed %s: %v (will retry on the next vouch)", k, err)
 			return
@@ -340,6 +350,10 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 			return backoff, false
 		}
 		return vouchInterval, true
+	case errors.Is(err, errNotPairedReplica):
+		// Nothing to ask until the owner joins again; checking at the
+		// slowest pace costs nothing and logs nothing.
+		return replicaRetryDelays[len(replicaRetryDelays)-1], false
 	default:
 		log.Infof("enrolment: main till could not register this replica in the cloud (will retry): %v", err)
 		return backoff, false
@@ -396,7 +410,7 @@ func (p primarySource) RequestVouch(ctx context.Context, deviceID, version strin
 	get := func(k string) string { v, _, _ := p.kv.Get(ctx, k); return strings.TrimSpace(v) }
 	primary, bearer := get(keySyncPrimaryURL), get(keySyncBearer)
 	if primary == "" || bearer == "" {
-		return Vouch{}, fmt.Errorf("not a paired replica")
+		return Vouch{}, errNotPairedReplica
 	}
 	body, err := json.Marshal(map[string]string{"device_id": deviceID, "version": version})
 	if err != nil {

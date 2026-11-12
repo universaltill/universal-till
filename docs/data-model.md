@@ -114,7 +114,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `plugin_settings`
 - `plugin_hooks`
 - `plugin_permissions`
-- `shortcut_buttons`
+- `shortcut_buttons` — `image_path` is legacy: no longer written by this version (ut-docs#6097; an older till in a mixed fleet may still write it, and LAN sync copies it) and not read (ut-docs#6076); the column stays because migrations are append-only (ADR-0100) and LAN sync copies it as plain data. The tile picture is the item's `item_images` thumbnail, then `items.icon`
 
 ## ER Diagram
 
@@ -636,7 +636,7 @@ erDiagram
         string barcode
         string item_id
         string label
-        string image_path
+        string image_path "legacy: unread; no longer written (ut-docs#6097, #6076)"
         string updated_at
     }
 
@@ -671,9 +671,32 @@ erDiagram
 ## Customers — sealed import (ut-docs#4748, ADR-0168 §5)
 
 - Migration 087: `customers.postcode TEXT` (personal data like the rest: syncs to replicas, blanked on an erased shell), expression indexes on `lower(email)` and the postcode without spaces in upper case, `import_source_links.baseline_hash` / `erased_at`, and the main-till-only tables `customer_import_salt` (one random salt that never leaves the till) and `customer_erasure_hashes` (salted email/phone hashes of erased customers). None of the new tables syncs.
-- `internal/customerimport.Apply` applies one sealed `import_customers` chunk (at most 200 rows, 64 KiB) in one transaction: tombstoned link, then link, folded email, `phone_e164`, name + postcode only when exactly one customer fits; two candidates are `ambiguous_match`, an email and a phone naming different people `conflicting_match`; empty fields are filled, a differing field is kept and reported as row number + field name only; `force_fields` overwrites exactly the fields it names; each link stores a salted hash of the fields last imported, so the same rows again change nothing.
+- `internal/customerimport.Apply` applies one sealed `import_customers` chunk (at most 200 rows, 64 KiB) in one transaction: tombstoned link, then link, folded email, `phone_e164`, name + postcode only when exactly one customer fits; two candidates are `ambiguous_match`, an email and a phone naming different people `conflicting_match`; empty fields are filled, a differing field is kept and reported as row number + field name only; `force_fields` overwrites exactly the fields it names; each link stores a salted hash of the fields last imported, so the same rows again change nothing. A row's name is held to `data.CheckSingleLineName`, the till's admin rule (no line break, tab, control, U+2028/2029 or invisible format character except the RTL marks, ZWNJ/ZWJ and balanced isolates); such a row comes back `invalid_fields` naming `name` (ut-docs#5861).
 - `POSRepo.EraseCustomer` writes the suppression hashes and turns the customer's import links into tombstones in its own transaction; a later import skips that person and counts `erased_on_till`. A customer erased with neither an email, a phone nor an import link leaves nothing to match on.
 - The directive (`import_customers`: `job_id`, `chunk_index`, `sealed`) is main-till only; the seal is HPKE to the directive key with info `universaltill/import-customers/v1` and AAD store, directive id, type, job id and chunk index (`directivekey.CustomersAAD`). No customer value is logged or audited: audit rows and the result carry ids, counts and field names.
+
+## Store claimed signal from the cloud (ut-docs#3532, ADR-0060 amendment 2026-11)
+
+The entitlement block (ADR-0060 §3; a 402 `plan_required` body's block too)
+may carry `claimed`, a JSON boolean: `true` when the store has an owner. Only
+the boolean crosses; never the owner's identity. The till uses it only to word
+a rejected credential ("pair this till again" vs "register as a new store"),
+never as a sale gate or a modal.
+
+- **Cache (settings, per-till `entitlement.` family).** `entitlement.claimed`
+  = `true` | `false`, written by `entitlement.Block.Values` **only** when the
+  block carries a JSON boolean. Absent, `null` or a wrong type writes nothing
+  and never rejects the block, so the last value stands; nothing clears it. No
+  row means "never told". Read through `entitlement.StoreClaimed`
+  (`known` only for exactly `true`/`false`).
+- **Reader.** `pages.storeHasOwner` returns the cached value when known (it
+  overrides the plan inference both ways); otherwise it falls back to the older
+  inference from `entitlement.plan` / `subscription_status`, so an older cloud
+  changes nothing.
+- **Replicas.** `entitlement.Cached` relays `claimed` on the vouch answer
+  (`omitempty`; omitted when the main till was never told). The replica
+  writes it only when relayed and only under the existing
+  newer-confirmation-wins rule; an older replica ignores the field.
 
 ## Shop currency from the cloud (ut-docs#4539, ADR-0163 amendment 2026-10-16)
 
@@ -794,6 +817,17 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   category_cloud_id / tax_code_cloud_id (null = clear), active, is_weighed,
   stock_untracked, age_restricted, color, icon, item_type, sell_screen_hidden,
   sell_screen_removed, net_quantity_value/unit (both null = clear).
+  **Till-owned fields** (`tillOwnedFields` in `internal/catalogpull/base.go`,
+  ut-docs#6072): the cloud has no write path for an item's unit, color,
+  item_type, stock_untracked, sell_screen_hidden, sell_screen_removed and its
+  three link lists, nor a category's color, sell_screen_hidden and
+  modifier_group_cloud_ids, but the feed always carries them at the cloud's
+  defaults. On a row the till already has (one with a `cloud_links` entry) —
+  a pull, an upload answer, a conflict answer, a resync or an applier re-pull
+  — they are not applied, so the till's values survive. A create applies them
+  as served. When the cloud gains a write path for one, it leaves that set
+  and `ApplierVersion` is bumped. `icon` is still applied as served
+  (ut-docs#6071).
   `modifier_group`: name, required, min_select, max_select, sort_order (the
   group row's own legacy column; not negative), active, options — the full
   ordered option set `[{id, name, price_delta_minor, active}]` (an option left
@@ -807,7 +841,8 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   **Link lists** — category `modifier_group_cloud_ids`; item
   `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
   `option_set_cloud_ids` — are each the whole ordered set: absent keeps the
-  till's links, `[]` clears them, `null` refuses the row (the contract's lists
+  till's links, `[]` clears them (on a create; on an update only once the
+  cloud masters the lists, see Till-owned fields), `null` refuses the row (the contract's lists
   are never null), and every id must resolve through `cloud_links`. Applying
   an item's option sets never generates variants (they arrive as their own
   rows, ut-docs#4521). The same holds for `options` and `values`: absent
@@ -1088,9 +1123,15 @@ data/plugins/
 - Includes version, URL, checksum, signature, trust tier
 
 **Revocation Endpoint**
-- `GET /v1/revocations`
-- Returns list of revoked plugin IDs and versions
-- Includes revocation reason and timestamp
+- `GET /v1/revocations` (relative to the marketplace endpoint URL)
+- Returns the revoked releases: `pluginId` is the marketplace **listing
+  UUID**, `manifestId` the plugin manifest id (cloud contract 0.0.11+),
+  plus `version`, `action` and `reason`
+- The till resolves the installed plugin via `manifestId`, then the
+  `plugin_install_status` row for the listing, then `pluginId` directly,
+  and disables it only on an exact version match; a sync that disabled
+  anything reloads the plugin manager so WASM modules unload (ut-docs#5653,
+  contract: ut-docs `reference/contracts/plugin-revocation-feed.md`)
 
 **Telemetry Endpoint**
 - `POST /v1/telemetry/report` with `Authorization: Bearer <device credential>`

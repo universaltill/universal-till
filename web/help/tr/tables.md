@@ -3,6 +3,7 @@ id: tables
 title: Masalar ve kat planı
 section: İşi yürütme
 order: 236
+public: true
 summary: "Dükkanınızın kat planını çizin — adı, alanı, koltuk sayısı ve şekliyle her yemek masası — ve hangi masaların boş, hangilerinin açık siparişi olduğunu bir bakışta görün."
 routes: [/tables]
 ---

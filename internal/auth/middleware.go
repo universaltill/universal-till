@@ -57,11 +57,24 @@ func exempt(path string) bool {
 		// ut-docs#3562: the replica push tick's no-sale journal, syncTill-
 		// authed in the handler like /api/sync/sales.
 		"/api/sync/no-sales",
+		// ut-docs#5198: a replica swapping its LAN sync bearer, syncTill-
+		// authed in the handler. Omitting it here would 401 every rotation
+		// -- the /api/sync/stock failure class again -- and the old bearer
+		// would die at the end of its grace.
+		"/api/sync/bearer/rotate",
 		// ut-docs#4711: the same tick's cleared-basket journal, syncTill-authed.
 		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join withdraws its own enrolment with the
 		// bearer it was just issued, syncTill-authed in the handler.
 		"/api/sync/enroll/withdraw",
+		// ut-docs#5074: the read-only sales copy's feed and state re-sync,
+		// syncTill-authed (and pinned-TLS-only) in the handler. NOT the
+		// copy's /status, /enable or /disable: those are a manager's
+		// session routes.
+		"/api/sync/sales-mirror", "/api/sync/sales-mirror/state",
+		// ut-docs#5074 M7: an additional till's own closes for the copy,
+		// syncTill-authed and pinned-TLS-only in the handler.
+		"/api/sync/closes",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
 		// ut-docs#2566: uploaded category photos, the categories scope of
 		// the same bearer-authed asset surface (sync_assets.go).
@@ -373,23 +386,27 @@ func exempt(path string) bool {
 // hx-triggers and fails on an unclassified one, or on a stale entry here.
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
-	"/ui/join-sync":           true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
-	"/ui/main-till-status":    true,
-	"/ui/net-status":          true, // status-bar light, fetch every 10 s (ut-docs#3095)
-	"/ui/subscription-chip":   true, // status-bar subscription chip, every 60 s (ut-docs#2569)
-	"/ui/sync-chip":           true,
-	"/ui/fiscal-chip":         true,
-	"/ui/diagnostics-chip":    true,
-	"/ui/pairing-notice":      true,
-	"/ui/join-notice":         true, // ambient join-discovery notice (ut-docs#2721)
-	"/ui/shop-name-notice":    true, // "Name your shop" banner, every 60 s (ut-docs#3114)
-	"/ui/theme-sync":          true,
-	"/ui/cloud-auth-chip":     true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
-	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
-	"/ui/disk-space-chip":     true, // low-disk chip, every 60 s (ut-docs#3121)
-	"/ui/backup-copy-chip":    true, // copy-a-backup-off reminder, every 10 min (ut-docs#5071)
-	"/ui/replaced-banner":     true, // this till was replaced as main till (ut-docs#5058)
-	"/ui/shop-currency-chip":  true, // shop currency differs, every 60 s (ut-docs#4539)
+	"/notices/bell":            true, // ADR-0176 (ut-docs#5366): the bell's local unread count, every 30 s
+	"/notices/strip":           true, // the critical strip, every 30 s
+	"/notices/toast":           true, // the one important-toast slot, every 15 s
+	"/ui/join-sync":            true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
+	"/ui/main-till-status":     true,
+	"/ui/net-status":           true, // status-bar light, fetch every 10 s (ut-docs#3095)
+	"/ui/subscription-chip":    true, // status-bar subscription chip, every 60 s (ut-docs#2569)
+	"/ui/sync-chip":            true,
+	"/ui/fiscal-chip":          true,
+	"/ui/diagnostics-chip":     true,
+	"/ui/pairing-notice":       true,
+	"/ui/join-notice":          true, // ambient join-discovery notice (ut-docs#2721)
+	"/ui/shop-name-notice":     true, // "Name your shop" banner, every 60 s (ut-docs#3114)
+	"/ui/theme-sync":           true,
+	"/ui/cloud-auth-chip":      true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
+	"/ui/report-archive-chip":  true, // refused report upload (ADR-0147, ut-docs#574)
+	"/ui/disk-space-chip":      true, // low-disk chip, every 60 s (ut-docs#3121)
+	"/ui/backup-copy-chip":     true, // copy-a-backup-off reminder, every 10 min (ut-docs#5071)
+	"/ui/replaced-banner":      true, // this till was replaced as main till (ut-docs#5058)
+	"/ui/move-approval-notice": true, // a move into another shop waits for approval, every 30 s (ut-docs#5127)
+	"/ui/shop-currency-chip":   true, // shop currency differs, every 60 s (ut-docs#4539)
 	// Settings → Language download chip, every 3 s (ut-docs#4477).
 	"/ui/settings/language-install": true,
 	// Sale screen watchers (#2765, #2858).
@@ -485,24 +502,28 @@ func displayBoardRequest(r *http.Request) bool {
 // running (ut-docs#2935 review). TestShellRequestsAreBoardScoped scans the
 // two templates and fails on a shell request missing here.
 var shellGetPaths = map[string]bool{
-	"/ui/main-till-status":    true,
-	"/ui/net-status":          true,
-	"/ui/subscription-chip":   true, // ut-docs#2569
-	"/ui/sync-chip":           true,
-	"/ui/fiscal-chip":         true,
-	"/ui/diagnostics-chip":    true,
-	"/ui/pairing-notice":      true,
-	"/ui/join-notice":         true, // ut-docs#2721
-	"/ui/shop-name-notice":    true, // "Name your shop" banner, every 60 s (ut-docs#3114)
-	"/ui/theme-sync":          true,
-	"/ui/session-chip":        true,
-	"/ui/bugreport-chip":      true,
-	"/ui/cloud-auth-chip":     true,
-	"/ui/report-archive-chip": true,
-	"/ui/disk-space-chip":     true,
-	"/ui/backup-copy-chip":    true, // ut-docs#5071
-	"/ui/replaced-banner":     true, // ut-docs#5058
-	"/ui/shop-currency-chip":  true, // ut-docs#4539
+	"/ui/main-till-status":     true,
+	"/ui/net-status":           true,
+	"/ui/subscription-chip":    true, // ut-docs#2569
+	"/ui/sync-chip":            true,
+	"/ui/fiscal-chip":          true,
+	"/ui/diagnostics-chip":     true,
+	"/ui/pairing-notice":       true,
+	"/ui/join-notice":          true, // ut-docs#2721
+	"/ui/shop-name-notice":     true, // "Name your shop" banner, every 60 s (ut-docs#3114)
+	"/ui/theme-sync":           true,
+	"/ui/session-chip":         true,
+	"/ui/bugreport-chip":       true,
+	"/notices/bell":            true, // ADR-0176, ut-docs#5366
+	"/notices/strip":           true,
+	"/notices/toast":           true,
+	"/ui/cloud-auth-chip":      true,
+	"/ui/report-archive-chip":  true,
+	"/ui/disk-space-chip":      true,
+	"/ui/backup-copy-chip":     true, // ut-docs#5071
+	"/ui/replaced-banner":      true, // ut-docs#5058
+	"/ui/move-approval-notice": true, // ut-docs#5127
+	"/ui/shop-currency-chip":   true, // ut-docs#4539
 }
 
 var shellPostPaths = map[string]bool{
@@ -564,12 +585,17 @@ func exemptRequest(r *http.Request, svc *Service) bool {
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt(r.URL.Path) || exemptRequest(r, svc) {
+			// ut-docs#5338: no session means no trust, so bound the body here,
+			// in the one place that decides "no session needed".
+			if !limitExemptBody(w, r) {
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
 		if c, err := r.Cookie(CookieName); err == nil {
 			p := r.URL.Path
-			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && p != "/api/orders/stream"
+			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && !sseStream(p)
 			if u, ok := svc.ResolveFor(r.Context(), c.Value, touch, displayBoardRequest(r)); ok {
 				// ut-docs#3935: a request-scoped permission snapshot, so
 				// the ~10 Can checks a page render makes read the
@@ -665,4 +691,11 @@ func UserID(r *http.Request) string {
 // seam for non-middleware entry points.
 func WithUser(r *http.Request, u User) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), ctxKey{}, u))
+}
+
+// sseStream reports the long-lived session-authed EventSource routes. They
+// are excluded from the session touch so an open stream never keeps an idle
+// session alive (ADR-0079, ut-docs#2743).
+func sseStream(p string) bool {
+	return p == "/api/orders/stream" || p == "/api/pairings/stream"
 }

@@ -158,4 +158,31 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
       assertClean();
     });
   }
+
+  // ut-docs#6046: the name is the keyboard path; focus returns to it on close.
+  test('name button opens on Enter and Space; a non-name cell tap opens; focus returns to the name', async ({ page }) => {
+    await page.goto('/registers');
+    const name = 'E2E Kbd ' + Date.now();
+    await createRegister(page, name);
+    // Deactivate it so the keyboard path is proven on the inactive-group row.
+    await row(page, name).click();
+    page.once('dialog', (d) => d.accept());
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
+    await expect(page.locator('.registers-inactive').getByText(name)).toHaveCount(1);
+    const nameBtn = row(page, name).locator('.record-row-open');
+    for (const key of ['Enter', ' ']) {
+      await nameBtn.focus();
+      await page.keyboard.press(key);
+      await expect(page.locator(DIALOG)).toBeVisible();
+      await expect(page.locator(NAME)).toHaveValue(name);
+      await page.keyboard.press('Escape');
+      await expect(page.locator(DIALOG)).toBeHidden();
+      await expect(nameBtn).toBeFocused();
+    }
+    await row(page, name).locator('td').nth(1).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(nameBtn).toBeFocused();
+  });
 });

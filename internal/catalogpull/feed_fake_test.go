@@ -347,3 +347,14 @@ func setBeforeChunkCommit(f func() error) func() {
 	beforeChunkCommit = f
 	return func() { beforeChunkCommit = old }
 }
+
+// allFieldsPulled lets a test see the cloud's link lists and display fields
+// applied onto a row the till already has: the behaviour the cloud masters
+// once it has a write path for them (ADR-0162 §2). Until then tillOwnedFields
+// keeps them (ut-docs#6072).
+func allFieldsPulled(t *testing.T) {
+	t.Helper()
+	old := tillOwnedFields
+	tillOwnedFields = nil
+	t.Cleanup(func() { tillOwnedFields = old })
+}

@@ -42,8 +42,22 @@
       .selforder-cart { border:1px solid var(--border, #d1d5db); border-radius:12px;
         padding:1rem; position:sticky; top:1rem; }
       .selforder-cart-lines { list-style:none; margin:0 0 .75rem; padding:0; }
-      .selforder-cart-line { display:grid; grid-template-columns:1fr auto auto auto;
-        align-items:center; gap:.5rem; padding:.5rem 0; border-block-end:1px solid var(--border, #e5e7eb); }
+      /* ut-docs#4959: each line is two rows beside the item photo — the
+         name (and modifiers) on the full width, then qty, total, remove.
+         One row with a photo column left a 360px phone ~22px for the name
+         (and the 22rem kiosk cart ~70px), measured in a driven run. The
+         photo uses contain like the tiles: icons and cut-outs uncropped. */
+      .selforder-cart-line { display:grid; grid-template-columns:auto 1fr auto auto;
+        grid-template-areas:"thumb info info info" "thumb qty total remove";
+        align-items:center; column-gap:.6rem; row-gap:.3rem; padding:.5rem 0;
+        border-block-end:1px solid var(--border, #e5e7eb); }
+      .selforder-cart-thumb { grid-area:thumb; align-self:start; inline-size:3rem; block-size:3rem;
+        object-fit:contain; border-radius:8px; border:1px solid var(--border, #e5e7eb); }
+      .selforder-cart-thumb-empty { display:inline-block; background:var(--surface, #f3f4f6); }
+      .selforder-cart-line-info { grid-area:info; min-inline-size:0; overflow-wrap:anywhere; }
+      .selforder-cart-line-qty { grid-area:qty; justify-self:start; }
+      .selforder-cart-line-total { grid-area:total; font-variant-numeric:tabular-nums; }
+      .selforder-cart-line > .btn-x { grid-area:remove; }
       .selforder-cart-line-qty { display:flex; align-items:center; gap:.4rem; }
       .selforder-qty-btn { min-width:36px; min-height:36px; padding:0; }
       .selforder-qty-value { min-inline-size:1.5rem; text-align:center; font-variant-numeric:tabular-nums; }

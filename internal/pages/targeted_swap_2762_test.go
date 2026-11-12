@@ -151,8 +151,8 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 			t.Errorf("settings.html: %s must keep %q: %s", post, want, form)
 		}
 	}
-	if n := strings.Count(s, `hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save;`); n != 2 {
-		t.Errorf("settings.html: currency and language must both keep reload:settings-save, found %d", n)
+	if n := strings.Count(s, `hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save;`); n != 3 {
+		t.Errorf("settings.html: currency, currency display (ut-docs#5410) and language must all keep reload:settings-save, found %d", n)
 	}
 	if strings.Contains(s, `class="card" data-ut-refresh`) || strings.Contains(s, `class="card settings-wide" data-ut-refresh`) {
 		t.Error("settings.html: a .card must never be a refresh region (the section switcher holds card references)")

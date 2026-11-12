@@ -3,6 +3,7 @@ id: open-orders
 title: Open orders
 section: Everyday selling
 order: 15
+public: true
 summary: "Every order on this till that is still waiting to be paid, in two tabs: sales put on hold, and self-order kiosk orders to be paid at the counter."
 routes: [/open-orders]
 keywords: [open orders, cancel order, cancel, void order, delete order, held, hold, on hold, parked, tab, resume, recall, table, waiting, pay at the counter, pay at counter, kiosk, self order, C-number]

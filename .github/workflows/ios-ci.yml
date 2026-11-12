@@ -11,6 +11,8 @@ name: ios-ci
 # and the TestFlight upload are ios-testflight.yml (ut-docs#3069), which
 # only a maintainer's dispatch or a published release can start.
 # universal-till is public, so the macOS runner minutes are free.
+# A run whose macOS job GitHub never gave a runner (hosted capacity
+# starvation) is re-run by ci-runner-retry.yml (ut-docs#5490).
 on:
   push:
     branches: [main]
@@ -86,6 +88,11 @@ jobs:
             -configuration Debug -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build
+      - name: Launch smoke's drawn-WebView poll, against the real screenshot check (ut-docs#5201)
+        if: steps.filter.outputs.match == 'true'
+        env:
+          UT_REQUIRE_IOS_SWIFT: "1"
+        run: bash scripts/ci/ios-sim-wait-drawn_test.sh
       - name: Launch smoke on iPhone and iPad simulators
         if: steps.filter.outputs.match == 'true'
         run: bash scripts/ci/ios-sim-smoke.sh ios/build/dd/Build/Products/Debug-iphonesimulator/UniversalTill.app ios/build/shots

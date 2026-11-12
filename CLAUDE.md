@@ -16,6 +16,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   comment-only edits are fine. Add a new `NNN_*.sql` and pin its checksum in
   `internal/db/shipped_migrations_test.go` (the failure message prints it).
 
+## Shared catimport module (ADR-0164, `scripts/ci/guard-catimport-version.sh`)
+- A PR changing `catimport/` Go source, `go.mod` or `go.sum` bumps
+  `catimport/VERSION` (patch fix, minor new name); `catimport-tag.yml` tags
+  `catimport/vX.Y.Z` on merge — never push that tag by hand (#5882).
+
 ## Card data (ADR-0127, `scripts/ci/guard-card-data-schema.sh`)
 - Card data lives only in the PSP's vault: no migration names a card
   number, BIN/IIN, CVV/CVC, track data or PIN block (last4, brand, expiry,
@@ -56,7 +61,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
 ## API, formats, i18n
 - Responses `{ "data": …, "error": null }`; JSON snake_case; ISO-8601 dates.
 - No hardcoded user-facing strings: templates use `{{ T "key" }}`, and every
-  key exists in every `web/locales/*.json` (en.json is the base) —
+  key exists in `web/locales/en.json` (the only required locale; code PRs
+  add English only, other languages come from Weblate, ADR-0160 §2) —
   `scripts/ci/guard-i18n.sh`. Go-side menu labels are `nav.*` keys.
 - Every `en.json` key has metadata in `web/i18n-meta/en.meta.json`:
   `description` and `review` (`legal`|`standard`) required, `placeholders`
@@ -121,6 +127,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `PersistManifest`, both installers and `WasmRuntime.Sync`. The `channel`
   block stays in `manifest.go` (ut-cloud's signing mirror reads it there).
 
+## Test fixtures (ut-docs#5467, `scripts/ci/guard-fixed-dates.sh`)
+- A fixed date within 60 days of today in a `*_test.go` / `*.spec.ts`
+  line fails CI: derive it from `time.Now()`, move it out of range, or mark a
+  value no real-clock check reads with same-line `fixed-date:ok <reason>`.
+
 ## Agent worktree hygiene
 - `.claude/worktrees/` accumulates stale agent worktrees that pollute
   repo-wide greps (#1567). Run `make prune-worktrees` periodically or when a
@@ -150,19 +161,31 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     ut-docs ADRs (needs `DOCS_READ_TOKEN`; skips with a warning without it).
     Merge the ut-docs ADR-0002 PR first. Historical counts in an ADR:
     `<!-- taxonomy-count:historical -->` (#2134, #2159).
+  - `webkit-phone` job in `e2e.yml`: runs `playwright.webkit.config.ts`
+    (phone-named specs in WebKit) when a PR touches `web/**`/`e2e/**`/`e2e.yml`, always
+    on push to main; skips green otherwise via in-job git diff, never a
+    required check (ut-docs#3734).
   - `docs-shots-determinism.yml` for docs-shots harness changes (paths in
     its `on:` block; + weekly cron, `workflow_dispatch`): two runs must
     produce byte-identical PNGs and `manifest.json` (#2184).
+  - `fixed-date-window.yml` (daily cron + `workflow_dispatch`, no PR
+    trigger, never gates): runs `guard-fixed-dates.sh` on `main` so a
+    fixture date entering the 60-day window is flagged before an unrelated
+    PR turns red (#5467).
   - `docs-shots-locale-drift.yml` (weekly cron + `workflow_dispatch`, no
     PR trigger, never gates): regenerates docs-shots on `main` and keeps one
     `docs-shots-drift` issue listing screenshots stale through
     `web/locales/**`-only changes; never commits (#4582).
   - `desktop-darwin.yml` for `cmd/unitill-desktop/**` / `web/locales/**`:
-    builds and vets the macOS shell (cgo/Objective-C) on `macos-14`, which
-    otherwise compiled only at release time (ut-docs#5021).
+    builds and vets the macOS shell (cgo/Objective-C) on `macos-15`, which
+    otherwise compiled only at release time (ut-docs#5021); also `go test`s
+    every package with darwin-only files (paths `internal/selfupdate/**`,
+    `internal/lantls/**`, `internal/diskspace/**`, `**/*_darwin{,_test}.go`;
+    of `internal/db` only `lock_unix.go` triggers it; ut-docs#5279).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
-    real on PRs; exceptions in `e2e/tests-i18n-audit/allowlist.json`;
+    real on PRs (push: report only, ADR-0160; PR defers keys new in the PR and
+    pre-existing keys the de pack merely lags on, #2805/#5583); exceptions in `e2e/tests-i18n-audit/allowlist.json`;
     `UT_LOCALE_AUDIT_STRICT=1` (`scripts/ci/audit-locale-render.sh`) makes a
     missing pack checkout a hard failure, not a skip (#2300).
 - Feature branch; review record in `docs/code-reviews/<date>-<topic>.md`;
@@ -183,11 +206,15 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   new page needs a topic claiming its `routes:` and a `?` link; a section
   inside a claimed page uses `{{ helpLink "topic-id" }}`.
   `guard-help-topics.sh` checks route coverage and topic consistency;
-  `guard-help-drift.sh` fails when a translation's structure drifts from
-  English unless recorded in
-  `scripts/ci/i18n-baseline/help-drift-baseline.json` (#1962).
+  `guard-help-drift.sh` only warns when a translation drifts from English
+  (English-only help topics merge; translations come via Weblate, ADR-0160).
   `guard-help-breadcrumbs.sh`: a translated `Settings → X` breadcrumb must use
   the locale's own label for that section; shrink-only baseline
-  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696).
+  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696). It also
+  fails any `→` in a help topic of an `httpx.IsRTL` locale: write `←`
+  (ut-docs#5644).
+  `guard-help-terms.sh`: a translated topic uses the locale UI's own word for
+  a role or thing (de: "Manager", never "Führungskraft"); entries in
+  `scripts/ci/help-terms.txt`; exception `help-term:allow <reason>` (#5243).
 - Keep `README.md` current in the same session whenever a change makes it
   stale.

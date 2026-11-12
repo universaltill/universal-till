@@ -1024,3 +1024,133 @@ func TestRenderVoucherTooWideFallsBackToText(t *testing.T) {
 		t.Error("fitting voucher code lost its barcode")
 	}
 }
+
+// ---- ut-docs#5847: control runes in free text never reach the printer ----
+
+func TestEncodeText_StripsControlRunesEveryCharset(t *testing.T) {
+	for _, cs := range allCharsets {
+		out := encodeText("A"+kick+"B\n\r\t\f\x1d\x1c\x10\x7f\u0085\u009b  ‮C", cs)
+		for _, c := range out {
+			if c < 0x20 || c == 0x7f {
+				t.Errorf("%q: control byte %#x in %q", cs, c, out)
+			}
+		}
+		if !bytes.HasPrefix(out, []byte("A")) || !bytes.HasSuffix(out, []byte("C")) {
+			t.Errorf("%q: %q", cs, out)
+		}
+		if got, want := string(encodeText("A"+kick+"B", cs)), "A"+kickTwin+"B"; got != want {
+			t.Errorf("%q: got %q want %q", cs, got, want)
+		}
+	}
+}
+
+func TestEncodeText_AsciiControlIsSpaceNotQuestionMark(t *testing.T) {
+	if got := string(encodeText("a\x00b\x1bc\x7fd\te", "ascii")); got != "a b c d e" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRunesEncodable_ControlRuneNeverDegrades(t *testing.T) {
+	for _, cs := range allCharsets {
+		if !Encodable("a\tb\x1b\n\u0085 ‮", cs) {
+			t.Errorf("%q: a stripped control rune must not count as degraded", cs)
+		}
+	}
+}
+
+// dirtyDoc builds a Doc with f applied to every free-text field (f=identity
+// is the attack, f=twinOf is its sanitised twin).
+func dirtyDoc(f func(string) string, kickDrawer bool, cs string) Doc {
+	in := func(s string) string { return f(s + kick + forged) }
+	return Doc{
+		StoreName:       in("Shop"),
+		Header:          []string{in("Hdr")},
+		Meta:            []string{in("Meta")},
+		Lines:           []Line{{Name: in("Item"), Qty: in("2"), Amount: in("1.00"), Sub: in("sub")}},
+		Totals:          []KV{{Label: in("Total"), Amount: in("1.00"), Strong: true}},
+		Payments:        []KV{{Label: in("Cash"), Amount: in("1.00")}},
+		Footer:          []string{in("Thanks")},
+		Barcode:         "R-1",
+		TrackingQR:      []byte{0x1d, 0x76, 0x30, 0x00, 0x01, 0x00, 0x01, 0x00, 0xff},
+		TrackingCaption: in("Track"),
+		VoucherHeading:  in("Vouchers"),
+		Vouchers: []VoucherBlock{{
+			Label: in("Gift"), Amount: in("5.00"), Holder: in("Anna"),
+			Balance: in("Bal"), Void: in("VOID"), Code: in("CODE"),
+		}},
+		KickDrawer: kickDrawer,
+		Charset:    cs,
+	}
+}
+
+func TestRender_ControlRunesInFreeTextNeverReachPrinter(t *testing.T) {
+	ident := func(s string) string { return s }
+	for _, cs := range allCharsets {
+		for _, k := range []bool{false, true} {
+			out := Render(dirtyDoc(ident, k, cs))
+			want := Render(dirtyDoc(twinOf, k, cs))
+			if !bytes.Equal(out, want) {
+				t.Errorf("%q kick=%v: dirty render differs from sanitised twin\n got %q\nwant %q", cs, k, out, want)
+			}
+			wantN := 0
+			if k {
+				wantN = 1
+			}
+			if n := bytes.Count(out, []byte(escP)); n != wantN {
+				t.Errorf("%q kick=%v: ESC p x%d, want %d", cs, k, n, wantN)
+			}
+			if a, b := bytes.Count(out, []byte("\n")), bytes.Count(want, []byte("\n")); a != b {
+				t.Errorf("%q kick=%v: %d newlines, sanitised twin has %d", cs, k, a, b)
+			}
+		}
+	}
+}
+
+func TestRenderLabel_ControlRunesNeverReachPrinter(t *testing.T) {
+	for _, cs := range allCharsets {
+		// a code with control runes is not barcodable, so it prints as text; the
+		// twin is therefore compared with the code left out, and the dirty
+		// code is checked on its own.
+		d := func(f func(string) string, code string) []byte {
+			return RenderLabelWithUnitPrice(f("Name"+kick+forged), f("1.00"+kick), f("per kg"+kick+forged), code, cs)
+		}
+		id := func(s string) string { return s }
+		if got, want := d(id, ""), d(twinOf, ""); !bytes.Equal(got, want) {
+			t.Errorf("%q: differs from twin\n got %q\nwant %q", cs, got, want)
+		}
+		out := RenderLabelWithUnitPrice("n", "1", "", "C"+kick+forged, cs)
+		if n := bytes.Count(out, []byte(escP)); n != 0 {
+			t.Errorf("%q: ESC p x%d", cs, n)
+		}
+		if !bytes.Contains(out, []byte("C"+kickTwin+forgedTwin+"\n")) {
+			t.Errorf("%q: sanitised code text row missing in %q", cs, out)
+		}
+	}
+}
+
+func TestRenderText_ControlRunesOnlyStructuralNewlines(t *testing.T) {
+	ident := func(s string) string { return s }
+	for _, k := range []bool{false, true} {
+		d := dirtyDoc(ident, k, "")
+		d.TrackingURL = "https://t.example/o/abc" + kick + forged
+		snapshot := dirtyDoc(ident, k, "")
+		snapshot.TrackingURL = d.TrackingURL
+		twin := dirtyDoc(twinOf, k, "")
+		twin.TrackingURL = twinOf(d.TrackingURL)
+		out := RenderText(d)
+		if want := RenderText(twin); out != want {
+			t.Errorf("dirty differs from twin\n got %q\nwant %q", out, want)
+		}
+		for _, r := range out {
+			if r < 0x20 && r != '\n' {
+				t.Errorf("control rune %U in plain-text output", r)
+			}
+		}
+		// the caller's Doc (its slices alias the caller's arrays) is not mutated
+		if d.Header[0] != snapshot.Header[0] || d.Lines[0].Name != snapshot.Lines[0].Name ||
+			d.Vouchers[0].Holder != snapshot.Vouchers[0].Holder || d.Footer[0] != snapshot.Footer[0] ||
+			d.Payments[0].Label != snapshot.Payments[0].Label || d.Totals[0].Label != snapshot.Totals[0].Label || d.Meta[0] != snapshot.Meta[0] {
+			t.Error("RenderText mutated the caller's Doc")
+		}
+	}
+}

@@ -8,13 +8,28 @@
 # (public repo: never self-hosted) whenever the shell or the embedded
 # locales it reads change.
 #
+# ut-docs#5279: the same job also runs the go tests of every package that has
+# darwin-specific files. ci.yml runs on Linux only, so e.g.
+# internal/selfupdate/macapp_darwin_test.go never executed anywhere.
+#
 # Path-scoped, so most PRs get no run: never make it a required check.
+#
+# A run whose macOS job GitHub never gave a runner (hosted capacity
+# starvation) is re-run by ci-runner-retry.yml (ut-docs#5490).
 name: desktop-darwin
 on:
   pull_request:
     paths:
       - "cmd/unitill-desktop/**"
       - "web/locales/**"
+      - "internal/selfupdate/**"
+      - "internal/lantls/**"
+      - "**/*_darwin.go"
+      - "**/*_darwin_test.go"
+      # darwin-compiled files not named *_darwin.go (internal/db is tested
+      # but not listed: it changes on most PRs and macOS minutes are dear).
+      - "internal/db/lock_unix.go"
+      - "internal/diskspace/**"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/desktop-darwin.yml"
@@ -23,7 +38,7 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15 # Apple Silicon; macos-14 is retired 2026-11-02 (ut-docs#5214)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -37,3 +52,28 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: go vet -tags desktop ./cmd/unitill-desktop
+      # Packages are discovered, not listed, so a new darwin file is covered
+      # without touching this workflow. git ls-files keeps untracked files and
+      # .claude/worktrees/ out. A darwin-specific file is one named
+      # *_darwin.go / *_darwin_test.go or with a //go:build line naming darwin
+      # not directly after "!" (approximate: !(darwin && …) also matches; a
+      # spare package costs only test time). cmd/unitill-desktop is skipped: it
+      # needs the desktop tag + cgo and is built and vetted above; it has no
+      # darwin-only tests today — a new one needs its own step here.
+      - name: Test packages with darwin-only files
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(
+            {
+              git ls-files '*_darwin.go' '*_darwin_test.go'
+              git grep -lE '^//go:build.*[^!]darwin' -- '*.go' || true
+            } | xargs -n1 dirname | sort -u | grep -vx 'cmd/unitill-desktop' | sed 's|^|./|' || true
+          )
+          if [ -z "$pkgs" ]; then
+            echo "::error::no packages with darwin-specific files found; discovery is broken"
+            exit 1
+          fi
+          echo "Testing: $pkgs"
+          # shellcheck disable=SC2086
+          go test -count=1 $pkgs

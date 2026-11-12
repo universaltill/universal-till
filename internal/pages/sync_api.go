@@ -324,19 +324,33 @@ func displayPrimaryAddress(primaryURL string) string {
 // syncTill authenticates a replica's sync call by its bearer (only the
 // SHA-256 is stored; the hash lookup makes timing attacks moot).
 //
+// The bearer may be the till's previous one while a rotation's grace window
+// is open (ut-docs#5198). A bearer that is due to be swapped marks the
+// answer with lantls.BearerRotateHeader; the replica's peer transport then
+// calls POST /api/sync/bearer/rotate in the background.
+//
 // It also enforces pinned LAN TLS per till (ADR-0114 §7, ut-docs#2737): the
 // first bearer request a till makes over TLS records it as pinned, and from
 // then on its bearer is refused on plain HTTP. A till sends TLS only once it
 // holds this main till's pin (lantls.NewPeerClient) and then never falls
 // back, so a plain request with a pinned till's bearer is a stolen bearer or
 // a downgrade. A till that has never used TLS keeps plain HTTP (§11).
-func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
+func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" {
 		return data.TillRow{}, false
 	}
-	t, ok, err := repo.TillByBearerHash(r.Context(), hashBearer(h))
-	if err != nil || !ok {
+	t, ok, err := repo.TillByBearerHashAt(r.Context(), hashBearer(h), syncBearerNow())
+	if err != nil {
+		return data.TillRow{}, false
+	}
+	if !ok {
+		if t.ID != "" {
+			// A previous bearer past its grace: a copy that outlived the
+			// rotation (an old backup) or a replica that never took the new
+			// one. The repo cleared it, so this is said once per rotation.
+			logging.L().Warnf("sync: an old sync credential for till %s was used after its rotation and was refused", t.ID)
+		}
 		return data.TillRow{}, false
 	}
 	switch {
@@ -356,8 +370,14 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 		}
 		t.TLSPinned = true
 	}
+	if t.RotateDue {
+		w.Header().Set(lantls.BearerRotateHeader, "1")
+	}
 	return t, true
 }
+
+// syncBearerNow is the clock bearer rotation runs on -- a seam for tests.
+var syncBearerNow = time.Now
 
 // joinWithdrawWindow bounds how long after enrolment a till may withdraw
 // its own enrolment (ut-docs#4566). A join enrols, then downloads the
@@ -466,10 +486,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// the same view as the status-bar chip that links here (#2742).
 		lv := replicaLinkView(r.Context(), d)
 		m["title"] = httpx.T(httpx.RequestLocale(r), "page.title.tills")
-		m["theme"] = d.CurrentState().Theme
+		m["theme"] = d.ResolvedTheme(r)
 		m["menuItems"] = d.MenuSnapshot()
 		m["MainUnreachable"] = lv.State == linkUnreachable
 		m["MainUnreachableSince"] = lv.Since
+		// ut-docs#5162: a restored copy has no bearer; the chip says "join
+		// again" and so does this page (never both with the notice above).
+		m["NeedsRejoin"] = lv.State == linkRejoin
 		// ut-docs#4507: joining replaces this till's sales too — the join
 		// section warns and asks for a confirm (same as the join notice).
 		m["HasSales"] = hasSalesHistory(r.Context(), d)
@@ -612,6 +635,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		role, ok := tillRoleFromForm(in.Role)
 		if !ok {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
+		}
+		// ut-docs#5862, #5875: one line, no hidden formatting characters, at
+		// most maxTillNameRunes. 400, never 422 (422 means name_taken to
+		// completeJoin); refused before the one-time token is spent.
+		if key := tillNameRefusalKey(in.Name); key != "" {
+			common.LocalizedError(w, r, http.StatusBadRequest, key)
 			return
 		}
 		presented := strings.TrimSpace(in.Token)
@@ -780,7 +810,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "withdraw must be done on the primary till", http.StatusConflict)
 			return
 		}
-		till, ok := syncTill(r, repo)
+		till, ok := syncTill(w, r, repo)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -822,7 +852,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// real backup snapshot itself stays pristine (it's a disaster-recovery
 	// artifact whose restore must bring back the real till roster).
 	mux.HandleFunc("GET /api/sync/snapshot", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, repo)
+		till, ok := syncTill(w, r, repo)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -842,7 +872,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Bearer-gated liveness — the first consumer of the sync surface;
 	// D2/D3 endpoints mount alongside it.
 	mux.HandleFunc("GET /api/sync/ping", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, repo)
+		till, ok := syncTill(w, r, repo)
 		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
@@ -942,10 +972,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			actorID = elev.ApproverID
 		}
 
+		// ut-docs#5074 M6: what this till had sent its main till, read before
+		// the identity (and with it the push cursor) is cleared.
+		pushedUpTo, _, _ := d.Settings.Get(r.Context(), "sync.push_cursor")
 		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
+		// ut-docs#5074 M6: this till's read-only copy of the shop's sales
+		// becomes its record (no stock, voucher or receipt-counter
+		// movement); a no-op when the copy was never on.
+		adopted := adoptSalesMirrorOnPromote(r.Context(), d, actorID, pushedUpTo)
 		// ut-docs#2753: no longer a replica, so no main till vouches for it.
 		enroll.ForgetReplicaVouch()
 		resolveReplicaSyncProblems()
@@ -956,6 +993,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till", "-", "till_promoted", nil, now, "")
 		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "tills.promoted"))
+		writeAdoptionNote(w, locale, adopted)
 	})
 
 	// Replica side (manager): join a primary. Enrols, downloads the full
@@ -1117,6 +1155,9 @@ const (
 	joinErrUnsentDayCloses
 	joinErrUnsentDayClosesRefused
 	joinErrMainReplaced // ut-docs#5058: that main till was replaced
+	// ut-docs#5862: this till's name has control or invisible characters;
+	// refused locally, before the main till is contacted.
+	joinErrNameInvalid
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1140,6 +1181,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnsentDayCloses:        "tills.join_error.unsent_day_closes",
 	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
 	joinErrMainReplaced:           "tills.join_error.replaced",
+	joinErrNameInvalid:            keyNameInvalidCharacters,
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1173,7 +1215,11 @@ func friendlyJoinError(locale string, err error) string {
 	if !errors.As(err, &je) {
 		return fmt.Sprintf(httpx.T(locale, "tills.join_error.unexpected"), err.Error())
 	}
-	msg := httpx.T(locale, joinErrLocaleKey[je.kind])
+	key := joinErrLocaleKey[je.kind]
+	if je.kind == joinErrUnsentDayClosesRefused && !planPurchaseAllowed() {
+		key = "tills.join_error.unsent_day_closes_refused_ios" // ut-docs#3434
+	}
+	msg := httpx.T(locale, key)
 	if je.detail == "" {
 		return msg
 	}
@@ -1239,17 +1285,30 @@ func primaryURLFromAddress(address string) (string, bool) {
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
 func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string, replaceConfirmed bool) (string, error) {
+	// ut-docs#5862: a till name is one line with no hidden formatting
+	// characters. Checked first — nothing is sent to the main till and no
+	// one-time token is spent for a name it would only have to refuse.
+	if _, err := data.CheckSingleLineName(name); err != nil {
+		return "", &joinError{kind: joinErrNameInvalid}
+	}
 	// ut-docs#5058 UT-5 (rejoin_replay.go): a joined till re-joining sends
 	// its unsent journal to the new main till before the wipe. Day closes
 	// the cloud has not acknowledged would be wiped instead: refuse first,
 	// before anything is enrolled.
 	rejoin := isJoinedTill(r.Context(), d)
+	keptDayCloses := 0
 	if rejoin {
 		n, err := rejoinUnsentDayCloses(r.Context(), d)
 		if err != nil {
 			return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
 		}
-		if n > 0 {
+		if n > 0 && enroll.RestoredState(r.Context(), d.Settings) {
+			// ut-docs#5162: a restored copy's cloud identity was reset, so it
+			// can never upload these; waiting would block the join forever.
+			// They stay in the backup copy the join takes of this till.
+			keptDayCloses = n
+			logging.L().Warnf("re-join: this restored till has %d day close(s) the cloud never received; they stay in this till's backup copy (ut-docs#5162)", n)
+		} else if n > 0 {
 			kind := joinErrUnsentDayCloses
 			if settingTrim(r.Context(), d, data.ReportArchiveCloudRefusedAtKey) != "" {
 				kind = joinErrUnsentDayClosesRefused // waiting would not help
@@ -1375,7 +1434,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	if rejoin {
 		unsent := countUnsentSales(r.Context(), d)
 		var rerr error
-		replay, rerr = replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "")
+		replay, rerr = replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "", out.Data.RegisterID)
 		if rerr != nil {
 			logging.L().Errorf("re-join: send this till's unsent journal to the new main till: %v", rerr)
 			return fail(&joinError{kind: joinErrUnsentNotSent, detail: strconv.Itoa(unsent)})
@@ -1443,7 +1502,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// From the stored cursor again, not from the newest sale sent: a sale
 		// in the same second would be skipped, and the main till's apply
 		// skips what it already has.
-		last, err := replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "")
+		last, err := replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "", out.Data.RegisterID)
 		if err != nil {
 			logging.L().Errorf("re-join: last pass of this till's journal: %v", err)
 			if uerr := db.UnstageJoin(d.Cfg.DBPath); uerr != nil {
@@ -1463,6 +1522,11 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 			time.Now().UTC().Format(time.RFC3339), "")
 		logging.L().Infof("re-join: sent %d unsent sale(s), %d no-sale open(s), %d cleared basket(s) to the new main till before the wipe (ut-docs#5058)",
 			replay.Sales, replay.NoSales, replay.ClearedBaskets)
+	}
+	if keptDayCloses > 0 {
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "rejoin_day_closes_kept_local",
+			map[string]any{"primary": primaryURL, "day_closes": keptDayCloses},
+			time.Now().UTC().Format(time.RFC3339), "")
 	}
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
 		map[string]any{"primary": primaryURL}, time.Now().UTC().Format(time.RFC3339), "")

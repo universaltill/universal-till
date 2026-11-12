@@ -156,6 +156,10 @@ func TestLinkChip_RendersEachState(t *testing.T) {
 			[]string{`data-link-state="linked"`, "Update to v1.4.0 needed", "The main till runs v1.4.0. Install it on this till in Settings",
 				`href="/settings#settings-update"`},
 			[]string{"soon", "Update waiting", `href="/tills"`}},
+		// ut-docs#5162: a restored copy has no bearer; a notice, not a modal.
+		{"restored copy: join again", linkView{State: linkRejoin},
+			[]string{`data-link-state="rejoin"`, "Join the main till again", "This till no longer uses its old connection", `href="/tills"`, "is-unreachable"},
+			[]string{"polling", "not reachable", "<dialog"}},
 		{"waiting for the main till to update", linkView{State: linkLinked, Update: linkMainUpdateWaiting},
 			[]string{"Waiting for the main till to update"}, []string{"Update waiting", "soon", "needed"}},
 	} {
@@ -540,5 +544,48 @@ func TestSyncPull_ContactIsTheAdminAnswerNotTheTickEnd(t *testing.T) {
 	}
 	if !got.Before(firstFollowUp) {
 		t.Fatalf("contact recorded at %v, after the follow-up requests began (%v)", got, firstFollowUp)
+	}
+}
+
+// ut-docs#5162: a restored copy keeps sync.primary_url but not its bearer or
+// till id. Every link rule below "has a main till" is moot without them.
+func TestDeriveLinkView_UnpairedReplicaIsRejoin(t *testing.T) {
+	linked := fleetlink.ClientStatus{Mode: fleetlink.ModeLinked, Linked: true}
+	for name, in := range map[string]linkInputs{
+		"plain":                   {Replica: true, Unpaired: true},
+		"even with a stale link":  {Replica: true, Unpaired: true, HasClient: true, Client: linked},
+		"even if the watch fired": {Replica: true, Unpaired: true, WatchUnreachable: true, WatchSince: "2026-09-25T10:00:00Z"},
+	} {
+		if v := deriveLinkView(in); v.State != linkRejoin {
+			t.Errorf("%s: state = %q, want %q", name, v.State, linkRejoin)
+		}
+	}
+	if v := deriveLinkView(linkInputs{Unpaired: true}); v.State != linkNone {
+		t.Errorf("a main till is never 'rejoin', got %q", v.State)
+	}
+	if v := deriveLinkView(linkInputs{Replica: true}); v.State == linkRejoin {
+		t.Error("a paired replica must not read 'rejoin'")
+	}
+}
+
+func TestLinkInputsOf_UnpairedWhenBearerOrTillIDMissing(t *testing.T) {
+	for name, c := range map[string]struct {
+		bearer, tillID string
+		want           bool
+	}{
+		"both":         {"b", "t", false},
+		"no bearer":    {"", "t", true},
+		"no till id":   {"b", "", true},
+		"neither":      {"", "", true},
+		"blank bearer": {"  ", "t", true},
+	} {
+		f := newSyncLinkFixture(t)
+		ctx := t.Context()
+		_ = f.dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example")
+		_ = f.dp.Settings.Set(ctx, "sync.bearer", c.bearer)
+		_ = f.dp.Settings.Set(ctx, "sync.till_id", c.tillID)
+		if got := linkInputsOf(ctx, f.dp).Unpaired; got != c.want {
+			t.Errorf("%s: Unpaired = %v, want %v", name, got, c.want)
+		}
 	}
 }

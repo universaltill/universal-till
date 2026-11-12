@@ -82,6 +82,10 @@
       <span class="btn-ico" aria-hidden="true">{{ icon "download" }}</span>
     </button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
+    {{/* ut-docs#4128: ?missing=<mask> (the link the AI assistant's answers
+         carry) narrows the list to items with a gap; say so and offer the
+         way back. */}}
+    {{ if .MissingFilterKey }}<p class="catalog-missing-filter" role="status" data-testid="catalog-missing-filter">{{ T .MissingFilterKey }} <a href="/catalog">{{ T "catalog.missing.clear" }}</a></p>{{ end }}
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
          hx-get/hx-target/open pattern as #modifier-modal (buttons.html)
          and #table-modal (table_picker.html). ut-docs#2097: opened with
@@ -386,7 +390,7 @@
           </div>
           <!-- ut-docs#1901: fixed swatch palette for a photo-less item's
                sale-screen tile color — SAME .picker-grid/.picker-tile pattern
-               and aria-pressed toggle convention as #builtin-icon-grid below,
+               as #builtin-icon-grid below but a radiogroup (ut-docs#5553),
                not a free color picker (validated server-side against
                catalogtypes.ItemColors() in validateLookups; a raw value would
                otherwise flow straight into a CSS custom property). #item-color
@@ -394,14 +398,14 @@
                clears it (stored empty). -->
           <div style="margin-bottom:.55rem">
             <div style="font-size:.82rem; margin-bottom:.25rem">{{ T "catalog.color" }}</div>
-            <div id="item-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+            <div id="item-color-grid" class="picker-grid item-color-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "catalog.color" }}">
               {{ range .ItemColors }}
-              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" role="radio" aria-checked="false" tabindex="-1" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
                 <span class="swatch-dot" aria-hidden="true"></span>
                 <span>{{ T .I18nKey }}</span>
               </button>
               {{ end }}
-              <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+              <button type="button" class="picker-tile item-color-tile" data-color="" role="radio" aria-checked="true" tabindex="0">{{ T "catalog.color.none" }}</button>
             </div>
             <input type="hidden" name="color" id="item-color">
           </div>
@@ -554,22 +558,26 @@
                  (web/public/icon-picker-filter.js) and a scroll box; "No
                  image" sits first so it never scrolls out of reach. -->
             <input type="search" class="builtin-icon-search" data-icon-filter="builtin-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">
-            <div id="builtin-icon-grid" class="picker-grid builtin-icon-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-              <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
-              {{ range .BuiltinIconGroups }}
-              <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
-              {{ range .Icons }}
+            <div id="builtin-icon-grid" class="picker-grid builtin-icon-grid" role="listbox" data-roving-listbox aria-label="{{ T "catalog.builtin_icon.hint" }}">
+              <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="none" aria-selected="false" tabindex="0">{{ T "catalog.builtin_icon.none" }}</button>
+              {{ range $i, $g := .BuiltinIconGroups }}
+              <div class="builtin-icon-group" role="group" aria-labelledby="builtin-icon-grid-g{{ $i }}">
+              <div class="builtin-icon-group-label" id="builtin-icon-grid-g{{ $i }}">{{ T $g.I18nKey }}</div>
+              {{ range $g.Icons }}
               <!-- Review finding F6 (ut-docs#1844): the label is visible text,
                    not a hover-only title — this is a touchscreen till
                    (reference/ux-guidelines.md), nothing here can depend on
                    hover to be understood. `title` stays as a bonus tooltip for
                    a mouse/desktop session; the alt text and this span carry
-                   the same identical string so neither is the "real" one. -->
-              <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
+                   the same identical string so neither is the "real" one.
+                   ut-docs#5601: a focus-only listbox (radiogroup.js) — arrows
+                   move focus, Enter/Space/click (this handler) chooses. -->
+              <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-keywords="{{ .Keywords }}" aria-selected="false" tabindex="-1" title="{{ T .I18nKey }}">
                 <img src="{{ .Path }}" alt="" width="28" height="28">
                 <span>{{ T .I18nKey }}</span>
               </button>
               {{ end }}
+              </div>
               {{ end }}
             </div>
             <div class="muted" data-icon-filter-empty="builtin-icon-grid" hidden>{{ T "catalog.builtin_icon.no_match" }}</div>
@@ -915,6 +923,32 @@
   formRoot.addEventListener('item-form-tab', function (ev) {
     if (ev.detail && ev.detail.tab === 'modifiers') loadItemModifiers();
   });
+  // ut-docs#2727: detach / attach / skip / use-again outerHTML-swap
+  // #item-modifiers-list. htmx restores focus only to a same-id element
+  // (the stable ids in modifier_group_admin.html); when the activated
+  // control is gone (a removed row, an emptied attach list) a keyboard or
+  // switch user would land on <body>, so park focus on the panel heading.
+  // Only for those mutation requests (target is the list itself) — the
+  // tab-select/open load targets #item-modifiers-host and never moves focus.
+  // The heading is not an input, so no on-screen keyboard appears.
+  // Keyed on the mutation's own xhr: the status-bar polls and the tab load
+  // settle on this page too and must neither clear nor trigger it. Only
+  // when focus is really lost — a user who moved on (Close, Save) keeps it.
+  var modifiersMutationXhr = null;
+  document.addEventListener('htmx:beforeRequest', function (ev) {
+    var t = ev.detail && ev.detail.target;
+    if (t && t.id === 'item-modifiers-list') modifiersMutationXhr = ev.detail.xhr || null;
+  });
+  document.addEventListener('htmx:afterRequest', function (ev) {
+    if (ev.detail && ev.detail.xhr === modifiersMutationXhr && !ev.detail.successful) modifiersMutationXhr = null;
+  });
+  document.addEventListener('htmx:afterSettle', function (ev) {
+    if (!modifiersMutationXhr || !ev.detail || ev.detail.xhr !== modifiersMutationXhr) return;
+    modifiersMutationXhr = null;
+    var heading = document.getElementById('item-modifiers-heading');
+    var a = document.activeElement;
+    if (heading && (!a || a === document.body || !a.isConnected)) heading.focus();
+  });
   // ut-docs#1901 UX fix: any field the operator touches after a save
   // invalidates that save's pending auto-close (search "auto-close"
   // below) — covers typing straight into the same still-open, auto-
@@ -1133,19 +1167,26 @@
     });
   }
 
-  // Fixed swatch palette (ut-docs#1901) — same .picker-grid/aria-pressed
-  // toggle convention as the built-in icon grid below. #item-color is the
+  // Fixed swatch palette (ut-docs#1901) — a single-select radiogroup
+  // (ut-docs#5553: role=radio/aria-checked, roving tabindex, arrows via
+  // radiogroup.js, which clicks the target tile). #item-color is the
   // one hidden field actually submitted; clicking a tile (including the
   // "none" tile, whose data-color is "") sets it and repaints which tile
-  // reads pressed.
+  // reads checked.
   var colorGrid = document.getElementById('item-color-grid');
   var colorInput = document.getElementById('item-color');
   function setColorTiles(hex) {
     if (!colorGrid) return;
-    colorGrid.querySelectorAll('.item-color-tile').forEach(function (btn) {
-      var pressed = (btn.dataset.color || '') === (hex || '');
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    var tiles = colorGrid.querySelectorAll('.item-color-tile');
+    var any = false;
+    tiles.forEach(function (btn) {
+      var on = (btn.dataset.color || '') === (hex || '');
+      if (on) any = true;
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.setAttribute('tabindex', on ? '0' : '-1');
     });
+    // A legacy off-palette value checks nothing: keep the grid reachable.
+    if (!any && tiles.length) tiles[0].setAttribute('tabindex', '0');
   }
   if (colorGrid) {
     colorGrid.addEventListener('click', function (ev) {
@@ -1692,7 +1733,9 @@
   // for an item photo (focus, flash, full resolution, retake), and the
   // in-page viewfinder showed a black box that went blank in the app.
   // iPadOS asks for desktop pages with a Mac user agent; a real Mac has no
-  // touch points. Android and desktop keep the viewfinder (#1472).
+  // touch points. Desktop browsers keep the viewfinder (#1472). The Android
+  // app (window.AndroidKiosk, injected by its shell) opens the system camera
+  // too (#5190): its file chooser launches the camera for this capture input.
   var appleTouch = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
     (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
   if (appleTouch) {
@@ -1708,7 +1751,7 @@
   }
   cameraBtn.addEventListener('click', function () {
     if (viewfinderBusy) return; // already open or a request is in flight
-    if (!appleTouch && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    if (!appleTouch && !window.AndroidKiosk && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       openViewfinder();
     } else {
       imageFileCamera.click();
@@ -1757,16 +1800,45 @@
     if (cutoutOffered()) { offerCutout(true); return; }
     imageForm.dispatchEvent(new Event('submit', { cancelable: true }));
   }
+  // ut-docs#5190: a photo from the system camera is full resolution (8MP and
+  // up), over the server's pixel limit and the 10MB cap. Bound it the way the
+  // viewfinder path above does: 1024px long edge, JPEG. Any failure to decode
+  // hands back the original rather than losing the photo.
+  function shrinkPhoto(file) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) { resolve(file); return; }
+        var scale = Math.min(1, 1024 / Math.max(w, h));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          resolve(blob ? new File([blob], 'catalog-photo.jpg', { type: 'image/jpeg' }) : file);
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
   imageFileCamera.addEventListener('change', function () {
-    if (this.files && this.files[0]) {
+    var picked = this.files && this.files[0];
+    if (!picked) return;
+    shrinkPhoto(picked).then(function (file) {
       var dt = new DataTransfer();
-      dt.items.add(this.files[0]);
+      dt.items.add(file);
       imageFileInput.files = dt.files;
-      imageFileNameEl.textContent = this.files[0].name;
-      showPendingFile(this.files[0]);
-      if (appleTouch) saveIOSPick();
+      imageFileNameEl.textContent = file.name;
+      showPendingFile(file);
+      // a native camera (iPhone/iPad, the Android app) is the decision, like
+      // Capture: save at once, the background-removal offer first
+      if (appleTouch || window.AndroidKiosk) saveIOSPick();
       else if (cutoutOffered()) offerCutout(false);
-    }
+    });
   });
   // ut-docs#3127: the operator chose in the "Remove background" panel. The
   // PNG (or the untouched original) is already in #image-file; mirror it,
@@ -1890,12 +1962,14 @@
     }
     builtinIconGrid.querySelectorAll('.builtin-icon-tile').forEach(function (btn) {
       var icon = btn.dataset.icon;
-      var pressed = isCustom ? false : (icon === 'none' ? hasNoImage : icon === selectedKey);
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      var selected = isCustom ? false : (icon === 'none' ? hasNoImage : icon === selectedKey);
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
       var suggested = hasNoImage && icon !== 'none' && icon === suggestedKey;
       btn.classList.toggle('builtin-icon-suggested', suggested);
       btn.title = suggested ? (btn.dataset.baseTitle || btn.title) + ' — ' + NOTICE_MSG.builtinIconSuggestedTitleSuffix : (btn.dataset.baseTitle || btn.title);
     });
+    // ut-docs#5601: one Tab stop on the selected option (else the first visible).
+    if (window.utRovingListbox) window.utRovingListbox.sync(builtinIconGrid);
   }
 
   // Remembers each tile's own translated label before the suggestion

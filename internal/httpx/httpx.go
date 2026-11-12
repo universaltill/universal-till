@@ -65,9 +65,23 @@ var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 // value (e.g. via t.Cleanup) after overriding it.
 var UpdateAvailable = func() bool { return updates.Current().Available }
 
+// PlanPurchaseAllowed is the seam behind the planpurchaseallowed template func
+// (ut-docs#5868). On iOS the closed #subscription-panel dialog must not be in
+// the DOM at all (App Store 3.1, ut-docs#3434). httpx cannot import
+// internal/pages, so pages sets this to its planPurchaseAllowed predicate at
+// init; the default (true) leaves any binary or test that never imports pages
+// unchanged.
+var PlanPurchaseAllowed = func() bool { return true }
+
 var baseFuncs = template.FuncMap{
+	// maxStoreNameRunes is the shop-name input cap (ut-docs#5774).
+	"maxStoreNameRunes": func() int { return config.MaxStoreNameRunes },
+	// planpurchaseallowed is false on iOS (ut-docs#5868); see PlanPurchaseAllowed.
+	"planpurchaseallowed": func() bool { return PlanPurchaseAllowed() },
 	// ut-docs#4370: request-bound by withTranslateMode; false everywhere else.
 	"translatemode": func() bool { return false },
+	// ut-docs#3735: request-bound by withHelpHref; false everywhere else.
+	"windowtoggle": func() bool { return false },
 	// runelen: a field's `size` attribute must track how many CHARACTERS
 	// will actually show, not how many bytes the string takes (ut-docs#3319
 	// review finding) — Go's builtin `len` on a string is byte length, which
@@ -338,6 +352,10 @@ func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
 	visible := requestVisibility(r)
 	out["railEntries"] = func() []RailEntry { return railEntriesFor(locale, visible) }
 	out["allowed"] = allowedFunc(visible)
+	// ut-docs#3735: base.html's <body data-window-toggle> (F11 live window
+	// toggle), decided per request by pages.windowToggleOffered.
+	windowToggle := WindowToggleOn(r)
+	out["windowtoggle"] = func() bool { return windowToggle }
 	return withTranslateMode(out, r)
 }
 
@@ -391,9 +409,28 @@ var (
 	i18nEpoch     atomic.Uint64
 	defaultLocale atomic.Value // string
 	currencyCode  atomic.Value // string
+	// currencyDisplay is store.currency_display (auto|symbol|code, ut-docs#5410).
+	currencyDisplay atomic.Value // string
 )
 
 func InitCurrency(code string) { currencyCode.Store(code) }
+
+// InitCurrencyDisplay publishes the shop's currency display mode. An
+// unknown value is stored as auto, never as a surprise third behaviour.
+func InitCurrencyDisplay(mode string) {
+	if !IsCurrencyDisplayMode(mode) {
+		mode = CurrencyDisplayAuto
+	}
+	currencyDisplay.Store(mode)
+}
+
+// CurrencyDisplayMode returns the published display mode (auto when unset).
+func CurrencyDisplayMode() string {
+	if v, ok := currencyDisplay.Load().(string); ok && v != "" {
+		return v
+	}
+	return CurrencyDisplayAuto
+}
 
 // minorUnits extracts an amount as integer minor units. Templates pass either
 // the typed money.Money basket amounts or int64 display DTOs.
@@ -695,6 +732,16 @@ func T(locale, key string) string {
 		return t.T(locale, key)
 	}
 	return key
+}
+
+// TExact is T without fallbacks: the value in exactly locale (or its base
+// language), ok false when that language lacks the key or no translator is
+// wired (ut-docs#2654).
+func TExact(locale, key string) (string, bool) {
+	if t := translator(); t != nil {
+		return t.Lookup(locale, key)
+	}
+	return "", false
 }
 
 // TM translates and formats a MessageFormat key (ADR-0160 §8,
@@ -1113,7 +1160,7 @@ func FuncsFor(locale string) template.FuncMap {
 		if !ok {
 			return ""
 		}
-		return FormatMoneyIn(minor, code, locale)
+		return FormatMoneyInDisplay(minor, code, locale)
 	}
 	// {{ bpPercent .Raw }}: a percent discount's rate in the request
 	// locale's decimal separator, next to the locale-bound money above
@@ -1134,7 +1181,7 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatQty(q, locale)
 	}
-	// {{ date .IssuedAt }}: date-ordering convention follows the request
+	// {{ date .IssuedAt }}: date-ordering convention follows DateLocale of the request
 	// locale (de-DE renders 06.09.2026, en-US renders 09/06/2026), digit
 	// shape follows locale too, same as money above (ut-docs#1130). Accepts
 	// either a time.Time or an RFC3339 string (the storage format for
@@ -1437,7 +1484,6 @@ var renderFiles = []string{
 	"ui/partials/buttons.html",
 	"ui/partials/buttons_admin.html",
 	"ui/partials/basket.html",
-	"ui/partials/plugin_install_modal.html",
 	"ui/partials/plugin_manual_import.html",
 	"ui/partials/help_topic.html",
 	"ui/partials/help_nav.html",

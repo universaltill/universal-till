@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
+	"github.com/universaltill/universal-till/internal/httpserver"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -45,10 +46,13 @@ type BackgroundJobs struct {
 }
 
 // NewBackgroundJobs creates a background job scheduler
-func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger, onRevoked func(context.Context) error) *BackgroundJobs {
 	var revocationChecker *plugins.RevocationChecker
 	if cfg.Marketplace.EndpointURL != "" {
 		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
+		if onRevoked != nil {
+			revocationChecker.SetOnRevoked(onRevoked)
+		}
 	}
 
 	telemetryClient := plugins.NewTelemetryClient(db, func() plugins.TelemetryIdentity {
@@ -142,14 +146,14 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 // that both waits on wg AND waits for Start to return (as app.Run does) can
 // safely assume nothing Start ever spawned is still touching db/supervisor
 // once both have happened. wg must not be nil.
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, onPluginsRevoked func(context.Context) error, wg *sync.WaitGroup) error {
 	// Start background jobs if a marketplace (catalog repository) is
 	// configured. Start() itself only launches goroutines and returns
 	// immediately, so it doesn't need its own wrapping goroutine — jobs' own 2
 	// goroutines register with wg directly.
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
-		jobs := NewBackgroundJobs(db, supervisor, cfg, logger)
+		jobs := NewBackgroundJobs(db, supervisor, cfg, logger, onPluginsRevoked)
 		jobs.Start(ctx, wg)
 	}
 
@@ -219,9 +223,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		}()
 	}
 
-	srv := &http.Server{
-		Handler: handler,
-	}
+	srv := httpserver.New(handler)
 
 	// Bind the configured port, or the next free one if it's already taken (a
 	// second till on the same machine, or another app on :8080) so a busy port
@@ -309,7 +311,7 @@ const ProblemKeyDailyBackupFailed = "backup.daily_failed"
 var snapshotWithAssets = dbpkg.SnapshotWithAssets
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
-// already exists, then prunes old snapshots to the newest DefaultBackupKeep.
+// already exists, then prunes snapshots older than the retention days.
 func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 	list, err := dbpkg.ListBackups(dbPath)
 	// A backup file a manager uploaded (ut-docs#5070) holds another copy
@@ -347,7 +349,14 @@ func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 		logging.ResolveProblems(ProblemKeyDailyBackupNoPhotos)
 	}
 	log.Printf("[Backup] daily snapshot: %s", path)
-	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
+	// Keep the last backup.retention_days days (default 7), never the newest
+	// (ut-docs#3092).
+	if days, err := data.BackupRetentionDaysChecked(context.Background(), db); err != nil {
+		// Fail toward retaining: never prune by a guessed window.
+		log.Printf("[Backup] not pruning old backups, retention setting unreadable: %v", err)
+	} else {
+		_, _ = dbpkg.PruneBackupsOlderThan(dbPath, days, time.Now())
+	}
 }
 
 // raiseOnce logs a keyed Problem unless one with that key is already open, so
@@ -509,6 +518,12 @@ func sweepHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now 
 	limits := housekeeping.Normal
 	if low {
 		limits = housekeeping.LowDisk
+	} else if days, err := data.BackupRetentionDaysChecked(context.Background(), db); err != nil {
+		// Fail toward retaining: no age rule when the setting can't be read.
+		log.Printf("[Housekeeping] backups: retention setting unreadable, no age pruning this run: %v", err)
+		limits.BackupMaxAge = 0
+	} else {
+		limits.BackupMaxAge = time.Duration(days) * 24 * time.Hour
 	}
 	if low && !diskLowOpen(now) {
 		log.Printf("[Housekeeping] low disk: %d MB free of %d MB (floor %d MB) — pruning each kind to its minimum", usage.Free>>20, usage.Total>>20, diskspace.Floor(usage.Total)>>20)

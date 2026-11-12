@@ -3,6 +3,7 @@ id: invoices
 title: Invoices & tax invoices
 section: Running the business
 order: 220
+public: true
 summary: Issue a proper (tax) invoice for a sale — for business customers or wherever a titled invoice is required.
 routes: [/invoices, /invoice/{display_no}]
 keywords: [invoice, vat, customer, business, tax invoice, credit note, seller details]

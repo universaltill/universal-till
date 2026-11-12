@@ -135,6 +135,12 @@ type ProofRequest struct {
 type ProofResponse struct {
 	PrimaryTillID string `json:"primary_till_id"`
 	Proof         string `json:"proof"`
+	// PrevProof is the same proof keyed by the till's previous bearer hash,
+	// sent only while a bearer rotation has not been confirmed by use of the
+	// new bearer (ut-docs#5198): a replica whose rotation answer was lost
+	// still holds the old bearer and must be able to re-find a moved main
+	// till. Older main tills omit it; older replicas ignore it.
+	PrevProof string `json:"prev_proof,omitempty"`
 }
 
 // PrimaryProof computes HMAC-SHA256 keyed by the replica's bearer hash (hex,
@@ -256,6 +262,19 @@ func NewPrimaryWatch(settings WatchSettings, browse BrowseFunc) *PrimaryWatch {
 // Call before the pull loop starts; nil keeps re-discovery mDNS-only.
 func (w *PrimaryWatch) SetCloudLookup(fn CloudLookupFunc) {
 	w.cloudLookup = fn
+}
+
+// prevBearer is the bearer this till rotated away from (ut-docs#5203), "" when
+// there is none or the settings do not keep one.
+func (w *PrimaryWatch) prevBearer(ctx context.Context) string {
+	r, ok := w.settings.(interface {
+		SyncBearerPrev(ctx context.Context) (string, error)
+	})
+	if !ok {
+		return ""
+	}
+	v, _ := r.SyncBearerPrev(ctx)
+	return strings.TrimSpace(v)
 }
 
 func (w *PrimaryWatch) get(ctx context.Context, key string) string {
@@ -674,11 +693,30 @@ func (w *PrimaryWatch) challengeVia(ctx context.Context, do func(*http.Request) 
 	if id == "" || (wantID != "" && id != wantID) {
 		return "", proofRefusedError{"proof names a different till"}
 	}
-	want := PrimaryProof(HashBearer(bearer), id, tillID, nonce, dialled, pin())
-	got, err := hex.DecodeString(out.Data.Proof)
-	wantRaw, _ := hex.DecodeString(want)
-	if err != nil || !hmac.Equal(got, wantRaw) {
-		return "", proofRefusedError{"proof does not match this till's pairing"}
+	// The proof is keyed by the main till's stored hash. That is this till's
+	// current bearer, or -- after the main till was restored from a backup
+	// older than this till's last rotation -- the bearer it rotated away from
+	// (ut-docs#5203); the first sync call then 401s and the transport falls
+	// back to it.
+	pinned := pin()
+	wants := [][]byte{nil}
+	wants[0], _ = hex.DecodeString(PrimaryProof(HashBearer(bearer), id, tillID, nonce, dialled, pinned))
+	if prev := w.prevBearer(ctx); prev != "" && prev != bearer {
+		prevWant, _ := hex.DecodeString(PrimaryProof(HashBearer(prev), id, tillID, nonce, dialled, pinned))
+		wants = append(wants, prevWant)
 	}
-	return id, nil
+	// The current proof, or the one under the previous bearer hash while a
+	// rotation is pending (ut-docs#5198).
+	for _, proof := range []string{out.Data.Proof, out.Data.PrevProof} {
+		got, err := hex.DecodeString(proof)
+		if err != nil || proof == "" {
+			continue
+		}
+		for _, want := range wants {
+			if hmac.Equal(got, want) {
+				return id, nil
+			}
+		}
+	}
+	return "", proofRefusedError{"proof does not match this till's pairing"}
 }

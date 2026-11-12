@@ -107,6 +107,8 @@
          role="radiogroup" + role="radio" + aria-checked (WAI-ARIA radio
          pattern, not aria-pressed): this is a single mutually-exclusive
          choice between two named states, not two independent toggles.
+         ut-docs#5553: roving tabindex + arrow keys (radiogroup.js); the ids
+         make htmx refocus the replacement button after the #basket swap.
          hx-sync="#basket:replace" (ut-docs#1337): every other
          #basket-targeting trigger already aborts an in-flight request to
          the same swap target the instant a newer one fires -- both
@@ -135,9 +137,10 @@
          switched off (sale.order_type_prompt = "off" -- no eat-in, e.g. an
          off-licence or a barber); the table button next to it stays. -->
     {{ if ne ordertypepromptmode "off" }}
-    <div class="order-type-toggle-group" role="radiogroup" aria-label="{{ T "basket.order_type.label" }}">
+    <div class="order-type-toggle-group" role="radiogroup" data-roving-radiogroup aria-label="{{ T "basket.order_type.label" }}">
       <button type="button" class="order-type-option{{ if eq .OrderType "" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "" }}true{{ else }}false{{ end }}"
+              id="order-type-dine-in" tabindex="{{ if or (eq .OrderType "") (eq .OrderType "mixed") }}0{{ else }}-1{{ end }}"
               data-testid="order-type-dine-in"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
@@ -145,6 +148,7 @@
       </button>
       <button type="button" class="order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+              id="order-type-takeaway" tabindex="{{ if eq .OrderType "takeaway" }}0{{ else }}-1{{ end }}"
               data-testid="order-type-takeaway"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
@@ -265,6 +269,12 @@
                     {{ if and $.DiscountErrorKey (eq $.DiscountErrorKey .LineKey) }}
                     <span class="line-discount-error" role="alert">{{ printf (T "basket.discount_too_large") (money $.DiscountErrorLimit) }}</span>
                     {{ end }}
+                    {{/* ut-docs#5417: the cashier's edit was refused because this
+                         line changed meanwhile on another screen. Per-render
+                         only (Basket.LineChangedKey). */}}
+                    {{ if and $.LineChangedKey (eq $.LineChangedKey .LineKey) }}
+                    <span class="line-discount-error" role="alert" data-line-changed>{{ T "basket.line_changed" }}</span>
+                    {{ end }}
                   </span>
                 </div>
               </td>
@@ -353,10 +363,14 @@
                          title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                          hx-post="/api/pos/line"
                          hx-vals='{{ jsonVals "key" .LineKey }}'
-                         hx-include="closest tr"
                          hx-target="#basket"
                          hx-swap="outerHTML"
                          hx-sync="#basket:replace" />
+                  {{/* No hx-include="closest tr" on purpose (ut-docs#5417): the
+                       discount box never re-posts the displayed qty, because a
+                       weighed line's %.2f display can be below its real qty
+                       (0.125 shows 0.12) and would read as a reduction.
+                       /api/pos/line keeps the current qty when qty is absent. */}}
                 </div>
                 {{ end }}
               </td>
@@ -439,6 +453,11 @@
        comment). Empty on a fresh render; a needsElevation response fills
        it with elevation.hint's small text. */}}
   <div id="shrinkage-hint" class="muted" aria-live="polite"></div>
+  {{/* ut-docs#5417: the refused edit's line is gone, so there is no row to
+       carry the note: show it here instead. */}}
+  {{ if $.LineChangedKey }}{{ $found := false }}{{ range .Lines }}{{ if eq .LineKey $.LineChangedKey }}{{ $found = true }}{{ end }}{{ end }}{{ if not $found }}
+  <div class="line-discount-error" role="alert" data-line-changed>{{ T "basket.line_changed" }}</div>
+  {{ end }}{{ end }}
   <div class="totals">
     <!-- Own full-width row, like .total below: a real customer name (CRM
          plugin) paired against a money figure in a half-width 2-col cell

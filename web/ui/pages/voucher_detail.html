@@ -14,6 +14,26 @@
     <dt class="muted">{{ T "pos.gift_voucher.use" }}</dt><dd style="margin:0">{{ if eq $v.Purpose "single_purpose" }}<span class="tag warn">{{ T "pos.gift_voucher.use_specific" }}</span>{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</dd>
     <dt class="muted">{{ T "vouchers.col.created" }}</dt><dd style="margin:0">{{ datetime $v.CreatedAt }}</dd>
   </dl>
+  {{ $s := .slip }}
+  {{ if and $s.allowed $s.possible }}
+  {{/* ut-docs#5740: print this voucher's gift slip again (no receipt).
+       Inline, never a modal; outcome swaps into #voucher-slip-msg. */}}
+  <div class="voucher-slip" style="margin-block-start:.8rem">
+    {{ if $s.printer }}
+    {{ if ne $v.BalanceMinor $v.OriginalAmountMinor }}<p class="muted" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.original_value_note" }}</p>{{ end }}
+    <form hx-post="{{ $s.href }}" hx-target="#voucher-slip-msg" hx-swap="innerHTML"
+          hx-disabled-elt="find button[type=submit]" hx-indicator="#voucher-slip-busy"
+          action="{{ $s.href }}" method="post" style="margin:0">
+      <button class="btn secondary" type="submit" data-testid="voucher-print-slip">{{ T "vouchers.print_slip.button" }}</button>
+    </form>
+    <span id="voucher-slip-busy" class="htmx-indicator muted" role="status">{{ T "vouchers.print_slip.printing" }}</span>
+    <div id="voucher-slip-msg" aria-live="polite" style="margin-block-start:.4rem"></div>
+    {{ else }}
+    <p class="muted" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.no_printer" }}</p>
+    <a class="btn secondary" href="/settings#settings-printer">{{ T "settings.printer.title" }}</a>
+    {{ end }}
+  </div>
+  {{ end }}
 </div>
 
 {{ $a := .adjust }}
@@ -59,13 +79,12 @@
      inline form, never a modal; refusals come back as a fragment swapped
      into #voucher-top-up-msg, success sends the manager to the sale screen
      with the top-up line in the basket (nothing is credited until the sale
-     is paid). An additional till shows a note instead — top-ups are made
-     on the main till. */}}
+     is paid). An additional till shows the same form (ut-docs#4416): the
+     POST asks the main till first and answers with the replica note when
+     it can't take the top-up right now. */}}
 <div class="card" id="voucher-top-up" style="margin-block-start:1rem">
   <h2>{{ T "vouchers.top_up.title" }}</h2>
-  {{ if $t.replica }}
-  <p class="muted" role="status">{{ T "vouchers.top_up.replica_note" }}</p>
-  {{ else if $t.possible }}
+  {{ if $t.possible }}
   <p class="muted">{{ T "vouchers.top_up.intro" }}</p>
   <form hx-post="{{ $t.href }}" hx-target="#voucher-top-up-msg" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
         action="{{ $t.href }}" method="post" style="display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:end">

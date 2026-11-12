@@ -36,4 +36,12 @@ func TestPosAlert_PresentOnPageThatNeverIncludedItDirectly(t *testing.T) {
 	if !strings.Contains(body, `data-msg-server="`) || !strings.Contains(body, `data-msg-network="`) {
 		t.Fatalf("#pos-alert rendered without app.js's expected data-msg-server/data-msg-network attributes, got: %.2000s", body)
 	}
+	// ut-docs#5298: the "may not have completed" text for a prompt's network failure.
+	if !strings.Contains(body, `data-msg-outcome-unknown="`) || strings.Contains(body, `data-msg-outcome-unknown=""`) {
+		t.Fatalf("#pos-alert missing or empty data-msg-outcome-unknown, got: %.2000s", body)
+	}
+	// ut-docs#5463: the "till did not reply in time" text for a timed-out action.
+	if !strings.Contains(body, `data-msg-outcome-timeout="`) || strings.Contains(body, `data-msg-outcome-timeout=""`) {
+		t.Fatalf("#pos-alert missing or empty data-msg-outcome-timeout, got: %.2000s", body)
+	}
 }

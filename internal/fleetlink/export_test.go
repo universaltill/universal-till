@@ -10,3 +10,10 @@ func (h *Hub) storeReport(tillID string, r Report) {
 	defer h.mu.Unlock()
 	h.storeReportLocked(tillID, r)
 }
+
+// Len is the number of live pending links.
+func (h *PendingHub) Len() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.links)
+}

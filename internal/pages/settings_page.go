@@ -434,7 +434,7 @@ func disableDemoRowButtonsScript(rowClass string) string {
 // never happen for a cashier session with nothing pending. Keeps whatever
 // ORDER settingsnav.Resolve produced (a `layout` plugin's reorder still
 // applies) — this only removes rows, never reorders the survivors.
-func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard bool) []settingsnav.Row {
+func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard, showStaffLinks bool) []settingsnav.Row {
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
 		"subscription":         !isManager,      // ut-docs#2569, ADR-0060 §6
@@ -443,6 +443,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
+		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
 	for _, row := range rows {
@@ -806,9 +807,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// whole point: the heading text must not appear in the body at
 		// all, not merely be visually hidden).
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0
+		// ut-docs#3208: same gates as GET /users and GET /users/permissions.
+		canManageUsers := canPerform(d, r, "user_management")
+		canEditPermissions := canPerform(d, r, lockoutAction)
 		settingsNav := filterSettingsNavForRender(
 			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
+			canManageUsers || canEditPermissions,
 		)
 		// ut-docs#3946: each settings.sections plugin entry is a section of
 		// its own, under a Plugins group, instead of a panel drawn under
@@ -817,16 +822,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsNav = append(settingsNav, pluginSettingsNavRows(locale, pluginSections)...)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
-			"theme":       st.Theme,
+			"theme":       d.ResolvedTheme(r),
+			"tillTheme":   st.Theme,
 			"themes":      availableThemes(r.Context(), d),
 			"settings":    st,
 			"settingsMap": visibleSettings(all),
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":         effectsLevelViewFrom(all),
-			"isManager":      isManager,
-			"canReportIssue": canReportIssue,
+			"fxView":             effectsLevelViewFrom(all),
+			"isManager":          isManager,
+			"canReportIssue":     canReportIssue,
+			"canManageUsers":     canManageUsers,
+			"canEditPermissions": canEditPermissions,
 			// ADR-0148 §5: the registration card says plainly that cloud
 			// sync is off (and offers "Check for a paid plan") while the
 			// cached entitlement doesn't allow the periodic check-in.
@@ -868,6 +876,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// renders consistently.
 			"receiptPolicyAdvisoryDE": strings.EqualFold(strings.TrimSpace(all[common.KeyCountry]), "DE"),
 			"backups":                 listBackupsForUI(d, locale),
+			"backupRetentionDays":     data.BackupRetentionDays(r.Context(), d.Db),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -921,8 +930,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2499: clamped here (not the raw field) so a Deps whose
 			// State was never populated by LoadState still pre-selects the
 			// real default in the Sell screen card's <select>.
-			"browsingMode":    common.ClampBrowsingMode(st.BrowsingMode),
-			"launchOnStartup": st.LaunchOnStartup,
+			"browsingMode": common.ClampBrowsingMode(st.BrowsingMode),
+			// ut-docs#5410: the Currency display select, examples included.
+			"currencyDisplayOptions": currencyDisplayOptions(st.CurrencyDisplay, locale),
+			"launchOnStartup":        st.LaunchOnStartup,
 			// shellAttached + piKioskAppliance (ADR-0064, ut-docs#1039;
 			// finding 8 of its review): which of the three window-control
 			// topologies this till is actually in, so the Display card can
@@ -1391,41 +1402,78 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
 		code := strings.TrimSpace(r.Form.Get("code"))
+		// Refusals Pair makes before touching the identity come first, so
+		// neither the confirmation nor a manager PIN is spent on a request
+		// that will be refused (ut-docs#3557).
+		if err := enroll.PairPrecheck(r.Context(), d.Cfg, d.Settings, code); err != nil {
+			writePairError(w, locale, err)
+			return
+		}
+		confirmed := r.Form.Get("confirm_replace") == "1"
+		// ut-docs#3557: Pair clears this till's identity before the cloud
+		// judges the code, so on a till with a working connection a wrong
+		// code leaves it disconnected. Ask first (confirm, then elevate:
+		// like POST /api/settings/display-mode). The gate is re-read on
+		// every POST; confirm_replace never skips elevation.
+		if !confirmed && pairReplacesWorkingConnection(r, d) {
+			shop := kioskShopName(r.Context(), d)
+			if shop == "" || config.IsPlaceholderStoreName(shop) {
+				shop = enroll.CurrentStatus().StoreID
+			}
+			// ut-docs#5127 UT-1b: where the cloud moves tills, pairing asks
+			// to MOVE this till (with its history) into the code's shop
+			// rather than replacing its connection; say that instead.
+			titleKey, bodyKey, confirmKey := "settings.enrol.pair_replace_title", "settings.enrol.pair_replace_body", "settings.enrol.pair_replace_confirm"
+			if enroll.PairWouldMove(r.Context(), d.Cfg, d.Settings) {
+				titleKey, bodyKey, confirmKey = "settings.move.confirm_title", "settings.move.confirm_body", "settings.move.confirm_btn"
+			}
+			// FSI..PDI keep the shop name and the code in their own
+			// direction inside an RTL (or LTR) sentence, so the typo check
+			// the dialog exists for reads true.
+			renderConfirmPrompt(w, r, confirmPrompt{
+				Action:   "/api/enrol/pair",
+				HxTarget: "#pair-msg",
+				Title:    httpx.T(locale, titleKey),
+				Body: fmt.Sprintf(httpx.T(locale, bodyKey),
+					bidiIsolate(stripBidiControls(shop)), bidiIsolate(unbreakableCode(stripBidiControls(code)))),
+				Confirm:   httpx.T(locale, confirmKey),
+				HelpTopic: "claim",
+				Danger:    true,
+				Hidden: []elevationHiddenField{
+					{Name: "code", Value: code},
+					{Name: "confirm_replace", Value: "1"},
+				},
+			})
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			// The dialog's form is the retry, so it carries the code.
+			// The dialog's form is the retry, so it carries the code (and
+			// the confirmation, when it was given).
+			hidden := []elevationHiddenField{{Name: "code", Value: code}}
+			if confirmed {
+				hidden = append(hidden, elevationHiddenField{Name: "confirm_replace", Value: "1"})
+			}
 			renderElevationPrompt(w, r, "/api/enrol/pair", "#pair-msg",
-				httpx.T(locale, "elevation.summary.enrol_pair"),
-				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
+				httpx.T(locale, "elevation.summary.enrol_pair"), hidden, elev)
 			return
 		}
 		status, err := enroll.Pair(r.Context(), d.Cfg, d.Settings, code)
-		// The refusals an operator can act on get their own translated
-		// message; everything else is the generic failure (the raw reason is only logged).
-		switch {
-		case errors.Is(err, enroll.ErrPairStoreMismatch):
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_store_mismatch")))
-			return
-		case errors.Is(err, enroll.ErrPairIdentityPinned):
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_identity_pinned")))
-			return
-		case errors.Is(err, enroll.ErrPairReplicaNoStore):
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
+		var pendingMove *enroll.MovePendingError
+		if errors.As(err, &pendingMove) {
+			// ut-docs#5127 UT-1b: the cloud recorded the move; it waits for
+			// a fresh manager/admin PIN on the approval page. The till is
+			// still in its shop, selling as before.
+			id := pendingMove.Move.MoveID
+			settingsAudit(r, posRepo, elev, "enrollment", id, "move_requested", map[string]any{"target_store": pendingMove.Move.TargetStore})
+			w.Header().Set("HX-Redirect", "/settings/cloud/move/"+id)
+			fmt.Fprintf(w, `<span>%s <a href="/settings/cloud/move/%s">%s</a></span>`,
+				html.EscapeString(httpx.T(locale, "settings.move.pending_msg")), html.EscapeString(id),
+				html.EscapeString(httpx.T(locale, "settings.move.notice_review")))
 			return
 		}
 		if err != nil {
-			// The raw reason is logged, never rendered: it is English-only
-			// and can carry the cloud's body or the endpoint (ut-docs#4058;
-			// the error never contains the pairing code or token).
-			logging.L().Warnf("enrol pair failed: %v", err)
-			msg := httpx.T(locale, "settings.enrol.pair_failed")
-			if key := enrolFailureKey(err); key != "" {
-				msg = httpx.T(locale, key)
-			}
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(msg))
+			writePairError(w, locale, err)
 			return
 		}
 		if !status.Registered {
@@ -1435,6 +1483,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "paired", map[string]any{"store_id": status.StoreID})
+		// No new Next steps card here (ut-docs#5333, design-5058 N5): a till with
+		// its own history keeps its staff/PINs, devices, stock and products, so
+		// every line would be false. Only a card the wizard deferred (its cloud
+		// commit failed on a brand-new till) is promoted.
+		promoteDeferredNextSteps(r.Context(), d)
 		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
 		fmt.Fprintf(w, `<span>✅ %s <code>%s</code></span>`,
 			html.EscapeString(httpx.T(locale, "settings.enrol.pair_success")), html.EscapeString(status.StoreID))
@@ -3038,14 +3091,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// pairing-time name until ut-docs#3294. A name another till in the shop
 	// uses is refused (ut-docs#3308).
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
-		// No rejecting validation here (the name is only trimmed/
-		// truncated), so the gate stays first, exactly as before —
-		// ParseForm only moved up to make override_pin readable
-		// (ut-docs#796).
+		// Two refusals (invalid characters, a taken name) come before the
+		// elevation gate (ut-docs#557 convention: a value refused anyway
+		// must not burn an approver's PIN entry); ParseForm sits up here
+		// to make override_pin readable (ut-docs#796).
 		_ = r.ParseForm()
 		// Mirrors the field's own maxlength server-side (maxTillNameRunes,
 		// shared with the cloud rename_till hook, which refuses instead).
 		name := truncateTillName(r.Form.Get("name"))
+		// ut-docs#5862: one line, no hidden formatting characters (the #5858
+		// rule); refused, never stripped. 422 + RefuseText is the shape the
+		// name_taken refusal below uses (inline in #till-name-msg).
+		if name != "" {
+			if _, err := data.CheckSingleLineName(name); err != nil {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), keyNameInvalidCharacters), http.StatusUnprocessableEntity)
+				return
+			}
+		}
 		// ut-docs#3308: a name another till in the shop already uses is
 		// refused, before the elevation gate (ut-docs#557 convention: a
 		// value refused anyway must not burn an approver's PIN entry).
@@ -3182,6 +3244,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ParseForm only moved up to make override_pin readable
 		// (ut-docs#796).
 		_ = r.ParseForm()
+		// ut-docs#5410: a bad display mode is a 400 (never clamped), refused
+		// before an approver's PIN is asked for. Empty is skipped like every
+		// other field of this handler.
+		currencyDisplay := strings.TrimSpace(r.Form.Get("currency_display"))
+		if currencyDisplay != "" && !httpx.IsCurrencyDisplayMode(currencyDisplay) {
+			http.Error(w, "currency_display must be one of auto, symbol, code", http.StatusBadRequest)
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)
@@ -3189,6 +3259,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				httpx.T(locale, "elevation.summary.store_save"),
 				[]elevationHiddenField{
 					{Name: "currency", Value: r.Form.Get("currency")},
+					{Name: "currency_display", Value: r.Form.Get("currency_display")},
 					{Name: "country", Value: r.Form.Get("country")},
 					{Name: "region", Value: r.Form.Get("region")},
 					{Name: "taxRatePct", Value: r.Form.Get("taxRatePct")},
@@ -3218,6 +3289,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// correct for a caller that does use the raw table), but this
 			// is the one that actually matters for the real UI.
 			extra[common.KeyCurrencyConfirmed] = "true"
+		}
+		if currencyDisplay != "" {
+			st.CurrencyDisplay = currencyDisplay
+			auditPayload["currency_display"] = currencyDisplay
 		}
 		countryChanged := false
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
@@ -3354,7 +3429,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			queueBasePluginsForCountryChange(r.Context(), d, st.Country)
 			startCustomerPhoneE164BackfillForCountryChange(d) // ut-docs#3992
 		}
-		httpx.InitCurrency(st.Currency)
+		common.InitCurrencyFromState(st)
 		// Live-apply, no restart (ut-docs#861) — st.Locale is always the
 		// current-or-just-changed value (CurrentState() seeds it when the
 		// "locale" field wasn't posted this call), same unconditional-call
@@ -3428,6 +3503,34 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "settings.retention.err_use_retention_card")
 			return
 		}
+		// ut-docs#5862 (review finding): this till's name keys take the
+		// Till name card's single-line rule here too, before the elevation
+		// gate, so the raw editor cannot store a name that card refuses.
+		if key == "till.name" || key == "sync.till_name" {
+			if _, err := data.CheckSingleLineName(value); err != nil {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), keyNameInvalidCharacters), http.StatusBadRequest)
+				return
+			}
+		}
+		// ut-docs#5874: the shop name takes the Shop name card's rule here
+		// too (plus the single-line rule, which also refuses U+E0100-E01EF),
+		// before the elevation gate, and the normalised name is what is
+		// stored - the raw editor cannot do what the card refuses.
+		if key == common.KeyStoreName {
+			norm, err := data.CheckSingleLineName(value)
+			if err == nil {
+				norm, err = config.NormalizeStoreName(norm)
+			}
+			if err != nil {
+				msgKey := keyNameInvalidCharacters
+				if !errors.Is(err, data.ErrNameInvalidCharacters) && !errors.Is(err, config.ErrStoreNameInvalidChars) {
+					msgKey = storeNameErrorKey(err)
+				}
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), msgKey), http.StatusBadRequest)
+				return
+			}
+			value = norm
+		}
 		// ut-docs#244: validate before persisting, not just before reflecting
 		// into RuntimeState — the old code let an unparsable value through to
 		// d.Settings.Set unchanged (silently no-op'ing only the in-memory
@@ -3468,6 +3571,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			value = taxrate.FormatPercent(bp)
+		}
+		// ut-docs#5410: a display mode outside auto|symbol|code is refused,
+		// never clamped, so the stored row is what the screen renders.
+		if key == common.KeyCurrencyDisplay && !httpx.IsCurrencyDisplayMode(value) {
+			http.Error(w, "mode must be one of auto, symbol, code", http.StatusBadRequest)
+			return
 		}
 		// ut-docs#2499: same validate-before-persisting reasoning as the
 		// service-charge rate above. An out-of-enum browsing mode would be
@@ -3700,6 +3809,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				s.Theme = value
 			case common.KeyCurrency:
 				s.Currency = value
+			case common.KeyCurrencyDisplay:
+				s.CurrencyDisplay = value // validated above
 			case common.KeyCountry:
 				s.Country = value
 				if derivedLocale != "" && derivedLocale != s.Locale {
@@ -3747,8 +3858,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 		})
 		switch key {
-		case common.KeyCurrency:
-			httpx.InitCurrency(st.Currency)
+		case common.KeyCurrency, common.KeyCurrencyDisplay:
+			common.InitCurrencyFromState(st)
 			// store.currency_confirmed was saved with the currency above.
 		case common.KeyTheme:
 			// ut-docs#2362, same class of gap as ut-docs#2121's display.mode
@@ -3887,6 +3998,67 @@ func resolveFiscalPostureKey(d *common.Deps, key string) (logical, storage strin
 		}
 	}
 	return key, key
+}
+
+// writePairError renders a refused or failed Pair as the card's error span.
+// The refusals an operator can act on get their own translated message;
+// everything else is the generic failure (the raw reason is only logged).
+func writePairError(w http.ResponseWriter, locale string, err error) {
+	switch {
+	case errors.Is(err, enroll.ErrPairStoreMismatch):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_store_mismatch")))
+		return
+	case errors.Is(err, enroll.ErrPairIdentityPinned):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_identity_pinned")))
+		return
+	case errors.Is(err, enroll.ErrPairReplicaNoStore):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
+		return
+	case errors.Is(err, enroll.ErrMoveSourceLost):
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, "settings.move.source_lost")))
+		return
+	}
+	var refused *enroll.MoveRefusedError
+	if errors.As(err, &refused) {
+		// A refused move changed nothing on this till (ut-docs#5127).
+		logging.L().Warnf("enrol pair (move) refused: %v", err)
+		fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+			html.EscapeString(httpx.T(locale, moveRefusalKey(refused.Code))))
+		return
+	}
+	// The raw reason is logged, never rendered: it is English-only
+	// and can carry the cloud's body or the endpoint (ut-docs#4058;
+	// the error never contains the pairing code or token).
+	logging.L().Warnf("enrol pair failed: %v", err)
+	msg := httpx.T(locale, "settings.enrol.pair_failed")
+	if key := enrolFailureKey(err); key != "" {
+		msg = httpx.T(locale, key)
+	}
+	fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(msg))
+}
+
+// pairReplacesWorkingConnection (ut-docs#3557): this till has a working
+// cloud connection of its own, so a wrong pairing code would cost the shop
+// an owner-minted code to recover. A joined till with no credential of its
+// own (ViaMainTill) re-registers through its main till, and a till the
+// cloud has locked out (revoked, retired, unauthorized, replaced) has
+// nothing working to lose. A lock-out counter that is still zero after a
+// reboot only means one extra confirmation, never a lock-out.
+func pairReplacesWorkingConnection(r *http.Request, d *common.Deps) bool {
+	if !enroll.CurrentStatus().Registered {
+		return false
+	}
+	if cloudAuthChipStatus().Show {
+		return false
+	}
+	if _, replaced := tillReplaced(r, d); replaced {
+		return false
+	}
+	return true
 }
 
 // enrolFailureKey names the message for a "Register now", "Claim this

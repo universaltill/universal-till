@@ -10,16 +10,16 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 )
 
-// ut-docs#3584: a save_item directive whose icon replaces an uploaded
-// photo, driven through buildCloudHooks exactly as Tick does — the item
-// keeps one picture (the icon) and the superseded photo's file is removed,
-// mirroring TestCloudSaveCategory_IconReplacesUploadedPhoto.
-func TestCloudSaveItem_IconReplacesUploadedPhoto(t *testing.T) {
+// ut-docs#6028 (was #3584's replace): a save_item directive whose icon meets
+// an uploaded photo, driven through buildCloudHooks exactly as Tick does —
+// the photo row and its file stay and the icon is stored as the fallback,
+// mirroring TestCloudSaveCategory_IconKeepsUploadedPhoto.
+func TestCloudSaveItem_IconKeepsPhotoFile(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	dataDir := useTempDataDir(t)
 	ctx := t.Context()
 	repo := data.NewCatalogRepo(dp.Db)
-	if err := repo.SetItemThumbnail(ctx, "itm1", catalog.ItemThumbURL("itm1")); err != nil {
+	if err := repo.SetItemPhoto(ctx, "itm1", catalog.ItemThumbURL("itm1")); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(dataDir, "public", "assets", "items", "itm1", "thumb.png")
@@ -33,21 +33,20 @@ func TestCloudSaveItem_IconReplacesUploadedPhoto(t *testing.T) {
 	if _, err := buildCloudHooks(dp, nil).SaveItem(ctx, data.ItemPatch{ID: "itm1", Icon: sp("lucide:beer")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := itemThumbRow(t, dp, "itm1"); ok {
-		t.Fatal("the icon must replace the item_images thumbnail row")
+	if p, ok := itemThumbRow(t, dp, "itm1"); !ok || p != catalog.ItemThumbURL("itm1") {
+		t.Fatalf("the icon must keep the item_images thumbnail row, got %q %v", p, ok)
 	}
 	if icon, err := repo.ItemIcon(ctx, "itm1"); err != nil || icon != "lucide:beer" {
 		t.Fatalf("icon = %q %v", icon, err)
 	}
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Fatalf("the superseded upload must be removed, stat err=%v", err)
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the photo file must stay, stat err=%v", err)
 	}
 }
 
-// set_catalog_image's clear on an item that shows an icon (no thumbnail
-// row) is not a no-op replay: the icon is the item's picture, and "remove"
-// takes it away, as for a category.
-func TestCloudSetCatalogImage_ClearRemovesItemIcon(t *testing.T) {
+// ut-docs#3601 reverses #3584 here: set_catalog_image clear removes only the
+// image, as for a category. On an icon-only item it is a no-op (no audit).
+func TestCloudSetCatalogImage_ClearKeepsIconOnlyItem(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
 	repo := data.NewCatalogRepo(dp.Db)
@@ -58,10 +57,10 @@ func TestCloudSetCatalogImage_ClearRemovesItemIcon(t *testing.T) {
 	if err != nil || msg != "image removed from item Apple" {
 		t.Fatalf("clear: %q %v", msg, err)
 	}
-	if icon, _ := repo.ItemIcon(ctx, "itm1"); icon != "" {
-		t.Fatalf("icon = %q after clear, want none", icon)
+	if icon, _ := repo.ItemIcon(ctx, "itm1"); icon != "lucide:beer" {
+		t.Fatalf("icon = %q after clear, want lucide:beer kept", icon)
 	}
-	if n := cloudAuditCount(t, dp, "cloud_catalog_image_cleared", "itm1"); n != 1 {
-		t.Fatalf("clear audit rows = %d, want 1", n)
+	if n := cloudAuditCount(t, dp, "cloud_catalog_image_cleared", "itm1"); n != 0 {
+		t.Fatalf("clear audit rows = %d, want 0", n)
 	}
 }

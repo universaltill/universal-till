@@ -23,7 +23,7 @@
 </div>
 
 {{ if .errKey }}
-<p class="login-error">
+<p class="login-error" role="alert">
   {{ if eq .errKey "categories.error.deactivate_blocked" }}
   {{ printf (T .errKey) .errCount }}
   {{ else }}
@@ -54,6 +54,8 @@
        names its Alt+ArrowUp/Down keys (aria-keyshortcuts). */}}
   <p class="muted list-reorder-hint" id="categories-reorder-hint">{{ T "categories.reorder_hint" }}</p>
   <div id="categories-reorder-live" class="visually-hidden" role="status" aria-live="polite"></div>
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="categories-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <p id="categories-reorder-msg" class="list-reorder-msg" role="alert" hidden></p>
   <div class="list-scroll">
   <table class="table" id="categories-table" aria-describedby="categories-reorder-hint">
@@ -109,14 +111,14 @@
              visual: image → icon (ui.CategoryThumb, icon only via
              iconid.AssetPath) → colour swatch → placeholder. */}}
         <td class="category-name-cell">
-          <button type="button" class="category-row-open" data-record-edit
+          <button type="button" class="category-row-open" data-record-edit aria-describedby="categories-row-edit-hint"
                   aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
             <span class="cat-thumb" aria-hidden="true">{{ if .Thumb }}<img src="{{ imgv .Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if .Color }}<span class="cat-thumb-swatch" style="--swatch: {{ .Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
             <span class="category-row-name">{{ .Name }}</span>
           </button>
           {{ if .SellScreenHidden }} <span class="chip category-hidden-badge">{{ T "categories.hidden_badge" }}</span>{{ end }}
         </td>
-        <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
+        <td>{{ TM "categories.item_count_plural" "count" .ItemCount }}</td>
         <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
       </tr>
       {{ end }}
@@ -151,12 +153,12 @@
   // ut-docs#2284: the category dialog's three pickers. record-dialog.js
   // owns open/close/prefill of ordinary fields (the name input and the
   // hidden colour input, via data-field-*); this script only paints what
-  // that generic prefill can't express — which colour TILE is pressed, and
+  // that generic prefill can't express — which colour TILE is checked, and
   // which of the group/station checkboxes are ticked — inside the
   // record-dialog:open hook, which fires synchronously BEFORE record-
   // dialog.js snapshots the form for its discard guard, so a freshly
   // opened row never reads as "dirty". Colour tiles reuse catalog.html's
-  // #item-color-grid contract exactly (data-color, aria-pressed, one hidden
+  // #item-color-grid contract exactly (data-color, aria-checked, one hidden
   // input actually submitted, the "none" tile clears it).
   var dialog = document.getElementById('category-dialog');
   if (!dialog) return;
@@ -164,8 +166,10 @@
   var grid = document.getElementById('category-color-grid');
   var colorInput = document.getElementById('category-color');
 
-  // Roving tabindex (WAI-ARIA toolbar/radio-group pattern): the grid is ONE
-  // Tab stop — the pressed tile — and the arrow keys walk the tiles, so a
+  // Roving tabindex (WAI-ARIA radio-group pattern): the grid is ONE
+  // Tab stop — the checked tile — and the arrow keys SELECT via
+  // radiogroup.js (ut-docs#5553; no page-local keydown here, it would
+  // preventDefault first and radiogroup.js would ignore the key), so a
   // keyboard user isn't made to Tab through nine swatches to reach the
   // checkboxes and Save (found by the ut-docs#2010 (c4) focus-trap e2e the
   // moment the picker landed in this dialog). Enter/Space press natively.
@@ -177,7 +181,7 @@
     tiles.forEach(function (btn) {
       var pressed = (btn.dataset.color || '') === hex;
       if (pressed) anyPressed = true;
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      btn.setAttribute('aria-checked', pressed ? 'true' : 'false');
       btn.setAttribute('tabindex', pressed ? '0' : '-1');
     });
     // A colour that matches no tile (a future palette change leaving an
@@ -204,30 +208,13 @@
       paintColor();
       btn.focus();
     });
-    grid.addEventListener('keydown', function (ev) {
-      // RTL (fa/ar): the grid's own tile ORDER in the DOM doesn't change,
-      // but "next" must still mean "the tile visually to the left" —
-      // logical-CSS rule, same reasoning as this repo's CSS (never
-      // left/right) applied to a keyboard direction instead of a style.
-      var rtl = document.documentElement.getAttribute('dir') === 'rtl';
-      var horizontalStep = rtl ? -1 : 1;
-      var step = (ev.key === 'ArrowRight') ? horizontalStep
-               : (ev.key === 'ArrowLeft') ? -horizontalStep
-               : (ev.key === 'ArrowDown') ? 1
-               : (ev.key === 'ArrowUp') ? -1 : 0;
-      if (!step) return;
-      var tiles = Array.prototype.slice.call(grid.querySelectorAll('.item-color-tile'));
-      var i = tiles.indexOf(document.activeElement);
-      if (i < 0) return;
-      ev.preventDefault();
-      tiles[(i + step + tiles.length) % tiles.length].focus();
-    });
   }
 
-  // ut-docs#2500: the image picker. The pressed icon tile shows what the
+  // ut-docs#2500: the image picker. The selected icon tile shows what the
   // category has NOW (from the row's data-image), or what the operator
-  // just picked; an uploaded photo presses no tile and shows its preview
-  // instead. Roving tabindex like the colour grid (one Tab stop).
+  // just picked; an uploaded photo selects no tile and shows its preview
+  // instead. One Tab stop, focus-only arrows: radiogroup.js's listbox
+  // branch (ut-docs#5601), unlike the colour grid's radiogroup.
   var iconGrid = document.getElementById('category-icon-grid');
   var iconInput = document.getElementById('category-icon');
   var imageFile = document.getElementById('category-image-file');
@@ -250,17 +237,15 @@
     existingCutoutBtn.hidden = !savedUploadURL || pending || iconPicked;
   }
 
-  function paintIcons(pressedKey) {
+  // ut-docs#5601: the grid is a focus-only listbox (radiogroup.js), so the
+  // chosen tile is aria-selected and the helper owns the one Tab stop.
+  function paintIcons(selectedKey) {
     if (!iconGrid) return;
-    var tiles = iconGrid.querySelectorAll('.builtin-icon-tile');
-    var anyPressed = false;
-    tiles.forEach(function (btn) {
-      var pressed = pressedKey !== null && btn.dataset.icon === pressedKey;
-      if (pressed) anyPressed = true;
-      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
-      btn.setAttribute('tabindex', pressed ? '0' : '-1');
+    iconGrid.querySelectorAll('.builtin-icon-tile').forEach(function (btn) {
+      var selected = selectedKey !== null && btn.dataset.icon === selectedKey;
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
     });
-    if (!anyPressed && tiles.length) tiles[0].setAttribute('tabindex', '0');
+    if (window.utRovingListbox) window.utRovingListbox.sync(iconGrid);
   }
 
   // Which tile a stored picture corresponds to (ut-docs#2717: the same
@@ -321,20 +306,6 @@
       paintIcons(btn.dataset.icon);
       paintExistingCutout();
       btn.focus();
-    });
-    iconGrid.addEventListener('keydown', function (ev) {
-      var rtl = document.documentElement.getAttribute('dir') === 'rtl';
-      var horizontalStep = rtl ? -1 : 1;
-      var step = (ev.key === 'ArrowRight') ? horizontalStep
-               : (ev.key === 'ArrowLeft') ? -horizontalStep
-               : (ev.key === 'ArrowDown') ? 1
-               : (ev.key === 'ArrowUp') ? -1 : 0;
-      if (!step) return;
-      var tiles = Array.prototype.slice.call(iconGrid.querySelectorAll('.builtin-icon-tile:not([hidden])'));
-      var i = tiles.indexOf(document.activeElement);
-      if (i < 0) return;
-      ev.preventDefault();
-      tiles[(i + step + tiles.length) % tiles.length].focus();
     });
   }
   var chooseBtn = document.getElementById('category-image-choose-btn');
@@ -523,14 +494,14 @@
        #category-dialog-msg — hints below are plain text on purpose. */}}
   <div class="category-dialog-section">
     <div class="category-dialog-label">{{ T "catalog.color" }}</div>
-    <div id="category-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+    <div id="category-color-grid" class="picker-grid item-color-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "catalog.color" }}">
       {{ range .root.itemColors }}
-      <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+      <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" role="radio" aria-checked="false" tabindex="-1" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
         <span class="swatch-dot" aria-hidden="true"></span>
         <span>{{ T .I18nKey }}</span>
       </button>
       {{ end }}
-      <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+      <button type="button" class="picker-tile item-color-tile" data-color="" role="radio" aria-checked="true" tabindex="0">{{ T "catalog.color.none" }}</button>
     </div>
     <input type="hidden" name="color" id="category-color">
   </div>
@@ -573,16 +544,18 @@
     {{/* ut-docs#2506: ~70 icons in sections — search box
          (web/public/icon-picker-filter.js), scroll box, "No image" first. */}}
     <input type="search" class="builtin-icon-search" data-icon-filter="category-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">
-    <div id="category-icon-grid" class="picker-grid builtin-icon-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
-      {{ range .root.builtinIconGroups }}
-      <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
-      {{ range .Icons }}
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-id="{{ .ID }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
+    <div id="category-icon-grid" class="picker-grid builtin-icon-grid" role="listbox" data-roving-listbox aria-label="{{ T "catalog.builtin_icon.hint" }}">
+      <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="none" aria-selected="false" tabindex="0">{{ T "catalog.builtin_icon.none" }}</button>
+      {{ range $i, $g := .root.builtinIconGroups }}
+      <div class="builtin-icon-group" role="group" aria-labelledby="category-icon-grid-g{{ $i }}">
+      <div class="builtin-icon-group-label" id="category-icon-grid-g{{ $i }}">{{ T $g.I18nKey }}</div>
+      {{ range $g.Icons }}
+      <button type="button" role="option" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-id="{{ .ID }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-selected="false" tabindex="-1" title="{{ T .I18nKey }}">
         <img src="{{ .Path }}" alt="" width="28" height="28">
         <span>{{ T .I18nKey }}</span>
       </button>
       {{ end }}
+      </div>
       {{ end }}
     </div>
     <div class="muted" data-icon-filter-empty="category-icon-grid" hidden>{{ T "catalog.builtin_icon.no_match" }}</div>

@@ -15,7 +15,7 @@ import (
 func TestApplyAdminWithResult_ReportsErasedCustomers(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT INTO customers (id, name) VALUES ('c-pinned', 'Pinned Person'), ('c-free', 'Free Person'), ('c-kept', 'Kept Person')`)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -69,7 +69,7 @@ func TestApplyAdminWithResult_ReportsErasedCustomers(t *testing.T) {
 func TestApplyAdminWithResult_SampleCustomerRemovalIsNotAnErasure(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	if err := NewDemoSeedRepo(primary.DB).SeedDemoCustomersPromos(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestApplyAdminWithResult_SampleCustomerRemovalIsNotAnErasure(t *testing.T) 
 func TestApplyAdminWithResult_RetiredSampleCustomerIsNotAnErasure(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	if err := NewDemoSeedRepo(primary.DB).SeedDemoCustomersPromos(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -139,7 +139,12 @@
   // Same-origin path only ("/refund/42"), never "//host" or "javascript:".
   function safePath(p) { return typeof p === 'string' && /^\/(?![\/\\])/.test(p) ? p : null; }
   function showDialog(d) { if (d && !d.open) d.show(); }
-  function closeDialog(d) { if (d && d.open) d.close(); }
+  // ut-docs#5288: a confirm / PIN prompt (data-ut-prompt) never closes while
+  // its own form has a request in flight (.htmx-request): its answer must
+  // still show. Prompts only: other dialogs (self-order kiosk, modifier
+  // picker) keep closing as before. The terminal after-request hook runs
+  // after htmx has cleared that class on the form it closes.
+  function closeDialog(d) { if (d && d.open && !(d.hasAttribute && d.hasAttribute('data-ut-prompt') && d.querySelector('form.htmx-request'))) d.close(); }
   function toMinor(v) { return window.utCurrency ? window.utCurrency.toMinor(v) : v; }
   function scanFocusLater() {
     setTimeout(function () {
@@ -427,7 +432,12 @@
     'elevation-done': function (ctx) {
       var xr = header(ctx, 'X-UT-Response');
       if (xr === 'elevation-prompt') return;
-      closeDialog(ctx.el.closest('dialog'));
+      var dlg = ctx.el.closest('dialog');
+      // A terminal answer, not a Cancel (ut-docs#5275). Only while still
+      // open: a dialog the operator already cancelled mid-request has had
+      // its cleanup, and a stale flag must not outlive it.
+      if (dlg && dlg.open) dlg.utAnswered = true;
+      closeDialog(dlg);
       if (xr !== 'ok') return;
       var t = null;
       try { t = document.querySelector(ctx.el.getAttribute('hx-target')); } catch (e) { t = null; }
@@ -452,7 +462,7 @@
     },
     'dismiss-pairing-notice': function () { if (window.utPairingNoticeDismiss) window.utPairingNoticeDismiss(); },
     'dismiss-shop-name-notice': function () { if (window.utShopNameNoticeDismiss) window.utShopNameNoticeDismiss(); }, // ut-docs#3114
-    'close-install-modal': function () { if (window.closeInstallModal) window.closeInstallModal(); },
+    'dismiss-move-approval-notice': function () { if (window.utMoveApprovalNoticeDismiss) window.utMoveApprovalNoticeDismiss(); }, // ut-docs#5127
     // receipt.html's "ask" prompt: Print hides the prompt BEFORE any
     // window.print() fallback, so the question never lands on paper.
     'receipt-ask-print': function (ctx, no) {
@@ -554,6 +564,69 @@
     if (t && t.tagName === 'IMG' && t.hasAttribute('data-fallback')) imageFallback(t);
   }, true);
 
+  // ---- confirm / elevation prompt cleanup (ut-docs#5275) ---------------------
+  // confirm_prompt.html / elevation_prompt.html (dialog[data-ut-prompt]).
+  // Escape (base.html) and Cancel both just close the dialog; this puts
+  // focus back on the control that asked and removes the prompt's own
+  // .elevation-hint from the hx-target. The opener is captured at request
+  // start (autofocus has moved focus by the time the dialog opens). Only
+  // the hint NODE is removed, never the target's innerHTML, so a real
+  // answer in the target is untouched.
+  function captureOpener(el, detail) {
+    var from = el && el.closest ? el.closest('dialog[data-ut-prompt]') : null;
+    if (from) {
+      detail.utPromptFrom = from; detail.utOpener = from.utOpener || null;
+      var tf = detail.target;
+      detail.utHintBefore = tf && tf.querySelector ? tf.querySelector(':scope > .elevation-hint') : null;
+      return;
+    }
+    var a = document.activeElement;
+    var op = a && a !== document.body ? a : null;
+    if (!op) {
+      var te = detail.requestConfig && detail.requestConfig.triggeringEvent;
+      op = (te && te.submitter) || el;
+    }
+    detail.utOpener = op;
+    var tg = detail.target;
+    detail.utHintBefore = tg && tg.querySelector ? tg.querySelector(':scope > .elevation-hint') : null;
+  }
+  var PROMPT_IDS = { 'confirm-prompt': 'confirm-modal', 'elevation-prompt': 'elevation-modal' };
+  function wirePrompt(ev, detail) {
+    if (detail.utPromptWired) return;
+    var id = PROMPT_IDS[header({ detail: detail }, 'X-UT-Response')];
+    var d = id && byId(id);
+    if (!d) return;
+    detail.utPromptWired = true;
+    d.utOpener = detail.utOpener || null;
+    d.utHint = null;
+    var f = d.querySelector('form[hx-target]');
+    var t = null;
+    try { t = f && document.querySelector(f.getAttribute('hx-target')); } catch (e) { t = null; }
+    // Only a hint THIS response placed: the request's own swap target (a
+    // swap="none" form like display-mode places nothing), and a node that
+    // was not already there before the request.
+    if (t && t === detail.target) {
+      var h = t.querySelector(':scope > .elevation-hint');
+      if (h && h !== detail.utHintBefore) d.utHint = h;
+    }
+    var from = detail.utPromptFrom;
+    if (from && from !== d && from.isConnected && from.open) {
+      from.utHandedOff = true; // confirm -> elevation: replaced, not cancelled
+      from.close();
+    }
+  }
+  document.addEventListener('close', function (ev) {
+    var d = ev.target;
+    if (!d || !d.matches || !d.matches('dialog[data-ut-prompt]')) return;
+    try {
+      if (d.utAnswered || d.utHandedOff) { d.utAnswered = d.utHandedOff = false; return; }
+      if (d.utHint && d.utHint.isConnected) d.utHint.remove();
+      var op = d.utOpener;
+      if (op && op.isConnected && !op.disabled && op.focus) op.focus({ preventScroll: true });
+      d.utOpener = d.utHint = null;
+    } catch (e) { /* cleanup only */ }
+  }, true);
+
   // ---- 3. htmx lifecycle ----------------------------------------------------
   // htmx fires these on the requesting element (beforeSwap/afterSettle on
   // the swap target); the walk up finds the carrier either way.
@@ -561,16 +634,27 @@
   function htmxHook(attr) {
     return function (ev) { dispatch(ev.target, attr, ev, ev.detail || {}); };
   }
+  // ut-docs#5291: aria-busy on a prompt's form while its own request runs
+  // (htmx adds .htmx-request and disables the buttons itself).
+  function markPromptBusy(el, on) {
+    var f = el && el.tagName === 'FORM' && el.closest && el.closest('dialog[data-ut-prompt]') ? el : null;
+    if (!f) return;
+    if (on) f.setAttribute('aria-busy', 'true'); else f.removeAttribute('aria-busy');
+  }
   document.addEventListener('htmx:beforeRequest', function (ev) {
     var detail = ev.detail || {};
+    try { markPromptBusy(ev.target, true); } catch (e) { /* a11y hint only */ }
     // The same object htmx later dispatches htmx:afterRequest with.
     try { detail[SRC] = ev.target; } catch (e) { /* no replay for this one */ }
+    try { captureOpener(ev.target, detail); } catch (e) { /* focus return only */ }
     clearSaveError(ev.target);
     dispatch(ev.target, 'data-before-request', ev, detail);
   }, true);
   document.addEventListener('htmx:afterRequest', function (ev) {
     var detail = ev.detail || {};
     var src = detail[SRC];
+    try { markPromptBusy(ev.target, false); } catch (e) { /* a11y hint only */ }
+    try { wirePrompt(ev, detail); } catch (e) { /* focus return only */ }
     // The source swapped itself out: this is htmx's re-dispatch on a
     // connected ancestor. Replay the source's own (missed) dispatch first.
     if (src && src !== ev.target && !src.isConnected) dispatch(src, 'data-after-request', ev, detail);

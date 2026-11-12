@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/fxlevel"
@@ -26,6 +27,22 @@ func openMigratedDB(t *testing.T, name string) *db.DB {
 	}
 	t.Cleanup(func() { d.Close() })
 	return d
+}
+
+// openReplicaDB is openMigratedDB for a till that applies admin bundles:
+// ApplyAdminWithResult refuses on a till without sync.primary_url
+// (ut-docs#5896), so every apply target is marked as a replica.
+func openReplicaDB(t *testing.T, name string) *db.DB {
+	t.Helper()
+	d := openMigratedDB(t, name)
+	markReplica(t, d)
+	return d
+}
+
+func markReplica(t *testing.T, d *db.DB) {
+	t.Helper()
+	mustExec(t, d, `INSERT INTO settings (key, value) VALUES ('sync.primary_url', 'http://primary:8080')
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
 }
 
 func mustExec(t *testing.T, d *db.DB, q string, args ...any) {
@@ -114,7 +131,7 @@ func wireTrip(t *testing.T, b AdminBundle) AdminBundle {
 func TestAdminDumpApplyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// Primary's admin state: category, item + barcode, user, shop setting,
 	// a per-till setting that must NOT travel, and a translation override.
@@ -129,7 +146,6 @@ func TestAdminDumpApplyRoundTrip(t *testing.T) {
 	// Replica's own state: per-till keys that must survive, plus a LOCAL
 	// item squatting on the primary's SKU under a different id — the prune
 	// pass has to clear it before the upsert lands (UNIQUE sku).
-	mustExec(t, replica, `INSERT INTO settings (key, value) VALUES ('sync.primary_url', 'http://primary:8080')`)
 	mustExec(t, replica, `INSERT INTO settings (key, value) VALUES ('printer.host', '10.0.0.77')`)
 	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-local', 'COLA', 'Local Cola', 999)`)
 
@@ -221,7 +237,7 @@ func TestAdminDumpApplyRoundTrip(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// registers doesn't admin-sync (ut-docs#1584 — per-till), so this test
 	// seeds the same rows by hand on both sides to simulate the shop-wide
@@ -260,6 +276,8 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump replica: %v", err)
 	}
+	// The receiving till must be a replica (ut-docs#5896).
+	markReplica(t, primary)
 	if _, err := NewSyncAdminRepo(primary.DB).ApplyAdminWithResult(ctx, wireTrip(t, replicaBundle)); err != nil {
 		t.Fatalf("apply to primary: %v", err)
 	}
@@ -278,7 +296,7 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_FiscalPendingSignRetriesNeverSyncs(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// The pre-1.4.0 primary still carries a stale retry queue.
 	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES ('fiscal.pending_sign_retries', '["sale-1","sale-2"]')`)
@@ -311,7 +329,7 @@ func TestAdminDumpApplyRoundTrip_FiscalPendingSignRetriesNeverSyncs(t *testing.T
 func TestAdminDumpApplyRoundTrip_AutoUpdateLastAttemptNeverSyncs(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES ('update.auto_last_attempt', '2026-09-25'), ('update.auto_enabled', 'false')`)
 
@@ -345,7 +363,7 @@ func TestAdminDumpApplyRoundTrip_AutoUpdateLastAttemptNeverSyncs(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_TillLocalStateNeverSyncs(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	perTill := []string{
 		"diagnostics.active", "diagnostics.session_id", "diagnostics.next_seq",
@@ -421,7 +439,7 @@ func TestAdminDumpApplyRoundTrip_TillLocalStateNeverSyncs(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_ThemeIsPerTillAndNeverSyncs(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT OR REPLACE INTO settings (key, value) VALUES ('theme', 'monarch'), ('store.currency', 'EUR')`)
 	mustExec(t, replica, `INSERT OR REPLACE INTO settings (key, value) VALUES ('theme', 'slate')`)
@@ -454,6 +472,47 @@ func TestAdminDumpApplyRoundTrip_ThemeIsPerTillAndNeverSyncs(t *testing.T) {
 	}
 }
 
+// ut-docs#5198: the rotation state of a till's bearer (when it was issued,
+// the previous hash and its expiry) is as private to the main till as the
+// hash itself -- it must neither travel in the dump nor survive on a replica
+// that already holds it from a full-DB join snapshot.
+func TestAdminDumpApplyRoundTrip_TillsRosterRedactsBearerRotationColumns(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openReplicaDB(t, "replica.db")
+	const rotated = `INSERT INTO tills (id, name, bearer_hash, bearer_issued_at, bearer_prev_hash, bearer_prev_expires_at)
+VALUES ('till-a', 'Front Counter', 'realhash-a', '2026-10-01T00:00:00Z', 'oldhash-a', '2026-10-01T00:10:00Z')`
+	mustExec(t, primary, rotated)
+	mustExec(t, replica, rotated)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["tills"] {
+		for _, c := range []string{"bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at"} {
+			if _, ok := rec[c]; ok {
+				t.Fatalf("%s must never appear in a dumped tills row, got %+v", c, rec)
+			}
+		}
+	}
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var issued, prev, exp sql.NullString
+	if err := replica.QueryRow(`SELECT bearer_issued_at, bearer_prev_hash, bearer_prev_expires_at FROM tills WHERE id = 'till-a'`).
+		Scan(&issued, &prev, &exp); err != nil {
+		t.Fatal(err)
+	}
+	if issued.Valid || prev.Valid || exp.Valid {
+		t.Fatalf("rotation columns survived an admin apply on the replica: %v %v %v", issued, prev, exp)
+	}
+	var kept string
+	if err := primary.QueryRow(`SELECT bearer_prev_hash FROM tills WHERE id = 'till-a'`).Scan(&kept); err != nil || kept != "oldhash-a" {
+		t.Fatalf("primary's own bearer_prev_hash must be unchanged: %q %v", kept, err)
+	}
+}
+
 // ut-docs#405: the shop's till roster now syncs like any other admin
 // table, but bearer_hash is that row's sync-auth secret and must never
 // leave the primary — redactCols strips it out of the dump, and migration
@@ -464,7 +523,7 @@ func TestAdminDumpApplyRoundTrip_ThemeIsPerTillAndNeverSyncs(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_TillsRosterRedactsBearerHash(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-a', 'Front Counter', 'realhash-a')`)
 	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-b', 'Back Counter', 'realhash-b')`)
@@ -532,7 +591,7 @@ func TestAdminDumpApplyRoundTrip_TillsRosterRedactsBearerHash(t *testing.T) {
 func TestAdminApplyTills_RedactsPreExistingBearerHash(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash) VALUES ('till-a', 'Front', 'realhash-a')`)
 	// Simulates a snapshot-joined replica: it already holds the primary's
@@ -566,7 +625,7 @@ func TestAdminApplyTills_RedactsPreExistingBearerHash(t *testing.T) {
 func TestAdminApplyTills_RedactsPreExistingLastSeenAt(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO tills (id, name, bearer_hash, last_seen_at) VALUES ('till-a', 'Front', 'hash-a', '2026-08-07T10:00:00Z')`)
 	// Simulates a snapshot-joined replica holding a much older timestamp
@@ -611,7 +670,7 @@ func TestAdminDumpFingerprint_StableAcrossTillAuthTouch(t *testing.T) {
 	}
 
 	// Exactly what every authenticated sync call does.
-	if _, ok, err := NewTillsRepo(primary.DB).TillByBearerHash(ctx, "hash-a"); err != nil || !ok {
+	if _, ok, err := NewTillsRepo(primary.DB).TillByBearerHashAt(ctx, "hash-a", time.Now()); err != nil || !ok {
 		t.Fatalf("auth: ok=%v err=%v", ok, err)
 	}
 
@@ -632,7 +691,7 @@ func TestAdminDumpFingerprint_StableAcrossTillAuthTouch(t *testing.T) {
 func TestAdminApplyRetiresFKPinnedSKUSquatter(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola Can', 120)`)
 	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-local', 'COLA', 'Local Cola', 999)`)
@@ -671,7 +730,7 @@ func TestAdminApplyRetiresFKPinnedSKUSquatter(t *testing.T) {
 func TestAdminSyncSharedPluginSettings(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	seedPlugin := func(d *db.DB, id string) {
 		mustExec(t, d, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`, id, id)
@@ -765,7 +824,7 @@ func TestAdminSyncSharedPluginSettings(t *testing.T) {
 // TestUxPluginSettingsGlobalRejectsDuplicateRow in internal/db.
 func TestAdminSyncSharedPluginSettingsDedupesDuplicateGlobalRowsInBundle(t *testing.T) {
 	ctx := context.Background()
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, replica, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES ('com.ut.dup', '1.0.0', 'com.ut.dup', 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`)
 	mustExec(t, replica, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES ('com.ut.dup', 'com.ut.dup', '1.0.0', 'plugin.wasm', 'wasm')`)
@@ -818,7 +877,7 @@ func TestAdminSyncSharedPluginSettingsDedupesDuplicateGlobalRowsInBundle(t *test
 // keep both or panic.
 func TestAdminSyncSharedPluginSettingsDedupeTiebreaksOnIDWhenUpdatedAtTies(t *testing.T) {
 	ctx := context.Background()
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, replica, `INSERT INTO plugin_catalog (id, version, name, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, published_at) VALUES ('com.ut.tie', '1.0.0', 'com.ut.tie', 'wasm', 'plugin.wasm', 'https://mp/x', 'deadbeef', '0.1.0', '1', '2026-07-17')`)
 	mustExec(t, replica, `INSERT INTO plugins (id, name, version, entrypoint, runtime) VALUES ('com.ut.tie', 'com.ut.tie', '1.0.0', 'plugin.wasm', 'wasm')`)
@@ -845,7 +904,7 @@ func TestAdminSyncSharedPluginSettingsDedupeTiebreaksOnIDWhenUpdatedAtTies(t *te
 func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// The replica sold this item (stock movement references it), so when the
 	// primary deletes it the prune must fall back to is_active = 0.
@@ -884,7 +943,7 @@ func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO categories (id, name) VALUES ('cat-hot', 'Hot Drinks')`)
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-esp', 'ESP', 'Espresso', 250)`)
@@ -952,7 +1011,7 @@ func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
 		VALUES ('stn-kitchen', 'Kitchen', 'printer', '/dev/usb/lp0', '2026-09-04', '2026-09-04')`)
@@ -991,7 +1050,7 @@ func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testi
 func TestAdminDumpApplyRoundTrip_RolePermissions(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// 'cashier' isn't seeded with 'audit' by migration 001_init.sql — grant
 	// it on the primary, as the permission matrix editor's
@@ -1043,7 +1102,7 @@ func TestAdminDumpApplyRoundTrip_RolePermissions(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_RolePermissions_SurvivesReplicaAheadOfPrimarySkew(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// The replica is running a migration the primary hasn't reached yet: a
 	// new role, a new permission action, and a grant tying them together —
@@ -1106,7 +1165,7 @@ func TestAdminDumpApplyRoundTrip_RolePermissions_SurvivesReplicaAheadOfPrimarySk
 func TestAdminDumpApplyRoundTrip_RolePermissions_PrunesSameVersionLocalDrift(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// A satellite-local edit (or a bug) grants 'cashier'/'audit' on the
 	// replica only — the primary has no opinion on this pairing at all.
@@ -1141,7 +1200,7 @@ func TestAdminDumpApplyRoundTrip_RolePermissions_PrunesSameVersionLocalDrift(t *
 func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO tables (id, label, area_zone, seat_count, created_at, updated_at)
 		VALUES ('tbl-1', 'Table 1', 'Terrace', 4, '2026-09-04', '2026-09-04')`)
@@ -1192,7 +1251,7 @@ func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *te
 func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-hq', 'HQ Store', 1)`)
 	mustExec(t, primary, `INSERT INTO registers (id, name, location_id, is_active) VALUES ('reg-front', 'Front Till', 'loc-hq', 1)`)
@@ -1249,7 +1308,7 @@ func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
 	mustExec(t, primary, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp1', 'Extras', 0, 0, 2, 0, 1)`)
@@ -1334,7 +1393,7 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	primaryModifiers := NewModifierRepo(primary.DB)
 	replicaModifiers := NewModifierRepo(replica.DB)
@@ -1468,7 +1527,7 @@ func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
 func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO registers (id, name, is_active) VALUES ('reg-1', 'Front Till', 1)`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -1543,7 +1602,7 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventoryHistory(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-1', 'Back Room', 1)`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -1636,7 +1695,7 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// Empty bundle from the primary (it never knew about this register) is
 	// enough to trigger the prune — no primary-side insert/delete needed.
@@ -1668,7 +1727,7 @@ func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
 func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
 	if err != nil {
@@ -1702,7 +1761,7 @@ func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T)
 func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -1740,7 +1799,7 @@ func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testin
 func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
 	if err != nil {
@@ -1781,7 +1840,7 @@ func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *te
 func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	if err := NewPluginRepo(primary.DB).StorageSet(ctx, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1", []byte(`{"id":"entry-1","eas_serial":"eas-1"}`)); err != nil {
 		t.Fatalf("seed fiscal_register entry via real write path: %v", err)
@@ -1896,7 +1955,7 @@ func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// Primary and replica start with the same seeded GB row (tax_rate_bp
 	// 2000). Diverge both, then let a primary edit win on sync -- proves
@@ -1961,7 +2020,7 @@ func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
 // come from ApplyAdmin actually writing it).
 func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.T) {
 	ctx := context.Background()
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	bundle := AdminBundle{Tables: map[string][]map[string]any{
 		"country_settings": {
@@ -1995,7 +2054,7 @@ func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.
 // passes through exactly as sent, in both directions.
 func TestAdminApplyCountrySettings_RatchetsShadowCustomerDocuments(t *testing.T) {
 	ctx := context.Background()
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	row := func(code, nameKey, shadow string) map[string]any {
 		return map[string]any{
@@ -2044,7 +2103,7 @@ func TestAdminApplyCountrySettings_RatchetsShadowCustomerDocuments(t *testing.T)
 func TestAdminApply_InvalidatesStaleOpenPriceHistory(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	// Primary: the item/variant at their NEW prices.
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola Can', 150)`)
@@ -2153,7 +2212,7 @@ func TestAdminApply_InvalidatesStaleOpenPriceHistory(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_MarketplaceIdentityNeverSyncs(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	perTill := map[string][2]string{ // key -> {primary value, replica value}
 		"marketplace.device_id":         {"till-main", "till-replica"},
@@ -2265,7 +2324,7 @@ func TestAdminDumpApplyRoundTrip_EffectsLevelIsPerTill(t *testing.T) {
 	}
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	for _, k := range keys {
 		mustExec(t, primary, `INSERT INTO settings (key, value) VALUES (?, 'primary')`, k)
 		mustExec(t, replica, `INSERT INTO settings (key, value) VALUES (?, 'replica')`, k)
@@ -2297,7 +2356,7 @@ func TestAdminDumpApplyRoundTrip_EffectsLevelIsPerTill(t *testing.T) {
 func TestAdminDumpApplyRoundTrip_UpdateFollowKeysNeverSync(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES
 		('update.follow_attempted', '1.4.0'), ('update.follow_error', 'failed:download'), ('sync.main_version', '1.4.0')`)

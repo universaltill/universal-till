@@ -169,11 +169,11 @@ var resetArchiveTables = []resetArchiveTable{
 	{"shrinkage_events", "id, reason_category, item_id, item_name, sku, quantity, unit_price_minor, extended_value_minor, actor_id, approver_id, note, order_type, register_id, created_at"},
 	// no_sale_events (ut-docs#2558, migration 064): the "No sale" drawer-open
 	// log. No FKs at all, so its position here is not load-bearing.
-	{"no_sale_events", "id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason"},
+	{"no_sale_events", "id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason, received_at"},
 	// cleared_baskets (ut-docs#1122, migration 086): baskets cleared with
 	// New sale before tender. No FKs at all, so its position here is not
 	// load-bearing.
-	{"cleared_baskets", "id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor"},
+	{"cleared_baskets", "id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor, received_at"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
 	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, voucher_id, local_date"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
@@ -198,7 +198,7 @@ var resetArchiveTables = []resetArchiveTable{
 	// every earlier ALTER's own note above (055 held_sales_archive.table_id,
 	// 056 tracking_token, 007 local_date/voided_local_date) — see
 	// reset_test.go's round-trip tests for the precedent this follows.
-	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp, voucher_issue_total, local_date, voided_local_date, display_no"},
+	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp, voucher_issue_total, local_date, voided_local_date, display_no, recorded_at"},
 	// updated_at and primary_synced (ADR-0093 + Amendment A, ut-docs#1920,
 	// migration 030): added to held_sales_archive in the same migration and
 	// to this cols string here, same fix shape as every earlier ALTER's own

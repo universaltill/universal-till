@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/netreach"
+	"github.com/universaltill/universal-till/internal/pairingpush"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -163,12 +164,26 @@ type Deps struct {
 	// in pages.Init; handlers nil-check it so bare-Deps tests stay valid.
 	OrderStatus *pos.OrderStatusBroadcaster
 
+	// PairingPush is the payload-free "pending pairings changed" nudge behind
+	// GET /api/pairings/stream (ut-docs#2743, ADR-0114 §2): published on
+	// pairing create/approve/deny/expiry, so the manager's browser re-reads
+	// the queue within ~1s instead of waiting for its 30s poll. Set once in
+	// pages.Init; handlers nil-check it so bare-Deps tests stay valid.
+	PairingPush *pairingpush.Broadcaster
+
 	// Link is the main-till link hub (ADR-0114, ut-docs#2734): one
 	// WebSocket per linked additional till, served by GET /api/sync/link.
 	// Change points call NudgeLink; the hub coalesces nudges into per-peer
 	// dirty flags, so a call is O(peers) and never blocks. Set once in
 	// pages.Init before the server accepts requests; nil in bare-Deps tests.
 	Link *fleetlink.Hub
+
+	// PendingLinks holds the joining tills' pending links on the main till
+	// (ADR-0114 §2 and its 2026-11-03 amendment, ut-docs#5297): one per
+	// pending pair request, resolved by approve/deny, closed on expiry and
+	// shutdown. Main till only (a replica refuses at the route). Set once in
+	// pages.Init; nil in bare-Deps tests, and every user nil-checks it.
+	PendingLinks *fleetlink.PendingHub
 
 	// LinkClient is this till's side of the main-till link when it is an
 	// additional till (ADR-0114 §2–§4, ut-docs#2735): it dials the main
@@ -224,6 +239,17 @@ type Deps struct {
 	// by StartSyncPull at boot; capacity 1, so any number of nudges before
 	// the loop drains it coalesce into one pull.
 	SyncPullNow chan struct{}
+
+	// SalesMirrorPullNow, when non-nil, asks the additional till's sales-copy
+	// pull loop (pages.StartSalesMirrorPull, ut-docs#5074) for one pull now —
+	// the link's sales_mirror nudge, or the link coming up. Capacity 1,
+	// coalesced like SyncPullNow.
+	SalesMirrorPullNow chan struct{}
+
+	// SalesMirrorNudgeNow, when non-nil, wakes the main till's sales-copy
+	// nudge watcher (pages.StartSalesMirrorNudge, ut-docs#5074 M4) at once:
+	// the journal just applied another till's sales. Capacity 1, coalesced.
+	SalesMirrorNudgeNow chan struct{}
 
 	// AsyncWork tracks best-effort, fire-and-forget goroutines started
 	// after a request already responded — printReceiptAsync (ut-docs#425)
@@ -330,8 +356,11 @@ func (d *Deps) WaitForAsyncWork() {
 type RuntimeState struct {
 	Theme    string
 	Currency string
-	Country  string
-	Region   string
+	// CurrencyDisplay is store.currency_display (auto|symbol|code,
+	// ut-docs#5410); always valid after LoadState/SaveState (clamped).
+	CurrencyDisplay string
+	Country         string
+	Region          string
 	// Locale is the shop's default locale (ut-docs#861) — settable live via
 	// Settings' Language card, distinct from a manager's own per-browser
 	// ?lang=/ut_lang cookie preference. Empty means "use the compiled-in/
@@ -690,6 +719,31 @@ func (d *Deps) RequestSyncPull() {
 	}
 	select {
 	case d.SyncPullNow <- struct{}{}:
+	default:
+	}
+}
+
+// RequestSalesMirrorPull asks the sales-copy pull loop for one pull now
+// (ut-docs#5074): the link's sales_mirror nudge, or the link coming up.
+// Non-blocking and coalesced; a no-op with no loop running.
+func (d *Deps) RequestSalesMirrorPull() {
+	if d.SalesMirrorPullNow == nil {
+		return
+	}
+	select {
+	case d.SalesMirrorPullNow <- struct{}{}:
+	default:
+	}
+}
+
+// PokeSalesMirrorNudge wakes the sales-copy nudge watcher on the main till.
+// Non-blocking and coalesced; a no-op with no watcher running.
+func (d *Deps) PokeSalesMirrorNudge() {
+	if d.SalesMirrorNudgeNow == nil {
+		return
+	}
+	select {
+	case d.SalesMirrorNudgeNow <- struct{}{}:
 	default:
 	}
 }

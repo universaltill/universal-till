@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -714,5 +715,33 @@ func TestPendingPrefersWebMWhenBothAudioFilesExist(t *testing.T) {
 	}
 	if want := filepath.Join(dir, "audio.webm"); bundles[0].AudioPath != want {
 		t.Fatalf("AudioPath = %q, want %q", bundles[0].AudioPath, want)
+	}
+}
+
+// ut-docs#2605: the till build is recorded at capture time (not upload time)
+// in meta.json under "app_version" and round-trips through Pending().
+func TestSaveRecordsAppVersion(t *testing.T) {
+	withTempPendingDir(t)
+	orig := buildinfo.Version
+	buildinfo.Version = "0.31.2"
+	t.Cleanup(func() { buildinfo.Version = orig })
+
+	id, err := Save("printer jammed", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(PendingDir, id, "meta.json"))
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"app_version": "0.31.2"`) {
+		t.Errorf("meta.json = %s, want an %q entry", raw, `"app_version": "0.31.2"`)
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	if bundles[0].Meta.AppVersion != "0.31.2" {
+		t.Errorf("Meta.AppVersion = %q, want %q", bundles[0].Meta.AppVersion, "0.31.2")
 	}
 }

@@ -49,7 +49,7 @@ func stubCheckin(t *testing.T, d *common.Deps, status string) {
 		_ = d.Settings.SetMany(context.Background(), map[string]string{
 			entitlement.KeyPlan:               "shop",
 			entitlement.KeySubscriptionStatus: status,
-			entitlement.KeyExpiresAt:          "2026-11-14T00:00:00Z",
+			entitlement.KeyExpiresAt:          "2026-11-14T00:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 			entitlement.KeyLastConfirmedAt:    time.Now().Add(time.Second).UTC().Format(time.RFC3339),
 		})
 	}()

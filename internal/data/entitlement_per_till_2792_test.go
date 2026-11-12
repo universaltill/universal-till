@@ -23,6 +23,9 @@ func TestEntitlementSettingsArePerTill(t *testing.T) {
 		// ut-docs#4285: the renewal watch's markers are this till's own.
 		entitlement.KeyLastPaidAt,
 		entitlement.KeyLapsedSeenAt,
+		// ut-docs#3532: the cloud's claimed signal is this till's own too;
+		// a replica gets it on the vouch relay, never the admin bundle.
+		entitlement.KeyStoreClaimed,
 	} {
 		if !perTillSetting(k) {
 			t.Errorf("%s is admin-synced: every entitlement refresh on the main till would move the admin cursor", k)
@@ -70,7 +73,7 @@ func TestEntitlementRefreshLeavesAdminCursorUnchanged(t *testing.T) {
 func TestEntitlementNeverAppliedFromAdminBundle(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT OR REPLACE INTO settings (key, value) VALUES ('entitlement.plan', 'chain'), ('store.currency', 'EUR')`)
 	mustExec(t, replica, `INSERT INTO settings (key, value) VALUES ('entitlement.plan', 'shop')`)
 

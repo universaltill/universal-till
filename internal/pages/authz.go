@@ -2,7 +2,9 @@ package pages
 
 import (
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -57,4 +59,23 @@ func requirePage(d *common.Deps, w http.ResponseWriter, r *http.Request, action 
 	}
 	httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 	return false
+}
+
+// sameOriginRequest reports whether r looks like a same-origin call from the
+// till's own page: Sec-Fetch-Site absent or "same-origin", and Origin absent
+// or an http(s) URL whose host equals r.Host (case-insensitive). Missing
+// headers (old clients, non-browser callers) are allowed — a forged request
+// from a web page always carries them. Shared by the cloud-pair wizard guard
+// and checkStepUp (ut-docs#5156) so the two cannot drift.
+func sameOriginRequest(r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		return false
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, r.Host) {
+			return false
+		}
+	}
+	return true
 }

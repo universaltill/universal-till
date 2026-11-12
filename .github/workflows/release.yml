@@ -166,6 +166,12 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       - name: Build unitill-desktop (${{ matrix.arch }})
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -173,7 +179,7 @@ jobs:
           set -euo pipefail
           BUILD_DATE="$(bash scripts/ci/build-date.sh)"
           CGO_ENABLED=1 go build -trimpath -tags desktop \
-            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}" \
             -o unitill-desktop ./cmd/unitill-desktop
           file unitill-desktop
       - uses: actions/upload-artifact@v7
@@ -270,6 +276,12 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       # ut-docs#3940: release-notes.json — every web/release-notes note, so a
       # till can show this version's notes BEFORE installing it. Attached by
       # .goreleaser.yaml's release.extra_files (build/ is gitignored, so it
@@ -360,8 +372,12 @@ jobs:
   # job verifies them, signs uninstall.exe (installer.nsi `!uninstfinalize`)
   # and the Setup.exe itself.
   windows-installer:
+    # ut-docs#5205: skipped (not failed) when goreleaser was skipped, e.g. a
+    # starved linux-shells arm runner; there is no release to wait for, so
+    # running would only add "real" failures. A goreleaser FAILURE still runs.
+    # Also skipped when goreleaser was CANCELLED (a starved runner, ut-docs#5209).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release-signing
@@ -446,17 +462,27 @@ jobs:
   # a macOS runner for CGO/WKWebView + codesign/iconutil, so it's a separate
   # job. It never holds the release (ut-docs#2917): publish-release does not
   # need it, and the .dmg reaches the release only via macos-dmg-attach,
-  # after publish. It Developer-ID signs + notarizes when the signing secrets are
-  # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
-  # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
+  # after publish. It Developer-ID signs + notarizes; in
+  # universaltill/universal-till it refuses to build without the signing/notary
+  # secrets (ut-docs#6025, preflight step), so a release never ships an ad-hoc
+  # .dmg. Forks without secrets ad-hoc sign (Apple Silicon requires a
+  # signature; a downloaded ad-hoc app needs System Settings → Privacy &
+  # Security → Open Anyway, or the bundled "Open Universal Till.command",
+  # ut-docs#3803). See docs/arch/desktop-app.md.
+  # A cancel because GitHub never gave it a runner is re-run automatically by
+  # release-runner-retry.yml (ut-docs#5175); any other failure still needs
+  # "Re-run failed jobs" by hand.
   macos-app:
     # Runs after goreleaser but does NOT require it to have SUCCEEDED — only
     # the release must exist (the wait step checks). A goreleaser job failure
     # after publishing (e.g. 422 double-uploads during a GitHub API outage)
-    # must not cost the .dmg, as it did for v0.2.9/v0.2.10.
+    # must not cost the .dmg, as it did for v0.2.9/v0.2.10. A goreleaser that
+    # was SKIPPED (upstream starvation, ut-docs#5205) is different: no release
+    # exists, so this job is skipped too instead of failing in the wait step.
+    # Same for a goreleaser CANCELLED by starvation (ut-docs#5209).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
-    runs-on: macos-14 # Apple Silicon
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
+    runs-on: macos-15 # Apple Silicon; macos-14 is retired 2026-11-02 (ut-docs#5214)
     # ut-docs#2917: bounded. Notarization alone is capped at NOTARY_TIMEOUT
     # (below); the rest of the build is ~15 min. On timeout/rejection this job
     # fails loudly and no .dmg is attached — the other platforms already
@@ -471,6 +497,27 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.prepare.outputs.tag }}
+      # ut-docs#6025: a release .dmg is Developer ID signed and notarized, or
+      # it is not built — the release page promises that (#6024). Fails in
+      # seconds, before the release wait and the ~15 min build, naming every
+      # missing secret (never a value). Forks (github.repository !=
+      # universaltill/universal-till) pass and build ad-hoc as before. Applies
+      # to tag pushes AND workflow_dispatch (both publish a real release).
+      # Failing here never holds the release: publish-release doesn't need
+      # macos-app (ut-docs#2917); macos-dmg-attach is just skipped.
+      - name: Refuse an unsigned or un-notarized release .dmg
+        env:
+          RELEASE_REPO: ${{ github.repository }}
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: bash scripts/ci/check-macos-release-secrets.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -489,7 +536,8 @@ jobs:
           exit 1
       # Import the Developer ID cert into a throwaway keychain when configured.
       # MACOS_CERT_P12 = base64 of the exported .p12; MACOS_CERT_PASSWORD its
-      # export password. No-ops (→ ad-hoc build) when the secret is absent.
+      # export password. The absent-cert path is reached only in forks;
+      # upstream it is refused by the preflight step (ut-docs#6025).
       # NB: the `secrets` context isn't allowed in `if:`, so the guard lives in
       # the script, not a step condition.
       - name: Import signing certificate
@@ -499,7 +547,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${MACOS_CERT_P12:-}" ]; then
-            echo "No signing certificate configured — ad-hoc build."
+            echo "No signing certificate configured — ad-hoc build (fork/local only; upstream releases are refused by the preflight step)."
             exit 0
           fi
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
@@ -536,9 +584,15 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       - name: Build .app and .dmg
         env:
-          # Empty when the secrets aren't set → build scripts ad-hoc sign / skip notarize.
+          # Required upstream (preflight step, ut-docs#6025); empty only in forks → ad-hoc sign / skip notarize.
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           # App Store Connect API key, role Developer (ut-docs#2870) — preferred
           # by packaging/macos/notary-args.sh; the Apple ID trio is a fallback.
@@ -551,6 +605,10 @@ jobs:
           # Bound on `notarytool wait` (ut-docs#2917); the submission id is
           # written to this job's summary for `notarytool info <id>`.
           NOTARY_TIMEOUT: 45m
+          # ut-docs#6025: upstream, make-dmg.sh fails instead of producing an
+          # ad-hoc or signed-but-un-notarized .dmg (backs up the preflight if
+          # notary-args.sh ever disagrees with it). Empty in forks.
+          MACOS_REQUIRE_NOTARIZED: ${{ github.repository == 'universaltill/universal-till' && '1' || '' }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
@@ -575,22 +633,25 @@ jobs:
           fail=0
           for bin in unitill-pos unitill-desktop; do
             f="$mnt/Universal Till.app/Contents/MacOS/$bin"
+            # No "dev" grep: strings drops runs under 4 chars (ut-docs#5205), so an
+            # unstamped build fails the version check below instead.
             # Capture, then grep (not `strings | grep -q`: macOS strings
             # errors when grep closes the pipe early — see verify-versions).
             out="$(strings -a "$f" 2>/dev/null || true)"
             if [ ! -f "$f" ]; then
               echo "::error::missing macOS .app $bin"; fail=1
-            elif grep -qx "dev" <<< "$out"; then
-              echo "::error::macOS .app $bin embeds buildinfo.Version=dev"; fail=1
             elif [ "$bin" = unitill-pos ] && { ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$f"; }; then
               # ADR-0158: the marketplace key must be compiled into the server,
               # the binary that verifies plugins. The shell never reads it
               # (ut-docs#4356; see verify-versions).
               echo "::error::macOS .app $bin lacks the compiled marketplace key (buildinfo.MarketplacePublicKey)"; fail=1
+            elif [ "$bin" = unitill-pos ] && [ -n "${UT_RELEASE_KEYS_HEX:-}" ] && ! LC_ALL=C grep -aqF "$UT_RELEASE_KEYS_HEX" "$f"; then
+              # ADR-0178: the self-updater's release keys must be compiled in.
+              echo "::error::macOS .app $bin lacks the compiled release keys (buildinfo.ReleasePublicKeys)"; fail=1
             elif grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: macOS .app $bin carries version $VERSION"
             else
-              echo "::error::macOS .app $bin does not contain version $VERSION"; fail=1
+              echo "::error::macOS .app $bin does not contain version $VERSION (an unstamped build, buildinfo.Version \"dev\", lands here; strings never prints a 3-char run, ut-docs#5205)"; fail=1
             fi
           done
           hdiutil detach -quiet -force "$mnt" || true
@@ -614,8 +675,10 @@ jobs:
   # "no Google contact" posture everywhere else. Own job like macos-app: only
   # needs the release to exist, never blocks or is blocked by goreleaser.
   android-app:
+    # ut-docs#5205: skipped when goreleaser was skipped (no release exists);
+    # ut-docs#5209: also when it was cancelled (starved).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -699,6 +762,12 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       # ut-docs#1541: one APK per device ABI (android/app/build.gradle.kts
       # product flavors) — every device downloads only its own ~40 MB package
       # instead of the 150 MB universal one carrying both ABIs. The universal
@@ -710,6 +779,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          # ut-docs#5271: optional non-GitHub mirror; unset = this repository's releases.
+          UT_ANDROID_UPDATE_APK_URL_BASE: ${{ vars.UT_ANDROID_UPDATE_APK_URL_BASE }}
         run: |
           set -euo pipefail
           # versionCode must strictly increase across releases for Android's
@@ -730,9 +801,24 @@ jobs:
           # (android/app/build.gradle.kts), still above every earlier release.
           IFS=. read -r MA MI PA <<< "$VERSION"
           VERSION_CODE=$((MA * 1000000 + MI * 1000 + PA))
+          # ut-docs#5271: the in-app update downloads from the repository this
+          # job uploads the *-latest.apk names to, so a GitHub fork's APKs
+          # update from the fork with no configuration; for us this equals
+          # the Gradle default byte-for-byte. UT_ANDROID_UPDATE_APK_URL_BASE
+          # is only for a non-GitHub mirror. Gradle validates the value.
+          UPDATE_APK_URL_BASE="${UT_ANDROID_UPDATE_APK_URL_BASE:-https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/}"
+          # One line, no whitespace, before it reaches GITHUB_ENV (a newline
+          # in the variable would add env lines); Gradle does the full check.
+          [[ "$UPDATE_APK_URL_BASE" =~ ^https://[^[:space:]]+/$ ]] || {
+            echo "::error::UT_ANDROID_UPDATE_APK_URL_BASE must be one https URL ending in / (ut-docs#5271)"
+            exit 1
+          }
+          echo "UPDATE_APK_URL_BASE=${UPDATE_APK_URL_BASE}" >> "$GITHUB_ENV"
+          echo "in-app update base: ${UPDATE_APK_URL_BASE}"
           cd android
           ./gradlew assembleArm64Release assembleArmv7Release assembleUniversalRelease \
-            -PversionName="$VERSION" -PversionCode="$VERSION_CODE"
+            -PversionName="$VERSION" -PversionCode="$VERSION_CODE" \
+            -PupdateApkUrlBase="$UPDATE_APK_URL_BASE"
       - name: Verify each APK is signed with our key and carries only its own ABI
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -752,6 +838,22 @@ jobs:
             "${BUILD_TOOLS}/apksigner" verify "$APK"
             FINGERPRINT="$("${BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | grep 'SHA-256 digest' | awk '{print $NF}')"
             echo "${flavor}: signed with SHA-256: ${FINGERPRINT}"
+            # ut-docs#5436 / ADR-0179: exactly one signer, and it must be one
+            # the shell pins, or armed tills would refuse this update. The script
+            # also proves the APK was built armed (digest present in its dex).
+            [ "$(wc -l <<< "$FINGERPRINT")" = 1 ] && [ -n "$FINGERPRINT" ] || {
+              echo "::error::${flavor} APK: expected exactly one signer certificate, got: ${FINGERPRINT}"
+              exit 1
+            }
+            bash scripts/ci/check-apk-signer-pin.sh android/app/apk-signer-sha256.txt "$flavor" "$FINGERPRINT" "$APK"
+            # ut-docs#5271: the APK must carry the update base it was built
+            # with (BuildConfig string in its dex). grep -c, not -q: same
+            # SIGPIPE reason as check-apk-signer-pin.sh.
+            hits="$(unzip -p "$APK" 'classes*.dex' | grep -acF "$UPDATE_APK_URL_BASE" || true)"
+            [ "${hits:-0}" -ge 1 ] || {
+              echo "::error::${flavor} APK does not carry update base ${UPDATE_APK_URL_BASE} (ut-docs#5271)"
+              exit 1
+            }
             # The ABI split is the whole point of #1541: fail rather than
             # publish an "arm64" APK that still carries the 32-bit library.
             got_abis="$(unzip -Z1 "$APK" | sed -n 's|^lib/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
@@ -819,7 +921,7 @@ jobs:
         run: |
           set -euo pipefail
           # ut-docs#1541: the installed app's in-app updater downloads these
-          # stable names too (BuildConfig.UPDATE_APK_URL per flavor). The
+          # stable names too (BuildConfig.UPDATE_APK_URL per flavor; base = -PupdateApkUrlBase). The
           # universal one keeps the legacy name every older till fetches.
           cp "unitill-pos_${VERSION}_android.apk" unitill-pos-android-latest.apk
           cp "unitill-pos_${VERSION}_android-arm64.apk" unitill-pos-android-arm64-latest.apk
@@ -846,9 +948,11 @@ jobs:
     # macos-app deliberately NOT needed (ut-docs#2917): a slow notarization
     # must not hold the release. The .dmg's version is checked in macos-app
     # itself and its checksum entry in macos-dmg-attach.
+    # ut-docs#5205: skipped when goreleaser was skipped (no release exists);
+    # ut-docs#5209: also when goreleaser or android-app was cancelled (starved).
     needs: [prepare, goreleaser, android-app]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
-    runs-on: macos-14 # tar/unzip/strings for every format (kept from when it also mounted the .dmg)
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' && needs.android-app.result != 'cancelled' }}
+    runs-on: ubuntu-latest # ut-docs#5200: a starved macOS pool must not stop publishing; .dmg checks live in macos-app / macos-dmg-attach (ut-docs#2917)
     timeout-minutes: 20
     # contents: write, not the read-only this job actually needs (ut-docs#1376
     # follow-up): since .goreleaser.yaml's release.draft became true, this
@@ -921,6 +1025,12 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       - name: Every binary must report the real version, never "dev"
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -945,13 +1055,14 @@ jobs:
             # then reports that as the WHOLE pipeline failing even though grep
             # found what it was looking for — every check failed this way on
             # this job's first real run despite the versions being correct.
+            # (The job ran on macos-14 until ut-docs#5200; the capture is just
+            # as safe with GNU strings on ubuntu-latest.)
             local out
             out="$(strings -a "$file" 2>/dev/null || true)"
-            if grep -qx "dev" <<< "$out"; then
-              echo "::error::$label embeds buildinfo.Version=dev — the ldflags -X version injection is broken for this build"
-              fail=1
-              return
-            fi
+            # No separate "dev" test: the unstamped default is 3 characters
+            # and `strings` (GNU and cctools) never prints runs under 4, so
+            # such a grep could not fire (ut-docs#5205). An unstamped build
+            # simply has no version line and fails the check below.
             # ADR-0158: the marketplace key must be compiled in. These builds
             # use -trimpath, so `go version -m` records no -ldflags; look for
             # the resolved key's bytes in the binary instead.
@@ -960,10 +1071,17 @@ jobs:
               fail=1
               return
             fi
+            # ADR-0178: with release signing configured, the self-updater's
+            # keys must be compiled in too (same -trimpath reasoning).
+            if [ "$need_key" = key ] && [ -n "${UT_RELEASE_KEYS_HEX:-}" ] && ! LC_ALL=C grep -aqF "$UT_RELEASE_KEYS_HEX" "$file"; then
+              echo "::error::$label lacks the compiled release keys (buildinfo.ReleasePublicKeys, ADR-0178)"
+              fail=1
+              return
+            fi
             if grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: $label carries version $VERSION"
             else
-              echo "::error::$label does not contain the expected version string $VERSION anywhere"
+              echo "::error::$label does not contain the expected version string $VERSION anywhere (an unstamped build, buildinfo.Version \"dev\", lands here — the ldflags -X version injection may be broken)"
               fail=1
             fi
           }
@@ -1057,6 +1175,12 @@ jobs:
               fail=1
               return
             fi
+            # ADR-0178: and, when release signing is configured, the release keys.
+            if [ -n "${UT_RELEASE_KEYS_HEX:-}" ] && ! grep -qF "buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}" <<< "$ldflags"; then
+              echo "::error::$label lacks -X buildinfo.ReleasePublicKeys=<release keys> (ADR-0178): $ldflags"
+              fail=1
+              return
+            fi
             echo "ok: $label carries version $VERSION and the marketplace key"
           }
 
@@ -1075,10 +1199,11 @@ jobs:
           # under set -euo pipefail, with no test ever running) when the APK
           # has two zip entries that collide once extracted onto this
           # runner's case-insensitive macOS filesystem — a v0.6.17 run hit
-          # this for a 9-patch PNG resource. `-o` force-overwrites instead of
-          # prompting; the directory was just freshly rm -rf'd/mkdir'd above,
-          # so there's nothing here worth an interactive confirmation either
-          # way.
+          # this for a 9-patch PNG resource (history: the job ran on macos-14
+          # until ut-docs#5200; `-o` stays harmless on Linux). `-o`
+          # force-overwrites instead of prompting; the directory was just
+          # freshly rm -rf'd/mkdir'd above, so there's nothing here worth an
+          # interactive confirmation either way.
           unzip -qo "unitill-pos_${VERSION}_android.apk" -d extracted
           checkAndroidLib extracted/lib/arm64-v8a/libgojni.so "android arm64-v8a libgojni.so (the omission that caused the real bug)"
           checkAndroidLib extracted/lib/armeabi-v7a/libgojni.so "android armeabi-v7a libgojni.so (the omission that caused the real bug)"
@@ -1116,12 +1241,22 @@ jobs:
     if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # ADR-0178: UT_RELEASE_SIGNING_KEY lives only in this environment, so only
+    # the two jobs that sign (here and macos-dmg-attach) can read it.
+    environment: release-signing
     permissions:
       contents: write # needed to see the draft release by tag — see verify-versions' comment
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       - name: Wait for the GitHub release to exist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1201,7 +1336,44 @@ jobs:
           done
 
           bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
-
+      # ADR-0178: sign the final checksums.txt. The seed is in the env of this
+      # step only (not the long fold/verify step above). Any half-configured
+      # state fails this job, which keeps publish-release from running: the
+      # release stays a draft.
+      - name: Sign checksums.txt
+        env:
+          UT_RELEASE_SIGNING_KEY: ${{ secrets.UT_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/assets"
+          keys="${UT_RELEASE_KEYS_HEX:-}"
+          if [ -z "$keys" ] && [ -z "${UT_RELEASE_SIGNING_KEY:-}" ]; then
+            if [ -f "$ASSETS/checksums.txt.sig" ]; then
+              echo "::error::release carries a checksums.txt.sig but this run has no signing keys: refusing to leave a stale signature behind a rewritten checksums.txt"
+              exit 1
+            fi
+            echo "::warning::release signing is not configured (ADR-0178): publishing checksums.txt without checksums.txt.sig"
+          elif [ -z "$keys" ]; then
+            echo "::error::UT_RELEASE_SIGNING_KEY is set but the UT_RELEASE_PUBLIC_KEYS variable is empty: the binaries just built carry no key to check the signature with"
+            exit 1
+          elif [ -z "${UT_RELEASE_SIGNING_KEY:-}" ]; then
+            echo "::error::UT_RELEASE_PUBLIC_KEYS is set but the UT_RELEASE_SIGNING_KEY secret is missing from the release-signing environment: tills built with these keys would refuse this release"
+            exit 1
+          else
+            go run ./scripts/releasesig sign --checksums "$ASSETS/checksums.txt" --out "$ASSETS/checksums.txt.sig"
+            go run ./scripts/releasesig verify --checksums "$ASSETS/checksums.txt" --sig "$ASSETS/checksums.txt.sig"
+          fi
+      # The signature goes up BEFORE the checksums.txt it covers.
+      - name: Upload checksums.txt.sig, then checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/assets"
+          if [ -f "$ASSETS/checksums.txt.sig" ]; then
+            gh release upload "$TAG" "$ASSETS/checksums.txt.sig" --clobber
+          fi
           gh release upload "$TAG" "$ASSETS/checksums.txt" --clobber
 
   # Flips the release goreleaser created (draft: true, .goreleaser.yaml) to
@@ -1273,20 +1445,30 @@ jobs:
   # and folds its line into checksums.txt — internal/selfupdate's mac update
   # path (macapp_darwin.go) verifies the .dmg against it before mounting and
   # fails closed without it. Runs only when macos-app succeeded, so a timed
-  # out / rejected notarization attaches nothing (never an un-notarized .dmg
-  # when notary credentials exist). Needs publish-release, which needs
+  # out / rejected notarization attaches nothing (never an un-notarized .dmg:
+  # upstream, macos-app refuses to build without the signing/notary secrets,
+  # ut-docs#6025). Needs publish-release, which needs
   # checksums: the only other read-modify-write of checksums.txt is finished.
   macos-dmg-attach:
     needs: [prepare, macos-app, publish-release]
     if: ${{ !cancelled() && needs.macos-app.result == 'success' && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # ADR-0178: re-signs checksums.txt after the .dmg line is folded in.
+    environment: release-signing
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-dmg
@@ -1303,7 +1485,51 @@ jobs:
             echo "::error::$dmg sha256 ($got) is not the one macos-app produced (${DMG_SHA256:-none})"
             exit 1
           fi
-      - name: Attach the .dmg and fold its SHA-256 into checksums.txt
+      - name: Fold the .dmg SHA-256 into checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          dmg="dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
+          keys="${UT_RELEASE_KEYS_HEX:-}"
+          rm -f "$RUNNER_TEMP/checksums.txt" "$RUNNER_TEMP/checksums.txt.sig" "$RUNNER_TEMP/checksums.old.txt"
+          gh release download "$TAG" --pattern checksums.txt --dir "$RUNNER_TEMP" --clobber
+          if [ -n "$keys" ]; then
+            # ADR-0178: the signature published by the checksums job covers
+            # the checksums.txt WITHOUT the .dmg line. Keep it (a till that
+            # reads between the uploads below must still verify), and sign
+            # the new bytes as a second line (--keep-checksums prunes stale
+            # lines so a re-run leaves two lines, not more).
+            gh release download "$TAG" --pattern checksums.txt.sig --dir "$RUNNER_TEMP" --clobber \
+              || { echo "::error::release $TAG has no checksums.txt.sig to extend"; exit 1; }
+            cp "$RUNNER_TEMP/checksums.txt" "$RUNNER_TEMP/checksums.old.txt"
+          elif gh release download "$TAG" --pattern checksums.txt.sig --dir "$RUNNER_TEMP" --clobber 2>/dev/null; then
+            # Dormant run, but the release is signed: rewriting checksums.txt
+            # would leave a stale .sig that fails every armed till.
+            echo "::error::release $TAG carries a checksums.txt.sig but this run has no signing keys (UT_RELEASE_PUBLIC_KEYS empty): refusing to rewrite checksums.txt"
+            exit 1
+          fi
+          packaging/macos/update-checksums.sh "$RUNNER_TEMP/checksums.txt" "$dmg"
+      # The signing seed is in the env of this step only.
+      - name: Re-sign checksums.txt
+        env:
+          UT_RELEASE_SIGNING_KEY: ${{ secrets.UT_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${UT_RELEASE_KEYS_HEX:-}" ]; then
+            if [ -z "${UT_RELEASE_SIGNING_KEY:-}" ]; then
+              echo "::error::UT_RELEASE_PUBLIC_KEYS is set but the UT_RELEASE_SIGNING_KEY secret is missing: cannot re-sign checksums.txt after adding the .dmg line"
+              exit 1
+            fi
+            go run ./scripts/releasesig sign --checksums "$RUNNER_TEMP/checksums.txt" \
+              --existing-sig "$RUNNER_TEMP/checksums.txt.sig" --keep-checksums "$RUNNER_TEMP/checksums.old.txt" --out "$RUNNER_TEMP/checksums.new.sig"
+            go run ./scripts/releasesig verify --checksums "$RUNNER_TEMP/checksums.old.txt" --sig "$RUNNER_TEMP/checksums.new.sig"
+            go run ./scripts/releasesig verify --checksums "$RUNNER_TEMP/checksums.txt" --sig "$RUNNER_TEMP/checksums.new.sig"
+            mv "$RUNNER_TEMP/checksums.new.sig" "$RUNNER_TEMP/checksums.txt.sig"
+          fi
+      - name: Attach the .dmg and upload checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -1312,9 +1538,10 @@ jobs:
           set -euo pipefail
           dmg="dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
           gh release upload "$TAG" "$dmg" --clobber
-          rm -f "$RUNNER_TEMP/checksums.txt"
-          gh release download "$TAG" --pattern checksums.txt --dir "$RUNNER_TEMP" --clobber
-          packaging/macos/update-checksums.sh "$RUNNER_TEMP/checksums.txt" "$dmg"
+          if [ -n "${UT_RELEASE_KEYS_HEX:-}" ]; then
+            # Signature first: the old checksums.txt still verifies against it.
+            gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt.sig" --clobber
+          fi
           gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt" --clobber
       # The gate verify-versions used to run for the .dmg: the published
       # checksums.txt entry must match the published artifact — plus every
@@ -1332,6 +1559,10 @@ jobs:
           dmg="unitill-pos-${VERSION}-macOS-arm64.dmg"
           test -f "$ASSETS/$dmg" || { echo "::error::$dmg is not on release $TAG"; exit 1; }
           bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
+          # ADR-0178: the published pair must verify as armed tills will.
+          if [ -n "${UT_RELEASE_KEYS_HEX:-}" ]; then
+            go run ./scripts/releasesig verify --checksums "$ASSETS/checksums.txt" --sig "$ASSETS/checksums.txt.sig"
+          fi
 
   # ut-docs#2274: on the workflow_dispatch path, `prepare` creates and
   # pushes the tag before any build job runs (so every downstream job can
@@ -1357,6 +1588,13 @@ jobs:
   # Accepted deliberately — that window is a single `gh release edit`
   # call wide, versus the three real incidents this job exists to prevent,
   # all of which failed well before any release was buildable at all.
+  #
+  # Exception (ut-docs#5205): if the only failures are jobs GitHub never gave
+  # a runner (e.g. linux-shells on the hosted arm pool; goreleaser and
+  # publish-release are then skipped) and release-runner-retry.yml will still
+  # re-run the run, the tag and draft are KEPT so the re-run can publish.
+  # `release-runner-retry.sh keep-tag` decides, with the same rule as the
+  # retry itself; any doubt or API error means delete, as before.
   cleanup-orphaned-tag:
     needs:
       [
@@ -1383,14 +1621,23 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read # keep-tag lists this run's jobs
+      checks: read # ... and their annotations (starved vs. a real failure)
     steps:
       - uses: actions/checkout@v7
       - name: Delete the orphaned tag and any draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          if [ "$(bash scripts/ci/release-runner-retry.sh keep-tag)" = keep ]; then
+            echo "::warning::Release ${TAG} did not publish because a job was never given a runner; keeping the tag and draft release because release-runner-retry.yml will re-run it. If that retry does not happen, release-orphan-tag-sweep.yml deletes the tag and draft after about 2 hours (use \"Re-run failed jobs\" by hand before then)."
+            exit 0
+          fi
           echo "::warning::Release ${TAG} did not complete (publish-release: ${{ needs.publish-release.result }}) — deleting the tag so it doesn't burn this version number for the next attempt."
           # `--cleanup-tag` removes both the release object and the tag in
           # one call when a (draft) release exists; if goreleaser never got

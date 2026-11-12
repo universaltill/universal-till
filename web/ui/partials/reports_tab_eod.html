@@ -1,6 +1,14 @@
 {{ if .IsManager }}
 <div class="card">
   <h2>{{ T "reports.eod.title" }}</h2>
+  <p class="muted"><a class="x-report-link" href="/shifts#x-report">{{ T "reports.eod.x_report_link" }}</a></p>
+  <section class="eod-day-x" aria-labelledby="eod-day-x-h">
+    <h3 id="eod-day-x-h">{{ T "reports.eod.day_x.title" }}</h3>
+    <p class="muted">{{ T "reports.eod.day_x.intro" }}</p>
+    <button type="button" class="btn secondary" id="eod-day-x-show" hx-post="/reports/eod/x-report"
+            hx-target="#eod-day-x-body" hx-swap="innerHTML" hx-disabled-elt="this">{{ T "reports.eod.day_x.show" }}</button>
+    <div id="eod-day-x-body" aria-live="polite"></div>
+  </section>
   <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
     <button class="btn primary" hx-post="/api/reports/eod/run" hx-target="#eod-msg" hx-swap="innerHTML">{{ T "reports.eod.run" }}</button>
     <span id="eod-msg" aria-live="polite"></span>
@@ -54,11 +62,11 @@
       {{ $canRunEOD := .CanRunEOD }}
       {{ range .EODRows }}
       <tr>
-        <td>{{ if .From }}{{ printf (T "reports.eod.period_range") .From .To }}{{ else }}{{ .Period }}{{ end }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
-        {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
+        <td>{{ if .From }}{{ printf (T "reports.eod.period_range") (datetime .From) (datetime .To) }}{{ else }}{{ datetime .Period }}{{ end }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
+        {{ if $canRunEOD }}<td>{{ qty .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
-      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice }}
+      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice .NoSaleCount }}
       <!-- ut-docs#1010: per-article-group/per-article/per-operator
            breakdowns for THIS archived report, same single-day-only
            breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
@@ -91,14 +99,26 @@
             <thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.sales" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
             <tbody>
               {{ range .Operators }}
-              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ qty .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
               {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+          {{ if .NoSaleCount }}
+          <strong>{{ T "reports.eod.no_sale_title" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            {{ if .NoSaleOperators }}<thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.eod.no_sale_opens" }}</th></tr></thead>{{ end }}
+            <tbody>
+              {{ range .NoSaleOperators }}
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ qty .Count }}</td></tr>
+              {{ end }}
+              <tr><td><strong>{{ T "reports.eod.no_sale_total" }}</strong></td><td style="text-align:end"><strong>{{ qty .NoSaleCount }}</strong></td></tr>
             </tbody>
           </table>
           {{ end }}
           {{ if .Articles }}
           <details>
-            <summary style="cursor:pointer;padding-block:.4rem"><strong>{{ T "reports.eod.by_article" }}</strong> ({{ len .Articles }})</summary>
+            <summary style="cursor:pointer;padding-block:.4rem"><strong>{{ T "reports.eod.by_article" }}</strong> ({{ qty (len .Articles) }})</summary>
             <table class="table" style="margin:.3rem 0 .8rem">
               <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
               <tbody>
@@ -138,15 +158,15 @@
               <tr><td>{{ T "reports.eod.fiscal_device.maker" }}</td><td style="text-align:end">{{ .FiscalDevice.Maker }}</td></tr>
               {{ end }}
               <tr><td>{{ T "reports.eod.fiscal_device.z_no" }}</td><td style="text-align:end">{{ range $i, $z := .FiscalDevice.ZNos }}{{ if $i }}, {{ end }}{{ $z }}{{ end }}</td></tr>
-              <tr><td>{{ T "reports.eod.fiscal_device.mali_fis" }}</td><td style="text-align:end">{{ .FiscalDevice.MaliFis }}</td></tr>
-              <tr><td>{{ T "reports.eod.fiscal_device.iade_fisi" }}</td><td style="text-align:end">{{ .FiscalDevice.IadeFisi }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.mali_fis" }}</td><td style="text-align:end">{{ qty .FiscalDevice.MaliFis }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.iade_fisi" }}</td><td style="text-align:end">{{ qty .FiscalDevice.IadeFisi }}</td></tr>
               {{ if .FiscalDevice.BilgiFisi }}
-              <tr><td>{{ T "reports.eod.fiscal_device.bilgi_fisi" }}</td><td style="text-align:end">{{ .FiscalDevice.BilgiFisi }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.bilgi_fisi" }}</td><td style="text-align:end">{{ qty .FiscalDevice.BilgiFisi }}</td></tr>
               {{ end }}
               {{ if .FiscalDevice.Other }}
-              <tr><td>{{ T "reports.eod.fiscal_device.other" }}</td><td style="text-align:end">{{ .FiscalDevice.Other }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.other" }}</td><td style="text-align:end">{{ qty .FiscalDevice.Other }}</td></tr>
               {{ end }}
-              <tr><td>{{ T "reports.eod.fiscal_device.till_tenders" }}</td><td style="text-align:end">{{ .FiscalDevice.TillOKCTenders }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.till_tenders" }}</td><td style="text-align:end">{{ qty .FiscalDevice.TillOKCTenders }}</td></tr>
             </tbody>
           </table>
           {{ if gt (len .FiscalDevice.ZNos) 1 }}
@@ -155,7 +175,7 @@
           {{ if eq .FiscalDevice.Total .FiscalDevice.TillOKCTenders }}
           <p><span aria-hidden="true">✓</span> {{ T "reports.eod.fiscal_device.match" }}</p>
           {{ else }}
-          <p><span class="tag stock-low"><span aria-hidden="true">⚠</span> {{ printf (T "reports.eod.fiscal_device.mismatch") .FiscalDevice.Total .FiscalDevice.TillOKCTenders }}</span></p>
+          <p><span class="tag stock-low"><span aria-hidden="true">⚠</span> {{ printf (T "reports.eod.fiscal_device.mismatch_count") (qty .FiscalDevice.Total) (qty .FiscalDevice.TillOKCTenders) }}</span></p>
           {{ end }}
           {{ end }}
           {{ end }}
@@ -217,7 +237,7 @@
         btn.disabled = false; msg.textContent = '✗ ' + t;
       });
     }, function () { btn.disabled = false; msg.textContent = ''; })
-      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + e; });
+      .catch(function (e) { btn.disabled = false; msg.textContent = '✗ ' + window.utElevationErrorText(e); });
   });
 })();
 </script>

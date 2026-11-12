@@ -84,7 +84,7 @@ func registerKitchenDisplay(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/kitchen_display.html", map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.kitchen_display"),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"stationName": station.Name,
 			"fragmentURL": kitchenDisplayFragmentURL(station.ID),

@@ -85,6 +85,11 @@ type VoucherBlock struct {
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
+	// Slip marks a block that also gets a stand-alone hand-over slip when
+	// printer.voucher_slip is on (ut-docs#4247 issued vouchers, #5793
+	// top-ups). Render/RenderText ignore it; a block with Void set never
+	// gets a slip.
+	Slip bool
 }
 
 // Line is one sale line.
@@ -325,26 +330,7 @@ func Render(d Doc) []byte {
 			b.Write(cmdBoldOff)
 		}
 		for _, v := range d.Vouchers {
-			line("")
-			line(kvRow(v.Label, v.Amount))
-			if v.Holder != "" {
-				line(clip(v.Holder, Width))
-			}
-			if v.Balance != "" {
-				line(clip(v.Balance, Width))
-			}
-			b.Write(cmdAlignMid)
-			if v.Void != "" {
-				line(clip(v.Void, Width))
-			}
-			if v.Void == "" && barcodePrintable(v.Code) {
-				barcode(&b, v.Code) // HRI prints the code text under the bars
-			} else {
-				for _, row := range wrapRunes(v.Code, Width) {
-					line(row)
-				}
-			}
-			b.Write(cmdAlignLeft)
+			writeVoucherESC(&b, line, v)
 		}
 		line(strings.Repeat("-", Width))
 	}
@@ -386,6 +372,51 @@ func Render(d Doc) []byte {
 
 	b.Write(cmdFeedCut)
 	return b.Bytes()
+}
+
+// writeVoucherESC writes one voucher block: value row, holder, balance and
+// the centred CODE128 (or the code as text). Shared by the receipt and the
+// stand-alone slip (ut-docs#4247) so there is one voucher layout.
+func writeVoucherESC(b *bytes.Buffer, line func(string), v VoucherBlock) {
+	line("")
+	line(kvRow(v.Label, v.Amount))
+	if v.Holder != "" {
+		line(clip(v.Holder, Width))
+	}
+	if v.Balance != "" {
+		line(clip(v.Balance, Width))
+	}
+	b.Write(cmdAlignMid)
+	if v.Void != "" {
+		line(clip(v.Void, Width))
+	}
+	if v.Void == "" && barcodePrintable(v.Code) {
+		barcode(b, v.Code) // HRI prints the code text under the bars
+	} else {
+		for _, row := range wrapRunes(v.Code, Width) {
+			line(row)
+		}
+	}
+	b.Write(cmdAlignLeft)
+}
+
+// writeVoucherText is writeVoucherESC for the plain-text renderer.
+func writeVoucherText(b *strings.Builder, center func(string), v VoucherBlock) {
+	b.WriteString("\n" + kvRow(v.Label, v.Amount) + "\n")
+	if v.Holder != "" {
+		b.WriteString(clip(v.Holder, Width) + "\n")
+	}
+	if v.Balance != "" {
+		b.WriteString(clip(v.Balance, Width) + "\n")
+	}
+	if v.Void != "" {
+		center(v.Void)
+	}
+	// The code as text only: a plain-text printer can't draw the
+	// symbol, and placeholder bars would print on a real receipt.
+	for _, row := range wrapRunes(v.Code, Width) {
+		center(row)
+	}
 }
 
 // layoutLine renders one sale line: "qty x name" left, amount right; long
@@ -519,7 +550,11 @@ func clip(s string, max int) string {
 // cp858 transcodes to code page 858 (ut-docs#1243) so currency symbols
 // (€ → 0xD5, £ → 0x9C) print correctly on single-byte-codepage printers,
 // with the same per-rune '?' fallback as ascii for anything CP858 lacks.
+// Whatever the charset, control runes (Cc, U+2028/9, U+202A-E) are replaced
+// by one space each and invalid UTF-8 bytes by '?' first (paperText,
+// ut-docs#5847): free text can never reach the printer as a command.
 func encodeText(s, charset string) []byte {
+	s = paperText(s) // ut-docs#5847: before every charset arm
 	switch charset {
 	case "ascii":
 		t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
@@ -533,10 +568,6 @@ func encodeText(s, charset string) []byte {
 				continue // takes no column in displayWidth, so prints nothing (ut-docs#4685)
 			}
 			if r < 0x20 || r > 0x7e {
-				if r == '\t' {
-					out = append(out, ' ')
-					continue
-				}
 				out = append(out, '?')
 				continue
 			}
@@ -552,11 +583,10 @@ func encodeText(s, charset string) []byte {
 		// Two deliberate differences from the ascii branch, confirmed at
 		// review (ut-docs#1243) and left as-is because cp858 is a
 		// transcode, not a sanitiser:
-		//   - C0/DEL control bytes (\n, \r, ESC, NUL, 0x7f) round-trip
-		//     through CP858 unchanged, where ascii maps them to '?'. That
-		//     matches the utf8 default, which passes them through too, so
-		//     cp858 is no worse than the mode nearly every till runs; it is
-		//     simply not an improvement on it.
+		//   - Control runes (C0/DEL/C1, ...) never get here: encodeText
+		//     replaces them with spaces for every charset before this
+		//     switch (ut-docs#5847), so free text cannot inject a printer
+		//     command or a forged line.
 		//   - Turkish still degrades. CP858 covers Western European letters
 		//     natively (é→0x82, ü→0x81, ß→0xe1), but it has no 'ş' and —
 		//     unlike CP850 — no 'ı', whose 0xD5 slot is exactly what CP858
@@ -635,12 +665,15 @@ func Encodable(s, charset string) bool {
 }
 
 func runeEncodable(r rune, charset string) bool {
+	if paperControl(r) {
+		return true // encodeText turns it into a space, never a '?' (ut-docs#5847)
+	}
 	if r == '\u200c' || r == '\u200d' {
 		return true // dropped by every arm, never degraded (ut-docs#4685)
 	}
 	switch charset {
 	case "ascii":
-		return r == '\t' || (r >= 0x20 && r <= 0x7e)
+		return r >= 0x20 && r <= 0x7e
 	case "cp858":
 		return charmapRuneEncodable(r, charmap.CodePage858)
 	case "win1250":
@@ -721,6 +754,7 @@ func codepageSelectCmd(charset string) []byte {
 // the receipt designer's live preview shows what the printer will produce,
 // with the barcode as a placeholder row.
 func RenderText(d Doc) string {
+	d = paperDoc(d) // ut-docs#5847: plain text never goes through encodeText
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
@@ -762,21 +796,7 @@ func RenderText(d Doc) string {
 			b.WriteString(clip(d.VoucherHeading, Width) + "\n")
 		}
 		for _, v := range d.Vouchers {
-			b.WriteString("\n" + kvRow(v.Label, v.Amount) + "\n")
-			if v.Holder != "" {
-				b.WriteString(clip(v.Holder, Width) + "\n")
-			}
-			if v.Balance != "" {
-				b.WriteString(clip(v.Balance, Width) + "\n")
-			}
-			if v.Void != "" {
-				center(v.Void)
-			}
-			// The code as text only: a plain-text printer can't draw the
-			// symbol, and placeholder bars would print on a real receipt.
-			for _, row := range wrapRunes(v.Code, Width) {
-				center(row)
-			}
+			writeVoucherText(&b, center, v)
 		}
 		b.WriteString(strings.Repeat("-", Width) + "\n")
 	}

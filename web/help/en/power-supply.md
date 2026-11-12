@@ -3,6 +3,7 @@ id: power-supply
 title: Power supply warning
 section: Connecting & extending
 order: 355
+public: true
 summary: On a Raspberry Pi, the status bar warns when the power supply can't deliver enough current for the touchscreen and other USB peripherals.
 keywords: [power, PSU, USB, Raspberry Pi, under-voltage, touchscreen]
 ---

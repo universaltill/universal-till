@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -152,10 +153,14 @@ VALUES('r-legacy','eod','2020-06-15','{"day":"2020-06-15","sales_count":4,"net":
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "2020-06-15") {
-		t.Fatalf("expected the legacy row's bare period, got: %s", body)
+	// The template renders every period through `datetime` (ut-docs#5785):
+	// a bare date as a date only, an instant as local date + clock.
+	dt := httpx.FuncsFor("en")["datetime"].(func(any) string)
+	wantLegacy := dt("2020-06-15")
+	if !strings.Contains(body, wantLegacy) {
+		t.Fatalf("expected the legacy row's bare period %q, got: %s", wantLegacy, body)
 	}
-	wantRange := from + " – " + to
+	wantRange := dt(from) + " – " + dt(to)
 	if !strings.Contains(body, wantRange) {
 		t.Fatalf("expected the close-to-close row rendered as %q, got: %s", wantRange, body)
 	}
@@ -163,7 +168,7 @@ VALUES('r-legacy','eod','2020-06-15','{"day":"2020-06-15","sales_count":4,"net":
 	// confirms its .From stayed empty (the template's {{ if .From }}
 	// branch correctly fell through to the bare {{ .Period }} for THIS
 	// row specifically, not just in isolation).
-	if strings.Contains(body, "2020-06-15 – ") {
+	if strings.Contains(body, wantLegacy+" – ") {
 		t.Fatalf("legacy row must not render a From – To range, got: %s", body)
 	}
 }

@@ -46,6 +46,13 @@
   --success-tint: rgba(22, 163, 74, .12);
   --danger-tint: rgba(220, 38, 38, .1);
   --warning-tint: rgba(217, 119, 6, .12);
+  /* ut-docs#2680: text colour for warning ink drawn ON --warning-tint (.tag.warn,
+     .journal-replica-notice, .sync-banner). --warning itself is only ~2.6:1 on
+     its own tint in the light themes; this is >=4.5:1 on the tint over --bg and
+     --surface in every light theme. --warning stays for borders/icons/dots.
+     ut-docs#5228: also for warning text on the plain surface (--warning is
+     ~3.2:1 on white); TestWarningInkOnlyColoursIcons enforces it. */
+  --warning-text: #92400e;
   /* ut-docs#2207: same split as the tint BACKGROUNDS above, one step later
      — the notice/tag/block BORDER colours (.pos-notice.success/.error,
      .notice-block-warn/-success) were still a literal rgba() at .35 alpha,
@@ -115,6 +122,9 @@
   --ui-scale-min-width: calc(100vw / 28.3);
 }
 @media (min-width: 901px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
+/* ut-docs#2918, #5212: a 768-900px window at most 700px tall uses the side-by-side
+   grid too (the landscape-phone block below), so it gets the same budget. */
+@media (min-width: 768px) and (max-width: 900px) and (max-height: 700px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
 html { font-size: min(calc(var(--ui-scale, 1) * var(--fluid-fs)), max(var(--fluid-fs), var(--ui-scale-min-width))); }
 /* --ut-bundle-fonts: the font subsets installed language bundles ship
    (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
@@ -212,7 +222,7 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
 /* A tag flagging something that needs attention (e.g. a failing bug-report
    upload, ut-docs#637) — same warn tint .sync-banner below uses, reused
    here rather than inventing a second warning color. */
-.tag.warn { background: var(--warning-tint); color: var(--warning); border-color: var(--warning); }
+.tag.warn { background: var(--warning-tint); color: var(--warning-text); border-color: var(--warning); }
 /* A tag for a healthy live state (the Tills roster's "Linked", ut-docs#2742)
    — the success tint; the word itself carries the meaning. */
 .tag.ok { background: var(--success-tint); color: var(--success); border-color: var(--success); }
@@ -522,7 +532,9 @@ html.fx-light #refresh-indicator, html.fx-light .animate-spin { animation: spin 
    suggested icon, the caps-lock key, a row being dragged. */
 html.fx-light .osk-caps { box-shadow: inset 0 0 0 2px var(--accent-contrast) !important; }
 html.fx-light .category-overflow-tile.active { box-shadow: 0 0 0 2px var(--cat-color, var(--accent)) inset !important; }
-html.fx-light .picker-tile[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
+html.fx-light .picker-tile[aria-pressed="true"],
+html.fx-light .picker-tile[aria-checked="true"],
+html.fx-light .picker-tile[aria-selected="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
 /* Its own rule: an engine without :has() drops only this one. */
 html.fx-light .designer-cat-colors .item-color-tile:has(input:checked) { box-shadow: inset 0 0 0 2px var(--accent) !important; }
 html.fx-light .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent) !important; }
@@ -930,11 +942,39 @@ body.sale-screen .session-admin-link { display: none; }
    e2e/tests/tills-pairing-layout-1548.spec.ts seeds a real pending request
    precisely so it fails on that, rather than measuring an empty list. */
 .pairing-table { display: block; overflow-x: auto; }
+/* ut-docs#5797: X report on /shifts. Amount columns align to the inline end
+   (mirrors in RTL); the 5-column tender table scrolls inside its own box at
+   kiosk/tablet widths and table-cards.js stacks it at <=480px; the totals and
+   cash tables opt out of the card stacking with data-cards="off". */
+.x-report { margin-block-start: .9rem; border-block-start: 1px solid var(--border); padding-block-start: .6rem; }
+.x-report h3 { margin-block: 0 .2rem; }
+.x-report h4 { margin-block: .8rem .3rem; }
+#x-report-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
+.x-report-num :is(td, th):not(:first-child) { text-align: end; font-variant-numeric: tabular-nums; }
+.x-report-tenders { display: block; overflow-x: auto; inline-size: max-content; max-inline-size: 100%; }
+.x-report-reason { overflow-wrap: anywhere; }
+.x-report-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
+.x-report-bar p { margin: 0; }
+.x-report-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.x-report-print-msg { flex-basis: 100%; min-block-size: 1.3rem; margin-block-end: .4rem; }
+.x-report-print-msg .error { margin-block: 0; color: var(--danger); }
+.x-report-print-msg .error::before { content: "⚠ "; }
+/* ut-docs#5800: day-so-far X report (Reports -> End of day) and the shared paper preview */
+.eod-day-x { padding-block-end: .8rem; margin-block-end: .8rem; border-block-end: 1px solid var(--border, #d1d5db); }
+.eod-day-x h3 { margin-block: 0 .3rem; }
+.eod-day-x-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-block: .6rem; }
+.eod-day-x-bar p { margin: 0; }
+.eod-day-x-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.paper-preview { background: #fff; color: #111; border: 1px dashed var(--border, #d1d5db); padding: .8rem; font-size: min(.78rem, 2.4vw); line-height: 1.25; overflow-x: auto; max-inline-size: 100%; box-sizing: border-box; }
+.x-report-link { display: inline-block; min-block-size: 44px; padding-block: .6rem; box-sizing: border-box; }
 /* ut-docs#2781: the roster gained a Role column and a per-till Change role
    button; with the link/version columns and a long (tr/ar) label it can
    outgrow a 1024px kiosk the same way — same escape hatch, scrolling the
    table instead of the page. */
 .tills-roster { display: block; overflow-x: auto; }
+/* ut-docs#1294: the 36-char discovery id wraps inside the name cell instead
+   of widening the column (only `anywhere` lowers min-content width). */
+.tills-roster .till-id { overflow-wrap: anywhere; }
 /* "Join as" choice on the join forms (tills.html, setup.html). */
 .join-role { border: 0; padding: 0; margin-block: .6rem; }
 .join-role label { display: block; margin-block: .3rem; }
@@ -1984,6 +2024,136 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
   }
   .pos-container > .products { max-height: 26dvh; }
 }
+/* ut-docs#2918: a landscape phone (844x390, 896x414, 800x360) is inside the
+   900px stacked tier but too short for it: basket (capped at 45dvh), tender
+   and products stacked in ~360px left the basket showing only its header
+   and toggle, no line and no totals, and cut Pay in half. Such a window is
+   wide, not tall, so from 768px it gets the desktop arrangement instead:
+   the basket as a full-height column, products above tender beside it. The
+   divider stays hidden (the 900px block above; the drag is a desktop
+   affordance, #2308), so its track is dropped. 768px is where the basket's
+   22rem floor, the tender's ~281px min-content and the rail still fit side
+   by side; narrower, the basket table wraps every cell (measured at 740px).
+   Those short windows (667x375, 740x360) stay stacked, but the basket is no
+   longer capped: its lines and totals show in full, the sale screen scrolls
+   (the page-scroll fallback the <=480px tier uses), and the tender is pinned
+   to the bottom of that scroll so Pay is always whole and in reach however
+   long the basket gets -- the phone sheet's sticky tender (#3059), including
+   its unpin while a dialog inside is open (a sticky box is a stacking
+   context and would trap the payment overlay under the status bar).
+   min-width: 481px leaves the <=480px phone tier (#3059) alone.
+   ut-docs#5212: the same goes up to 700px tall (was 480px). In the stacked
+   tier the basket's 45dvh cap is below its min-content (header, toggle,
+   thead, .basket-scroll's 6rem floor, totals: ~301px at scale 1) until
+   ~700px tall, so 900x600, 768x600 and 600x600 clipped the grand Total
+   line inside the basket's own scroll. A taller window keeps the stacked
+   tier, where the cap fits. The 700px threshold and the 301px are at UI
+   scale 1 (media queries are px, the min-content is rem); larger scales
+   are ut-docs#5220. These windows overlap the min-height: 481px
+   tablet blocks below; only the basket's container (#3050) applies there,
+   and it just picks the line shape for the basket's own width.
+   Regression tests: e2e/tests/landscape-phone-sale-2918.spec.ts,
+   e2e/tests/tablet-tier-totals-416.spec.ts. */
+@media (min-width: 768px) and (max-width: 900px) and (max-height: 700px) {
+  .pos-container {
+    grid-template-columns: minmax(var(--pos-basket-min-w), var(--basket-col-width, 26.25rem)) minmax(var(--pos-products-min-w), 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "basket products"
+      "basket tender";
+    column-gap: .8rem;
+  }
+  .pos-container > .basket { max-height: none; }
+}
+/* ut-docs#5212: at 481-700px tall the side-by-side tender column (~280px at
+   768px wide) squeezed the barcode field to a sliver beside qty, + and the
+   two icons. From 541px tall there is height to spare, so the field takes
+   its own full-width row; shorter, the second row would push the first tile
+   row out of the products panel (measured at 768x481), so the scan row
+   stays one row there and is rearranged by the <=540px block below
+   (ut-docs#5221). */
+@media (min-width: 768px) and (max-width: 900px) and (min-height: 541px) and (max-height: 700px) {
+  .pos-container > .tender .scan-row { flex-wrap: wrap; }
+  .pos-container > .tender .scan-row input[name="code"] { flex: 1 0 100%; }
+}
+/* ut-docs#5221: at 768-887px wide and <=540px tall there is no height for a
+   second scan row (the first tile row would leave the products panel,
+   768x400: 162px tall), and the one-row scan form squeezed the barcode field
+   to 26px beside qty, + and the camera/OSK/identify icons. The scan form and
+   the action row dissolve (display: contents) into three rows of .tender,
+   the same height as before (two .425rem row gaps = the .45rem + .4rem of
+   the old scan row and two-line action row): 1) barcode field, qty, +; 2) the remaining
+   icons (OSK, camera, identify, Hold, New sale, Open orders) sharing the
+   line evenly, each at least 44px at scale 1; 3) Pay, full width (unless an
+   icon spills onto its row, ut-docs#5227). Pay
+   sits after the icons here, the one place the visual order differs from
+   the DOM order. Tab order and the form's submit are unaffected; the
+   [hidden] icons stay hidden (no display is set on them). The row-1 basis
+   is the full width less qty, + and two gaps, so exactly qty and + join the
+   field and nothing else. Capped at 887px: from 888px the tender column
+   (>=310px) holds the one-line action row, and three rows there would add
+   height, so 888-900px keeps the old two rows and widens the column
+   instead (ut-docs#5227, block below) - except with a visible identify
+   button, which gets these three rows too (ut-docs#5235; the 888-900px
+   block copies these rules: keep the two in sync).
+   ut-docs#5227: Pay is not forced onto a line of its own (it was
+   flex: 1 0 100%). At UI scale >= 1 its 7rem basis never fits beside the
+   3-5 icons of row 2,
+   so it still wraps to row 3 and its 999 grow takes the whole line. With a
+   plugin identify button, the OSK toggle and the camera all shown, row 2
+   has six icons (6 x 2.59rem + gaps = 298px against 251px at 768px), and the
+   sixth now joins Pay's row instead of opening a fourth row that pushed the
+   first tile row out of the products panel. */
+@media (min-width: 768px) and (max-width: 887px) and (max-height: 540px) {
+  .pos-container > .tender { flex-flow: row wrap; align-content: start; column-gap: .4rem; row-gap: .425rem; }
+  .pos-container > .tender .scan-row,
+  .pos-container > .tender .tender-default-footer { display: contents; }
+  .pos-container > .tender .scan-row input[name="code"] { flex: 1 1 calc(100% - 3.4rem - 2.75rem - .8rem); }
+  .pos-container > .tender .scan-row input[name="qty"] { flex: 0 0 3.4rem; }
+  .pos-container > .tender .scan-row button[type="submit"] { flex: 0 0 2.75rem; }
+  .pos-container > .tender .scan-row .tender-icon-btn:not([type="submit"]),
+  .pos-container > .tender .tender-default-footer > .tender-icon-btn { flex: 1 1 0; min-inline-size: 2.59rem; }
+  .pos-container > .tender .tender-default-footer > .payment-trigger { flex: 999 1 7rem; order: 1; }
+}
+/* ut-docs#5227: at 888-900px wide and <=540px tall the scan row and the
+   action row each stay one line, and the tender column (309-321px) left
+   the barcode field 55-67px once the OSK toggle joined the camera beside
+   qty and + (it needs ~88px for "Barcode"); a plugin identify button
+   left ~21px. The basket column already runs at its 22rem floor at
+   768-844px wide in this tier (lines and totals whole, the #2918 cases), so
+   here it takes that floor too and its ~72px go to the products/tender
+   column: the field is 127-139px with the OSK toggle, and the tender keeps
+   its two rows (126.92px at 900x414). With a plugin identify button as well
+   it is 73-85px, still short of the ~88px placeholder, so then (ut-docs#5235)
+   the tender switches to the three-row layout of the 768-887px block above:
+   the field is 234px at 888x414 and 246px at 900x414, the tender 180.47px
+   (126.92px with two rows, no identify) and the products panel 176px, the
+   first tile row 104 of 141px visible, as at 768-887px. The tender rules
+   below copy the 768-887px block: keep the two in sync. No divider track
+   exists in this tier, so a saved --basket-col-width is ignored here, as it
+   already is wherever the basket sits at its floor. */
+@media (min-width: 888px) and (max-width: 900px) and (max-height: 540px) {
+  .pos-container { grid-template-columns: var(--pos-basket-min-w) minmax(var(--pos-products-min-w), 1fr); }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) { flex-flow: row wrap; align-content: start; column-gap: .4rem; row-gap: .425rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row,
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .tender-default-footer { display: contents; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row input[name="code"] { flex: 1 1 calc(100% - 3.4rem - 2.75rem - .8rem); }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row input[name="qty"] { flex: 0 0 3.4rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row button[type="submit"] { flex: 0 0 2.75rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .scan-row .tender-icon-btn:not([type="submit"]),
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .tender-default-footer > .tender-icon-btn { flex: 1 1 0; min-inline-size: 2.59rem; }
+  .pos-container > .tender:has(#plugin-identify-open:not([hidden])) .tender-default-footer > .payment-trigger { flex: 999 1 7rem; order: 1; }
+}
+@media (min-width: 481px) and (max-width: 767px) and (max-height: 700px) {
+  .pos-container { grid-template-rows: max-content max-content max-content; overflow-y: auto; }
+  .pos-container > .basket { max-height: none; overflow-y: visible; }
+  .pos-container > .tender {
+    position: sticky; bottom: 0; z-index: 2;
+    box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
+  }
+  .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
+  .pos-container > .products { max-height: 80dvh; }
+}
 
 /* ---------- Cards & forms ---------- */
 .card {
@@ -2021,7 +2191,7 @@ input, select, textarea {
   min-block-size: 46px;
 }
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border);
+  outline: 2px solid var(--focus-border); outline-offset: 1px; border-color: var(--focus-border);
 }
 .form-row input { padding: .55rem; }
 label { font-size: .85rem; color: var(--text); }
@@ -2911,6 +3081,27 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    behaviour would make that keyboard unreachable on kiosk hardware with no
    physical keyboard. */
 #elevation-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#5304 (#elevation-modal), ut-docs#5309 (#hold-modal, #pfand-modal,
+   #table-add-modal): with the on-screen keyboard open, keep the whole dialog
+   above it. Top-anchored (not 8vh) and capped to the free band; the form
+   scrolls inside and the action row sticks to the bottom edge so it is never
+   under #osk. Same --osk-reserved-height source as .item-form-modal /
+   .payment-overlay (ut-docs#1998). Logical properties only (RTL). */
+body.osk-padded #elevation-modal[open],
+body.osk-padded #hold-modal[open],
+body.osk-padded #pfand-modal[open],
+body.osk-padded #table-add-modal[open] {
+  inset-block-start: .5rem;
+  max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 1rem);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+body.osk-padded #elevation-modal .modifier-actions,
+body.osk-padded #hold-modal .modifier-actions,
+body.osk-padded #pfand-modal .modifier-actions,
+body.osk-padded #table-add-modal .modifier-actions {
+  position: sticky; inset-block-end: -1.25rem; margin-block-end: -1.25rem;
+  padding-block: .5rem 1.25rem; background: Canvas; /* the dialog's own UA background in every theme (dark.css --surface differs) */
+}
 .elevation-summary { font-weight: 600; margin-block: .4rem .6rem; }
 /* Satellite-role confirm dialog (ut-docs#2781): same non-modal treatment
    as #elevation-modal above (cloned from it, minus the PIN field) — it
@@ -3268,6 +3459,11 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   transition: background .15s ease, color .15s ease;
 }
 .order-type-option.is-active { background: var(--accent); color: #fff; }
+/* ut-docs#5553: visible >=3:1 focus inside the pill (the group clips outside outlines). */
+.order-type-option:focus-visible { outline: 2px solid var(--focus-border); outline-offset: -4px; }
+/* Two-tone: the white ring alone is 1.8-2.8:1 on the accent fill in some themes,
+   so a black ring sits flush inside it (black vs accent >= 3:1 everywhere). */
+.order-type-option.is-active:focus-visible { outline-color: #fff; box-shadow: inset 0 0 0 4px #000; }
 /* ut-docs#2282/#2309: the per-line dine-in/takeaway segments (ADR-0073
    Decision 2) and the mixed-basket status chip that used to live here were
    REMOVED with the cashier-facing per-line control (product-owner scope
@@ -3546,8 +3742,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    so a scaled-up till drops to a roomier shape by itself (a viewport query
    would overflow at scale 1.5-2). min-height instead of orientation: the
    Android keyboard shrinks the viewport, and orientation would flip the
-   layout mid-typing. The short stacked landscape windows in this range
-   (900x600, 768x600) get the shorter lines too; landscape phones (height
+   layout mid-typing. The short landscape windows in this range (900x600,
+   768x600; side-by-side since ut-docs#5212) size their lines by the
+   basket column's width the same way; landscape phones (height
    < 481px, ut-docs#2918) and the <=480px tier (ut-docs#3059) are out. A
    browser without container queries keeps the stacked tier as it was.
    Only this element may be a container (TestAppCSSContainerOnlyOnTheBasket).
@@ -3729,7 +3926,7 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    .sync-banner already use, so it reads as a real notice, not muted status text. */
 .journal-replica-notice { margin-block-end: .75rem; padding: .5rem .75rem;
                            border-radius: var(--radius); font-size: .85rem;
-                           background: var(--warning-tint); color: var(--warning); }
+                           background: var(--warning-tint); color: var(--warning-text); }
 .journal table { width: 100%; border-collapse: collapse; background: var(--surface);
                  border-radius: var(--radius); overflow: hidden; }
 .journal th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
@@ -3893,6 +4090,21 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
      container's own text, never to a flex container's anonymous item. */
   display: block; text-align: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ut-docs#5221: the action row's width, not the window's, decides when it
+   wraps. In the side-by-side tender column (~251px of row at 768-860px
+   wide) Pay's 7rem basis plus three 2.75rem icons and their .4rem gaps
+   (16.45rem) does not fit, so Open orders dropped alone onto a second line
+   by accident (#4897 made the same wrap happen at a high UI scale). Where
+   the row cannot hold them in one line, Pay now takes a full line of its own
+   and the three icons share the next evenly. Where it fits (900x414, the
+   desktop column) nothing changes. The footer is a stretched flex item of
+   the column .tender, so its width comes from the parent, never its
+   content, which is what a size container needs. */
+.tender-default-footer { container-type: inline-size; container-name: tender-actions; }
+@container tender-actions (max-width: 16.45rem) {
+  .tender-default-footer > .payment-trigger { flex-basis: 100%; }
+  .tender-default-footer > .tender-icon-btn { flex: 1 1 0; }
+}
 /* ut-docs#2702: the preferred payment method (payments.default_method)
    leads the payment panel's grid and spans its whole first row — the
    quick-pay button's one-tap job, now one tap after Pay. */
@@ -4275,7 +4487,7 @@ body.osk-padded .payment-overlay {
 /* Add/Cancel stay in view even when a long translation or a small screen
    makes the dialog scroll (#modifier-modal is the scroll container). */
 .gift-voucher-popup .modifier-actions { position: sticky; inset-block-end: -1.25rem; margin-block-end: -1.25rem;
-                                         padding-block: .5rem 1.25rem; background: var(--surface, Canvas); }
+                                         padding-block: .5rem 1.25rem; background: Canvas; /* the dialog's own UA background in every theme (dark.css --surface differs) */ }
 .gift-voucher-row { display: flex; align-items: flex-end; gap: .5rem; }
 .gift-voucher-field { display: flex; flex-direction: column; gap: .25rem; flex: 1 1 auto; min-inline-size: 0; }
 .gift-voucher-field input { inline-size: 100%; }
@@ -4350,6 +4562,19 @@ body.osk-padded .payment-overlay {
 #refresh-indicator { margin-inline-start: .5rem; font-size: 1rem; animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; display: inline-block; }
+/* ut-docs#5291: busy ring on the submit button of any prompt dialog whose own
+   request is in flight (htmx-driven confirm/PIN prompts and the fetch-driven
+   PIN prompt of utPostWithElevation all carry form.htmx-request). Logical
+   properties only; static open ring under reduced motion. */
+dialog[data-ut-prompt] form.htmx-request .modifier-actions button[type=submit]::after {
+  content: ""; display: inline-block; inline-size: .9em; block-size: .9em;
+  margin-inline-start: .5em; vertical-align: -.125em;
+  border: 2px solid currentColor; border-block-start-color: transparent; border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog[data-ut-prompt] form.htmx-request .modifier-actions button[type=submit]::after { animation: none; }
+}
 svg.animate-spin { flex-shrink: 0; width: 1.25rem; height: 1.25rem; }
 
 /* ---------- Generic tables (settings, inventory, catalog, shifts…) ---------- */
@@ -4425,7 +4650,8 @@ tr.row-warn td { background: var(--warning-tint); }
 .import-system-secrets div { display: flex; gap: .4rem; align-items: baseline; }
 .import-system-secrets dt { font-weight: 600; }
 .import-system-secrets dd { margin: 0; }
-.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning); font-weight: 600; }
+/* ut-docs#5228: text on the plain surface, so --warning-text (~7:1 on white), not --warning (~3.2:1). */
+.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning-text); font-weight: 600; }
 .import-system-run { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
 .import-system-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-block: .5rem; }
 .import-system-actions .btn { flex: 1 1 auto; min-height: 44px; }
@@ -4528,10 +4754,10 @@ body.login-screen {
    navigation control shouldn't change color depending on transient state.
    `.sync-chip`/`.fiscal-chip` themselves are now bare wrappers (htmx
    swap target + the state-class hook sync_admin_test.go's/
-   fiscal_chip_test.go's TestSyncChip_*/TestFiscalChip_* assert on,
+   fiscal_chip_test.go's TestSyncChip_* and TestFiscalChip_* assert on,
    "sync-chip ok"/"sync-chip warn"/"fiscal-chip ok"/"fiscal-chip warn") —
    no box styling of their own, nothing to define here. */
-.sync-banner { background: var(--warning-tint); color: var(--warning); border-radius: .5rem;
+.sync-banner { background: var(--warning-tint); color: var(--warning-text); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
 
@@ -4799,24 +5025,24 @@ body.login-screen {
    this selector can't touch it. */
 @media (max-width: 480px) {
   .fiscal-register-group .users-inline { flex-wrap: wrap; }
-  /* ut-docs#3653: the same overflow inside a phone card's actions cell.
-     That cell is flex-end, so a non-wrapping inline edit form wider than
-     the card (promotions: type, value, description, two dates, Save
-     ≈ 715px) spilled past the card's inline-START edge and its first
-     controls were cut off by the table's overflow:hidden. /kitchen-stations
-     had the same defect. table-cards.js puts .t-cards on tables at every
-     width, but this block is ≤480px only, so the desktop /users row
-     (#898) is untouched. */
+  /* Phone card actions cell: let a row's inline edit form wrap inside the
+     card. Still used by /tables and /users (row edit forms); delete when
+     they adopt the record dialog (epic ut-docs#2012). min-inline-size, not
+     width: it outranks the templates' inline style="width:…". */
   table.t-cards .t-cards-actions .users-inline {
     flex-wrap: wrap; justify-content: flex-end; min-inline-size: 0; max-inline-size: 100%;
   }
-  /* Once wrapped, let the fields fill their line, and keep a date wide
-     enough to show its year (7.5rem cut it off at "31/12/202").
-     min-inline-size, not width: it outranks the templates' inline
-     style="width:…" without !important. */
   table.t-cards .t-cards-actions .users-inline :is(input, select) { flex: 1 1 auto; }
-  table.t-cards .t-cards-actions .users-inline input[type="date"] { min-inline-size: 9.75rem; }
 }
+
+/* Kitchen stations (ut-docs#5575): the View display link sits inside a
+   tappable row, so give it a >=44px-tall hit area; discovery results sit
+   in the station dialog. */
+.kitchen-view-display { display: inline-block; padding-block: .6rem; }
+.kitchen-discover-btn { inline-size: 100%; }
+.kitchen-discover-msg { min-block-size: 1.2rem; }
+.kitchen-discover-list { list-style: none; padding-inline-start: 0; margin: .4rem 0; }
+.kitchen-discover-list li { padding-block: .3rem; overflow-wrap: anywhere; }
 
 /* Camera identify overlay (opened on demand from the scan row). The overlay
    reserves the measured status row (--phone-sb-h, app.js measureBar; 4rem =
@@ -5155,6 +5381,9 @@ body.login-screen {
   padding: 1.6rem; inline-size: min(26rem, 92vw); margin: 8dvh auto 0;
   display: flex; flex-direction: column; gap: .9rem; text-align: center;
 }
+/* ut-docs#5602: on a short till screen (1024x600 kiosk Pi) the 8dvh dead space
+   pushed Back/Next below the fold when an error line showed. */
+@media (max-height: 700px) { .setup-card { margin-block-start: 1rem; } }
 .setup-card h1 { font-size: 1.3rem; margin: 0; }
 .setup-card input[type="text"], .setup-card input[type="password"], .setup-card select {
   inline-size: 100%; padding: .6rem .7rem; font-size: 1.05rem;
@@ -5237,8 +5466,11 @@ body.login-screen {
 }
 .picker-tile:hover { border-color: #cbd5e1; }
 .picker-tile:active { transform: scale(.97); }
-.picker-tile:focus-visible { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border); }
-.picker-tile[aria-pressed="true"] {
+/* ut-docs#1103 UX1: >=3:1 ring (WCAG 1.4.11); the gap keeps it distinct from the checked inset ring. */
+.picker-tile:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; border-color: var(--focus-border); }
+.picker-tile[aria-pressed="true"],
+.picker-tile[aria-checked="true"],
+.picker-tile[aria-selected="true"] {
   border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent);
 }
 [x-cloak] { display: none !important; }
@@ -5266,6 +5498,29 @@ body.login-screen {
   overflow-wrap: anywhere; min-inline-size: 0;
 }
 .builtin-icon-tile img { display: block; }
+/* ut-docs#5736: the chosen tile also carries a tick badge, a SHAPE cue (WCAG
+   1.4.1) so "chosen" no longer rests on the accent hue alone, which the
+   same-hue focus outline otherwise matches. ::after is the filled circle,
+   ::before the check (clip-path, so no left/right and no image); both sit
+   in the top inline-end corner over the tile padding, clear of the label.
+   background/clip-path only: html.fx-light wipes box-shadow/filter but not
+   these, so the badge survives it. Scoped to the icon grids; aria-selected
+   already tells assistive tech, so the badge is decorative (content: "").
+   The circle is --focus-border, not --accent: amber/fresh/monarch's raw
+   --accent is only ~2.5-2.8:1 under the white check; their darker
+   --focus-border (ut-docs#797) keeps the check >=3:1 (WCAG 1.4.11). */
+.builtin-icon-tile { position: relative; }
+.builtin-icon-tile[aria-selected="true"]::before,
+.builtin-icon-tile[aria-selected="true"]::after {
+  content: ""; position: absolute; box-sizing: border-box; pointer-events: none;
+  inset-block-start: 3px; inset-inline-end: 3px;
+  inline-size: 1.1rem; block-size: 1.1rem;
+}
+.builtin-icon-tile[aria-selected="true"]::after { border-radius: 50%; background: var(--focus-border); }
+.builtin-icon-tile[aria-selected="true"]::before {
+  z-index: 1; background: var(--accent-contrast);
+  clip-path: polygon(20% 52%, 30% 42%, 42% 55%, 70% 27%, 80% 37%, 42% 75%);
+}
 /* ut-docs#2506: ~70 icons in sections. The grid scrolls inside its own
    box (touch-scrollable, no nested page jump) so the dialog's Save stays
    reachable at the 1024×600 floor; the section headings span the whole
@@ -5273,13 +5528,27 @@ body.login-screen {
 .builtin-icon-grid {
   grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
   max-block-size: 18rem; overflow-y: auto; overscroll-behavior: contain;
-  padding: .15rem;
+  /* ut-docs#1103: room for the 2px+2px .picker-tile focus ring, which the
+     scroll box would otherwise clip on edge tiles. */
+  padding: .3rem;
+  /* ut-docs#5601: arrowing to an edge tile scrolls it clear of the box edge,
+     so its focus ring isn't clipped. */
+  scroll-padding: 5px;
 }
 .builtin-icon-group-label {
   grid-column: 1 / -1; margin-block-start: .35rem;
   font-size: .8rem; font-weight: 600; color: var(--muted); text-align: start;
 }
 .builtin-icon-group-label[hidden], .builtin-icon-tile[hidden] { display: none; }
+/* ut-docs#5601: each section is a role="group" wrapper inside the listbox.
+   It spans the whole row and repeats the grid's own column template, so the
+   tiles lay out in the same columns as before; no subgrid/display:contents
+   (both have had accessibility-tree bugs on older WebKit/Chromium). */
+.builtin-icon-group {
+  grid-column: 1 / -1; display: grid; gap: inherit;
+  grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
+}
+.builtin-icon-group[hidden] { display: none; }
 .builtin-icon-search { display: block; inline-size: 100%; margin-block: .35rem; }
 /* Review finding F5: .picker-tile:focus-visible's own outline (above) and
    a plain `outline` here have identical specificity, so whichever rule
@@ -5292,8 +5561,8 @@ body.login-screen {
 .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
 
 /* Item color swatch picker (ut-docs#1901): same .picker-grid/.picker-tile
-   pattern and aria-pressed convention as the built-in icon grid just
-   above, one small dot + translated name per tile rather than an image.
+   pattern as the built-in icon grid just above (whose selected tile is
+   aria-selected since ut-docs#5601, a listbox; this one is aria-pressed), one small dot + translated name per tile rather than an image.
    --swatch (set inline per tile, catalog.html) feeds .swatch-dot's
    background — the one place a raw hex from catalogtypes.ItemColors()
    reaches CSS on the PICKER side; the tile's own selected/pressed state
@@ -5737,11 +6006,13 @@ body.login-screen {
    isn't a smoothly animatable shorthand, so it disappears outright). */
 .settings-hit-target { outline: 3px solid var(--accent); outline-offset: 3px;
                        border-radius: .3rem; }
-/* Phone width (the same 40rem breakpoint .settings-grid collapses at, below):
-   list-first. Without a selection only the section list shows; a tap (or a
-   real deep link, which settings.html's script treats as a selection) swaps
-   in the panel with a back control. Above this width .has-selection has no
-   effect at all — both panes are always side by side. */
+/* At 56.25rem (900px) or narrower (a media-query rem is 16px whatever the UI scale), so
+   phones AND a 10" tablet in portrait (ut-docs#4628: beside the nav the panel
+   was ~355px and the fee rows scrolled sideways): list-first. Without a
+   selection only the section list shows; a tap (or a real deep link, which
+   settings.html's script treats as a selection) swaps in the panel with a
+   back control. Above this width .has-selection has no effect at all - both
+   panes are always side by side. */
 .settings-back { display: none; margin-block-end: .8rem; }
 /* ut-docs#3090: the landing grid of category tiles, and the sidebar header
    (a way back to it + the open category's name). The shell's own
@@ -5762,7 +6033,7 @@ body.login-screen {
 .settings-cat-title:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .settings-home-link:hover, .settings-home-link:focus-visible { background: var(--surface-2); }
 .settings-cat-title { margin: .2rem 0 .6rem; padding-inline: .6rem; font-size: 1.15rem; text-align: start; }
-@media (max-width: 40rem) {
+@media (max-width: 56.25rem) {
   .settings-shell { grid-template-columns: 1fr; }
   .settings-nav { position: static; max-block-size: none; padding-inline-end: 0; }
   #settings-shell:not(.has-selection) .settings-panel { display: none; }
@@ -5819,6 +6090,31 @@ body.login-screen {
    "Light: no animations, flat look (fastest)") must never outgrow its card
    at 360px — it shrinks and the native control truncates the label. */
 .set-row select { max-inline-size: 100%; min-inline-size: 0; }
+/* Stacked checkbox row (was an inline style on four stock/receipt labels). */
+.set-block { display: block; margin-block: .35rem; }
+/* ut-docs#5738: a label-wrapped checkbox in Settings is a >=44px touch row
+   with a 1.5rem box under kiosk mode or a coarse pointer (touchscreen). One
+   shared rule, so every current and future checkbox row inherits it; desktop
+   mouse density is unchanged. .staff-lang-opt and .ps-switch size themselves.
+   flex-wrap: nowrap keeps the text beside the box (a .set-row label would
+   otherwise drop it under the box at phone width). The @media copy below
+   must stay in sync with this one (the spec tests both branches). */
+body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch):has(> input[type="checkbox"]) {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem;
+  min-block-size: 2.75rem; margin-block: .35rem;
+}
+body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[type="checkbox"] {
+  flex: none; inline-size: 1.5rem; block-size: 1.5rem; margin: 0;
+}
+@media (pointer: coarse) {
+  .settings-panel label:not(.staff-lang-opt):not(.ps-switch):has(> input[type="checkbox"]) {
+    display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem;
+    min-block-size: 2.75rem; margin-block: .35rem;
+  }
+  .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[type="checkbox"] {
+    flex: none; inline-size: 1.5rem; block-size: 1.5rem; margin: 0;
+  }
+}
 .set-tight { margin-block-start: .35rem; }
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }
@@ -6123,6 +6419,11 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
 .btn-icon .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
 .btn-icon:focus-visible { outline: 2px solid var(--focus-border, var(--accent)); outline-offset: 2px; }
 .btn-icon-danger, .btn-icon-danger:hover { color: var(--danger); }
+/* ut-docs#5574: promotion dialog customer field + its remove (x) button. */
+[data-promo-customer] { display: flex; flex-direction: column; gap: .2rem; }
+.promo-cust-row { display: flex; gap: .5rem; align-items: stretch; }
+.promo-cust-row > input { flex: 1 1 auto; min-inline-size: 0; }
+.promo-cust-row > .btn-icon { min-inline-size: 3rem; min-block-size: 3rem; }
 /* --- The list: a card whose wide table scrolls inside it (same escape
    hatch as .users-list / .settings-grid .card .table) and tap-to-edit rows
    that read as tappable. Attribute selectors, so no page has to carry an
@@ -6144,7 +6445,13 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    buttons vertically, tripling the row height and clipping them at the card
    edge (seen in this card's own 360px screenshot). One row, and the table
    scrolls sideways inside the card instead. */
-.list-actions { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+.list-actions:not(td) { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+/* flex only on a non-cell container (designer category list, buttons.html);
+   on a <td> flex replaced display:table-cell, so the cell stopped stretching
+   to the row and its border-bottom sat above the row's on a wrapped row
+   (ut-docs#5576). The cell stays a real table cell, nowrap + end-aligned. */
+td.list-actions { white-space: nowrap; text-align: end; vertical-align: middle; }
+td.list-actions > * + * { margin-inline-start: .5rem; }
 .list-empty-row td { text-align: center; color: var(--muted); }
 [data-record-open] { cursor: pointer; }
 [data-record-open]:hover > td { background: var(--surface-2); }
@@ -6193,10 +6500,9 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
 /* ut-docs#2099 (coding-standards.md §10, ut-docs#1999's other half): status/
    lock/exit-to-OS, withheld outright in self-order kiosk mode (see
    record_dialog.html — the whole row is absent then, not just hidden).
-   Deliberately its own thin line, NOT full-height .btn/.btn-icon controls
-   (those are 3rem/48px touch targets, sized for a primary action) — this
-   is a secondary affordance and the ut-docs#2000 head-height budget has no
-   room to repeat that size a third time in the same pinned head. Measured
+   Secondary row, but its controls meet the 44px touch floor (ut-docs#5576;
+   was 1.9rem ≈ 33x32): 44px literal so it holds at any --ui-scale. Still
+   thinner than full 3rem .btn/.btn-icon, the ut-docs#2000 head budget. Measured
    height cost at 360px is recorded in
    ut-docs/reference/list-and-dialog-pattern.md's "The nav rail is
    covered" section. The connection chip reuses .sb-dot / .is-offline
@@ -6215,8 +6521,8 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    override to the existing --danger token (~4.8:1 on white) rather than a
    new literal; .sb-dot's own background/glow is unaffected. */
 .record-dialog-status-row .sb-conn.is-offline { color: var(--danger); }
-.record-dialog-status-row .btn { min-block-size: 1.9rem; padding: .2rem .5rem; }
-.record-dialog-status-row .btn-icon { min-inline-size: 1.9rem; padding-inline: .4rem; }
+.record-dialog-status-row .btn { min-block-size: 44px; padding: .2rem .5rem; }
+.record-dialog-status-row .btn-icon { min-inline-size: 44px; padding-inline: .4rem; }
 .record-dialog-status-row .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
 .record-dialog-lock { margin: 0; display: inline-flex; }
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
@@ -6233,6 +6539,8 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
    failure the server response never covered — makes it non-empty and
    this rule takes over. */
 .record-dialog-msg:empty { display: none; }
+.record-dialog-body [aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 1px; }
+.record-dialog-msg { scroll-margin-block-start: .5rem; }
 .record-dialog-msg { color: var(--danger); font-weight: 600;
                       margin-block: 0 .7rem; max-inline-size: 40rem; }
 .record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
@@ -6454,7 +6762,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-colors .item-color-tile { flex-direction: row; gap: .4rem; min-block-size: 2.6rem; min-inline-size: 6rem; padding: .35rem .6rem; }
 .designer-cat-colors .item-color-tile input[type="radio"] { margin: 0; flex: none; }
 .designer-cat-colors .item-color-tile:has(input:checked) { border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent); }
-.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; }
+.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 .designer-cat-new { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
 .designer-cat-new .designer-cat-form { inline-size: 100%; border-block-start: 0; padding-block-start: 0; }
 
@@ -6471,16 +6779,18 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .cat-thumb-swatch { inline-size: 1.25rem; block-size: 1.25rem; border-radius: 50%; background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
 .cat-thumb-placeholder { display: inline-flex; color: var(--muted); }
 .cat-thumb-placeholder svg { inline-size: 1.1rem; block-size: 1.1rem; }
-.category-row-open {
+/* Row-tap list name button (ut-docs#2699 categories; ut-docs#6046 every other
+   record list). */
+.category-row-open, .record-row-open {
   display: inline-flex; align-items: center; gap: .6rem; min-block-size: 3rem; max-inline-size: 100%;
   padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
   border-radius: var(--radius);
 }
-.category-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
-.category-row-name { overflow-wrap: break-word; }
+.category-row-open:focus-visible, .record-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.category-row-name, .record-row-name { overflow-wrap: break-word; }
 /* The name column keeps room for the picture plus a short word at 360px;
-   the table's own .list-scroll wrapper scrolls sideways if it must,
-   rather than breaking names mid-word. */
+   the phone tier stacks the table as cards (table-cards.js / .t-cards,
+   ut-docs#3359) rather than breaking names mid-word. */
 .category-name-cell { min-inline-size: 9.5rem; }
 .list-reorder-hint { font-size: .85rem; margin-block: 0 .5rem; }
 .list-reorder-msg { margin-block: 0 .5rem; color: var(--danger); font-size: .9rem; }
@@ -6533,6 +6843,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 
 @media (max-width: 480px) {
   :root { --phone-top-h: 56px; }
+  /* ut-docs#3148: the bar below is sticky, so an anchor jump
+     (/settings#settings-about) or scrollIntoView would put its target's
+     top edge under it and hide the heading. The tablet+ side rail sits
+     beside the page, so this is the phone tier only; pages without the
+     bar (self-order) get no gap. No :has() support = the old behaviour. */
+  html:has(.nav) { scroll-padding-block-start: calc(var(--phone-top-h) + .5rem); }
 
   /* Top bar: ☰ + logo, one row. */
   .nav {
@@ -6965,6 +7281,13 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-view-table-wrap { overflow-x: auto; }
 /* ut-docs#2838: the AI-agent confirm card's buttons (core-rendered). */
 .agent-confirm-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .75rem; }
+/* ut-docs#4128: the catalog's ?missing= banner spans the action row. */
+.catalog-missing-filter { flex-basis: 100%; margin: 0; padding-block: .5rem; }
+/* ut-docs#4128: the AI assistant's item list (core-drawn). */
+.agent-item-list-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.agent-item-list-row { display: flex; align-items: center; gap: .75rem; min-block-size: 48px; }
+.agent-item-list-thumb { inline-size: 48px; block-size: 48px; flex: none; border-radius: 6px; object-fit: cover; background: var(--surface-2, rgba(128, 128, 128, .25)); }
+.agent-item-list-name { font-weight: 600; overflow-wrap: anywhere; padding-block: .5rem; }
 .plugin-view-table th { text-align: start; }
 .plugin-view-table .num { text-align: end; font-variant-numeric: tabular-nums; }
 /* nowrap only as a real table: in phone card mode (table-cards.js) it would
@@ -7024,6 +7347,11 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-chat { display: flex; flex-direction: column; gap: .75rem; min-inline-size: 0; }
 .plugin-chat-scroll { display: flex; flex-direction: column-reverse; overflow-y: auto;
   max-block-size: min(60vh, 32rem); overscroll-behavior: contain; }
+/* ut-docs#4379: on a phone a long transcript at 60vh pushed Send below the
+   fold; a shorter cap keeps the question row on screen. */
+@media (max-width: 480px) {
+  .plugin-chat-scroll { max-block-size: min(40vh, 18rem); }
+}
 .plugin-chat-log { display: flex; flex-direction: column; gap: .6rem; padding-block: .25rem; }
 .plugin-chat-turn { max-inline-size: min(85%, 40rem); padding-block: .55rem; padding-inline: .8rem;
   border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg); color: var(--text);
@@ -7107,7 +7435,11 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 
 /* Online orders (ADR-0169 §9, ut-docs#4768): logical properties only. */
 .channel-orders-intro { margin-block: .25rem .75rem; max-inline-size: 60ch; }
-.channel-orders-num { text-align: end; font-variant-numeric: tabular-nums; }
+/* ut-docs#5427 (UX A2): `.card table th/td { text-align: start }` outranks a
+   bare class, so numbers inside a .card (Online orders, Online channels) were
+   start-aligned; the :is() selector wins on specificity. */
+.channel-orders-num,
+:is(table.table, .card table) :is(th, td).channel-orders-num { text-align: end; font-variant-numeric: tabular-nums; }
 .channel-order-status { display: inline-block; padding-block: .1rem; padding-inline: .55rem; border-radius: 999px;
   border: 1px solid var(--border, currentColor); font-size: .8rem; white-space: nowrap; }
 .channel-order-status[data-status="cancelled"], .channel-order-status[data-status="refunded"],
@@ -7119,6 +7451,18 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* Reports → Online channels (ut-docs#5427). Reuses .channel-order-scroll,
+   .channel-orders-num and .channel-order-key; logical properties only. */
+.online-channels-notice { margin-block: .25rem .75rem; max-inline-size: 70ch; }
+.online-channels-link { display: inline-flex; align-items: center; min-block-size: 44px; }
+.online-channels-note { margin-block: .5rem 0; max-inline-size: 70ch; }
+.online-channels .online-channels-total :is(th, td) { font-weight: 600; }
+.online-channels .online-channels-total th { font-size: inherit; text-transform: none; letter-spacing: normal; color: var(--text); text-align: start; border-block-end: 1px solid var(--border); }
+/* The rule above the Total row only on the table layout: below 481px every
+   cell is its own line in the card (table-cards), and a rule per line is noise. */
+@media (min-width: 481px) {
+  .online-channels .online-channels-total :is(th, td) { border-block-start: 2px solid var(--border, currentColor); }
+}
 /* ut-docs#5070: Settings → Backups → Restore from a file, and the welcome
    page's restore line. Logical properties only (RTL). */
 .backup-upload { margin-block-start: 1rem; }
@@ -7148,3 +7492,191 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
   border-block-end: 1px solid var(--danger-tint-border); }
 .replaced-banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #replaced-banner-mount:empty { display: none; }
+/* ut-docs#5058 UT-3: the Next steps card above the sale grid after a cloud
+   setup. In flow (the sale screen is 100dvh, so it shrinks the grid and never
+   pushes Pay off screen), info tint of .pos-notice.info, never a dialog and
+   not a .pos-notice (those fade out). Capped at a third of the screen. */
+.next-steps-card { padding-block: .5rem; padding-inline: .8rem;
+  max-block-size: 35dvh; overflow-y: auto;
+  background: rgba(37, 99, 235, .1); color: var(--text);
+  border-block-end: 1px solid rgba(37, 99, 235, .3); }
+.next-steps-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.next-steps-head h2 { margin: 0; font-size: 1rem; text-align: start; }
+.next-steps-list { list-style: none; margin: 0; padding: 0; display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: .25rem .8rem; }
+.next-steps-list a { display: flex; align-items: center; min-block-size: 44px;
+  color: inherit; text-align: start; text-decoration: underline; overflow-wrap: anywhere; }
+/* ut-docs#5127 UT-1b: approve or decline moving this till into another
+   shop (move_approval.html). The route reads as a label/value list that
+   wraps on a 360px phone; the two actions stack below the typed name. */
+.move-approval { max-width: 40rem; }
+.move-route { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0 0 1rem; }
+.move-route dt { color: var(--muted); }
+.move-route dd { margin: 0; overflow-wrap: anywhere; }
+.move-warning { padding: .6rem .8rem; border-inline-start: 4px solid var(--danger); background: var(--surface); }
+#move-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .8rem; margin-block-start: 1rem; }
+.move-approve { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem; flex: 1 1 18rem; }
+.move-approve label { flex-basis: 100%; margin: 0; }
+.move-approve input[type="text"] { flex: 1 1 12rem; margin: 0; }
+.move-decline { margin: 0; }
+#move-approval-notice-mount:empty { display: none; }
+
+/* ut-docs#5410: Currency display select (Settings -> Currency). */
+.currency-display-select { min-block-size: 44px; }
+
+/* ut-docs#3661: /promotions on the list-and-dialog pattern. A 36-char
+   customer UUID or a long description wraps instead of widening the table;
+   the Valid column keeps each date on one line, stacked. */
+#promotions-table td.promo-wrap { overflow-wrap: anywhere; min-inline-size: 6rem; }
+#promotions-table td.promo-dates { white-space: nowrap; }
+#promotions-table td.promo-dates .promo-date { display: block; }
+/* A readonly field (promotion code and customer on edit, country code) must
+   not look editable: a tap on it summons no keyboard, which reads as broken. */
+.record-dialog-body input[readonly] { background: var(--surface-2); cursor: default; }
+
+/* ---------- Notices from Universal Till and partners (ADR-0176, ut-docs#5366) ----------
+   Spec: ut-docs docs/design/5366-till-notices. ONE notification surface
+   (.pos-notice) with two new modifiers; the bell sits in the rail's status
+   group; severity is a glyph SHAPE (circle / triangle / octagon) plus a word,
+   never colour alone. Logical properties only (RTL). Light-theme border tints
+   are the measured >=3:1 values (WCAG 1.4.11); themes/dark.css redefines them. */
+:root {
+  --notice-info-bg: #e6edfc;      --notice-info-bd: #4f74c4;      --notice-info-fg: #0f172a;
+  --notice-imp-bg: #fdf0d5;       --notice-imp-bd: #a16207;       --notice-imp-fg: #7a3a05;
+  --notice-crit-bg: #fde4e4;      --notice-crit-bd: #b91c1c;      --notice-crit-fg: #8f1515;
+}
+/* .important / .critical join .info/.success/.error on the one component. */
+.pos-notice.important { background: var(--notice-imp-bg); color: var(--notice-imp-fg);
+  border-color: var(--notice-imp-bd); position: relative; overflow: hidden; }
+.pos-notice.critical { background: var(--notice-crit-bg); color: var(--notice-crit-fg);
+  border-color: var(--notice-crit-bd); border-width: 2px; }
+.pos-notice .notice-sev-ico { flex: none; display: inline-flex; }
+.pos-notice .notice-sev-ico svg { inline-size: 22px; block-size: 22px; }
+.pos-notice .notice-text b { display: block; }
+.pos-notice .notice-text > span { display: block; }
+/* The toast body keeps to two lines; the full text is one tap away. */
+.pos-notice .notice-toast-body { display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; font-weight: 500; }
+.pos-notice .notice-strip-acts { display: flex; gap: .3rem; flex: none; align-items: center; }
+/* The 44px targets overlap the toast's .55rem (8.8px) padding by at most 8px
+   so nothing pokes past its overflow: hidden edge. */
+.pos-notice .notice-link { color: inherit; font-weight: 700; text-decoration: underline;
+  min-block-size: 44px; display: inline-flex; align-items: center; margin-block: -8px;
+  padding-inline: .3rem; }
+/* The strip sits at the very top of the viewport: no negative margins there,
+   or the Acknowledge button's top edge and focus ring are clipped off-screen. */
+.pos-notice.strip .btn { min-block-size: 44px; }
+.pos-notice.strip .btn, .pos-notice.strip .notice-link { margin-block: 0; }
+/* The critical strip: one line at the top of the main region, full width; a
+   long title keeps to two lines on a phone (the inbox has the full text). */
+.pos-notice.strip .notice-text b { display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.notices-strip-mount:empty { display: none; }
+.pos-notice.strip { border-radius: 0; border-inline-width: 0; border-block-start-width: 0;
+  margin: 0; padding-block: .25rem; }
+.notices-toast-mount:empty { display: none; }
+.notices-toast-mount { grid-column: 1 / -1; }
+@media (prefers-reduced-motion: reduce) { .pos-notice { transition: none; } }
+.pos-notice.important::after { content: ""; position: absolute; inset-inline: 0; inset-block-end: 0;
+  block-size: 3px; background: currentColor; opacity: .5; transform-origin: left center;
+  animation: notice-timer var(--notice-ms, 10s) linear forwards; }
+html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
+.pos-notice.important.paused::after { animation-play-state: paused; }
+@keyframes notice-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .pos-notice.important::after { animation: none; transform: scaleX(.6); }
+}
+
+/* Bell + unread badge. */
+#notices-bell:empty { display: none; }
+.notices-badge { position: absolute; inset-block-start: -.5rem; inset-inline-end: -.85rem;
+  min-inline-size: 22px; block-size: 22px; padding: 0 5px; border-radius: 11px;
+  background: #fff; color: #0f172a; border: 2px solid var(--brand);
+  font-size: .78rem; font-weight: 800; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px; }
+/* A critical unread: the badge changes SHAPE (square) and carries a triangle. */
+.notices-badge.crit { background: #b91c1c; color: #fff; border-color: #fff; border-radius: 6px; }
+.notices-badge .notices-badge-ico svg { inline-size: 11px; block-size: 11px; display: block; }
+.notices-badge[hidden] { display: none; }
+.notices-badge-burger { display: none; }
+@media (max-width: 480px) {
+  .nav-drawer-toggle { position: relative; }
+  .notices-badge-burger:not([hidden]) { display: inline-flex; inset-block-start: 2px; inset-inline-end: -4px; }
+  .notices-bell .notices-badge { position: static; margin-inline-start: auto; }
+}
+
+/* The inbox. */
+.notices-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-block-end: .7rem; }
+.notices-tab { min-block-size: 44px; padding: .4rem 1rem; border-radius: 22px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; text-decoration: none; }
+.notices-tab[aria-current="page"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.notices-cnt { font-size: .8rem; font-weight: 800; border: 1px solid currentColor;
+  border-radius: 10px; padding: 0 .4rem; }
+.notices-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.notice-msg { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  border-inline-start-width: 6px; overflow: hidden; }
+.notice-msg.s-info { border-inline-start-color: var(--notice-info-bd); }
+.notice-msg.s-important { border-inline-start-color: var(--notice-imp-bd); }
+.notice-msg.s-critical { border-inline-start-color: var(--notice-crit-bd); }
+.notice-hd { display: flex; gap: .7rem; align-items: flex-start; padding: .6rem .8rem;
+  min-block-size: 64px; inline-size: 100%; text-align: start; background: transparent;
+  border: 0; color: inherit; font: inherit; cursor: pointer; }
+.notice-sev-ico svg { inline-size: 26px; block-size: 26px; display: block; }
+.notice-msg .notice-sev-ico { flex: none; margin-block-start: 2px; }
+.notice-msg.s-important .notice-sev-ico { color: var(--notice-imp-fg); }
+.notice-msg.s-critical .notice-sev-ico { color: var(--notice-crit-fg); }
+.notice-main { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; }
+.notice-ttl { font-weight: 500; overflow-wrap: anywhere; }
+.notice-msg.unread .notice-ttl { font-weight: 800; }
+.notice-unrd { inline-size: 10px; block-size: 10px; border-radius: 50%; background: var(--accent);
+  flex: none; margin-block-start: 8px; }
+.notice-meta { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: center;
+  font-size: .82rem; color: var(--muted); margin-block-start: .15rem; }
+.notice-sevtag { font-weight: 700; color: var(--text); border: 1px solid currentColor;
+  border-radius: 4px; padding: 0 .35rem; }
+.notice-msg.s-important .notice-sevtag { color: var(--notice-imp-fg); }
+.notice-msg.s-critical .notice-sevtag { color: var(--notice-crit-fg); background: var(--notice-crit-bg); }
+.notice-sender { display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; color: var(--text); }
+.notice-sender.partner { border: 1.5px dashed var(--muted); border-radius: 6px; padding: 0 .4rem; }
+.notice-sender-ico svg { inline-size: 14px; block-size: 14px; display: block; }
+.notice-body { padding: 0 .8rem .7rem; padding-inline-start: calc(.8rem + 26px + .7rem); }
+.notice-body p { margin: .2rem 0 .6rem; overflow-wrap: anywhere; }
+.notice-acts { display: flex; flex-wrap: wrap; gap: .5rem; }
+@media (max-width: 480px) {
+  .notice-hd { min-block-size: 68px; }
+  .notice-body { padding-inline-start: .8rem; }
+}
+.notices-empty { margin: 2rem auto; text-align: center; max-inline-size: 34ch; display: flex;
+  flex-direction: column; gap: .5rem; align-items: center; }
+.notices-empty-ico svg { inline-size: 56px; block-size: 56px; color: var(--muted); }
+.notices-empty p { margin: 0; color: var(--muted); }
+
+/* ut-docs#5553: Windows High Contrast / forced colors. The normal selected
+   look (accent border + inset box-shadow + tinted fill) is erased in this
+   mode, so selection is re-drawn with system colours and a thicker border;
+   focus keeps its own outline, separate from the selection fill. */
+@media (forced-colors: active) {
+  .picker-tile[aria-pressed="true"],
+  .picker-tile[aria-checked="true"],
+  .picker-tile[aria-selected="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText;
+    border-color: Highlight;
+    box-shadow: inset 0 0 0 2px Highlight;
+  }
+  .picker-tile:focus-visible { outline: 3px solid CanvasText; outline-offset: 2px; }
+  /* ut-docs#5736: the tile is Highlight here, so the badge inverts: HighlightText circle, Highlight check. */
+  .builtin-icon-tile[aria-selected="true"]::after { forced-color-adjust: none; background: HighlightText; }
+  .builtin-icon-tile[aria-selected="true"]::before { forced-color-adjust: none; background: Highlight; }
+  .order-type-option { border: 1px solid ButtonText; }
+  .order-type-option[aria-checked="true"],
+  body:not(.pos-sheet-open) .basket .order-type-option[aria-checked="true"] {
+    forced-color-adjust: none;
+    background: Highlight; color: HighlightText;
+    border: 3px solid Highlight;
+    box-shadow: none;
+  }
+  .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
+  .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
+}

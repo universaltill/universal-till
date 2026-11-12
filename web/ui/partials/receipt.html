@@ -159,9 +159,13 @@
 <div class="totals">
   {{ if .ShowTax }}
   <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
-  <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
   {{ end }}
   {{ if gt .SaleDiscount 0 }}<div>{{ T "basket.discount" }}{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
+  {{ if .ShowTax }}
+  <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
+  {{ end }}
+  {{ if .ServiceCharge }}<div data-testid="receipt-service-charge">{{ T "journal.detail.service_charge" }}: {{ money .ServiceCharge }}</div>{{ end }}
+  {{ if and .ShowTax .VoucherIssueTotal }}<div data-testid="receipt-voucher-total">{{ T "receipt.vouchers.issued" }}: {{ money .VoucherIssueTotal }}</div>{{ end }}
   <div><strong>{{ T "basket.total" }}: {{ money .Total }}</strong></div>
 </div>
 {{ if .Payments }}
