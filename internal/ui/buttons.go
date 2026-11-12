@@ -1369,8 +1369,9 @@ func (s *ButtonStore) updateOrderWith(ctx context.Context, current []Button, cod
 		// never one frozen at drag time — see LoadButtons' own
 		// COALESCE(NULLIF(sb.label,''), i.name) fallback, and
 		// MaterializeAndReorder's own doc comment. ImageURL is left empty
-		// for the same reason: LoadButtons already falls a NULL image_path
-		// back to the item's own catalog thumbnail.
+		// for the same reason: the tile picture always comes from the item
+		// (item_images thumbnail, then items.icon), so nothing is frozen on
+		// the row (ut-docs#6076).
 		materialize = append(materialize, data.ShortcutButton{
 			Label:   "",
 			Barcode: code,

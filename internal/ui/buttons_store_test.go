@@ -149,8 +149,8 @@ func TestButtonStoreLoad_ThumbnailFallbackPriceOrderAndModifiers(t *testing.T) {
 	if tea.Label != "Tea Tile" || coffee.Label != "Coffee Tile" {
 		t.Fatalf("sort_order not honored: %+v", btns)
 	}
-	if tea.ImageURL != "/public/images/tea-explicit.png" {
-		t.Fatalf("explicit image lost: %q", tea.ImageURL)
+	if tea.ImageURL != "" {
+		t.Fatalf("a button's own image_path is not a picture source (ut-docs#6076): %q", tea.ImageURL)
 	}
 	if coffee.ImageURL != "/public/images/coffee.png" {
 		t.Fatalf("thumbnail fallback missing: %q", coffee.ImageURL)

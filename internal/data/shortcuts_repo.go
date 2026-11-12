@@ -58,16 +58,15 @@ func (r *ShortcutsRepo) loadButtons(ctx context.Context, op string, withHidden b
 	var err error
 	done := shortcutsObs.trace(op)
 	defer func() { done(err) }()
-	// ut-docs#4838: the item's own catalog photo (item_images,
-	// role='thumbnail' — same source the catalog list, basket and scan
-	// resolvers use) WINS over the button's own image_path, which the
-	// designer's save can freeze as a library/placeholder tile; the button's
-	// image is only the fallback for an item with no photo row. Before, a
-	// photo set in the item editor never replaced such a frozen tile.
-	// Without the catalog lookup, a shop's catalog-uploaded item photo showed
-	// up in the catalog list but never on the actual sale-screen tile,
-	// since shortcut_buttons.image_path is a separate column nothing ever
-	// populates from a plain catalog image upload — confirmed live 2026-07-29.
+	// ut-docs#6076 (supersedes the ut-docs#4838 fallback): the item's own
+	// item_images thumbnail (role='thumbnail' -- the source the catalog list,
+	// basket and scan resolvers use) is the ONLY picture read here; the
+	// caller (ButtonStore) then falls back to the item's icon. The button's
+	// own shortcut_buttons.image_path is a legacy column no longer read for
+	// the picture: neither clear path (CatalogRepo.ClearItemPhoto /
+	// ClearItemThumbnail) knows about it, and the demo seed froze each
+	// item's bundled thumb there, so a cleared item kept its stock photo on
+	// the tile. A photo-less item shows no picture, as on every other surface.
 	// INNER JOIN (not LEFT) is deliberate (ut-docs#2281 cause A): a button
 	// whose item was soft-deleted (is_active=0, Catalog "Delete item") or
 	// whose item row is gone entirely must not come back as a tile — it
@@ -93,7 +92,7 @@ func (r *ShortcutsRepo) loadButtons(ctx context.Context, op string, withHidden b
 	// empty in the first place (ButtonStore.Add rejects a blank label).
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(NULLIF(sb.label, ''), i.name), sb.barcode, sb.item_id,
-       COALESCE((SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1), sb.image_path),
+       (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, ''), i.sell_screen_hidden
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id AND i.is_active = 1 AND i.sell_screen_removed = 0 AND (? OR i.sell_screen_hidden = 0)
