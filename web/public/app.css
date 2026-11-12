@@ -6492,6 +6492,61 @@ td.list-actions > * + * { margin-inline-start: .5rem; }
                  background: var(--surface); color: var(--text); }
 /* Out-specifies the display:flex above so a closed dialog renders nothing. */
 .record-dialog:not([open]) { display: none; }
+/* ut-docs#6125 (coding-standards §10, ut-docs#1999/#6118): the catalogue and
+   inventory full-screen dialogs (#item-form-modal, #import-modal,
+   #tax-codes-modal, #stock-dialog) no longer cover the nav rail or the status
+   bar. Block-end stops at the measured status row (--phone-sb-h: app.js
+   measureBar, not width-gated; 2rem until measured) so .statusbar (z 460 over
+   the scrim) stays the hit target. block-size:auto lets both insets size the
+   box; with the on-screen keyboard open body.osk-padded .item-form-modal /
+   .record-dialog (0,2,1) re-impose an explicit block-size, the box is
+   top-anchored and this end inset is ignored, so keyboard space is unchanged.
+   A CLASS, never an id: an id selector would beat that OSK rule. Placed after
+   .item-form-modal and .record-dialog (same 0,1,0) so it wins by order. */
+.dialog-beside-chrome { inset-block: 0 var(--phone-sb-h, 2rem); block-size: auto; }
+/* >=481px: BESIDE the rail (mirrors under RTL), as .category-items-modal does
+   (#3073), so the rail stays visible; Lock is the dialog's own
+   .dialog-status-inline below (the rail's is not always on screen).
+   <=480px: full width under the top bar, where ☰ is covered by the dialog. */
+@media (min-width: 481px) {
+  .dialog-beside-chrome { inset-inline: var(--rail-width) 0; inline-size: auto; }
+}
+.dialog-beside-chrome [data-ut-focus-home]:focus { outline: none; }
+/* Compact Lock + exit-to-OS (record_dialog.html "dialog_status_inline"): the
+   first children of the dialog's existing title line, at EVERY width. They
+   are the dialog's Lock because the rail's is not reliably reachable beside
+   it: under a scrim the rail is pointer-events:none (it cannot be scrolled),
+   and with a real manager session its Lock sits at y~674-722 of a 600px
+   viewport at 1024x600 (measured, ut-docs#6125), and ☰ is covered by the
+   dialog on a phone. No extra head row (UX-1, #2000 budget): at <=480px the
+   44px controls take the title line's own vertical padding via a negative
+   block margin, so the line does not grow. 44px literals, as
+   .record-dialog-status-row. */
+.dialog-status-inline { display: flex; flex: none; align-items: center; gap: .5rem; }
+.dialog-status-inline form { margin: 0; display: inline-flex; }
+.dialog-status-inline .btn { min-block-size: 44px; padding: .2rem .5rem; }
+.dialog-status-inline .btn-icon { min-inline-size: 44px; padding-inline: .4rem; }
+.dialog-status-inline .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
+@media (max-width: 480px) {
+  .catalog-form-head-title > .dialog-status-inline,
+  .record-dialog-head-title > .dialog-status-inline { margin-block: -.6rem; }
+}
+/* #import-modal / #tax-codes-modal hold a whole hx-swapped page and were
+   overflow:hidden with no scroll container, so most of it was unreachable
+   (a wheel or swipe moved the page behind). They scroll as one box with the
+   page head pinned, so the phone Lock never scrolls away. Scoped to the two
+   page dialogs: the item editor has its own head/body split. [open] keeps a
+   closed dialog display:none. */
+.item-form-modal.dialog-page-scroll[open] { display: block; overflow-y: auto; overflow-x: hidden;
+                                            box-sizing: border-box; padding: 0 1.5rem 1.5rem; }
+.dialog-page-scroll > .page-head { position: sticky; inset-block-start: 0; z-index: 2;
+                                   margin: 0 -1.5rem 1rem; padding: .6rem 1.5rem;
+                                   background: var(--surface); border-block-end: 1px solid var(--border); }
+.dialog-page-scroll > .page-head > h1 { flex: 1 1 auto; min-inline-size: 0; margin: 0; }
+@media (max-width: 480px) {
+  .item-form-modal.dialog-page-scroll[open] { padding-inline: 1rem; }
+  .dialog-page-scroll > .page-head { margin-inline: -1rem; padding-inline: 1rem; gap: .5rem; }
+}
 .record-dialog-inner { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
 .record-dialog-head { flex: none; padding: .6rem 1.5rem .5rem;
                       border-block-end: 1px solid var(--border); background: var(--surface); }

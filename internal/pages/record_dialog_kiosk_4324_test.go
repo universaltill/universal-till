@@ -31,7 +31,7 @@ func TestSelfOrderKioskTemplatesHaveNoRecordDialog(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, banned := range []string{`template "record_dialog"`, `data-record-dialog`} {
+		for _, banned := range []string{`template "record_dialog"`, `data-record-dialog`, `template "dialog_status_inline"`, `dialog-status-inline`} {
 			if strings.Contains(string(b), banned) {
 				t.Errorf("%s contains %s: the self-order kiosk faces customers and must not render the record dialog's Lock/exit-to-OS row (ut-docs#4324)", f, banned)
 			}

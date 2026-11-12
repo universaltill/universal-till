@@ -38,7 +38,10 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // is reachable on the default project now.
 //
 // phone-lock-over-scrim-6118.spec.ts (ut-docs#6118) needs a real session too:
-// Lock only renders with one.
+// Lock only renders with one. So does record-dialog-lock-status-reachable-6125
+// .spec.ts (the catalogue/inventory dialogs' Lock + status); it is named
+// record-… so it sorts AFTER login.spec.ts (a name before it would complete
+// the first-boot wizard first).
 //
 // nav-rail-lock-reachable-1346.spec.ts (ut-docs#1346) is a different class
 // of gap #901/#902 didn't touch: GET /settings itself is reachable on the
@@ -69,7 +72,7 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // ut-docs#5417's line-reduction hint spec likewise: named prompt-… so it sorts
 // after login.spec.ts (a name before it completes the first-boot wizard first).
 export const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|phone-lock-over-scrim-6118|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304|notices-cashier-5366|prompt-line-reduction-hint-5417)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|phone-drawer-lock-align-3407|phone-lock-over-scrim-6118|record-dialog-lock-status-reachable-6125|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710|step-up-same-origin-5156|prompt-inflight-pin-5288|prompt-inflight-fetch-5291|prompt-timeout-pin-5335|pin-dialog-above-osk-5304|notices-cashier-5366|prompt-line-reduction-hint-5417)\.spec\.ts$/;
 
 // ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
 // real plugins/layout-salon installed, which HIDES /tables and

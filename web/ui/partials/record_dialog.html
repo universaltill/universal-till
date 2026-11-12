@@ -141,6 +141,41 @@
      not parse time — which is why internal/pages/categories_page_test.go
      pins the reference page's rendered dialog body actually holds its
      field. Copy that test when adopting the pattern on another screen. */}}
+{{/* ut-docs#6125: the exit-to-OS link and the Lock form, defined ONCE and
+     shared by the record dialog's status row (below) and by
+     "dialog_status_inline" (the compact phone variant the catalogue and
+     inventory dialogs carry). The Lock form is the verbatim #2099 form and
+     must stay outside every fieldset[data-main-till-lock] (ut-docs#3605). */}}
+{{ define "dialog_exit_link" }}<a class="record-dialog-exit btn secondary btn-icon" data-record-dialog-exit
+           href="/settings#settings-display"
+           aria-label="{{ T "settings.display.exit_to_os_btn" }}" title="{{ T "settings.display.exit_to_os_btn" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "log-out" }}</span>
+        </a>{{ end }}
+{{ define "dialog_lock_form" }}<form method="post" action="/api/auth/logout" class="record-dialog-lock" data-record-dialog-lock>
+          <button type="submit" class="btn secondary btn-icon btn-lock"
+                  aria-label="{{ T "auth.lock" }}" title="{{ T "auth.lock" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "lock" }}</span>
+          </button>
+        </form>{{ end }}
+{{/* ut-docs#6125 — compact Lock + exit-to-OS for the full-screen catalogue and
+     inventory dialogs, at EVERY width. They sit beside the rail (>=481px) and
+     above the status bar, so the real .statusbar is uncovered and there is no
+     connection chip here (UX-1) — but the rail's own Lock is not a reliable
+     answer: under a scrim the rail is click-through (it cannot be scrolled)
+     and with a real manager session its Lock lies below the fold at 1024x600
+     (measured), and on a phone the dialog covers ☰. So the controls go at the
+     inline-start of the dialog's EXISTING title line: no extra head row, Lock
+     first then exit (DOM order = visual order), 44x44 icons. Always rendered,
+     never gated on display.mode (ut-docs#4324): these dialogs only exist on
+     operator pages; the self-order kiosk templates never include it
+     (TestSelfOrderKioskTemplatesHaveNoRecordDialog). The title next to it is
+     the dialog's data-ut-focus-home/autofocus (ut-docs#4077) so neither
+     initial nor stray focus lands on Lock. */}}
+{{ define "dialog_status_inline" }}<div class="dialog-status-inline" data-dialog-status-inline>
+          {{ template "dialog_lock_form" }}
+          {{ template "dialog_exit_link" }}
+        </div>{{ end }}
+
 {{ define "record_dialog" }}
 {{ $_ := req . "id" "formID" "createTitleKey" "editTitleKey" "createAction" }}
 <dialog id="{{ .id }}" class="record-dialog" aria-labelledby="{{ .id }}-title"
@@ -183,17 +218,8 @@
           <span class="sb-dot"></span>
           <span class="sb-conn-text">{{ T "status.online" }}</span>
         </span>
-        <a class="record-dialog-exit btn secondary btn-icon" data-record-dialog-exit
-           href="/settings#settings-display"
-           aria-label="{{ T "settings.display.exit_to_os_btn" }}" title="{{ T "settings.display.exit_to_os_btn" }}">
-          <span class="btn-ico" aria-hidden="true">{{ icon "log-out" }}</span>
-        </a>
-        <form method="post" action="/api/auth/logout" class="record-dialog-lock" data-record-dialog-lock>
-          <button type="submit" class="btn secondary btn-icon btn-lock"
-                  aria-label="{{ T "auth.lock" }}" title="{{ T "auth.lock" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "lock" }}</span>
-          </button>
-        </form>
+        {{ template "dialog_exit_link" }}
+        {{ template "dialog_lock_form" }}
       </div>
     </div>
     <div class="record-dialog-body">
