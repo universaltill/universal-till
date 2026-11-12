@@ -159,3 +159,12 @@ func TestFoldForSearch_ParityFixture(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6057: a soft hyphen or LRM in a label never reaches the keywords.
+func TestPickerIconGroups_IgnorablesDropped(t *testing.T) {
+	lk := stubLookup(map[string]string{"de|catalog.builtin_icon.coffee": "Kaf\u00adfee\u200e"})
+	kw := pickerKeywords(t, PickerIconGroups([]string{"de"}, lk), "coffee")
+	if strings.ContainsAny(kw, "\u00ad\u200e") || !hasWord(kw, "kaffee") {
+		t.Errorf("keywords = %q", kw)
+	}
+}
