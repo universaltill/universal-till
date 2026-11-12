@@ -4,9 +4,9 @@
 # against fixture ui/public trees in a fresh mktemp dir and proves it
 # rejects a real .showModal() call (HTML attribute and JS), ignores every
 # comment form (HTML, Go template, JS block across lines, // line and
-# trailing), honours the self-order kiosk exemption only for
-# #selforder-modal, honours `showmodal:allow`, skips web/public/vendor, and
-# passes on the real tree.
+# trailing; a /* that opens no comment hides nothing, ut-docs#6132),
+# honours the self-order kiosk exemption only for #selforder-modal, honours
+# `showmodal:allow`, skips web/public/vendor, and passes on the real tree.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -89,6 +89,25 @@ cat >"${UI}/partials/comments.html" <<'EOF'
 </script>
 EOF
 expect_pass "every comment form"
+
+# ut-docs#6132: a `/*` that does not open a comment (inside a `//` comment,
+# a URL path or an attribute value such as accept="image/*") must not hide
+# the code after it until the next `*/`.
+reset_tree
+printf '%s\n' '  // GET /api/* returns JSON' '  d.showModal();' >"${PUB}/app.js"
+expect_fail "a call after a // comment that contains /*"
+
+reset_tree
+printf '%s\n' '<input type="file" accept="image/*">' '<script>d.showModal();</script>' >"${UI}/partials/photo.html"
+expect_fail "a call after an accept=\"image/*\" attribute"
+
+reset_tree
+printf '%s\n' 'var glob = "a/*"; d.showModal();' >"${PUB}/app.js"
+expect_fail "a call on the same line after a /* inside a string"
+
+reset_tree
+printf '%s\n' '<a href="https://example.test/x">x</a> <!-- d.showModal() -->' '<script>' '  /* d.showModal() */ d.show();' '  {{/* d.showModal() */}}' '</script>' >"${UI}/partials/real_comments.html"
+expect_pass "real comments next to a URL"
 
 reset_tree
 printf '%s\n' '<button hx-on::after-request="document.getElementById('"'"'selforder-modal'"'"').showModal()">x</button>' >"${UI}/partials/self_order_grid.html"
