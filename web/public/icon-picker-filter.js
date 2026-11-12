@@ -49,7 +49,7 @@
   function fold(s) {
     var lo = '';
     for (var c of rep(s || '')) lo += c.toLowerCase();
-    lo = lo.normalize('NFD').replace(/[\p{Mn}\u0640\u200C\u200D]/gu, ''); // all Mn + tatweel + ZWNJ/ZWJ (ut-docs#6052)
+    lo = lo.normalize('NFD').replace(/[\p{Mn}\u0640\u00AD\u200B-\u200F\u061C\u2060\u2066-\u2069\uFEFF]/gu, ''); // Mn + tatweel + default-ignorables; keep in sync with Go `ignorables` in internal/catimport/placeholder_norm.go (ut-docs#6052, #6057)
     return rep(lo.normalize('NFC'));
   }
 

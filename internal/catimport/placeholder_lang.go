@@ -79,7 +79,7 @@ func NewIconMatcher(locales []string, lookup LabelLookup) *IconMatcher {
 					continue
 				}
 				rows = append(rows, labelRow{icon: d.Key, words: w, joined: " " + strings.Join(w, " ") + " "})
-				if hasZWNJ(alt) {
+				if hasWordJoiner(alt) {
 					if jw := joinedWords(alt); len(jw) > 0 && strings.Join(jw, " ") != strings.Join(w, " ") {
 						rows = append(rows, labelRow{icon: d.Key, words: jw, joined: " " + strings.Join(jw, " ") + " "})
 					}
@@ -146,7 +146,7 @@ func (m *IconMatcher) match(s string) (string, bool) {
 		return view{joined: " " + strings.Join(words, " ") + " ", tokens: tokens}
 	}
 	views := []view{mk(normalizedWords(s))}
-	if hasZWNJ(s) {
+	if hasWordJoiner(s) {
 		views = append(views, mk(joinedWords(s)))
 	}
 	englishDone := false
