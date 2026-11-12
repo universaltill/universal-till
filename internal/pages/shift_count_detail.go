@@ -71,7 +71,9 @@ func registerShiftCountDetail(mux *http.ServeMux, d *common.Deps) {
 			writeJSON(w, http.StatusOK, map[string]any{"data": dto, "error": nil})
 			return
 		}
-		mismatch := rd.Recorded && !rd.Unreadable && rd.Total != sc.Counted
+		// A partial read leaves the dropped entries out of rd.Total, so a
+		// comparison with Counted would be meaningless (review of #1043).
+		mismatch := rd.Recorded && !rd.Unreadable && !rd.Partial && rd.Total != sc.Counted
 		httpx.RenderPartial("ui/partials/shift_count_detail.html", map[string]any{"C": sc, "R": rd, "Mismatch": mismatch})(w, r)
 	})
 }

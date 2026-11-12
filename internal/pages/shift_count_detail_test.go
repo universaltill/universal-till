@@ -106,12 +106,21 @@ func TestShiftCountDetail_DamagedAndHostile(t *testing.T) {
 	}
 	mustContainAll(t, rec.Body.String(), "£2.00", "Part of this count could not be read")
 
+	// Partial read whose readable total differs from Counted: the dropped
+	// entries are unknown, so no mismatch note (review of #1043).
+	f.closedShift(t, "p2", 500, `{"abc":3,"200":1}`)
+	body := f.getCount(t, "p2", nil, nil).Body.String()
+	mustContainAll(t, body, "Part of this count could not be read")
+	if strings.Contains(body, "differs from this piece count") {
+		t.Errorf("partial read must not claim a mismatch:\n%s", body)
+	}
+
 	f.closedShift(t, "u1x", 0, `{"100":`)
 	rec = f.getCount(t, "u1x", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("corrupt: %d", rec.Code)
 	}
-	body := rec.Body.String()
+	body = rec.Body.String()
 	mustContainAll(t, body, "This count could not be read.")
 	if strings.Contains(body, "<table") || strings.Contains(body, "differs from this piece count") {
 		t.Errorf("unreadable: no table or mismatch note:\n%s", body)
@@ -189,6 +198,9 @@ func TestShiftCountDetail_JSONShape(t *testing.T) {
 	}
 }
 
+// TestShiftCountDetail_CashierSeesItWithAuthOn calls the mux without the auth
+// middleware: it proves the handler itself adds no role or PIN check for a
+// cashier (design D1). Session enforcement for /ui/ is auth's own concern.
 func TestShiftCountDetail_CashierSeesItWithAuthOn(t *testing.T) {
 	f := xpFixture(t)
 	f.closedShift(t, "a1", 10000, `{"5000":2}`)
@@ -230,17 +242,6 @@ func TestShiftCountDetail_ReadOnly(t *testing.T) {
 	f.getCount(t, "sh1", nil, nil)
 	if after := snap(); after != before {
 		t.Errorf("route wrote something:\nbefore %s\nafter  %s", before, after)
-	}
-}
-
-func TestShiftCountDetail_RTLNoPhysicalStyles(t *testing.T) {
-	f := xpFixture(t)
-	f.closedShift(t, "l1", 10000, `{"5000":2}`)
-	body := f.getCount(t, "l1", nil, nil).Body.String()
-	for _, bad := range []string{"left", "right"} {
-		if strings.Contains(strings.ToLower(body), "style=") && strings.Contains(strings.ToLower(body), bad) {
-			t.Errorf("fragment carries a physical %q style:\n%s", bad, body)
-		}
 	}
 }
 

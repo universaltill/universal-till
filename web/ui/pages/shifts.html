@@ -67,13 +67,13 @@
             {{ range .History }}
             <tr>
               <td>{{ datetime .OpenedAt }}</td>
-              <td>{{ if .Open }}<span class="tag" style="color:var(--success)">{{ T "shifts.open" }}</span>{{ else }}{{ datetime .ClosedAt }}{{ end }}</td>
+              <td{{ if not .Open }} id="shift-closed-{{ .ID }}"{{ end }}>{{ if .Open }}<span class="tag" style="color:var(--success)">{{ T "shifts.open" }}</span>{{ else }}{{ datetime .ClosedAt }}{{ end }}</td>
               <td>{{ money .OpeningCash }}</td>
               <td>{{ if .Open }}—{{ else }}{{ money .ClosingCash }}{{ end }}</td>
               <td>{{ if .Open }}—{{ else }}{{ money .Expected }}{{ end }}</td>
               <td>{{ if .Open }}—{{ else }}<span {{ if ne .Variance 0 }}class="stock-low"{{ end }}>{{ money .Variance }}</span>{{ end }}</td>
               <td>{{ if not .Open }}<button type="button" class="btn secondary" hx-get="/ui/shifts/{{ .ID }}/count" hx-target="#shift-count-body"
-                    hx-swap="innerHTML show:#shift-count:top" hx-disabled-elt="this" data-after-request="focus:shift-count-title">{{ T "shifts.count_detail.show" }}</button>{{ end }}</td>
+                    hx-swap="innerHTML show:#shift-count:top" hx-disabled-elt="this" aria-describedby="shift-closed-{{ .ID }}" data-after-request="focus:shift-count-title">{{ T "shifts.count_detail.show" }}</button>{{ end }}</td>
             </tr>
             {{ end }}
           {{ else }}
