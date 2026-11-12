@@ -3145,6 +3145,12 @@ body.osk-padded #table-add-modal .modifier-actions {
     max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 11.5rem); }
   #ut-confirm .modifier-actions .btn { flex: 1 1 0; }
 }
+/* ut-docs#6149: the dialog always moves focus to exactly one button (the safe
+   one; OK when neutral) so Enter's target is known. A pointer/touch open gets
+   no UA :focus-visible ring, hence :focus (not :focus-visible) here: the ring
+   is the "Enter goes here" cue on tap, click and key alike. Same declaration
+   as the --focus-border rings elsewhere (>=3:1 per theme). */
+#ut-confirm .modifier-actions .btn:focus { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 /* ut-docs#4286: the Renew / Choose-a-plan panel (base.html). Non-modal
    .show() over #ut-scrim like #table-qr-modal: fixed, centred, capped short
    of the viewport so it never covers the status bar (z 460, reachable);
