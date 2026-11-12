@@ -114,7 +114,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `plugin_settings`
 - `plugin_hooks`
 - `plugin_permissions`
-- `shortcut_buttons`
+- `shortcut_buttons` — `image_path` is legacy: not read for the tile picture; the item's `item_images` thumbnail, then `items.icon`, is (ut-docs#6076)
 
 ## ER Diagram
 
@@ -636,7 +636,7 @@ erDiagram
         string barcode
         string item_id
         string label
-        string image_path
+        string image_path "legacy, unread for the tile picture (ut-docs#6076)"
         string updated_at
     }
 
