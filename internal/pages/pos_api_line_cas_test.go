@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/money"
@@ -183,6 +184,11 @@ func TestLineHandler_RaceNoUngatedReduction(t *testing.T) {
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
 	cashier := &auth.User{ID: "cashier-1", Role: "cashier"}
+	// Yield between the handler's read and its update so the interleavings
+	// the CAS must survive actually happen on every run (without it the
+	// window is a few instructions wide and an unfixed handler passes about
+	// half the time). Scheduling only: the hook changes no basket state.
+	setLineSnapshotTestHook(t, func() { time.Sleep(20 * time.Microsecond) })
 
 	var raises int64
 	var wg sync.WaitGroup
