@@ -84,8 +84,11 @@ func TestSearchResultAddVals_QuotesAndBackslashesSurvive(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.AddVals()), &vals); err != nil {
 		t.Fatalf("AddVals not valid JSON: %v (%s)", err, r.AddVals())
 	}
-	if vals["label"] != r.Name || vals["code"] != r.Barcode || vals["itemId"] != "i1" || vals["imageUrl"] != r.Image {
+	if vals["label"] != r.Name || vals["code"] != r.Barcode || vals["itemId"] != "i1" {
 		t.Fatalf("unexpected vals: %#v", vals)
+	}
+	if _, ok := vals["imageUrl"]; ok {
+		t.Fatalf("AddVals must not carry imageUrl (ut-docs#6097): %#v", vals)
 	}
 }
 
