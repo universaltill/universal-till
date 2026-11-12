@@ -6455,6 +6455,22 @@ td.list-actions > * + * { margin-inline-start: .5rem; }
 .list-empty-row td { text-align: center; color: var(--muted); }
 [data-record-open] { cursor: pointer; }
 [data-record-open]:hover > td { background: var(--surface-2); }
+/* ut-docs#6055: pressed state for touch (no hover there). base.html sets
+   .ut-pressed on pointerdown, only when the tap will open the row (no
+   :active here: it would also paint the row for a press on a link inside
+   it, which never opens it). --border is a step darker than --surface-2 in
+   every theme, so it still shows over a sticky :hover. Colour only
+   (ADR-0119). Placed after :hover so it wins at equal specificity. On the
+   ≤480px card list the row itself is the rounded card: paint it, not its
+   cells (which would leave a square block inset in the card). */
+[data-record-open].ut-pressed > td { background: var(--border); }
+@media (max-width: 480px) {
+  table.t-cards tr.t-cards-row[data-record-open]:hover { background: var(--surface-2); }
+  table.t-cards tr.t-cards-row[data-record-open].ut-pressed { background: var(--border); }
+  /* The cell rules above would paint a square block over the card; a
+     dragged category row (.is-dragging, below) keeps its own cell colour. */
+  table.t-cards tr.t-cards-row[data-record-open]:is(:hover, .ut-pressed):not(.is-dragging) > td { background: none; }
+}
 
 /* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
    reason, see .item-form-modal above), a flex column of exactly two parts:

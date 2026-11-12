@@ -1181,6 +1181,16 @@
         // delays or re-targets the press the ADR-0122 listeners above see.
         var PRESS_SLOP = 10, pressEl = null, pressX = 0, pressY = 0, pressTimer = 0;
         function pressTarget(t) {
+          // ut-docs#6055: a row-tap list row ([data-record-open]) opens its
+          // dialog on tap; mark it pressed so it is discoverable on touch
+          // (no hover there). Pressed exactly when record-dialog.js's click
+          // handler would open the row: the row's own [data-record-edit]
+          // control, or no other control/form around the target (mirror
+          // that selector). Not inside a dialog. Anything else (a link in
+          // the row) falls through to the navigation checks below unchanged.
+          var row = t && t.closest ? t.closest('[data-record-open]') : null;
+          if (row && !row.closest('dialog') &&
+              (t.closest('[data-record-edit]') || !t.closest('button, a, input, select, textarea, label, form'))) return row;
           var el = t && t.closest ? t.closest('a[href], .nav-toggle') : null;
           if (!el) return null;
           if (el.classList.contains('nav-toggle')) return el;
