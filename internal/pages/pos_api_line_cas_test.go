@@ -247,3 +247,168 @@ func TestLineHandler_RaceNoUngatedReduction(t *testing.T) {
 		t.Fatalf("cashier is denied void_comp_waste, shrinkage must be 0, got %v", lost)
 	}
 }
+
+// ut-docs#6113: the elevation prompt for a line reduction summarises "from X
+// to Y" but replayed only the absolute target, so if the line changed between
+// prompt and approval the approved retry applied a different reduction than
+// the approver agreed to. The prompt now replays from_qty and a stale
+// approval is refused as a changed line.
+
+var hiddenInputRE = regexp.MustCompile(`<input type="hidden" name="([^"]*)" value="([^"]*)">`)
+
+// promptHiddenFields returns the replay fields of an elevation prompt body.
+func promptHiddenFields(t *testing.T, body string) url.Values {
+	t.Helper()
+	v := url.Values{}
+	for _, m := range hiddenInputRE.FindAllStringSubmatch(body, -1) {
+		v.Set(m[1], m[2])
+	}
+	return v
+}
+
+func TestLineHandler_ElevationReplaysFromQty(t *testing.T) {
+	mux, dp := newPOSMuxRealSession(t)
+	if _, err := dp.Engine.ScanQty("ABC", 3); err != nil {
+		t.Fatal(err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	if !isElevationPrompt(rec) {
+		t.Fatalf("want prompt, got %d", rec.Code)
+	}
+	if got := promptHiddenFields(t, rec.Body.String()).Get("from_qty"); got != "3" {
+		t.Fatalf("from_qty = %q, want 3; body: %s", got, rec.Body.String())
+	}
+}
+
+func TestLineHandler_StaleApprovalRefusedWhenLineChangedSincePrompt(t *testing.T) {
+	mux, dp := newPOSMuxRealSession(t)
+	_, blockedID := newElevationTestPrincipals(t, dp, "mgr-6113-a", "cashier-6113-a", "445566")
+	if _, err := dp.Engine.ScanQty("ABC", 3); err != nil {
+		t.Fatal(err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
+	if !isElevationPrompt(rec) {
+		t.Fatalf("want prompt, got %d", rec.Code)
+	}
+	retry := promptHiddenFields(t, rec.Body.String())
+	// Another screen raises the line 3 -> 5 while the prompt is open.
+	if err := dp.Engine.UpdateLineByKey(key, 5, 0); err != nil {
+		t.Fatal(err)
+	}
+	retry.Set("override_pin", "445566")
+	rec = postForm(mux, "/api/pos/line", retry, cashier)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "data-line-changed") {
+		t.Fatalf("body lacks the line-changed note: %s", rec.Body.String())
+	}
+	if rec.Header().Get("HX-Retarget") != "#basket" || rec.Header().Get("HX-Reswap") != "outerHTML" {
+		t.Fatalf("retarget headers: %v", rec.Header())
+	}
+	if q := dp.Engine.Basket().Lines[0].Qty; q != 5 {
+		t.Fatalf("line must stay 5, got %v", q)
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM shrinkage_events`); n != 0 {
+		t.Fatalf("shrinkage rows = %d, want 0", n)
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM audit_log WHERE entity_type='pos_line'`); n != 0 {
+		t.Fatalf("audit rows = %d, want 0", n)
+	}
+}
+
+func TestLineHandler_MatchingFromQtyApprovalStillApplies(t *testing.T) {
+	mux, dp := newPOSMuxRealSession(t)
+	_, blockedID := newElevationTestPrincipals(t, dp, "mgr-6113-b", "cashier-6113-b", "445566")
+	if _, err := dp.Engine.ScanQty("ABC", 3); err != nil {
+		t.Fatal(err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier)
+	if !isElevationPrompt(rec) {
+		t.Fatalf("want prompt, got %d", rec.Code)
+	}
+	retry := promptHiddenFields(t, rec.Body.String())
+	retry.Set("override_pin", "445566")
+	rec = postForm(mux, "/api/pos/line", retry, cashier)
+	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
+		t.Fatalf("approved retry: %d prompt=%v", rec.Code, isElevationPrompt(rec))
+	}
+	if q := dp.Engine.Basket().Lines[0].Qty; q != 1 {
+		t.Fatalf("want qty 1, got %v", q)
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM shrinkage_events`); n != 1 {
+		t.Fatalf("shrinkage rows = %d, want 1", n)
+	}
+}
+
+func TestLineHandler_InvalidFromQtyIs400(t *testing.T) {
+	for _, bad := range []string{"abc", "NaN", "Inf", "-1"} {
+		t.Run(bad, func(t *testing.T) {
+			mux, dp := newPOSMuxRealSession(t)
+			if _, err := dp.Engine.ScanQty("ABC", 3); err != nil {
+				t.Fatal(err)
+			}
+			key := dp.Engine.Basket().Lines[0].LineKey
+			rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}, "from_qty": {bad}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid from_qty") {
+				t.Fatalf("want 400 invalid from_qty, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// ut-docs#6113 review F2: a stale retry is refused before the PIN check, so
+// even a wrong PIN gets the 409, not a re-prompt (and never counts toward
+// the PIN lockout).
+func TestLineHandler_StaleApprovalWithWrongPINIsConflictNotPrompt(t *testing.T) {
+	mux, dp := newPOSMuxRealSession(t)
+	_, blockedID := newElevationTestPrincipals(t, dp, "mgr-6113-c", "cashier-6113-c", "445566")
+	if _, err := dp.Engine.ScanQty("ABC", 3); err != nil {
+		t.Fatal(err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	retry := promptHiddenFields(t, postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, cashier).Body.String())
+	if err := dp.Engine.UpdateLineByKey(key, 5, 0); err != nil {
+		t.Fatal(err)
+	}
+	retry.Set("override_pin", "000000") // wrong: must never reach the PIN check
+	rec := postForm(mux, "/api/pos/line", retry, cashier)
+	if rec.Code != http.StatusConflict || isElevationPrompt(rec) {
+		t.Fatalf("stale retry must 409 before elevation, got %d prompt=%v", rec.Code, isElevationPrompt(rec))
+	}
+}
+
+// ut-docs#6113 review F1: a code-addressed (no key) approval whose line has
+// gone since the prompt still shows the basket-level note on its 409.
+func TestLineHandler_StaleCodeAddressedApprovalShowsNote(t *testing.T) {
+	mux, dp := newPOSMuxRealSession(t)
+	_, blockedID := newElevationTestPrincipals(t, dp, "mgr-6113-d", "cashier-6113-d", "445566")
+	if _, err := dp.Engine.ScanQty("ABC", 3); err != nil {
+		t.Fatal(err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	cashier := &auth.User{ID: blockedID, Role: "cashier"}
+	rec := postForm(mux, "/api/pos/line", url.Values{"code": {"ABC"}, "qty": {"1"}}, cashier)
+	if !isElevationPrompt(rec) {
+		t.Fatalf("want prompt, got %d", rec.Code)
+	}
+	retry := promptHiddenFields(t, rec.Body.String())
+	if retry.Get("key") != "" || retry.Get("code") != "ABC" {
+		t.Fatalf("want a code-addressed replay, got %v", retry)
+	}
+	dp.Engine.RemoveLine(key)
+	retry.Set("override_pin", "445566")
+	rec = postForm(mux, "/api/pos/line", retry, cashier)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "data-line-changed") {
+		t.Fatalf("want 409 with the note, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := len(dp.Engine.Basket().Lines); n != 0 {
+		t.Fatalf("approval re-created the line: %d lines", n)
+	}
+}
