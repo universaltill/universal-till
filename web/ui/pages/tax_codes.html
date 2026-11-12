@@ -1,6 +1,7 @@
 {{ define "content" }}
 <div class="page-head">
-  <h1>{{ T "taxcodes.title" }} {{ helpLink "tax-codes" }}</h1>
+  {{ if .InItemsShell }}{{ template "dialog_status_inline" }}{{ end }}
+  <h1{{ if .InItemsShell }} tabindex="-1" data-ut-focus-home autofocus{{ end }}>{{ T "taxcodes.title" }} {{ helpLink "tax-codes" }}</h1>
   <!-- ut-docs#2095: Tax codes is NOT an /items rail section, so unlike
        modifiers.html/option_sets.html this must NEVER hx-get="/catalog"
        hx-target="#items-panel" — that would swap the shell's panel, which

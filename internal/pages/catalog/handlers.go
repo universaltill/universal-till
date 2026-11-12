@@ -901,6 +901,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "photo_cutout.html"),
 			filepath.Join("web", "ui", "partials", "category_filter.html"),
 			filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
+			// ut-docs#6125: catalog.html's #item-form-modal title line includes
+			// the phone Lock + exit-to-OS by its "dialog_status_inline" name.
+			filepath.Join("web", "ui", "partials", "record_dialog.html"),
 		)
 		// ut-docs#1950: /catalog is also the /items rail's default ("Library")
 		// section — an htmx request from that panel (NOT a stale history

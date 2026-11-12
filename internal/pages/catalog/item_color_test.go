@@ -108,7 +108,7 @@ func TestCatalogPage_ItemFormDialogClosedByDefault(t *testing.T) {
 	if !strings.Contains(body, `id="item-form-modal"`) {
 		t.Fatalf("expected the item-form dialog in the page:\n%s", body)
 	}
-	if !strings.Contains(body, `class="item-form-modal"`) {
+	if !strings.Contains(body, `class="item-form-modal dialog-beside-chrome"`) {
 		t.Fatalf("expected the item-form-modal class (near-full-screen sizing, NOT the 28rem .modifier-modal cap):\n%s", body)
 	}
 	// The dialog tag itself must not carry `open` — find the opening

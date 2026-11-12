@@ -102,12 +102,15 @@
      only, no Save button here) so it never eats a 360px screen the way
      ut-docs#2000 found the catalog dialog's head doing -- Save stays on
      the form itself, inside the body. */}}
-<dialog id="stock-dialog" class="record-dialog" aria-labelledby="stock-dialog-title" data-ut-focus-trap>
+<dialog id="stock-dialog" class="record-dialog dialog-beside-chrome" aria-labelledby="stock-dialog-title" data-ut-focus-trap>
   <div class="record-dialog-inner">
     <div class="record-dialog-head">
       <div class="record-dialog-head-row">
         <div class="record-dialog-head-title">
-          <h3 id="stock-dialog-title">{{ T "inventory.receive_adjust" }}</h3>
+          {{/* ut-docs#6125: Lock + exit-to-OS at the start of the
+               title line, at every width; the head is still ONE row. */}}
+          {{ template "dialog_status_inline" }}
+          <h3 id="stock-dialog-title" tabindex="-1" data-ut-focus-home autofocus>{{ T "inventory.receive_adjust" }}</h3>
         </div>
         <div class="record-dialog-head-actions">
           <button type="button" class="btn secondary btn-icon" id="stock-dialog-close"

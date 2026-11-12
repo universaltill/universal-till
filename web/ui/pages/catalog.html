@@ -145,9 +145,13 @@
      real text inputs, so they need the same OSK-reachable, full-bleed,
      no-top-layer treatment as #item-form-modal itself, including its
      existing `body.osk-padded .item-form-modal` keyboard-clearance rule
-     — reusing the class gets that for free, no new CSS needed. -->
-<dialog id="import-modal" class="item-form-modal" aria-labelledby="catalog-import-btn" data-ut-focus-trap></dialog>
-<dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn" data-ut-focus-trap></dialog>
+     — reusing the class gets that for free, no new CSS needed.
+     ut-docs#6125: all three item dialogs now carry .dialog-beside-chrome
+     (beside the rail, above the status bar), and these two swapped-in page
+     dialogs .dialog-page-scroll (they were overflow:hidden with no scroll
+     container, so most of their content was unreachable). -->
+<dialog id="import-modal" class="item-form-modal dialog-beside-chrome dialog-page-scroll" aria-labelledby="catalog-import-btn" data-ut-focus-trap></dialog>
+<dialog id="tax-codes-modal" class="item-form-modal dialog-beside-chrome dialog-page-scroll" aria-labelledby="catalog-taxcodes-btn" data-ut-focus-trap></dialog>
 
 {{ if .SyncPrimary }}
 {{/* ut-docs#3605: both texts render, the inactive one hidden, so
@@ -207,7 +211,7 @@
      so every item-bound panel (variants, image, labels, keypad) shows its
      .item-form-needs-save hint and hides its .item-form-needs-item
      controls instead of offering forms that cannot work. -->
-<dialog id="item-form-modal" class="item-form-modal" aria-labelledby="item-form-title" data-ut-focus-trap>
+<dialog id="item-form-modal" class="item-form-modal dialog-beside-chrome" aria-labelledby="item-form-title" data-ut-focus-trap>
   <div class="catalog-form is-create" id="item-form-root" x-data="{
     tab: 'details',
     init() {
@@ -230,7 +234,11 @@
     <div class="catalog-form-head">
       <div class="catalog-form-head-row">
         <div class="catalog-form-head-title">
-          <h3 id="item-form-title">{{ T "catalog.new_item" }}</h3>
+          {{/* ut-docs#6125: Lock + exit-to-OS at the start of the
+               title line, at every width (the rail's own Lock is not reliably on
+               screen under a scrim). Outside every data-main-till-lock fieldset. */}}
+          {{ template "dialog_status_inline" }}
+          <h3 id="item-form-title" tabindex="-1" data-ut-focus-home autofocus>{{ T "catalog.new_item" }}</h3>
           <!-- ut-docs#1956: icon-only delete, at the OPPOSITE end of the bar
                from Save/Close so it cannot be hit by accident; hidden in
                create mode (setMode). Deactivate, not erase — same endpoint
@@ -875,7 +883,10 @@
       // somewhere in the form during those two frames.
       if (barcode && (!modal.contains(document.activeElement) ||
                       document.activeElement === document.body ||
-                      document.activeElement === deleteBtn)) {
+                      document.activeElement === deleteBtn ||
+                      // ut-docs#6125: the title is the dialog's neutral focus
+                      // home (it keeps .show() off Lock); hand it to Barcode.
+                      document.activeElement.hasAttribute('data-ut-focus-home'))) {
         barcode.focus();
       }
       // ut-docs#2024: the dialog is display:none until .show() runs, so

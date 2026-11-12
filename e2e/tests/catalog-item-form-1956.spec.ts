@@ -115,17 +115,27 @@ test.describe('catalog item form (ut-docs#1956)', () => {
     expect(m.h, 'a checkbox row should stay one line tall').toBeLessThan(32);
     expect(m.sameRow, 'the checkbox must sit beside its text, not above it').toBe(true);
   });
-  test('the dialog covers the full viewport', async ({ page }) => {
+  // ut-docs#6125 (was "covers the full viewport"): still full-screen, but beside
+  // the nav rail and above the status bar so Lock and status stay reachable
+  // (coding-standards §10). At <=480px the rail is a top bar the dialog still
+  // spans, so x = 0 there.
+  test('the dialog fills the screen beside the rail, above the status bar (#6125)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
     await openNewItemForm(page);
-    const box = await page.locator('#item-form-modal').boundingBox();
+    const m = await page.evaluate(() => {
+      const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
+      const d = r('#item-form-modal'), n = r('.nav'), sb = r('.statusbar');
+      return { d: { x: d.left, y: d.top, right: d.right, bottom: d.bottom }, navRight: n.right, sbTop: sb.top };
+    });
     const vp = page.viewportSize()!;
-    expect(box).not.toBeNull();
-    expect(box!.x).toBe(0);
-    expect(box!.y).toBe(0);
-    expect(Math.round(box!.width)).toBe(vp.width);
-    expect(Math.round(box!.height)).toBe(vp.height);
+    // Measured from the rail's own box, never a literal.
+    expect(m.d.x).toBeGreaterThanOrEqual(m.navRight - 0.5);
+    expect(m.d.x).toBeLessThanOrEqual(m.navRight + 0.5);
+    expect(m.d.y).toBe(0);
+    expect(Math.round(m.d.right)).toBe(vp.width);
+    expect(m.d.bottom).toBeLessThanOrEqual(m.sbTop + 0.5);
+    expect(m.d.bottom).toBeGreaterThanOrEqual(m.sbTop - 0.5);
     assertClean();
   });
 
