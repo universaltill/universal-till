@@ -4013,6 +4013,21 @@ window.utTabBarFade = function (el) {
   var body = document.body;
 
   function toggleBtn() { return document.querySelector('.nav-drawer-toggle'); }
+  // Scrim going on/off while the drawer is open re-evaluates the dead rows.
+  if (window.MutationObserver) {
+    new MutationObserver(function () {
+      if (body.classList.contains('nav-drawer-open')) syncDeadRows(true);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  }
+  // ut-docs#6118: over a popup every drawer row but Lock is dead (CSS) and
+  // must be dead for screen readers too; cleared on close and scrim-off.
+  function syncDeadRows(open) {
+    var dead = open && document.documentElement.classList.contains('ut-scrim-on');
+    document.querySelectorAll('#nav-drawer a, #nav-drawer button').forEach(function (el) {
+      if (dead && !el.closest('.session-lock')) el.setAttribute('aria-disabled', 'true');
+      else el.removeAttribute('aria-disabled');
+    });
+  }
   function setDrawer(open, restoreFocus) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
@@ -4022,9 +4037,21 @@ window.utTabBarFade = function (el) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
     }
+    syncDeadRows(open);
     if (open) {
-      var first = document.querySelector('#nav-drawer a, #nav-drawer button');
+      var scrimOn = document.documentElement.classList.contains('ut-scrim-on');
+      var lock = scrimOn && document.querySelector('#nav-drawer .session-lock button');
+      var first = lock || (scrimOn ? null : document.querySelector('#nav-drawer a, #nav-drawer button'));
       if (first) first.focus();
+      if (lock) {
+        // Lock is the last row and the status foot overlays the drawer's end:
+        // scroll to the end (the drawer's end padding reserves the foot) once
+        // measureBar has set that padding.
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          var dr = document.getElementById('nav-drawer');
+          if (dr && body.classList.contains('nav-drawer-open')) dr.scrollTop = dr.scrollHeight;
+        }); });
+      }
     } else if (restoreFocus && btn) {
       btn.focus();
     }
@@ -4066,6 +4093,16 @@ window.utTabBarFade = function (el) {
       if (bar) bar.focus();
     }
   }
+
+  // ut-docs#6118: a row dead over a popup stays dead for AT activation too.
+  // Capture phase: htmx's boosted-link listener sits on the anchor itself.
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t instanceof Element && t.closest('#nav-drawer [aria-disabled="true"]')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
 
   document.addEventListener('click', function (e) {
     var t = e.target;
