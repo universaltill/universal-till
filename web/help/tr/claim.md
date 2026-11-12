@@ -3,7 +3,7 @@ id: claim
 title: Mağaza kaydı ve sahiplenme
 section: Bağlantı ve eklentiler
 order: 320
-public: true
+public: false
 summary: Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı SİZİN hesabınıza bağlar — çevrimiçi yönetim (Mağazalarım, kasa filosu) ve ücretli özellikler böyle açılır.
 keywords: [kayıt, sahiplenme, bulut, marketplace, mağaza, eşleştirme, eşleştirme kodu, yeniden eşleştirme]
 routes: [/settings/cloud/move/{id}]
