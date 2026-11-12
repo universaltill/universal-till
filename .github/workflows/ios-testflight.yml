@@ -92,7 +92,7 @@ jobs:
           if [ -n "$INPUT_VERSION" ]; then
             version="$INPUT_VERSION"
           else
-            version="$(git describe --tags --abbrev=0 --match 'v*')"
+            version="$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*')"
           fi
           version="${version#v}"
           # CFBundleShortVersionString: one to three dot-separated integers.
