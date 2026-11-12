@@ -180,6 +180,28 @@ test.describe('bug-report panel persists across pages (ut-docs#2342)', () => {
     assertClean();
   });
 
+  test('phone width: a confirmed Discard leaves focus on a visible opener, not <body> (ut-docs#6116 D2)', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 640 });
+    await page.goto('/');
+    const panel = page.getByTestId('bugreport-panel');
+    // At 360px the status-bar toggle lives in the closed drawer (hidden): open
+    // the panel the way a phone operator does, through the drawer's row.
+    await page.locator('.nav-drawer-toggle').click();
+    await page.getByTestId('bugreport-toggle').click();
+    await expect(panel).toBeVisible();
+    await page.locator('#ir-note').fill('e2e: phone discard');
+    const none = noNativeDialogs(page);
+    await page.getByTestId('bugreport-discard').click();
+    await answerTillConfirm(page, 'confirm');
+    await expect(panel).toBeHidden();
+    await expect.poll(() => page.evaluate(() => {
+      const a = document.activeElement as HTMLElement | null;
+      return !!a && a !== document.body && a.getClientRects().length > 0 &&
+        getComputedStyle(a).visibility !== 'hidden';
+    })).toBe(true);
+    none();
+  });
+
   test('a panel opened by /report-issue stays open after typing + a full load (review finding 2)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/report-issue');

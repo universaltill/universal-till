@@ -440,8 +440,16 @@
       closePanel();
       // The panel (and the Discard button till-confirm would refocus) is gone:
       // hand focus to the status-bar opener, not <body> (ut-docs#6116 UX).
-      var opener = document.getElementById('bugreport-toggle');
-      if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+      // At phone width that button sits in the closed drawer (hidden, so
+      // focus() is a no-op): fall back to the visible ☰ that opens it.
+      var cands = [document.getElementById('bugreport-toggle'), document.querySelector('.nav-drawer-toggle')];
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        if (!c || !c.isConnected || typeof c.focus !== 'function') continue;
+        if (c.getClientRects().length === 0 || getComputedStyle(c).visibility === 'hidden') continue;
+        c.focus();
+        if (document.activeElement === c) break;
+      }
     }
     // Asked in the till's own dialog (till-confirm.js, ut-docs#6116), never
     // the browser's window.confirm: that makes the status bar inert.

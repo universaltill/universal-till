@@ -167,6 +167,13 @@ test.describe('record dialog discard guard asks in the till dialog (ut-docs#6116
     await page.locator(NAME).fill('lock 6116');
     await page.locator(`${DIALOG} .record-dialog-close`).click();
     await expect(confirmDlg(page)).toBeVisible();
+    // Cancel keeps the edit: dialog still open with the typed value, no logout.
+    await answerTillConfirm(page, 'cancel');
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await expect(page.locator(NAME)).toHaveValue('lock 6116');
+    expect(logouts).toBe(0);
+    await page.locator(`${DIALOG} .record-dialog-close`).click();
+    await expect(confirmDlg(page)).toBeVisible();
     // A real (hit-tested) click: nothing covers Lock while the question is up.
     await page.locator(`${DIALOG} [data-record-dialog-lock] button`).click();
     await expect.poll(() => logouts).toBe(1);
