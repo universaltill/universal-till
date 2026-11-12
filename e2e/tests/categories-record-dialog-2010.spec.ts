@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, openNewItemForm, closeItemForm, clickThenReload } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2010: /categories is the reference implementation of the app-wide
 // list/edit standard (ut-docs/reference/list-and-dialog-pattern.md):
@@ -153,10 +153,14 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     const name = 'Deactivate Probe ' + Date.now();
     await createCategory(page, name);
     await row(page, name).locator('td').first().click();
+    const noNative = noNativeDialogs(page);
     let msg = '';
-    page.once('dialog', (d) => { msg = d.message(); d.accept(); });
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click());
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+      msg = await answerTillConfirm(page, 'confirm');
+    });
     expect(msg).toContain('Deactivate');
+    noNative();
     await expect(row(page, name)).toContainText('inactive');
 
     // Reopen: no trash icon that would quietly reactivate — Activate instead.
@@ -210,14 +214,18 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
       const renamedTo = catName + ' renamed but never saved';
       await page.locator(NAME).fill(renamedTo);
 
-      // The deactivate confirm() (categories.deactivate_confirm) — accept
+      // The deactivate confirm (categories.deactivate_confirm) — confirm
       // it, same as (b3)'s clean-deactivate case, so the actual refusal is
       // what's under test here, not the confirm step.
-      page.once('dialog', (d) => d.accept());
+      const noNative = noNativeDialogs(page);
       await Promise.all([
         page.waitForResponse((res) => res.url().includes('/active') && res.status() === 400),
-        page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click(),
+        (async () => {
+          await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+          await answerTillConfirm(page, 'confirm');
+        })(),
       ]);
+      noNative();
 
       // Refused: no navigation happened at all (unlike the success path,
       // which real dialog.close() would follow via a real page load), the
@@ -281,9 +289,10 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     page.on('request', (req) => {
       if (req.url().includes('/active')) sawActiveRequest = true;
     });
-    let dialogMsg = '';
-    page.once('dialog', (d) => { dialogMsg = d.message(); d.dismiss(); });
+    const noNative = noNativeDialogs(page);
     await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+    const dialogMsg = await answerTillConfirm(page, 'cancel');
+    noNative();
     // No response to wait for (nothing is sent) — settle on next tick
     // instead of a fixed sleep, then assert the negative directly.
     await page.waitForTimeout(300);

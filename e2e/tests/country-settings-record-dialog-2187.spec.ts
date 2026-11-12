@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setOskMode, clickThenReload } from './helpers';
+import { watchConsole, setOskMode, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2187: /country-settings adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring locations-record-dialog-2124.spec.ts's shape (the
@@ -199,10 +199,13 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
 
     await row(page, 'GB').click();
     await expect(dlg).toBeVisible();
-    // hx-confirm pops a real browser confirm() — accept it explicitly (same
-    // pattern as locations-record-dialog-2124.spec.ts's own deactivate case).
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="is_builtin=1"] button[type="submit"]`).click());
+    // hx-confirm opens the till's in-page confirm (ut-docs#5524) — confirm it.
+    const noNative = noNativeDialogs(page);
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="is_builtin=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
+    noNative();
     // Restored to its shipped default (20%), not removed — GB is still
     // listed, and still builtin.
     await expect(row(page, 'GB')).toHaveCount(1);

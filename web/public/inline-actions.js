@@ -375,12 +375,30 @@
     'request-submit': function (ctx) { var f = formOf(ctx.el); if (f) f.requestSubmit(); },
     'prevent': function (ctx) { preventDefault(ctx); },
     // A plain (non-htmx) form asking first; the question is the carrier's
-    // data-confirm-text (already translated server-side).
+    // data-confirm-text (already translated server-side). Asked in the till's
+    // own dialog (till-confirm.js, ut-docs#5524): the submit is held, then
+    // re-issued with requestSubmit() once confirmed -- utConfirmed lets that
+    // one re-submit through. Native confirm() only if the dialog is missing.
     'confirm': function (ctx) {
-      if (!window.confirm(ctx.el.getAttribute('data-confirm-text') || '')) {
-        preventDefault(ctx);
-        return false;
+      var f = ctx.el;
+      if (f.utConfirmed) { f.utConfirmed = false; return; }
+      var q = f.getAttribute('data-confirm-text') || '';
+      if (!(window.UT && window.UT.confirm && byId('ut-confirm'))) {
+        if (!window.confirm(q)) { preventDefault(ctx); return false; }
+        return;
       }
+      preventDefault(ctx);
+      var sub = ctx.event && ctx.event.submitter;
+      window.UT.confirm(q, { opener: sub || f }).then(function (ok) {
+        if (!ok || !f.isConnected) return;
+        // The submit handler runs synchronously inside requestSubmit; a form
+        // that fails validation fires none, so the flag never outlives it.
+        f.utConfirmed = true;
+        try {
+          if (f.requestSubmit) f.requestSubmit(sub || undefined); else f.submit();
+        } finally { f.utConfirmed = false; }
+      });
+      return false;
     },
     // ut-docs#1540: a pairing button outside any <form> — trim, then let
     // `required` speak; an invalid name cancels the htmx request.

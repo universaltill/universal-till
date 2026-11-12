@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2904: pairing approve/deny, till revoke and Backup now used to
 // answer with HX-Refresh (a full page reload). They now re-render only
@@ -67,11 +67,13 @@ test('tills: revoke refreshes only the enrolled-tills roster, no page reload', a
   await page.evaluate(() => { (window as any).__ut2904 = 'still-here'; });
   await roster.evaluate((r) => r.setAttribute('data-stale', '1'));
 
-  page.once('dialog', (d) => d.accept()); // hx-confirm
+  const noNative = noNativeDialogs(page);
   await row.getByRole('button', { name: /revoke/i }).click();
+  await answerTillConfirm(page, 'confirm'); // hx-confirm
   await expect(page.locator('#tills-roster[data-stale]')).toHaveCount(0); // roster was replaced
   await expect(row).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).__ut2904), 'page was reloaded').toBe('still-here');
+  noNative();
   assertClean();
 });
 
