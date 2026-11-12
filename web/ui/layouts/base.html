@@ -625,8 +625,9 @@
         }
         function escAllowed(t) {
           // #bugreport-panel (data-ut-no-scrim) stays usable while the
-          // operator reproduces the problem (ut-docs#3212 review).
-          return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk, #bugreport-panel'));
+          // operator reproduces the problem (ut-docs#3212 review). The phone ☰
+          // stays reachable over a popup so Lock can be (ut-docs#6118).
+          return !!(t && t.closest && t.closest('.statusbar, .session-lock, .nav-drawer-toggle, #osk, #bugreport-panel'));
         }
         // record-dialog.js's focusin backstop uses the same allow-list (ut-docs#4078).
         UT.focusTrapExempt = escAllowed;

@@ -3118,8 +3118,9 @@ body.osk-padded #table-add-modal .modifier-actions {
 #ut-confirm .ut-confirm-msg { margin-block: 0 .75rem; color: var(--text); text-align: start;
   white-space: pre-line; overflow-wrap: anywhere; }
 @media (max-width: 480px) {
-  /* The rail is a top bar here and holds Lock: start below it (as
-     #category-items-modal does) so Lock stays reachable while asking. */
+  /* The rail is a top bar here holding ☰; Lock is in its drawer, which
+     floats above this dialog while the scrim is on (ut-docs#6118). Start
+     below the bar (as #category-items-modal does) so ☰ stays tappable. */
   #ut-confirm { inset-block-start: calc(var(--topbar-h) + .5rem);
     max-block-size: calc(100vh - var(--topbar-h) - 1.5rem); max-block-size: calc(100dvh - var(--topbar-h) - 1.5rem); }
   #ut-confirm .modifier-actions .btn { flex: 1 1 0; }
@@ -6995,6 +6996,28 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   /* ...and, like everywhere else, it stays above #ut-scrim while a dialog
      is open (status stays reachable; base rule html.ut-scrim-on .statusbar). */
   html.ut-scrim-on body.sale-screen .statusbar { z-index: 460; }
+  /* ut-docs#6118 (#1999, #2873): Lock is a drawer row here, and the nav is
+     pointer-events:none under the scrim, so lift ☰ above the dim and let the
+     opened drawer float over the popup (500-590), below #osk (1000). Only
+     Lock is live in it, every other row dimmed and dead, as on the rail. */
+  html.ut-scrim-on .nav .nav-drawer-toggle { z-index: 1; pointer-events: auto; }
+  html.ut-scrim-on body.nav-drawer-open .nav { z-index: 595; }
+  /* The drawer and its backdrop absorb taps (never fall through to the
+     popup or scrim). */
+  html.ut-scrim-on body.nav-drawer-open :is(.nav-drawer, .nav-drawer-backdrop) { pointer-events: auto; }
+  html.ut-scrim-on .nav-drawer * { pointer-events: none; }
+  html.ut-scrim-on .nav-drawer :is(.session-lock, .session-lock *) { pointer-events: auto; }
+  html.ut-scrim-on .nav-drawer .nav-toggle:not(.btn-lock) { opacity: .45; }
+  /* Status stays reachable over the opened drawer (its foot on Sell). */
+  html.ut-scrim-on body.nav-drawer-open .statusbar { z-index: 596; }
+  /* Focus lands on Lock when the drawer opens over a popup: show it. */
+  .nav-drawer .btn-lock:focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
+  /* With the on-screen keyboard open these popups start at the top edge,
+     over the 56px top bar and ☰; keep them below it (ut-docs#6118). */
+  body.osk-padded :is(#elevation-modal, #hold-modal, #pfand-modal, #table-add-modal)[open] {
+    inset-block-start: calc(var(--phone-top-h) + .5rem);
+    max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - var(--phone-top-h) - 1rem);
+  }
   .pos-container {
     display: flex; flex-direction: column; overflow: hidden;
     flex: 1 1 auto; min-height: 0;
