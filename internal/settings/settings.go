@@ -59,6 +59,18 @@ func (s *Store) SetMany(ctx context.Context, kv map[string]string) error {
 	return s.repo.SetMany(ctx, kv)
 }
 
+// SetIfReplica is data.SettingsRepo.SetIfReplica: the pairs are written in one
+// transaction only while this till still has a sync.primary_url, else
+// data.ErrNotReplica (ut-docs#5903).
+func (s *Store) SetIfReplica(ctx context.Context, kv map[string]string) error {
+	return s.repo.SetIfReplica(ctx, kv)
+}
+
+// IsReplica is data.SettingsRepo.IsReplica (uncached).
+func (s *Store) IsReplica(ctx context.Context) (bool, error) {
+	return s.repo.IsReplica(ctx)
+}
+
 // All returns all key/value pairs from settings.
 func (s *Store) All(ctx context.Context) (map[string]string, error) {
 	return s.repo.All(ctx)

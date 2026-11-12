@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -119,17 +120,21 @@ func displayModeRoleRefusal(role, mode string) string {
 
 // rememberOwnTillRole stores the role the main till reported for this till
 // (the admin pull), writing only on a change. An empty or unknown value —
-// an older main till, or garbage — leaves the stored role alone.
-func rememberOwnTillRole(ctx context.Context, d *common.Deps, role string) {
+// an older main till, or garbage — leaves the stored role alone. The write
+// is refused with data.ErrNotReplica when this till was promoted to main
+// meanwhile (ut-docs#5903); other failures are logged and returned.
+func rememberOwnTillRole(ctx context.Context, d *common.Deps, role string) error {
 	if !data.ValidTillRole(role) {
-		return
+		return nil
 	}
 	if cur, _, _ := d.Settings.Get(ctx, tillRoleSettingsKey); cur == role {
-		return
+		return nil
 	}
-	if err := d.Settings.Set(ctx, tillRoleSettingsKey, role); err != nil {
+	err := d.Settings.SetIfReplica(ctx, map[string]string{tillRoleSettingsKey: role})
+	if err != nil && !errors.Is(err, data.ErrNotReplica) {
 		logging.L().Errorf("till role: remember own role %q: %v", role, err)
 	}
+	return err
 }
 
 // changeTillRole is the one role-change path (the Tills page's Change role

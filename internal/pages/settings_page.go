@@ -2408,7 +2408,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// (when the snapshot brought one) and the same role_changed
 			// audit row the Tills page writes, attributed to whoever
 			// confirmed (the approver, once elevated).
-			rememberOwnTillRole(r.Context(), d, data.TillRoleSatellite)
+			_ = rememberOwnTillRole(r.Context(), d, data.TillRoleSatellite)
 			actor := elev.ActorID
 			if elev.Outcome == elevated {
 				actor = elev.ApproverID
