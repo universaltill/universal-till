@@ -114,7 +114,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `plugin_settings`
 - `plugin_hooks`
 - `plugin_permissions`
-- `shortcut_buttons` — `image_path` is legacy: not read for the tile picture; the item's `item_images` thumbnail, then `items.icon`, is (ut-docs#6076)
+- `shortcut_buttons` — `image_path` is legacy: no longer written by this version (ut-docs#6097; an older till in a mixed fleet may still write it, and LAN sync copies it) and not read (ut-docs#6076); the column stays because migrations are append-only (ADR-0100) and LAN sync copies it as plain data. The tile picture is the item's `item_images` thumbnail, then `items.icon`
 
 ## ER Diagram
 
@@ -636,7 +636,7 @@ erDiagram
         string barcode
         string item_id
         string label
-        string image_path "legacy, unread for the tile picture (ut-docs#6076)"
+        string image_path "legacy: unread; no longer written (ut-docs#6097, #6076)"
         string updated_at
     }
 
