@@ -17,6 +17,10 @@ scripts/release.sh minor    # 0.2.0 → 0.3.0
 scripts/release.sh 1.0.0    # explicit
 ```
 
+Both bumps (A and B) start from the highest plain `vX.Y.Z` tag
+(`scripts/ci/latest-stable-tag.sh`); pre-release tags such as `-beta.N` or
+`-rc1` are ignored.
+
 **C. Manual tag (the classic way still works):**
 ```sh
 git checkout main && git pull

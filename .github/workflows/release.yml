@@ -42,6 +42,8 @@ jobs:
         with:
           fetch-depth: 0
       - id: v
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
 
@@ -95,14 +97,8 @@ jobs:
             if [ -n "${{ inputs.version }}" ]; then
               VERSION="${{ inputs.version }}"
             else
-              LATEST="$(git tag -l 'v*' | sort -V | tail -1)"; LATEST="${LATEST#v}"; LATEST="${LATEST:-0.0.0}"
-              IFS=. read -r MA MI PA <<< "$LATEST"
-              case "${{ inputs.bump }}" in
-                major) MA=$((MA + 1)); MI=0; PA=0 ;;
-                minor) MI=$((MI + 1)); PA=0 ;;
-                patch) PA=$((PA + 1)) ;;
-              esac
-              VERSION="${MA}.${MI}.${PA}"
+              # ut-docs#1807: highest plain vX.Y.Z tag; pre-release tags ignored.
+              VERSION="$(bash scripts/ci/latest-stable-tag.sh --next "${BUMP}")"
             fi
             TAG="v${VERSION}"
             if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then

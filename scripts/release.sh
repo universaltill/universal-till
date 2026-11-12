@@ -15,20 +15,17 @@ cd "$(dirname "$0")/.."
 [ -z "$(git status --porcelain)" ] || { echo "working tree not clean — commit or stash first"; exit 1; }
 
 git fetch --tags --quiet
-LATEST="$(git tag -l 'v*' | sort -V | tail -1)"; LATEST="${LATEST#v}"; LATEST="${LATEST:-0.0.0}"
+# ut-docs#1807: highest plain vX.Y.Z tag; pre-release tags are ignored.
+LATEST="$(bash scripts/ci/latest-stable-tag.sh)"; LATEST="${LATEST#v}"; LATEST="${LATEST:-0.0.0}"
 
 ARG="${1:-patch}"
 if [[ "$ARG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   VERSION="$ARG"
 else
-  IFS=. read -r MA MI PA <<< "$LATEST"
   case "$ARG" in
-    major) MA=$((MA + 1)); MI=0; PA=0 ;;
-    minor) MI=$((MI + 1)); PA=0 ;;
-    patch) PA=$((PA + 1)) ;;
+    major | minor | patch) VERSION="$(bash scripts/ci/latest-stable-tag.sh --next "$ARG")" ;;
     *) echo "usage: scripts/release.sh [patch|minor|major|X.Y.Z]"; exit 1 ;;
   esac
-  VERSION="${MA}.${MI}.${PA}"
 fi
 TAG="v${VERSION}"
 

@@ -103,15 +103,12 @@ jobs:
           # component through the patch number identical to a real older
           # release, so Newer() correctly ranks it below any stable
           # (including the one it's based on) and above the previous one.
-          # Excludes any -beta./-nightly. suffix so a future beta tag
-          # (ut-docs#1807) can't be mistaken for the latest stable here —
-          # "nightly" itself already doesn't match 'v*' at all. `|| true`
-          # on the grep: with zero matching tags (a fresh repo, or every
-          # v* tag being a pre-release) grep exits 1 on no matches, which
-          # would otherwise kill this step under `set -e` before the
-          # `:-0.0.0` fallback below ever gets a chance to apply.
-          LATEST="$(git tag -l 'v*' | { grep -vE -- '-(beta|nightly)\.' || true; } | sed 's/^v//' | sort -V | tail -1)"
+          # scripts/ci/latest-stable-tag.sh (ut-docs#1807) is the one home for
+          # "latest stable": plain vX.Y.Z only, so no -beta./-rc/-nightly. tag
+          # can be mistaken for it; no stable tag prints nothing -> 0.0.0.
+          LATEST="$(bash scripts/ci/latest-stable-tag.sh)"; LATEST="${LATEST#v}"
           LATEST="${LATEST:-0.0.0}"
+          # Defence in depth: unreachable by construction, kept as a tripwire.
           if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::latest stable tag resolved to '${LATEST}', not a plain MAJOR.MINOR.PATCH — refusing to build a nightly from an unparseable version (check for a stray non-semver 'v*' tag)"
             exit 1

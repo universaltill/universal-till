@@ -86,6 +86,8 @@ jobs:
         run: shellcheck scripts/ci/*.sh
       - name: Release-notes guard regression test (ut-docs#3091)
         run: bash scripts/ci/guard-release-notes_test.sh
+      - name: Latest-stable-tag helper self-test (ut-docs#1807)
+        run: bash scripts/ci/latest-stable-tag_test.sh
       - name: Release checksums completeness check regression test (ut-docs#2863)
         run: bash scripts/ci/check-release-checksums_test.sh
       - name: Marketplace signing key resolution + release wiring self-test (ADR-0158, ut-docs#4292)
