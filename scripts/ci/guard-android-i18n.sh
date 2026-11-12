@@ -6,15 +6,18 @@
 # side by guard-i18n.sh) -- a Farsi shop saw a Farsi till inside an English
 # frame. This mirrors guard-i18n.sh's key-parity check for
 # android/app/src/main/res/values*/strings.xml instead of web/locales/*.json:
-#   1. Every locale directory (values-fa, values-tr, values-ar, ...) defines
-#      exactly the same key set as the base values/strings.xml -- no missing
-#      translation, no orphan key.
-#   2. Every %N$s-style placeholder in a translated string matches the base
-#      string's placeholders exactly (same positions, same count) -- a
+#   1. Locale vs base key set (ut-docs#5480, ADR-0160 section 2 "Code merges
+#      with English only", #5478): a locale MISSING a base key is a
+#      "warning (non-blocking)" like guard-i18n.sh -- an English-only code PR
+#      adds the base key and translations arrive via Weblate; Android falls
+#      back to values/ at runtime. An ORPHAN key (in a locale, not in base)
+#      stays BLOCKING: a stale translation of a removed/renamed English key
+#      (Android lint ExtraTranslation is fatal in release builds).
+#   2. Still BLOCKING, for keys present on both sides: the same name must be
+#      the same resource type (string vs plurals), and every %N$s-style
+#      placeholder must match the base's exactly (same count) -- a
 #      translation that drops or reorders a placeholder crashes
 #      String.format at runtime instead of failing loudly at CI time.
-# Fails CI so a new key (or a new locale directory) can't ship
-# out of parity, same guarantee guard-i18n.sh gives the web side.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,6 +33,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 fail = False
+warned = []  # locale dirs with missing keys (non-blocking)
 BASE = "android/app/src/main/res/values/strings.xml"
 
 # Locale-shaped resource qualifiers only (independent review, 2026-08-07):
@@ -94,11 +98,15 @@ for path in locale_dirs:
     missing = sorted(base_keys - keys.keys())
     orphan = sorted(keys.keys() - base_keys)
     if missing:
-        fail = True
-        print(f"guard-android-i18n: {path} is missing keys: {', '.join(missing)}")
+        warned.append(path.split("/")[-2].removeprefix("values-"))
+        shown = ", ".join(missing[:20]) + (f", +{len(missing) - 20} more" if len(missing) > 20 else "")
+        print(f"guard-android-i18n: warning (non-blocking): {path} is missing "
+              f"{len(missing)} key(s) from {BASE} (translations arrive via "
+              f"Weblate, ADR-0160 section 2): {shown}")
     if orphan:
         fail = True
-        print(f"guard-android-i18n: {path} has orphan keys not in {BASE}: {', '.join(orphan)}")
+        print(f"guard-android-i18n: {path} has orphan keys not in {BASE}: {', '.join(orphan)} "
+              f"-- delete them from that file too (Android lint's ExtraTranslation fails the release build)")
     for key in base_keys & keys.keys():
         base_kind, base_val = base[key]
         loc_kind, loc_val = keys[key]
@@ -131,7 +139,13 @@ for path in locale_dirs:
 
 if fail:
     sys.exit(1)
-print(f"✓ android-i18n guard: {len(base_keys)} keys match across "
-      f"{len(locale_dirs)} locale(s) ({', '.join(sorted(p.split('/')[-2].removeprefix('values-') for p in locale_dirs))}), "
-      f"placeholders intact")
+locales = ", ".join(sorted(p.split("/")[-2].removeprefix("values-") for p in locale_dirs))
+if warned:
+    print(f"✓ android-i18n guard: no blocking problems across {len(locale_dirs)} "
+          f"locale(s) ({locales}); {len(warned)} locale(s) incomplete "
+          f"({', '.join(sorted(warned))}) -- translations arrive via Weblate, "
+          f"placeholders intact where translated")
+else:
+    print(f"✓ android-i18n guard: {len(base_keys)} keys match across "
+          f"{len(locale_dirs)} locale(s) ({locales}), placeholders intact")
 PY
