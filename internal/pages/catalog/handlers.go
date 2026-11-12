@@ -880,7 +880,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
 			"MissingFilterKey":      missingKey,
-			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
+			"BuiltinIconGroups":     common.ShopPickerIconGroups(r.Context(), data.NewSettingsRepo(d.Db)),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 			"AICutout":              aiCutoutOffered(r),
@@ -1407,7 +1407,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if err := saveLookupImage(r.Context(), lookupClient, itemID, imgURL); err != nil {
 				log.Printf("[catalog] lookup image for item %s skipped: %v", itemID, err)
 			} else {
-				if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
+				if err := repo.SetItemPhoto(r.Context(), itemID, ItemThumbURL(itemID)); err != nil {
 					// Same review-F2 reasoning as the manual upload handler
 					// above: the photo is safely on disk regardless, this only
 					// keeps item_images (POS grid/basket/self-order/
@@ -2224,7 +2224,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Built-in icon picker (ut-docs#1844): a bundled category icon
-	// (catimport.BuiltinIcons — the same library PlaceholderIcon already
+	// (catimport.BuiltinIcons — the same library the import matcher already
 	// picks from for imageless imports) is a valid alternative to an
 	// uploaded photo, stored through the identical item_images/thumbnail
 	// row so every existing reader (POS grid, basket, self-order,
@@ -2235,7 +2235,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// current thumbnail is instead a custom upload (a built-in choice and a
 	// custom photo are mutually exclusive — picking one always replaces
 	// the other, same as the existing upload-over-placeholder behaviour),
-	// and which key PlaceholderIcon's own keyword match would suggest for
+	// and which key the shop-language IconMatcher would suggest for
 	// this item's actual name/category — so a still-imageless item shows a
 	// sensible preselected tile instead of nothing.
 	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
@@ -2262,7 +2262,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				categoryName = cat.Name
 			}
 		}
-		suggestedKey := tillimport.PlaceholderIcon(itm.Name, categoryName)
+		suggestedKey := common.ShopIconMatcher(r.Context(), data.NewSettingsRepo(d.Db)).Icon(itm.Name, categoryName)
 		selectedKey := ""
 		isCustom := false
 		// ut-docs#3133: the Item image tab previews the current picture from
@@ -2874,24 +2874,36 @@ var ErrItemThumbRow = errors.New("item photo saved but its item_images thumbnail
 // the item's thumbnail and points item_images at it — the one write path
 // for the till's own upload and the cloud's set_catalog_image directive
 // (ut-docs#3139). The file must be written first: every surface that
-// resolves the photo by its path convention checks the file. itemID must
-// already be validated (no "/", "\" or ".").
+// resolves the photo by its path convention checks the file. The item's
+// stored icon id is kept (ut-docs#3601). itemID must already be validated
+// (no "/", "\" or ".").
 func StoreItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string, img image.Image) error {
 	if err := imaging.WriteThumbPNG(img, itemThumbFile(itemID)); err != nil {
 		return err
 	}
-	if err := repo.SetItemThumbnail(ctx, itemID, ItemThumbURL(itemID)); err != nil {
+	if err := repo.SetItemPhoto(ctx, itemID, ItemThumbURL(itemID)); err != nil {
 		return fmt.Errorf("%w (%s): %v", ErrItemThumbRow, itemID, err)
 	}
 	return nil
 }
 
 // ClearItemPicture is the till's own "no image" (the icon picker's none):
-// the item_images thumbnail row goes, then any uploaded photo file.
-// Shared with set_catalog_image's clear (ut-docs#3139). itemID must
-// already be validated.
+// it clears both the item_images thumbnail row and items.icon, then any
+// uploaded photo file. itemID must already be validated.
 func ClearItemPicture(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
 	if err := repo.ClearItemThumbnail(ctx, itemID); err != nil {
+		return err
+	}
+	removeUploadedThumbnail(itemID)
+	return nil
+}
+
+// ClearItemPhoto is set_catalog_image's clear (my.'s "remove the image",
+// ut-docs#3601): the thumbnail row and the uploaded file go, the stored
+// icon id stays, so the item falls back to its icon. Mirrors
+// clearCategoryPicture. itemID must already be validated.
+func ClearItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
+	if err := repo.ClearItemPhoto(ctx, itemID); err != nil {
 		return err
 	}
 	removeUploadedThumbnail(itemID)

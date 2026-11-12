@@ -6779,16 +6779,18 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .cat-thumb-swatch { inline-size: 1.25rem; block-size: 1.25rem; border-radius: 50%; background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
 .cat-thumb-placeholder { display: inline-flex; color: var(--muted); }
 .cat-thumb-placeholder svg { inline-size: 1.1rem; block-size: 1.1rem; }
-.category-row-open {
+/* Row-tap list name button (ut-docs#2699 categories; ut-docs#6046 every other
+   record list). */
+.category-row-open, .record-row-open {
   display: inline-flex; align-items: center; gap: .6rem; min-block-size: 3rem; max-inline-size: 100%;
   padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
   border-radius: var(--radius);
 }
-.category-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
-.category-row-name { overflow-wrap: break-word; }
+.category-row-open:focus-visible, .record-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.category-row-name, .record-row-name { overflow-wrap: break-word; }
 /* The name column keeps room for the picture plus a short word at 360px;
-   the table's own .list-scroll wrapper scrolls sideways if it must,
-   rather than breaking names mid-word. */
+   the phone tier stacks the table as cards (table-cards.js / .t-cards,
+   ut-docs#3359) rather than breaking names mid-word. */
 .category-name-cell { min-inline-size: 9.5rem; }
 .list-reorder-hint { font-size: .85rem; margin-block: 0 .5rem; }
 .list-reorder-msg { margin-block: 0 .5rem; color: var(--danger); font-size: .9rem; }

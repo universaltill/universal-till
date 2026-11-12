@@ -16,13 +16,6 @@
 //                                  as repeated "ids" fields (the body shape
 //                                  /api/categories/reorder and
 //                                  /api/designer/categories/reorder share)
-//     data-reorder-refresh         optional htmx event fired on <body> after
-//                                  a save, for a page that must re-render
-//                                  from the server's truth. The Designer no
-//                                  longer sets it (ut-docs#3074: a re-render
-//                                  repainted the whole replica and lost the
-//                                  scroll position) -- it listens for
-//                                  list-reorder:saved instead
 //     data-reorder-live            id of a visually-hidden aria-live region
 //                                  for announcements
 //     data-reorder-msg             optional id of a visible message region
@@ -233,32 +226,6 @@
     }, function () { return ''; });
   }
 
-  function refreshAfterSave(list) {
-    var ev = list.getAttribute('data-reorder-refresh');
-    if (!ev || !window.htmx) return;
-    var a = document.activeElement;
-    var focusId = (a && a.id && list.contains(a)) ? a.id : '';
-    if (focusId) {
-      // The refresh replaces this list: put focus back on the same
-      // control's fresh twin once htmx has settled it, unless something
-      // else claimed focus meanwhile.
-      // ut-docs#3074 (#2713's leak): if the refresh never settles (dropped,
-      // failed), don't leave this listener on body to fire on some later,
-      // unrelated swap.
-      var timer = 0;
-      var onSettle = function () {
-        clearTimeout(timer);
-        document.body.removeEventListener('htmx:afterSettle', onSettle);
-        var el = document.getElementById(focusId);
-        var cur = document.activeElement;
-        if (el && el.getClientRects().length && (!cur || cur === document.body || !document.contains(a))) el.focus();
-      };
-      document.body.addEventListener('htmx:afterSettle', onSettle);
-      timer = setTimeout(function () { document.body.removeEventListener('htmx:afterSettle', onSettle); }, 5000);
-    }
-    window.htmx.trigger(document.body, ev);
-  }
-
   function persist(list) {
     var s = state(list);
     var url = list.getAttribute('data-reorder-url');
@@ -278,7 +245,6 @@
           s.good = now;
           clearFailure(list);
           list.dispatchEvent(new CustomEvent('list-reorder:saved', { bubbles: true, detail: { ids: now.slice() } }));
-          refreshAfterSave(list);
           return;
         }
         return reasonOf(res).then(function (reason) { revert(list, reason, subject); });

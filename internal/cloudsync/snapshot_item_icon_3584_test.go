@@ -25,13 +25,18 @@ func TestSnapshotItemIcon(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"it-icon", "it-tile", "it-photo", "it-none"} {
+	for _, id := range []string{"it-icon", "it-tile", "it-photo", "it-photo-icon", "it-none"} {
 		testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: id, SKU: id, Name: id, BasePrice: 100, IsActive: true})
 	}
 	if _, err := db.Exec(`UPDATE items SET icon = 'lucide:beer' WHERE id = 'it-icon'`); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.SeedImage(t, db, "img-1", "it-tile", "/public/assets/category-icons/coffee.svg")
+	// ut-docs#3601: a photo that keeps a stored icon reports "" (the photo shows).
+	if _, err := db.Exec(`UPDATE items SET icon = 'lucide:beer' WHERE id = 'it-photo-icon'`); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.SeedImage(t, db, "img-3", "it-photo-icon", "/public/assets/items/it-photo-icon/thumb.png")
 	testsupport.SeedImage(t, db, "img-2", "it-photo", "/public/assets/items/it-photo/thumb.png")
 
 	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
@@ -46,7 +51,7 @@ func TestSnapshotItemIcon(t *testing.T) {
 		}
 		got[m["id"].(string)] = v
 	}
-	want := map[string]any{"it-icon": "lucide:beer", "it-tile": "lucide:coffee", "it-photo": "", "it-none": ""}
+	want := map[string]any{"it-icon": "lucide:beer", "it-tile": "lucide:coffee", "it-photo": "", "it-photo-icon": "", "it-none": ""}
 	for id, w := range want {
 		if got[id] != w {
 			t.Errorf("%s icon = %v, want %q", id, got[id], w)

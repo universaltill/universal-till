@@ -728,6 +728,16 @@ func T(locale, key string) string {
 	return key
 }
 
+// TExact is T without fallbacks: the value in exactly locale (or its base
+// language), ok false when that language lacks the key or no translator is
+// wired (ut-docs#2654).
+func TExact(locale, key string) (string, bool) {
+	if t := translator(); t != nil {
+		return t.Lookup(locale, key)
+	}
+	return "", false
+}
+
 // TM translates and formats a MessageFormat key (ADR-0160 §8,
 // ut-docs#4373) outside templates. Numbers render with the locale's
 // grouping and digit shape, like {{ qty }}. A translation that doesn't

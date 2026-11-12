@@ -17,6 +17,8 @@ jobs:
         # `needs: build` gates it behind the whole e2e job.
         with:
           node-version: '26'
+      - name: icon picker fold parity (ut-docs#6042)
+        run: node --test e2e/unit/icon-picker-fold_test.js
       - name: Prep Go cache dirs
         run: |
           mkdir -p "${RUNNER_TEMP}/gobuildcache"
