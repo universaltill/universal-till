@@ -1314,7 +1314,22 @@ document.addEventListener('htmx:afterSettle', function (evt) {
 // sends HX-Trigger: ut-basket-resync with the prompt; re-render the live basket
 // so the box shows the real quantity until the approver confirms.
 document.addEventListener('ut-basket-resync', function(){
-  if (window.htmx) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+  if (!window.htmx) return;
+  // ut-docs#5417: the resync replaces #basket, and the prompt's hint lives in
+  // it (#shrinkage-hint). Carry the same hint nodes across (not a copy, so the
+  // dialog's own reference to them stays valid for Cancel/Escape), but only
+  // while the dialog is still open: an approval that already cleared the slot
+  // must not get a stale hint back.
+  var old = document.getElementById('shrinkage-hint');
+  var kept = old ? Array.prototype.slice.call(old.childNodes) : [];
+  var p = window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+  if (!kept.length || !p || typeof p.then !== 'function') return;
+  p.then(function(){
+    var slot = document.getElementById('shrinkage-hint');
+    var dlg = document.getElementById('elevation-modal');
+    if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
+    kept.forEach(function(n){ slot.appendChild(n); });
+  });
 });
 
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
@@ -1529,11 +1544,12 @@ document.addEventListener('click', function(e){
     if (!d || !d.xhr || d.xhr.status < 400) return;
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
     if (path.indexOf('/api/pos/') === 0) {
-      // Sale-screen carve-out (ut-docs#213): only a 400 whose body is a
-      // rendered basket fragment (e.g. modifier validation) swaps in place
+      // Sale-screen carve-out (ut-docs#213): only a 400 or 409 whose body is a
+      // rendered basket fragment (e.g. modifier validation, or ut-docs#5417's
+      // "line changed" refusal) swaps in place
       // of the generic alert — anything else on this path falls through to
       // the #pos-alert banner via htmx:responseError below.
-      if (d.xhr.status === 400 && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
+      if ((d.xhr.status === 400 || d.xhr.status === 409) && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
         d.shouldSwap = true;
         d.isError = false;
       }
