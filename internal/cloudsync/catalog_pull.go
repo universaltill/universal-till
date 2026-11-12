@@ -40,11 +40,7 @@ func pullCloudCatalog(ctx context.Context, cfg *config.Config, db *sql.DB, hooks
 		return false
 	}
 	m := enroll.Effective(cfg).Marketplace
-	opt := catalogpull.Options{
-		ItemInLiveBasket:  hooks.CatalogItemInLiveBasket,
-		TaxRateRefused:    hooks.CatalogTaxRateRefused,
-		ItemPhotoReplaced: hooks.CatalogItemPhotoReplaced,
-	}
+	opt := catalogPullOptions(ctx, db, hooks)
 	// Upload first, then pull (ADR-0162 §4/§5, ut-docs#4464): the till's
 	// own edits reach the cloud's conflict test before the feed could bring
 	// a newer cloud value over them (the pull also leaves a pending field
@@ -90,6 +86,19 @@ func pullCloudCatalog(ctx context.Context, cfg *config.Config, db *sql.DB, hooks
 		logging.L().Infof("cloudsync: catalogue pull: %d applied, %d refused, %d skipped, %d pruned", res.Applied, res.Refused, res.Skipped, res.Pruned)
 	}
 	return res.Changed || uploaded
+}
+
+// catalogPullOptions are the catalogue pull and upload's options: the hooks,
+// and the field lists the cloud's last sync answer said its change upload
+// accepts ("" = none: contract 1.0.0, ut-docs#6088). The block was cached by
+// this tick's check-in POST, before the upload runs.
+func catalogPullOptions(ctx context.Context, db *sql.DB, hooks Hooks) catalogpull.Options {
+	return catalogpull.Options{
+		ItemInLiveBasket:  hooks.CatalogItemInLiveBasket,
+		TaxRateRefused:    hooks.CatalogTaxRateRefused,
+		ItemPhotoReplaced: hooks.CatalogItemPhotoReplaced,
+		AcceptedFields:    entitlement.CatalogChangesFields(ctx, data.NewSettingsRepo(db)),
+	}
 }
 
 // pushCloudCatalog uploads the outbox and reports whether an answer changed

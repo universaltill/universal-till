@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,6 +95,13 @@ const (
 	// of "entitlement."; read through StoreClaimed. Wording only: NEVER a
 	// sale gate (package doc).
 	KeyStoreClaimed = "entitlement.claimed"
+	// KeyCatalogChangesFields: the catalogue fields the cloud's change upload
+	// accepts per kind (cloud-catalog-changes contract 1.2.0, ut-docs#6088),
+	// as canonical JSON {"item":["name",...],...}; "" when the block carries
+	// none or a malformed one (contract 1.0.0). Always rewritten with the
+	// block, so a cloud rolled back to one without the key clears it. Per-till
+	// like the rest of "entitlement."; read through CatalogChangesFields.
+	KeyCatalogChangesFields = "entitlement.catalog_changes_fields"
 )
 
 // StoreClaimed is the cloud's last word on whether the store has an owner
@@ -177,6 +185,18 @@ func CatalogMaster(ctx context.Context, r Reader) string {
 		return CatalogMasterTill
 	}
 	return CatalogMasterMode(v)
+}
+
+// CatalogChangesFields is the cached accepted-fields advertisement of the
+// cloud's catalogue change upload (KeyCatalogChangesFields), "" when there is
+// none or on a read error: the 1.0.0 field list (ut-docs#6088). NEVER a sale
+// gate (package doc): it only narrows what the catalogue upload sends.
+func CatalogChangesFields(ctx context.Context, r Reader) string {
+	v, ok, err := r.Get(ctx, KeyCatalogChangesFields)
+	if err != nil || !ok {
+		return ""
+	}
+	return v
 }
 
 // Grace is how long a cached plan is honoured without a fresh confirmation
@@ -416,6 +436,60 @@ type Block struct {
 	// cached; absent, null or a wrong type writes nothing (the last value
 	// stands) and never rejects the block.
 	Claimed json.RawMessage `json:"claimed"`
+	// CatalogChanges is the cloud's advertisement of the fields its catalogue
+	// change upload accepts, {"fields": {kind: [field, ...]}} (contract
+	// cloud-catalog-changes 1.2.0, ut-docs#6088). Raw like CatalogMaster:
+	// absent, null, a wrong shape or an oversized one caches "" (the 1.0.0
+	// list) and never rejects the block.
+	CatalogChanges json.RawMessage `json:"catalog_changes"`
+}
+
+// Shape limits of the catalog_changes advertisement. Shape only: which kinds
+// and fields exist is the catalogue uploader's business, not this package's.
+const (
+	maxAdvertisedKinds  = 16
+	maxAdvertisedFields = 64
+)
+
+var advertisedName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// catalogChangesFields decodes the raw catalog_changes field to canonical JSON
+// (kinds and fields sorted, fields unique), or "" for anything but a
+// well-formed advertisement within the shape limits.
+func (b Block) catalogChangesFields() string {
+	if len(b.CatalogChanges) == 0 {
+		return ""
+	}
+	var wire struct {
+		Fields map[string][]string `json:"fields"`
+	}
+	if json.Unmarshal(b.CatalogChanges, &wire) != nil || wire.Fields == nil || len(wire.Fields) > maxAdvertisedKinds {
+		return ""
+	}
+	out := make(map[string][]string, len(wire.Fields))
+	for kind, fields := range wire.Fields {
+		if !advertisedName.MatchString(kind) || len(fields) > maxAdvertisedFields {
+			return ""
+		}
+		seen := make(map[string]bool, len(fields))
+		list := make([]string, 0, len(fields))
+		for _, f := range fields {
+			if !advertisedName.MatchString(f) {
+				return ""
+			}
+			if !seen[f] {
+				seen[f] = true
+				list = append(list, f)
+			}
+		}
+		sort.Strings(list)
+		out[kind] = list
+	}
+	raw, err := json.Marshal(out) // map keys marshal sorted
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // claimed decodes the raw claimed field. ok only for a JSON boolean: null,
@@ -461,9 +535,10 @@ func (b Block) catalogMaster() string {
 	return s
 }
 
-// Values validates b and returns the settings rows to write: nine always
+// Values validates b and returns the settings rows to write: ten always
 // (the four ADR-0060 §4 rows, ADR-0117 §2's cloud_link tier/mode, ADR-0162
-// §1's catalog_master and ADR-0163's shop currency and decimals) plus a tenth,
+// §1's catalog_master, ADR-0163's shop currency and decimals, and the
+// catalogue upload's accepted fields) plus an eleventh,
 // KeyStoreClaimed, only when the block carries a boolean `claimed` — leaving
 // it out is how the last value is kept (SetMany writes just the map's keys).
 // last_confirmed_at = now (UTC). An unknown plan or status is an error — the
@@ -502,6 +577,10 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		// a currency must clear the cache, not keep a stale one.
 		KeyShopCurrency:         b.shopCurrency(),
 		KeyShopCurrencyDecimals: b.shopCurrencyDecimals(),
+		// Always written, "" included (ut-docs#6088): a cloud rolled back to
+		// a build without the advertisement must drop the till back to the
+		// 1.0.0 field list.
+		KeyCatalogChangesFields: b.catalogChangesFields(),
 	}
 	if v, ok := b.claimed(); ok {
 		m[KeyStoreClaimed] = strconv.FormatBool(v)

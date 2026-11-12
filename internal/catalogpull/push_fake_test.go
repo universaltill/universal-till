@@ -43,6 +43,13 @@ type fakeCloud struct {
 	// rejectNextCreate answers the next create rejected
 	// cloud_id_unavailable.
 	rejectNextCreate bool
+	// accept, when set, is the cloud's field list per kind (ut-docs#6088):
+	// as ut-cloud's ParseChanges (change.go:168-201), a field outside the
+	// kind's list in changed_fields, before or after answers 400
+	// invalid_request for the WHOLE call, which records nothing. Nil = every
+	// field. refused counts such calls.
+	accept  map[string][]string
+	refused int
 
 	// index of feed.rows, kept current incrementally (rows only grow).
 	indexed int
@@ -76,6 +83,11 @@ func (c *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.outsideAccepted(req.Changes) {
+		c.refused++
+		writeErr(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
 	c.calls = append(c.calls, req.Changes)
 	if c.status != 0 {
 		writeErr(w, c.status, c.code)
@@ -104,6 +116,33 @@ func (c *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"results": out}, "error": nil})
+}
+
+// outsideAccepted reports whether any change names a field outside accept's
+// list for its kind.
+func (c *fakeCloud) outsideAccepted(chs []Change) bool {
+	if c.accept == nil {
+		return false
+	}
+	for _, ch := range chs {
+		ok := map[string]bool{}
+		for _, f := range c.accept[ch.Kind] {
+			ok[f] = true
+		}
+		names := append([]string(nil), ch.ChangedFields...)
+		for f := range ch.Before {
+			names = append(names, f)
+		}
+		for f := range ch.After {
+			names = append(names, f)
+		}
+		for _, f := range names {
+			if !ok[f] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // reindex brings the row index up to date (rows are only appended while

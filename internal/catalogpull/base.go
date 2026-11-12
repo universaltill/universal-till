@@ -397,15 +397,23 @@ func (r *runner) dropBaseBarcode(ctx context.Context, tx *sql.Tx, itemID, key st
 
 // pendingFields are the fields of a linked row with an unanswered local
 // edit that the pull must leave alone: those whose local value differs
-// from base. None without an outbox mark, or without a base (nothing to
+// from base. None without an outbox mark (or a hold: its edits wait for a
+// cloud that accepts them, ut-docs#6088), or without a base (nothing to
 // compare against: the cloud wins).
 func (r *runner) pendingFields(ctx context.Context, tx *sql.Tx, kind, localID string, st data.CloudLinkState) (map[string]bool, bool, error) {
 	if !uploadable(kind) {
 		return nil, false, nil
 	}
 	marked, err := r.outbox.HasMark(ctx, tx, kind, localID)
-	if err != nil || !marked {
+	if err != nil {
 		return nil, false, err
+	}
+	if !marked {
+		// A row whose edits wait for a cloud that accepts their fields is
+		// pending like a marked one (cloud_outbox_held, ut-docs#6088).
+		if marked, err = r.outbox.HasHeld(ctx, tx, kind, localID); err != nil || !marked {
+			return nil, false, err
+		}
 	}
 	base := parseBase(st.Base)
 	l, err := r.readLocal(ctx, tx, kind, localID, base)

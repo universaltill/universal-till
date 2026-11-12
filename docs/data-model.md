@@ -1025,6 +1025,23 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   cannot wait, so it leaves the seeded `sku` out of `before`
   (ut-docs#4623).
   A 410 resync forgets every `echo_version`.
+- **Fields the cloud does not accept yet (migration 102, ut-docs#6088;
+  contract 1.2.0 "Accepted fields").** A cloud refuses a whole upload call
+  (`400`, nothing recorded) when one change names a field outside its list,
+  so the till sends only `fields100` (the frozen 1.0.0 lists,
+  `internal/catalogpull/accepted.go`) plus the fields the cloud advertises
+  in the sync answer's entitlement block (`catalog_changes.fields`, cached as
+  `entitlement.catalog_changes_fields`; no value = 1.0.0). An upload field
+  outside that set is *withheld*: left out of `changed_fields`/`before`/`after`
+  and kept on the till. `cloud_outbox_held(entity, local_id, created_at)` holds
+  the rows with withheld edits (written at seal, settled by the answer), kept
+  off `cloud_outbox` so the uploader never rescans them; the pull treats a
+  held row as pending, and a `conflict` answer replaces only the fields the
+  cloud judged. When the accepted set changes
+  (`cloudsync.catalog.held_accepted`) every held row goes back into
+  `cloud_outbox` once and uploads as an ordinary update. A sealed change
+  naming a field the set no longer holds (a cloud rollback) is re-sealed
+  under a new `change_id` without it. Main-till bookkeeping, never synced.
 - **Not yet:** staff attribution (`staff_id` is sent empty: till edits are
   not stamped with their editor, ut-docs#4558), and an edit made between a change's seal
   and a conflict answer is replaced too (the cloud wins).

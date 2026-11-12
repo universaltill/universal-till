@@ -124,6 +124,10 @@ const (
 	// an existing cloud shop; the "Syncing your shop" state shows from then
 	// until the first pull is done, or a window passes (ut-docs#5098).
 	KeyJoinSince = "cloudsync.join_since"
+	// KeyHeldAccepted is the fingerprint of the accepted-field set (accepted.go)
+	// the held rows were last released for: when the cloud's advertised set
+	// changes, every held row goes back into the outbox once (ut-docs#6088).
+	KeyHeldAccepted = "cloudsync.catalog.held_accepted"
 )
 
 // PageLimit is the page size the pull asks for (the contract's maximum).
@@ -178,6 +182,11 @@ type Options struct {
 	// icon replaced an item's thumbnail (ut-docs#3584's one-picture rule),
 	// so the caller can remove a superseded upload's file. Nil = keep.
 	ItemPhotoReplaced func(itemID, clearedPath string)
+	// AcceptedFields is the cloud's advertised upload field lists (the sync
+	// entitlement block's catalog_changes.fields, as canonical JSON); "" =
+	// none: contract cloud-catalog-changes 1.0.0 (ut-docs#6088). Only Push
+	// reads it.
+	AcceptedFields string
 }
 
 // Result reports one Run.
@@ -564,6 +573,9 @@ type runner struct {
 	links    *data.CloudLinkRepo
 	outbox   *data.CloudOutboxRepo
 	opt      Options
+	// accepted is the set of upload fields the cloud takes (Push only; Run
+	// never sends a change).
+	accepted acceptedSet
 	// answering is set while an upload answer's current rows apply (no
 	// echo skip); forced additionally overwrites pending local edits (a
 	// conflict: the cloud wins).

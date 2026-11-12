@@ -138,8 +138,12 @@ type PushResult struct {
 	Dropped   int // marks with nothing to upload
 	// Changed is true when an answer changed the local catalogue.
 	Changed bool
-	// Pending is the marks still waiting (open and sealed) after the run.
+	// Pending is the marks still waiting (open and sealed) after the run,
+	// and the held rows.
 	Pending int
+	// Held is the rows whose edits wait for a cloud that accepts their
+	// fields (cloud_outbox_held) after the run; they are in Pending too.
+	Held int
 	// Stopped / StopStatus: an answer that stops the upload with no error
 	// (409 catalog_master_till / catalog_adopting, 402, 401/403).
 	Stopped    string
@@ -159,13 +163,22 @@ func Push(ctx context.Context, db *sql.DB, post Poster, opt Options) (res PushRe
 	if err := seedBasesIfUpgrading(ctx, db, r.settings); err != nil {
 		return res, err
 	}
+	if err := r.releaseHeldIfChanged(ctx); err != nil {
+		return res, err
+	}
 	st, err := loadGen(ctx, r.settings)
 	if err != nil {
 		return res, err
 	}
 	defer func() {
-		if open, sealed, cerr := r.outbox.Counts(context.WithoutCancel(ctx), db); cerr == nil {
+		bg := context.WithoutCancel(ctx)
+		if open, sealed, cerr := r.outbox.Counts(bg, db); cerr == nil {
 			res.Pending = open + sealed
+		}
+		if held, cerr := r.outbox.CountHeld(bg, db); cerr == nil {
+			res.Held = held
+			res.Pending += held
+			r.noteWithheld(held)
 		}
 	}()
 	for calls := 0; calls < maxCallsPerRun; calls++ {
@@ -214,7 +227,7 @@ func Push(ctx context.Context, db *sql.DB, post Poster, opt Options) (res PushRe
 
 func newRunner(db *sql.DB, opt Options) *runner {
 	return &runner{
-		db: db, settings: data.NewSettingsRepo(db), opt: opt,
+		db: db, settings: data.NewSettingsRepo(db), opt: opt, accepted: acceptedFrom(opt.AcceptedFields),
 		cat: data.NewCatalogRepo(db), pos: data.NewPOSRepo(db), links: data.NewCloudLinkRepo(),
 		mods: data.NewModifierRepo(db), sets: data.NewOptionSetRepo(db), outbox: data.NewCloudOutboxRepo(),
 	}
@@ -242,6 +255,13 @@ func (r *runner) nextBatch(ctx context.Context, gen int64, res *PushResult) ([]d
 	sealed, err := r.outbox.SealedMarks(ctx, r.db, MaxChangesPerCall)
 	if err != nil {
 		return nil, err
+	}
+	if changed, err := r.resealOutrun(ctx, sealed); err != nil {
+		return nil, err
+	} else if changed {
+		if sealed, err = r.outbox.SealedMarks(ctx, r.db, MaxChangesPerCall); err != nil {
+			return nil, err
+		}
 	}
 	if len(sealed) < MaxChangesPerCall {
 		if err := r.sealOpen(ctx, gen, MaxChangesPerCall-len(sealed), res); err != nil {
@@ -375,6 +395,9 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 		ch.Op, ch.CloudID, ch.Before = opDelete, link.CloudID, map[string]json.RawMessage{}
 		_, seeded := base[seededSKUField]
 		for _, f := range uploadFields[m.Entity] {
+			if !r.accepted.accepts(m.Entity, f) {
+				continue // a field the cloud would refuse the whole call for (ut-docs#6088)
+			}
 			if f == "sku" && seeded {
 				// An unsettled seeded sku may be the till's own SKU for a
 				// blank cloud one, and a deleted row cannot wait for the
@@ -396,20 +419,37 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 			}
 		}
 		for _, f := range uploadFields[m.Entity] {
+			if !r.accepted.accepts(m.Entity, f) {
+				continue
+			}
 			if f == "barcodes" && len(l.keys) == 0 {
 				continue
 			}
 			ch.After[f] = l.vals[f]
 			ch.ChangedFields = append(ch.ChangedFields, f)
 		}
+		if len(r.accepted.withheldOf(m.Entity)) > 0 {
+			// The withheld fields' local values stay on the till: held from
+			// the seal, so the pull cannot overwrite them before the answer
+			// (or an accepted-set change) settles them (holdWithheld).
+			if err := r.outbox.HoldMark(ctx, tx, m.Entity, m.LocalID, m.CreatedAt); err != nil {
+				return 0, err
+			}
+		}
 	case base == nil:
 		// Linked by a pull that kept no base (an older applier): the next
 		// pull re-applies it and sets one; the mark waits.
 		return sealedRefs, nil
 	default:
-		fields := changedFields(m.Entity, l, base)
-		if len(fields) == 0 {
+		fields, withheld := r.accepted.split(m.Entity, changedFields(m.Entity, l, base))
+		if len(fields) == 0 && len(withheld) == 0 {
 			res.Dropped++
+			if len(r.accepted.withheldOf(m.Entity)) > 0 {
+				// Nothing differs any more (a withheld edit was reverted).
+				if err := r.outbox.DeleteHeld(ctx, tx, m.Entity, m.LocalID); err != nil {
+					return 0, err
+				}
+			}
 			return sealedRefs, r.outbox.DeleteMark(ctx, tx, m.ID)
 		}
 		if _, seeded := base[seededSKUField]; seeded && slices.Contains(fields, "sku") {
@@ -418,6 +458,18 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 			// false conflict. The re-pull settles it; the mark waits
 			// (ut-docs#4623).
 			return sealedRefs, nil
+		}
+		if len(withheld) > 0 {
+			// Edits the cloud cannot take yet stay on the till: held with the
+			// mark's first created_at, beside whatever part uploads now.
+			if err := r.outbox.HoldMark(ctx, tx, m.Entity, m.LocalID, m.CreatedAt); err != nil {
+				return 0, err
+			}
+			if len(fields) == 0 {
+				// Neither sealed nor dropped (ut-docs#6088): the row waits in
+				// cloud_outbox_held, out of the uploader's rescans.
+				return sealedRefs, r.outbox.DeleteMark(ctx, tx, m.ID)
+			}
 		}
 		ch.Op, ch.CloudID = opUpdate, link.CloudID
 		ch.Before, ch.After = map[string]json.RawMessage{}, map[string]json.RawMessage{}
@@ -584,6 +636,9 @@ func (r *runner) applyAnswer(ctx context.Context, tx *sql.Tx, m data.OutboxMark,
 		if gone, err := r.adoptForLocalDelete(ctx, tx, m, ch, a, gen); err != nil || gone {
 			return err
 		}
+	}
+	if err := r.holdWithheld(ctx, tx, m, ch, a); err != nil {
+		return err
 	}
 	forced := a.Status == statusConflict
 	if !forced {

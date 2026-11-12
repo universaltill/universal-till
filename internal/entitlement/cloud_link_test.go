@@ -65,8 +65,8 @@ func TestBlockValuesCloudLinkDefaultsToPeriodic(t *testing.T) {
 	if got[KeyCloudLinkMode] != "" {
 		t.Fatalf("cloud_link mode = %q, want empty", got[KeyCloudLinkMode])
 	}
-	if len(got) != 9 {
-		t.Fatalf("Values returned %d keys, want exactly 9: %v", len(got), got)
+	if len(got) != 10 {
+		t.Fatalf("Values returned %d keys, want exactly 10: %v", len(got), got)
 	}
 }
 

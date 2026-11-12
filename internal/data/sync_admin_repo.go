@@ -543,6 +543,7 @@ var nonAdminTables = map[string]string{
 	"cloud_apply_failures":    "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
 	"cloud_retired":           "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
 	"cloud_outbox":            "the main till's catalogue edits not yet answered by the cloud — main-till upload bookkeeping, never synced (ut-docs#4464)",
+	"cloud_outbox_held":       "catalogue edits waiting for a cloud that accepts their fields, kept off cloud_outbox so the uploader never rescans them — main-till upload bookkeeping, never synced (ut-docs#6088)",
 	"cloud_outbox_suppress":   "a flag row that lives only inside the pull's own write transaction — never synced (ut-docs#4464)",
 	"stock_upload_outbox":     "the main till's changed on-hand rows not yet answered by the cloud — main-till upload bookkeeping, never synced (ut-docs#4763)",
 	"stock_upload_state":      "this till's stock-upload stream id (the identity of its movement sequence) — main-till upload bookkeeping, never synced (ut-docs#4763)",

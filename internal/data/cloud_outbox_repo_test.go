@@ -252,3 +252,141 @@ func TestCloudOutboxInFlightAndBaselessLinks(t *testing.T) {
 		t.Fatalf("after a = %+v, want d", got)
 	}
 }
+
+// ut-docs#6088: cloud_outbox_held keeps a row's edits that the cloud's change
+// upload cannot take yet. HoldMark keeps the earliest created_at, so a held
+// edit still ages from its first edit (ADR-0162 §5's age bound).
+func TestHoldMarkKeepsEarliestCreatedAt(t *testing.T) {
+	d := openMigratedDB(t, "outbox-hold.db")
+	db, ctx, r := d.DB, context.Background(), NewCloudOutboxRepo()
+	if err := r.HoldMark(ctx, db, "item", "i1", "2026-11-02T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.HoldMark(ctx, db, "item", "i1", "2026-11-05T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	if err := db.QueryRow(`SELECT created_at FROM cloud_outbox_held WHERE entity = 'item' AND local_id = 'i1'`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "2026-11-02T10:00:00Z" {
+		t.Fatalf("created_at = %q, want the earliest", got)
+	}
+	if n, _ := r.CountHeld(ctx, db); n != 1 {
+		t.Fatalf("CountHeld = %d, want 1", n)
+	}
+	if ok, _ := r.HasHeld(ctx, db, "item", "i1"); !ok {
+		t.Fatal("HasHeld = false")
+	}
+	if ok, _ := r.HasMark(ctx, db, "item", "i1"); ok {
+		t.Fatal("a held row is not an outbox mark (HasMark must stay false)")
+	}
+	if err := r.DeleteHeld(ctx, db, "item", "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := r.HasHeld(ctx, db, "item", "i1"); ok {
+		t.Fatal("HasHeld after DeleteHeld = true")
+	}
+}
+
+// Releasing held rows opens a mark for each (oldest first), merges into a
+// row's already-open mark keeping the earlier created_at, leaves a sealed
+// mark alone, and empties the held table.
+func TestReleaseHeldMergesIntoOpenMark(t *testing.T) {
+	d := openMigratedDB(t, "outbox-release.db")
+	db, ctx, r := d.DB, context.Background(), NewCloudOutboxRepo()
+	obExec(t, db, `INSERT INTO cloud_outbox (entity, local_id, created_at) VALUES ('item', 'open-newer', '2026-11-09T00:00:00Z')`)
+	obExec(t, db, `INSERT INTO cloud_outbox (entity, local_id, created_at) VALUES ('item', 'open-older', '2026-11-01T00:00:00Z')`)
+	obExec(t, db, `INSERT INTO cloud_outbox (entity, local_id, created_at, change_id, body, sealed_at, seal_seq) VALUES ('item', 'sealed', '2026-11-08T00:00:00Z', 'c1', '{}', '2026-11-08T00:00:00Z', 1)`)
+	for _, h := range [][2]string{{"open-newer", "2026-11-03T00:00:00Z"}, {"open-older", "2026-11-05T00:00:00Z"}, {"sealed", "2026-11-04T00:00:00Z"}, {"fresh-b", "2026-11-07T00:00:00Z"}, {"fresh-a", "2026-11-06T00:00:00Z"}} {
+		if err := r.HoldMark(ctx, db, "item", h[0], h[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := r.ReleaseHeld(ctx, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Fatalf("ReleaseHeld = %d, want 5", n)
+	}
+	if c, _ := r.CountHeld(ctx, db); c != 0 {
+		t.Fatalf("held rows left = %d", c)
+	}
+	created := map[string]string{}
+	rows, err := db.Query(`SELECT local_id, created_at FROM cloud_outbox WHERE sealed_at IS NULL ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var order []string
+	for rows.Next() {
+		var id, at string
+		if err := rows.Scan(&id, &at); err != nil {
+			t.Fatal(err)
+		}
+		created[id] = at
+		order = append(order, id)
+	}
+	want := map[string]string{
+		"open-newer": "2026-11-03T00:00:00Z", // the held edit is older: it wins
+		"open-older": "2026-11-01T00:00:00Z", // the open mark is older: it stays
+		"fresh-a":    "2026-11-06T00:00:00Z",
+		"fresh-b":    "2026-11-07T00:00:00Z",
+		"sealed":     "2026-11-04T00:00:00Z", // no open mark: one opens beside the sealed one
+	}
+	if len(created) != len(want) {
+		t.Fatalf("open marks = %v, want %v", created, want)
+	}
+	for id, at := range want {
+		if created[id] != at {
+			t.Errorf("open mark %s created_at = %q, want %q", id, created[id], at)
+		}
+	}
+	// Newly opened marks are in created_at order (the oldest edit uploads first).
+	pos := map[string]int{}
+	for i, id := range order {
+		pos[id] = i
+	}
+	if !(pos["sealed"] < pos["fresh-a"] && pos["fresh-a"] < pos["fresh-b"]) {
+		t.Errorf("new open marks not in created_at order: %v", order)
+	}
+}
+
+// Reseal swaps a sealed mark's change_id and body in place, keeping its
+// seal_seq (the reference order) and sealed_at; an open mark is not resealed.
+func TestResealKeepsSealSeq(t *testing.T) {
+	d := openMigratedDB(t, "outbox-reseal.db")
+	db, ctx, r := d.DB, context.Background(), NewCloudOutboxRepo()
+	obExec(t, db, `INSERT INTO cloud_outbox (entity, local_id, created_at, change_id, body, sealed_at, seal_seq) VALUES ('item', 'a', '2026-11-08T00:00:00Z', 'c1', '{"old":1}', '2026-11-08T01:00:00Z', 7)`)
+	obExec(t, db, `INSERT INTO cloud_outbox (entity, local_id, created_at) VALUES ('item', 'b', '2026-11-08T00:00:00Z')`)
+	var sealedID, openID int64
+	if err := db.QueryRow(`SELECT id FROM cloud_outbox WHERE local_id = 'a'`).Scan(&sealedID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT id FROM cloud_outbox WHERE local_id = 'b'`).Scan(&openID); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := r.Reseal(ctx, db, sealedID, "c2", `{"new":1}`)
+	if err != nil || !ok {
+		t.Fatalf("Reseal = %v, %v", ok, err)
+	}
+	var cid, body, at string
+	var seq int64
+	if err := db.QueryRow(`SELECT change_id, body, sealed_at, seal_seq FROM cloud_outbox WHERE id = ?`, sealedID).Scan(&cid, &body, &at, &seq); err != nil {
+		t.Fatal(err)
+	}
+	if cid != "c2" || body != `{"new":1}` || at != "2026-11-08T01:00:00Z" || seq != 7 {
+		t.Fatalf("resealed = %q %q %q %d", cid, body, at, seq)
+	}
+	if ok, err := r.Reseal(ctx, db, openID, "c3", `{}`); err != nil || ok {
+		t.Fatalf("Reseal of an open mark = %v, %v; want false", ok, err)
+	}
+}

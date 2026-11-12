@@ -185,6 +185,102 @@ func (*CloudOutboxRepo) Counts(ctx context.Context, q SyncQuerier) (open, sealed
 	return open, sealed, nil
 }
 
+// --- cloud_outbox_held (migration 102, ut-docs#6088) ---
+//
+// A row whose only unsent edits are fields the cloud's change upload does
+// not accept yet waits here instead of in cloud_outbox, so the uploader
+// never rescans it each tick. Main-till bookkeeping, never synced.
+
+// HoldMark records that (entity, localID) has edits waiting for a cloud that
+// accepts their fields. createdAt is the first edit's time; a second hold
+// keeps the earlier one, so the edit still ages from its first recording.
+func (*CloudOutboxRepo) HoldMark(ctx context.Context, q SyncQuerier, entity, localID, createdAt string) error {
+	_, err := q.ExecContext(ctx, `
+INSERT INTO cloud_outbox_held (entity, local_id, created_at) VALUES (?, ?, ?)
+ON CONFLICT (entity, local_id) DO UPDATE SET created_at = MIN(created_at, excluded.created_at)`,
+		entity, localID, createdAt)
+	if err != nil {
+		return fmt.Errorf("cloud outbox hold: %w", err)
+	}
+	return nil
+}
+
+// HasHeld reports whether (entity, localID) is held. Deliberately separate
+// from HasMark: a held row is not an upload in flight, and a cloud delete
+// still wins over a held edit (ADR-0162 §5).
+func (*CloudOutboxRepo) HasHeld(ctx context.Context, q SyncQuerier, entity, localID string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM cloud_outbox_held WHERE entity = ? AND local_id = ?`, entity, localID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cloud outbox has held: %w", err)
+	}
+	return true, nil
+}
+
+// DeleteHeld forgets (entity, localID)'s hold.
+func (*CloudOutboxRepo) DeleteHeld(ctx context.Context, q SyncQuerier, entity, localID string) error {
+	if _, err := q.ExecContext(ctx, `DELETE FROM cloud_outbox_held WHERE entity = ? AND local_id = ?`, entity, localID); err != nil {
+		return fmt.Errorf("cloud outbox delete held: %w", err)
+	}
+	return nil
+}
+
+// CountHeld returns the number of held rows.
+func (*CloudOutboxRepo) CountHeld(ctx context.Context, q SyncQuerier) (int, error) {
+	var n int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloud_outbox_held`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("cloud outbox held count: %w", err)
+	}
+	return n, nil
+}
+
+// ReleaseHeld moves every held row back into cloud_outbox as an open mark
+// (the accepted set changed, so they may upload now) and empties the held
+// table; it returns how many rows it released. A row that already has an
+// open mark keeps the earlier of the two created_at values; a sealed mark is
+// left alone (the in-flight rule makes the new open mark wait for it). New
+// marks open oldest edit first.
+func (*CloudOutboxRepo) ReleaseHeld(ctx context.Context, tx *sql.Tx) (int, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloud_outbox_held`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("cloud outbox release held: %w", err)
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE cloud_outbox SET created_at = (SELECT MIN(cloud_outbox.created_at, h.created_at) FROM cloud_outbox_held h WHERE h.entity = cloud_outbox.entity AND h.local_id = cloud_outbox.local_id)
+WHERE sealed_at IS NULL AND EXISTS (SELECT 1 FROM cloud_outbox_held h WHERE h.entity = cloud_outbox.entity AND h.local_id = cloud_outbox.local_id)`); err != nil {
+		return 0, fmt.Errorf("cloud outbox release held: merge: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO cloud_outbox (entity, local_id, created_at)
+SELECT h.entity, h.local_id, h.created_at FROM cloud_outbox_held h
+WHERE NOT EXISTS (SELECT 1 FROM cloud_outbox o WHERE o.entity = h.entity AND o.local_id = h.local_id AND o.sealed_at IS NULL)
+ORDER BY h.created_at, h.entity, h.local_id`); err != nil {
+		return 0, fmt.Errorf("cloud outbox release held: open: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cloud_outbox_held`); err != nil {
+		return 0, fmt.Errorf("cloud outbox release held: clear: %w", err)
+	}
+	return n, nil
+}
+
+// Reseal replaces a sealed, unanswered mark's change in place: a new
+// change_id and body, with seal_seq (the reference order) and sealed_at kept.
+// False when the mark is not sealed (any more).
+func (*CloudOutboxRepo) Reseal(ctx context.Context, q SyncQuerier, id int64, changeID, body string) (bool, error) {
+	res, err := q.ExecContext(ctx, `UPDATE cloud_outbox SET change_id = ?, body = ? WHERE id = ? AND sealed_at IS NOT NULL`, changeID, body, id)
+	if err != nil {
+		return false, fmt.Errorf("cloud outbox reseal: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
 // OutboxItem is an item's uploadable local values (contract 1.0.0).
 type OutboxItem struct {
 	Name, Description, SKU string

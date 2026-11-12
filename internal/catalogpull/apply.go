@@ -231,12 +231,17 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 		if link, ok, err = r.links.State(ctx, tx, row.Kind, row.CloudID); err != nil {
 			return nil, err
 		}
-		if ok && !r.forced {
+		// A conflict answer lets the cloud win every field it judged; only
+		// the fields it never saw (withheld, ut-docs#6088) stay pending.
+		if ok && (!r.forced || r.accepted.anyWithheldOf(row.Kind)) {
 			pending, _, err := r.pendingFields(ctx, tx, row.Kind, local, link)
 			if err != nil {
 				return nil, err
 			}
 			for name := range pending {
+				if r.forced && r.accepted.accepts(row.Kind, name) {
+					continue
+				}
 				delete(f, name)
 			}
 		}
