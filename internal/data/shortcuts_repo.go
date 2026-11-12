@@ -18,9 +18,12 @@ func NewShortcutsRepo(db *sql.DB) *ShortcutsRepo {
 var shortcutsObs = newRepoObservability("shortcuts")
 
 type ShortcutButton struct {
-	Label      string
-	Barcode    string
-	ItemID     string
+	Label   string
+	Barcode string
+	ItemID  string
+	// ImageURL is read-only: loadButtons fills it from the item's thumbnail.
+	// No write method stores it (shortcut_buttons.image_path is a legacy,
+	// never-written column since ut-docs#6097).
 	ImageURL   string
 	Price      int64  // item base price in minor units, for display on the tile
 	CategoryID string // the item's category, empty when uncategorized
@@ -66,7 +69,8 @@ func (r *ShortcutsRepo) loadButtons(ctx context.Context, op string, withHidden b
 	// the picture: neither clear path (CatalogRepo.ClearItemPhoto /
 	// ClearItemThumbnail) knows about it, and the demo seed froze each
 	// item's bundled thumb there, so a cleared item kept its stock photo on
-	// the tile. A photo-less item shows no picture, as on every other surface.
+	// the tile. No code path writes it any more (ut-docs#6097). A photo-less
+	// item shows no picture, as on every other surface.
 	// INNER JOIN (not LEFT) is deliberate (ut-docs#2281 cause A): a button
 	// whose item was soft-deleted (is_active=0, Catalog "Delete item") or
 	// whose item row is gone entirely must not come back as a tile — it
@@ -137,7 +141,7 @@ func (r *ShortcutsRepo) SaveButtons(ctx context.Context, list []ShortcutButton) 
 		err = shortcutsObs.wrap("save_buttons", err)
 		return err
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order) VALUES(?,?,?,?,?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES(?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		err = shortcutsObs.wrap("save_buttons", err)
@@ -145,7 +149,7 @@ func (r *ShortcutsRepo) SaveButtons(ctx context.Context, list []ShortcutButton) 
 	}
 	defer stmt.Close()
 	for i, b := range list {
-		if _, err := stmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL), i); err != nil {
+		if _, err := stmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID, i); err != nil {
 			tx.Rollback()
 			err = shortcutsObs.wrap("save_buttons", err)
 			return err
@@ -209,8 +213,8 @@ func (r *ShortcutsRepo) MaterializeAndReorder(ctx context.Context, materialize [
 		return err
 	}
 	if len(materialize) > 0 {
-		insertStmt, ierr := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
-VALUES(?,?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
+		insertStmt, ierr := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order)
+VALUES(?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
 ON CONFLICT(barcode) DO NOTHING`)
 		if ierr != nil {
 			tx.Rollback()
@@ -218,7 +222,7 @@ ON CONFLICT(barcode) DO NOTHING`)
 			return err
 		}
 		for _, b := range materialize {
-			if _, ierr := insertStmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL)); ierr != nil {
+			if _, ierr := insertStmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID); ierr != nil {
 				insertStmt.Close()
 				tx.Rollback()
 				err = shortcutsObs.wrap("materialize_and_reorder", ierr)
@@ -253,7 +257,7 @@ ON CONFLICT(barcode) DO NOTHING`)
 // transaction:
 //
 //   - if the item already has a shortcut_buttons row, that row is kept --
-//     its code and its sort position -- and only its label/image are
+//     its code and its sort position -- and only its label is
 //     refreshed (ut-docs#2698 review F1). Hide keeps the row and search
 //     offers "Add to quick buttons" on a hidden result; the item's
 //     resolvable tile code may have changed since the row was written (a
@@ -297,13 +301,13 @@ func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 	var existing string
 	switch qerr := tx.QueryRowContext(ctx, `SELECT barcode FROM shortcut_buttons WHERE item_id = ? ORDER BY sort_order, barcode LIMIT 1`, b.ItemID).Scan(&existing); {
 	case qerr == nil:
-		_, err = tx.ExecContext(ctx, `UPDATE shortcut_buttons SET label = ?, image_path = ?, updated_at = datetime('now') WHERE barcode = ?`,
-			b.Label, nullIfEmptyButton(b.ImageURL), existing)
+		_, err = tx.ExecContext(ctx, `UPDATE shortcut_buttons SET label = ?, updated_at = datetime('now') WHERE barcode = ?`,
+			b.Label, existing)
 	case errors.Is(qerr, sql.ErrNoRows):
-		_, err = tx.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
-VALUES(?,?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
-ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path, updated_at=datetime('now')`,
-			b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL))
+		_, err = tx.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order)
+VALUES(?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
+ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, updated_at=datetime('now')`,
+			b.Barcode, b.Label, b.ItemID)
 	default:
 		err = qerr
 	}
@@ -383,11 +387,4 @@ func (r *ShortcutsRepo) ExistingBarcodes(ctx context.Context, codes []string) (m
 		}
 	}
 	return out, nil
-}
-
-func nullIfEmptyButton(s string) any {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	return s
 }

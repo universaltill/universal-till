@@ -830,10 +830,9 @@ func (r SearchResult) AddVals() string {
 		code = r.SKU
 	}
 	b, _ := json.Marshal(map[string]string{
-		"label":    r.Name,
-		"code":     code,
-		"itemId":   r.ItemID,
-		"imageUrl": r.Image,
+		"label":  r.Name,
+		"code":   code,
+		"itemId": r.ItemID,
 	})
 	return string(b)
 }
@@ -1284,10 +1283,9 @@ func (s *ButtonStore) Save(list []Button) error {
 	var repoButtons []data.ShortcutButton
 	for _, b := range list {
 		repoButtons = append(repoButtons, data.ShortcutButton{
-			Label:    b.Label,
-			Barcode:  b.Code,
-			ItemID:   b.ItemID,
-			ImageURL: b.ImageURL,
+			Label:   b.Label,
+			Barcode: b.Code,
+			ItemID:  b.ItemID,
 		})
 	}
 	return s.repo.SaveButtons(context.Background(), repoButtons)
@@ -1631,10 +1629,9 @@ func (s *ButtonStore) Add(btn Button) error {
 	// transaction -- adding a tile for a hidden or removed item puts it back.
 	ctx := context.Background()
 	if err := s.repo.AddButton(ctx, data.ShortcutButton{
-		Label:    btn.Label,
-		Barcode:  btn.Code,
-		ItemID:   btn.ItemID,
-		ImageURL: btn.ImageURL,
+		Label:   btn.Label,
+		Barcode: btn.Code,
+		ItemID:  btn.ItemID,
 	}); err != nil {
 		return err
 	}
@@ -2407,16 +2404,13 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	itemID := strings.TrimSpace(r.Form.Get("itemId"))
-	img := strings.TrimSpace(r.Form.Get("imageUrl"))
-	if img != "" && !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") && !strings.HasPrefix(img, "/public/") {
-		// Treat as filename in local images folder
-		img = "/public/images/" + img
-	}
+	// ut-docs#6097: an "imageUrl" field is deliberately ignored (like any
+	// unknown form field), not refused: older Designers and satellites
+	// still send it, and the tile picture comes from the item's thumbnail.
 	err := h.Store.Add(Button{
-		Label:    r.Form.Get("label"),
-		Code:     r.Form.Get("code"),
-		ItemID:   itemID,
-		ImageURL: img,
+		Label:  r.Form.Get("label"),
+		Code:   r.Form.Get("code"),
+		ItemID: itemID,
 	})
 	if err != nil {
 		// ut-docs#1220: a raw http.Error(w, err.Error(), 400) here was

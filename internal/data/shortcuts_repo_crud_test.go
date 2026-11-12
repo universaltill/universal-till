@@ -231,7 +231,7 @@ func TestAddButton_ReusesTheItemsExistingRow(t *testing.T) {
 		}
 		got = append(got, r)
 	}
-	want := row{"SKU-A", "Latte Large", 1, "/public/images/latte.png"}
+	want := row{"SKU-A", "Latte Large", 1, ""} // image_path never written (ut-docs#6097)
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("want exactly one kept row %+v, got %+v", want, got)
 	}

@@ -43,6 +43,7 @@ func TestSnapshotItemIcon(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]any{}
+	stored := map[string]any{}
 	for _, it := range cloud.snapshots[0]["items"].([]any) {
 		m := it.(map[string]any)
 		v, ok := m["icon"]
@@ -50,11 +51,25 @@ func TestSnapshotItemIcon(t *testing.T) {
 			t.Fatalf("item %v has no icon field", m["id"])
 		}
 		got[m["id"].(string)] = v
+		// ut-docs#6028: the raw stored icon, present on every item row.
+		sv, ok := m["icon_stored"]
+		if !ok {
+			t.Fatalf("item %v has no icon_stored field", m["id"])
+		}
+		stored[m["id"].(string)] = sv
 	}
 	want := map[string]any{"it-icon": "lucide:beer", "it-tile": "lucide:coffee", "it-photo": "", "it-photo-icon": "", "it-none": ""}
 	for id, w := range want {
 		if got[id] != w {
 			t.Errorf("%s icon = %v, want %q", id, got[id], w)
+		}
+	}
+	// icon_stored is the raw items.icon even while a photo hides it; a lone
+	// library tile reports its id in icon and "" here.
+	wantStored := map[string]any{"it-icon": "lucide:beer", "it-tile": "", "it-photo": "", "it-photo-icon": "lucide:beer", "it-none": ""}
+	for id, w := range wantStored {
+		if stored[id] != w {
+			t.Errorf("%s icon_stored = %v, want %q", id, stored[id], w)
 		}
 	}
 }
