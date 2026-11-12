@@ -128,6 +128,31 @@ EOS
 expect_pass "HTML and Go-template comments across lines"
 
 reset_tree
+printf '%s\n' "// fetch /api/*" "confirm('x')" >"${PUB}/app.js"
+expect_fail "a confirm() after a // comment that contains /*"
+
+reset_tree
+printf '%s\n' '<input type="file" accept="image/*">' "<button onclick=\"confirm('x')\">x</button>" >"${UI}/pages/p.html"
+expect_fail "a confirm() after an accept=\"image/*\" attribute"
+
+reset_tree
+printf '%s\n' "x(); // see /* here" "confirm('x')" >"${PUB}/app.js"
+expect_fail "a confirm() after a trailing // comment that contains /*"
+
+reset_tree
+cat >"${PUB}/app.js" <<'EOS'
+/* a block comment
+   confirm('x')
+   ends here */
+d.show();
+EOS
+expect_pass "a real multi-line /* */ block comment"
+
+reset_tree
+printf '%s\n' "{{/* confirm( */}}" "<p>ok</p>" >"${UI}/partials/c.html"
+expect_pass "a one-line {{/* confirm( */}} template comment"
+
+reset_tree
 printf '%s\n' "window.confirm('x');" >"${PUB}/vendor/lib.js"
 expect_pass "web/public/vendor"
 
