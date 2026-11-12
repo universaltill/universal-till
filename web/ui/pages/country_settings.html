@@ -320,7 +320,7 @@
      a boosted submit. */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="is_builtin=1"
-      hx-confirm="{{ T "countrysettings.reset_confirm" }}"
+      hx-confirm="{{ T "countrysettings.reset_confirm" }}" data-confirm-ok="{{ T "countrysettings.reset" }}"
       hx-boost="true" hx-target="#country-dialog-msg" hx-swap="innerHTML">
   <button type="submit" class="btn secondary btn-icon"
           aria-label="{{ T "countrysettings.reset" }}" title="{{ T "countrysettings.reset" }}">
@@ -328,7 +328,7 @@
   </button>
 </form>
 <form method="post" data-record-destructive-form data-record-when="is_builtin=0"
-      hx-confirm="{{ T "countrysettings.delete_confirm" }}"
+      hx-confirm="{{ T "countrysettings.delete_confirm" }}" data-confirm-ok="{{ T "countrysettings.delete" }}"
       hx-boost="true" hx-target="#country-dialog-msg" hx-swap="innerHTML">
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"
           aria-label="{{ T "countrysettings.delete" }}" title="{{ T "countrysettings.delete" }}">

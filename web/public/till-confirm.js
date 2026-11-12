@@ -18,7 +18,9 @@
  * Do not move it to body or to the capture phase.
  *
  * No user-facing strings here: the question comes from the opener (already
- * translated in its template) and the button labels from the shell.
+ * translated in its template) and the button labels from the opener's
+ * data-confirm-ok / data-confirm-dismiss (already translated in its
+ * template), else the shell's defaults.
  */
 (function () {
   'use strict';
@@ -55,6 +57,7 @@
   // UT.confirm(question, opts) -> Promise<boolean>
   //   opts.tone    'danger' (default) | 'neutral'
   //   opts.ok      already-translated Confirm label (else the shell's)
+  //   opts.dismiss already-translated Cancel label (else the shell's)
   //   opts.opener  element to give focus back to
   window.UT = window.UT || {};
   window.UT.confirm = function (question, opts) {
@@ -72,6 +75,8 @@
       okBtn.classList.toggle('danger', !neutral);
       okBtn.classList.toggle('primary', neutral);
       okBtn.textContent = opts.ok || okBtn.getAttribute('data-default-label') || okBtn.textContent;
+      // Reset on every ask like ok: "Keep order" must not leak into the next question.
+      cancelBtn.textContent = opts.dismiss || cancelBtn.getAttribute('data-default-label') || cancelBtn.textContent;
       dlg.removeAttribute('data-armed');
       dlg.show();
       focusIt(neutral ? okBtn : cancelBtn);
@@ -120,6 +125,7 @@
     var elt = d.elt;
     var toneEl = elt && elt.closest ? elt.closest('[data-confirm-tone]') : null;
     var okEl = elt && elt.closest ? elt.closest('[data-confirm-ok]') : null;
+    var dismissEl = elt && elt.closest ? elt.closest('[data-confirm-dismiss]') : null;
     // The focused element is the opener only when it belongs to this request
     // (a button inside the hx-confirm carrier); focus left in a search box
     // must not get focus back on Cancel or steer the poll guard.
@@ -129,6 +135,7 @@
     window.UT.confirm(d.question, {
       tone: toneEl && toneEl.getAttribute('data-confirm-tone') === 'neutral' ? 'neutral' : 'danger',
       ok: okEl ? okEl.getAttribute('data-confirm-ok') : '',
+      dismiss: dismissEl ? dismissEl.getAttribute('data-confirm-dismiss') : '',
       opener: opener
     }).then(function (ok) {
       if (!ok) return;

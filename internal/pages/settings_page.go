@@ -288,9 +288,10 @@ func writeKeptDemoItemsHTML(b *strings.Builder, locale string, items []data.Kept
 		case data.KeptReasonEdited:
 			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_edited")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-remove-anyway" `+
-				`hx-post="/api/settings/demo-item/%s/remove" hx-confirm="%s" `+
+				`hx-post="/api/settings/demo-item/%s/remove" hx-confirm="%s" data-confirm-ok="%s" `+
 				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
 				id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_confirm")),
+				html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")),
 				html.EscapeString(demoItemMsgSelector(it.ID)), html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-keep-own" `+
 				`hx-post="/api/settings/demo-item/%s/keep" `+
@@ -392,9 +393,10 @@ func writeKeptDemoPromosHTML(b *strings.Builder, locale string, promos []data.Ke
 		case data.KeptReasonEdited:
 			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_promo_edited")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-promo-remove-anyway" `+
-				`hx-post="/api/settings/demo-promo/%s/remove" hx-confirm="%s" `+
+				`hx-post="/api/settings/demo-promo/%s/remove" hx-confirm="%s" data-confirm-ok="%s" `+
 				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
 				code, html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_confirm")),
+				html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_btn")),
 				html.EscapeString(demoPromoMsgSelector(p.Code)), html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_btn")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-promo-keep-own" `+
 				`hx-post="/api/settings/demo-promo/%s/keep" `+

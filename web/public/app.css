@@ -3143,7 +3143,12 @@ body.osk-padded #table-add-modal .modifier-actions {
     inset-block-end: calc(var(--osk-reserved-height, 17rem) + .5rem);
     max-block-size: calc(100vh - var(--osk-reserved-height, 17rem) - 11.5rem);
     max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 11.5rem); }
-  #ut-confirm .modifier-actions .btn { flex: 1 1 0; }
+  /* ut-docs#6117: verb labels ("Promote this till", de "Bestellung
+     stornieren") can be longer than half a 360px row. A 7.5rem basis
+     keeps the short Cancel/Confirm pair side by side at 360px; a long label
+     wraps inside its button and the target never drops below 44px. */
+  #ut-confirm .modifier-actions .btn { flex: 1 1 7.5rem; min-block-size: 44px;
+    white-space: normal; overflow-wrap: anywhere; text-align: center; }
 }
 /* ut-docs#6149: the dialog always moves focus to exactly one button (the safe
    one; OK when neutral) so Enter's target is known. A pointer/touch open gets

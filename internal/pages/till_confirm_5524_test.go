@@ -52,6 +52,7 @@ func TestBase_TillConfirmShell(t *testing.T) {
 		`data-ut-confirm="cancel"`, `data-ut-confirm="ok"`,
 		`{{ T "common.cancel" }}`, `{{ T "common.confirm" }}`,
 		`data-default-label="{{ T "common.confirm" }}"`,
+		`data-default-label="{{ T "common.cancel" }}"`,
 		`id="ut-confirm-msg"`, `aria-labelledby="ut-confirm-msg"`,
 	} {
 		if !strings.Contains(dlg, want) {

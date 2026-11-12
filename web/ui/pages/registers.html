@@ -99,7 +99,7 @@
      form, surfaced the same in-dialog way as any other refusal. */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "registers.deactivate_confirm" }}"
+      hx-confirm="{{ T "registers.deactivate_confirm" }}" data-confirm-ok="{{ T "registers.deactivate" }}"
       hx-boost="true" hx-target="#register-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"
