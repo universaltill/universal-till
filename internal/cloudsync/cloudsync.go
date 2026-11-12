@@ -1878,6 +1878,12 @@ type snapshotItemRow struct {
 	// path and items.icon, the same read the category report uses
 	// (ut-docs#2717), so my. draws and preselects what the till draws.
 	Icon string `json:"icon"`
+	// IconStored (ut-docs#6028) is the raw items.icon, "" for none — set
+	// even while a photo hides it (Icon above is the displayed one), so my.'s
+	// picker shows the icon actually stored; the item counterpart of the
+	// categories report's icon_stored (ut-docs#3585). A lone library tile
+	// reports its id in Icon and "" here, as for categories.
+	IconStored string `json:"icon_stored"`
 	// EverSold (ut-docs#3317) is true once the item or one of its variants
 	// has a sale line here (live or archived). my. offers Delete only while
 	// it is false; the cloud keeps it true once any till reported it.
@@ -2036,6 +2042,7 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB, 
 			Variants:     make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256:  ServedImageSHA256(thumbs[it.ID]),
 			Icon:         iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
+			IconStored:   it.Icon,
 			SellScreen:   it.SellScreen,
 		}
 		if len(it.Barcodes) > 0 {
