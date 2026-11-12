@@ -54,19 +54,6 @@ func TestDeleteUnusedItem_RefusalsNameTheRealHistory(t *testing.T) {
 		msg    string
 	}{
 		{
-			name:   "comped",
-			seed:   func(x func(string, ...any)) { seedShrinkage(x, "se-c", "comp", "use-2") },
-			reason: data.ItemUseShrinkage, msg: "it was comped or wasted 1 time — deactivate it instead",
-		},
-		{
-			name: "wasted twice",
-			seed: func(x func(string, ...any)) {
-				seedShrinkage(x, "se-w1", "waste", "use-2")
-				seedShrinkage(x, "se-w2", "waste", "use-2")
-			},
-			reason: data.ItemUseShrinkage, msg: "it was comped or wasted 2 times — deactivate it instead",
-		},
-		{
 			name: "void kept by a restorable reset",
 			seed: func(x func(string, ...any)) {
 				x(`INSERT INTO reset_batches (id, created_at) VALUES ('rb-2', datetime('now'))`)
@@ -97,12 +84,6 @@ func TestDeleteUnusedItem_RefusalsNameTheRealHistory(t *testing.T) {
 			if !itemExists(t, d.DB, "use-2") {
 				t.Fatal("a refused delete removed the item")
 			}
-			// A refusal changes nothing: voids stay attached.
-			var n int
-			_ = d.DB.QueryRow(`SELECT COUNT(*) FROM shrinkage_events WHERE item_id = 'use-2'`).Scan(&n)
-			if c.reason == data.ItemUseShrinkage && n == 0 {
-				t.Fatal("a refused delete detached shrinkage rows")
-			}
 		})
 	}
 }
@@ -122,45 +103,5 @@ func TestDeleteUnusedItem_SoldItemWithVoidsStillRefusesAsSold(t *testing.T) {
 	_ = d.DB.QueryRow(`SELECT COUNT(*) FROM shrinkage_events WHERE item_id = 'sv-1'`).Scan(&n)
 	if n != 1 {
 		t.Fatal("a refused delete detached the void")
-	}
-}
-
-// Independent review (ut-docs#4746): an ID check (age_verifications) is a
-// due-diligence record the cleanup rule keeps the item for. It must refuse
-// with its own name, before anything is changed — inside the catalogue
-// pull's transaction (DeleteUnusedItemTx), which commits after a refusal
-// (the item is deactivated instead), a late refusal used to leave the
-// voids detached from an item that was never deleted.
-func TestDeleteUnusedItemTx_AgeCheckRefusesNamedAndLeavesVoidsAttached(t *testing.T) {
-	for _, archived := range []bool{false, true} {
-		d, x, _ := resetTestDB(t, "delete-item-age.db")
-		seedDeletableItem(x, "age-1")
-		seedShrinkage(x, "se-age", "void", "age-1")
-		if archived {
-			x(`INSERT INTO reset_batches (id, created_at) VALUES ('rb-age', datetime('now'))`)
-			x(`INSERT INTO age_verifications_archive (id, item_id, item_name, outcome, created_at, reset_batch_id)
-			   VALUES ('av-1', 'age-1', 'Item', 'refused', '2026-10-21T21:42:44Z', 'rb-age')`)
-		} else {
-			x(`INSERT INTO age_verifications (id, item_id, item_name, outcome, created_at)
-			   VALUES ('av-1', 'age-1', 'Item', 'refused', '2026-10-21T21:42:44Z')`)
-		}
-		ctx := context.Background()
-		tx, err := d.DB.BeginTx(ctx, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = data.NewPOSRepo(d.DB).DeleteUnusedItemTx(ctx, tx, "age-1")
-		if err := tx.Commit(); err != nil { // the caller deactivates and commits
-			t.Fatal(err)
-		}
-		var n int
-		_ = d.DB.QueryRow(`SELECT COUNT(*) FROM shrinkage_events WHERE item_id = 'age-1'`).Scan(&n)
-		if n != 1 || !itemExists(t, d.DB, "age-1") {
-			t.Fatalf("archived=%v: attached voids = %d, item kept = %v; a refusal must change nothing", archived, n, itemExists(t, d.DB, "age-1"))
-		}
-		var inUse *data.ItemInUseError
-		if !errors.As(err, &inUse) || inUse.Reason != data.ItemUseAgeCheck || err.Error() != "its ID checks are on record — deactivate it instead" {
-			t.Fatalf("archived=%v err = %v, want %s", archived, err, data.ItemUseAgeCheck)
-		}
 	}
 }

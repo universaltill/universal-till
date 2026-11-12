@@ -21,12 +21,14 @@ import (
 const (
 	ItemUseSold         = "sold"
 	ItemUseStockHistory = "stock_history"
-	// ItemUseShrinkage: a live comp or waste (a void is not history, see
-	// DeleteUnusedItem). ItemUseArchivedShrinkage: any shrinkage row in a
-	// transaction-reset archive, which a restore would need the item for.
-	ItemUseShrinkage         = "shrinkage"
+	// ut-docs#4778 (owner rule 2026-10-22: an item that was never sold must
+	// be deletable): live voids, comps, wastes and ID checks no longer
+	// refuse — they are detached (see deleteUnusedItemWrites). Only what a
+	// restore of a transaction reset would need the item for still does:
+	// ItemUseArchivedShrinkage is any shrinkage row in a reset archive,
+	// ItemUseArchivedAgeCheck any ID check in one.
 	ItemUseArchivedShrinkage = "archived_shrinkage"
-	ItemUseAgeCheck          = "age_check"
+	ItemUseArchivedAgeCheck  = "archived_age_check"
 	ItemUseQuickButton       = "quick_button"
 	ItemUseOpenBasket        = "open_basket"
 	ItemUseOpenVouchers      = "open_vouchers"
@@ -39,8 +41,6 @@ type ItemInUseError struct {
 	// Sales is the number of sales (live and archived) with a line for the
 	// item or one of its variants. Set only for ItemUseSold.
 	Sales int64
-	// Count is the number of comp/waste events. Set only for ItemUseShrinkage.
-	Count int64
 }
 
 func (e *ItemInUseError) Error() string {
@@ -52,15 +52,10 @@ func (e *ItemInUseError) Error() string {
 		return fmt.Sprintf("sold %d times — deactivate it instead", e.Sales)
 	case ItemUseStockHistory:
 		return "it has stock history — deactivate it instead"
-	case ItemUseShrinkage:
-		if e.Count == 1 {
-			return "it was comped or wasted 1 time — deactivate it instead"
-		}
-		return fmt.Sprintf("it was comped or wasted %d times — deactivate it instead", e.Count)
 	case ItemUseArchivedShrinkage:
 		return "its voids, comps or wastes sit in an archived reset that can still be restored — deactivate it instead"
-	case ItemUseAgeCheck:
-		return "its ID checks are on record — deactivate it instead"
+	case ItemUseArchivedAgeCheck:
+		return "its ID checks sit in an archived reset that can still be restored — deactivate it instead"
 	case ItemUseQuickButton:
 		return "it is on a quick button — deactivate it instead"
 	case ItemUseOpenVouchers:
@@ -74,8 +69,53 @@ func (e *ItemInUseError) Error() string {
 type ItemDeleteResult struct {
 	Name           string
 	AlreadyDeleted bool
-	// Voids is the number of recorded voids detached from the item.
-	Voids int64
+	// Voids, Comps, Wastes and IDChecks are the numbers of live records
+	// detached from the item (ut-docs#4746, #4778). Their item_name stays, so
+	// the Shrinkage report and the ID-check log keep their totals.
+	Voids, Comps, Wastes, IDChecks int64
+}
+
+// DetachedNote is the audit-log line for what the delete detached, or ""
+// when nothing: "item deleted with 2 voids, 1 waste, 1 ID check".
+func (r ItemDeleteResult) DetachedNote() string {
+	var parts []string
+	for _, k := range []struct {
+		n         int64
+		one, many string
+	}{
+		{r.Voids, "void", "voids"},
+		{r.Comps, "comp", "comps"},
+		{r.Wastes, "waste", "wastes"},
+		{r.IDChecks, "ID check", "ID checks"},
+	} {
+		switch {
+		case k.n == 1:
+			parts = append(parts, "1 "+k.one)
+		case k.n > 1:
+			parts = append(parts, fmt.Sprintf("%d %s", k.n, k.many))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "item deleted with " + strings.Join(parts, ", ")
+}
+
+// AddDetachedToAudit adds the detached counts (voids, comps, wastes,
+// id_checks, each only when > 0) and the DetachedNote to an audit payload.
+// Both delete paths (the delete_item directive and the catalogue tombstone)
+// use it so their audit rows read alike.
+func (r ItemDeleteResult) AddDetachedToAudit(audit map[string]any) {
+	note := r.DetachedNote()
+	if note == "" {
+		return
+	}
+	for k, n := range map[string]int64{"voids": r.Voids, "comps": r.Comps, "wastes": r.Wastes, "id_checks": r.IDChecks} {
+		if n > 0 {
+			audit[k] = n
+		}
+	}
+	audit["note"] = note
 }
 
 // itemSalesCountSQL counts the sales (live, and archived by a transaction
@@ -104,14 +144,13 @@ SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ? AND quantity <> 0
 // once the item is gone. Takes the item id once.
 const itemArchivedShrinkageSQL = `SELECT EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
 
-// itemAgeCheckSQL: an ID check recorded for the item, live or archived
-// (age_verifications, ut-docs#3340) — due-diligence evidence the cleanup
-// rule (obsoleteItemsPredicate) keeps the item for. Checked by name before
-// anything changes (independent review of ut-docs#4746). Takes the item id
-// twice.
-const itemAgeCheckSQL = `
-SELECT EXISTS (SELECT 1 FROM age_verifications WHERE item_id = ?)
-    OR EXISTS (SELECT 1 FROM age_verifications_archive WHERE item_id = ?)`
+// itemAgeCheckSQL: an ID check in a transaction-reset archive
+// (age_verifications_archive, ut-docs#3340): a restore of that batch would
+// need the item (ErrArchiveReferencesRemoved), so it refuses by name before
+// anything changes (independent review of ut-docs#4746). LIVE ID checks do
+// not refuse any more (ut-docs#4778): they are detached with the item. Takes
+// the item id once.
+const itemAgeCheckSQL = `SELECT EXISTS (SELECT 1 FROM age_verifications_archive WHERE item_id = ?)`
 
 // itemOpenVouchersSQL (ut-docs#4259): a gift voucher item while the shop
 // has any active voucher. A voucher sold through the item is never a sale
@@ -212,7 +251,7 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 	}{
 		{itemStockHistorySQL, 4, ItemUseStockHistory},
 		{itemArchivedShrinkageSQL, 1, ItemUseArchivedShrinkage},
-		{itemAgeCheckSQL, 2, ItemUseAgeCheck},
+		{itemAgeCheckSQL, 1, ItemUseArchivedAgeCheck},
 		{`SELECT EXISTS (SELECT 1 FROM shortcut_buttons WHERE item_id = ?)`, 1, ItemUseQuickButton},
 		{itemParkedSQL, 4, ItemUseOpenBasket},
 		{itemOpenVouchersSQL, 1, ItemUseOpenVouchers},
@@ -230,22 +269,15 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 		}
 	}
 
-	// A comp or waste is a real loss record: it keeps the item. A void is
-	// not (ut-docs#4746): the line was taken back before any sale, so the
-	// void rows are detached below and keep their item_name.
-	var comped int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM shrinkage_events WHERE item_id = ? AND reason_category <> 'void'`, itemID).Scan(&comped); err != nil {
-		return res, fmt.Errorf("delete item: shrinkage: %w", err)
-	}
-	if comped > 0 {
-		return res, &ItemInUseError{Reason: ItemUseShrinkage, Count: comped}
-	}
+	// Live voids, comps, wastes and ID checks do not keep the item
+	// (ut-docs#4778, extending #4746): the rows are detached below and keep
+	// their item_name, so the reports keep their totals.
 
 	// Every write below sits in one savepoint: a refusal after it (the
 	// cleanup predicate disagreeing) undoes them even inside a caller's
 	// transaction that commits after a refusal (DeleteUnusedItemTx: the
 	// catalogue pull deactivates instead), so a refused delete never leaves
-	// voids detached from a kept item (independent review, ut-docs#4746).
+	// records detached from a kept item (independent review, ut-docs#4746).
 	if _, err := tx.ExecContext(ctx, `SAVEPOINT delete_unused_item`); err != nil {
 		return res, fmt.Errorf("delete item: savepoint: %w", err)
 	}
@@ -265,11 +297,42 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 // savepoint once every use check passed.
 func deleteUnusedItemWrites(ctx context.Context, tx *sql.Tx, itemID string, res ItemDeleteResult) (ItemDeleteResult, error) {
 	variants := `SELECT id FROM item_variants WHERE item_id = ?`
-	voids, err := tx.ExecContext(ctx, `UPDATE shrinkage_events SET item_id = NULL WHERE item_id = ? AND reason_category = 'void'`, itemID)
+	// ut-docs#4778: count each kind first, then detach them all in one
+	// statement (item_id is nullable in both tables: migrations 035, 056).
+	rows, err := tx.QueryContext(ctx, `SELECT reason_category, COUNT(*) FROM shrinkage_events WHERE item_id = ? GROUP BY reason_category`, itemID)
 	if err != nil {
-		return res, fmt.Errorf("delete item: detach voids: %w", err)
+		return res, fmt.Errorf("delete item: count shrinkage: %w", err)
 	}
-	res.Voids, _ = voids.RowsAffected()
+	for rows.Next() {
+		var cat string
+		var n int64
+		if err := rows.Scan(&cat, &n); err != nil {
+			_ = rows.Close()
+			return res, fmt.Errorf("delete item: count shrinkage: %w", err)
+		}
+		switch cat {
+		case "void":
+			res.Voids = n
+		case "comp":
+			res.Comps = n
+		case "waste":
+			res.Wastes = n
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return res, fmt.Errorf("delete item: count shrinkage: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return res, fmt.Errorf("delete item: count shrinkage: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shrinkage_events SET item_id = NULL WHERE item_id = ?`, itemID); err != nil {
+		return res, fmt.Errorf("delete item: detach shrinkage: %w", err)
+	}
+	checks, err := tx.ExecContext(ctx, `UPDATE age_verifications SET item_id = NULL WHERE item_id = ?`, itemID)
+	if err != nil {
+		return res, fmt.Errorf("delete item: detach ID checks: %w", err)
+	}
+	res.IDChecks, _ = checks.RowsAffected()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM stock_movements WHERE quantity = 0 AND (item_id = ? OR variant_id IN (`+variants+`))`, itemID, itemID); err != nil {
 		return res, fmt.Errorf("delete item: zero movements: %w", err)
 	}
