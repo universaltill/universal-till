@@ -92,7 +92,8 @@ test.describe('Android app: the photo the system camera returns', () => {
     // ut-docs#6151: assert on the file that was actually POSTed, not on the
     // #image-file input. The page clears that input when the upload's
     // RESPONSE arrives, and awaiting the request does not order a read of it
-    // before that, so reading files[0] here flaked (~1/16). (Chromium gives
+    // before that, so reading files[0] here flaked (10/50 under --repeat-each
+    // 50 --workers 4). (Chromium gives
     // Playwright no postDataBuffer() for a file-backed multipart body, so the
     // `image` part is captured from the FormData at send time, see addInitScript above.)
     const dims = await page.evaluate(async () => {
