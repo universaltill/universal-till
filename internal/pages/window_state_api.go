@@ -118,6 +118,7 @@ func isLoopbackAddr(remoteAddr string) bool {
 // flat WriteTimeout is ever added there, it must exceed ShellPollMaxWait or
 // every shell poll will be severed mid-hold.
 func registerWindowState(mux *http.ServeMux, d *common.Deps) {
+	registerWindowToggle(mux, d) // ut-docs#3735: F11 live toggle (session-gated)
 	// One counted semaphore per registration: how many polls are parked
 	// right now. Buffered-channel semaphore; try-acquire, never block.
 	parkSlots := make(chan struct{}, maxParkedShellPolls)
