@@ -385,6 +385,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ut-docs#4370: translate mode (ADR-0160 §7) — the T helper tags
 	// strings with their keys only for a request translateModeActive allows.
 	httpx.InitTranslateMode(func(r *http.Request) bool { return translateModeActive(dp, r) })
+	// ut-docs#3735: <body data-window-toggle> (F11 window toggle) per request.
+	httpx.InitWindowToggle(func(r *http.Request) bool { return windowToggleOffered(dp, r) })
 	// ut-docs#3091: record this till's running version (and when it first
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())

@@ -1410,6 +1410,10 @@
          design (login.html/setup.html/self_order*.html are a documented
          gap, not an oversight). -->
     <script defer src="/public/input-heartbeat.js?v={{ assetv "public/input-heartbeat.js" }}"></script>
+    <!-- ut-docs#3735: F11 toggles the desktop shell's live window mode
+         (fullscreen <-> normal) for a manager; inert unless <body> carries
+         data-window-toggle — see web/public/window-toggle.js. -->
+    <script defer src="/public/window-toggle.js?v={{ assetv "public/window-toggle.js" }}"></script>
     <!-- ut-docs#2010: the app-wide list/edit standard's behaviour (record
          dialog open/close/Escape/discard guard + list-header search filter),
          attribute-driven and a no-op on any page without that markup — see
@@ -1485,7 +1489,8 @@
         data-show-more="{{ T "common.show_more" }}" data-show-less="{{ T "common.show_less" }}"
         data-money-invalid="{{ if eq currency.Decimals 0 }}{{ T "common.money.invalid_whole" }}{{ else }}{{ T "common.money.invalid" }}{{ end }}"
         data-percent-invalid="{{ T "common.percent.invalid" }}"
-        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
+        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}
+        {{ if windowtoggle }}data-window-toggle="1" data-f11-kiosk-locked="{{ T "settings.display.f11_kiosk_locked" }}"{{ end }}>
     <!-- ut-docs#2224 / ADR-0098: everything a navigation changes lives in
          this one region; an <a> inside it is boosted and the response's own
          #ut-page replaces this one (outerHTML). The head, the scripts,

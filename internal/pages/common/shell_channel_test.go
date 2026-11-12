@@ -309,3 +309,24 @@ func TestShellChannel_NoteSeenDoesNotWakeParkedModeWaiters(t *testing.T) {
 		t.Fatal("SetMode did not broadcast on the mode-change channel")
 	}
 }
+
+// CompareAndSetMode writes only when the live mode still equals what the
+// caller read, so a kiosk set in between is never overwritten (ut-docs#3735).
+func TestShellChannel_CompareAndSetMode(t *testing.T) {
+	c := NewShellChannel("normal")
+	_, rev0 := c.Snapshot()
+	if !c.CompareAndSetMode("normal", "fullscreen") {
+		t.Fatal("CAS with matching expect must succeed")
+	}
+	if m, rev := c.Snapshot(); m != "fullscreen" || rev == rev0 {
+		t.Fatalf("after CAS mode=%q rev=%d (was %d), want fullscreen and a rev bump", m, rev, rev0)
+	}
+	// Kiosk set between the caller's read ("fullscreen") and its write.
+	c.SetMode("kiosk")
+	if c.CompareAndSetMode("fullscreen", "normal") {
+		t.Fatal("CAS must refuse when the live mode changed since the read")
+	}
+	if m, _ := c.Snapshot(); m != "kiosk" {
+		t.Fatalf("mode = %q, want kiosk preserved", m)
+	}
+}
