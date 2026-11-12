@@ -60,6 +60,10 @@ on:
 # this job — a required-status-check gate reads that as "waiting forever"
 # and makes those PRs permanently unmergeable. Same warning as
 # lang-pack-drift.yml's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   determinism:
     runs-on: ubuntu-latest

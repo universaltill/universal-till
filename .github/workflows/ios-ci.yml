@@ -17,6 +17,10 @@ on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   simulator:
     # Same image as ios-testflight.yml (Xcode 26 / iOS 26 SDK), so a PR
