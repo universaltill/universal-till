@@ -3,7 +3,7 @@ id: fiscal-device
 title: Mali cihaz (Türkiye)
 section: Dükkanı kurma
 order: 113
-public: true
+public: false
 summary: "Kasanın hangi yazarkasa (YN ÖKC) üzerinden ödeme aldığını, cihazın fiş bastığının doğrulanıp doğrulanmadığını ve son verdiği fişi görün — yasal fişi cihaz basar, kasa her satışta cihazın fiş numarasını saklar."
 routes: [/fiscal-device]
 keywords: [mali, türkiye, ÖKC, yazarkasa, GİB, fiş, cihaz, Z raporu]
