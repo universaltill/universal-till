@@ -108,8 +108,8 @@ func TestItemThumbnailWrites_ClearTheIcon(t *testing.T) {
 	}
 }
 
-// save_item's icon still replaces an uploaded photo; letting a photo keep it
-// is ut-docs#6028 (cross-repo with my./ut-cloud).
+// save_item's icon keeps an uploaded photo (ut-docs#6028, as SaveCategory's
+// #3585): the photo shows, the icon is its fallback.
 func TestSaveItem_Icon(t *testing.T) {
 	f := newSaveFixture(t)
 	ctx := context.Background()
@@ -122,22 +122,22 @@ func TestSaveItem_Icon(t *testing.T) {
 		t.Fatalf("refused patch wrote the name: %q", got)
 	}
 
-	// An icon replaces an uploaded photo and reports it, so the caller can
-	// remove the superseded file.
-	if err := f.catalog.SetItemThumbnail(ctx, "itm1", itemPhoto3584); err != nil {
+	// An icon keeps an uploaded photo (ut-docs#6028): nothing is reported
+	// as cleared, so no file is removed.
+	if err := f.catalog.SetItemPhoto(ctx, "itm1", itemPhoto3584); err != nil {
 		t.Fatal(err)
 	}
 	res, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", Icon: strp("  lucide:coffee ")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ClearedImagePath != itemPhoto3584 {
-		t.Fatalf("ClearedImagePath = %q, want %q", res.ClearedImagePath, itemPhoto3584)
+	if res.ClearedImagePath != "" {
+		t.Fatalf("ClearedImagePath = %q, want none (the photo is kept)", res.ClearedImagePath)
 	}
 	if !contains(res.Changed, "icon") {
 		t.Fatalf("Changed = %v, want icon listed", res.Changed)
 	}
-	if got := f.picture(t); got != "-|lucide:coffee" {
+	if got := f.picture(t); got != itemPhoto3584+"|lucide:coffee" {
 		t.Fatalf("after icon: %q", got)
 	}
 
@@ -145,7 +145,7 @@ func TestSaveItem_Icon(t *testing.T) {
 	if res, err = f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", Icon: strp("lucide:coffee")}); err != nil || res.ClearedImagePath != "" {
 		t.Fatalf("replay: res=%+v err=%v", res, err)
 	}
-	if got := f.picture(t); got != "-|lucide:coffee" {
+	if got := f.picture(t); got != itemPhoto3584+"|lucide:coffee" {
 		t.Fatalf("after replay: %q", got)
 	}
 
@@ -153,13 +153,11 @@ func TestSaveItem_Icon(t *testing.T) {
 	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", Name: strp("Latte")}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.picture(t); got != "-|lucide:coffee" {
-		t.Fatalf("icon-less save: %q, want the icon kept", got)
+	if got := f.picture(t); got != itemPhoto3584+"|lucide:coffee" {
+		t.Fatalf("icon-less save: %q, want photo and icon kept", got)
 	}
 
 	// icon "" clears the icon and leaves an uploaded photo alone…
-	f.exec(t, `INSERT INTO item_images (id, item_id, path, role) VALUES ('img1', 'itm1', ?, 'thumbnail')`, itemPhoto3584)
-	f.exec(t, `UPDATE items SET icon = NULL WHERE id = 'itm1'`)
 	if res, err = f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", Icon: strp("")}); err != nil || res.ClearedImagePath != "" {
 		t.Fatalf("clear over photo: res=%+v err=%v", res, err)
 	}
