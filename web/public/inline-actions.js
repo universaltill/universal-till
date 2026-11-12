@@ -384,7 +384,7 @@
       if (f.utConfirmed) { f.utConfirmed = false; return; }
       var q = f.getAttribute('data-confirm-text') || '';
       if (!(window.UT && window.UT.confirm && byId('ut-confirm'))) {
-        if (!window.confirm(q)) { preventDefault(ctx); return false; }
+        if (!window.confirm(q)) { preventDefault(ctx); return false; } // native-confirm:allow no #ut-confirm shell (login/setup/self-order pages): native fallback
         return;
       }
       preventDefault(ctx);

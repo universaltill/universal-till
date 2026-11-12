@@ -3149,7 +3149,7 @@ utSellCamera(function(){
     var q = e.detail.question;
     var ask = (q && window.UT && window.UT.confirm && document.getElementById('ut-confirm'))
       ? window.UT.confirm(q, { opener: elt })
-      : Promise.resolve(!q || window.confirm(q)); // script/shell missing: native fallback
+      : Promise.resolve(!q || window.confirm(q)); // native-confirm:allow script/shell missing: native fallback (ut-docs#5524)
     ask.then(function (ok) {
       if (!ok) return; // Cancel: the reorder stays dirty, the tile stays
       dirty = false;

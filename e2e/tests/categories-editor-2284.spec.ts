@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, noNativeDialogs } from './helpers';
 
 // ut-docs#2284: the category dialog's three pickers — colour swatch grid,
 // customization-group checkboxes and kitchen-station checkboxes — on top
@@ -70,10 +70,7 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
 
     // (b) Opening a row must never prompt: fail loudly if any confirm()
     // appears from here on.
-    page.on('dialog', async (d) => {
-      await d.dismiss();
-      throw new Error(`unexpected ${d.type()} dialog: ${d.message()}`);
-    });
+    const none = noNativeDialogs(page);
     await r.click();
     await expect(dlg).toBeVisible();
     await expect(dlg).toHaveAttribute('data-record-mode', 'edit');
@@ -94,6 +91,8 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
     await page.locator(NAME).press('Escape');
     await expect(dlg).toBeHidden();
 
+    await expect(page.getByTestId('till-confirm')).toBeHidden();
+    none();
     assertClean();
   });
 });

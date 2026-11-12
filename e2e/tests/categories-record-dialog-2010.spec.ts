@@ -348,6 +348,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
   });
 
   test('(c) Escape closes a clean dialog silently and asks first when dirty', async ({ page }) => {
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page);
     await page.goto('/categories');
     const dlg = page.locator(DIALOG);
@@ -355,37 +356,35 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await expect(dlg).toBeVisible();
 
     // Clean: no confirm, just closes.
-    let prompts = 0;
-    page.on('dialog', (d) => { prompts++; d.dismiss(); });
     await page.locator(NAME).press('Escape');
     await expect(dlg).toBeHidden();
-    expect(prompts).toBe(0);
+    await expect(page.getByTestId('till-confirm')).toBeHidden();
 
     // Dirty + dismiss the confirm: stays open with the text intact.
     await page.locator('#categories-new').click();
     await expect(dlg).toBeVisible();
     await page.locator(NAME).fill('unsaved text');
     await page.locator(NAME).press('Escape');
+    await answerTillConfirm(page, 'cancel');
     await expect(dlg).toBeVisible();
-    expect(prompts).toBe(1);
     await expect(page.locator(NAME)).toHaveValue('unsaved text');
 
-    // Dirty + accept: closes. Same guard on the Close button.
-    page.removeAllListeners('dialog');
-    let msg = '';
-    page.once('dialog', (d) => { msg = d.message(); d.accept(); });
+    // Dirty + confirm: closes. Same guard on the Close button.
     await page.locator(`${DIALOG} .record-dialog-close`).click();
+    const msg = await answerTillConfirm(page, 'confirm');
     await expect(dlg).toBeHidden();
     // The resolved English value, not /discard/i — that regex also matched
     // the raw key name `common.discard_confirm`, so a missing translation
     // passed (review nit).
     expect(msg).toBe('Discard your unsaved changes?');
+    none();
     assertClean();
   });
 
   test('(c2) opening create over a dirty edit asks first — open() honours the same guard as close()', async ({ page }) => {
     // Review S1: open() used to skip the discard guard, so New over an
     // edit with unsaved text silently emptied the field and flipped mode.
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page);
     await page.goto('/categories');
     const name = 'Dirty Probe ' + Date.now();
@@ -398,18 +397,16 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     // dispatchEvent, not click(): the opaque full-bleed dialog covers New,
     // so no pointer reaches it — but before the focus trap the keyboard
     // could (Tab out, Enter), and the JS is shared by nine screens.
-    let prompts = 0;
-    page.on('dialog', (d) => { prompts++; d.dismiss(); });
     await page.locator('#categories-new').dispatchEvent('click');
-    expect(prompts, 'New over a dirty edit must ask').toBe(1);
+    await answerTillConfirm(page, 'cancel');
     await expect(dlg).toHaveAttribute('data-record-mode', 'edit');
     await expect(page.locator(NAME)).toHaveValue(name + ' edited');
 
-    page.removeAllListeners('dialog');
-    page.once('dialog', (d) => d.accept());
     await page.locator('#categories-new').dispatchEvent('click');
+    await answerTillConfirm(page, 'confirm');
     await expect(dlg).toHaveAttribute('data-record-mode', 'create');
     await expect(page.locator(NAME)).toHaveValue('');
+    none();
     assertClean();
   });
 
