@@ -26,6 +26,8 @@
   {{ if not .promotions }}
   <p class="muted">{{ T "promotions.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="promotions-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <div class="list-scroll">
   <table class="table" id="promotions-table">
     <thead>
@@ -55,7 +57,7 @@
           data-field-customer_id="{{ .CustomerID }}"
           data-promo-customer-label="{{ .CustomerLabel }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name"><bdi dir="ltr">{{ .Code }}</bdi></span></button></td>
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="promotions-row-edit-hint"><span class="record-row-name"><bdi dir="ltr">{{ .Code }}</bdi></span></button></td>
         <td>{{ if eq .Type "percent" }}{{ T "promotions.type.percent" }}{{ else }}{{ T "promotions.type.amount" }}{{ end }}</td>
         <td>{{ .ValueDisplay }}</td>
         <td class="promo-wrap"><bdi dir="auto">{{ .Description }}</bdi></td>

@@ -54,6 +54,8 @@
        names its Alt+ArrowUp/Down keys (aria-keyshortcuts). */}}
   <p class="muted list-reorder-hint" id="categories-reorder-hint">{{ T "categories.reorder_hint" }}</p>
   <div id="categories-reorder-live" class="visually-hidden" role="status" aria-live="polite"></div>
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="categories-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <p id="categories-reorder-msg" class="list-reorder-msg" role="alert" hidden></p>
   <div class="list-scroll">
   <table class="table" id="categories-table" aria-describedby="categories-reorder-hint">
@@ -109,7 +111,7 @@
              visual: image → icon (ui.CategoryThumb, icon only via
              iconid.AssetPath) → colour swatch → placeholder. */}}
         <td class="category-name-cell">
-          <button type="button" class="category-row-open" data-record-edit
+          <button type="button" class="category-row-open" data-record-edit aria-describedby="categories-row-edit-hint"
                   aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
             <span class="cat-thumb" aria-hidden="true">{{ if .Thumb }}<img src="{{ imgv .Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if .Color }}<span class="cat-thumb-swatch" style="--swatch: {{ .Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
             <span class="category-row-name">{{ .Name }}</span>
