@@ -1398,6 +1398,7 @@
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
+    <script defer src="/public/till-confirm.js?v={{ assetv "public/till-confirm.js" }}"></script>
     <script defer src="/public/pairing-stream.js?v={{ assetv "public/pairing-stream.js" }}"></script>
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
@@ -2379,6 +2380,23 @@
          renderConfirmPrompt), OOB-swapped in here for the same no-nested-
          form reason as #elevation-modal above. -->
     <dialog id="confirm-modal" class="modifier-modal" data-ut-focus-trap data-ut-escape-close></dialog>
+    {{/* ut-docs#5524: the client-side confirm every hx-confirm opens
+         (web/public/till-confirm.js). Same look as #confirm-modal but never
+         OOB-swapped: the JS fills the message (textContent) and tone on each
+         open. .show() over #ut-scrim, never showModal(). No form: Confirm
+         calls htmx's issueRequest(true). Escape is handled by the script, so
+         there is no data-ut-escape-close. */}}
+    <dialog id="ut-confirm" class="modifier-modal confirm-dialog" data-ut-focus-trap
+            aria-labelledby="ut-confirm-msg" data-testid="till-confirm">
+      <p id="ut-confirm-msg" class="ut-confirm-msg"></p>
+      <div class="modifier-actions">
+        <button type="button" class="btn secondary" data-ut-confirm="cancel"
+                data-testid="till-confirm-cancel">{{ T "common.cancel" }}</button>
+        <button type="button" class="btn danger" data-ut-confirm="ok"
+                data-default-label="{{ T "common.confirm" }}"
+                data-testid="till-confirm-ok">{{ T "common.confirm" }}</button>
+      </div>
+    </dialog>
     <!-- ut-docs#2873: the ONE shared backdrop behind every non-modal popup
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css

@@ -18,6 +18,7 @@ var HeadAssets = []string{
 	"public/vendor/htmx.min.js",
 	"public/vendor/alpine.min.js",
 	"public/app.js",
+	"public/till-confirm.js", // ut-docs#5524: the in-page hx-confirm dialog
 	"public/osk.js",
 	"public/cursor.js",
 	"public/autofill.js",

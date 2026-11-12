@@ -94,6 +94,7 @@
   "tills.join.rejoin_note": {"description": "Note in a joined till's 'join an existing shop' section: joining another main till sends its unsent sales there first.", "review": "standard", "placeholders": ["how many unsent sales this till has"]},
   "common.back": {"description": "Button that returns to the previous screen or step.", "review": "standard", "max_length": 24},
   "common.cancel": {"description": "Button that closes a dialog or form without saving anything.", "review": "standard", "max_length": 24},
+  "common.confirm": {"description": "Button in a confirmation dialog that carries out the action the dialog asks about (delete, revoke, deactivate). Cancel is beside it.", "review": "standard", "max_length": 24},
   "common.clear": {"description": "Button that empties a field, search or selection.", "review": "standard", "max_length": 24},
   "common.close": {"description": "Button that closes a panel or dialog.", "review": "standard", "max_length": 24},
   "common.discard_confirm": {"description": "Confirmation question shown when the user leaves a form that has unsaved changes.", "review": "standard"},

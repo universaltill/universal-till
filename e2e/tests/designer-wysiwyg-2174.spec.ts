@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2174: /designer is a live, in-place-edited replica of the sale
 // screen's real product panel — the SAME buttons.html fragment the sale
@@ -156,7 +156,7 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     const f = fixture('2');
     const newName = `Wysiwyg2174 New ${f.run}`;
     const renamed = `${newName} Renamed`;
-    page.on('dialog', (d) => d.accept());
+    const noNative = noNativeDialogs(page);
 
     await page.goto('/designer');
     await expect(replica(page)).toBeVisible();
@@ -214,12 +214,14 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     // offers Activate; reactivate → it offers the bin again.
     const deactivated = page.waitForResponse((r) => r.url().endsWith(`/api/designer/categories/${id}/active`) && r.request().method() === 'POST');
     await page.locator(`#designer-cat-active-${id}`).click();
+    await answerTillConfirm(page, 'confirm');
     expect((await deactivated).status()).toBe(204);
     await expect(catRow(page, renamed)).toHaveClass(/designer-cat-inactive/);
     await expect(page.locator(`#designer-cat-active-${id}`)).toHaveText(/Activate/);
     const reactivated = page.waitForResponse((r) => r.url().endsWith(`/api/designer/categories/${id}/active`) && r.request().method() === 'POST');
     await page.locator(`#designer-cat-active-${id}`).click();
     expect((await reactivated).status()).toBe(204);
+    noNative();
     await expect(catRow(page, renamed)).not.toHaveClass(/designer-cat-inactive/);
 
     // Leave it deactivated so the shared demo till's strip is untouched.

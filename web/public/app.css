@@ -3108,6 +3108,22 @@ body.osk-padded #table-add-modal .modifier-actions {
    needs the identical fixed position + z-index, which .modifier-modal
    alone does not provide (ut-docs#2873's scrim sweep caught the gap). */
 #confirm-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#5524: the client hx-confirm dialog (till-confirm.js). Same frame as
+   #confirm-modal (.modifier-modal supplies width/padding); above the popups it
+   can be raised from (#modifier-modal 560, #hold-modal 550, record/item-form
+   dialogs 500), below #osk (1000). The status bar stays reachable over
+   #ut-scrim (450/460). Scrim tap is deliberately not an answer. */
+#ut-confirm { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 590;
+  max-block-size: calc(100vh - 8vh - 1rem); max-block-size: calc(100dvh - 8vh - 1rem); overflow-y: auto; }
+#ut-confirm .ut-confirm-msg { margin-block: 0 .75rem; color: var(--text); text-align: start;
+  white-space: pre-line; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  /* The rail is a top bar here and holds Lock: start below it (as
+     #category-items-modal does) so Lock stays reachable while asking. */
+  #ut-confirm { inset-block-start: calc(var(--topbar-h) + .5rem);
+    max-block-size: calc(100vh - var(--topbar-h) - 1.5rem); max-block-size: calc(100dvh - var(--topbar-h) - 1.5rem); }
+  #ut-confirm .modifier-actions .btn { flex: 1 1 0; }
+}
 /* ut-docs#4286: the Renew / Choose-a-plan panel (base.html). Non-modal
    .show() over #ut-scrim like #table-qr-modal: fixed, centred, capped short
    of the viewport so it never covers the status bar (z 460, reachable);

@@ -735,3 +735,47 @@ export async function expectGermanIfPackLoaded(page: Page): Promise<void> {
     expect(german, 'German pack configured (UT_E2E_I18N_OVERLAY_DIR) but ?lang=de rendered English').toBe(true);
   }
 }
+
+// ---------------------------------------------------------------------------
+// ut-docs#5524: hx-confirm opens the till's own in-page dialog
+// (web/public/till-confirm.js, #ut-confirm), not the browser's window.confirm.
+// ---------------------------------------------------------------------------
+
+// Records every native 'dialog' event (and dismisses it so nothing hangs).
+// The returned function asserts none fired -- call it at the end of a test
+// that must never see the browser's own confirm.
+export function noNativeDialogs(page: Page): () => void {
+  const seen: string[] = [];
+  page.on('dialog', (d) => {
+    seen.push(`${d.type()}: ${d.message()}`);
+    void d.dismiss().catch(() => {});
+  });
+  return () => expect(seen, 'a native browser dialog opened').toEqual([]);
+}
+
+// Answers the open till confirm. 'confirm' waits for the Confirm button to be
+// armed (it ignores taps for ~350 ms so a double-tap on the opener cannot
+// land on it). Returns the question text so a caller can assert on it more.
+export async function answerTillConfirm(
+  page: Page,
+  answer: 'confirm' | 'cancel' | 'escape',
+  expectText?: string | RegExp,
+): Promise<string> {
+  const dlg = page.getByTestId('till-confirm');
+  await expect(dlg).toBeVisible();
+  const msg = (await dlg.locator('#ut-confirm-msg').textContent()) || '';
+  if (expectText !== undefined) {
+    if (typeof expectText === 'string') expect(msg).toContain(expectText);
+    else expect(msg).toMatch(expectText);
+  }
+  if (answer === 'confirm') {
+    await expect(dlg).toHaveAttribute('data-armed', '');
+    await page.getByTestId('till-confirm-ok').click();
+  } else if (answer === 'cancel') {
+    await page.getByTestId('till-confirm-cancel').click();
+  } else {
+    await page.keyboard.press('Escape');
+  }
+  await expect(dlg).toBeHidden();
+  return msg;
+}

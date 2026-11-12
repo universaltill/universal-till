@@ -2534,6 +2534,12 @@ utSellCamera(function(){
     // ut-docs#2534: and the all_filter_chips chip row -- switching the
     // category is how another category's order is reached.
     // ut-docs#2465: and the Move to category dialog.
+    // ut-docs#5524: and the till's confirm dialog (the remove badge's
+    // hx-confirm) -- a native confirm never delivered pointer events to the
+    // page, this one does, so answering it must not end the edit session;
+    // nor must a stray tap on the scrim behind it.
+    if (el.closest('#ut-confirm')) return true;
+    if (window.UT && window.UT.confirmOpen && window.UT.confirmOpen() && el.closest('#ut-scrim')) return true;
     return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, #tile-move-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
   }
   function visibleCells(gridEl) {
@@ -3131,8 +3137,8 @@ utSellCamera(function(){
 
   // ---- htmx interplay ----
   // The remove badge's own hx-confirm/hx-post: if a drag is still
-  // unsaved, confirm first (htmx's own question, so the operator sees the
-  // same dialog either way), then persist the order, THEN let htmx issue
+  // unsaved, confirm first (the same question, asked in the same till
+  // dialog -- till-confirm.js, ut-docs#5524 -- either way), then persist the order, THEN let htmx issue
   // the remove -- its buttons-changed refresh re-renders the grid from the
   // server, which would otherwise silently drop the unsaved reorder.
   document.body.addEventListener('htmx:confirm', function (e) {
@@ -3140,9 +3146,15 @@ utSellCamera(function(){
     if (!elt || !elt.classList || !elt.classList.contains('tile-badge-remove')) return;
     if (!dirty) return; // nothing pending: htmx's own confirm + request as usual
     e.preventDefault();
-    if (e.detail.question && !window.confirm(e.detail.question)) return;
-    dirty = false;
-    persistOrder().then(function () { e.detail.issueRequest(true); });
+    var q = e.detail.question;
+    var ask = (q && window.UT && window.UT.confirm && document.getElementById('ut-confirm'))
+      ? window.UT.confirm(q, { opener: elt })
+      : Promise.resolve(!q || window.confirm(q)); // script/shell missing: native fallback
+    ask.then(function (ok) {
+      if (!ok) return; // Cancel: the reorder stays dirty, the tile stays
+      dirty = false;
+      persistOrder().then(function () { e.detail.issueRequest(true); });
+    });
   });
   // Any OTHER refetch of the grid root while a reorder is unsaved (a
   // modifiers-changed from elsewhere): persist first, then re-trigger it.

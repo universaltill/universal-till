@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
 
 // ut-docs#5575: /kitchen-stations adopts the ut-docs#2010 list + record dialog
 // standard (modelled on promotions-record-dialog-3661.spec.ts). The old page
@@ -181,11 +181,10 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
     await expect(page.locator(`${DIALOG} form[data-record-when="active=0"]`)).toBeHidden();
     const trash = page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`);
     await expect(trash).toBeVisible();
-    page.once('dialog', (d) => {
-      expect(d.message()).toMatch(/default kitchen printer/i);
-      void d.accept();
+    await clickThenReload(page, async () => {
+      await trash.click();
+      await answerTillConfirm(page, 'confirm', /default kitchen printer/i);
     });
-    await clickThenReload(page, () => trash.click());
     await expect(row(page, name)).toContainText(/inactive/i);
 
     await row(page, name).click();
