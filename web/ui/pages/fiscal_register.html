@@ -292,7 +292,7 @@
      review's finding 4. */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="decommissioned_on="
-      hx-confirm="{{ T "fiscalregister.decommission_confirm" }}"
+      hx-confirm="{{ T "fiscalregister.decommission_confirm" }}" data-confirm-ok="{{ T "fiscalregister.decommission" }}"
       hx-boost="true" hx-target="#fiscal-register-dialog-msg" hx-swap="innerHTML">
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"
           aria-label="{{ T "fiscalregister.decommission" }}" title="{{ T "fiscalregister.decommission" }}">

@@ -248,7 +248,7 @@
           <button type="button" class="btn secondary catalog-form-delete" id="item-form-delete" hidden
                   aria-label="{{ T "catalog.delete" }}" title="{{ T "catalog.delete" }}"
                   hx-post="/api/catalog/item/deactivate" hx-include="#item-id"
-                  hx-confirm="{{ T "catalog.delete" }}" hx-target="this" hx-swap="none">
+                  hx-confirm="{{ T "catalog.delete" }}" data-confirm-ok="{{ T "confirm.remove" }}" hx-target="this" hx-swap="none">
             <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
           </button>
           </fieldset>

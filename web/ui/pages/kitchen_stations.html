@@ -324,7 +324,7 @@
      data-record-when="active=…" matches the opened row). */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}"
+      hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}" data-confirm-ok="{{ T "kitchenstations.deactivate" }}"
       hx-boost="true" hx-target="#kitchen-station-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"

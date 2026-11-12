@@ -3123,7 +3123,12 @@ body.osk-padded #table-add-modal .modifier-actions {
      below the bar (as #category-items-modal does) so ☰ stays tappable. */
   #ut-confirm { inset-block-start: calc(var(--topbar-h) + .5rem);
     max-block-size: calc(100vh - var(--topbar-h) - 1.5rem); max-block-size: calc(100dvh - var(--topbar-h) - 1.5rem); }
-  #ut-confirm .modifier-actions .btn { flex: 1 1 0; }
+  /* ut-docs#6117: verb labels ("Promote this till", de "Bestellung
+     stornieren") can be longer than half a 360px row. A 7.5rem basis
+     keeps the short Cancel/Confirm pair side by side at 360px; a long label
+     wraps inside its button and the target never drops below 44px. */
+  #ut-confirm .modifier-actions .btn { flex: 1 1 7.5rem; min-block-size: 44px;
+    white-space: normal; overflow-wrap: anywhere; text-align: center; }
 }
 /* ut-docs#4286: the Renew / Choose-a-plan panel (base.html). Non-modal
    .show() over #ut-scrim like #table-qr-modal: fixed, centred, capped short
