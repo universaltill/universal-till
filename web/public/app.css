@@ -3120,9 +3120,29 @@ body.osk-padded #table-add-modal .modifier-actions {
 @media (max-width: 480px) {
   /* The rail is a top bar here holding ☰; Lock is in its drawer, which
      floats above this dialog while the scrim is on (ut-docs#6118). Start
-     below the bar (as #category-items-modal does) so ☰ stays tappable. */
+     below the bar (as #category-items-modal does) so ☰ stays tappable —
+     except over a full-screen dialog (next rule). */
   #ut-confirm { inset-block-start: calc(var(--topbar-h) + .5rem);
     max-block-size: calc(100vh - var(--topbar-h) - 1.5rem); max-block-size: calc(100dvh - var(--topbar-h) - 1.5rem); }
+  /* ut-docs#6131: over a full-screen dialog there is no ☰ to keep clear, and
+     the dialog's own head (title + Lock/exit-to-OS/status row, #2099/#6125)
+     sits right under the top edge — beneath this z-590 question (the dialog
+     is a z-500 stacking context, so its Lock cannot be raised over it).
+     Anchor to the bottom, above the status row: the head stays the hit
+     target and the answer sits under the thumb. 11rem is the head at 360px
+     (measured 160.7px = 10.04rem) plus slack; a long question scrolls
+     (overflow-y:auto) instead of growing up into the head. */
+  html:has(:is(.record-dialog, .dialog-beside-chrome)[open]) #ut-confirm {
+    inset-block: auto calc(var(--phone-sb-h, 4rem) + .5rem + env(safe-area-inset-bottom));
+    max-block-size: calc(100vh - var(--phone-sb-h, 4rem) - 11rem);
+    max-block-size: calc(100dvh - var(--phone-sb-h, 4rem) - 11rem); }
+  /* With the keyboard band reserved the box ends higher, so re-cap it too
+     (bottom offset + 11rem): otherwise a long question grows up over the
+     head again (review of #6131: top -32px at 320x568). */
+  html:has(:is(.record-dialog, .dialog-beside-chrome)[open]) body.osk-padded #ut-confirm {
+    inset-block-end: calc(var(--osk-reserved-height, 17rem) + .5rem);
+    max-block-size: calc(100vh - var(--osk-reserved-height, 17rem) - 11.5rem);
+    max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 11.5rem); }
   /* ut-docs#6117: verb labels ("Promote this till", de "Bestellung
      stornieren") can be longer than half a 360px row. A 7.5rem basis
      keeps the short Cancel/Confirm pair side by side at 360px; a long label
