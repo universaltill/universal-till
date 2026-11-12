@@ -96,6 +96,27 @@ func TestLineHandler_RemovedLineShowsBasketLevelNote(t *testing.T) {
 	}
 }
 
+// ut-docs#5417 review R1: a key-addressed edit whose line was already gone
+// when the handler read the basket gets the same 409 + note, not a silent 200.
+func TestLineHandler_AlreadyRemovedLineShowsNote(t *testing.T) {
+	mux, dp := newPOSMuxRealSession(t)
+	if _, err := dp.Engine.ScanQty("ABC", 2); err != nil {
+		t.Fatal(err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	dp.Engine.RemoveLine(key)
+	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}}, &auth.User{ID: "cashier-1", Role: "cashier"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "data-line-changed") {
+		t.Fatalf("no visible note for an already-removed line: %s", body)
+	}
+	if n := len(dp.Engine.Basket().Lines); n != 0 {
+		t.Fatalf("edit re-created the line: %d lines", n)
+	}
+}
+
 func TestLineHandler_ElevationPromptResyncsAfterSettle(t *testing.T) {
 	mux, key, _, _ := seedPricedLine(t, 3)
 	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"1"}}, &auth.User{ID: "cashier-1", Role: "cashier"})

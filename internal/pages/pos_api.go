@@ -1700,6 +1700,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if prevTable != "" && d.Engine.TableID() == "" {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
+		} else if key != "" {
+			// ut-docs#5417 review R1: the keyed line was already gone when the
+			// basket was read; say so instead of a silent no-op 200.
+			updateErr = pos.ErrLineChanged
 		}
 		if reduction && updateErr == nil {
 			// Record only a reduction the engine actually applied.
@@ -1734,7 +1738,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#5417: the line changed (or went) since it was read, so the
 		// edit was not applied: 409 with the current basket and a note.
 		if errors.Is(updateErr, pos.ErrLineChanged) {
-			b.LineChangedKey = cur.LineKey
+			b.LineChangedKey = key
+			if cur != nil {
+				b.LineChangedKey = cur.LineKey
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusConflict)
 		}
