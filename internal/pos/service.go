@@ -1776,37 +1776,7 @@ func (s *Service) clearCacheForCode(code string) {
 	}
 }
 
-// UpdateLine sets qty/discount for a given SKU (or item/variant match) and
-// recomputes totals. Matches only the FIRST line for code — same caveat as
-// Remove (see its doc comment): unsafe once multiple modifier-distinct
-// lines can share a SKU. The cashier UI uses UpdateLineByKey instead.
-//
-// A discount above the line's total at the new qty is refused with a
-// *LineDiscountTooLargeError and the line is left unchanged (ut-docs#4627).
-func (s *Service) UpdateLine(code string, qty float64, discount money.Money) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if qty < 0 {
-		qty = 0
-	}
-	for i := range s.lines {
-		if s.lines[i].SKU == code || (s.lines[i].ItemID == code || s.lines[i].VariantID == code) {
-			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
-				return err
-			}
-			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
-			if s.lines[i].Qty == 0 {
-				s.removeLocked(s.lines[i].SKU)
-				return nil
-			}
-			s.recomputeTotals()
-			return nil
-		}
-	}
-	return nil
-}
-
-// LineDiscountTooLargeError (ut-docs#4627) is UpdateLine/UpdateLineByKey
+// LineDiscountTooLargeError (ut-docs#4627) is UpdateLineByKey / UpdateLineByKeyIfQty
 // refusing a discount above the line's total at the requested qty: Limit
 // is that total, the most the discount can be. The line is left as it was.
 type LineDiscountTooLargeError struct {
@@ -1846,8 +1816,8 @@ func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (floa
 var ErrLineChanged = errors.New("basket line changed since it was read")
 
 // UpdateLineByKey sets qty/discount for the single line matching key
-// exactly (ADR-0020) — safe even when multiple lines share a SKU. Same
-// discount refusal as UpdateLine.
+// exactly (ADR-0020) — safe even when multiple lines share a SKU. A
+// discount above the line's total is refused (LineDiscountTooLargeError).
 func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
