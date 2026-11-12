@@ -2853,6 +2853,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
 		}
 
+		// ut-docs#6152: with printer.voucher_slip on, the browser-printed
+		// receipt carries the gift slips too (print-only, each on its own
+		// page), in the printed receipt's language, as paper does. Never in
+		// a suppressed market (returned above); a render failure degrades
+		// to no slips.
+		if renderErr == nil && printerCfg.VoucherSlip && len(issuedVouchers) > 0 {
+			pl := receiptPrintLocale(customerLocale, locale)
+			set := browserSlipSet{Lang: pl, Dir: slipDir(pl),
+				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, issuedVouchers)}
+			if slips, err := renderBrowserSlips("voucher_slips_receipt", pl, set); err != nil {
+				log.Printf("tender: browser voucher slips skipped: %v", err)
+			} else {
+				receiptHTML += string(slips)
+			}
+		}
+
 		writeTenderView(receiptHTML)
 	})
 
