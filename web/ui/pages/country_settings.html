@@ -58,6 +58,8 @@
      country"/"Show all countries") already says exactly what changed, so
      this needs no new locale key. */}}
 <div id="country-settings-status" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+{{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+<span id="country-settings-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
 <div id="country-settings-view">
 
 {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
@@ -145,7 +147,7 @@
           data-field-archive_min_days="{{ .ArchiveMinDays }}"
           data-field-is_builtin="{{ if .IsBuiltin }}1{{ else }}0{{ end }}"
           data-field-original_code="{{ .Code }}">
-        <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }} <span class="muted" dir="ltr">{{ .Code }}</span>{{ if not .IsBuiltin }}<br /><span class="muted">{{ T "countrysettings.custom" }}</span>{{ end }}</span></button></td>
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="country-settings-row-edit-hint"><span class="record-row-name">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }} <span class="muted" dir="ltr">{{ .Code }}</span>{{ if not .IsBuiltin }}<br /><span class="muted">{{ T "countrysettings.custom" }}</span>{{ end }}</span></button></td>
         <td dir="ltr">{{ .Currency }}</td>
         <td dir="ltr">{{ .CurrencySymbol }}</td>
         <td dir="ltr">{{ .TaxRatePct }}%{{ if .TaxInclusive }} <span class="muted">({{ T "countrysettings.tax.inclusive" }})</span>{{ end }}</td>
