@@ -370,6 +370,8 @@ jobs:
         run: bash scripts/ci/guard-android-status-address.sh
       - name: Android string resource i18n guard
         run: bash scripts/ci/guard-android-i18n.sh
+      - name: Android string resource i18n guard regression test
+        run: bash scripts/ci/guard-android-i18n_test.sh
       - name: Android external-link hand-off guard
         run: bash scripts/ci/guard-android-external-links.sh
       - name: Android external-link hand-off guard regression test
