@@ -307,6 +307,9 @@ func TestPullOptionSetRefusals(t *testing.T) {
 }
 
 func TestPullItemAndCategoryLinkLists(t *testing.T) {
+	// The cloud masters links once it has a write path (ADR-0162 §2); until
+	// then tillOwnedFields keeps them (ut-docs#6072).
+	allFieldsPulled(t)
 	h := newHarness(t)
 	h.feed.add(groupRow(cGroup, 1, "Milk", opt(1, "Oat", 40, true)))
 	h.feed.add(groupRow(cGroup2, 2, "Size", opt(2, "Large", 50, true)))
@@ -372,6 +375,9 @@ func TestPullItemAndCategoryLinkLists(t *testing.T) {
 }
 
 func TestPullLinkListUnknownOrNullRefusesTheRow(t *testing.T) {
+	// The cloud masters links once it has a write path (ADR-0162 §2); until
+	// then tillOwnedFields keeps them (ut-docs#6072).
+	allFieldsPulled(t)
 	h := newHarness(t)
 	h.feed.add(groupRow(cGroup, 1, "Milk"))
 	h.feed.add(setRow(cSet, 1, "Cup"))

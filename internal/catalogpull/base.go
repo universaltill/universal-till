@@ -34,6 +34,22 @@ var uploadFields = map[string][]string{
 	kindTaxCode:  {"name", "rate_basis_points", "takeaway_rate_basis_points", "active"},
 }
 
+// tillOwnedFields are the item and category feed fields the cloud has no
+// write path for today (ut-cloud catalogwrite ItemSave/CategorySave; the
+// change upload's uploadFields): the feed carries them (contract 1.1.1) but
+// always at the cloud's schema defaults, so on a row this till already has
+// (a linked row) the pull and an upload answer leave the till's value alone
+// (ut-docs#6072). A create still applies them as served. When a contract
+// minor gives the cloud a write path for one (catalogwrite + the changes
+// contract, both sides), that release removes it here and bumps
+// ApplierVersion so every till re-pulls it. icon is not here: it is applied
+// as served until ut-docs#6071 decides it (in-flight #6028 pins that).
+var tillOwnedFields = map[string][]string{
+	kindItem: {"unit", "color", "item_type", "stock_untracked", "sell_screen_hidden",
+		"sell_screen_removed", "modifier_group_cloud_ids", "modifier_opt_out_cloud_ids", "option_set_cloud_ids"},
+	kindCategory: {"color", "sell_screen_hidden", "modifier_group_cloud_ids"},
+}
+
 // uploadable reports whether kind's rows upload.
 func uploadable(kind string) bool { _, ok := uploadFields[kind]; return ok }
 

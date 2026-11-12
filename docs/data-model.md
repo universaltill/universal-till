@@ -114,7 +114,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `plugin_settings`
 - `plugin_hooks`
 - `plugin_permissions`
-- `shortcut_buttons`
+- `shortcut_buttons` — `image_path` is legacy: not read for the tile picture; the item's `item_images` thumbnail, then `items.icon`, is (ut-docs#6076)
 
 ## ER Diagram
 
@@ -636,7 +636,7 @@ erDiagram
         string barcode
         string item_id
         string label
-        string image_path
+        string image_path "legacy, unread for the tile picture (ut-docs#6076)"
         string updated_at
     }
 
@@ -817,6 +817,17 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   category_cloud_id / tax_code_cloud_id (null = clear), active, is_weighed,
   stock_untracked, age_restricted, color, icon, item_type, sell_screen_hidden,
   sell_screen_removed, net_quantity_value/unit (both null = clear).
+  **Till-owned fields** (`tillOwnedFields` in `internal/catalogpull/base.go`,
+  ut-docs#6072): the cloud has no write path for an item's unit, color,
+  item_type, stock_untracked, sell_screen_hidden, sell_screen_removed and its
+  three link lists, nor a category's color, sell_screen_hidden and
+  modifier_group_cloud_ids, but the feed always carries them at the cloud's
+  defaults. On a row the till already has (one with a `cloud_links` entry) —
+  a pull, an upload answer, a conflict answer, a resync or an applier re-pull
+  — they are not applied, so the till's values survive. A create applies them
+  as served. When the cloud gains a write path for one, it leaves that set
+  and `ApplierVersion` is bumped. `icon` is still applied as served
+  (ut-docs#6071).
   `modifier_group`: name, required, min_select, max_select, sort_order (the
   group row's own legacy column; not negative), active, options — the full
   ordered option set `[{id, name, price_delta_minor, active}]` (an option left
@@ -830,7 +841,8 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   **Link lists** — category `modifier_group_cloud_ids`; item
   `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
   `option_set_cloud_ids` — are each the whole ordered set: absent keeps the
-  till's links, `[]` clears them, `null` refuses the row (the contract's lists
+  till's links, `[]` clears them (on a create; on an update only once the
+  cloud masters the lists, see Till-owned fields), `null` refuses the row (the contract's lists
   are never null), and every id must resolve through `cloud_links`. Applying
   an item's option sets never generates variants (they arrive as their own
   rows, ut-docs#4521). The same holds for `options` and `values`: absent

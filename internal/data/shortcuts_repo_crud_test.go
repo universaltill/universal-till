@@ -60,8 +60,9 @@ func TestSaveButtons_ReplacesWholeSetInOrder(t *testing.T) {
 	if btns[0].Label != "First" || btns[1].Label != "Second" {
 		t.Fatalf("expected sort_order to follow list order, got %+v", btns)
 	}
-	if btns[1].ImageURL != "/custom.png" {
-		t.Fatalf("expected explicit image preserved, got %q", btns[1].ImageURL)
+	// image_path is persisted but is not a picture source on load (ut-docs#6076).
+	if btns[1].ImageURL != "" {
+		t.Fatalf("expected button image_path not to be read as a picture, got %q", btns[1].ImageURL)
 	}
 
 	// A second call must REPLACE the set, not append to it.

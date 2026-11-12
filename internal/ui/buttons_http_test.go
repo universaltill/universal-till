@@ -49,7 +49,6 @@ func TestButtonsHTTPList_RendersTiles(t *testing.T) {
 
 func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 	h, db := newButtonsHTTPWithDB(t, "buttons_admin.html")
-	store := &h.Store
 	// One item per case: an item has one quick-button row, so re-adding an
 	// item under another code refreshes its existing row (ut-docs#2698 F1).
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Coffee', 350, 1)`)
@@ -82,16 +81,23 @@ func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 			t.Fatalf("Add success body should be empty (the retired admin grid is gone), got: %s", rec.Body.String())
 		}
 	}
-	btns, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(btns) != len(cases) {
-		t.Fatalf("buttons = %d, want %d", len(btns), len(cases))
-	}
+	// The normalised value is still persisted in image_path (legacy column),
+	// but it is no longer a picture source (ut-docs#6076), so read it directly.
 	got := map[string]string{}
-	for _, b := range btns {
-		got[b.Code] = b.ImageURL
+	rows, err := db.Query(`SELECT barcode, COALESCE(image_path,'') FROM shortcut_buttons`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code, img string
+		if err := rows.Scan(&code, &img); err != nil {
+			t.Fatal(err)
+		}
+		got[code] = img
+	}
+	if len(got) != len(cases) {
+		t.Fatalf("buttons = %d, want %d", len(got), len(cases))
 	}
 	for i, tc := range cases {
 		code := "C" + string(rune('1'+i))
