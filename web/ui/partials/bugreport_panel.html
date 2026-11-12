@@ -438,13 +438,25 @@
       resetDraft();
       statusEl.textContent = '';
       closePanel();
+      // The panel (and the Discard button till-confirm would refocus) is gone:
+      // hand focus to the status-bar opener, not <body> (ut-docs#6116 UX).
+      var opener = document.getElementById('bugreport-toggle');
+      if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
     }
-    document.getElementById('bugreport-discard').addEventListener('click', function () {
-      if (!window.confirm(T.discardConfirm)) return;
-      discardPending = true;
-      if (voiceRecording) voiceRecorder.stop();
-      if (screenRecording) screenRecorder.stop();
-      finishDiscard();
+    // Asked in the till's own dialog (till-confirm.js, ut-docs#6116), never
+    // the browser's window.confirm: that makes the status bar inert.
+    document.getElementById('bugreport-discard').addEventListener('click', function (ev) {
+      var btn = ev.currentTarget;
+      var ask = (window.UT && typeof window.UT.confirm === 'function')
+        ? window.UT.confirm(T.discardConfirm, { opener: btn })
+        : Promise.resolve(window.confirm(T.discardConfirm)); // native-confirm:allow till-confirm.js not loaded: still ask, never a silent discard
+      ask.then(function (ok) {
+        if (ok !== true) return;            // Cancel: recording, draft and panel untouched
+        discardPending = true;
+        if (voiceRecording) voiceRecorder.stop();
+        if (screenRecording) screenRecorder.stop();
+        finishDiscard();
+      });
     });
 
     restoreDraft();

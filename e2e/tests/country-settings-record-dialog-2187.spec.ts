@@ -128,6 +128,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
   });
 
   test('closing with unsaved changes asks first (discard guard)', async ({ page }) => {
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page);
     await page.goto('/country-settings?all=1');
     await page.locator('#country-settings-new').click();
@@ -135,19 +136,16 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     await expect(dlg).toBeVisible();
     await page.locator(CODE).fill(newCode());
 
-    let confirmed = false;
-    page.once('dialog', (d) => {
-      confirmed = true;
-      d.dismiss();
-    });
+    // Asked in the till's own dialog (ut-docs#6116), never the browser's.
     await page.locator(`${DIALOG} .record-dialog-close`).click();
-    expect(confirmed).toBe(true);
-    // Dismissed the confirm — the dialog must still be open, nothing lost.
+    await answerTillConfirm(page, 'cancel');
+    // Cancelled the question — the dialog must still be open, nothing lost.
     await expect(dlg).toBeVisible();
 
-    page.once('dialog', (d) => d.accept());
     await page.locator(`${DIALOG} .record-dialog-close`).click();
+    await answerTillConfirm(page, 'confirm');
     await expect(dlg).toBeHidden();
+    none();
     assertClean();
   });
 

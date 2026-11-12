@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 import * as http from 'http';
 
 // ut-docs#4228: the plugin store detail page (/plugins/store/{listing_id})
@@ -93,8 +93,7 @@ test.describe.serial('Plugin store detail page actions (ut-docs#4228)', () => {
   test('verified listing: terms box gates Download, then it posts with no prompt; the error key is shown', async ({ page }) => {
     const assertClean = watchConsole(page, exempt403);
     const posts = await interceptDownload(page);
-    let dialogs = 0;
-    page.on('dialog', (d) => { dialogs++; void d.dismiss(); });
+    const none = noNativeDialogs(page);
     await open(page, VERIFIED);
 
     // Unregistered till (see the header on file order): the terms box shows
@@ -114,31 +113,52 @@ test.describe.serial('Plugin store detail page actions (ut-docs#4228)', () => {
     const form = new URLSearchParams(posts[0].body ?? '');
     expect(form.get('listing_id')).toBe(VERIFIED);
     expect(form.get('accept_terms')).toBe('on');
-    expect(dialogs, 'a verified publisher is not asked to confirm').toBe(0);
+    await expect(page.getByTestId('till-confirm'), 'a verified publisher is not asked to confirm').toBeHidden();
+    none();
     assertClean();
   });
 
-  test('unverified publisher: Cancel sends nothing, OK sends the POST', async ({ page }) => {
+  test('unverified publisher: Cancel sends nothing, Confirm sends the POST', async ({ page }) => {
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page, exempt403);
     const posts = await interceptDownload(page);
     await open(page, UNVERIFIED);
     await page.locator('#store-accept-terms').check();
 
-    let message = '';
-    page.once('dialog', (d) => { message = d.message(); void d.dismiss(); });
     await download(page).click();
+    // The trust question is asked in the till's own dialog (ut-docs#6116).
+    let message = await answerTillConfirm(page, 'cancel', VENDOR);
     await page.waitForTimeout(500);
     expect(message).toContain(VENDOR);
     expect(posts, 'Cancel on the trust prompt sends nothing').toHaveLength(0);
     await expect(download(page)).toBeEnabled();
 
-    page.once('dialog', (d) => { message = d.message(); void d.accept(); });
     await download(page).click();
+    message = await answerTillConfirm(page, 'confirm', VENDOR);
     await expect(page.locator('#store-msg')).toHaveText(`✗ ${NOT_ENTITLED}`);
     expect(message).toContain(VENDOR);
     expect(posts).toHaveLength(1);
     expect(new URLSearchParams(posts[0].body ?? '').get('listing_id')).toBe(UNVERIFIED);
     await expect(download(page)).toBeEnabled();
+    none();
+    assertClean();
+  });
+
+  test('unverified publisher: Escape sends nothing; a vendor named A$&B renders literally', async ({ page }) => {
+    const none = noNativeDialogs(page);
+    const assertClean = watchConsole(page, exempt403);
+    const posts = await interceptDownload(page);
+    await open(page, UNVERIFIED);
+    await page.locator('#store-accept-terms').check();
+    await page.locator('.store-detail').evaluate((el) => el.setAttribute('data-vendor', 'A$&B'));
+    await download(page).click();
+    const message = await answerTillConfirm(page, 'escape');
+    expect(message).toContain('A$&B');
+    await page.waitForTimeout(500);
+    expect(posts, 'Escape on the trust prompt sends nothing').toHaveLength(0);
+    await expect(download(page)).toBeEnabled();
+    await expect(page.locator('#store-msg')).not.toContainText('⏳');
+    none();
     assertClean();
   });
 

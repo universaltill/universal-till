@@ -60,7 +60,7 @@
   window.UT.confirm = function (question, opts) {
     opts = opts || {};
     var dlg = dialog();
-    if (!dlg) return Promise.resolve(window.confirm(String(question)));
+    if (!dlg) return Promise.resolve(window.confirm(String(question))); // native-confirm:allow no #ut-confirm shell: native fallback keeps "never sends unconfirmed" (ut-docs#5524)
     wire();
     if (pending) return Promise.resolve(false); // one question at a time
     return new Promise(function (resolve) {

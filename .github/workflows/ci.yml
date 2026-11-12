@@ -203,6 +203,12 @@ jobs:
         run: bash scripts/ci/guard-no-showmodal.sh
       - name: No-showModal guard regression test
         run: bash scripts/ci/guard-no-showmodal_test.sh
+      # ut-docs#6116: no till surface asks with the browser's window.confirm --
+      # it makes the status bar and Lock inert; UT.confirm (till-confirm.js).
+      - name: No-native-confirm guard
+        run: bash scripts/ci/guard-no-native-confirm.sh
+      - name: No-native-confirm guard regression test
+        run: bash scripts/ci/guard-no-native-confirm_test.sh
       # ut-docs#4375 (ADR-0160 §8): no physical left/right CSS -- the till lays
       # out right-to-left for ar/fa/he/ur; shrink-only baseline for old lines.
       - name: RTL logical-CSS guard

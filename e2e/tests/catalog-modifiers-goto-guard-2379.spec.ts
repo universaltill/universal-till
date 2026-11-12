@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2379: the item-editor's modifiers surface (a nested dialog then,
 // the Modifiers tab since ut-docs#2211) gets a
@@ -45,16 +46,13 @@ test.describe('ut-docs#2379 go-to-Modifiers guard (catalog item editor)', () => 
     await page.locator(`.catalog-row[data-id="${itemId}"]`).click();
     await expect(page.locator('#item-form-modal')).toBeVisible();
 
-    let dialogFired = false;
-    page.once('dialog', (d) => {
-      dialogFired = true;
-      d.dismiss();
-    });
+    const none = noNativeDialogs(page);
 
-    await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    const ret = await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    expect(ret, 'utCatalogGoToModifiers always returns false (inline-actions prevents the default)').toBe(false);
     await page.waitForURL('**/modifiers');
 
-    expect(dialogFired, 'a pristine, just-opened item form must never prompt').toBe(false);
+    none();
     await expect(page).toHaveURL(/\/modifiers$/);
   });
 
@@ -68,22 +66,16 @@ test.describe('ut-docs#2379 go-to-Modifiers guard (catalog item editor)', () => 
 
     await page.locator('#item-name').fill(`${name} EDITED`);
 
-    let promptMessage = '';
-    page.once('dialog', (d) => {
-      promptMessage = d.message();
-      d.dismiss();
-    });
-    // window.confirm() is a blocking native call — Playwright's dialog
-    // handler answers it via CDP before this evaluate()'s own promise can
-    // resolve, and utCatalogGoToModifiers returns BEFORE calling
-    // location.assign on the cancelled path (see catalog.html: `if
-    // (!window.confirm(...)) return false;`). So by the time this await
-    // returns, the guard has already made its decision either way — no
-    // arbitrary settle-timeout needed to avoid asserting before the fact.
-    await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    const none = noNativeDialogs(page);
+    // The question is asked in the till's own dialog (ut-docs#6116), so the
+    // call returns false at once and the outcome lands after the answer.
+    const ret = await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    expect(ret).toBe(false);
+    const promptMessage = await answerTillConfirm(page, 'cancel');
 
     await expect(page).not.toHaveURL(/\/modifiers$/);
     expect(promptMessage.length, 'expected a real, non-empty discard-confirm message').toBeGreaterThan(0);
+    none();
     await expect(page.locator('#item-name')).toHaveValue(`${name} EDITED`);
   });
 
@@ -105,16 +97,15 @@ test.describe('ut-docs#2379 go-to-Modifiers guard (catalog item editor)', () => 
 
     await page.locator('#item-price').fill('9.99');
 
-    let promptMessage = '';
-    page.once('dialog', (d) => {
-      promptMessage = d.message();
-      d.dismiss();
-    });
-    await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    const none = noNativeDialogs(page);
+    const ret = await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    expect(ret).toBe(false);
+    const promptMessage = await answerTillConfirm(page, 'cancel');
 
     expect(promptMessage.length, 'a price-only edit must still trigger the discard-confirm').toBeGreaterThan(0);
     await expect(page).not.toHaveURL(/\/modifiers$/);
     await expect(page.locator('#item-price')).toHaveValue('9.99');
+    none();
   });
 
   test('dirty form prompts, OK discards the edits and navigates', async ({ page }) => {
@@ -127,10 +118,13 @@ test.describe('ut-docs#2379 go-to-Modifiers guard (catalog item editor)', () => 
 
     await page.locator('#item-name').fill(`${name} EDITED`);
 
-    page.once('dialog', (d) => d.accept());
-    await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    const none = noNativeDialogs(page);
+    const ret = await page.evaluate(() => (window as unknown as { utCatalogGoToModifiers: () => boolean }).utCatalogGoToModifiers());
+    expect(ret).toBe(false);
+    await answerTillConfirm(page, 'confirm');
     await page.waitForURL('**/modifiers');
 
     await expect(page).toHaveURL(/\/modifiers$/);
+    none();
   });
 });
