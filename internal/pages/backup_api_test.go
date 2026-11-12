@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -800,5 +801,41 @@ func TestBackupNow_PhotosFailureShowsWarningNotSuccess(t *testing.T) {
 	}
 	if !strings.Contains(data, "photos_error") || !strings.Contains(data, "boom") {
 		t.Fatalf("audit row must carry photos_error, got %s", data)
+	}
+}
+
+// ut-docs#5523: a future mtime with a past name must show the name's date,
+// and the real backup stays the "newest" row.
+func TestListBackupsForUIShowsEffectiveDate(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	_, dp, _ := newBackupTestDeps(t)
+	dir, err := db.BackupDir(dp.Cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	put := func(nameDelta, mtimeDelta time.Duration) string {
+		name := "unitill-pos-" + now.UTC().Add(nameDelta).Format("20060102-150405") + ".db"
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		at := now.Add(mtimeDelta)
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+		return name
+	}
+	real := put(-2*time.Hour, -2*time.Hour)
+	bogus := put(-72*time.Hour, 48*time.Hour)
+
+	rows := listBackupsForUI(dp, "en")
+	if len(rows) != 2 || rows[0].Name != real || !rows[0].Newest || rows[1].Name != bogus || rows[1].Newest {
+		t.Fatalf("rows = %+v", rows)
+	}
+	want := httpx.FormatDateTime(now.Add(-72*time.Hour).Local(), "en")
+	futureDay := httpx.FormatDateTime(now.Add(48*time.Hour).Local(), "en")
+	if rows[1].Date == futureDay || rows[1].Date[:6] != want[:6] {
+		t.Fatalf("date = %q, want near %q (not future %q)", rows[1].Date, want, futureDay)
 	}
 }

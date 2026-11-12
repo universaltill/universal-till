@@ -313,7 +313,13 @@ var snapshotWithAssets = dbpkg.SnapshotWithAssets
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
 // already exists, then prunes snapshots older than the retention days.
 func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
-	list, err := dbpkg.ListBackups(dbPath)
+	runDailyBackupAt(db, dbPath, assetsRoot, time.Now())
+}
+
+// runDailyBackupAt is runDailyBackup with an injected clock. A backup whose
+// age is unknown (future mtime and name, ut-docs#5523) is never "fresh".
+func runDailyBackupAt(db *sql.DB, dbPath, assetsRoot string, now time.Time) {
+	list, err := dbpkg.ListBackupsAt(dbPath, now)
 	// A backup file a manager uploaded (ut-docs#5070) holds another copy
 	// of the shop, not a snapshot of this till's data: it never counts as
 	// today's backup.
@@ -323,7 +329,7 @@ func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 			own = append(own, b)
 		}
 	}
-	if err == nil && len(own) > 0 && time.Since(own[0].ModTime) < 24*time.Hour {
+	if err == nil && len(own) > 0 && own[0].AgeKnown && now.Sub(own[0].EffectiveTime) < 24*time.Hour {
 		checkFreshBackup(dbPath, assetsRoot, own[0].Name)
 		return
 	}
@@ -355,7 +361,7 @@ func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 		// Fail toward retaining: never prune by a guessed window.
 		log.Printf("[Backup] not pruning old backups, retention setting unreadable: %v", err)
 	} else {
-		_, _ = dbpkg.PruneBackupsOlderThan(dbPath, days, time.Now())
+		_, _ = dbpkg.PruneBackupsOlderThan(dbPath, days, now)
 	}
 }
 
