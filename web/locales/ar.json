@@ -2964,7 +2964,6 @@
   "status.language_pack_update_available": "يتوفر تحديث لحزمة اللغة",
   "status.cloud_auth.hint": "لم تعد السحابة تقبل بيانات اعتماد هذا الصندوق. يواصل الصندوق البيع دون اتصال ويحاول الاتصال بالسحابة مرة كل ساعة.",
   "status.cloud_auth.needs_pairing": "يحتاج هذا الصندوق إلى الإقران من جديد",
-  "status.cloud_auth.register_new": "التسجيل كمتجر جديد",
   "status.cloud_auth.revoked": "أُزيل من حساب المتجر السحابي",
   "status.cloud_auth.replaced": "استُبدل بـ %s",
   "status.cloud_auth.replaced_hint": "تم استبدال هذا الصندوق في %[1]s. لم تعد مبيعاته تصل إلى السحابة أو إلى الصندوق الرئيسي. استخدم %[2]s بدلًا منه.",

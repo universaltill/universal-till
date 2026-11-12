@@ -25,7 +25,7 @@ func TestRegisterSendsTermsOnlyWhenAccepted(t *testing.T) {
 			t.Fatalf("RecordTermsAcceptance: %v", err)
 		}
 		m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-		if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+		if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		if got["terms_version"] != TermsVersion {
@@ -40,7 +40,7 @@ func TestRegisterSendsTermsOnlyWhenAccepted(t *testing.T) {
 		var got map[string]any
 		srv := registerTestServer(t, &got)
 		m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-		if err := register(context.Background(), m, "Corner Shop", newFakeKV()); err != nil {
+		if err := register(context.Background(), m, "Corner Shop", newFakeKV(), ""); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		for _, k := range []string{"terms_version", "terms_locale"} {
@@ -58,7 +58,7 @@ func TestRegisterSendsTermsOnlyWhenAccepted(t *testing.T) {
 			t.Fatal(err)
 		}
 		m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-		if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+		if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 			t.Fatal(err)
 		}
 		if got["terms_version"] != TermsVersion {
@@ -228,7 +228,7 @@ func TestRegisterSendingTermsSetsSentMarker(t *testing.T) {
 	srv := registerTestServer(t, &got)
 	kv := newFakeKV()
 	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+	if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 		t.Fatal(err)
 	}
 	if TermsSent(context.Background(), kv) {
@@ -236,7 +236,7 @@ func TestRegisterSendingTermsSetsSentMarker(t *testing.T) {
 	}
 	resetState()
 	_ = RecordTermsAcceptance(context.Background(), kv, "en")
-	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+	if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !TermsSent(context.Background(), kv) {

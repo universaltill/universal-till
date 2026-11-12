@@ -5753,6 +5753,16 @@ body.login-screen {
 }
 .statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
 #sb-cloud-auth-mount:empty { display: none; }
+/* ut-docs#5145: Settings > Till registration, the device ID and key
+   fingerprint support asks for. Selectable with one tap, wrapping at group
+   (space) boundaries, logical properties only. */
+.register-facts { margin-block: .5rem 0; display: grid; gap: .35rem; }
+.register-facts dt { font-size: .85em; opacity: .75; }
+.register-facts dd { margin-inline-start: 0; word-break: normal; overflow-wrap: anywhere; user-select: all; }
+.reconnect-actions { display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; }
+.reconnect-actions .reconnect-newshop { margin-block-start: 1.5rem; padding-block-start: 1.5rem; align-self: stretch; }
+@media (min-width: 601px) { .reconnect-actions { gap: 1rem; } }
+.register-facts code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal; }
 /* ut-docs#574 (ADR-0147): the cloud refused the archived-report upload
    (report_archive_chip.html). Same amber pill as sb-cloud-auth: the till
    still sells and keeps every report; the upload waits for an active

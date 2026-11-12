@@ -78,6 +78,37 @@ func KID(publicKey []byte) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
+// FingerprintLen is a key fingerprint's length in hex characters (ut-docs#5145;
+// ut-cloud internal/approvalkey.FingerprintLen): half the SHA-256 of the public
+// key, 128 bits. Its first 16 are the KID. Support reads it from Settings to
+// bind a re-register to this till's key.
+const FingerprintLen = 32
+
+// Fingerprint is this till's key fingerprint, creating the key on first use
+// (the same key every register and check-in reports). An error when the key
+// cannot be loaded or created.
+func (s *Store) Fingerprint() (string, error) {
+	k, err := s.LoadOrCreate()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(k.Public().(ed25519.PublicKey))
+	return hex.EncodeToString(sum[:])[:FingerprintLen], nil
+}
+
+// FingerprintGroups spaces a fingerprint into groups of four for reading aloud;
+// anything that is not FingerprintLen characters passes through unchanged.
+func FingerprintGroups(fp string) string {
+	if len(fp) != FingerprintLen {
+		return fp
+	}
+	parts := make([]string, 0, FingerprintLen/4)
+	for i := 0; i < FingerprintLen; i += 4 {
+		parts = append(parts, fp[i:i+4])
+	}
+	return strings.Join(parts, " ")
+}
+
 // load reads the seed: (key, true, nil) when usable, (nil, false, nil) when
 // there is no file, an error for anything else. Caller holds s.mu.
 func (s *Store) load() (ed25519.PrivateKey, bool, error) {
@@ -264,6 +295,43 @@ func (s *Store) SignApproval(a Approval) (string, error) {
 	}
 	if !found {
 		return "", errors.New("approval: this till has no approval key")
+	}
+	return b64(ed25519.Sign(k, msg)), nil
+}
+
+// reregisterDomain is the first line of the re-register proof (ut-docs#5145;
+// ut-cloud internal/approvalkey.ReregisterDomain). It differs from the PoP and
+// move-approval domains, so a signature made here never verifies as either.
+const reregisterDomain = "universaltill/till-reregister/v1"
+
+// ReregisterMessage is the exact bytes signed to prove this till's key to the
+// cloud when it re-registers a known device:
+//
+//	universaltill/till-reregister/v1\n<device_id>\n<public_key>\n<challenge>
+func ReregisterMessage(deviceID, publicKey, challenge string) ([]byte, error) {
+	for _, f := range []string{deviceID, publicKey, challenge} {
+		if f == "" || strings.ContainsAny(f, "\n\r") {
+			return nil, errors.New("reregister: a field is empty or contains a line break")
+		}
+	}
+	return []byte(reregisterDomain + "\n" + deviceID + "\n" + publicKey + "\n" + challenge), nil
+}
+
+// SignReregister signs a challenge the cloud handed out. It never creates a
+// key: a till with no (or an unusable) key cannot prove one.
+func (s *Store) SignReregister(deviceID, challenge string) (string, error) {
+	s.mu.Lock()
+	k, found, err := s.load()
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", errors.New("reregister: this till has no approval key")
+	}
+	msg, err := ReregisterMessage(deviceID, b64(k.Public().(ed25519.PublicKey)), challenge)
+	if err != nil {
+		return "", err
 	}
 	return b64(ed25519.Sign(k, msg)), nil
 }

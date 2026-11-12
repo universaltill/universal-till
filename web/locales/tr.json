@@ -2964,7 +2964,6 @@
   "status.language_pack_update_available": "Dil paketi güncellemesi mevcut",
   "status.cloud_auth.hint": "Bulut artık bu kasanın kimlik bilgisini kabul etmiyor. Kasa çevrimdışı satışa devam eder ve buluta saatte bir yeniden bağlanmayı dener.",
   "status.cloud_auth.needs_pairing": "Bu kasanın yeniden eşleştirilmesi gerekiyor",
-  "status.cloud_auth.register_new": "Yeni mağaza olarak kaydol",
   "status.cloud_auth.revoked": "Mağazanın bulut hesabından kaldırıldı",
   "status.cloud_auth.replaced": "Yerine geçen: %s",
   "status.cloud_auth.replaced_hint": "Bu kasa %[1]s tarihinde değiştirildi. Satışları artık buluta veya ana kasaya ulaşmıyor. Bunun yerine şu kasayı kullanın: %[2]s.",
