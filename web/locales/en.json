@@ -2798,6 +2798,7 @@
   "settings.printer.receipt_policy.never": "Never print automatically",
   "settings.printer.receipt_policy.title": "Receipt after each sale",
   "settings.printer.system_hint": "For a regular office printer (e.g. HP), pick “Regular printer” — receipts are sent as plain text to the system default printer. Put a specific printer name in Address to target it, or leave blank for the default. Thermal printers use Network or USB device (ESC/POS).",
+  "settings.printer.system_unavailable": "Regular printer can't print on this till — no printer is set up in its operating system. Choose Network (IP) or USB device for your receipt printer.",
   "settings.printer.test": "Print test receipt",
   "settings.printer.test_failed": "Print failed",
   "settings.printer.test_ok": "Test receipt sent — check the printer",

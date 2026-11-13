@@ -866,6 +866,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfigForSettings(r.Context(), d),
+			// ut-docs#6182: advisory under Connection when Regular printer (system)
+			// cannot print on this device. Render-time probe read only.
+			"printerSystemUnavailable": systemPrinterMissing(d),
 			// ADR-0124: the receipt policy above is the shop's stored choice;
 			// in a forbidden market the till still prints nothing, and says so.
 			"receiptPolicyShadowNote": customerDocumentsSuppressed(r.Context(), d),
