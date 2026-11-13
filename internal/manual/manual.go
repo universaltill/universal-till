@@ -191,7 +191,7 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			// topic (the declaration source the harness and guard read); in
 			// any other locale it is dropped and reported like a missing
 			// image, so one bad Weblate edit cannot nil Builtin().
-			tp, err := parseTopicLenient(raw, func(file string) (string, bool) {
+			tp, err := parseTopic(raw, func(file string) (string, bool) {
 				return shotSrc(fsys, root, locale, file)
 			}, locale != FallbackLocale)
 			if err != nil {
@@ -619,15 +619,10 @@ func snippet(tp *Topic, terms []string) string {
 //
 // resolve maps an inline screenshot file name (e.g. "sell-browse-tiles.png")
 // to its served src; nil means nothing resolves. An unresolved image is
-// dropped from the HTML and recorded in Topic.missingImages.
-func parseTopic(raw []byte, resolve func(file string) (string, bool)) (*Topic, error) {
-	return parseTopicLenient(raw, resolve, false)
-}
-
-// parseTopicLenient is parseTopic; with lenient set, a malformed inline image
-// reference is dropped and recorded in Topic.missingImages instead of
-// returning an error.
-func parseTopicLenient(raw []byte, resolve func(file string) (string, bool), lenient bool) (*Topic, error) {
+// dropped from the HTML and recorded in Topic.missingImages. With lenient
+// set (translated topics), a malformed inline image reference is dropped and
+// recorded the same way instead of returning an error.
+func parseTopic(raw []byte, resolve func(file string) (string, bool), lenient bool) (*Topic, error) {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	if !strings.HasPrefix(text, "---\n") {
 		return nil, fmt.Errorf("missing front matter")
