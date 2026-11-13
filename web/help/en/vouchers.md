@@ -135,6 +135,8 @@ A customer who lost the gift slip they were handed can have it printed again, wi
 1. Open **Menu → Gift vouchers** and tap the voucher's card number.
 2. Tap **Print voucher slip**. The slip comes out on this till's receipt printer, and the page shows "Slip sent to the printer." With no receipt printer set up on this till, the browser's print dialog opens with just the slip instead; choose a printer there (or save it as a PDF). The page then shows "Print dialog opened for this slip."
 
+The picture at the top of this page shows a voucher's own page on a till with no receipt printer set up: a note above **Print voucher slip** tells you the slip will open in the browser's print dialog, with a **Receipt printer** link to set one up.
+
 The button shows for an **Active** voucher with a balance, whether or not a receipt printer is set up and whether or not **Print each gift voucher on its own slip** is on. The slip carries the shop name and the receipt's header lines (and logo, if your receipt shows one), **Gift voucher** and its value, **For …** when a name was entered, the barcode (on a Regular printer the number prints as text instead), and a line **Reprinted** with today's date, so it can be told from the slip handed over at the sale. No receipt prints and the cash drawer doesn't open. A slip printed through the browser has no logo and prints black on white.
 
 The slip shows the voucher's **original value**, not what is left on it. When the two differ, the page says so above the button — check the current balance on the voucher's page before you hand the slip over.

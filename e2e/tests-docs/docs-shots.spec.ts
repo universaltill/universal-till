@@ -33,6 +33,15 @@ const ADMIN_PIN = '482913'; // same PIN login.spec.ts sets, so a reused local au
 // /invoices: the current calendar month — neither reads internal/clock), so
 // each topic addresses the seeded month explicitly instead. Keep these in
 // step with the dates in seed_docs_sales/main.go.
+// ut-docs#6157: the vouchers topic pictures a voucher's DETAIL page (with the
+// "no receipt printer" hint above Print slip), not the empty list. Keep
+// DOCS_VOUCHER_ID equal to docsVoucherID in e2e/seed_docs_sales/main.go.
+const DOCS_VOUCHER_ID = 'DOCS-GV-0001';
+const routeOverride: Record<string, string> = { vouchers: '/vouchers/' + DOCS_VOUCHER_ID };
+// Selector that must be visible before the shot, so a regression (404, hint
+// gone because a printer is configured) fails the capture, not the picture.
+const mustShow: Record<string, string> = { vouchers: '[data-testid="voucher-slip-browser-hint"]' };
+
 const pinnedQuery: Record<string, string> = {
   reports: 'period=month&anchor=2025-12-15',
   invoices: 'from=2025-12-01&to=2025-12-31',
@@ -244,6 +253,7 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // push stream (GET /api/pairings/stream) — same never-idle shape, same 204.
   await page.route('**/api/pairings/stream', (r) => r.fulfill({ status: 204 }));
   await page.goto(url, { waitUntil: 'networkidle' });
+  if (mustShow[id]) await expect(page.locator(mustShow[id])).toBeVisible();
 
   // The locale actually took: RTL locales must render flipped, same
   // assertion as rtl.spec.ts — a screenshot of the wrong locale (or of a
@@ -492,7 +502,7 @@ for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MO
       if (topic.id === 'sell') await ensureBasketLines(page);
       if (topic.id === 'invoices') await ensureInvoiceSeller(page);
       await ensureFullEffects(page);
-      await capture(page, topic.id, locale, topic.route);
+      await capture(page, topic.id, locale, routeOverride[topic.id] ?? topic.route);
     });
   }
 }
