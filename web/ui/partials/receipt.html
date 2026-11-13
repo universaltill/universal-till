@@ -110,7 +110,7 @@
          state change. The action row below stays exactly as it is for
          always/never and as the fallback once the prompt is answered.
          Review finding (2026-09-09): the block is hidden BEFORE
-         window.print() fires in the fallback path, and .receipt-ask is in
+         the print helper (UT.print) fires in the fallback path, and .receipt-ask is in
          the @media print hide list above — a failed reprint must never put
          "Would you like a receipt?" on the customer's own paper. -->
     <div class="receipt-ask" id="receipt-ask" role="group" aria-label="{{ T "receipt.ask.title" }}">
@@ -123,7 +123,7 @@
     {{ end }}
     {{/* ADR-0124 (ut-docs#3169): a 451 from the print POST is the
          customer-document gate's refusal, never a printer fault — neither
-         Print here nor the ask prompt's Print falls back to window.print()
+         Print here nor the ask prompt's Print falls back to the print helper (UT.print)
          on it. In a suppressed market this partial is not rendered at all
          (sale_recorded.html replaces it); this is defence in depth. */}}
     <div class="actions">
