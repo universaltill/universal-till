@@ -80,6 +80,8 @@ var baseFuncs = template.FuncMap{
 	"planpurchaseallowed": func() bool { return PlanPurchaseAllowed() },
 	// ut-docs#4370: request-bound by withTranslateMode; false everywhere else.
 	"translatemode": func() bool { return false },
+	// ut-docs#3735: request-bound by withHelpHref; false everywhere else.
+	"windowtoggle": func() bool { return false },
 	// runelen: a field's `size` attribute must track how many CHARACTERS
 	// will actually show, not how many bytes the string takes (ut-docs#3319
 	// review finding) — Go's builtin `len` on a string is byte length, which
@@ -350,6 +352,10 @@ func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
 	visible := requestVisibility(r)
 	out["railEntries"] = func() []RailEntry { return railEntriesFor(locale, visible) }
 	out["allowed"] = allowedFunc(visible)
+	// ut-docs#3735: base.html's <body data-window-toggle> (F11 live window
+	// toggle), decided per request by pages.windowToggleOffered.
+	windowToggle := WindowToggleOn(r)
+	out["windowtoggle"] = func() bool { return windowToggle }
 	return withTranslateMode(out, r)
 }
 

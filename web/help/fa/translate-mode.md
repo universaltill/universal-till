@@ -3,7 +3,7 @@ id: translate-mode
 title: حالت ترجمه
 section: راه‌اندازی فروشگاه
 order: 151
-public: true
+public: false
 summary: مدیران می‌توانند ببینند هر برچسب از کدام کلید متن می‌آید، آن را در Weblate باز کنند و عبارتش را برای این فروشگاه تغییر دهند.
 keywords: [حالت ترجمه, ترجمه, weblate, زبان, عبارت]
 ---

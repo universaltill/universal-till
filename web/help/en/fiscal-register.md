@@ -3,7 +3,7 @@ id: fiscal-register
 title: Fiscal register (Germany)
 section: Setting up your shop
 order: 112
-public: true
+public: false
 summary: "Record the till and TSE details Germany's §146a Abs. 4 AO till-notification needs, grouped by business location — you file the notification yourself in Mein ELSTER."
 routes: [/fiscal-register]
 keywords: [fiscal, germany, AO, TSE, ELSTER, kassensichv, notification, till, registration]

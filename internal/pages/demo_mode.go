@@ -451,12 +451,13 @@ var demoDeniedRoutes = map[string]bool{
 	// Desktop shell / OS: window mode and state, input heartbeat, launch on
 	// startup, exit to OS (stays visible in the UI; the POST answers the demo
 	// message).
-	"GET /api/window-mode":                 true,
-	"GET /ui/settings/window-mode-status":  true,
-	"POST /api/settings/exit-to-os":        true,
-	"POST /api/settings/launch-on-startup": true,
-	"POST /api/settings/window-mode":       true,
-	"POST /api/window/input-heartbeat":     true,
+	"GET /api/window-mode":                  true,
+	"GET /ui/settings/window-mode-status":   true,
+	"POST /api/settings/exit-to-os":         true,
+	"POST /api/settings/launch-on-startup":  true,
+	"POST /api/settings/window-mode":        true,
+	"POST /api/settings/window-mode/toggle": true,
+	"POST /api/window/input-heartbeat":      true,
 	// Reload-reason diagnostics (ut-docs#2788): telemetry about the till
 	// device itself, like the heartbeat; the page's beacon ignores the
 	// answer.

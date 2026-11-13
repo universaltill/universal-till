@@ -1208,7 +1208,7 @@
         <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
-              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
+              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}" data-confirm-ok="{{ T "categories.deactivate" }}"{{ end }}>
           <input type="hidden" name="active" value="0">
           <button type="submit" class="btn secondary btn-icon btn-icon-danger" id="designer-cat-active-{{ $c.ID }}"
                   {{ if gt $c.ItemCount 0 }}aria-describedby="designer-cat-blocked-{{ $c.ID }}"{{ end }}
@@ -1716,7 +1716,7 @@
                    confirm() dialog that would only ever precede the SAME
                    eventual elevation either way. The confirm still guards
                    the real, granted path unchanged. */}}
-              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}"{{ end }}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}" data-confirm-ok="{{ T "confirm.remove" }}"{{ end }}
               hx-swap="none"
               aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
               title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">

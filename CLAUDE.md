@@ -44,6 +44,14 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `#ut-scrim`; only self-order kiosk dialogs may stay modal
   (`scripts/ci/guard-no-showmodal.sh`, reviewed exception
   `showmodal:allow <reason>`; ut-docs#2097).
+- No native `window.confirm` on till surfaces: ask with `UT.confirm(q,
+  {opener}) → Promise<boolean>` (`web/public/till-confirm.js`) or
+  `hx-confirm`; act only on `true`. Fallbacks for a missing
+  `till-confirm.js`/`#ut-confirm` carry same-line `native-confirm:allow
+  <reason>` (`scripts/ci/guard-no-native-confirm.sh`; ut-docs#6116).
+  Every `hx-confirm` opener names its verb on the same tag:
+  `data-confirm-ok="{{ T "key" }}"` (optional `data-confirm-dismiss`);
+  `TestHxConfirm_EveryOpenerNamesItsVerb` (ut-docs#6117).
 
 ## Self-order kiosk isolation (`scripts/ci/guard-kiosk-engine.sh`)
 - The kiosk basket is `common.Deps.KioskEngine`, separate from the cashier's

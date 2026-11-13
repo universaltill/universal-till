@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Route } from '@playwright/test';
+import { answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#5404: ordinary user-initiated htmx actions (click/submit/change/...)
 // get the same client timeout as #5335's prompts. Non-GET -> sticky outcome
@@ -99,19 +100,21 @@ test.describe('ordinary action timeout (ut-docs#5404)', () => {
 
   test('A3 DELETE with hx-confirm: outcome, and it is sticky against a later network alert', async ({ page }) => {
     await shortTimeout(page);
-    page.on('dialog', (d) => d.accept());
+    const noNative = noNativeDialogs(page);
     const hd = await hold(page, '**/__ut5404/d');
     const hg = await hold(page, '**/__ut5404/g2');
     await page.goto('/');
     await probe(page, '<button id="d" hx-delete="/__ut5404/d" hx-confirm="sure?" hx-target="#t5404">del</button>'
       + '<button id="g2" hx-get="/__ut5404/g2" hx-target="#t5404">get</button><div id="t5404"></div>');
     await page.locator('#d').click();
+    await answerTillConfirm(page, 'confirm', 'sure?');
     await hd.inFlight;
     await expect(alertText(page)).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
     await page.locator('#g2').click();
     await hg.inFlight;
     await page.waitForTimeout(OVERRIDE_MS * 1.8);
     await expect(alertText(page)).toHaveText(TIMEOUT_TEXT);
+    noNative();
   });
 
   test('A4 sale-screen tile tap: outcome, nothing stuck busy, a second tap sends a request', async ({ page }) => {

@@ -3108,6 +3108,54 @@ body.osk-padded #table-add-modal .modifier-actions {
    needs the identical fixed position + z-index, which .modifier-modal
    alone does not provide (ut-docs#2873's scrim sweep caught the gap). */
 #confirm-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#5524: the client hx-confirm dialog (till-confirm.js). Same frame as
+   #confirm-modal (.modifier-modal supplies width/padding); above the popups it
+   can be raised from (#modifier-modal 560, #hold-modal 550, record/item-form
+   dialogs 500), below #osk (1000). The status bar stays reachable over
+   #ut-scrim (450/460). Scrim tap is deliberately not an answer. */
+#ut-confirm { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 590;
+  max-block-size: calc(100vh - 8vh - 1rem); max-block-size: calc(100dvh - 8vh - 1rem); overflow-y: auto; }
+#ut-confirm .ut-confirm-msg { margin-block: 0 .75rem; color: var(--text); text-align: start;
+  white-space: pre-line; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  /* The rail is a top bar here holding ☰; Lock is in its drawer, which
+     floats above this dialog while the scrim is on (ut-docs#6118). Start
+     below the bar (as #category-items-modal does) so ☰ stays tappable —
+     except over a full-screen dialog (next rule). */
+  #ut-confirm { inset-block-start: calc(var(--topbar-h) + .5rem);
+    max-block-size: calc(100vh - var(--topbar-h) - 1.5rem); max-block-size: calc(100dvh - var(--topbar-h) - 1.5rem); }
+  /* ut-docs#6131: over a full-screen dialog there is no ☰ to keep clear, and
+     the dialog's own head (title + Lock/exit-to-OS/status row, #2099/#6125)
+     sits right under the top edge — beneath this z-590 question (the dialog
+     is a z-500 stacking context, so its Lock cannot be raised over it).
+     Anchor to the bottom, above the status row: the head stays the hit
+     target and the answer sits under the thumb. 11rem is the head at 360px
+     (measured 160.7px = 10.04rem) plus slack; a long question scrolls
+     (overflow-y:auto) instead of growing up into the head. */
+  html:has(:is(.record-dialog, .dialog-beside-chrome)[open]) #ut-confirm {
+    inset-block: auto calc(var(--phone-sb-h, 4rem) + .5rem + env(safe-area-inset-bottom));
+    max-block-size: calc(100vh - var(--phone-sb-h, 4rem) - 11rem);
+    max-block-size: calc(100dvh - var(--phone-sb-h, 4rem) - 11rem); }
+  /* With the keyboard band reserved the box ends higher, so re-cap it too
+     (bottom offset + 11rem): otherwise a long question grows up over the
+     head again (review of #6131: top -32px at 320x568). */
+  html:has(:is(.record-dialog, .dialog-beside-chrome)[open]) body.osk-padded #ut-confirm {
+    inset-block-end: calc(var(--osk-reserved-height, 17rem) + .5rem);
+    max-block-size: calc(100vh - var(--osk-reserved-height, 17rem) - 11.5rem);
+    max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 11.5rem); }
+  /* ut-docs#6117: verb labels ("Promote this till", de "Bestellung
+     stornieren") can be longer than half a 360px row. A 7.5rem basis
+     keeps the short Cancel/Confirm pair side by side at 360px; a long label
+     wraps inside its button and the target never drops below 44px. */
+  #ut-confirm .modifier-actions .btn { flex: 1 1 7.5rem; min-block-size: 44px;
+    white-space: normal; overflow-wrap: anywhere; text-align: center; }
+}
+/* ut-docs#6149: the dialog always moves focus to exactly one button (the safe
+   one; OK when neutral) so Enter's target is known. A pointer/touch open gets
+   no UA :focus-visible ring, hence :focus (not :focus-visible) here: the ring
+   is the "Enter goes here" cue on tap, click and key alike. Same declaration
+   as the --focus-border rings elsewhere (>=3:1 per theme). */
+#ut-confirm .modifier-actions .btn:focus { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 /* ut-docs#4286: the Renew / Choose-a-plan panel (base.html). Non-modal
    .show() over #ut-scrim like #table-qr-modal: fixed, centred, capped short
    of the viewport so it never covers the status bar (z 460, reachable);
@@ -6989,6 +7037,28 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   /* ...and, like everywhere else, it stays above #ut-scrim while a dialog
      is open (status stays reachable; base rule html.ut-scrim-on .statusbar). */
   html.ut-scrim-on body.sale-screen .statusbar { z-index: 460; }
+  /* ut-docs#6118 (#1999, #2873): Lock is a drawer row here, and the nav is
+     pointer-events:none under the scrim, so lift ☰ above the dim and let the
+     opened drawer float over the popup (500-590), below #osk (1000). Only
+     Lock is live in it, every other row dimmed and dead, as on the rail. */
+  html.ut-scrim-on .nav .nav-drawer-toggle { z-index: 1; pointer-events: auto; }
+  html.ut-scrim-on body.nav-drawer-open .nav { z-index: 595; }
+  /* The drawer and its backdrop absorb taps (never fall through to the
+     popup or scrim). */
+  html.ut-scrim-on body.nav-drawer-open :is(.nav-drawer, .nav-drawer-backdrop) { pointer-events: auto; }
+  html.ut-scrim-on .nav-drawer * { pointer-events: none; }
+  html.ut-scrim-on .nav-drawer :is(.session-lock, .session-lock *) { pointer-events: auto; }
+  html.ut-scrim-on .nav-drawer .nav-toggle:not(.btn-lock) { opacity: .45; }
+  /* Status stays reachable over the opened drawer (its foot on Sell). */
+  html.ut-scrim-on body.nav-drawer-open .statusbar { z-index: 596; }
+  /* Focus lands on Lock when the drawer opens over a popup: show it. */
+  .nav-drawer .btn-lock:focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
+  /* With the on-screen keyboard open these popups start at the top edge,
+     over the 56px top bar and ☰; keep them below it (ut-docs#6118). */
+  body.osk-padded :is(#elevation-modal, #hold-modal, #pfand-modal, #table-add-modal)[open] {
+    inset-block-start: calc(var(--phone-top-h) + .5rem);
+    max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - var(--phone-top-h) - 1rem);
+  }
   .pos-container {
     display: flex; flex-direction: column; overflow: hidden;
     flex: 1 1 auto; min-height: 0;

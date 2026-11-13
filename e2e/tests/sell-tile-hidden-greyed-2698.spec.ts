@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm } from './helpers';
 
 // ut-docs#2698 (product owner: "after hiding a product ... it shouldn't
 // disappear from the editing page, it should be gray and let me bring it
@@ -198,10 +198,12 @@ test.describe('hidden quick buttons stay greyed in edit mode; trash removes, sea
     await openCategory(page);
     await enterJiggle(page, tile(page, A.name));
 
-    page.once('dialog', (d) => d.accept());
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/buttons/remove-from-grid') && r.ok()),
-      cellOf(page, C.name).getByTestId('tile-badge-remove').click(),
+      (async () => {
+        await cellOf(page, C.name).getByTestId('tile-badge-remove').click();
+        await answerTillConfirm(page, 'confirm');
+      })(),
     ]);
     await expect(grid(page)).toHaveClass(/jiggle-mode/);
     await expect(tile(page, C.name)).toHaveCount(0);

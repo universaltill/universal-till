@@ -55,11 +55,11 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 	return "updated " + res.Name, nil
 }
 
-// removeReplacedItemUpload removes an item's uploaded photo file once an
-// icon from the cloud replaced it (ut-docs#3584), as the till's own icon
-// picker does (removeUploadedThumbnail) — for save_item and for the cloud
-// catalogue pull (ADR-0162 §4, ut-docs#4463). A replaced library tile has
-// no file; clearedPath "" is a no-op.
+// removeReplacedItemUpload removes an item's uploaded photo file when told
+// an icon replaced it — for save_item and for the cloud catalogue pull
+// (ADR-0162 §4, ut-docs#4463). Defensive: since ut-docs#6028 an icon never
+// replaces an uploaded photo, so this only ever sees a library tile's path
+// (no file, a no-op); clearedPath "" is a no-op too.
 func removeReplacedItemUpload(itemID, clearedPath string) {
 	if clearedPath != "" && safeCategoryID(itemID) && clearedPath == catalog.ItemThumbURL(itemID) {
 		catalog.RemoveItemUpload(itemID)
@@ -311,11 +311,9 @@ func cloudDeleteItem(ctx context.Context, d *common.Deps, id string) (string, er
 		return "already deleted", nil
 	}
 	audit := map[string]any{"name": res.Name}
-	if res.Voids > 0 {
-		// ut-docs#4746: the voids were detached with the item.
-		audit["voids"] = res.Voids
-		audit["note"] = fmt.Sprintf("item deleted with %d voids", res.Voids)
-	}
+	// ut-docs#4746, #4778: live voids, comps, wastes and ID checks were
+	// detached with the item; the audit row says how many of each.
+	res.AddDetachedToAudit(audit)
 	auditCloudDirective(ctx, d, "item", id, "cloud_item_deleted", audit)
 	return "deleted item " + res.Name, nil
 }

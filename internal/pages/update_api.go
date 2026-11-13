@@ -695,9 +695,10 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			updates.SetAutoUpdateStuck(false) // ut-docs#2733: fixed since the last tick
 			// The status-bar update button also appears on the next page
 			// load; this inline one applies immediately.
-			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s">%s</button>`,
+			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s">%s</button>`,
 				html.EscapeString(st.Latest),
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
+				html.EscapeString(httpx.T(locale, "status.update_now")),
 				html.EscapeString(httpx.T(locale, "status.update_now")))
 		default:
 			get := func(key string) string {

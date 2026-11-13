@@ -18,10 +18,12 @@ var HeadAssets = []string{
 	"public/vendor/htmx.min.js",
 	"public/vendor/alpine.min.js",
 	"public/app.js",
+	"public/till-confirm.js", // ut-docs#5524: the in-page hx-confirm dialog
 	"public/osk.js",
 	"public/cursor.js",
 	"public/autofill.js",
 	"public/input-heartbeat.js",
+	"public/window-toggle.js",
 	"public/record-dialog.js",
 	"public/list-reorder.js", // ut-docs#2699: long-press drag reorder for admin lists
 	"public/table-cards.js",  // ut-docs#3359: tables become card lists at the phone tier

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm } from './helpers';
 
 // ut-docs#2406 (follow-up from the ADR-0101/#2399 review's finding L5): a
 // shop that cleans up many single-use-group items ends up with a pile of
@@ -59,11 +59,13 @@ test.describe('bulk-delete unassigned modifier groups (ut-docs#2406)', () => {
     await toolbar.locator('#modifiers-filter-unassigned').uncheck();
     await expect(cardFor(kept)).toBeVisible();
 
-    // Delete all unassigned — confirm dialog accepted.
-    page.once('dialog', (d) => d.accept());
+    // Delete all unassigned — confirmed in the till's in-page dialog.
     await Promise.all([
       page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/delete-unassigned') && r.request().method() === 'POST'),
-      toolbar.getByRole('button', { name: /delete all unassigned/i }).click(),
+      (async () => {
+        await toolbar.getByRole('button', { name: /delete all unassigned/i }).click();
+        await answerTillConfirm(page, 'confirm');
+      })(),
     ]);
 
     await expect(cardFor(orphan1)).toHaveCount(0);
@@ -74,10 +76,12 @@ test.describe('bulk-delete unassigned modifier groups (ut-docs#2406)', () => {
     await expect(page.locator('.modifiers-unassigned-toolbar')).toHaveCount(0);
 
     // Tidy: remove the surviving group everywhere.
-    page.once('dialog', (d) => d.accept());
     await Promise.all([
       page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/delete') && r.request().method() === 'POST'),
-      cardFor(kept).locator('.modifier-delete-btn').click(),
+      (async () => {
+        await cardFor(kept).locator('.modifier-delete-btn').click();
+        await answerTillConfirm(page, 'confirm');
+      })(),
     ]);
     await expect(cardFor(kept)).toHaveCount(0);
     assertClean();

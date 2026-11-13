@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,6 +177,19 @@ func TestBackupCopyChip_SaveCopyRecordsAndHeadDoesNot(t *testing.T) {
 	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v == "" {
 		t.Fatal("save-copy did not record the copy")
 	}
+	// ut-docs#5615: the status-bar chip refreshes at once on this event.
+	if got := rec.Header().Get("HX-Trigger"); got != "backup-copied" {
+		t.Fatalf("save-copy HX-Trigger = %q, want backup-copied", got)
+	}
+	// A failed save must not tell the chip to refresh.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/backup/save-copy/..%2F..%2Fetc%2Fpasswd", nil), mgrUser))
+	if rec.Code == http.StatusOK {
+		t.Fatalf("bad-name save-copy = 200")
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "" {
+		t.Fatalf("failed save-copy HX-Trigger = %q, want empty", got)
+	}
 }
 
 // ut-docs#5619: the Android shell saves through the system file picker and
@@ -183,16 +197,24 @@ func TestBackupCopyChip_SaveCopyRecordsAndHeadDoesNot(t *testing.T) {
 func TestBackupCopyChip_PickerCopyRecordsOnlyRealBackups(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	mux, store, dbPath := newBackupCopyChipMux(t, now)
+	var trigger string
 	post := func(name string) int {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/backup/copied/"+name, nil), mgrUser))
+		trigger = rec.Header().Get("HX-Trigger")
 		return rec.Code
 	}
 	if code := post("unitill-pos-19990101-000000.db"); code != http.StatusNotFound {
 		t.Fatalf("unknown backup = %d, want 404", code)
 	}
+	if trigger != "" {
+		t.Fatalf("404 HX-Trigger = %q, want empty", trigger)
+	}
 	if code := post("notes.db"); code != http.StatusBadRequest {
 		t.Fatalf("bad name = %d, want 400", code)
+	}
+	if trigger != "" {
+		t.Fatalf("400 HX-Trigger = %q, want empty", trigger)
 	}
 	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v != "" {
 		t.Fatalf("a rejected call recorded a copy: %q", v)
@@ -208,6 +230,10 @@ func TestBackupCopyChip_PickerCopyRecordsOnlyRealBackups(t *testing.T) {
 	}
 	if code := post(filepath.Base(snap)); code != http.StatusNoContent {
 		t.Fatalf("real backup = %d, want 204", code)
+	}
+	// ut-docs#5615: the status-bar chip refreshes at once on this event.
+	if trigger != "backup-copied" {
+		t.Fatalf("204 HX-Trigger = %q, want backup-copied", trigger)
 	}
 	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v == "" {
 		t.Fatal("picker copy was not recorded")
@@ -236,4 +262,22 @@ func TestBackupCopyChip_PickerFetchDoesNotRecord(t *testing.T) {
 	if v, _, _ := store.Get(context.Background(), backupCopiedAtKey); v != "" {
 		t.Fatalf("picker fetch recorded a copy: %q", v)
 	}
+}
+
+// ut-docs#5615: the status-bar mount must listen for the backup-copied event
+// the save endpoints send, or the chip lingers until the next 10-min poll.
+func TestBackupCopyChipMountListensForBackupCopied(t *testing.T) {
+	b, err := os.ReadFile("web/ui/layouts/base.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, `id="sb-backup-copy-mount"`) {
+			if !strings.Contains(line, "backup-copied from:body") {
+				t.Fatalf("sb-backup-copy-mount hx-trigger lacks %q: %s", "backup-copied from:body", line)
+			}
+			return
+		}
+	}
+	t.Fatal("sb-backup-copy-mount not found in base.html")
 }

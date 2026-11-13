@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2330: the item-editor's modifiers surface (a nested dialog then,
 // the Modifiers tab since ut-docs#2211) is attach/detach-only — no inline group/option create/edit/delete reachable
@@ -94,12 +95,16 @@ test.describe('ut-docs#2330 item-editor Manage Modifiers is attach/detach-only',
     await expect(attachedRow.locator('input[name="name"]')).toHaveCount(0);
     await expect(dialogList.locator(`input[type="checkbox"][name="groupId"][value="${groupId}"]`)).toHaveCount(0);
 
-    // Detach reverses it — accept the native confirm() (hx-confirm).
-    page.once('dialog', (d) => d.accept());
+    // Detach reverses it — confirm in the till's in-page dialog (hx-confirm).
+    const noNative = noNativeDialogs(page);
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group/detach') && r.request().method() === 'POST'),
-      attachedRow.locator('button', { hasText: 'Remove from this item' }).click(),
+      (async () => {
+        await attachedRow.locator('button', { hasText: 'Remove from this item' }).click();
+        await answerTillConfirm(page, 'confirm');
+      })(),
     ]);
+    noNative();
 
     await expect(dialogList.locator(`.modifier-admin-group[data-group-id="${groupId}"]`)).toHaveCount(0);
     await expect(dialogList.locator(`input[type="checkbox"][name="groupId"][value="${groupId}"]`)).toHaveCount(1);

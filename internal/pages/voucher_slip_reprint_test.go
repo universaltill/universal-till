@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -160,19 +161,6 @@ func TestVoucherSlipReprint_VoidAndUsedUpRefused(t *testing.T) {
 	}
 }
 
-func TestVoucherSlipReprint_NoPrinter(t *testing.T) {
-	mux, dp := newVoucherImportTestMux(t)
-	seedActive(t, dp, "GV-A", "")
-	setSettings(t, dp, map[string]string{keyPrinterMode: "off"})
-	rec := vPrintSlip(t, mux, "GV-A", &vManager)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), httpx.T("en", "vouchers.print_slip.no_printer")) {
-		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
-	}
-	if len(slipAuditRows(t, dp, "GV-A")) != 0 {
-		t.Error("audited without reaching a printer")
-	}
-}
-
 func TestVoucherSlipReprint_PrinterFails(t *testing.T) {
 	mux, dp := newVoucherImportTestMux(t)
 	seedActive(t, dp, "GV-A", "")
@@ -264,9 +252,11 @@ func TestVoucherDetail_PrintSlipButton(t *testing.T) {
 	}
 	setSettings(t, dp, map[string]string{keyPrinterMode: "off"})
 	b := vGet(t, mux, "/vouchers/GV-A?lang=en", &vManager, false).Body.String()
-	if strings.Contains(b, `data-testid="voucher-print-slip"`) || !strings.Contains(b, `href="/settings#settings-printer"`) ||
-		!strings.Contains(b, httpx.T("en", "vouchers.print_slip.no_printer")) {
-		t.Error("no-printer branch wrong")
+	for _, want := range []string{`data-testid="voucher-print-slip"`, `data-testid="voucher-slip-browser-hint"`, `href="/settings#settings-printer"`,
+		`data-after-request="ut-response:print-slip print"`, html.EscapeString(httpx.T("en", "vouchers.print_slip.browser_hint"))} {
+		if !strings.Contains(b, want) {
+			t.Errorf("no-printer page lacks %q", want)
+		}
 	}
 }
 

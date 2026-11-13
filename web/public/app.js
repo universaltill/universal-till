@@ -1311,10 +1311,25 @@ document.addEventListener('htmx:afterSettle', function (evt) {
 
 // ut-docs#5411: a quantity edit that needs a manager's PIN leaves the typed
 // number in the qty box while the basket still holds the old one. The server
-// sends HX-Trigger: ut-basket-resync with the prompt; re-render the live basket
+// sends HX-Trigger-After-Settle: ut-basket-resync with the prompt (ut-docs#5417); re-render the live basket
 // so the box shows the real quantity until the approver confirms.
 document.addEventListener('ut-basket-resync', function(){
-  if (window.htmx) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+  if (!window.htmx) return;
+  // ut-docs#5417: the resync replaces #basket, and the prompt's hint lives in
+  // it (#shrinkage-hint). Carry the same hint nodes across (not a copy, so the
+  // dialog's own reference to them stays valid for Cancel/Escape), but only
+  // while the dialog is still open: an approval that already cleared the slot
+  // must not get a stale hint back.
+  var old = document.getElementById('shrinkage-hint');
+  var kept = old ? Array.prototype.slice.call(old.childNodes) : [];
+  var p = window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+  if (!kept.length || !p || typeof p.then !== 'function') return;
+  p.then(function(){
+    var slot = document.getElementById('shrinkage-hint');
+    var dlg = document.getElementById('elevation-modal');
+    if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
+    kept.forEach(function(n){ slot.appendChild(n); });
+  });
 });
 
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
@@ -1529,11 +1544,12 @@ document.addEventListener('click', function(e){
     if (!d || !d.xhr || d.xhr.status < 400) return;
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
     if (path.indexOf('/api/pos/') === 0) {
-      // Sale-screen carve-out (ut-docs#213): only a 400 whose body is a
-      // rendered basket fragment (e.g. modifier validation) swaps in place
+      // Sale-screen carve-out (ut-docs#213): only a 400 or 409 whose body is a
+      // rendered basket fragment (e.g. modifier validation, or ut-docs#5417's
+      // "line changed" refusal) swaps in place
       // of the generic alert — anything else on this path falls through to
       // the #pos-alert banner via htmx:responseError below.
-      if (d.xhr.status === 400 && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
+      if ((d.xhr.status === 400 || d.xhr.status === 409) && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
         d.shouldSwap = true;
         d.isError = false;
       }
@@ -2518,6 +2534,12 @@ utSellCamera(function(){
     // ut-docs#2534: and the all_filter_chips chip row -- switching the
     // category is how another category's order is reached.
     // ut-docs#2465: and the Move to category dialog.
+    // ut-docs#5524: and the till's confirm dialog (the remove badge's
+    // hx-confirm) -- a native confirm never delivered pointer events to the
+    // page, this one does, so answering it must not end the edit session;
+    // nor must a stray tap on the scrim behind it.
+    if (el.closest('#ut-confirm')) return true;
+    if (window.UT && window.UT.confirmOpen && window.UT.confirmOpen() && el.closest('#ut-scrim')) return true;
     return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, #tile-move-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
   }
   function visibleCells(gridEl) {
@@ -3115,8 +3137,8 @@ utSellCamera(function(){
 
   // ---- htmx interplay ----
   // The remove badge's own hx-confirm/hx-post: if a drag is still
-  // unsaved, confirm first (htmx's own question, so the operator sees the
-  // same dialog either way), then persist the order, THEN let htmx issue
+  // unsaved, confirm first (the same question, asked in the same till
+  // dialog -- till-confirm.js, ut-docs#5524 -- either way), then persist the order, THEN let htmx issue
   // the remove -- its buttons-changed refresh re-renders the grid from the
   // server, which would otherwise silently drop the unsaved reorder.
   document.body.addEventListener('htmx:confirm', function (e) {
@@ -3124,9 +3146,21 @@ utSellCamera(function(){
     if (!elt || !elt.classList || !elt.classList.contains('tile-badge-remove')) return;
     if (!dirty) return; // nothing pending: htmx's own confirm + request as usual
     e.preventDefault();
-    if (e.detail.question && !window.confirm(e.detail.question)) return;
-    dirty = false;
-    persistOrder().then(function () { e.detail.issueRequest(true); });
+    var q = e.detail.question;
+    var ask = (q && window.UT && window.UT.confirm && document.getElementById('ut-confirm'))
+      ? window.UT.confirm(q, {
+        opener: elt,
+        // Same labels as the till-confirm.js handler gives this opener (ut-docs#6117).
+        tone: (elt.closest('[data-confirm-tone]') || elt).getAttribute('data-confirm-tone') === 'neutral' ? 'neutral' : 'danger',
+        ok: (elt.closest('[data-confirm-ok]') || elt).getAttribute('data-confirm-ok') || '',
+        dismiss: (elt.closest('[data-confirm-dismiss]') || elt).getAttribute('data-confirm-dismiss') || ''
+      })
+      : Promise.resolve(!q || window.confirm(q)); // native-confirm:allow script/shell missing: native fallback (ut-docs#5524)
+    ask.then(function (ok) {
+      if (!ok) return; // Cancel: the reorder stays dirty, the tile stays
+      dirty = false;
+      persistOrder().then(function () { e.detail.issueRequest(true); });
+    });
   });
   // Any OTHER refetch of the grid root while a reorder is unsaved (a
   // modifiers-changed from elsewhere): persist first, then re-trigger it.
@@ -3985,6 +4019,21 @@ window.utTabBarFade = function (el) {
   var body = document.body;
 
   function toggleBtn() { return document.querySelector('.nav-drawer-toggle'); }
+  // Scrim going on/off while the drawer is open re-evaluates the dead rows.
+  if (window.MutationObserver) {
+    new MutationObserver(function () {
+      if (body.classList.contains('nav-drawer-open')) syncDeadRows(true);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  }
+  // ut-docs#6118: over a popup every drawer row but Lock is dead (CSS) and
+  // must be dead for screen readers too; cleared on close and scrim-off.
+  function syncDeadRows(open) {
+    var dead = open && document.documentElement.classList.contains('ut-scrim-on');
+    document.querySelectorAll('#nav-drawer a, #nav-drawer button').forEach(function (el) {
+      if (dead && !el.closest('.session-lock')) el.setAttribute('aria-disabled', 'true');
+      else el.removeAttribute('aria-disabled');
+    });
+  }
   function setDrawer(open, restoreFocus) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
@@ -3994,9 +4043,21 @@ window.utTabBarFade = function (el) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
     }
+    syncDeadRows(open);
     if (open) {
-      var first = document.querySelector('#nav-drawer a, #nav-drawer button');
+      var scrimOn = document.documentElement.classList.contains('ut-scrim-on');
+      var lock = scrimOn && document.querySelector('#nav-drawer .session-lock button');
+      var first = lock || (scrimOn ? null : document.querySelector('#nav-drawer a, #nav-drawer button'));
       if (first) first.focus();
+      if (lock) {
+        // Lock is the last row and the status foot overlays the drawer's end:
+        // scroll to the end (the drawer's end padding reserves the foot) once
+        // measureBar has set that padding.
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          var dr = document.getElementById('nav-drawer');
+          if (dr && body.classList.contains('nav-drawer-open')) dr.scrollTop = dr.scrollHeight;
+        }); });
+      }
     } else if (restoreFocus && btn) {
       btn.focus();
     }
@@ -4038,6 +4099,16 @@ window.utTabBarFade = function (el) {
       if (bar) bar.focus();
     }
   }
+
+  // ut-docs#6118: a row dead over a popup stays dead for AT activation too.
+  // Capture phase: htmx's boosted-link listener sits on the anchor itself.
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t instanceof Element && t.closest('#nav-drawer [aria-disabled="true"]')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
 
   document.addEventListener('click', function (e) {
     var t = e.target;

@@ -625,8 +625,9 @@
         }
         function escAllowed(t) {
           // #bugreport-panel (data-ut-no-scrim) stays usable while the
-          // operator reproduces the problem (ut-docs#3212 review).
-          return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk, #bugreport-panel'));
+          // operator reproduces the problem (ut-docs#3212 review). The phone ☰
+          // stays reachable over a popup so Lock can be (ut-docs#6118).
+          return !!(t && t.closest && t.closest('.statusbar, .session-lock, .nav-drawer-toggle, #osk, #bugreport-panel'));
         }
         // record-dialog.js's focusin backstop uses the same allow-list (ut-docs#4078).
         UT.focusTrapExempt = escAllowed;
@@ -1398,6 +1399,7 @@
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
+    <script defer src="/public/till-confirm.js?v={{ assetv "public/till-confirm.js" }}"></script>
     <script defer src="/public/pairing-stream.js?v={{ assetv "public/pairing-stream.js" }}"></script>
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
@@ -1410,6 +1412,10 @@
          design (login.html/setup.html/self_order*.html are a documented
          gap, not an oversight). -->
     <script defer src="/public/input-heartbeat.js?v={{ assetv "public/input-heartbeat.js" }}"></script>
+    <!-- ut-docs#3735: F11 toggles the desktop shell's live window mode
+         (fullscreen <-> normal) for a manager; inert unless <body> carries
+         data-window-toggle — see web/public/window-toggle.js. -->
+    <script defer src="/public/window-toggle.js?v={{ assetv "public/window-toggle.js" }}"></script>
     <!-- ut-docs#2010: the app-wide list/edit standard's behaviour (record
          dialog open/close/Escape/discard guard + list-header search filter),
          attribute-driven and a no-op on any page without that markup — see
@@ -1485,7 +1491,8 @@
         data-show-more="{{ T "common.show_more" }}" data-show-less="{{ T "common.show_less" }}"
         data-money-invalid="{{ if eq currency.Decimals 0 }}{{ T "common.money.invalid_whole" }}{{ else }}{{ T "common.money.invalid" }}{{ end }}"
         data-percent-invalid="{{ T "common.percent.invalid" }}"
-        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
+        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}
+        {{ if windowtoggle }}data-window-toggle="1" data-f11-kiosk-locked="{{ T "settings.display.f11_kiosk_locked" }}"{{ end }}>
     <!-- ut-docs#2224 / ADR-0098: everything a navigation changes lives in
          this one region; an <a> inside it is boosted and the response's own
          #ut-page replaces this one (outerHTML). The head, the scripts,
@@ -1689,8 +1696,10 @@
            who may manage backups only. A status chip, never a modal; it
            does not bring the status bar onto the sale screen (app.css).
            Filled by GET /ui/backup-copy-chip on load and every 10 min;
-           empty body otherwise. -->
-      <span id="sb-backup-copy-mount" hx-preserve hx-get="/ui/backup-copy-chip" hx-trigger="load, every 600s"></span>
+           empty body otherwise. ut-docs#5615: also refreshes at once on the
+           backup-copied event a successful copy save sends (HX-Trigger),
+           so the reminder clears right after "Saved". -->
+      <span id="sb-backup-copy-mount" hx-preserve hx-get="/ui/backup-copy-chip" hx-trigger="load, every 600s, backup-copied from:body"></span>
       <!-- ut-docs#4539 (ADR-0163 amendment 2026-10-16): the shop's currency
            on my. differs from this till's and the till did not adopt it
            (it already has sales, or doesn't know the code) — "Currency
@@ -2372,6 +2381,24 @@
          renderConfirmPrompt), OOB-swapped in here for the same no-nested-
          form reason as #elevation-modal above. -->
     <dialog id="confirm-modal" class="modifier-modal" data-ut-focus-trap data-ut-escape-close></dialog>
+    {{/* ut-docs#5524: the client-side confirm every hx-confirm opens
+         (web/public/till-confirm.js). Same look as #confirm-modal but never
+         OOB-swapped: the JS fills the message (textContent) and tone on each
+         open. .show() over #ut-scrim, never showModal(). No form: Confirm
+         calls htmx's issueRequest(true). Escape is handled by the script, so
+         there is no data-ut-escape-close. */}}
+    <dialog id="ut-confirm" class="modifier-modal confirm-dialog" data-ut-focus-trap
+            aria-labelledby="ut-confirm-msg" data-testid="till-confirm">
+      <p id="ut-confirm-msg" class="ut-confirm-msg"></p>
+      <div class="modifier-actions">
+        <button type="button" class="btn secondary" data-ut-confirm="cancel"
+                data-default-label="{{ T "common.cancel" }}"
+                data-testid="till-confirm-cancel">{{ T "common.cancel" }}</button>
+        <button type="button" class="btn danger" data-ut-confirm="ok"
+                data-default-label="{{ T "common.confirm" }}"
+                data-testid="till-confirm-ok">{{ T "common.confirm" }}</button>
+      </div>
+    </dialog>
     <!-- ut-docs#2873: the ONE shared backdrop behind every non-modal popup
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css

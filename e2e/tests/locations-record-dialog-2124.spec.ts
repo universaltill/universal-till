@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
 
 // ut-docs#2124: /locations adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring categories-record-dialog-2010.spec.ts's proof for
@@ -84,8 +84,10 @@ test.describe('locations list + record dialog (ut-docs#2124)', () => {
     // pattern as categories-record-dialog-2010.spec.ts's own (b3)).
     await row(page, renamed).click();
     await expect(dlg).toBeVisible();
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(row(page, renamed)).toContainText(/inactive/i);
 
     // Activate reverses it, from the same dialog — no confirm on this path.

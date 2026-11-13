@@ -673,6 +673,27 @@ func TestShippedHelpDeclaresPublicAndLocalesAgree(t *testing.T) {
 	}
 }
 
+// The owner excluded these topics from the public website and the assistant
+// connector's help index (pairing, transfer and approval-key internals, plus
+// translation and fiscal internals; ut-website help-public-allowlist). None
+// may be `public: true`, in any language.
+func TestOwnerExcludedHelpTopicsNotPublic(t *testing.T) {
+	lib, err := Load(os.DirFS("../../web"), "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"claim", "support-partner", "translate-mode", "translations", "fiscal-device", "fiscal-register"} {
+		if _, ok := lib.byLocale[FallbackLocale][id]; !ok {
+			t.Errorf("excluded topic %q not found in English help", id)
+		}
+		for loc, topics := range lib.byLocale {
+			if tp, ok := topics[id]; ok && tp.Public {
+				t.Errorf("%s/%s.md is public: true, but the owner excluded it from the public site", loc, id)
+			}
+		}
+	}
+}
+
 // ut-docs#3434: <!-- plan-purchase --> blocks are dropped for a host that
 // may not offer plan purchase (the iOS app).
 const planPurchaseTopic = `---

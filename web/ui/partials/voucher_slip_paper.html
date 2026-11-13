@@ -1,0 +1,68 @@
+{{/* ut-docs#6152: a gift voucher slip for the browser's print dialog. The
+     slip text arrives pre-translated (browserVoucherSlip), so no T inside
+     it; the language is decided in Go. Logical CSS only; black on white
+     whatever the theme. No ids: the receipt repeats the slip. */}}
+{{ define "voucher_slip_paper_css" }}
+.voucher-slip-paper{max-inline-size:72mm;margin-inline:auto;padding-block:4mm;text-align:center;font:12pt/1.3 system-ui,sans-serif;background:#fff;color:#000}
+.voucher-slip-paper *{color:#000 !important}
+.voucher-slip-store{font-weight:700;font-size:1.3em}
+.voucher-slip-rule{border-block-start:1px dashed #000;margin-block:2mm}
+.voucher-slip-value{display:flex;justify-content:space-between;gap:.5em;font-weight:700}
+.voucher-slip-holder,.voucher-slip-balance{text-align:start}
+.voucher-slip-barcode svg{max-inline-size:100%;block-size:44px}
+.voucher-slip-code{display:block;font-family:monospace;letter-spacing:2px;overflow-wrap:anywhere}
+{{ end }}
+
+{{ define "voucher_slip_paper" }}
+<div class="voucher-slip-paper" data-testid="voucher-slip-paper">
+  {{ if .StoreName }}<div class="voucher-slip-store">{{ .StoreName }}</div>{{ end }}
+  {{ range .Header }}<div class="voucher-slip-header">{{ . }}</div>{{ end }}
+  <div class="voucher-slip-rule"></div>
+  <div class="voucher-slip-value"><span>{{ .Label }}</span><bdi>{{ .Amount }}</bdi></div>
+  {{ with .Holder }}<div class="voucher-slip-holder">{{ . }}</div>{{ end }}
+  {{ with .Balance }}<div class="voucher-slip-balance">{{ . }}</div>{{ end }}
+  <div class="voucher-slip-barcode">{{ barcode128svg .Code }}<span class="voucher-slip-code" dir="ltr">{{ .Code }}</span></div>
+  {{ with .Note }}<div class="voucher-slip-note">{{ . }}</div>{{ end }}
+  <div class="voucher-slip-rule"></div>
+</div>
+{{ end }}
+
+{{/* Sale receipt: print-only, each slip on its own page after the receipt.
+     The slips sit inside #basket, whose on-screen card frame (border,
+     radius, padding, theme surface) would repeat on every slip sheet and
+     print navy in a dark theme with background graphics on; in print the
+     frame is dropped and the sheet is white (review of ut-docs#6152, D1).
+     The receipt itself keeps its own .receipt-card frame. */}}
+{{ define "voucher_slips_receipt" }}
+<style>{{ template "voucher_slip_paper_css" }}
+.voucher-slips-print{display:none}
+@media print{
+html,body{background:#fff !important}
+.pos-container,.pos-container > .basket.receipt-view{border:0 !important;border-radius:0 !important;box-shadow:none !important;background:#fff !important;padding:0 !important;margin:0 !important;inline-size:auto !important;max-inline-size:none !important}
+.voucher-slips-print{display:block;background:#fff}
+.voucher-slip-sheet{break-before:page;page-break-before:always}
+}
+</style>
+<div class="voucher-slips-print" lang="{{ .Lang }}" dir="{{ .Dir }}" aria-hidden="true" data-testid="receipt-voucher-slips">
+  {{ range .Slips }}<div class="voucher-slip-sheet">{{ template "voucher_slip_paper" . }}</div>{{ end }}
+</div>
+{{ end }}
+
+{{/* Voucher page: the POST's answer. The status swaps into
+     #voucher-slip-msg; the slip lands in #voucher-slip-print (OOB). Each
+     print rule is its own @media block so an engine without :has() drops
+     only those and still prints the slip. */}}
+{{ define "voucher_slip_print_response" }}
+<span class="tag" role="status" data-testid="voucher-slip-browser-opened">{{ T "vouchers.print_slip.browser_opened" }}</span>
+<div id="voucher-slip-print" class="voucher-slip-print-host" hx-swap-oob="true" aria-hidden="true" lang="{{ .Set.Lang }}" dir="{{ .Set.Dir }}">
+  <style>{{ template "voucher_slip_paper_css" }}
+.voucher-slip-print-host{display:none}
+@media print{html,body{background:#fff !important}}
+@media print{body{display:block !important;overflow:visible !important}}
+@media print{body *:not(:has(.voucher-slip-print-host)):not(.voucher-slip-print-host):not(.voucher-slip-print-host *){display:none !important}}
+@media print{body *:has(.voucher-slip-print-host){display:block !important;position:static !important;margin:0 !important;padding:0 !important;border:0 !important;block-size:auto !important;min-block-size:0 !important;overflow:visible !important;background:#fff !important}}
+@media print{.voucher-slip-print-host{display:block !important}}
+  </style>
+  {{ range .Set.Slips }}{{ template "voucher_slip_paper" . }}{{ end }}
+</div>
+{{ end }}
