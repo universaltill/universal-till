@@ -443,8 +443,10 @@ func TestPullSkipsOtherKindsAndStillAdvances(t *testing.T) {
 func TestPullApplierVersionBumpRepullsFromZero(t *testing.T) {
 	// Version 4 (ut-docs#4464) keeps every uploadable row's base: a till
 	// that ran version 3 (ut-docs#4521) re-pulls, so its rows get one.
-	if ApplierVersion != 4 {
-		t.Fatalf("ApplierVersion = %d, want 4", ApplierVersion)
+	// Version 5 (ut-docs#6082/#6202) puts an item's is_weighed,
+	// age_restricted and net quantity in that base.
+	if ApplierVersion != 5 {
+		t.Fatalf("ApplierVersion = %d, want 5", ApplierVersion)
 	}
 	h := newHarness(t)
 	h.feed.add(itemFeedRow(1, 1, "A", 100))

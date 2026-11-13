@@ -17,7 +17,7 @@ import (
 
 // fakeCloud is an httptest stand-in for ut-cloud's POST
 // /api/v1/stores/catalog/changes (contract cloud-catalog-changes.md
-// 1.0.0) over the SAME rows the fake feed serves, so an accepted change is
+// 1.1.0) over the SAME rows the fake feed serves, so an accepted change is
 // a new feed version (the echo) and a conflict mints none. It implements
 // the contract's value-based test (internal/catalogchanges is the real one):
 // every changed field at before or already at after → write the ones at
@@ -299,6 +299,27 @@ func (c *fakeCloud) decide(ch Change) Answer {
 			apply = append(apply, f)
 		default:
 			return conflict("value")
+		}
+	}
+	// As the cloud (itemSave, contract 1.1.0): the net quantity's two fields
+	// are written as a pair, so one half applying carries the other with it.
+	// One half alone never arrives (the cloud answers 400; the till couples
+	// them), which the fake enforces.
+	var hasV, hasU, appV, appU bool
+	for _, f := range ch.ChangedFields {
+		hasV, hasU = hasV || f == "net_quantity_value", hasU || f == "net_quantity_unit"
+	}
+	if hasV != hasU {
+		return Answer{ChangeID: ch.ChangeID, Status: statusRejected, Code: "invalid_request"}
+	}
+	for _, f := range apply {
+		appV, appU = appV || f == "net_quantity_value", appU || f == "net_quantity_unit"
+	}
+	if appV != appU {
+		if !appV {
+			apply = append(apply, "net_quantity_value")
+		} else {
+			apply = append(apply, "net_quantity_unit")
 		}
 	}
 	if len(apply) == 0 {

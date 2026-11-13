@@ -27,9 +27,12 @@ import (
 // refused cloud value never looks like a till edit.
 
 // uploadFields are each kind's uploadable fields (contract
-// cloud-catalog-changes.md 1.0.0), in upload order.
+// cloud-catalog-changes.md 1.1.0), in upload order. An item's
+// net_quantity_value and net_quantity_unit always travel together
+// (changedFields, ut-docs#6082/#6202).
 var uploadFields = map[string][]string{
-	kindItem:     {"name", "description", "sku", "price_minor", "category_cloud_id", "tax_code_cloud_id", "active", "barcodes"},
+	kindItem: {"name", "description", "sku", "price_minor", "category_cloud_id", "tax_code_cloud_id", "active", "barcodes",
+		"is_weighed", "age_restricted", "net_quantity_value", "net_quantity_unit"},
 	kindCategory: {"name", "parent_cloud_id", "sort_order", "active"},
 	kindTaxCode:  {"name", "rate_basis_points", "takeaway_rate_basis_points", "active"},
 }
@@ -42,7 +45,9 @@ var uploadFields = map[string][]string{
 // (ut-docs#6072). A create still applies them as served. When a contract
 // minor gives the cloud a write path for one (catalogwrite + the changes
 // contract, both sides), that release removes it here and bumps
-// ApplierVersion so every till re-pulls it. icon is not here: it is applied
+// ApplierVersion so every till re-pulls it. is_weighed, age_restricted and
+// the net quantity pair were never here: they upload since contract 1.1.0
+// (ut-docs#6082/#6202). icon is not here: it is applied
 // as served until ut-docs#6071 decides it (in-flight #6028 pins that).
 var tillOwnedFields = map[string][]string{
 	kindItem: {"unit", "color", "item_type", "stock_untracked", "sell_screen_hidden",
@@ -200,6 +205,8 @@ func (r *runner) readLocal(ctx context.Context, q data.SyncQuerier, kind, localI
 			"name": rawJSON(it.Name), "description": rawJSON(it.Description), "sku": rawJSON(it.SKU),
 			"price_minor": rawJSON(it.PriceMinor), "category_cloud_id": cat, "tax_code_cloud_id": tax,
 			"active": rawJSON(it.Active), "barcodes": rawJSON(list),
+			"is_weighed": rawJSON(it.IsWeighed), "age_restricted": rawJSON(it.AgeRestricted),
+			"net_quantity_value": rawJSON(it.NetQuantityValue), "net_quantity_unit": rawJSON(it.NetQuantityUnit),
 		}
 	case kindCategory:
 		c, ok, err := r.outbox.OutboxCategoryValues(ctx, q, localID)
@@ -249,6 +256,50 @@ func changedFields(kind string, l local, base values) []string {
 		}
 		if norm(l.vals[f]) != norm(b) {
 			out = append(out, f)
+		}
+	}
+	return coupleNetQuantity(kind, out, base)
+}
+
+// netQuantityPair are an item's two net-quantity feed fields. The cloud
+// refuses one half alone (a 400, contract 1.1.0), and the pull's pending
+// strip needs both halves gone together: a lone surviving half is an
+// invalid net quantity that fails the whole pulled row.
+var netQuantityPair = []string{"net_quantity_value", "net_quantity_unit"}
+
+// coupleNetQuantity makes changed hold both halves of an item's net
+// quantity when it holds either, in upload order. A base lacking either
+// half (an applier-4 base not yet backfilled) compares neither: both halves
+// are dropped.
+func coupleNetQuantity(kind string, changed []string, base values) []string {
+	if kind != kindItem {
+		return changed
+	}
+	_, haveV := base[netQuantityPair[0]]
+	_, haveU := base[netQuantityPair[1]]
+	pairIn := func(f string) bool { return f == netQuantityPair[0] || f == netQuantityPair[1] }
+	touched := false
+	for _, c := range changed {
+		touched = touched || pairIn(c)
+	}
+	if !touched {
+		return changed
+	}
+	out := make([]string, 0, len(changed)+1)
+	for _, f := range uploadFields[kind] {
+		in := pairIn(f)
+		if in && !(haveV && haveU) {
+			continue
+		}
+		if in {
+			out = append(out, f)
+			continue
+		}
+		for _, c := range changed {
+			if c == f {
+				out = append(out, f)
+				break
+			}
 		}
 	}
 	return out
@@ -427,9 +478,13 @@ func (r *runner) pendingFields(ctx context.Context, tx *sql.Tx, kind, localID st
 // seedChunk is how many links one seeding transaction carries.
 const seedChunk = 500
 
-// seedBasesIfUpgrading seeds the bases of an applier-3 till (seedBases)
-// before its first upload or re-pull; a no-op once the stored applier
-// version is current, and on a till that never pulled.
+// seedBasesIfUpgrading seeds the base-less links (seedBases) of a till
+// whose stored applier version is below the current one, before its first
+// upload or re-pull: only an applier-3 till has any (version 4 introduced
+// the base, so a till upgrading from 4 finds none, and migration 102
+// backfills its bases' item flag and net-quantity fields instead). A
+// no-op once the stored version is current, and on a till that never
+// pulled.
 func seedBasesIfUpgrading(ctx context.Context, db *sql.DB, settings *data.SettingsRepo) error {
 	v, ok, err := settings.Get(ctx, KeyApplierVersion)
 	if err != nil {
