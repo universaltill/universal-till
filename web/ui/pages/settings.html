@@ -1898,7 +1898,7 @@
     {{ $p := .printer }}
     <div class="field-pair">
       <label>{{ T "settings.printer.mode" }}
-        <select name="mode">
+        <select name="mode"{{ if and .printerSystemUnavailable (eq $p.Mode "system") }} aria-describedby="printer-system-unavailable"{{ end }}>
           <option value="off"     {{ if eq $p.Mode "off" }}selected{{ end }}>{{ T "settings.printer.mode_off" }}</option>
           <option value="network" {{ if eq $p.Mode "network" }}selected{{ end }}>{{ T "settings.printer.mode_network" }}</option>
           <option value="device"  {{ if eq $p.Mode "device" }}selected{{ end }}>{{ T "settings.printer.mode_device" }}</option>
@@ -1917,6 +1917,12 @@
         </select>
       </label>
     </div>
+    {{ if .printerSystemUnavailable }}
+    <!-- ut-docs#6182: rendered only when this device's probe says "no system
+         printer"; hidden unless Connection is Regular printer (system). The
+         script after the card toggles it live before Save. Advisory only. -->
+    <p class="notice-block-warn" id="printer-system-unavailable" role="status" data-testid="printer-system-unavailable"{{ if ne $p.Mode "system" }} hidden{{ end }}><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.printer.system_unavailable" }} {{ helpLink "printing" }}</p>
+    {{ end }}
     <div class="field-pair">
       <label>{{ T "settings.printer.address" }} <input type="text" name="address" id="printer-address-input" value="{{ $p.Address }}" placeholder="192.168.1.50:9100" dir="ltr"></label>
       <label>{{ T "settings.printer.device" }} <input type="text" name="device" value="{{ $p.Device }}" placeholder="/dev/usb/lp0" dir="ltr"></label>
@@ -2022,6 +2028,24 @@
   </form>
   </div>
 </div>
+<script>
+(function () {
+  // ut-docs#6182: the "no system printer" warning follows the CURRENTLY
+  // picked Connection, before Save. Delegated on the card (outside
+  // #settings-printer-region) so it survives UT.refreshRegion's swap.
+  var card = document.getElementById('settings-printer');
+  if (!card) return;
+  card.addEventListener('change', function (ev) {
+    var sel = ev.target;
+    if (!sel || sel.tagName !== 'SELECT' || sel.name !== 'mode') return;
+    var w = document.getElementById('printer-system-unavailable');
+    if (!w) return; // probe not "none": nothing rendered, nothing to do
+    var on = sel.value === 'system';
+    w.hidden = !on;
+    if (on) sel.setAttribute('aria-describedby', w.id); else sel.removeAttribute('aria-describedby');
+  });
+})();
+</script>
 {{ if .isManager }}
 <script>
 (function () {

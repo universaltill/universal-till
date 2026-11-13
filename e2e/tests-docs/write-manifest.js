@@ -12,5 +12,5 @@ fs.mkdirSync(path.dirname(out), { recursive: true });
 const manifest = buildManifest();
 fs.writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(
-  `wrote ${path.relative(repoRoot, out)}: ${Object.keys(manifest.topics).length} topics, surface ${manifest.surface_sha256.slice(0, 12)}…`,
+  `wrote ${path.relative(repoRoot, out)}: ${Object.keys(manifest.topics).length} topics, ${Object.values(manifest.shots).flat().length} extra shots, surface ${manifest.surface_sha256.slice(0, 12)}…`,
 );

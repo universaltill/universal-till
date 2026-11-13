@@ -184,7 +184,7 @@ Deliveroo), accounting systems (QuickBooks, Xero, Wave), ERP integration
 
 **Raspberry Pi / Debian / Ubuntu** — the recommended shop install
 (creates the `pos` service user, installs a systemd service, survives
-upgrades, keeps item photos in `/var/lib/unitill`):
+upgrades, keeps shop data and item photos in `/opt/unitill/data`):
 
 ```bash
 # arm64 = Raspberry Pi OS 64-bit; use _amd64.deb on a PC

@@ -78,6 +78,23 @@ expect_fail() {
   rm -f /tmp/guard_docs_shots_test_out.$$
 }
 
+# Like expect_fail, but asserts a specific message (extended regex), for the
+# extra-shot cases (ut-docs#2615).
+expect_fail_with() {
+  local label="$1" pattern="$2"
+  if bash "${GUARD}" >/tmp/guard_docs_shots_test_out.$$ 2>&1; then
+    echo "❌ FAIL: expected guard to reject ${label}, but it passed (false negative)" >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  elif grep -Eq "${pattern}" /tmp/guard_docs_shots_test_out.$$; then
+    echo "✓ guard correctly rejected ${label}"
+  else
+    echo "❌ FAIL: guard rejected ${label}, but not with /${pattern}/:" >&2
+    cat /tmp/guard_docs_shots_test_out.$$ >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+  rm -f /tmp/guard_docs_shots_test_out.$$
+}
+
 clear_fixture() {
   local name="$1"
   rm -f "${FIXTURE_DIR}/zz_guard_docs_shots_test_${name}.go"
@@ -165,6 +182,78 @@ expect_pass "gitignored dotfiles planted in the surface roots (.DS_Store class)"
 for f in "${dotfile_fixtures[@]}"; do rm -f "${f}"; done
 rmdir "web/public/.ut-guard-fixture-dir" 2>/dev/null || true
 fixtures=()
+
+# Extra shots (ut-docs#2615): en/sell.md references img/sell-browse-*.png, the
+# manifest records them under "shots", and each needs its en PNG. Every case
+# edits the sandbox copy and restores it from a saved copy afterwards.
+SHOTS_BAK="$(mktemp -d)"
+cp web/help/img/manifest.json "${SHOTS_BAK}/manifest.json"
+cp web/help/en/sell.md "${SHOTS_BAK}/sell.md"
+cp web/help/img/en/sell-browse-strip.png "${SHOTS_BAK}/strip.png"
+restore_shots() {
+  cp "${SHOTS_BAK}/manifest.json" web/help/img/manifest.json
+  cp "${SHOTS_BAK}/sell.md" web/help/en/sell.md
+  cp "${SHOTS_BAK}/strip.png" web/help/img/en/sell-browse-strip.png
+}
+cleanup_shots() {
+  local status=$?
+  rm -rf "${SHOTS_BAK}"
+  (exit "${status}")
+  cleanup
+}
+trap cleanup_shots EXIT
+
+# (a) a declared shot whose en PNG is gone is named.
+rm -f web/help/img/en/sell-browse-strip.png
+expect_fail_with "a missing extra-shot PNG" "extra shots with no screenshot.*|en/sell-browse-strip"
+restore_shots
+
+# (b) the manifest records a shot nothing references: orphan.
+python3 - <<'PYEOF'
+import json
+p = "web/help/img/manifest.json"
+m = json.load(open(p))
+m["shots"]["sell"].append("sell-browse-gone")
+json.dump(m, open(p, "w"), indent=2)
+PYEOF
+expect_fail_with "a manifest extra shot no topic references (orphan)" "no en topic references"
+restore_shots
+
+# (c) the markdown drops a reference while the manifest still lists it: orphan.
+grep -v 'img/sell-browse-strip.png' "${SHOTS_BAK}/sell.md" >web/help/en/sell.md
+expect_fail_with "a removed markdown reference still in the manifest (orphan)" "no en topic references"
+restore_shots
+
+# (d) a reference that is not img/<id>-<name>.png.
+printf '\n![x](img/other-x.png)\n' >>web/help/en/sell.md
+expect_fail_with "a bad image reference" "bad image reference"
+restore_shots
+
+# (e) a manifest without "shots": declared shots were never captured.
+python3 - <<'PYEOF'
+import json
+p = "web/help/img/manifest.json"
+m = json.load(open(p))
+del m["shots"]
+json.dump(m, open(p, "w"), indent=2)
+PYEOF
+expect_fail_with "a manifest with no shots key" "never captured"
+restore_shots
+
+# (f) an extra shot in a topic that declares no routes.
+cat >web/help/en/zz-noroute.md <<'MDEOF'
+---
+id: zz-noroute
+title: No route
+---
+
+# No route
+
+![x](img/zz-noroute-a.png)
+MDEOF
+expect_fail_with "an extra shot in a route-less topic" "need a routed topic"
+rm -f web/help/en/zz-noroute.md
+expect_pass "the real tree again after the extra-shot cases"
 
 if [[ ${FAIL_COUNT} -gt 0 ]]; then
   echo "${FAIL_COUNT} failure(s)" >&2

@@ -28,8 +28,19 @@ cd "${ROOT_DIR}"
 PY_HASH="$(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash scripts/ci/guard-docs-shots.sh)"
 JS_HASH="$(node -e "console.log(require('./e2e/tests-docs/lib.js').buildManifest().surface_sha256)")"
 
+# The declared extra shots (ut-docs#2615) must agree too: the same en-markdown
+# references, derived independently by the guard and by lib.js.
+PY_SHOTS="$(GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY=1 bash scripts/ci/guard-docs-shots.sh)"
+JS_SHOTS="$(node -e "const s=require('./e2e/tests-docs/lib.js').extraShotsByTopic(); for (const t of Object.keys(s).sort()) for (const x of s[t]) console.log(t+' '+x)")"
+if [[ "${PY_SHOTS}" != "${JS_SHOTS}" ]]; then
+  echo "❌ FAIL: guard-docs-shots.sh (Python) and lib.js (JS) derive DIFFERENT extra shots:" >&2
+  echo "     Python: ${PY_SHOTS}" >&2
+  echo "     JS:     ${JS_SHOTS}" >&2
+  exit 1
+fi
+
 if [[ "${PY_HASH}" == "${JS_HASH}" ]]; then
-  echo "✓ guard-docs-shots cross-check: Python and JS agree (${PY_HASH:0:12}…)"
+  echo "✓ guard-docs-shots cross-check: Python and JS agree (${PY_HASH:0:12}…, extra shots: $(echo "${PY_SHOTS}" | grep -c . || true))"
   exit 0
 fi
 

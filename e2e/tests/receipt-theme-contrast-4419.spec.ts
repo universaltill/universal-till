@@ -42,7 +42,7 @@ async function receiptContrast(page: Page) {
     const card = document.querySelector('#basket .receipt-card')!;
     const out: { text: string; ratio: number; color: string }[] = [];
     for (const el of [card, ...Array.from(card.querySelectorAll('*'))]) {
-      if (el.closest('.btn, button, .receipt-printer-warning, svg')) continue;
+      if (el.closest('.btn, button, svg')) continue; // ut-docs#6184: the printer warning follows the theme now, so it is swept too
       const own = Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent!.trim()).join(' ').trim();
       if (!own) continue;
       const r = el.getBoundingClientRect();

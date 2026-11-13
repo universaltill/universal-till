@@ -27,6 +27,12 @@ func Builtin() *Library {
 			log.Printf("manual: embedded help unavailable: %v", err)
 			return
 		}
+		// The help-topics guard fails on these in CI; a build that ships
+		// one anyway still serves the topic (minus the picture) and says
+		// so once in the log rather than hiding it.
+		for _, m := range lib.MissingImages() {
+			log.Printf("manual: inline image not shipped, dropped: %s", m)
+		}
 		builtin = lib
 	})
 	return builtin

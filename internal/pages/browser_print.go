@@ -43,3 +43,12 @@ func receiptPrinterWarningHTML(T func(string) string, browserPrintOff, allowSett
 	}
 	return `<div class="receipt-printer-warning">` + msg + act + `</div>`
 }
+
+// systemPrinterMissing (ut-docs#6182): the till's OWN device (the server
+// process, where `lp` runs for mode=system) definitely has no OS print
+// destination. Viewer-independent (no loopback check, unlike
+// browserPrintOff) and not Pi-gated here: the probe is only wired on the Pi
+// kiosk (init.go), so nil → false. Never blocks (CachedProber.State).
+func systemPrinterMissing(d *common.Deps) bool {
+	return d != nil && d.SystemPrinters != nil && d.SystemPrinters.State() == print.DestNone
+}
