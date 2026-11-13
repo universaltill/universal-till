@@ -8,6 +8,24 @@ import { watchConsole } from './helpers';
 // checked with emulateMedia. The shadow-market refusal is covered by Go
 // (the e2e till can't run a suppressed market), here only its client side.
 
+
+// ut-docs#6155: every top-level @page rule the page carries (engine-neutral:
+// CSSPageRule where exposed, else the rule text).
+async function pageMarginRules(page) {
+  return page.evaluate(() => {
+    const out: string[] = [];
+    for (const s of Array.from(document.styleSheets)) {
+      let rules: CSSRule[] = [];
+      try { rules = Array.from(s.cssRules); } catch { continue; }
+      for (const r of rules) {
+        if (r.cssText.startsWith('@page')) out.push(((r as any).style && (r as any).style.margin) || r.cssText);
+      }
+    }
+    return out;
+  });
+}
+function isZero(v: string) { return /^0(px)?$/.test(v.trim()) || /margin:\s*0(px)?\s*(;|\}|$)/.test(v); }
+
 const RUN = Date.now().toString(36).toUpperCase();
 const CODE = `T6152-${RUN}`;
 
@@ -44,6 +62,8 @@ test.describe.serial('voucher slip through the browser (ut-docs#6152)', () => {
     await expect(page.getByTestId('voucher-slip-browser-hint')).toBeVisible();
     const hintLink = page.getByTestId('voucher-slip-browser-hint').locator('a');
     expect((await hintLink.boundingBox())!.height).toBeGreaterThanOrEqual(43);
+    // ut-docs#6155: no @page rule on the plain voucher page (no spill).
+    expect(await pageMarginRules(page)).toEqual([]);
 
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/print-slip') && r.status() === 200),
@@ -58,7 +78,18 @@ test.describe.serial('voucher slip through the browser (ut-docs#6152)', () => {
     // On screen the slip is not shown.
     await expect(page.locator('#voucher-slip-print .voucher-slip-paper')).toBeHidden();
 
+    const rules = await pageMarginRules(page);
+    expect(rules.length, '@page rule after the press').toBeGreaterThan(0);
+    for (const r of rules) expect(isZero(r), `@page margin: ${r}`).toBeTruthy();
+
     await page.emulateMedia({ media: 'print' });
+    // The host padding must survive the `padding:0 !important` ancestor rule.
+    const MM6 = 6 * 96 / 25.4 - 0.5;
+    const pads = await page.locator('#voucher-slip-print').evaluate((el) => {
+      const s = getComputedStyle(el);
+      return [s.paddingInlineStart, s.paddingInlineEnd, s.paddingBlockStart, s.paddingBlockEnd].map(parseFloat);
+    });
+    for (const v of pads) expect(v, 'host print inset').toBeGreaterThanOrEqual(MM6);
     const slips = page.getByTestId('voucher-slip-paper');
     await expect(slips).toHaveCount(1);
     await expect(slips).toBeVisible();
