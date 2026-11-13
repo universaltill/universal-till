@@ -103,5 +103,7 @@ commits behind `main`, and `main` had touched the same files.
   showModal, native-confirm, compliance, help-breadcrumbs, help-terms and
   fixed-dates guards. `internal/pages` passes except that golden, which the
   re-pin fixes.
+Pre-flight: help topic updated (`web/help/*/plugins.md` + docs-shots manifest hashes); new en.json keys → `web/i18n-meta/en.meta.json` updated; reference/architecture docs in universaltill/ut-docs#4887 (`architecture/plugin-architecture.md`, `reference/plugin-manifest.md`); README n/a (no claim changed); ADR n/a (implements ADR-0121 S1, no new decision).
+
 - Verdict: safe to merge once CI is green on the new head. No code under
   review changed, only the merge resolution and the test golden.
