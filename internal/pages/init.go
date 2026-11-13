@@ -34,6 +34,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -372,6 +373,15 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
+	// ut-docs#6154: the Pi kiosk's cached `lpstat` probe (never on other tills).
+	if isPiKioskAppliance(windowCtl) {
+		sp := print.NewCachedProber(print.LpstatProber{}, 60*time.Second)
+		dp.SystemPrinters = sp
+		go func() { // warm-up; lpstat absent → instant
+			defer logging.RecoverAndLog("pages.init.printProbe")
+			sp.Refresh(context.Background())
+		}()
+	}
 	// ADR-0088 Decision J / ut-docs#1912: nav.html is a shared partial with
 	// no per-page data of its own, so its railEntries template func reads
 	// the rail-slot amendments through this PluginMu-locked accessor rather
@@ -387,6 +397,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	httpx.InitTranslateMode(func(r *http.Request) bool { return translateModeActive(dp, r) })
 	// ut-docs#3735: <body data-window-toggle> (F11 window toggle) per request.
 	httpx.InitWindowToggle(func(r *http.Request) bool { return windowToggleOffered(dp, r) })
+	// ut-docs#6154: a Pi kiosk with no OS print destination never opens the
+	// browser's PDF-only print dialog. Live per-request check; no probe or
+	// exec on any other till.
+	httpx.InitBrowserPrint(func(r *http.Request) bool { return browserPrintOff(dp, r) })
 	// ut-docs#3091: record this till's running version (and when it first
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())

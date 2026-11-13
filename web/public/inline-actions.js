@@ -174,8 +174,34 @@
   function printPage() {
     var k = window.AndroidKiosk;
     if (k && typeof k.print === 'function') { try { k.print(); } catch (e) {} return; }
+    // ut-docs#6154: on the Pi kiosk's own screen with no OS printer the
+    // browser dialog can only "Save as PDF" to a home nobody can reach —
+    // show the server-rendered inline notice instead. Never window.print(),
+    // even if the notice is missing. Non-modal; focus stays on the button.
+    if (document.documentElement.getAttribute('data-browser-print') === 'off') {
+      var n = byId('ut-print-unavailable');
+      if (n) {
+        // Re-announce a second press: hide, then show on the next frame.
+        var show = function () {
+          n.classList.remove('hide'); n.hidden = false;
+          try { n.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+        };
+        if (!n.hidden) {
+          n.hidden = true;
+          if (window.requestAnimationFrame) window.requestAnimationFrame(show); else show();
+        } else show();
+      }
+      return;
+    }
     window.print();
   }
+  // The notice must not linger over another page after a navigation swap.
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || !(t.tagName === 'MAIN' || t.id === 'ut-page' || t.tagName === 'BODY')) return;
+    var n = byId('ut-print-unavailable');
+    if (n) n.hidden = true;
+  });
   var UTns = window.UT = window.UT || {};
   UTns.print = printPage;
   // Where the save-error step's line goes: right after the posting form;

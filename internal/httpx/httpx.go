@@ -82,6 +82,8 @@ var baseFuncs = template.FuncMap{
 	"translatemode": func() bool { return false },
 	// ut-docs#3735: request-bound by withHelpHref; false everywhere else.
 	"windowtoggle": func() bool { return false },
+	// ut-docs#6154: request-bound by withHelpHref / WithBrowserPrint; false elsewhere.
+	"browserprintoff": func() bool { return false },
 	// runelen: a field's `size` attribute must track how many CHARACTERS
 	// will actually show, not how many bytes the string takes (ut-docs#3319
 	// review finding) — Go's builtin `len` on a string is byte length, which
@@ -356,6 +358,10 @@ func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
 	// toggle), decided per request by pages.windowToggleOffered.
 	windowToggle := WindowToggleOn(r)
 	out["windowtoggle"] = func() bool { return windowToggle }
+	// ut-docs#6154: base.html's <html data-browser-print="off"> and the
+	// receipt's no-printer affordance.
+	browserPrintOff := BrowserPrintOff(r)
+	out["browserprintoff"] = func() bool { return browserPrintOff }
 	return withTranslateMode(out, r)
 }
 

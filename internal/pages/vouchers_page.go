@@ -292,7 +292,9 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 				"allowed":  allowed,
 				"possible": judged.Status == "active" && judged.BalanceMinor > 0,
 				"printer":  printerConfig(r.Context(), d).Enabled(),
-				"href":     "/vouchers/" + url.PathEscape(id) + "/print-slip",
+				// ut-docs#6154: printerless Pi kiosk — no dialog to fall back on.
+				"browserOff": browserPrintOff(d, r),
+				"href":       "/vouchers/" + url.PathEscape(id) + "/print-slip",
 			},
 			"adjust": map[string]any{
 				"allowed":  allowed,
@@ -434,6 +436,10 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			writeCustomerDocumentsRefused(w, r)
 			return
 		case errors.Is(err, errNoReceiptPrinter):
+			if browserPrintOff(d, r) { // ut-docs#6154: a dialog that can't open; no slip, no audit row
+				voucherAdjustMessage(w, r, http.StatusConflict, "vouchers.print_slip.no_printer")
+				return
+			}
 			set := browserSlipSet{Lang: httpx.DefaultLocale(), Dir: slipDir(httpx.DefaultLocale()),
 				Slips: []browserVoucherSlip{browserVoucherSlipFor(actx, d, shown, time.Now())}}
 			body, rerr := renderBrowserSlips("voucher_slip_print_response", httpx.RequestLocale(r), map[string]any{"Set": set})

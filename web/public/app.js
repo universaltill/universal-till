@@ -1042,6 +1042,9 @@ function renderNotice(el, level, text){
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
+    // ut-docs#6154: a reusable notice (shown again by later actions) is never
+    // auto-removed, hidden or not; only its own dismiss button hides it.
+    if (toast.hasAttribute('data-reusable') || toast.hidden) return;
     // errors persist until dismissed; a critical notice (ADR-0176) stays until
     // a manager acknowledges it -- it never auto-expires.
     if (toast.classList.contains('error') || toast.classList.contains('critical')) return;
@@ -1338,7 +1341,7 @@ document.addEventListener('click', function(e){
   if (!btn) return;
   var notice = btn.closest('.pos-notice');
   if (!notice) return;
-  if (notice.id === 'pos-alert') { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
+  if (notice.id === 'pos-alert' || notice.hasAttribute('data-reusable')) { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
   notice.classList.add('hide');
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });

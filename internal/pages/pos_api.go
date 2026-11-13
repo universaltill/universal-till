@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -2701,7 +2702,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
+		funcs := httpx.WithBrowserPrint(httpx.FuncsFor(locale), r)
 		// writeTenderView swaps the post-tender view into #basket, plus the
 		// recent-sales journal out of band.
 		writeTenderView := func(viewHTML string) {
@@ -2850,7 +2851,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
 		if renderErr != nil {
 			printerUnavailable = true
-			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
+			receiptHTML = receiptPrinterWarningHTML(funcs["T"].(func(string) string), httpx.BrowserPrintOff(r), canPerform(d, r, "settings"))
 		}
 
 		// ut-docs#6152: with printer.voucher_slip on, the browser-printed
@@ -3147,6 +3148,16 @@ func normalizeLegalLines(text string, lines []string) []string {
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
 func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string, serviceCharge int64) (string, error) {
+	// ut-docs#6154: receipt.html reads browserprintoff/allowed; a hand-built
+	// funcs map (tests, other callers) gets the "browser print on" defaults.
+	if _, ok := funcs["browserprintoff"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["browserprintoff"] = func() bool { return false }
+	}
+	if _, ok := funcs["allowed"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["allowed"] = func(string) bool { return false }
+	}
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
