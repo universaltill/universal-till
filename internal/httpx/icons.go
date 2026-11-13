@@ -253,6 +253,10 @@ var railIcons = map[string]string{
 	// glyph, growing this registry the same way "filter"/"landmark"/
 	// "scan-barcode" already did. Lucide's "eye" path, unmodified.
 	"eye": `<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>`,
+	// ut-docs#3440: the session chip's "My display" link -- half-filled
+	// circle, unique among nav destinations. Lucide's "contrast" path,
+	// unmodified.
+	"contrast": `<circle cx="12" cy="12" r="10"/><path d="M12 18a6 6 0 0 0 0-12v12z"/>`,
 	// ut-docs#2541: the jiggle edit mode's Hide badge (product-tile,
 	// buttons.html) -- "eye" (immediately above) already reads as "view",
 	// not "take off the sell screen", and this registry's own "trash-2"

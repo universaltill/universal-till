@@ -301,6 +301,13 @@ type Deps struct {
 	// (ut-docs#2817) — the catalogue write-through refuses it either way.
 	MainTillUnreachable func(context.Context) bool
 
+	// ThemeAvailable reports whether a theme key is installed on this till
+	// (built-in stylesheet or an active plugin theme entry). pages.Init sets
+	// it; nil (tests, a bare Deps) means "don't check". ResolvedTheme uses
+	// it so an operator's personal theme that was since uninstalled falls
+	// back to the till theme instead of a page with no theme (ut-docs#3440).
+	ThemeAvailable func(ctx context.Context, key string) bool
+
 	// sellCacheOnce/sellCache back SellScreenCache below (ut-docs#2989).
 	sellCacheOnce sync.Once
 	sellCache     *ui.SellScreenCache
