@@ -753,6 +753,9 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/barcode-symbology":              true,
 	"POST /api/settings/basket-panel-width":             true,
 	"POST /api/settings/browsing-mode":                  true,
+	"GET /my-display":                                   true, // ut-docs#3440: per-operator cosmetic preference, same class as browsing-mode above
+	"POST /api/my-display/theme":                        true,
+	"POST /api/my-display/browsing-mode":                true,
 	"POST /api/settings/catalog-import-barcode-default": true,
 	"POST /api/settings/catalog-pre-pack-unit-price":    true,
 	"POST /api/settings/demo-item/{id}/keep":            true,

@@ -461,7 +461,9 @@ async function ensureOperator(page: Page) {
 // tables there since #902), which would leak into the manual's screenshots.
 // Narrowing this list is therefore a deliberate follow-up decision about
 // screenshot fixtures, not a leftover of the auth fix.
-const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings', 'tables'];
+const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings', 'tables', 'my-display'];
+// "my-display" (ut-docs#3440): the auth-off till has no operator, so the page would only show its
+// disabled "sign in" state; the auth till's signed-in admin gets the real, enabled page.
 
 const topics = routedTopics() as { id: string; route: string }[];
 

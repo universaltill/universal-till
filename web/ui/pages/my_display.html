@@ -1,0 +1,76 @@
+{{ define "content" }}
+<!-- "My display" (ut-docs#3440): the signed-in operator's own theme and sale
+     screen layout. Two cards, one Save each, so it is plain which choice a
+     Save covers. Success is a 204 -> reload (the new theme shows at once).
+     Errors land in #my-display-save-error with the server's own sentence.
+     An additional till gets the notice and disabled controls (writes are
+     refused there, 409). Logical CSS only; no dialogs, no confirm. -->
+<div class="page-head">
+  <h1>{{ T "page.title.my_display" }} {{ helpLink "my-display" }}</h1>
+</div>
+
+<p id="my-display-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+
+<div class="card" id="my-display-intro">
+  <p class="muted">{{ T "settings.my_display.intro" }}</p>
+  {{ if .followsMain }}<p class="muted" role="status">{{ T "settings.my_display.replica_notice" }}</p>{{ end }}
+  {{ if .noOperator }}<p class="muted" role="status">{{ T "settings.my_display.no_operator" }}</p>{{ end }}
+</div>
+
+<div class="card" id="my-display-theme">
+  <h2>{{ T "settings.theme.title" }}</h2>
+  <form hx-post="/api/my-display/theme" hx-swap="none" data-after-request="ok reload:my-display-theme; fail save-error:my-display-save-error" class="set-gap">
+    <fieldset class="set-gap my-display-set"{{ if or .followsMain .noOperator }} disabled{{ end }}>
+      <label class="set-row">{{ T "settings.theme.title" }}
+        <select name="theme">
+          <option value=""{{ if not .savedTheme }} selected{{ end }}>{{ .themeDefault }}</option>
+          {{ $cur := .savedTheme }}
+          {{ range .themes }}
+          <option value="{{ .Key }}"{{ if eq .Key $cur }} selected{{ end }}>{{ T .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
+          {{ end }}
+        </select>
+      </label>
+      {{ if .themeMissing }}<p class="muted">{{ .themeMissingText }}</p>{{ end }}
+      <button class="btn" type="submit">{{ T "common.save" }}</button>
+    </fieldset>
+  </form>
+</div>
+
+<div class="card" id="my-display-mode">
+  <h2>{{ T "settings.sell_screen.browsing_mode_label" }}</h2>
+  <form id="my-display-mode-form" hx-post="/api/my-display/browsing-mode" hx-swap="none" data-after-request="ok reload:my-display-mode; fail save-error:my-display-save-error" class="set-gap">
+    <fieldset class="set-gap my-display-set"{{ if or .followsMain .noOperator }} disabled{{ end }}>
+      <label class="set-row">{{ T "settings.sell_screen.browsing_mode_label" }}
+        <select name="mode" id="my-display-mode-select">
+          <option value=""{{ if not .savedMode }} selected{{ end }}>{{ .modeDefault }}</option>
+          <option value="category_tabs"{{ if eq .savedMode "category_tabs" }} selected{{ end }}>{{ T "settings.sell_screen.browsing_mode_category_tabs" }}</option>
+          <option value="all_filter_chips"{{ if eq .savedMode "all_filter_chips" }} selected{{ end }}>{{ T "settings.sell_screen.browsing_mode_all_filter_chips" }}</option>
+          <option value="strip_overflow"{{ if eq .savedMode "strip_overflow" }} selected{{ end }}>{{ T "settings.sell_screen.browsing_mode_strip_overflow" }}</option>
+        </select>
+      </label>
+      {{ $hm := .hintMode }}
+      <p class="muted" data-browsing-mode-hint="category_tabs"{{ if ne $hm "category_tabs" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_category_tabs_hint" }}</p>
+      <p class="muted" data-browsing-mode-hint="all_filter_chips"{{ if ne $hm "all_filter_chips" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_all_filter_chips_hint" }}</p>
+      <p class="muted" data-browsing-mode-hint="strip_overflow"{{ if ne $hm "strip_overflow" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_strip_overflow_hint" }}</p>
+      <button class="btn" type="submit">{{ T "common.save" }}</button>
+    </fieldset>
+  </form>
+</div>
+<script>
+(function () {
+  // Hint follows the picked option before Save is pressed. When the picker is
+  // on "Use the till's choice" (empty value) the till's own layout hint stays.
+  var form = document.getElementById('my-display-mode-form');
+  var select = document.getElementById('my-display-mode-select');
+  if (!form || !select) return;
+  var initial = '';
+  form.querySelectorAll('[data-browsing-mode-hint]').forEach(function (p) { if (!p.hidden) initial = p.getAttribute('data-browsing-mode-hint'); });
+  select.addEventListener('change', function () {
+    var shown = select.value || initial;
+    form.querySelectorAll('[data-browsing-mode-hint]').forEach(function (p) {
+      p.hidden = p.getAttribute('data-browsing-mode-hint') !== shown;
+    });
+  });
+})();
+</script>
+{{ end }}

@@ -11,11 +11,11 @@ import (
 
 // PersonalDisplayAction is the permission action that lets an operator's own
 // user_display_settings rows override the till/shop display settings
-// (ut-docs#3149). Migration 061 registers it in permission_actions but grants
-// it to no role (part 3 of #3149 seeds the grants); until a role holds it,
-// AuthSvc.Can reports false (no role_permissions row) and both resolvers
-// below always return the till/shop value. A till whose permission_actions
-// lacks the row altogether (older schema) resolves the same way.
+// (ut-docs#3149). Migration 061 registers it in permission_actions; migration
+// 102 (ut-docs#3440) grants it to admin, manager and super_admin — cashier is
+// sale-only. A role without a grant (AuthSvc.Can false), and a till whose
+// permission_actions lacks the row altogether (older schema), get the
+// till/shop value from both resolvers below.
 const PersonalDisplayAction = "personal_display"
 
 // ResolvedTheme is the theme to render for this request: the signed-in
@@ -23,7 +23,11 @@ const PersonalDisplayAction = "personal_display"
 // otherwise the till/shop theme from CurrentState().
 func (d *Deps) ResolvedTheme(r *http.Request) string {
 	if v, ok := d.personalDisplayValue(r, KeyTheme); ok && strings.TrimSpace(v) != "" {
-		return v
+		// A theme uninstalled since it was saved falls through to the till
+		// theme (ut-docs#3440); a nil hook means "don't check".
+		if d.ThemeAvailable == nil || d.ThemeAvailable(r.Context(), v) {
+			return v
+		}
 	}
 	return d.CurrentState().Theme
 }
