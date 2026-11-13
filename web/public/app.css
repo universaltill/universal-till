@@ -1566,6 +1566,18 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
     padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
   }
   .catalog-form-head-actions .btn { min-inline-size: 3rem; padding-inline: .65rem; }
+  /* ut-docs#6138: in edit mode the visible +New button joins Close/Save, so
+     the 12rem title group no longer fit beside the action group on a 360px
+     row and the head wrapped into two 3rem button rows (32.3% of 360x640).
+     Shrinking the title group's basis instead fit one row but left the h3
+     ~45px ("Edi…"), so the operator could no longer see which item was
+     open (independent review, UX gate). Instead the title becomes its own
+     full-width text line and the delete button joins the action row:
+     one text line + one button row (~28% in both modes), full item name
+     visible. display: contents only flattens a semantics-free wrapper div;
+     the h3 and the delete button keep their own roles and names. */
+  .catalog-form-head-title { display: contents; }
+  .catalog-form-head-title h3 { flex: 1 0 100%; }
   .catalog-form-head-actions .btn .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
   .catalog-form-head-actions .btn:focus-visible {
     outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px;
@@ -5335,7 +5347,11 @@ body.login-screen {
    rather than a new one. */
 .items-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
                 gap: 1.2rem; align-items: start; }
-@media (max-width: 52rem) { .items-layout { grid-template-columns: 1fr; } }
+/* ut-docs#6138: minmax(0, 1fr), not 1fr (= minmax(auto, 1fr)): the single
+   stacked track's automatic minimum was the rail rows' nowrap text
+   min-content, which at 360px in fa/ar (longer labels) pushed the page
+   1-5px wider than the viewport. The rows ellipsise (.items-text). */
+@media (max-width: 52rem) { .items-layout { grid-template-columns: minmax(0, 1fr); } }
 
 .items-rail-wrap { position: sticky; inset-block-start: .5rem; }
 /* ut-docs#3297: stacked, the section list sits above the panel; pinned,

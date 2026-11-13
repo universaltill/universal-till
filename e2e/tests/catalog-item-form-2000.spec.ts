@@ -77,4 +77,65 @@ test.describe('catalog item form header at phone width (ut-docs#2000)', () => {
     await expect(page.locator('#item-form-panel-keypad')).toBeVisible();
     assertClean();
   });
+
+  // ut-docs#6138: the 360x640 phone (the common small Android) was
+  // measured at 28.2% in create mode but 32.3% in edit mode, where the
+  // extra +New button no longer fits beside Close/Save and wraps the action
+  // group onto a second row.
+  for (const mode of ['create', 'edit'] as const) {
+    test(`the pinned head is < 30% of a 360x640 viewport in ${mode} mode (ut-docs#6138)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: 360, height: 640 });
+      await page.goto('/catalog');
+      if (mode === 'create') {
+        await openNewItemForm(page);
+      } else {
+        await page.locator('[id^=catalog-row-]').first().click();
+        await expect(page.locator('#item-form-modal')).toBeVisible();
+        await expect(page.locator('#item-form-delete')).toBeVisible();
+      }
+      const head = (await page.locator('.catalog-form-head').boundingBox())!;
+      const fraction = head.height / 640;
+      expect(fraction, `${mode}: head is ${(fraction * 100).toFixed(1)}% (${head.height}px of 640)`).toBeLessThan(0.30);
+      if (mode === 'edit') {
+        // +New stays reachable by its accessible name.
+        await expect(page.getByRole('button', { name: /new/i }).first()).toBeVisible();
+        // Independent review (UX gate): fitting the head by shrinking the
+        // title left the h3 ~45px wide ("Edi…"), hiding which item is open.
+        // The title must show in full for a normal-length name...
+        const title = await page.locator('#item-form-title').evaluate((el) => ({
+          sw: el.scrollWidth, cw: el.clientWidth, text: el.textContent || '',
+        }));
+        expect(title.sw, `edit title "${title.text}" is truncated (${title.sw}px in ${title.cw}px)`).toBeLessThanOrEqual(title.cw);
+        // ...and Delete joins +New/Close/Save on ONE button row.
+        const tops = new Set<number>();
+        for (const id of ['#item-form-delete', '#item-form-reset', '#item-form-close-btn', '#item-form-submit']) {
+          tops.add(Math.round((await page.locator(id).boundingBox())!.y));
+        }
+        expect(tops.size, 'delete, +New, Close and Save must share one row at 360px').toBe(1);
+      }
+      assertClean();
+    });
+  }
+
+  // ut-docs#6138: the items list scrolled sideways by ~6px at 360px in fa.
+  for (const [route, lang] of [['/items', 'fa'], ['/items', 'ar'], ['/catalog', 'fa'], ['/catalog', 'ar']]) {
+    test(`${route} does not scroll horizontally at 360px in ${lang} (ut-docs#6138)`, async ({ page }) => {
+      await page.setViewportSize({ width: 360, height: 640 });
+      await page.goto(`${route}?lang=${lang}`);
+      await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+      const m = await page.evaluate(() => {
+        const se = document.scrollingElement!;
+        const offenders: string[] = [];
+        for (const el of Array.from(document.body.querySelectorAll('*'))) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && (r.right > se.clientWidth + 0.5 || r.left < -0.5)) {
+            offenders.push(`${el.tagName.toLowerCase()}#${el.id}.${(el as HTMLElement).className}`.slice(0, 80));
+          }
+        }
+        return { sw: se.scrollWidth, cw: se.clientWidth, offenders: offenders.slice(0, 6) };
+      });
+      expect(m.sw, `scrollWidth ${m.sw} vs clientWidth ${m.cw}; offenders: ${m.offenders.join(' | ')}`).toBe(m.cw);
+    });
+  }
 });
