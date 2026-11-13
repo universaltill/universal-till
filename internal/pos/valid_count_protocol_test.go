@@ -39,6 +39,8 @@ func TestValidCountProtocol_Table(t *testing.T) {
 		{"trailing whitespace", "{\"100\":1}\n", true},
 		{"duplicate key", `{"100":1,"100":3}`, false},
 		{"duplicate key hiding a quoted value", `{"100":"x","100":1}`, false},
+		{"escaped duplicate key", `{"100":1,"1\u0030\u0030":2}`, false},
+		{"trailing comma", `{"100":1,}`, false},
 		{"nested", `{"100":{"a":1}}`, false},
 		{"oversize", `{"100":1` + strings.Repeat(" ", maxCountProtocolLen) + `}`, false},
 	}
