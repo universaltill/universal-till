@@ -27,6 +27,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,6 +46,17 @@ const (
 	sellerName    = "Demo Shop Ltd"
 	sellerAddress = "1 High Street, Demo Town"
 	sellerVATNo   = "GB123456789"
+)
+
+// The one gift voucher the vouchers help topic pictures (ut-docs#6157): its
+// detail page /vouchers/<id>. Keep docsVoucherID equal to DOCS_VOUCHER_ID in
+// e2e/tests-docs/docs-shots.spec.ts. Written with a fixed midday-UTC stamp
+// (the create routes all read the wall clock) and no sale, so the History
+// row shows no receipt link.
+const (
+	docsVoucherID     = "DOCS-GV-0001"
+	docsVoucherAt     = "2025-12-10T12:00:00Z"
+	docsVoucherAmount = int64(2500)
 )
 
 type lineSpec struct {
@@ -242,5 +254,32 @@ func seed(ctx context.Context, sqlDB *sql.DB) error {
 			return fmt.Errorf("channel order %s: %w", o.OrderNumber, err)
 		}
 	}
-	return nil
+	return seedVoucher(ctx, sqlDB, repo)
+}
+
+// seedVoucher writes the docs gift voucher and its 'issue' history row.
+// Idempotent: an existing id is left alone (and so is its history).
+func seedVoucher(ctx context.Context, sqlDB *sql.DB, repo *data.POSRepo) error {
+	dbTx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dbTx.Rollback() }()
+	err = repo.CreateVoucher(ctx, dbTx, data.Voucher{
+		ID: docsVoucherID, HolderLabel: "Anna", OriginalAmountMinor: docsVoucherAmount,
+		BalanceMinor: docsVoucherAmount, Currency: "GBP", Status: "active", CreatedAt: docsVoucherAt,
+	})
+	if errors.Is(err, data.ErrVoucherIDExists) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("docs voucher: %w", err)
+	}
+	if err := repo.RecordVoucherTransaction(ctx, dbTx, data.VoucherTransaction{
+		ID: "docs-gv-issue-1", VoucherID: docsVoucherID, Type: "issue",
+		AmountMinor: docsVoucherAmount, CreatedAt: docsVoucherAt,
+	}); err != nil {
+		return fmt.Errorf("docs voucher issue row: %w", err)
+	}
+	return dbTx.Commit()
 }
