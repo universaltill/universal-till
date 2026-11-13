@@ -143,7 +143,7 @@ What can go wrong:
 
 - Only a manager or admin can print a slip.
 - With no receipt printer set up, the slip opens in the browser's print dialog, and the page also links to **Receipt printer** in Settings. The audit log records it as opened in the print dialog, because the till can't tell whether it was printed or the dialog was cancelled.
-- The print dialog can only print on a printer the device itself knows about. On a till with no printer at all (for example a kiosk set up from the till image) it can only save a PDF, and in the Android app no print dialog opens. Set up a receipt printer there instead.
+- The print dialog can only print on a printer the device itself knows about. On a till with no printer at all (for example a kiosk set up from the till image) it can only save a PDF, and in the Android app it opens Android's print dialog (a printer needs an Android print service, or choose Save as PDF). Set up a receipt printer there instead.
 - If **Print failed** appears, see "Nothing is printing" in [Receipts & printing](/help/printing).
 - A voided or used-up voucher has no button; if it was voided or used up after you opened the page, the till says so and prints nothing.
 - On an additional till the slip prints on that till's own printer. It decides on the main till's status when the main till is reachable, and on this till's own record when it isn't.
