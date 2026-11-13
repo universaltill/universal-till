@@ -20,7 +20,7 @@
 <div class="card" id="my-display-theme">
   <h2>{{ T "settings.theme.title" }}</h2>
   <form hx-post="/api/my-display/theme" hx-swap="none" data-after-request="ok reload:my-display-theme; fail save-error:my-display-save-error" class="set-gap">
-    <fieldset class="set-gap"{{ if or .followsMain .noOperator }} disabled{{ end }}>
+    <fieldset class="set-gap my-display-set"{{ if or .followsMain .noOperator }} disabled{{ end }}>
       <label class="set-row">{{ T "settings.theme.title" }}
         <select name="theme">
           <option value=""{{ if not .savedTheme }} selected{{ end }}>{{ .themeDefault }}</option>
@@ -39,7 +39,7 @@
 <div class="card" id="my-display-mode">
   <h2>{{ T "settings.sell_screen.browsing_mode_label" }}</h2>
   <form id="my-display-mode-form" hx-post="/api/my-display/browsing-mode" hx-swap="none" data-after-request="ok reload:my-display-mode; fail save-error:my-display-save-error" class="set-gap">
-    <fieldset class="set-gap"{{ if or .followsMain .noOperator }} disabled{{ end }}>
+    <fieldset class="set-gap my-display-set"{{ if or .followsMain .noOperator }} disabled{{ end }}>
       <label class="set-row">{{ T "settings.sell_screen.browsing_mode_label" }}
         <select name="mode" id="my-display-mode-select">
           <option value=""{{ if not .savedMode }} selected{{ end }}>{{ .modeDefault }}</option>

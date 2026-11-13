@@ -6208,6 +6208,9 @@ body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[ty
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }
 .set-gap-s { margin-block-start: .45rem; }
+/* "My display" form groups: a fieldset only for the disabled state, so strip
+   the browser box and the min-content width that overflowed at 360px. */
+fieldset.my-display-set { border: 0; padding: 0; margin-inline: 0; margin-block-end: 0; min-inline-size: 0; }
 .set-divider { margin-block-start: .8rem; border-block-start: 1px solid var(--border);
                padding-block-start: .6rem; }
 /* ut-docs#2981: a Settings region that writes a shop-wide key sits in a

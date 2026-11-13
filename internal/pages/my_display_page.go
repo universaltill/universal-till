@@ -113,27 +113,27 @@ func registerMyDisplayPage(mux *http.ServeMux, d *common.Deps) {
 // empty value clears the operator's row ("use the till's choice").
 func saveMyDisplay(d *common.Deps, w http.ResponseWriter, r *http.Request, key, field string, valid func(context.Context, string) bool, badKey string) {
 	if !canPerform(d, r, personalDisplayAction) {
-		common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+		httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "common.error.manager_or_admin_required"), http.StatusForbidden)
 		return
 	}
 	ctx := r.Context()
 	u, ok := auth.FromContext(ctx)
 	if !ok || u.ID == "" {
-		common.LocalizedError(w, r, http.StatusForbidden, "settings.my_display.no_operator")
+		httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.my_display.no_operator"), http.StatusForbidden)
 		return
 	}
 	if tillFollowsMain(ctx, d) {
-		common.LocalizedError(w, r, http.StatusConflict, "settings.my_display.error.replica_use_primary")
+		httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.my_display.error.replica_use_primary"), http.StatusConflict)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	if err := r.ParseForm(); err != nil {
-		common.LocalizedError(w, r, http.StatusBadRequest, "settings.my_display.error.invalid")
+		httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.my_display.error.invalid"), http.StatusBadRequest)
 		return
 	}
 	v := strings.TrimSpace(r.Form.Get(field))
 	if len(v) > myDisplayMaxValue {
-		common.LocalizedError(w, r, http.StatusBadRequest, "settings.my_display.error.invalid")
+		httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.my_display.error.invalid"), http.StatusBadRequest)
 		return
 	}
 	repo := data.NewUserDisplayRepo(d.Db)
@@ -142,7 +142,7 @@ func saveMyDisplay(d *common.Deps, w http.ResponseWriter, r *http.Request, key, 
 	case v == "":
 		err = repo.Delete(ctx, u.ID, key)
 	case !valid(ctx, v):
-		common.LocalizedError(w, r, http.StatusBadRequest, badKey)
+		httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), badKey), http.StatusBadRequest)
 		return
 	default:
 		err = repo.Set(ctx, u.ID, key, v)

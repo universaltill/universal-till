@@ -114,6 +114,9 @@ func TestMyDisplay_UnknownThemeAndGarbage400(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("theme %.20q = %d, want 400", v, rec.Code)
 		}
+		if got := rec.Header().Get("X-UT-Response"); got != "refused" {
+			t.Errorf("theme %.20q X-UT-Response = %q, want refused (D1: save-error step shows the sentence)", v, got)
+		}
 		if strings.Contains(rec.Body.String(), "my_display.") {
 			t.Errorf("body shows a raw key: %q", rec.Body.String())
 		}
@@ -192,6 +195,9 @@ func TestMyDisplay_NoOperatorSession403(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("= %d, want 403", rec.Code)
 	}
+	if got := rec.Header().Get("X-UT-Response"); got != "refused" {
+		t.Errorf("X-UT-Response = %q, want refused", got)
+	}
 }
 
 func TestMyDisplay_FollowerTill409GetStillRenders(t *testing.T) {
@@ -207,6 +213,9 @@ func TestMyDisplay_FollowerTill409GetStillRenders(t *testing.T) {
 		rec := r.do("POST", c.path, "u-mgr", "manager", c.form)
 		if rec.Code != http.StatusConflict {
 			t.Errorf("%s = %d, want 409", c.path, rec.Code)
+		}
+		if got := rec.Header().Get("X-UT-Response"); got != "refused" {
+			t.Errorf("%s X-UT-Response = %q, want refused", c.path, got)
 		}
 		if !strings.Contains(rec.Body.String(), "main till") {
 			t.Errorf("%s body %q does not point at the main till", c.path, rec.Body.String())
