@@ -5,7 +5,9 @@
 // Layouts follow the page locale (<html lang>): en, tr, fa, ar, de, es; a
 // numeric pad serves number/tel/numeric-inputmode fields. Keys write into
 // the focused input and fire an `input` event so HTMX/Alpine listeners run;
-// Enter submits the input's form (requestSubmit → normal submit handlers).
+// Enter submits the input's form (requestSubmit → normal submit handlers),
+// unless a textarea opts into `data-osk-enter="newline"`: then Enter types a
+// line break and the keyboard stays open (ut-docs#6179).
 (function () {
   'use strict';
 
@@ -537,6 +539,10 @@
       case 'ABC': layer = baseLayout(); render(); updateReservedHeight(); return;
       case 'SPACE': insert(' '); return;
       case '↵':
+        if (current && current.tagName === 'TEXTAREA' && current.dataset.oskEnter === 'newline') {
+          insert('\n');
+          return;
+        }
         if (current) {
           var form = current.form;
           var el = current;

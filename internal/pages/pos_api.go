@@ -2830,8 +2830,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				iv.Holder = t.HolderLabel
 				iv.Balance = t.BalanceAfterMinor
 				iv.HasBalance = true
+				iv.At = t.CreatedAt
 			}
 			issuedVouchers = append(issuedVouchers, iv)
+		}
+		// ut-docs#6179: the issue date of each issued voucher is read back from
+		// the committed row, once — the paper slip reads the same rows, so the
+		// dates agree by construction. A read error leaves no date line.
+		hasIssued := false
+		for _, iv := range issuedVouchers {
+			hasIssued = hasIssued || !iv.TopUp
+		}
+		if hasIssued {
+			if rows, vErr := repo.VouchersIssuedInSale(r.Context(), saleID); vErr == nil {
+				created := make(map[string]string, len(rows))
+				for _, row := range rows {
+					created[row.ID] = row.CreatedAt
+				}
+				for i := range issuedVouchers {
+					if !issuedVouchers[i].TopUp {
+						issuedVouchers[i].At = created[issuedVouchers[i].Code]
+					}
+				}
+			}
 		}
 		design := receiptDesignFromSettings(r.Context(), d)
 		// ut-docs#908: the customer order-tracking QR on the counter
@@ -2862,7 +2883,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if renderErr == nil && printerCfg.VoucherSlip && len(issuedVouchers) > 0 {
 			pl := receiptPrintLocale(customerLocale, locale)
 			set := browserSlipSet{Lang: pl, Dir: slipDir(pl),
-				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, issuedVouchers)}
+				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, voucherSlipLines(design.VoucherSlipText), issuedVouchers)}
 			if slips, err := renderBrowserSlips("voucher_slips_receipt", pl, set); err != nil {
 				log.Printf("tender: browser voucher slips skipped: %v", err)
 			} else {
@@ -2993,6 +3014,9 @@ type receiptVoucherIssue struct {
 	// SinglePurpose (ut-docs#5739): taxed into the subtotal, so NOT part of
 	// the "Vouchers issued" liability row.
 	SinglePurpose bool
+	// At is the stored created_at of the voucher row (issued) or its top_up row
+	// (top-up): the slip's date line. "" = no line (ut-docs#6179).
+	At string
 }
 
 // newReceiptVoucherIssue maps a non-top-up voucher issue of the sale being

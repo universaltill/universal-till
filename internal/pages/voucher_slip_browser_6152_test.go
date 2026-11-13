@@ -158,7 +158,7 @@ func TestReceiptBrowserSlips_Mapping(t *testing.T) {
 		{Code: "C3", Amount: 500, TopUp: true, Balance: 1500, HasBalance: true},
 		{Code: "D4", Amount: 700, TopUp: true},
 	}
-	got := receiptBrowserSlips("en", "My Store", []string{"H1"}, vs)
+	got := receiptBrowserSlips("en", "My Store", []string{"H1"}, nil, vs)
 	if len(got) != 4 {
 		t.Fatalf("got %d slips", len(got))
 	}
