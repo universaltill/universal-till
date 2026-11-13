@@ -232,6 +232,23 @@ func TestSessionChip(t *testing.T) {
 	}
 }
 
+// ut-docs#3440: the chip carries a "My display" link only for an operator
+// holding personal_display (migration 102: manager yes, cashier no).
+func TestSessionChip_MyDisplayLinkOnlyWhenGranted(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	chip := func(u auth.User) string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/session-chip", nil), u))
+		return rec.Body.String()
+	}
+	if body := chip(auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}); !strings.Contains(body, `href="/my-display"`) {
+		t.Errorf("manager chip lacks the My display link: %s", body)
+	}
+	if body := chip(auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}); strings.Contains(body, "/my-display") {
+		t.Errorf("cashier chip shows the My display link: %s", body)
+	}
+}
+
 // ensureFirstBootAdmin attaches the first-boot PIN to an existing active,
 // non-system admin instead of creating a duplicate.
 func TestFirstBootReusesExistingActiveAdmin(t *testing.T) {

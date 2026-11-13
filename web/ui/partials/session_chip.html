@@ -18,6 +18,13 @@
     <span class="nav-toggle-label">{{ T "translations.title" }}</span>
   </a>
   {{ end }}
+  {{ if .personalDisplay }}
+  <!-- ut-docs#3440: personal theme + layout; shown by grant, not role. -->
+  <a class="session-admin-link nav-toggle" href="/my-display" title="{{ T "settings.my_display.nav" }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "contrast" }}</span>
+    <span class="nav-toggle-label">{{ T "settings.my_display.nav" }}</span>
+  </a>
+  {{ end }}
   <!-- Operator name has no fixed length. In the rail (>480px) the label is
        visually-hidden anyway (.nav-toggle-label, app.css), so its length
        costs no layout there.
