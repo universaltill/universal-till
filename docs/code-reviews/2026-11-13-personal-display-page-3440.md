@@ -48,6 +48,10 @@
    - demo classification;
    - no new file write without `MkdirAll` and no cwd-relative path.
 
+**CI follow-up (locale-render-audit):** the German render of `/my-display` flagged the built-in theme names "Amber" and "Slate". `availableThemes` labels a built-in theme with the title-cased key and no T key, the same as Settings. Those two collide by spelling with `catalog.color.amber`/`slate`. Theme names are product names, so both are added to `e2e/tests-i18n-audit/allowlist.json` with that reason.
+- Accepted trade-off: an untranslated `catalog.color.amber`/`slate` on a German page would no longer be flagged.
+- Translating theme names would be a product change for Settings too.
+
 No `settingsAudit` row is written for a personal cosmetic preference. This is a product nuance, accepted, and recorded for the owner.
 
 ## Verification
