@@ -2882,6 +2882,7 @@
   "settings.update.android.no_bridge": "This update can only be installed from the till app itself",
   "settings.update.android.pin_needed": "Enter the manager PIN to install this update",
   "settings.update.apply_confirm": "Download and install the update now? The till restarts when done.",
+  "settings.update.busy_open_sale": "Can't update while a sale or order is open. Finish or park it, then try again.",
   "settings.update.auto_blocked": "Automatic updates are on, but this till can't install them by itself: its install folder isn't writable by the till. If it was installed from the .deb package, reinstall the latest one — that fixes the folder; otherwise give the till's user write access to that folder. Then check again.",
   "settings.update.auto_enable": "Update automatically",
   "settings.update.follows_main": "This till follows the main till's version (%s). Change automatic updates on the main till.",

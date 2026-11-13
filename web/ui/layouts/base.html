@@ -2127,8 +2127,18 @@
         // along with the text; the transient armed/downloading states
         // stay plain text (no icon), same simplification as dropping the
         // decorative ⚡ prefix elsewhere in this change.
-        var label = btn.innerHTML, armed = false, armTimer = null;
+        var label = btn.innerHTML, armed = false, armTimer = null, busyTimer = null;
+        // ut-docs#6158: drop a "sale is open" refusal from the chip.
+        function clearBusy() {
+          clearTimeout(busyTimer);
+          if (btn.classList.contains('is-busy')) {
+            btn.classList.remove('is-busy');
+            btn.removeAttribute('title');
+            btn.innerHTML = label;
+          }
+        }
         btn.addEventListener('click', function () {
+          clearBusy();
           if (!armed) {
             armed = true;
             btn.textContent = T.confirm + latest;
@@ -2137,8 +2147,9 @@
           }
           armed = false; clearTimeout(armTimer);
           btn.disabled = true; btn.textContent = T.downloading;
+          var status = 0;
           fetch('/api/update/apply', { method: 'POST' })
-            .then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function (r) { status = r.status; return r.json().catch(function () { return {}; }); })
             .then(function (res) {
               // { "data": …, "error": null|"…" } envelope (universal-till/
               // CLAUDE.md, ut-docs#387). already_current: the status bar's
@@ -2153,11 +2164,31 @@
                 return;
               }
               var failed = !!(res && res.error);
-              btn.textContent = failed ? T.failed : T.restarting;
+              // ut-docs#6158: 409 = a sale is open; the server's error is
+              // translated operator text. Anything else stays generic.
+              var busy = failed && status === 409 && typeof res.error === 'string';
+              btn.textContent = busy ? res.error : (failed ? T.failed : T.restarting);
+              if (busy) {
+                btn.classList.add('is-busy');
+                btn.title = res.error;
+                clearTimeout(busyTimer);
+                busyTimer = setTimeout(clearBusy, 15000);
+                // The status bar's polite live region: a focused button's
+                // text change isn't announced reliably.
+                var live = document.getElementById('sb-link-live');
+                if (live) {
+                  live.textContent = '';
+                  requestAnimationFrame(function () { live.textContent = res.error; });
+                }
+              }
               // A failed apply never left the server mid-restart — nothing to
               // poll for, and polling anyway just leaves the failure message
               // sitting there for 3 minutes before silently going stale.
-              if (failed) { btn.disabled = false; return; }
+              if (failed) {
+                btn.disabled = false;
+                if (busy && document.activeElement === document.body) btn.focus({ preventScroll: true });
+                return;
+              }
               // Archive installs re-exec in place (reconnect + reload). The mac
               // .app quits and relaunches itself, so the window just closes and
               // reopens on the new version.

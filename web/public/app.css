@@ -5708,7 +5708,8 @@ body.login-screen {
 .statusbar .sb-update a:hover { color: #000; }
 /* Its link IS the remedy, so it may wrap rather than clip at phone width
    (.sb-item is nowrap); min-width: 0 lets the flex item shrink to wrap. */
-.statusbar .sb-update.is-stuck { white-space: normal; min-width: 0; border-radius: .75rem; }
+.statusbar .sb-update.is-stuck,
+.statusbar .sb-update.is-busy { white-space: normal; min-width: 0; border-radius: .75rem; }
 /* Quiet hint shown until the till is connected to the marketplace —
    registration is OPTIONAL (ADR-0015), so no alarm colors, no urgency. */
 .statusbar .sb-enrol {

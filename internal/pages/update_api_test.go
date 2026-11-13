@@ -768,3 +768,174 @@ func TestAutoUpdateTick_FailedApplyDoesNotRetrySameDay(t *testing.T) {
 		t.Fatalf("expected Apply called exactly once despite two ticks the same day, got %d calls", *applyCalls)
 	}
 }
+
+// stubUpdateApplySeams fakes the two seams POST /api/update/apply uses after
+// its busy gate (ut-docs#6158) and counts the calls, so a test can prove a
+// refusal never reaches the network or the binary swap.
+func stubUpdateApplySeams(t *testing.T) (applyCalls, checkCalls *int) {
+	t.Helper()
+	oldApply, oldCheck := updateApplyNow, updateCheckNow
+	t.Cleanup(func() { updateApplyNow, updateCheckNow = oldApply, oldCheck })
+	applyCalls, checkCalls = new(int), new(int)
+	updateApplyNow = func(context.Context, func() bool) error { *applyCalls++; return nil }
+	updateCheckNow = func(context.Context) updates.Status { *checkCalls++; return updates.Status{} }
+	return applyCalls, checkCalls
+}
+
+func postUpdateApply(t *testing.T, dp *common.Deps, hx bool) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	registerUpdateAPI(mux, dp)
+	req := httptest.NewRequest(http.MethodPost, "/api/update/apply", nil)
+	if hx {
+		req.Header.Set("HX-Request", "true")
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func addCoffee(s *pos.Service) {
+	s.AddLineWithModifiers(pos.BasketLine{SKU: "sku-1", Name: "Coffee", Qty: 1, PriceCents: 250}, 1, nil)
+}
+
+// ut-docs#6158: "Update now" restarts the till, which destroys any open
+// basket, so it refuses with 409 + a translated reason up front.
+func TestUpdateApply_RefusesWhileSaleOpen(t *testing.T) {
+	cases := map[string]func(dp *common.Deps){
+		"cashier item": func(dp *common.Deps) { addCoffee(dp.Engine) },
+		"by-hand only": func(dp *common.Deps) {
+			dp.Engine.RestoreHeld(pos.BasketSnapshot{AddByHand: []pos.ByHandLine{{Name: "Latte", Qty: 2}}}, pos.HeldOrigin{})
+		},
+		"kiosk basket": func(dp *common.Deps) {
+			dp.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, nil)
+			addCoffee(dp.KioskEngine)
+		},
+		"table-QR session": func(dp *common.Deps) {
+			m := pos.NewSessionBasketManager(func() *pos.Service { return pos.NewServiceWithResolver(pos.Config{}, nil) })
+			_, s, _ := m.Create()
+			addCoffee(s)
+			dp.SelfOrderSessions = m
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			chdirRoot(t)
+			t.Setenv("UT_AUTH", "off")
+			dp := newAutoUpdateTestDeps(t)
+			setup(dp)
+			applyCalls, checkCalls := stubUpdateApplySeams(t)
+
+			rec := postUpdateApply(t, dp, false)
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("code %d, want 409 (body %q)", rec.Code, rec.Body.String())
+			}
+			var body struct {
+				Data  any    `json:"data"`
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body not JSON: %v (%q)", err, rec.Body.String())
+			}
+			want := httpx.T("en", "settings.update.busy_open_sale")
+			if want == "settings.update.busy_open_sale" || body.Error != want || body.Data != nil {
+				t.Fatalf("envelope = %+v, want data null and error %q", body, want)
+			}
+			if *applyCalls != 0 || *checkCalls != 0 {
+				t.Fatalf("apply/check reached on a busy till: %d/%d", *applyCalls, *checkCalls)
+			}
+		})
+	}
+}
+
+func TestUpdateApply_RefusesWhileSaleOpen_HTMX(t *testing.T) {
+	chdirRoot(t)
+	t.Setenv("UT_AUTH", "off")
+	dp := newAutoUpdateTestDeps(t)
+	addCoffee(dp.Engine)
+	stubUpdateApplySeams(t)
+
+	rec := postUpdateApply(t, dp, true)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code %d, want 409", rec.Code)
+	}
+	if rec.Header().Get("X-UT-Response") != "refused" || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("headers = %v, want refused text/plain", rec.Header())
+	}
+	if want := httpx.T("en", "settings.update.busy_open_sale"); !strings.Contains(rec.Body.String(), want) || want == "settings.update.busy_open_sale" {
+		t.Fatalf("body %q lacks %q", rec.Body.String(), want)
+	}
+}
+
+// Empty baskets (and a nil kiosk engine / session manager) are not busy: the
+// request proceeds to the existing path. A held sale is persisted, so it does
+// not count either.
+func TestUpdateApply_NotBusyProceeds(t *testing.T) {
+	chdirRoot(t)
+	t.Setenv("UT_AUTH", "off")
+	dp := newAutoUpdateTestDeps(t)
+	dp.KioskEngine, dp.SelfOrderSessions = nil, nil
+	_, checkCalls := stubUpdateApplySeams(t)
+
+	rec := postUpdateApply(t, dp, false)
+
+	// Supported() is false on a test binary (400) or the stub says
+	// already-current (200); either way it is past the busy gate.
+	if rec.Code == http.StatusConflict {
+		t.Fatalf("empty till refused with 409: %q", rec.Body.String())
+	}
+	_ = checkCalls
+}
+
+func TestUpdateApply_NilEngineNotBusy(t *testing.T) {
+	chdirRoot(t)
+	t.Setenv("UT_AUTH", "off")
+	dp := newAutoUpdateTestDeps(t)
+	dp.Engine = nil
+	stubUpdateApplySeams(t)
+
+	if rec := postUpdateApply(t, dp, false); rec.Code == http.StatusConflict {
+		t.Fatalf("nil engine refused with 409: %q", rec.Body.String())
+	}
+}
+
+// Gate order: a non-manager gets 403, never the 409 detail.
+func TestUpdateApply_NonManagerStill403WhileSaleOpen(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	dp := newAutoUpdateTestDeps(t)
+	addCoffee(dp.Engine)
+	stubUpdateApplySeams(t)
+
+	if rec := postUpdateApply(t, dp, false); rec.Code != http.StatusForbidden {
+		t.Fatalf("code %d, want 403", rec.Code)
+	}
+}
+
+// The Settings inline button renders the 409 reason next to itself, not as
+// the generic server banner (ut-docs#6158).
+func TestUpdateCheck_ApplyButtonRendersBusyRefusalInline(t *testing.T) {
+	chdirRoot(t)
+	t.Setenv("UT_AUTH", "off")
+	dp := newAutoUpdateTestDeps(t)
+	oldCheck, oldSup := updateCheckNow, autoUpdateSupported
+	t.Cleanup(func() { updateCheckNow, autoUpdateSupported = oldCheck, oldSup })
+	updateCheckNow = func(context.Context) updates.Status { return updates.Status{Available: true, Latest: "9.9.9"} }
+	autoUpdateSupported = func() bool { return true }
+
+	mux := http.NewServeMux()
+	registerUpdateAPI(mux, dp)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/update/check", nil))
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-after-request="status:409 text-response:update-apply-msg"`,
+		`<span id="update-apply-msg"></span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("check fragment lacks %s:\n%s", want, body)
+		}
+	}
+}

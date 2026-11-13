@@ -55,6 +55,12 @@ var (
 	// this seam or the guard built on it -- an explicit user action stays
 	// available even on a dev build; only the unattended scheduler defers.
 	autoUpdateBuildVersion = func() string { return buildinfo.Version }
+	// updateApplyNow backs POST /api/update/apply (ut-docs#6158): the latest
+	// release, restart held until no sale is open. A seam so a test can prove
+	// the busy refusal never reaches it.
+	updateApplyNow = func(ctx context.Context, idle func() bool) error {
+		return selfupdate.ApplyVersionWhenIdle(ctx, "", idle)
+	}
 	// updateCheckNow backs Settings' POST /api/update/check.
 	updateCheckNow = updates.CheckNow
 	// autoUpdateGOOS is runtime.GOOS for the stuck decision (ut-docs#2733).
@@ -477,10 +483,29 @@ func respondUpdateApplyInstalled(w http.ResponseWriter, version string) {
 	})
 }
 
+// refuseUpdateApplyBusy answers POST /api/update/apply while a sale is open
+// (ut-docs#6158): 409 and translated text. The Settings button (HTMX)
+// renders it inline via `text-response:`; the status-bar chip reads the
+// envelope's error.
+func refuseUpdateApplyBusy(w http.ResponseWriter, r *http.Request) {
+	msg := httpx.T(httpx.ResolveLocale(w, r), "settings.update.busy_open_sale")
+	if r.Header.Get("HX-Request") == "true" {
+		httpx.RefuseText(w, msg, http.StatusConflict)
+		return
+	}
+	respondUpdateApply(w, http.StatusConflict, false, msg)
+}
+
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
+			return
+		}
+		// ut-docs#6158: updating restarts the till and an open sale lives in
+		// memory, so refuse before any disk probe or network call.
+		if autoUpdateBusy(d) {
+			refuseUpdateApplyBusy(w, r)
 			return
 		}
 		respond := func(status int, ok bool, msg string) { respondUpdateApply(w, status, ok, msg) }
@@ -502,14 +527,18 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		// this would silently re-download+reinstall the same build instead
 		// of failing loudly, at best a wasted download, at worst whatever
 		// state applyMacApp's helper hits redoing a swap it just did.
-		st := updates.CheckNow(r.Context())
+		st := updateCheckNow(r.Context())
 		if !st.Available {
 			respondCurrent()
 			return
 		}
-		// Apply stages the swap and schedules the re-exec; the response flushes
-		// before the process restarts.
-		if err := selfupdate.Apply(r.Context()); err != nil {
+		// The 409 above is the up-front refusal; this idle gate covers a sale
+		// opened during the download: the restart waits until the basket is
+		// empty. If the client goes away first, r.Context() is cancelled,
+		// nothing has been swapped yet and the till keeps the old version.
+		// Apply stages the swap and schedules the re-exec; the response
+		// flushes before the process restarts.
+		if err := updateApplyNow(r.Context(), autoUpdateIdle(d)); err != nil {
 			respond(http.StatusBadGateway, false, err.Error())
 			return
 		}
@@ -695,7 +724,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			updates.SetAutoUpdateStuck(false) // ut-docs#2733: fixed since the last tick
 			// The status-bar update button also appears on the next page
 			// load; this inline one applies immediately.
-			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s">%s</button>`,
+			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s" data-after-request="status:409 text-response:update-apply-msg">%s</button> <span id="update-apply-msg"></span>`,
 				html.EscapeString(st.Latest),
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
 				html.EscapeString(httpx.T(locale, "status.update_now")),
