@@ -79,3 +79,29 @@ issues, `go test ./...`, every guard in `ci.yml`'s build job.
 
 - Refuse `show_when` cycles at install (finding 4) — Backlog card.
 - `ut-plugin-language-{de,es,pt}`: the 3 new keys, after core merges.
+
+## Addendum 2026-11-13 — PR sweep (routine `:41`, lane:cloud-41)
+
+The owner approved merging on 2026-11-12 (ut-docs#4666). The branch was 204
+commits behind `main`, and `main` had touched the same files.
+
+- `origin/main` merged into the branch. A force-push of a rebase was refused,
+  so this is a merge, not a rebase. The only conflict was
+  `web/help/img/manifest.json`. It was resolved by taking `main`'s manifest and
+  recomputing the `plugins` topic hashes and `surface_sha256`, exactly as the
+  original refresh commit did. `guard-docs-shots.sh` passes, and no PNG changed:
+  the no-tab plugin settings page the manual pictures renders the same as on
+  `main` (next point).
+- `TestPluginSettingsTabs_NoTabsManifestUnchanged` failed after the merge. The
+  golden still held the form as it was before #2452 changed
+  `plugin_settings.html` on `main`. The golden was regenerated on a clean
+  `origin/main` worktree with the test copied in, so the code under the golden
+  came from `main`, not this branch. This branch then renders that golden
+  byte-for-byte. The invariant "a manifest without `settings_tabs` renders
+  unchanged" still holds against current `main`.
+- Locally green: `go build ./...` and the i18n, i18n-meta, help-topics, RTL,
+  showModal, native-confirm, compliance, help-breadcrumbs, help-terms and
+  fixed-dates guards. `internal/pages` passes except that golden, which the
+  re-pin fixes.
+- Verdict: safe to merge once CI is green on the new head. No code under
+  review changed, only the merge resolution and the test golden.
