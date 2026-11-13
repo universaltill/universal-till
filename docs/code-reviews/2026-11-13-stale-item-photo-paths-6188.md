@@ -9,3 +9,5 @@
 **Verification.** `gofmt -l internal/pages/catalog/` clean; `go build ./internal/pages/...` passes. No test applies to a comment.
 
 Pre-flight: help topic n/a (no visible behaviour) · `reference/` updated (investigation-5058) · README n/a · en.json n/a (no key) · review record: this file (one per repo) · follow-ups none.
+
+**CI follow-up.** `guard-docs-shots_test.sh` failed on the first push: the comment edit changed the whole-file surface hash. Refreshed only `surface_sha256` with `scripts/ci/update-docs-shots-surface-hash.sh` (ut-docs#2102 escape hatch; comment-only, no rendered pixel changes), committed with `Docs-Shots-Unchanged: true`. Guard and its test pass locally.
