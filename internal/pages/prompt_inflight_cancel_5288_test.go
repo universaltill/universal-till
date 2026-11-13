@@ -56,20 +56,20 @@ func TestConfirmPrompt_CancelDisabledWhileInFlight(t *testing.T) {
 	requireCancelDisabledInFlight(t, rec.Body.String(), "confirm-modal")
 }
 
-// Escape (base.html) and close-closest / close (inline-actions.js) both refuse
+// Escape (ut-motion.js) and close-closest / close (inline-actions.js) both refuse
 // to close a dialog whose own form has an htmx request in flight.
 func TestEscapeAndCloseRefuseWhileFormInFlight_5288(t *testing.T) {
-	base, err := os.ReadFile("web/ui/layouts/base.html") // TestMain chdirs to the repo root
+	base, err := os.ReadFile("web/public/ut-motion.js") // TestMain chdirs to the repo root; the Escape handler moved here (ut-docs#2972)
 	if err != nil {
 		t.Fatal(err)
 	}
 	i := strings.Index(string(base), "top.hasAttribute('data-ut-escape-close')")
 	if i < 0 {
-		t.Fatal("base.html's Escape handler changed shape; update this test")
+		t.Fatal("ut-motion.js's Escape handler changed shape; update this test")
 	}
 	handler := string(base)[i:min(len(base), i+600)]
 	if !strings.Contains(handler, "top.hasAttribute('data-ut-prompt') && top.querySelector('form.htmx-request')") {
-		t.Fatalf("base.html's Escape handler must ignore Escape while the dialog's own form is in flight (form.htmx-request), got: %s", handler)
+		t.Fatalf("ut-motion.js's Escape handler must ignore Escape while the dialog's own form is in flight (form.htmx-request), got: %s", handler)
 	}
 	ia, err := os.ReadFile("web/public/inline-actions.js")
 	if err != nil {
