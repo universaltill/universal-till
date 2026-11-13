@@ -31,7 +31,7 @@ Logical CSS properties only; no new `en.json` keys; no ADR (presentation-only ch
 - Not verified: no physical printer, so no real print dialog (headless `page.pdf` cannot show the browser's own header/footer either way, so the assertion is on the CSSOM rule). WebKit was not run locally because the browser download is blocked by the proxy; CI's `webkit-phone` lane runs the phone spec.
 - `gofmt -l .` clean; `go build ./...` and `go test ./internal/pages/...` pass; guards rtl-logical-css, i18n, help-topics, help-drift, fixed-dates, compliance-claims, competitor-naming and mail-addresses pass.
 
-Pre-flight: web/help topic updated (`printing.md`, `vouchers.md`); `make docs-shots` n/a (print-only CSS, screen unchanged); reference page n/a (ut-docs `architecture/receipt-printing.md` covers the print-copy mechanism, not browser margins); README n/a; en.json/meta n/a (no keys); review record (this file); follow-ups ut-docs#6167 (invoice page print CSS + `@page`), #6175 (status bar / auto-reset / frame on the printed receipt).
+Pre-flight: web/help topic updated (`printing.md`, `vouchers.md`); `make docs-shots` rerun after CI's freshness guard flagged it (every PNG byte-identical, as expected for print-only CSS; only `manifest.json`'s surface and `en/vouchers` hashes moved); reference page n/a (ut-docs `architecture/receipt-printing.md` covers the print-copy mechanism, not browser margins); README n/a; en.json/meta n/a (no keys); review record (this file); follow-ups ut-docs#6167 (invoice page print CSS + `@page`), #6175 (status bar / auto-reset / frame on the printed receipt).
 
 ## Verdict
 
