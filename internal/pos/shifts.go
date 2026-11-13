@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -253,7 +254,8 @@ const maxCountProtocolLen = 4096
 //   - every value is a bare JSON number token (a quoted "3" is refused)
 //     that is a non-negative integer fitting int64 (3.5, 1e2, -1, null,
 //     true are refused); 0 pieces is allowed;
-//   - no denomination*pieces product and no running sum overflows int64.
+//   - no denomination*pieces product and no running sum overflows int64;
+//   - no key appears twice, and nothing but whitespace follows the object.
 //
 // json.Valid alone accepts any JSON value (a bare string, a number, an
 // array), which silently defeats the contract (ut-docs#1006 review finding
@@ -264,13 +266,29 @@ func ValidCountProtocol(s string) bool {
 	if len(s) > maxCountProtocolLen {
 		return false
 	}
-	var m map[string]json.RawMessage
+	// Walk the object token by token rather than decoding into a map: a
+	// map silently keeps the last of two duplicate keys, and Decode+More
+	// lets a stray trailing "}" or "]" through (ut-docs#6159 review).
 	dec := json.NewDecoder(strings.NewReader(s))
-	if err := dec.Decode(&m); err != nil || m == nil || dec.More() {
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return false
 	}
+	seen := make(map[string]bool)
 	var sum int64
-	for k, raw := range m {
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		k, isKey := kt.(string)
+		if !isKey || seen[k] {
+			return false
+		}
+		seen[k] = true
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return false
+		}
 		denom, ok := parseDenomKey(k)
 		if !ok {
 			return false
@@ -292,6 +310,12 @@ func ValidCountProtocol(s string) bool {
 			return false
 		}
 		sum += line
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return false // anything but whitespace after the object
 	}
 	return true
 }

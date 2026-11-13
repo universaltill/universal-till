@@ -759,7 +759,7 @@ func TestCloseShift_CountProtocolShapeIs400OnJSONAndForm(t *testing.T) {
 		}
 		rec := postShiftJSON(t, mux, "/api/shifts/close", string(body))
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), wantMsg) {
-			t.Fatalf("JSON %s: want 400 %q, got %d: %s", cp, wantMsg, rec.Code, rec.Body.String())
+			t.Errorf("JSON %s: want 400 %q, got %d: %s", cp, wantMsg, rec.Code, rec.Body.String())
 		}
 
 		form := url.Values{"shift_id": {shiftID}, "closing_cash": {"10000"}, "count_protocol": {cp}}
@@ -768,7 +768,7 @@ func TestCloseShift_CountProtocolShapeIs400OnJSONAndForm(t *testing.T) {
 		frec := httptest.NewRecorder()
 		mux.ServeHTTP(frec, req)
 		if frec.Code != http.StatusBadRequest || !strings.Contains(frec.Body.String(), wantMsg) {
-			t.Fatalf("form %s: want 400 %q, got %d: %s", cp, wantMsg, frec.Code, frec.Body.String())
+			t.Errorf("form %s: want 400 %q, got %d: %s", cp, wantMsg, frec.Code, frec.Body.String())
 		}
 	}
 }
