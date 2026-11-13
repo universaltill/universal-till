@@ -69,6 +69,10 @@ type Doc struct {
 	// the receipt redeems it. Empty = no block, byte-identical to before.
 	Vouchers       []VoucherBlock
 	VoucherHeading string
+	// VoucherSlipText is the shop's own text for the gift voucher slips
+	// derived from this receipt (receipt.voucher_slip_text, ut-docs#6179),
+	// one entry per line. Render/RenderText ignore it.
+	VoucherSlipText []string
 }
 
 // VoucherBlock is one issued voucher, every field already formatted and
@@ -90,6 +94,10 @@ type VoucherBlock struct {
 	// top-ups). Render/RenderText ignore it; a block with Void set never
 	// gets a slip.
 	Slip bool
+	// SlipDate is the pre-formatted date line of this block's stand-alone
+	// slip ("Issued 13/11/2026" / "Topped up …", ut-docs#6179); "" = no line.
+	// Render/RenderText ignore it: the receipt never prints it.
+	SlipDate string
 }
 
 // Line is one sale line.

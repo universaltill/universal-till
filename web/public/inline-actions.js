@@ -154,7 +154,7 @@
   }
   // Receipt reprint (receipt.html): the same POST as before; a 451 is the
   // customer-document gate's refusal (ADR-0124), never a printer fault, so
-  // it never falls back to window.print().
+  // it never falls back to printing (printPage).
   // ut-docs#4714: a self-order customer's language pick (the Print button's
   // data-customer-locale) rides along so a manual print matches the
   // auto-print; the journal's reprint sends none (the shop's copy).
@@ -166,6 +166,44 @@
     }
     return fetch('/api/print/receipt/' + encodeURIComponent(no), opts);
   }
+  // ut-docs#6153: the till's only print entry point. Android System WebView
+  // ignores window.print(), so the Android app's bridge opens the system
+  // dialog there; every other shell (desktop, Pi kiosk, iOS) keeps window.print().
+  // A false return (kiosk pinned, dialog already open) prints nothing: never
+  // fall through to the no-op window.print().
+  function printPage() {
+    var k = window.AndroidKiosk;
+    if (k && typeof k.print === 'function') { try { k.print(); } catch (e) {} return; }
+    // ut-docs#6154: on the Pi kiosk's own screen with no OS printer the
+    // browser dialog can only "Save as PDF" to a home nobody can reach —
+    // show the server-rendered inline notice instead. Never window.print(),
+    // even if the notice is missing. Non-modal; focus stays on the button.
+    if (document.documentElement.getAttribute('data-browser-print') === 'off') {
+      var n = byId('ut-print-unavailable');
+      if (n) {
+        // Re-announce a second press: hide, then show on the next frame.
+        var show = function () {
+          n.classList.remove('hide'); n.hidden = false;
+          try { n.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+        };
+        if (!n.hidden) {
+          n.hidden = true;
+          if (window.requestAnimationFrame) window.requestAnimationFrame(show); else show();
+        } else show();
+      }
+      return;
+    }
+    window.print();
+  }
+  // The notice must not linger over another page after a navigation swap.
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || !(t.tagName === 'MAIN' || t.id === 'ut-page' || t.tagName === 'BODY')) return;
+    var n = byId('ut-print-unavailable');
+    if (n) n.hidden = true;
+  });
+  var UTns = window.UT = window.UT || {};
+  UTns.print = printPage;
   // Where the save-error step's line goes: right after the posting form;
   // a form-less carrier (a lone checkbox) uses its card.
   function saveErrorAnchor(el) {
@@ -469,7 +507,7 @@
     // ---- navigation / window ----
     'go': function (ctx, path) { var p = safePath(path); if (p) window.location.href = p; },
     'reload-page': function () { location.reload(); },
-    'print': function () { window.print(); },
+    'print': function () { printPage(); },
     // Ends the bubbling walk: ancestors' data-action does not run.
     'stop': function () {},
 
@@ -484,15 +522,15 @@
     'dismiss-shop-name-notice': function () { if (window.utShopNameNoticeDismiss) window.utShopNameNoticeDismiss(); }, // ut-docs#3114
     'dismiss-move-approval-notice': function () { if (window.utMoveApprovalNoticeDismiss) window.utMoveApprovalNoticeDismiss(); }, // ut-docs#5127
     // receipt.html's "ask" prompt: Print hides the prompt BEFORE any
-    // window.print() fallback, so the question never lands on paper.
+    // print fallback, so the question never lands on paper.
     'receipt-ask-print': function (ctx, no) {
       var el = byId('receipt-ask');
       reprint(no, ctx.el.getAttribute('data-customer-locale')).then(function (r) {
         if (el) el.hidden = true;
-        if (!r.ok && r.status !== 451) window.print();
+        if (!r.ok && r.status !== 451) printPage();
       }).catch(function () {
         if (el) el.hidden = true;
-        window.print();
+        printPage();
       });
     },
     // receipt.html's Print: ✓ on success (data-done-text), disabled on the
@@ -502,8 +540,8 @@
       reprint(no, b.getAttribute('data-customer-locale')).then(function (r) {
         if (r.ok) b.textContent = b.getAttribute('data-done-text') || b.textContent;
         else if (r.status === 451) b.disabled = true;
-        else window.print();
-      }).catch(function () { window.print(); });
+        else printPage();
+      }).catch(function () { printPage(); });
     }
   };
 

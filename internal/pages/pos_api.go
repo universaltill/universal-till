@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -2701,7 +2702,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
+		funcs := httpx.WithBrowserPrint(httpx.FuncsFor(locale), r)
 		// writeTenderView swaps the post-tender view into #basket, plus the
 		// recent-sales journal out of band.
 		writeTenderView := func(viewHTML string) {
@@ -2829,8 +2830,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				iv.Holder = t.HolderLabel
 				iv.Balance = t.BalanceAfterMinor
 				iv.HasBalance = true
+				iv.At = t.CreatedAt
 			}
 			issuedVouchers = append(issuedVouchers, iv)
+		}
+		// ut-docs#6179: the issue date of each issued voucher is read back from
+		// the committed row, once — the paper slip reads the same rows, so the
+		// dates agree by construction. A read error leaves no date line.
+		hasIssued := false
+		for _, iv := range issuedVouchers {
+			hasIssued = hasIssued || !iv.TopUp
+		}
+		if hasIssued {
+			if rows, vErr := repo.VouchersIssuedInSale(r.Context(), saleID); vErr == nil {
+				created := make(map[string]string, len(rows))
+				for _, row := range rows {
+					created[row.ID] = row.CreatedAt
+				}
+				for i := range issuedVouchers {
+					if !issuedVouchers[i].TopUp {
+						issuedVouchers[i].At = created[issuedVouchers[i].Code]
+					}
+				}
+			}
 		}
 		design := receiptDesignFromSettings(r.Context(), d)
 		// ut-docs#908: the customer order-tracking QR on the counter
@@ -2850,7 +2872,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
 		if renderErr != nil {
 			printerUnavailable = true
-			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
+			receiptHTML = receiptPrinterWarningHTML(funcs["T"].(func(string) string), httpx.BrowserPrintOff(r), canPerform(d, r, "settings"))
 		}
 
 		// ut-docs#6152: with printer.voucher_slip on, the browser-printed
@@ -2861,7 +2883,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if renderErr == nil && printerCfg.VoucherSlip && len(issuedVouchers) > 0 {
 			pl := receiptPrintLocale(customerLocale, locale)
 			set := browserSlipSet{Lang: pl, Dir: slipDir(pl),
-				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, issuedVouchers)}
+				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, voucherSlipLines(design.VoucherSlipText), issuedVouchers)}
 			if slips, err := renderBrowserSlips("voucher_slips_receipt", pl, set); err != nil {
 				log.Printf("tender: browser voucher slips skipped: %v", err)
 			} else {
@@ -2992,6 +3014,9 @@ type receiptVoucherIssue struct {
 	// SinglePurpose (ut-docs#5739): taxed into the subtotal, so NOT part of
 	// the "Vouchers issued" liability row.
 	SinglePurpose bool
+	// At is the stored created_at of the voucher row (issued) or its top_up row
+	// (top-up): the slip's date line. "" = no line (ut-docs#6179).
+	At string
 }
 
 // newReceiptVoucherIssue maps a non-top-up voucher issue of the sale being
@@ -3147,6 +3172,16 @@ func normalizeLegalLines(text string, lines []string) []string {
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
 func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string, serviceCharge int64) (string, error) {
+	// ut-docs#6154: receipt.html reads browserprintoff/allowed; a hand-built
+	// funcs map (tests, other callers) gets the "browser print on" defaults.
+	if _, ok := funcs["browserprintoff"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["browserprintoff"] = func() bool { return false }
+	}
+	if _, ok := funcs["allowed"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["allowed"] = func(string) bool { return false }
+	}
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,

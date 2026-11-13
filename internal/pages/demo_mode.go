@@ -648,6 +648,7 @@ var demoAllowedRoutes = map[string]bool{
 	"/reports":                   true,
 	"/shifts":                    true,
 	"POST /shifts/x-report":      true,
+	"GET /ui/shifts/{id}/count":  true, // ut-docs#1043: read-only stored denomination count
 	"POST /reports/eod/x-report": true, // ut-docs#5800: day-so-far view
 	"/ui/journal":                true,
 	"/ui/reports/tab/{name}":     true,

@@ -3,7 +3,7 @@
 {{- /* ADR-0119 (ut-docs#2859): the ONE effects-level gate -- exactly one
      fx-full|fx-balanced|fx-light class, the resolved level (never auto).
      Core CSS/JS and theme/layout plugins gate costly paint and motion on it. */}}
-<html lang="{{ locale }}" dir="{{ dir }}" class="fx-{{ fxlevel }}" style="--ui-scale: {{ uiscale }}">
+<html lang="{{ locale }}" dir="{{ dir }}" class="fx-{{ fxlevel }}" style="--ui-scale: {{ uiscale }}"{{ if browserprintoff }} data-browser-print="off"{{ end }}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -1641,6 +1641,12 @@
          fallback for whatever isn't caught by a more specific handler
          first. -->
     {{ template "pos_alert" . }}
+    {{- /* ut-docs#6154: shown by UT.print when <html data-browser-print="off"> (Pi kiosk, no OS printer). Non-modal; always rendered, hidden. Wording is true whether no printer is set up or the set-up one is off. */}}
+    <div id="ut-print-unavailable" class="pos-notice info" role="status" hidden data-reusable data-testid="print-unavailable">
+      <span class="notice-text">{{ T "receipt.printer.nothing_printed" }}</span>
+      {{ if allowed "settings" }}<a class="btn secondary" href="/settings#settings-printer">{{ T "receipt.printer.set_up" }}</a>{{ else }}<span class="notice-text">{{ T "receipt.printer.ask_manager" }}</span>{{ end }}
+      <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+    </div>
     <main class="container">{{ template "content" . }}</main>
     <!-- Screen readers hear a CHANGE of link state, not every poll: the
          script below copies the chip's text here only when its

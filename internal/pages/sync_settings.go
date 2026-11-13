@@ -149,6 +149,16 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 				country, countryInBatch = s.Value, true
 			case common.KeyLocale:
 				localeInBatch = true
+			case keyReceiptVoucherSlipText:
+				// ut-docs#6179: version-skew defence (a current additional till
+				// already refused it locally). The normalised value is both
+				// written and answered.
+				norm, nerr := normalizeVoucherSlipText(s.Value)
+				if nerr != nil {
+					fail(http.StatusUnprocessableEntity, "invalid_value", "receipt.voucher_slip_text over 4 lines / 160 characters")
+					return
+				}
+				s.Value = norm
 			case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 				// The upsert handler's ADR-0048 gates: fabricating an
 				// override is refused for everyone; clearing one is
