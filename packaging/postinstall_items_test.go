@@ -18,8 +18,14 @@ import (
 func TestPostinstallLegacyItemsSymlinkRetired(t *testing.T) {
 	post := readScript(t, "packaging/scripts/postinstall.sh")
 
-	if anyLineContains(codeLines(post), "ln -sfn /var/lib/unitill/items") {
-		t.Error("postinstall.sh recreates the legacy items symlink; it was retired in ut-docs#4401")
+	// Either end of the old symlink in a code line means the block is back,
+	// however the ln is spelled (a variable for the target, "ln -s", a cp of
+	// the tree) — the script has no other reason to name either path.
+	code := codeLines(post)
+	for _, path := range []string{"/var/lib/unitill/items", "public/assets/items"} {
+		if anyLineContains(code, path) {
+			t.Errorf("postinstall.sh touches %s again; the legacy items symlink was retired in ut-docs#4401", path)
+		}
 	}
 	if strings.Contains(post, "migrateLegacyUploadedAssets") {
 		t.Error("postinstall.sh references the retired migrateLegacyUploadedAssets (ut-docs#4401)")

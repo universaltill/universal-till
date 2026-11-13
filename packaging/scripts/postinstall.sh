@@ -10,8 +10,13 @@ fi
 
 mkdir -p /opt/unitill/data /var/lib/unitill
 
-# Retained for legacy upgraded boxes whose dpkg-preserved items symlink still
-# points at /var/lib/unitill/items (ut-docs#4401).
+# /var/lib/unitill holds the kiosk first-boot marker (kiosk-setup-done) and
+# stays pos-owned. Nothing is provisioned under it any more (ut-docs#4401),
+# but a box first installed from an older .deb still has
+# web/public/assets/items as a symlink onto /var/lib/unitill/items: dpkg
+# keeps that symlink on upgrade and unpacks the shipped demo thumbs through
+# it as root, and the chown of /opt/unitill below does not follow it — so
+# this recursive chown is what keeps that tree pos-owned on those boxes.
 chown -R pos:pos /var/lib/unitill
 
 # Own the WHOLE install tree as the pos service user, not just data/assets.
