@@ -725,6 +725,54 @@ func TestCloseShift_SkimAndCountProtocolValidationAre400(t *testing.T) {
 	}
 }
 
+// ut-docs#6159: non-canonical denomination keys and quoted-numeral counts
+// are refused at the write gate on both entry points (JSON and form).
+func TestCloseShift_CountProtocolShapeIs400OnJSONAndForm(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	const wantMsg = "count_protocol must be a flat JSON object of denomination:count"
+
+	regN := 0
+	openAndGetID := func() string {
+		regN++
+		regID := fmt.Sprintf("reg-6159-%d", regN)
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES(?,?,1)`, regID, "Till "+regID); err != nil {
+			t.Fatal(err)
+		}
+		rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"`+regID+`","cashier_id":"user1","opening_cash":10000}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+		}
+		var id string
+		if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE register_id=? AND closed_at IS NULL`, regID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	for _, cp := range []string{`{"abc":3}`, `{"100":"3"}`} {
+		shiftID := openAndGetID()
+		body, err := json.Marshal(map[string]any{"shift_id": shiftID, "closing_cash": 10000, "count_protocol": cp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := postShiftJSON(t, mux, "/api/shifts/close", string(body))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), wantMsg) {
+			t.Errorf("JSON %s: want 400 %q, got %d: %s", cp, wantMsg, rec.Code, rec.Body.String())
+		}
+
+		form := url.Values{"shift_id": {shiftID}, "closing_cash": {"10000"}, "count_protocol": {cp}}
+		req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		frec := httptest.NewRecorder()
+		mux.ServeHTTP(frec, req)
+		if frec.Code != http.StatusBadRequest || !strings.Contains(frec.Body.String(), wantMsg) {
+			t.Errorf("form %s: want 400 %q, got %d: %s", cp, wantMsg, frec.Code, frec.Body.String())
+		}
+	}
+}
+
 func TestRecordCashAdjustment(t *testing.T) {
 	// Auth is exercised separately below (TestRecordCashAdjustment_
 	// RequiresManagerPINWhenAmountRemovesCash and friends); this test is
