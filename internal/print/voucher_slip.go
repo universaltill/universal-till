@@ -18,6 +18,12 @@ type VoucherSlip struct {
 	// "Reprinted 6 Nov 2026" on a slip printed again from the voucher's page
 	// (ut-docs#5740). Empty = no line: the #4247 slip is byte-identical.
 	Note string
+	// Date is the slip's own date line ("Issued <date>" / "Topped up <date>",
+	// ut-docs#6179), printed centred under the code, before Note. "" = no line.
+	Date string
+	// Text is the shop's own text (ut-docs#6179), one entry per stored line,
+	// word-wrapped to Width and centred after a blank line. nil = nothing.
+	Text []string
 }
 
 // RenderVoucherSlip produces the ESC/POS bytes of one slip: a complete
@@ -46,12 +52,27 @@ func RenderVoucherSlip(s VoucherSlip) []byte {
 	b.Write(cmdAlignLeft)
 	line(strings.Repeat("-", Width))
 	writeVoucherESC(&b, line, s.Voucher)
+	if s.Date != "" {
+		b.Write(cmdAlignMid)
+		line(clip(s.Date, Width))
+		b.Write(cmdAlignLeft)
+	}
 	if s.Note != "" {
 		b.Write(cmdAlignMid)
 		line(clip(s.Note, Width))
 		b.Write(cmdAlignLeft)
 	}
 	line("")
+	if len(s.Text) > 0 {
+		b.Write(cmdAlignMid)
+		for _, l := range s.Text {
+			for _, row := range wrapWords(l, Width) {
+				line(row)
+			}
+		}
+		b.Write(cmdAlignLeft)
+		line("")
+	}
 	line(strings.Repeat("-", Width))
 	b.Write(cmdFeedCut)
 	return b.Bytes()
@@ -75,8 +96,23 @@ func RenderVoucherSlipText(s VoucherSlip) string {
 	}
 	b.WriteString(strings.Repeat("-", Width) + "\n")
 	writeVoucherText(&b, center, s.Voucher)
+	if s.Date != "" {
+		center(s.Date)
+	}
 	if s.Note != "" {
 		center(s.Note)
+	}
+	if len(s.Text) > 0 {
+		b.WriteString("\n")
+		for _, l := range s.Text {
+			for _, row := range wrapWords(l, Width) {
+				if row == "" {
+					b.WriteString("\n")
+					continue
+				}
+				center(row)
+			}
+		}
 	}
 	b.WriteString("\n" + strings.Repeat("-", Width) + "\n")
 	return b.String()

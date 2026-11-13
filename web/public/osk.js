@@ -5,7 +5,9 @@
 // Layouts follow the page locale (<html lang>): en, tr, fa, ar, de, es; a
 // numeric pad serves number/tel/numeric-inputmode fields. Keys write into
 // the focused input and fire an `input` event so HTMX/Alpine listeners run;
-// Enter submits the input's form (requestSubmit → normal submit handlers).
+// Enter submits the input's form (requestSubmit → normal submit handlers),
+// unless a textarea opts into `data-osk-enter="newline"`: then Enter types a
+// line break and the keyboard stays open (ut-docs#6179).
 (function () {
   'use strict';
 
@@ -537,15 +539,16 @@
       case 'ABC': layer = baseLayout(); render(); updateReservedHeight(); return;
       case 'SPACE': insert(' '); return;
       case '↵':
+        if (current && current.tagName === 'TEXTAREA' && current.dataset.oskEnter === 'newline') {
+          insert('\n');
+          return;
+        }
         if (current) {
           var form = current.form;
           var el = current;
           hide();
           el.blur();
-          if (form) {
-            if (typeof form.requestSubmit === 'function') form.requestSubmit();
-            else form.submit();
-          }
+          if (form) implicitSubmit(form);
         }
         return;
       default:
@@ -554,6 +557,27 @@
         // until the Shift key itself is tapped again (case '⇧' above).
         if (shift && !shiftLatched) { shift = false; render(); }
     }
+  }
+
+  // ut-docs#6180: ↵ must obey the HTML implicit-submission rule, as a
+  // physical keyboard's Enter does. Blindly calling requestSubmit() did a
+  // native GET reload on forms that never submit natively (several text
+  // fields, no submit button, e.g. the receipt designer), losing edits.
+  var BLOCKS_IMPLICIT = /^(text|search|url|tel|email|password|date|month|week|time|datetime-local|number)$/;
+  function implicitSubmit(form) {
+    var def = null, blockers = 0;
+    for (var i = 0; i < form.elements.length; i++) {
+      var f = form.elements[i];
+      var tag = f.tagName;
+      var type = (f.type || '').toLowerCase();
+      if (!def && ((tag === 'BUTTON' && (type === 'submit' || type === '')) ||
+          (tag === 'INPUT' && (type === 'submit' || type === 'image')))) def = f;
+      if (tag === 'INPUT' && BLOCKS_IMPLICIT.test(type)) blockers++;
+    }
+    if (def) { if (!def.disabled) def.click(); return; }
+    if (blockers > 1) return;
+    if (typeof form.requestSubmit === 'function') form.requestSubmit();
+    else form.submit();
   }
 
   function show(el) {

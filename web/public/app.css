@@ -931,6 +931,14 @@ body.sale-screen .session-admin-link { display: none; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
 
+/* Receipt designer (ut-docs#6179): the hint under the slip-text field, and the
+   Save / Print test row, which wraps so the longer inline refusal drops to its
+   own line under the buttons on a phone instead of crushing them. */
+.rd-hint { display: block; margin-block-end: .6rem; }
+.rd-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-block-start: .6rem; }
+.rd-msg { flex: 1 1 12rem; min-inline-size: 0; }
+label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
+
 /* ---------- Tills / pairing (ut-docs#1548) ---------- */
 /* Same escape-hatch pattern .users-list .table / .settings-grid .card .table
    already use — with even ONE pending request, the pending-pairings table
