@@ -3492,7 +3492,7 @@ window.utTabBarFade = function (el) {
 // id, e.g. basket.html's `id="basket"`).
 (function () {
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
-  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // ADR-0119: UT.motionOff() (ut-motion.js) is reduced motion OR
   // the Light effects level; the bare media query is only the fallback for
   // a page outside base.html that loads this file without it.
   var PANES = ['items-panel', 'admin-panel', 'manual-panel'];
@@ -3586,7 +3586,7 @@ window.utTabBarFade = function (el) {
   // the same in WebView2, Android WebView and WebKitGTK. Uniform scale plus
   // translation (so RTL needs nothing), transform and opacity only, from
   // opacity 0.4, never blank. The transform is TRANSIENT (fill 'none') and
-  // registered with UT.trackZoom, so a tap, a popup opening (base.html's
+  // registered with UT.trackZoom, so a tap, a popup opening (ut-motion.js's
   // dialog wrapper) or the next pane swap finish() it: a position:fixed
   // dialog inside the pane is never shown inside a transformed ancestor
   // (the #2338 hazard). A pane that settles with a dialog already open
@@ -3776,7 +3776,7 @@ window.utTabBarFade = function (el) {
   }
 
   // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or Escape --
-  // base.html's shared data-ut-escape-close handler since ut-docs#2097)
+  // ut-motion.js's shared data-ut-escape-close handler since ut-docs#2097)
   // behaves like Cancel for the rest of THIS sale -- suppress the
   // sale-start nag, without touching the per-item/per-Pay gates. `close`
   // does not bubble, so this has to be a capturing document-level

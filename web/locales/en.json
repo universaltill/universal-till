@@ -406,6 +406,7 @@
   "catalog.image_types": "Image (PNG/JPEG)",
   "catalog.image_upload_error_prefix": "✗ ",
   "catalog.image_uploaded": "✓ image updated",
+  "catalog.icon_match.head_last": "0",
   "catalog.image_uploading": "⏳ uploading…",
   "catalog.item_form.saved": "Saved",
   "catalog.item_form.saving": "Saving…",

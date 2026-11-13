@@ -51,6 +51,16 @@ func readRecordDialogJS(t *testing.T) string {
 	return string(b)
 }
 
+func readMotionJS(t *testing.T) string {
+	t.Helper()
+	chdirRoot(t)
+	b, err := os.ReadFile("web/public/ut-motion.js")
+	if err != nil {
+		t.Fatalf("read ut-motion.js: %v", err)
+	}
+	return string(b)
+}
+
 func readBaseHTML(t *testing.T) string {
 	t.Helper()
 	chdirRoot(t)
@@ -266,14 +276,13 @@ func TestAppCSSViewTransitionNeverBlocksInput(t *testing.T) {
 	if !strings.Contains(readAppCSS(t), "::view-transition { pointer-events: none; }") {
 		t.Errorf("app.css must set ::view-transition { pointer-events: none; }")
 	}
-	html := readBaseHTML(t)
 	for _, want := range []string{
 		"window.addEventListener('pointerdown', function (e) {",
 		"try { vt.skipTransition(); } catch (err) { /* already done */ }",
 		"var el = document.elementFromPoint(e.clientX, e.clientY);",
 	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("base.html must end a running transition on pointerdown and hand the click on (missing %q)", want)
+		if !strings.Contains(readMotionJS(t), want) {
+			t.Errorf("ut-motion.js must end a running transition on pointerdown and hand the click on (missing %q)", want)
 		}
 	}
 }
@@ -290,20 +299,15 @@ func TestAppCSSPageZoomNeedsNoDirectionVariable(t *testing.T) {
 }
 
 // TestBaseHTMLRecordsTheMotionOrigin pins ADR-0122 §2: ONE origin recorder,
-// in the first script of the document (where UT.motionOff lives), capture
+// in ut-motion.js (where UT.motionOff lives), capture
 // phase, pointerdown plus keyboard activation, reading the nearest
 // interactive ancestor; UT.takeOrigin() hands it out once; it expires after
 // 5 s; an off-screen or zero-size box is no origin; nothing throws.
 func TestBaseHTMLRecordsTheMotionOrigin(t *testing.T) {
-	html := readBaseHTML(t)
-	first := strings.Index(html, "<script>")
-	firstEnd := strings.Index(html[first:], "</script>")
-	if first < 0 || firstEnd < 0 {
-		t.Fatalf("base.html: first inline <script> not found")
-	}
-	script := html[first : first+firstEnd]
+	// ut-docs#2972: the recorder and UT.motionOff both live in ut-motion.js.
+	script := readMotionJS(t)
 	if !strings.Contains(script, "UT.motionOff = function () {") {
-		t.Fatalf("the origin recorder must live in the same first script as UT.motionOff")
+		t.Fatalf("the origin recorder must live in the same script as UT.motionOff")
 	}
 	for _, want := range []string{
 		"var ORIGIN_SEL = 'a, button, [hx-get], [hx-post], [role=treeitem], [data-zoom-origin]';",
@@ -320,18 +324,24 @@ func TestBaseHTMLRecordsTheMotionOrigin(t *testing.T) {
 		"r.width > 0 && r.height > 0",
 	} {
 		if !strings.Contains(script, want) {
-			t.Errorf("base.html's first script must carry the ADR-0122 origin recorder (missing %q)", want)
+			t.Errorf("ut-motion.js must carry the ADR-0122 origin recorder (missing %q)", want)
 		}
 	}
 	// Recorder and zoom helpers are defined before the View-Transition
 	// feature check returns early, so the shell script (and the tree-pane /
-	// popup consumers, #2943/#2944) can always call them.
-	check := strings.Index(script, "if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;")
-	for _, def := range []string{"UT.takeOrigin = function () {", "UT.zoomTo = function (rect) {", "UT.zoomRemember = function (", "UT.zoomRecall = function ("} {
-		i := strings.Index(script, def)
+	// popup consumers, #2943/#2944) can always call them. UT.takeOrigin lives
+	// in ut-motion.js (no feature check at all); the page-zoom helpers stay
+	// in base.html's script, ahead of its check (ut-docs#2972).
+	base := readBaseHTML(t)
+	check := strings.Index(base, "if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;")
+	for _, def := range []string{"UT.zoomTo = function (rect) {", "UT.zoomRemember = function (", "UT.zoomRecall = function ("} {
+		i := strings.Index(base, def)
 		if i < 0 || check < 0 || i > check {
 			t.Errorf("%q must be defined before the feature-check early return", def)
 		}
+	}
+	if !strings.Contains(script, "UT.takeOrigin = function () {") {
+		t.Errorf("ut-motion.js must define UT.takeOrigin")
 	}
 	// The recorder must never throw into the page.
 	rec := extractBlock(t, script, "function recordOrigin(e, target) {")
@@ -369,7 +379,7 @@ func TestBaseHTMLZoomOriginAndBackStore(t *testing.T) {
 	}
 	// Boosted path: set in beforeTransition, after the motion-off cancel.
 	bt := extractBlock(t, html, "document.addEventListener('htmx:beforeTransition', function (e) {")
-	off := strings.Index(bt, "if (UT.motionOff() || !document.startViewTransition) { e.preventDefault(); return; }")
+	off := strings.Index(bt, "if ((UT.motionOff && UT.motionOff()) || !document.startViewTransition) { e.preventDefault(); return; }")
 	zoom := strings.Index(bt, "UT.zoomTo(")
 	if off < 0 || zoom < 0 || zoom < off {
 		t.Errorf("htmx:beforeTransition must cancel under motionOff first, then set the zoom origin (UT.zoomTo); got %s", bt)
@@ -384,7 +394,7 @@ func TestBaseHTMLZoomOriginAndBackStore(t *testing.T) {
 		t.Errorf("htmx:beforeTransition must drop the press origin when the response was redirected")
 	}
 	// Typing in a field is not an activation of a source view.
-	if !strings.Contains(html, "/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || '')") {
+	if !strings.Contains(readMotionJS(t), "/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || '')") {
 		t.Errorf("the keydown origin recorder must skip Enter/Space typed into a field")
 	}
 	// Cross-document path: pageswap stores, pagereveal reads and sets.
@@ -616,14 +626,15 @@ func TestBaseHTMLPageRevealSkipsReloads(t *testing.T) {
 // A 2s backstop from creation covers an engine whose ready never settles.
 func TestBaseHTMLPageRevealHasASkipWatchdog(t *testing.T) {
 	html := readBaseHTML(t)
+	js := readMotionJS(t) // ut-docs#2972: the watchdog is defined in ut-motion.js
 	for _, want := range []string{
 		"UT.vtWatchdog = function (vt) {",
 		"var backstop = setTimeout(skip, 2000);",
 		"vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 1000); }, clear);",
 		"vt.finished.then(clear, clear);",
 	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("base.html's shared transition watchdog must contain %q", want)
+		if !strings.Contains(js, want) {
+			t.Fatalf("ut-motion.js's shared transition watchdog must contain %q", want)
 		}
 	}
 	// Both call sites: the pagereveal listener and the startViewTransition
@@ -634,14 +645,15 @@ func TestBaseHTMLPageRevealHasASkipWatchdog(t *testing.T) {
 	// The helper must be defined BEFORE the pagereveal script's feature-check
 	// early return, or an engine without the Navigation API would leave the
 	// shell's startViewTransition wrapper calling an undefined function.
-	def := strings.Index(html, "UT.vtWatchdog = function (vt) {")
+	// It now lives in ut-motion.js, loaded as base.html's first <script>.
 	check := strings.Index(html, "if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;")
-	if def < 0 || check < 0 || def > check {
-		t.Fatalf("UT.vtWatchdog must be defined before the pagereveal script's feature-check return")
+	tag := strings.Index(html, `<script src="/public/ut-motion.js`)
+	if tag < 0 || check < 0 || tag > check {
+		t.Fatalf("UT.vtWatchdog (ut-motion.js) must load before the pagereveal script's feature-check return")
 	}
 	// The regression shape itself: a skip timer armed right where the
 	// transition is created.
-	if strings.Contains(html, "var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);") {
+	if strings.Contains(html+js, "var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);") {
 		t.Fatalf("a 600ms skip timer armed at transition creation is back (ut-docs#2496); arm it on vt.ready via UT.vtWatchdog")
 	}
 }
@@ -827,19 +839,21 @@ func TestAppJSZoomsTheTreePaneTransiently(t *testing.T) {
 // the element under the pointer at its final position, and the following
 // click lands on that control.
 func TestBaseHTMLZoomTapFinishesAndRecordsOrigin(t *testing.T) {
-	html := readBaseHTML(t)
+	html := readMotionJS(t) // ut-docs#2972: moved from base.html's first script
 	end := strings.Index(html, "UT.vtWatchdog = function")
 	if end < 0 {
-		t.Fatalf("base.html has no UT.vtWatchdog -- first script not found")
+		t.Fatalf("ut-motion.js has no UT.vtWatchdog -- script not found")
 	}
 	first := html[:end]
 	for _, want := range []string{"UT.finishZooms = function", "UT.trackZoom = function"} {
 		if !strings.Contains(first, want) {
-			t.Errorf("base.html's first script must contain %q (ADR-0122 §7)", want)
+			t.Errorf("ut-motion.js must contain %q (ADR-0122 §7)", want)
 		}
 	}
-	if n := strings.Count(first, "function recordOrigin("); n != 1 {
-		t.Errorf("base.html must keep exactly ONE origin recorder (ADR-0122 §2), found %d", n)
+	// Count across base.html AND ut-motion.js: a second recorder pasted back
+	// into either file must fail (ADR-0122 §2).
+	if n := strings.Count(first+readBaseHTML(t), "function recordOrigin("); n != 1 {
+		t.Errorf("base.html + ut-motion.js must keep exactly ONE origin recorder (ADR-0122 §2), found %d", n)
 	}
 	listener := func(from int) string {
 		pd := first[from:]
@@ -850,7 +864,7 @@ func TestBaseHTMLZoomTapFinishesAndRecordsOrigin(t *testing.T) {
 	}
 	pdAt := strings.Index(first, "window.addEventListener('pointerdown'")
 	if pdAt < 0 {
-		t.Fatalf("base.html has no capture-phase pointerdown listener")
+		t.Fatalf("ut-motion.js has no capture-phase pointerdown listener")
 	}
 	pd := listener(pdAt)
 	// A new press disarms a stale re-dispatch window first (review).
@@ -864,7 +878,7 @@ func TestBaseHTMLZoomTapFinishesAndRecordsOrigin(t *testing.T) {
 	// listeners on window run in registration order), so it sees zoomTap.
 	recAt := strings.Index(first[pdAt+1:], "window.addEventListener('pointerdown'")
 	if recAt < 0 {
-		t.Fatalf("base.html has no second (origin recorder) pointerdown listener")
+		t.Fatalf("ut-motion.js has no second (origin recorder) pointerdown listener")
 	}
 	rec := listener(pdAt + 1 + recAt)
 	// Capture phase, pinned on the recorder itself (review): a bubble-phase
@@ -889,13 +903,13 @@ func TestBaseHTMLZoomTapFinishesAndRecordsOrigin(t *testing.T) {
 // no position:fixed dialog is ever shown inside a transformed pane. Hooked
 // on HTMLDialogElement.prototype once; the native method still runs.
 func TestBaseHTMLDialogOpenFinishesPaneZooms(t *testing.T) {
-	html := readBaseHTML(t)
+	html := readMotionJS(t) // ut-docs#2972
 	if n := strings.Count(html, "HTMLDialogElement.prototype[m] = "); n != 1 {
-		t.Fatalf("the showModal/show wrapper must be installed exactly once in base.html, found %d", n)
+		t.Fatalf("the showModal/show wrapper must be installed exactly once in ut-motion.js, found %d", n)
 	}
 	i := strings.Index(html, "['showModal', 'show'].forEach")
 	if i < 0 {
-		t.Fatalf("base.html must wrap HTMLDialogElement.prototype.showModal and .show")
+		t.Fatalf("ut-motion.js must wrap HTMLDialogElement.prototype.showModal and .show")
 	}
 	w := html[i:]
 	if e := strings.Index(w, "});"); e > 0 {

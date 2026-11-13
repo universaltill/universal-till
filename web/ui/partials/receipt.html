@@ -53,7 +53,8 @@
   .receipt-tracking-qr {border-top: 1px dashed var(--border); margin-block-start: 0.75rem; padding-block-start: 0.75rem; text-align: center;}
   .receipt-tracking-qr img {max-width: 160px; width: 100%; height: auto;}
   .receipt-tracking-caption {display: block; margin-block-start: 0.25rem; color: var(--text);}
-  .receipt-printer-warning {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
+  /* ut-docs#6184: theme warning tokens, not literals (a light-orange slab on dark). */
+  .receipt-printer-warning {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; background: var(--warning-tint); border: 1px solid var(--warning-tint-border); color: var(--warning-text); padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
   .receipt-ask {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem;}
   .receipt-ask-title {font-weight: 600; margin-bottom: 0.5rem;}

@@ -270,7 +270,7 @@
     },
     // Open without leaving focus inside the dialog (menu.html's deposit
     // refund: show() would focus its first field and pop the OSK). A
-    // dialog in base.html's focus trap (ut-docs#3212) would pull focus
+    // dialog in ut-motion.js's focus trap (ut-docs#3212) would pull focus
     // restored to the page behind straight back to that first field (the
     // native keyboard on #1248's hardware), so there focus is left on the
     // body: the next Tab enters the dialog.
@@ -286,13 +286,14 @@
       }
     },
     'close': function (ctx, id) { closeDialog(byId(id)); },
-    // Close and drop its content (self-order kiosk: the next open swaps
-    // fresh markup in; stale markup must never flash).
+    // Close (self-order kiosk). Dropping the markup is the dialog's own
+    // data-ut-clear-on-close, done by ut-motion.js AFTER the closing shrink
+    // (ut-docs#2972): emptying it here handed the shrink a blank element.
+    // The next open swaps fresh markup in, so stale markup never flashes.
     'close-clear': function (ctx, id) {
       var d = byId(id);
       if (!d) return;
       closeDialog(d);
-      d.innerHTML = '';
     },
     // Close the dialog this control sits in. On a link (the in-shell
     // "← Catalog" back link) it also stops the navigation.

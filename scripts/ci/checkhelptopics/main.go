@@ -79,6 +79,15 @@ func main() {
 		}
 	}
 
+	// Inline screenshots (ut-docs#2615): Load drops a reference no image backs
+	// (so `make docs-shots` can bootstrap), which only this check surfaces.
+	if lines := missingImageLines(lib); len(lines) > 0 {
+		fail = true
+		for _, line := range lines {
+			fmt.Fprintln(os.Stderr, line)
+		}
+	}
+
 	if fail {
 		os.Exit(1)
 	}
@@ -136,6 +145,17 @@ func translationWarnings(lib *manual.Library, locales []string) []string {
 		if missing := lib.MissingTranslations(locale); len(missing) > 0 {
 			out = append(out, fmt.Sprintf("guard-help-topics: warning (non-blocking): locale %q is missing manual topics: %v", locale, missing))
 		}
+	}
+	return out
+}
+
+// missingImageLines reports every inline screenshot reference
+// (img/<id>-<name>.png in a topic) that no committed image backs, in any
+// locale or the en fallback. Run `make docs-shots` and commit the PNGs.
+func missingImageLines(lib *manual.Library) []string {
+	var out []string
+	for _, m := range lib.MissingImages() {
+		out = append(out, "guard-help-topics: topic screenshot not committed ("+m+") - run `make docs-shots` and commit web/help/img")
 	}
 	return out
 }

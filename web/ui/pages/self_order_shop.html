@@ -9,6 +9,10 @@
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
     <link rel="stylesheet" href="/plugin-fonts/bundle-fonts.css" />
+    <!-- ut-docs#2972: the shared ADR-0122 popup motion, synchronous and first
+         (no defer/async): the showModal wrapper must exist before htmx or
+         inline-actions.js open the picker. The same file base.html loads. -->
+    <script src="/public/ut-motion.js?v={{ assetv "public/ut-motion.js" }}"></script>
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <!-- ut-docs#400: see web/public/autofill.js's own comment for why this
          can't be app.js. Customer-facing kiosk surface — covered here too. -->
@@ -94,7 +98,7 @@
       <div id="selforder-cart" class="selforder-cart" hx-get="/api/self-order/cart" hx-trigger="load" hx-swap="outerHTML"></div>
     </main>
 
-    <dialog id="selforder-modal" class="modifier-modal"></dialog>
+    <dialog id="selforder-modal" class="modifier-modal" data-ut-clear-on-close></dialog>
 
     <!-- The kiosk's declared-offline signal (ut-docs#675 review, B1): the
          payment picker's checkout form hx-include's this input, and the
