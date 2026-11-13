@@ -31,7 +31,7 @@ func registerChannelOrdersPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/channel_orders.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.channel_orders"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"Orders":    orders,
 		})(w, r)
@@ -52,7 +52,7 @@ func registerChannelOrdersPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/channel_order_detail.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.channel_orders"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"Order":     o,
 		})(w, r)

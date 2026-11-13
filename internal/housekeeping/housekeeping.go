@@ -33,10 +33,13 @@ import (
 
 // Retention limits. Whichever limit is hit first removes the file.
 const (
-	PreRestoreKeep       = 3
-	PreRestoreMaxAge     = 30 * 24 * time.Hour
-	IssueReportMaxAge    = 7 * 24 * time.Hour
-	UpdateDownloadMaxAge = 7 * 24 * time.Hour
+	PreRestoreKeep = 3
+	// DefaultBackupRetentionDays is the days of backups kept unless the shop
+	// sets backup.retention_days (equals data.DefaultBackupRetentionDays).
+	DefaultBackupRetentionDays = 7
+	PreRestoreMaxAge           = 30 * 24 * time.Hour
+	IssueReportMaxAge          = 7 * 24 * time.Hour
+	UpdateDownloadMaxAge       = 7 * 24 * time.Hour
 	// Interval between runs. The job runs shortly after boot and then once
 	// a day; it is not pinned to a night-time hour because a till switched
 	// off overnight would never run it, and deleting a few files costs a
@@ -59,7 +62,12 @@ const (
 
 // Limits are the per-kind limits one sweep applies.
 type Limits struct {
+	// BackupKeep caps the snapshot count (0 = no count cap) and
+	// BackupMaxAge their age (0 = no age cap); the newest snapshot always
+	// stays. The daily sweep uses the age the shop set (backup.retention_days,
+	// ut-docs#3092); the low-disk sweep uses the count.
 	BackupKeep           int
+	BackupMaxAge         time.Duration
 	PreRestoreKeep       int
 	PreRestoreMaxAge     time.Duration
 	IssueReportMaxAge    time.Duration
@@ -68,7 +76,7 @@ type Limits struct {
 
 // Normal is the daily sweep's limits — the retention table below.
 var Normal = Limits{
-	BackupKeep:           db.DefaultBackupKeep,
+	BackupMaxAge:         DefaultBackupRetentionDays * 24 * time.Hour,
 	PreRestoreKeep:       PreRestoreKeep,
 	PreRestoreMaxAge:     PreRestoreMaxAge,
 	IssueReportMaxAge:    IssueReportMaxAge,
@@ -126,7 +134,7 @@ type Rule struct {
 func Retention() []Rule {
 	return []Rule{
 		{KindBackups, "backups/unitill-pos-*.db",
-			fmt.Sprintf("newest %d snapshots, together at most %d%% of the free space they could release; newest %d below the low-disk floor (never fewer than %d)", db.DefaultBackupKeep, BackupSharePercent, MinBackupKeep, MinBackupKeep), "housekeeping + db.PruneBackups (CapBackups)"},
+			fmt.Sprintf("the last %d days (setting backup.retention_days), pruned after every new backup, never the newest; together at most %d%% of the free space they could release; newest %d below the low-disk floor (never fewer than %d)", DefaultBackupRetentionDays, BackupSharePercent, MinBackupKeep, MinBackupKeep), "after each backup + housekeeping (db.PruneBackupsOlderThan, CapBackups)"},
 		{KindPreRestore, "backups/pre-restore-*.db",
 			fmt.Sprintf("newest %d, none older than %d days (newest 1, none older than %d day below the low-disk floor), never inside the shop's statutory retention floor (ADR-0040)", PreRestoreKeep, days(PreRestoreMaxAge), days(LowDiskMaxAge)), "housekeeping (db.PrunePreRestore)"},
 		{KindIssueReports, "issue-reports/pending/<id>/",
@@ -175,7 +183,7 @@ type Result struct {
 // than it is removed, whatever l says.
 func RunWith(dbPath string, now time.Time, minRetain time.Duration, l Limits) []Result {
 	return []Result{
-		sweepBackups(dbPath, l.BackupKeep),
+		sweepBackups(dbPath, l.BackupKeep, l.BackupMaxAge, now),
 		result(KindPreRestore)(db.PrunePreRestore(dbPath, l.PreRestoreKeep, l.PreRestoreMaxAge, now, minRetain)),
 		result(KindIssueReports)(issuereport.PruneOlderThan(now.Add(-l.IssueReportMaxAge))),
 		result(KindUpdateDownloads)(selfupdate.PruneStaleAttempts(now.Add(-l.UpdateDownloadMaxAge))),
@@ -223,18 +231,28 @@ func result(kind string) func(int, int64, error) Result {
 	}
 }
 
-// sweepBackups re-applies the snapshot count (normally already enforced
-// after each backup) and reports what it removed.
-func sweepBackups(dbPath string, keep int) Result {
+// sweepBackups re-applies the snapshot age and count limits (normally already
+// enforced after each backup) and reports what it removed. The newest
+// snapshot is never removed (db.PruneBackupsOlderThan, db.PruneBackups with
+// keep >= 1).
+func sweepBackups(dbPath string, keep int, maxAge time.Duration, now time.Time) Result {
 	res := Result{Kind: KindBackups}
 	list, err := db.ListBackups(dbPath)
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	if err := db.PruneBackups(dbPath, keep); err != nil {
-		res.Err = err
-		return res
+	if maxAge > 0 {
+		if _, err := db.PruneBackupsOlderThan(dbPath, max(1, int(maxAge/(24*time.Hour))), now); err != nil {
+			res.Err = err
+			return res
+		}
+	}
+	if keep > 0 {
+		if err := db.PruneBackups(dbPath, keep); err != nil {
+			res.Err = err
+			return res
+		}
 	}
 	return diffBackups(dbPath, list, res)
 }

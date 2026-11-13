@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -20,6 +21,11 @@ import (
 func peripheralsTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
+	// DeviceExtra creates the till's approval key under paths.Data on every
+	// till (ut-docs#5127): keep it out of ./data.
+	origData := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(origData) })
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	return &common.Deps{Db: db, Settings: settings.NewStore(db)}

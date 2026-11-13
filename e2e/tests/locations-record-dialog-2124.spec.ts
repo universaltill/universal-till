@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
 
 // ut-docs#2124: /locations adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring categories-record-dialog-2010.spec.ts's proof for
@@ -58,7 +58,7 @@ test.describe('locations list + record dialog (ut-docs#2124)', () => {
     const name = 'E2E Storeroom ' + Date.now();
     await createLocation(page, name);
 
-    // Tap the row (not just the pencil button) to open edit mode,
+    // Tap the row (not just the name button) to open edit mode,
     // prefilled from the row's data-field-* attributes.
     await row(page, name).click();
     const dlg = page.locator(DIALOG);
@@ -84,8 +84,10 @@ test.describe('locations list + record dialog (ut-docs#2124)', () => {
     // pattern as categories-record-dialog-2010.spec.ts's own (b3)).
     await row(page, renamed).click();
     await expect(dlg).toBeVisible();
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(row(page, renamed)).toContainText(/inactive/i);
 
     // Activate reverses it, from the same dialog — no confirm on this path.
@@ -168,4 +170,26 @@ test.describe('locations list + record dialog (ut-docs#2124)', () => {
       assertClean();
     });
   }
+
+  // ut-docs#6046: the name is the keyboard path; focus returns to it on close.
+  test('name button opens on Enter and Space; a non-name cell tap opens; focus returns to the name', async ({ page }) => {
+    await page.goto('/locations');
+    const name = 'E2E Kbd ' + Date.now();
+    await createLocation(page, name);
+    const nameBtn = row(page, name).locator('.record-row-open');
+    for (const key of ['Enter', ' ']) {
+      await nameBtn.focus();
+      await page.keyboard.press(key);
+      await expect(page.locator(DIALOG)).toBeVisible();
+      await expect(page.locator(NAME)).toHaveValue(name);
+      await page.keyboard.press('Escape');
+      await expect(page.locator(DIALOG)).toBeHidden();
+      await expect(nameBtn).toBeFocused();
+    }
+    await row(page, name).locator('td').nth(1).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(nameBtn).toBeFocused();
+  });
 });

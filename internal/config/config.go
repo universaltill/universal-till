@@ -19,7 +19,11 @@ import (
 
 type Locales struct {
 	Currency string
-	Locale   string
+	// CurrencyDisplay is store.currency_display: auto|symbol|code
+	// (ut-docs#5410). Loaded from the settings store at boot; there is no
+	// env override.
+	CurrencyDisplay string
+	Locale          string
 	// TaxRateBP is the shop's default VAT rate in basis points (810 = 8.1 %),
 	// ut-docs#3259. UT_TAX_RATE and the stored store.tax_rate setting stay
 	// percent strings; internal/taxrate.ParsePercent/FormatPercent convert.
@@ -293,10 +297,11 @@ func Init() (*Config, error) {
 	tax_inclusive, _ := strconv.ParseBool(getenv("UT_TAX_INCLUSIVE", "true"))
 
 	locales := Locales{
-		Currency:     getenv("UT_CURRENCY", "GBP"),
-		Locale:       getenv("UT_DEFAULT_LOCALE", "en-US"),
-		TaxRateBP:    taxRateBP,
-		TaxInclusive: tax_inclusive,
+		Currency:        getenv("UT_CURRENCY", "GBP"),
+		CurrencyDisplay: "auto",
+		Locale:          getenv("UT_DEFAULT_LOCALE", "en-US"),
+		TaxRateBP:       taxRateBP,
+		TaxInclusive:    tax_inclusive,
 	}
 	cfg.Locales = locales
 	cfg.DefaultLocale = getenv("UT_MARKETPLACE_LOCALE", "en-US") // BCP 47 format for marketplace

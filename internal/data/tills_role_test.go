@@ -45,7 +45,7 @@ func TestTillsRole_SatelliteRoundTrips(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].Role != TillRoleSatellite {
 		t.Fatalf("ListTills = %+v err=%v, want one satellite", list, err)
 	}
-	got, ok, err := repo.TillByBearerHash(ctx, "hash-k")
+	got, ok, err := repo.TillByBearerHashAt(ctx, "hash-k", time.Now())
 	if err != nil || !ok || got.Role != TillRoleSatellite {
 		t.Fatalf("TillByBearerHash = %+v ok=%v err=%v, want satellite", got, ok, err)
 	}

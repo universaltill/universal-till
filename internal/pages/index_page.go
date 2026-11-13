@@ -202,7 +202,8 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// an unrecognised value falls back to the generic key rather
 			// than rendering verbatim.
 			"msgKey":               httpx.QueryMsgKey(r),
-			"theme":                d.CurrentState().Theme,
+			"nextSteps":            nextStepsView(r, d), // ut-docs#5058 UT-3: nil unless a manager's till was just set up from the cloud
+			"theme":                d.ResolvedTheme(r),
 			"menuItems":            d.MenuSnapshot(),
 			"currency":             d.CurrentState().Currency,
 			"paymentMethods":       methods,

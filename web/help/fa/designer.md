@@ -3,6 +3,7 @@ id: designer
 title: طراحی رسید
 section: اداره کسب‌وکار
 order: 240
+public: true
 summary: آنچه روی رسید می‌آید (لوگو، سربرگ، پانوشت) را با پیش‌نمایش زنده و چاپ آزمایشی پیش از ذخیره، سفارشی کنید.
 routes: [/receipt-designer]
 ---

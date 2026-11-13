@@ -3,6 +3,7 @@ id: fiscal-device
 title: Fiscal device (Türkiye)
 section: Setting up your shop
 order: 113
+public: false
 summary: "See which cash register (YN ÖKC) the till pays through, whether it has proven it prints, and the last receipt it issued — the device prints the legal receipt, the till keeps its number on every sale."
 routes: [/fiscal-device]
 keywords: [fiscal, turkey, türkiye, ÖKC, yazarkasa, cash register, GİB, receipt, device, Z report]

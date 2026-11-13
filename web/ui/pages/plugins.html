@@ -81,7 +81,7 @@
                     }).catch(function (e) { vLoading = false; versions = null; vError = String(e); });
                   }">{{ T "plugins.manage.action.versions" }}</button>
           <button class="btn danger"
-                  @click="if (confirm('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?')) act('/api/plugins/' + p.id + '/uninstall', 'POST')">{{ T "plugins.manage.action.uninstall" }}</button>
+                  @click="actAfterConfirm('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?', $event.currentTarget, '/api/plugins/' + p.id + '/uninstall', 'POST')">{{ T "plugins.manage.action.uninstall" }}</button>
         </div>
         {{/* ut-docs#2239: version history is fetched lazily on first open per
              card (not eagerly with the rest of pluginsJSON at page load) so a
@@ -113,7 +113,7 @@
                   <li style="display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap; padding:.3rem 0">
                     <span x-text="v.version"></span>
                     <button class="btn secondary"
-                            @click="if (confirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?')) act('/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version })">{{ T "plugins.manage.action.rollback_to" }}</button>
+                            @click="actAfterConfirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?', $event.currentTarget, '/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version })">{{ T "plugins.manage.action.rollback_to" }}</button>
                   </li>
                 </template>
               </ul>
@@ -144,7 +144,16 @@
   var T = {
     'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
     'plugins.uninstall.error.replica_use_primary': '{{ T "plugins.uninstall.error.replica_use_primary" }}',
-    'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}'
+    'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}',
+    'plugins.manage.error.revoked': '{{ T "plugins.manage.error.revoked" }}'
+  };
+  // Uninstall / roll back ask first, in the till's own dialog (ut-docs#6116).
+  // act() runs only on an explicit Confirm.
+  window.actAfterConfirm = function (question, opener, url, method, body) {
+    var ask = (window.UT && typeof window.UT.confirm === 'function')
+      ? window.UT.confirm(question, { opener: opener })
+      : Promise.resolve(window.confirm(question)); // native-confirm:allow till-confirm.js not loaded: still ask, never act unconfirmed
+    ask.then(function (ok) { if (ok === true) window.act(url, method, body); });
   };
   window.act = function (url, method, body) {
     msg.textContent = '⏳ …';

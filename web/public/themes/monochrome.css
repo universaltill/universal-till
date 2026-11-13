@@ -22,6 +22,7 @@
   --success: #000000;
   --danger: #000000;
   --warning: #000000;
+  --warning-text: #000000;  /* ut-docs#2680: stays colourless */
   /* ut-docs#2192: app.css's semantic-tint BACKGROUNDS (.pos-notice,
      .tag.warn, .sync-banner, row/block warning+success notices) used to
      be literal rgba() green/red/amber washes no theme could reach — this

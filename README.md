@@ -4,8 +4,34 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org)
+[![Translation status](https://translate.universaltill.com/widget/universal-till/svg-badge.svg)](https://translate.universaltill.com/engage/universal-till/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord)](https://discord.gg/universaltill)
+
+---
+
+## 🌍 Help translate Universal Till
+
+Your language, your shop. Anyone can help translate the till in a browser, with no code and no Git:
+**[translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/)** — sign in, pick a language, fix or add wording. Native speakers are very welcome, especially for French, Chinese, Malay, Spanish, Portuguese, Turkish, Arabic and Persian. Suggestions are reviewed before they reach tills.
+
+<a href="https://translate.universaltill.com/engage/universal-till/"><img src="https://translate.universaltill.com/widget/universal-till/svg-badge.svg" alt="Translation status"></a>
+
+Pick your language and help finish it:
+
+| Language | Status |
+|---|---|
+| Deutsch | <a href="https://translate.universaltill.com/engage/universal-till/-/de/"><img src="https://translate.universaltill.com/widget/universal-till/-/de/svg-badge.svg" alt="Deutsch translation status"></a> |
+| Español | <a href="https://translate.universaltill.com/engage/universal-till/-/es/"><img src="https://translate.universaltill.com/widget/universal-till/-/es/svg-badge.svg" alt="Español translation status"></a> |
+| Português | <a href="https://translate.universaltill.com/engage/universal-till/-/pt/"><img src="https://translate.universaltill.com/widget/universal-till/-/pt/svg-badge.svg" alt="Português translation status"></a> |
+| Français | <a href="https://translate.universaltill.com/engage/universal-till/-/fr/"><img src="https://translate.universaltill.com/widget/universal-till/-/fr/svg-badge.svg" alt="Français translation status"></a> |
+| Türkçe | <a href="https://translate.universaltill.com/engage/universal-till/-/tr/"><img src="https://translate.universaltill.com/widget/universal-till/-/tr/svg-badge.svg" alt="Türkçe translation status"></a> |
+| العربية | <a href="https://translate.universaltill.com/engage/universal-till/-/ar/"><img src="https://translate.universaltill.com/widget/universal-till/-/ar/svg-badge.svg" alt="العربية translation status"></a> |
+| فارسی | <a href="https://translate.universaltill.com/engage/universal-till/-/fa/"><img src="https://translate.universaltill.com/widget/universal-till/-/fa/svg-badge.svg" alt="فارسی translation status"></a> |
+| 简体中文 | <a href="https://translate.universaltill.com/engage/universal-till/-/zh_Hans/"><img src="https://translate.universaltill.com/widget/universal-till/-/zh_Hans/svg-badge.svg" alt="简体中文 translation status"></a> |
+| Bahasa Melayu | <a href="https://translate.universaltill.com/engage/universal-till/-/ms/"><img src="https://translate.universaltill.com/widget/universal-till/-/ms/svg-badge.svg" alt="Bahasa Melayu translation status"></a> |
+
+Your language is not listed? Say so on the [translation page](https://translate.universaltill.com/engage/universal-till/) and we will add it.
 
 ---
 
@@ -17,12 +43,12 @@
 
 - ✅ **100% Free Core** - No monthly fees, ever
 - ✅ **Offline-First** - Works without internet, syncs when available
-- ✅ **Run Anywhere** - Raspberry Pi, Android tablets, old hardware, or dedicated POS terminals
+- ✅ **Run Anywhere** - Raspberry Pi, Android tablets, iPhone and iPad (in testing), old hardware, or dedicated POS terminals
 - ✅ **Plugin Ecosystem** - Extend functionality with free or paid plugins
 - ✅ **No Lock-In** - Export your data anytime, switch systems freely
 - ✅ **Open Source** - MIT licensed, fork and modify as you wish
 - ✅ **Fast & Lightweight** - Written in Go for blazing performance on cheap hardware
-- ✅ **Multi-Platform** - Phone app, web interface, or dedicated terminal
+- ✅ **Multi-Platform** - Android and iOS phone/tablet apps (iOS in internal testing), web interface, or dedicated terminal
 
 ---
 
@@ -94,22 +120,21 @@ Owners manage the shop from any browser at
 - Any standard keyboard/mouse/touchscreen
 
 ### Optional Cloud Services
-*(paid plans — see [Pricing](#-pricing); the core till never needs them)*
-- Multi-till synchronization
-- Encrypted off-site backup and restore, hosted in the EU
-- Managed fiscal device where a market requires one (e.g. German TSE)
-- Remote support sessions — a technician sees your screen, with your
+*(paid plans — see [Pricing](#-pricing) for which plan each starts from; the core till never needs them. Tills in one shop sync over the shop's own network on every plan.)*
+- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up)
+- Manage from a browser (my.) and a cloud-held catalogue every till follows (basic on Local Plus, full from Shop)
+- Mobile tills syncing over the internet (Pro and up)
+- Managed fiscal device where a market requires one (e.g. German TSE; Shop and up)
+- Remote support sessions (Shop and up) — a technician sees your screen, with your
   permission, and fixes it with you
 - Diagnostic mode — with a one-time code from support, the till streams
   structured technical events (never receipts, prices, names or notes)
   until you turn it off in Settings; a rail indicator stays visible the
   whole time
-- Advanced analytics and accountant exports
-- Multi-location management
+- Multi-location management and consolidated reporting (Multi-location plan)
 
 ### Plugin Marketplace
-Available now: Stripe / QR Pay / demo card payments, German & Spanish
-language packs, themes, a "No Sale" register-drawer plugin, an AI
+Available now: Stripe / QR Pay / demo card payments, themes, a "No Sale" register-drawer plugin, an AI
 assistant (self-hosted by default; a shop may opt into a hosted provider
 with its own key — ADR-0085), a webhook/ERP connector, and a help/FAQ
 plugin. One-click
@@ -159,7 +184,7 @@ Deliveroo), accounting systems (QuickBooks, Xero, Wave), ERP integration
 
 **Raspberry Pi / Debian / Ubuntu** — the recommended shop install
 (creates the `pos` service user, installs a systemd service, survives
-upgrades, keeps item photos in `/var/lib/unitill`):
+upgrades, keeps shop data and item photos in `/opt/unitill/data`):
 
 ```bash
 # arm64 = Raspberry Pi OS 64-bit; use _amd64.deb on a PC
@@ -205,7 +230,14 @@ dedicated (no-desktop) kiosk on a box that didn't get it at install time.
 **Windows**: download the `windows_amd64.zip`, extract anywhere,
 double-click `run-unitill.bat`.
 
-**macOS / manual Linux**: download the `.tar.gz`, extract, and run
+**macOS** (Apple Silicon): download `unitill-pos-<version>-macOS-arm64.dmg`,
+open it and drag Universal Till to Applications. The `.dmg` is attached
+shortly after the release is published. Portable alternative: the macOS
+`.tar.gz`, extracted, then double-click `run-unitill.command` — it is not
+signed, so if macOS blocks it, use System Settings → Privacy & Security →
+**Open Anyway**.
+
+**Manual Linux**: download the `.tar.gz`, extract, and run
 `./unitill-pos` from inside the extracted folder (it needs the bundled
 `web/` directory next to it).
 
@@ -281,6 +313,14 @@ and a fetched key are ignored. A source build has no compiled key and uses the
 env var or the lazily fetched key; with no key at all it refuses every plugin.
 Unsigned plugins (sideloading your own builds) need a `go build -tags devplugins`
 till; no setting turns that on in a normal build.
+
+**Release builds can also compile the release-signing keys in** (ADR-0178):
+`-X …/internal/buildinfo.ReleasePublicKeys=<hex>[,<hex>]`, resolved from the
+`UT_RELEASE_PUBLIC_KEYS` repository variable by
+`scripts/ci/resolve-release-keys.sh`. With keys compiled in, the self-updater
+installs a release only if its `checksums.txt.sig` verifies; with none (source
+builds, or release signing not yet armed) it checks SHA-256 only. See
+`RELEASING.md`.
 
 ---
 
@@ -411,6 +451,10 @@ Off, the till neither advertises itself nor browses for other tills or network
 printers. The e2e and docs-shots harness sets it to `0` so throwaway tills
 neither show up on a real till's LAN nor display one in manual screenshots
 (ut-docs#3814).
+
+The same harness also sets `UT_UPDATE_CHECK=0` (except the incoming-release-notes
+till, which polls a local fake releases API), so a new GitHub release never shows
+"Update now" mid-run or in screenshots (ut-docs#5237).
 
 ### Who can open the till UI (ADR-0157)
 
@@ -574,9 +618,6 @@ keep it updated.
 | AI Assistant | integration | [ut-plugin-integration-ai](https://github.com/universaltill/ut-plugin-integration-ai) | [latest](https://github.com/universaltill/ut-plugin-integration-ai/releases/latest/download/latest.tar.gz) |
 | Webhook / ERP Connector | integration | [ut-plugin-integration-webhook](https://github.com/universaltill/ut-plugin-integration-webhook) | not packaged yet |
 | No-Sale Button | button | [ut-plugin-button-nosale](https://github.com/universaltill/ut-plugin-button-nosale) | [latest](https://github.com/universaltill/ut-plugin-button-nosale/releases/latest/download/latest.tar.gz) |
-| Spanish (Español) | language | [ut-plugin-language-es](https://github.com/universaltill/ut-plugin-language-es) | [latest](https://github.com/universaltill/ut-plugin-language-es/releases/latest/download/latest.tar.gz) |
-| German (Deutsch) | language | [ut-plugin-language-de](https://github.com/universaltill/ut-plugin-language-de) | [latest](https://github.com/universaltill/ut-plugin-language-de/releases/latest/download/latest.tar.gz) |
-| Portuguese (Português) | language | [ut-plugin-language-pt](https://github.com/universaltill/ut-plugin-language-pt) | [latest](https://github.com/universaltill/ut-plugin-language-pt/releases/latest/download/latest.tar.gz) |
 | Screen Top Theme | theme | [ut-plugin-theme-screen-top](https://github.com/universaltill/ut-plugin-theme-screen-top) | [latest](https://github.com/universaltill/ut-plugin-theme-screen-top/releases/latest/download/latest.tar.gz) |
 | Buttons Left Theme | theme | [ut-plugin-theme-buttons-left](https://github.com/universaltill/ut-plugin-theme-buttons-left) | [latest](https://github.com/universaltill/ut-plugin-theme-buttons-left/releases/latest/download/latest.tar.gz) |
 | Midnight Theme | theme | [ut-plugin-theme-midnight](https://github.com/universaltill/ut-plugin-theme-midnight) | [latest](https://github.com/universaltill/ut-plugin-theme-midnight/releases/latest/download/latest.tar.gz) |
@@ -635,9 +676,10 @@ We'll even link to notable forks in this README! 🎉
 
 - **Linux** (x64, ARM, ARM64) ✅
 - **Windows** (x64, ARM64) ✅
-- **macOS** (Intel, Apple Silicon) ✅
+- **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
 - **Android** (tablets, POS terminals) ✅
+- **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 
 ### Tested Hardware
@@ -663,13 +705,14 @@ Built into core (`web/locales/`), including full RTL layout:
 - Persian / Farsi (fa) — RTL
 - Turkish (tr)
 
-Available as install-time language plugins (offered right on the setup
-wizard's language step, installing on selection):
-- German (de) — `ut-plugin-language-de`
-- Spanish (es) — `ut-plugin-language-es`
-- Portuguese, European (pt) — `ut-plugin-language-pt`
+Further languages are translated by the community in
+[Weblate](https://translate.universaltill.com/engage/universal-till/) and
+reach tills as signed language bundles, offered right on the setup wizard's
+language step and installed on selection (German first; Spanish, Portuguese,
+French, Chinese, Malay and more follow as their translations are approved).
+The old per-language plugin repos (`ut-plugin-language-*`) are being retired.
 
-Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translation guidelines.
+Want to add or improve a language? Translate it in your browser at [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/); see [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.
 
 ---
 
@@ -687,7 +730,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
       nav rail — added since)
 - [x] Plugin marketplace with one-click install (`ut-cloud`, ADR-0018) — live at [cloud.universaltill.com](https://cloud.universaltill.com)
 - [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
-- [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)
+- [x] Language bundles translated in Weblate: German live, more rolling out (core ships en/ar/fa/tr)
 - [x] Theme plugins, FAQ / help plugin
 - [x] AI assistant plugin (camera item ID, "Ask your till") — runs inside the plugin (WASM, ut-docs#2851); self-hosted by default, hosted Claude or OpenAI as a shop's own-key opt-in (ADR-0085, ut-docs#1791)
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
@@ -701,7 +744,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Tips — `payments.tip_amount` in the core domain model and manual entry via `/api/pos/tender`, tested end to end. Each payment also records `payments.tip_recipient` (`employee` or `business`) — whose money the tip is, captured at tender time rather than reconstructed later, since it drives different tax treatment per country. It defaults to `employee`, or to whatever an installed country-tax plugin declares ([ADR-0061](https://github.com/universaltill/ut-docs/blob/main/adr/0061-service-charge-tax-and-tip-recipient-country-policy.md)). Automatic sync of a tip the customer picks on a SumUp reader also ships, but that half is **not yet verified against a live SumUp sandbox** — see [ut-plugin-payment-sumup](https://github.com/universaltill/ut-plugin-payment-sumup)'s README "Tips" section before relying on it in production. The end-of-day (Z) report now breaks tips out by payment method, held out of Gross/Net/revenue (`EODReport.Tips`), matching the reference day-close's "tips held separately, posted to their own account" shape — no ledger-account posting/export exists in this repo (see "Confirmed not built yet" below)
 - [x] Service charge — `sales.service_charge_amount`, a till-set percentage (`store.service_charge_rate_pct`) automatically added to the sale total, distinct from a discretionary tip (which never affects the total). Shown as its own receipt line when non-zero. The charge is **taxed**: its tax is apportioned across the sale's own per-line rate bands by net line value (or at a flat rate an installed country-tax plugin declares), and appears in the sale's tax total, the invoice VAT table and the `fiscal.sign.ask` breakdown ([ADR-0061](https://github.com/universaltill/ut-docs/blob/main/adr/0061-service-charge-tax-and-tip-recipient-country-policy.md)). With no country plugin installed the charge is still taxed — that is the default, not an untaxed one. A till whose `store.country` is `TR` cannot set or apply one: Turkey's Fiyat Etiketi Yönetmeliği amendment of 30 Jan 2026 bans a service-charge/table-fee/cover line on the bill outright, so the rate is refused at the settings API and forced to zero on the tender path ([ut-docs#962](https://github.com/universaltill/ut-docs/issues/962)) — the sale itself still completes normally. Additive statutory charges ([ADR-0062](https://github.com/universaltill/ut-docs/blob/main/adr/0062-additive-statutory-charges-replace-single-service-charge-slot.md)): a sale carries an ordered charge list — the till's own service charge plus any levy a country-tax plugin declares through `charge.policy.ask` (e.g. a GCC municipality/tourism tax, applied at the plugin's rate) — each taxed on its own and itemized in `sale_charges`; `sales.service_charge_amount` is their sum. The basket, the tender and the recorded sale all build the list the same way, and the Turkey ban suppresses plugin-declared levies too. No shipped plugin declares extra levies yet, and receipts/journal/invoice still show one summed service-charge line until [ut-docs#986](https://github.com/universaltill/ut-docs/issues/986)
 
-- [x] Gift vouchers as a liability (multi-purpose) — selling a voucher is recorded at 0% VAT as an outstanding liability (`vouchers` / `voucher_transactions`), excluded from article revenue and the per-rate VAT bands; VAT arises when the voucher is spent, at the redeemed goods' own rates. Redeeming debits a tracked per-voucher balance (overspend and over-tendering both refused), voiding the issuing sale voids a still-unused voucher with it (and is refused once any part of the voucher has been spent), the day-end Z-report shows issued/redeemed counts and amounts in their own GUTSCHEINE section (voided sales excluded), and the outstanding balance is queryable per voucher (`GET /api/vouchers/{id}`). The cashier sells a voucher by tapping a **gift voucher item** — an item whose `item_type` is `gift_voucher` (migration 071, the item editor's **Type**): instead of adding goods it opens a Gift voucher popup (value prefilled from the item's price, card number focused for a hardware scanner — blank creates a 13-digit EAN-13 `99…` number — optional holder, any purchase / specific item), refuses a number already issued or already in the basket, and adds a voucher basket line (qty 1, never merged, no discounts, promotions or stock); at checkout each such line becomes an `issue_vouchers` entry on the same `/api/pos/tender` path, never a sale line, and gift voucher items never appear on the self-order kiosk ([ut-docs#4214](https://github.com/universaltill/ut-docs/issues/4214)). Redemption is in the payment panel's Split tab: choosing the built-in `voucher` method reveals a voucher-code field with a best-effort balance check (`GET /api/vouchers/{id}`), and the receipt prints every issued code ([ut-docs#1008](https://github.com/universaltill/ut-docs/issues/1008), [ut-docs#1832](https://github.com/universaltill/ut-docs/issues/1832)). Redemption also has a scan-first entry point: scanning a voucher's barcode (operator-supplied free text, `GS-` prefix convention; CODE128 recommended for printed codes, the only registered symbology that accepts alphanumeric input) at the sale screen — or any voucher number no item answers to, such as a pre-printed card or a till-generated number (#4214) — resolves it and offers its balance as a pay-grid tender option directly — no manual code entry needed — with distinct toasts for a used-up/inactive voucher and an unrecognized code, using the same cross-till/offline-first lookup `GET /api/vouchers/{id}`, so it also works on a satellite till ([ut-docs#1833](https://github.com/universaltill/ut-docs/issues/1833)). **Single-purpose vouchers** (Einzweck-Gutscheine, §3 Abs. 13-15 UStG — the good and its VAT rate are known when the voucher is sold) are the second kind, chosen with "Specific item (taxed now)" in the Gift voucher popup and taxed at the gift voucher item's own tax code: VAT is declared by the *issuing* sale at that rate (the voucher lands in `subtotal`/`tax_total` and in the Z-report's and invoice's per-rate VAT bands, never in the 0% `voucher_issue_total` liability — `vouchers.purpose` / `issue_vat_rate_bp`, migration 036), and redemption is the hand-over of the already-taxed item, not a payment: **Check balance** on such a voucher offers a separate **Redeem** tap (`POST /api/vouchers/{id}/redeem`) that drains it in one step with no further tax event, while tendering it as payment is refused on every path (local, cross-till, scan-to-tender) so the same consideration is never taxed twice ([ut-docs#1037](https://github.com/universaltill/ut-docs/issues/1037)); DATEV posting is a separate follow-up. A merchant migrating from another system can bring in the outstanding balances on physical voucher cards their customers already hold as an **opening liability** — never a sale — via **Import voucher balances** on the Gift vouchers page: preview a `code,balance,label` CSV (nothing saved until confirmed), then commit inside one transaction; a code that already exists on this till is skipped and reported, never overwritten, so re-importing the same file twice is safe. An imported voucher's `voucher_transactions` row carries no `sale_id` by construction, and the day-end Z-report's Issued count/amount excludes exactly that shape so importing never inflates the day it happens to run on ([ut-docs#1834](https://github.com/universaltill/ut-docs/issues/1834)). The manager-only **Gift vouchers** page (`/vouchers`, Menu tile) lists every voucher this till knows about, newest first (number, holder, original value, balance, status active/used up/void, purpose, created date, link to the issuing receipt), with a number/holder search and status filter, each voucher's issue/redemption history (`/vouchers/{id}`), a CSV export of the current filter (`GET /api/vouchers/export`, `code,balance,label,original_amount,status,purpose,created_at`, formula-injection-safe) that the importer reads back — refusing `single_purpose` rows so a specific-item voucher is never re-imported as a multi-purpose balance and taxed twice — and the import form itself, moved here from Settings; on an additional till a status banner says the full list is on the main till ([ut-docs#4251](https://github.com/universaltill/ut-docs/issues/4251)). A manager can **top up** an existing any-purchase voucher as a sale from its page (**Top up** → amount → **Add to sale**, `POST /vouchers/{id}/top-up`): the amount goes into the cashier's basket as a top-up line, and paying the sale credits the voucher in the sale's own transaction (a `top_up` ledger row, migration 080) as a 0% liability counted under Issued on the Z-report; the receipt shows the number, the amount added and the new balance; voiding the sale takes the credit back (refused once it has been spent); a voided or specific-item voucher can't be topped up, and top-ups are made on the main till ([ut-docs#4252](https://github.com/universaltill/ut-docs/issues/4252))
+- [x] Gift vouchers as a liability (multi-purpose) — selling a voucher is recorded at 0% VAT as an outstanding liability (`vouchers` / `voucher_transactions`), excluded from article revenue and the per-rate VAT bands; VAT arises when the voucher is spent, at the redeemed goods' own rates. Redeeming debits a tracked per-voucher balance (overspend and over-tendering both refused), voiding the issuing sale voids a still-unused voucher with it (and is refused once any part of the voucher has been spent), the day-end Z-report shows issued/redeemed counts and amounts in their own GUTSCHEINE section (voided sales excluded), and the outstanding balance is queryable per voucher (`GET /api/vouchers/{id}`). The cashier sells a voucher by tapping a **gift voucher item** — an item whose `item_type` is `gift_voucher` (migration 071, the item editor's **Type**): instead of adding goods it opens a Gift voucher popup (value prefilled from the item's price, card number focused for a hardware scanner — blank creates a 13-digit EAN-13 `99…` number — optional holder, any purchase / specific item), refuses a number already issued or already in the basket, and adds a voucher basket line (qty 1, never merged, no discounts, promotions or stock); at checkout each such line becomes an `issue_vouchers` entry on the same `/api/pos/tender` path, never a sale line, and gift voucher items never appear on the self-order kiosk ([ut-docs#4214](https://github.com/universaltill/ut-docs/issues/4214)). Redemption is in the payment panel's Split tab: choosing the built-in `voucher` method reveals a voucher-code field with a best-effort balance check (`GET /api/vouchers/{id}`), and the receipt prints every issued code — with an optional, default-off printer setting that also prints one gift slip per issued voucher after the receipt ([ut-docs#4247](https://github.com/universaltill/ut-docs/issues/4247)) ([ut-docs#1008](https://github.com/universaltill/ut-docs/issues/1008), [ut-docs#1832](https://github.com/universaltill/ut-docs/issues/1832)). Redemption also has a scan-first entry point: scanning a voucher's barcode (operator-supplied free text, `GS-` prefix convention; CODE128 recommended for printed codes, the only registered symbology that accepts alphanumeric input) at the sale screen — or any voucher number no item answers to, such as a pre-printed card or a till-generated number (#4214) — resolves it and offers its balance as a pay-grid tender option directly — no manual code entry needed — with distinct toasts for a used-up/inactive voucher and an unrecognized code, using the same cross-till/offline-first lookup `GET /api/vouchers/{id}`, so it also works on a satellite till ([ut-docs#1833](https://github.com/universaltill/ut-docs/issues/1833)). **Single-purpose vouchers** (Einzweck-Gutscheine, §3 Abs. 13-15 UStG — the good and its VAT rate are known when the voucher is sold) are the second kind, chosen with "Specific item (taxed now)" in the Gift voucher popup and taxed at the gift voucher item's own tax code: VAT is declared by the *issuing* sale at that rate (the voucher lands in `subtotal`/`tax_total` and in the Z-report's and invoice's per-rate VAT bands, never in the 0% `voucher_issue_total` liability — `vouchers.purpose` / `issue_vat_rate_bp`, migration 036), and redemption is the hand-over of the already-taxed item, not a payment: **Check balance** on such a voucher offers a separate **Redeem** tap (`POST /api/vouchers/{id}/redeem`) that drains it in one step with no further tax event, while tendering it as payment is refused on every path (local, cross-till, scan-to-tender) so the same consideration is never taxed twice ([ut-docs#1037](https://github.com/universaltill/ut-docs/issues/1037)); DATEV posting is a separate follow-up. A merchant migrating from another system can bring in the outstanding balances on physical voucher cards their customers already hold as an **opening liability** — never a sale — via **Import voucher balances** on the Gift vouchers page: preview a `code,balance,label` CSV (nothing saved until confirmed), then commit inside one transaction; a code that already exists on this till is skipped and reported, never overwritten, so re-importing the same file twice is safe. An imported voucher's `voucher_transactions` row carries no `sale_id` by construction, and the day-end Z-report's Issued count/amount excludes exactly that shape so importing never inflates the day it happens to run on ([ut-docs#1834](https://github.com/universaltill/ut-docs/issues/1834)). The manager-only **Gift vouchers** page (`/vouchers`, Menu tile) lists every voucher this till knows about, newest first (number, holder, original value, balance, status active/used up/void, purpose, created date, link to the issuing receipt), with a number/holder search and status filter, each voucher's issue/redemption history (`/vouchers/{id}`), a CSV export of the current filter (`GET /api/vouchers/export`, `code,balance,label,original_amount,status,purpose,created_at`, formula-injection-safe) that the importer reads back — refusing `single_purpose` rows so a specific-item voucher is never re-imported as a multi-purpose balance and taxed twice — and the import form itself, moved here from Settings; on an additional till a status banner says the full list is on the main till ([ut-docs#4251](https://github.com/universaltill/ut-docs/issues/4251)). A manager can **top up** an existing any-purchase voucher as a sale from its page (**Top up** → amount → **Add to sale**, `POST /vouchers/{id}/top-up`): the amount goes into the cashier's basket as a top-up line, and paying the sale credits the voucher in the sale's own transaction (a `top_up` ledger row, migration 080) as a 0% liability counted under Issued on the Z-report; the receipt shows the number, the amount added and the new balance; voiding the sale takes the credit back (refused once it has been spent); a voided or specific-item voucher can't be topped up ([ut-docs#4252](https://github.com/universaltill/ut-docs/issues/4252)) A manager can also print a voucher's gift slip again from its page (**Print voucher slip**, `POST /vouchers/{id}/print-slip`: one slip, no receipt, independent of the slip setting, audited, [ut-docs#5740](https://github.com/universaltill/ut-docs/issues/5740); with no receipt printer it opens the slip in the browser's print dialog instead, audited `via: browser`, and the browser-printed sale receipt carries the `printer.voucher_slip` slips as print-only pages, [ut-docs#6152](https://github.com/universaltill/ut-docs/issues/6152)). An additional till tops up too: it checks the voucher on the main till when the line is added (refused while the main till is unreachable or older than LAN-sync contract 1.13.0), and the main till credits it when the sale's journal arrives; a search for a full voucher number this till hasn't seen opens it from the main till; an additional till refuses to void any sale that sold or topped up a voucher (409, nothing changes — the main till already holds the value through the sales journal and never learns of a local void, [ut-docs#5133](https://github.com/universaltill/ut-docs/issues/5133)) ([ut-docs#4416](https://github.com/universaltill/ut-docs/issues/4416))
 - [x] Cancellations, close attribution and annotation on the day-end (Z) report ([ut-docs#1012](https://github.com/universaltill/ut-docs/issues/1012)) — a completed sale later voided/reversed (a "Storno") now reports its own STORNOS count/total on the Z-report, separate from Refunds (a formal return processed afterward — a "Retoure"); this is not a pre-tender abandoned-basket count — the till only ever writes a `sales` row once a sale completes, so there is nothing to count before that. The report also always prints who ran the close (`EODReport.GeneratedBy`, resolved to a display name — "System" for the automatic scheduled close) and, when supplied, a validated free-text `Annotation`. The annotation field has no on-screen input yet — only the API (`POST /api/reports/eod/run`'s `annotation` form value) accepts one today
 - [x] By-article-group, by-article and by-operator breakdowns on the day-end (Z) report ([ut-docs#1010](https://github.com/universaltill/ut-docs/issues/1010)) — three more single-day-only sections alongside the existing per-department/per-till ones: **BY ARTICLE GROUP** groups by an item's own *immediate* category (a subcategory reports on its own line, unlike the per-department breakdown's root-category rollup), **BY ARTICLE** is every article sold that day with no top/bottom-N limit (shown collapsed on screen since a busy day can list dozens), and **BY OPERATOR** is revenue and sale count per cashier. Operator attribution reads `sales.cashier_id` alone — a manager-override elevation recorded separately in `audit_log` never changes who a sale's revenue is attributed to. The printed `BY ARTICLE` section currently has no line cap, so a shop with hundreds of distinct daily articles gets a correspondingly long Z-report roll — a follow-up card tracks whether that should be capped or made a setting
 - [x] Categories admin screen ([ut-docs#1898](https://github.com/universaltill/ut-docs/issues/1898)) — categories existed in the schema and were read in several places (the sale-screen tabs, the catalog item editor, kitchen-station routing) with no screen anywhere to create, rename, reorder or deactivate one. `/categories` (manager-only, main-till-only) now covers all four; a category still holding active items can't be deactivated — the page explains how many are in the way instead of silently reassigning them to "uncategorised" or cascading the deactivation onto them. Flat list only, no nested/tree editing
@@ -710,7 +753,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### In progress / partially built
 - [ ] **ERP integration plugins** — the webhook connector (above) is a working *template*; real per-system connectors (`core-universaltill`/Universal Core, SAP, Dynamics/LS Central) aren't built yet (ADR-0014)
 - [ ] **Payment orchestration / least-cost routing** — target markets decided (UK, UAE, Qatar, +), but which providers to route between and build-vs-buy for the multi-acquirer connections are still open (ADR-0016)
-- [ ] **iOS app** — the iPhone/iPad shell builds and starts the till on simulators in CI (`ios/`, [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046)); signing/TestFlight and a real-device check are still to do (ADR-0023)
+- [ ] **iOS app** — the iPhone/iPad shell builds and starts the till on simulators in CI (`ios/`, [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046)); it is signed and distributed to internal testers through TestFlight; the App Store release and the Android-parity bridges are still to do (ADR-0023)
 - [ ] **Delivery-platform integrations** (Deliveroo, Uber Eats, Just Eat) — the plugin taxonomy already has a `delivery` type and kitchen ticket printing already understands an order-type/table concept, but no actual provider plugin exists yet
 - [ ] Advanced inventory management
 - [ ] Multi-location support
@@ -730,7 +773,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
 - [x] Kitchen display system — HDMI-local slice ([ut-docs#544](https://github.com/universaltill/ut-docs/issues/544)): a kitchen station can be a printer, a display, or both; a display-capable station gets a live per-station order screen at `/kitchen-display/{station_id}` (the `/orders` board scoped by the same item-over-category routing that decides tickets, same one-tap status endpoint, same 15s poll + SSE refresh) meant for a second monitor on the machine already running the till. Still to come: the LAN-paired standalone KDS device (its own pairing/auth/liveness), the cross-till proxy so a replica's screen reads the primary's board, and per-line status (today status is per order, so a split order shows on both screens and clears from both)
-- [ ] Further mobile platform work (iOS signing/TestFlight, device checks and Android-parity bridges — [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046))
+- [ ] Further mobile platform work (iOS App Store release, device checks and Android-parity bridges — [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046))
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing
 
@@ -766,30 +809,35 @@ time (remote support, migration).
 
 ### What's in each plan
 
-Local Plus (£10 / €10 a month) sits between Local and Shop; the matrix below
-shows the other four plans.
+Five plans, one matrix. The full definition, with every feature row, is
+[subscription-plans.md](https://github.com/universaltill/ut-docs/blob/main/reference/subscription-plans.md);
+this is its summary.
 
-| | **Local** | **Shop** | **Pro** | **Multi-location** |
-|---|---|---|---|---|
-| **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
-| **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
-| **Locations** | 1 | 1 | 1 | 3 (+£33 / €33 each, to 10) |
-| Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
-| All free plugins | ✅ | ✅ | ✅ | ✅ |
-| Local backup / restore | ✅ | ✅ | ✅ | ✅ |
-| Encrypted off-site cloud backup | ❌ | ✅ | ✅ | ✅ |
-| Multi-till sync | ❌ | ✅ | ✅ | ✅ |
-| Manage prices & catalog from a browser | ❌ | ✅ | ✅ | ✅ |
-| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) |
-| **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ |
-| Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ |
-| Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ |
-| Cloud archive retention | local only | 2 years | 10 years | 10 years |
-| Proactive health check | ❌ | ❌ | quarterly | quarterly |
-| Migration from your old system | guides | guides | ✅ done for you | ✅ done for you |
-| Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ✅ |
-| **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
-| Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
+| | **Local** | **Local Plus** | **Shop** | **Pro** | **Multi-location** |
+|---|---|---|---|---|---|
+| **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
+| **Locations** | 1 | 1 | 1 | 1 | 3 (+£33 / €33 each, to 10) |
+| Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ | ✅ |
+| All free plugins | ✅ | ✅ | ✅ | ✅ | ✅ |
+| AI assistant (your own key or your own server) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tills in one shop sync over the shop's network | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Local backup / restore | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Encrypted off-site cloud backup | ❌ | ✅ | ✅ | ✅ | ✅ |
+| Manage from a browser (my.) | ❌ | 1 site, basic | ✅ | ✅ | ✅ |
+| Cloud holds your catalogue, every till follows it | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Mobile tills sync with the main till over the internet | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | bring your own | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) |
+| **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cloud archive of receipts and reports | local only | 1 year | 2 years | legal retention: UK 7, Germany 10, elsewhere 10 years | legal retention: UK 7, Germany 10, elsewhere 10 years |
+| Team members on my., besides the owner | owner only | owner only | 2 | 5 | 50 |
+| Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Proactive health check | ❌ | ❌ | ❌ | quarterly | quarterly + annual review |
+| Migration from your old system | guides | guides | guides | ✅ done for you | ✅ done for you |
+| Support | Community, support messages | Community, support messages | + live chat | + phone, business hours | + phone, weekends |
+| **Remote support session** | ❌ | ❌ | next business day | same business day | on demand |
 
 Extra location **£33 / €33 a month** (published up to 10) · **software carries no
 per-till charge, ever** (a mandated device's real per-till cost, where one
@@ -833,7 +881,7 @@ So:
 - On **Shop and up**, the managed TSE costs **€12 a month for each registered
   main till**, as its own line on the invoice, never hidden in the plan price —
   we provision it, monitor it and renew it, and you never see TSE paperwork.
-- On the **free plan**, you bring your own — a dongle you buy, or your own
+- On **Local and Local Plus**, you bring your own — a dongle you buy, or your own
   cloud TSE account. Both are fully supported, first-class paths.
 
 We would rather say this plainly than let "free forever" imply a total cost
@@ -858,8 +906,8 @@ obligations remain yours.*
 > component before a shop can operate an electronic till as its system of
 > record — e.g. Germany's TSE (Technische Sicherheitseinrichtung) under
 > KassenSichV. That component is not Universal Till software, is not
-> included in the free tier, and its cost is unaffected by anything above:
-> bring your own on Free, or the managed one at €12 a month per registered
+> included in the free tier or Local Plus, and its cost is unaffected by anything above:
+> bring your own on Local and Local Plus, or the managed one at €12 a month per registered
 > main till on Shop and up. See
 > [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
 > The till enforces this on a per-market basis: a shop switched to

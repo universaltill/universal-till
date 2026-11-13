@@ -139,7 +139,12 @@
   // Same-origin path only ("/refund/42"), never "//host" or "javascript:".
   function safePath(p) { return typeof p === 'string' && /^\/(?![\/\\])/.test(p) ? p : null; }
   function showDialog(d) { if (d && !d.open) d.show(); }
-  function closeDialog(d) { if (d && d.open) d.close(); }
+  // ut-docs#5288: a confirm / PIN prompt (data-ut-prompt) never closes while
+  // its own form has a request in flight (.htmx-request): its answer must
+  // still show. Prompts only: other dialogs (self-order kiosk, modifier
+  // picker) keep closing as before. The terminal after-request hook runs
+  // after htmx has cleared that class on the form it closes.
+  function closeDialog(d) { if (d && d.open && !(d.hasAttribute && d.hasAttribute('data-ut-prompt') && d.querySelector('form.htmx-request'))) d.close(); }
   function toMinor(v) { return window.utCurrency ? window.utCurrency.toMinor(v) : v; }
   function scanFocusLater() {
     setTimeout(function () {
@@ -149,7 +154,7 @@
   }
   // Receipt reprint (receipt.html): the same POST as before; a 451 is the
   // customer-document gate's refusal (ADR-0124), never a printer fault, so
-  // it never falls back to window.print().
+  // it never falls back to printing (printPage).
   // ut-docs#4714: a self-order customer's language pick (the Print button's
   // data-customer-locale) rides along so a manual print matches the
   // auto-print; the journal's reprint sends none (the shop's copy).
@@ -161,6 +166,44 @@
     }
     return fetch('/api/print/receipt/' + encodeURIComponent(no), opts);
   }
+  // ut-docs#6153: the till's only print entry point. Android System WebView
+  // ignores window.print(), so the Android app's bridge opens the system
+  // dialog there; every other shell (desktop, Pi kiosk, iOS) keeps window.print().
+  // A false return (kiosk pinned, dialog already open) prints nothing: never
+  // fall through to the no-op window.print().
+  function printPage() {
+    var k = window.AndroidKiosk;
+    if (k && typeof k.print === 'function') { try { k.print(); } catch (e) {} return; }
+    // ut-docs#6154: on the Pi kiosk's own screen with no OS printer the
+    // browser dialog can only "Save as PDF" to a home nobody can reach —
+    // show the server-rendered inline notice instead. Never window.print(),
+    // even if the notice is missing. Non-modal; focus stays on the button.
+    if (document.documentElement.getAttribute('data-browser-print') === 'off') {
+      var n = byId('ut-print-unavailable');
+      if (n) {
+        // Re-announce a second press: hide, then show on the next frame.
+        var show = function () {
+          n.classList.remove('hide'); n.hidden = false;
+          try { n.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+        };
+        if (!n.hidden) {
+          n.hidden = true;
+          if (window.requestAnimationFrame) window.requestAnimationFrame(show); else show();
+        } else show();
+      }
+      return;
+    }
+    window.print();
+  }
+  // The notice must not linger over another page after a navigation swap.
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || !(t.tagName === 'MAIN' || t.id === 'ut-page' || t.tagName === 'BODY')) return;
+    var n = byId('ut-print-unavailable');
+    if (n) n.hidden = true;
+  });
+  var UTns = window.UT = window.UT || {};
+  UTns.print = printPage;
   // Where the save-error step's line goes: right after the posting form;
   // a form-less carrier (a lone checkbox) uses its card.
   function saveErrorAnchor(el) {
@@ -203,6 +246,8 @@
     'ok-2xx': function (ctx) { var x = xhrOf(ctx); return !!(x && x.status >= 200 && x.status < 300); },
     // users.html / elevation: X-UT-Response tells success from a refusal.
     'ut-ok': function (ctx) { return header(ctx, 'X-UT-Response') === 'ok'; },
+    // ut-docs#6152: X-UT-Response equals the argument (e.g. print-slip).
+    'ut-response': function (ctx, arg) { return header(ctx, 'X-UT-Response') === arg; },
     // A settings save that answered with HTML (an elevation prompt) must
     // not reload over it.
     'not-html': function (ctx) { return header(ctx, 'Content-Type').indexOf('text/html') === -1; },
@@ -225,7 +270,7 @@
     },
     // Open without leaving focus inside the dialog (menu.html's deposit
     // refund: show() would focus its first field and pop the OSK). A
-    // dialog in base.html's focus trap (ut-docs#3212) would pull focus
+    // dialog in ut-motion.js's focus trap (ut-docs#3212) would pull focus
     // restored to the page behind straight back to that first field (the
     // native keyboard on #1248's hardware), so there focus is left on the
     // body: the next Tab enters the dialog.
@@ -241,13 +286,14 @@
       }
     },
     'close': function (ctx, id) { closeDialog(byId(id)); },
-    // Close and drop its content (self-order kiosk: the next open swaps
-    // fresh markup in; stale markup must never flash).
+    // Close (self-order kiosk). Dropping the markup is the dialog's own
+    // data-ut-clear-on-close, done by ut-motion.js AFTER the closing shrink
+    // (ut-docs#2972): emptying it here handed the shrink a blank element.
+    // The next open swaps fresh markup in, so stale markup never flashes.
     'close-clear': function (ctx, id) {
       var d = byId(id);
       if (!d) return;
       closeDialog(d);
-      d.innerHTML = '';
     },
     // Close the dialog this control sits in. On a link (the in-shell
     // "← Catalog" back link) it also stops the navigation.
@@ -370,12 +416,30 @@
     'request-submit': function (ctx) { var f = formOf(ctx.el); if (f) f.requestSubmit(); },
     'prevent': function (ctx) { preventDefault(ctx); },
     // A plain (non-htmx) form asking first; the question is the carrier's
-    // data-confirm-text (already translated server-side).
+    // data-confirm-text (already translated server-side). Asked in the till's
+    // own dialog (till-confirm.js, ut-docs#5524): the submit is held, then
+    // re-issued with requestSubmit() once confirmed -- utConfirmed lets that
+    // one re-submit through. Native confirm() only if the dialog is missing.
     'confirm': function (ctx) {
-      if (!window.confirm(ctx.el.getAttribute('data-confirm-text') || '')) {
-        preventDefault(ctx);
-        return false;
+      var f = ctx.el;
+      if (f.utConfirmed) { f.utConfirmed = false; return; }
+      var q = f.getAttribute('data-confirm-text') || '';
+      if (!(window.UT && window.UT.confirm && byId('ut-confirm'))) {
+        if (!window.confirm(q)) { preventDefault(ctx); return false; } // native-confirm:allow no #ut-confirm shell (login/setup/self-order pages): native fallback
+        return;
       }
+      preventDefault(ctx);
+      var sub = ctx.event && ctx.event.submitter;
+      window.UT.confirm(q, { opener: sub || f }).then(function (ok) {
+        if (!ok || !f.isConnected) return;
+        // The submit handler runs synchronously inside requestSubmit; a form
+        // that fails validation fires none, so the flag never outlives it.
+        f.utConfirmed = true;
+        try {
+          if (f.requestSubmit) f.requestSubmit(sub || undefined); else f.submit();
+        } finally { f.utConfirmed = false; }
+      });
+      return false;
     },
     // ut-docs#1540: a pairing button outside any <form> — trim, then let
     // `required` speak; an invalid name cancels the htmx request.
@@ -427,7 +491,12 @@
     'elevation-done': function (ctx) {
       var xr = header(ctx, 'X-UT-Response');
       if (xr === 'elevation-prompt') return;
-      closeDialog(ctx.el.closest('dialog'));
+      var dlg = ctx.el.closest('dialog');
+      // A terminal answer, not a Cancel (ut-docs#5275). Only while still
+      // open: a dialog the operator already cancelled mid-request has had
+      // its cleanup, and a stale flag must not outlive it.
+      if (dlg && dlg.open) dlg.utAnswered = true;
+      closeDialog(dlg);
       if (xr !== 'ok') return;
       var t = null;
       try { t = document.querySelector(ctx.el.getAttribute('hx-target')); } catch (e) { t = null; }
@@ -439,7 +508,7 @@
     // ---- navigation / window ----
     'go': function (ctx, path) { var p = safePath(path); if (p) window.location.href = p; },
     'reload-page': function () { location.reload(); },
-    'print': function () { window.print(); },
+    'print': function () { printPage(); },
     // Ends the bubbling walk: ancestors' data-action does not run.
     'stop': function () {},
 
@@ -452,17 +521,17 @@
     },
     'dismiss-pairing-notice': function () { if (window.utPairingNoticeDismiss) window.utPairingNoticeDismiss(); },
     'dismiss-shop-name-notice': function () { if (window.utShopNameNoticeDismiss) window.utShopNameNoticeDismiss(); }, // ut-docs#3114
-    'close-install-modal': function () { if (window.closeInstallModal) window.closeInstallModal(); },
+    'dismiss-move-approval-notice': function () { if (window.utMoveApprovalNoticeDismiss) window.utMoveApprovalNoticeDismiss(); }, // ut-docs#5127
     // receipt.html's "ask" prompt: Print hides the prompt BEFORE any
-    // window.print() fallback, so the question never lands on paper.
+    // print fallback, so the question never lands on paper.
     'receipt-ask-print': function (ctx, no) {
       var el = byId('receipt-ask');
       reprint(no, ctx.el.getAttribute('data-customer-locale')).then(function (r) {
         if (el) el.hidden = true;
-        if (!r.ok && r.status !== 451) window.print();
+        if (!r.ok && r.status !== 451) printPage();
       }).catch(function () {
         if (el) el.hidden = true;
-        window.print();
+        printPage();
       });
     },
     // receipt.html's Print: ✓ on success (data-done-text), disabled on the
@@ -472,8 +541,8 @@
       reprint(no, b.getAttribute('data-customer-locale')).then(function (r) {
         if (r.ok) b.textContent = b.getAttribute('data-done-text') || b.textContent;
         else if (r.status === 451) b.disabled = true;
-        else window.print();
-      }).catch(function () { window.print(); });
+        else printPage();
+      }).catch(function () { printPage(); });
     }
   };
 
@@ -554,6 +623,69 @@
     if (t && t.tagName === 'IMG' && t.hasAttribute('data-fallback')) imageFallback(t);
   }, true);
 
+  // ---- confirm / elevation prompt cleanup (ut-docs#5275) ---------------------
+  // confirm_prompt.html / elevation_prompt.html (dialog[data-ut-prompt]).
+  // Escape (base.html) and Cancel both just close the dialog; this puts
+  // focus back on the control that asked and removes the prompt's own
+  // .elevation-hint from the hx-target. The opener is captured at request
+  // start (autofocus has moved focus by the time the dialog opens). Only
+  // the hint NODE is removed, never the target's innerHTML, so a real
+  // answer in the target is untouched.
+  function captureOpener(el, detail) {
+    var from = el && el.closest ? el.closest('dialog[data-ut-prompt]') : null;
+    if (from) {
+      detail.utPromptFrom = from; detail.utOpener = from.utOpener || null;
+      var tf = detail.target;
+      detail.utHintBefore = tf && tf.querySelector ? tf.querySelector(':scope > .elevation-hint') : null;
+      return;
+    }
+    var a = document.activeElement;
+    var op = a && a !== document.body ? a : null;
+    if (!op) {
+      var te = detail.requestConfig && detail.requestConfig.triggeringEvent;
+      op = (te && te.submitter) || el;
+    }
+    detail.utOpener = op;
+    var tg = detail.target;
+    detail.utHintBefore = tg && tg.querySelector ? tg.querySelector(':scope > .elevation-hint') : null;
+  }
+  var PROMPT_IDS = { 'confirm-prompt': 'confirm-modal', 'elevation-prompt': 'elevation-modal' };
+  function wirePrompt(ev, detail) {
+    if (detail.utPromptWired) return;
+    var id = PROMPT_IDS[header({ detail: detail }, 'X-UT-Response')];
+    var d = id && byId(id);
+    if (!d) return;
+    detail.utPromptWired = true;
+    d.utOpener = detail.utOpener || null;
+    d.utHint = null;
+    var f = d.querySelector('form[hx-target]');
+    var t = null;
+    try { t = f && document.querySelector(f.getAttribute('hx-target')); } catch (e) { t = null; }
+    // Only a hint THIS response placed: the request's own swap target (a
+    // swap="none" form like display-mode places nothing), and a node that
+    // was not already there before the request.
+    if (t && t === detail.target) {
+      var h = t.querySelector(':scope > .elevation-hint');
+      if (h && h !== detail.utHintBefore) d.utHint = h;
+    }
+    var from = detail.utPromptFrom;
+    if (from && from !== d && from.isConnected && from.open) {
+      from.utHandedOff = true; // confirm -> elevation: replaced, not cancelled
+      from.close();
+    }
+  }
+  document.addEventListener('close', function (ev) {
+    var d = ev.target;
+    if (!d || !d.matches || !d.matches('dialog[data-ut-prompt]')) return;
+    try {
+      if (d.utAnswered || d.utHandedOff) { d.utAnswered = d.utHandedOff = false; return; }
+      if (d.utHint && d.utHint.isConnected) d.utHint.remove();
+      var op = d.utOpener;
+      if (op && op.isConnected && !op.disabled && op.focus) op.focus({ preventScroll: true });
+      d.utOpener = d.utHint = null;
+    } catch (e) { /* cleanup only */ }
+  }, true);
+
   // ---- 3. htmx lifecycle ----------------------------------------------------
   // htmx fires these on the requesting element (beforeSwap/afterSettle on
   // the swap target); the walk up finds the carrier either way.
@@ -561,16 +693,27 @@
   function htmxHook(attr) {
     return function (ev) { dispatch(ev.target, attr, ev, ev.detail || {}); };
   }
+  // ut-docs#5291: aria-busy on a prompt's form while its own request runs
+  // (htmx adds .htmx-request and disables the buttons itself).
+  function markPromptBusy(el, on) {
+    var f = el && el.tagName === 'FORM' && el.closest && el.closest('dialog[data-ut-prompt]') ? el : null;
+    if (!f) return;
+    if (on) f.setAttribute('aria-busy', 'true'); else f.removeAttribute('aria-busy');
+  }
   document.addEventListener('htmx:beforeRequest', function (ev) {
     var detail = ev.detail || {};
+    try { markPromptBusy(ev.target, true); } catch (e) { /* a11y hint only */ }
     // The same object htmx later dispatches htmx:afterRequest with.
     try { detail[SRC] = ev.target; } catch (e) { /* no replay for this one */ }
+    try { captureOpener(ev.target, detail); } catch (e) { /* focus return only */ }
     clearSaveError(ev.target);
     dispatch(ev.target, 'data-before-request', ev, detail);
   }, true);
   document.addEventListener('htmx:afterRequest', function (ev) {
     var detail = ev.detail || {};
     var src = detail[SRC];
+    try { markPromptBusy(ev.target, false); } catch (e) { /* a11y hint only */ }
+    try { wirePrompt(ev, detail); } catch (e) { /* focus return only */ }
     // The source swapped itself out: this is htmx's re-dispatch on a
     // connected ancestor. Replay the source's own (missed) dispatch first.
     if (src && src !== ev.target && !src.isConnected) dispatch(src, 'data-after-request', ev, detail);

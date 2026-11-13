@@ -7,7 +7,17 @@
 {{/* ut-docs#2722: on a replica whose main till stopped answering — the
      same state as the status-bar chip that links here, explained, with
      what happens by itself and the one case that needs a person. */}}
-{{ if .MainUnreachable }}
+{{/* ut-docs#5162: a restored copy (its bearer and till id were dropped) is
+     told to join again. A notice, never a modal; the unreachable notice
+     below stays out of its way. */}}
+{{ if .NeedsRejoin }}
+<div class="notice-block-warn" role="status" data-testid="tills-needs-rejoin">
+  <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "sync.link.rejoin" }}</strong>
+  <p>{{ T "sync.link.rejoin_hint" }}</p>
+  <p>{{ T "tills.rejoin_needed_help" }}</p>
+</div>
+{{ end }}
+{{ if and .MainUnreachable (not .NeedsRejoin) }}
 <div class="notice-block-warn" role="status" data-testid="tills-main-unreachable">
   <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.main_unreachable_title" }}</strong>
   — {{ if .MainUnreachableSince }}{{ printf (T "sync.main_till_unreachable_since") (datetime .MainUnreachableSince) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}
@@ -155,12 +165,15 @@
     <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
   </div>
 
+  {{/* ut-docs#5074 M5: the read-only sales copy (its own partial). */}}
+  <div id="tills-sales-mirror" hx-get="/ui/tills/sales-mirror" hx-trigger="load" hx-swap="outerHTML"></div>
+
   {{ if .SyncPrimary }}
   <div class="card">
     <h3>{{ T "tills.promote_title" }}</h3>
     <p class="muted">{{ T "tills.promote_help" }}</p>
     <form hx-post="/api/sync/promote" hx-target="#promote-msg" hx-swap="innerHTML"
-          hx-confirm="{{ T "tills.promote_confirm" }}">
+          hx-confirm="{{ T "tills.promote_confirm" }}" data-confirm-ok="{{ T "tills.promote_btn" }}">
       <label>{{ T "tills.promote_confirm_label" }}
         <input type="text" name="confirm" placeholder="PROMOTE" autocomplete="off" required></label>
       <button class="btn" type="submit">{{ T "tills.promote_btn" }}</button>
@@ -252,7 +265,7 @@
           var addr = hostOf(p.base_url);
           var addrPart = addr ? (' · ' + esc(i18n.resultAddress) + ': ' + esc(addr)) : '';
           return '<li style="padding:.3rem 0">' + esc(p.name)
-            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
+            + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + '<bdi dir="ltr">' + esc(p.till_id) + '</bdi>' + addrPart + '</span> '
             + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
             + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name, #pairing-join-role, #pairing-replace-local" '
             // ut-docs#1540: same required-field guard as the setup wizard's

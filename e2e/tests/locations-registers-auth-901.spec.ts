@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Locator, Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
 
 // ut-docs#901: /locations and /registers both 403'd permanently under
 // UT_AUTH=off (this suite's default project) because their requireManager
@@ -95,8 +95,10 @@ test.describe('/locations admin page (ut-docs#901)', () => {
     // an unhandled one, which would silently no-op the click, so accept
     // it explicitly.
     await openRowDialog(page, renamedRow, '#location-dialog');
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator('#location-dialog form[data-record-when="active=1"] button[type="submit"]').click());
+    await clickThenReload(page, async () => {
+      await page.locator('#location-dialog form[data-record-when="active=1"] button[type="submit"]').click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(renamedRow).toHaveAttribute('data-field-active', '0'); // now offers "activate" -> currently inactive
 
     // Reactivate. Leaves this test's own new/renamed row behind, active --
@@ -153,8 +155,10 @@ test.describe('/registers admin page (ut-docs#901)', () => {
     // confirm()) -- Playwright auto-dismisses an unhandled one, which
     // would silently no-op the click, so accept it explicitly.
     await openRowDialog(page, renamedRowA, '#register-dialog');
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator('#register-dialog form[data-record-when="active=1"] button[type="submit"]').click());
+    await clickThenReload(page, async () => {
+      await page.locator('#register-dialog form[data-record-when="active=1"] button[type="submit"]').click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(renamedRowA).toHaveAttribute('data-field-active', '0'); // now offers "activate" -> currently inactive
 
     // Reactivate. Leaves both this test's new/renamed rows behind, active --

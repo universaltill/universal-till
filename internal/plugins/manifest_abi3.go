@@ -114,16 +114,21 @@ const minScheduleEveryS = 30
 // a schedule event must start with `<id>.`, and validatePluginID refuses an
 // id whose first segment is one of these roots. The core-root check on a
 // schedule event stays as a second, clearer guard.
+// Every root of a core Publish/Ask event name and every NewEventBus
+// eventModes key must be here (TestCoreEventsHaveReservedRoots). ut-cloud
+// pkg/manifest mirrors this map (TestCoreEventRootsMirrorPOS) — land both
+// sides together.
 var coreEventRoots = map[string]bool{
-	"basket": true, "catalog": true, "cloud": true, "cloudsync": true,
-	"customer": true, "device": true, "eod": true, "erp": true,
-	"export": true, "fiscal": true, "fiscaldevice": true,
-	"fiscalregister": true, "hardware": true, "import": true,
-	"kitchen": true, "loyalty": true, "orders": true, "payment": true,
-	"payments": true, "plugin": true, "plugins": true, "receipt": true,
-	"reconcile": true, "reports": true, "sale": true, "sales": true,
+	"agent": true, "basket": true, "catalog": true, "charge": true,
+	"cloud": true, "cloudsync": true, "customer": true, "device": true,
+	"eod": true, "erp": true, "export": true, "fiscal": true,
+	"fiscaldevice": true, "fiscalregister": true, "hardware": true,
+	"import": true, "inventory": true, "kitchen": true, "loyalty": true,
+	"orders": true, "payment": true, "payments": true, "plugin": true,
+	"plugins": true, "receipt": true, "reconcile": true, "report": true,
+	"reports": true, "sale": true, "sales": true, "shift": true,
 	"shifts": true, "stock": true, "sync": true, "system": true,
-	"tax": true, "ui": true,
+	"tax": true, "till": true, "ui": true, // till.* is core's (till.drawer.no_sale, ut-docs#5758)
 }
 
 var (

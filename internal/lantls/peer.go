@@ -1,11 +1,13 @@
 package lantls
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
@@ -98,6 +101,185 @@ func SetPeerReproof(fn PeerReproof) (restore func()) {
 	return func() { peerReproof.Store(prev) }
 }
 
+// Bearer rotation (ut-docs#5198). The main till marks an answer with
+// BearerRotateHeader when the bearer the replica just used is due to be
+// swapped. The replica's side of that lives here because every request to
+// the main till passes this transport, so no call site can miss the header.
+const (
+	// BearerRotateHeader is set by the main till on a response to a request
+	// whose bearer should rotate.
+	BearerRotateHeader = "X-UT-Sync-Bearer-Rotate"
+	// BearerRotatePath is the main till's rotation endpoint.
+	BearerRotatePath = "/api/sync/bearer/rotate"
+
+	// bearerRotateTimeout bounds one background rotation attempt.
+	bearerRotateTimeout = 20 * time.Second
+)
+
+// bearerRotateRetryEvery is the least time between two rotation attempts,
+// so a main till that keeps asking (or a rotation that keeps failing) costs
+// one call a minute, not one per request. A var only for tests.
+var bearerRotateRetryEvery = time.Minute
+
+// BearerRotate swaps this till's bearer for a fresh one from the main till.
+// It reports failure by logging and leaving the old bearer in place.
+type BearerRotate func(ctx context.Context)
+
+var bearerRotate atomic.Pointer[BearerRotate]
+
+// bearerRotateBusy is the single-flight guard; bearerRotateLast the start of
+// the latest attempt (unix nanoseconds).
+var (
+	bearerRotateBusy atomic.Bool
+	// bearerRotateAgain: a forced rotation was requested while one was in
+	// flight (the in-flight one may predate the bearer just adopted).
+	bearerRotateAgain atomic.Bool
+	bearerRotateLast  atomic.Int64
+)
+
+// bearerRotateRuns counts rotation goroutines started and not yet finished,
+// so restoring the hook can wait for them (ut-docs#5236). A queued forced
+// run is counted before the run that queued it finishes, so the count never
+// touches zero between the two.
+var (
+	bearerRotateRunsMu   sync.Mutex
+	bearerRotateRunsIdle = sync.NewCond(&bearerRotateRunsMu)
+	bearerRotateRuns     int
+)
+
+// bearerRotateRunStart re-reads the hook and counts a run of it under the
+// lock waitBearerRotateIdle holds, so a restore (which swaps the hook before
+// waiting) either waits for this run or makes it see the restored hook.
+// nil: no hook, nothing counted.
+func bearerRotateRunStart() *BearerRotate {
+	bearerRotateRunsMu.Lock()
+	defer bearerRotateRunsMu.Unlock()
+	hook := bearerRotate.Load()
+	if hook != nil {
+		bearerRotateRuns++
+	}
+	return hook
+}
+
+func bearerRotateRunDone() {
+	bearerRotateRunsMu.Lock()
+	bearerRotateRuns--
+	if bearerRotateRuns == 0 {
+		bearerRotateRunsIdle.Broadcast()
+	}
+	bearerRotateRunsMu.Unlock()
+}
+
+// waitBearerRotateIdle blocks until no rotation goroutine is running. Each
+// run is bounded by bearerRotateTimeout.
+func waitBearerRotateIdle() {
+	bearerRotateRunsMu.Lock()
+	for bearerRotateRuns > 0 {
+		bearerRotateRunsIdle.Wait()
+	}
+	bearerRotateRunsMu.Unlock()
+}
+
+// SetBearerRotate installs the process-wide rotation hook; nil means a
+// rotation request from the main till is ignored. It returns a func that
+// restores the previous hook and then waits for any rotation already running
+// to finish, so the hook never writes (the bearer file, the settings
+// database) after its owner has torn those down (ut-docs#5236). That wait
+// is bounded by bearerRotateTimeout, so shutdown can take up to that much
+// longer while the main till is unreachable. Never call restore from inside
+// the hook: its own run is counted, so it would wait on itself.
+func SetBearerRotate(fn BearerRotate) (restore func()) {
+	var p *BearerRotate
+	if fn != nil {
+		p = &fn
+	}
+	prev := bearerRotate.Swap(p)
+	bearerRotateLast.Store(0)
+	return func() {
+		bearerRotate.Store(prev)
+		waitBearerRotateIdle()
+	}
+}
+
+// fireBearerRotate runs the hook in the background: off the request that
+// carried the header (a sale never waits for it), one at a time, and at most
+// once per bearerRotateRetryEvery. A main till that does not know the
+// bearer to be stale simply keeps asking; an offline till gets the header
+// with its next answer.
+func fireBearerRotate() { fireBearerRotateOpt(false) }
+
+// fireBearerRotateOpt is fireBearerRotate; force skips the once-a-minute
+// throttle (never the single-flight guard). A fallback adoption uses it: the
+// bearer just adopted is the older one a restored main till knows, and it
+// should be swapped for a fresh one at once (ut-docs#5203).
+func fireBearerRotateOpt(force bool) {
+	// Fast path only: the hook that runs is re-read in bearerRotateRunStart.
+	hook := bearerRotate.Load()
+	if hook == nil {
+		return
+	}
+	if !bearerRotateBusy.CompareAndSwap(false, true) {
+		// A rotation is in flight; it may be using the bearer this request
+		// just replaced. A forced request is not dropped: the running
+		// goroutine runs the hook once more when it is done.
+		if force {
+			bearerRotateAgain.Store(true)
+		}
+		return
+	}
+	now := time.Now().UnixNano()
+	if last := bearerRotateLast.Load(); !force && last != 0 && now-last < int64(bearerRotateRetryEvery) {
+		bearerRotateBusy.Store(false)
+		return
+	}
+	bearerRotateLast.Store(now)
+	if hook = bearerRotateRunStart(); hook == nil {
+		bearerRotateBusy.Store(false)
+		return
+	}
+	go func() {
+		defer logging.RecoverAndLog("lantls.bearer_rotate")
+		// Deferred after the recover, so it runs first, panic or not.
+		defer bearerRotateRunDone()
+		func() {
+			defer bearerRotateBusy.Store(false)
+			ctx, cancel := context.WithTimeout(context.Background(), bearerRotateTimeout)
+			defer cancel()
+			(*hook)(ctx)
+		}()
+		// Busy is released first, so a force request arriving now either
+		// started its own run or left the flag for this check. Each flag
+		// is consumed by exactly one extra run: no unbounded loop.
+		if bearerRotateAgain.CompareAndSwap(true, false) {
+			fireBearerRotateOpt(true)
+		}
+	}()
+}
+
+// BearerFallback is the replica's way back to the bearer it held before its
+// last rotation (ut-docs#5203). A main till restored from a backup taken
+// before that rotation knows only the older bearer, so it answers 401 to the
+// current one. Given the bearer a request presented, it returns the previous
+// bearer to try (ok=false: none, or presented is not the current bearer any
+// more) and adopt, which the transport calls only after the main till has
+// accepted that previous bearer. adopt reports whether it actually switched
+// bearers (false: it lost a race to a concurrent adoption or a re-join), and
+// only then is a prompt rotation requested.
+type BearerFallback func(ctx context.Context, presented string) (previous string, adopt func() bool, ok bool)
+
+var bearerFallback atomic.Pointer[BearerFallback]
+
+// SetBearerFallback installs the process-wide fallback hook; nil means a 401
+// is final. It returns a func that restores the previous hook.
+func SetBearerFallback(fn BearerFallback) (restore func()) {
+	var p *BearerFallback
+	if fn != nil {
+		p = &fn
+	}
+	prev := bearerFallback.Swap(p)
+	return func() { bearerFallback.Store(prev) }
+}
+
 // PeerPinned reports whether this till holds a pin for its main till, i.e.
 // whether its traffic to the main till is pinned TLS (fleetlink's report).
 func PeerPinned(ctx context.Context) bool {
@@ -126,6 +308,69 @@ func (p *peerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		closeBody(r)
 		return nil, fmt.Errorf("lantls: cannot read the main till's address or pin: %w", err)
 	}
+	resp, err := p.route(r, t)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		resp = p.retryWithPreviousBearer(r, t, resp)
+	}
+	if err == nil && resp.Header.Get(BearerRotateHeader) != "" &&
+		samePeerHost(r.URL, t.PrimaryURL) && r.URL.Path != BearerRotatePath {
+		fireBearerRotate()
+	}
+	return resp, err
+}
+
+// retryWithPreviousBearer handles a 401 for the replica's current bearer
+// (ut-docs#5203). It sends r once more with the previous bearer when the
+// installed fallback hook offers one, and returns whichever answer stands:
+// the retry's (a 401 included) when it got one, else first. A 401 means the
+// main till refused the credential before any handler ran, so replaying is
+// safe for any method; a body is replayed only through GetBody. It never
+// retries the retry and never touches the rotation call itself.
+func (p *peerTransport) retryWithPreviousBearer(r *http.Request, t PeerTarget, first *http.Response) *http.Response {
+	hook := bearerFallback.Load()
+	if hook == nil || r.URL.Path == BearerRotatePath || !samePeerHost(r.URL, t.PrimaryURL) {
+		return first
+	}
+	presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || presented == "" {
+		return first
+	}
+	hasBody := r.Body != nil && r.Body != http.NoBody
+	if hasBody && r.GetBody == nil {
+		return first
+	}
+	prev, adopt, ok := (*hook)(r.Context(), presented)
+	if !ok || prev == "" || prev == presented {
+		return first
+	}
+	retry := r.Clone(r.Context())
+	retry.Header.Set("Authorization", "Bearer "+prev)
+	if hasBody {
+		body, err := r.GetBody()
+		if err != nil {
+			return first
+		}
+		retry.Body = body
+	}
+	// Drain and close the 401 before the retry goes out, so the retry can
+	// reuse the keep-alive connection. The body is kept to hand back if the
+	// retry fails to produce any answer.
+	buf, _ := io.ReadAll(io.LimitReader(first.Body, 4096))
+	_ = first.Body.Close()
+	second, err := p.route(retry, t)
+	if err != nil {
+		first.Body = io.NopCloser(bytes.NewReader(buf))
+		return first
+	}
+	if second.StatusCode != http.StatusUnauthorized && adopt() {
+		fireBearerRotateOpt(true)
+	}
+	return second
+}
+
+// route sends r over pinned TLS when it is aimed at the main till and a pin
+// is held, and as it is otherwise.
+func (p *peerTransport) route(r *http.Request, t PeerTarget) (*http.Response, error) {
 	if t.Pin == "" || !samePeerHost(r.URL, t.PrimaryURL) {
 		return http.DefaultTransport.RoundTrip(r)
 	}

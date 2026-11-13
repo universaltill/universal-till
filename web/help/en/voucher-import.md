@@ -3,6 +3,7 @@ id: voucher-import
 title: Import voucher balances
 section: Setting up your shop
 order: 148
+public: true
 summary: Migrating from another till? Bring in the outstanding balances on physical voucher cards your customers already hold, as an opening balance — not a new sale.
 keywords: [voucher, gift voucher, gift card, gutschein, import, migration, balance, opening balance, csv]
 ---

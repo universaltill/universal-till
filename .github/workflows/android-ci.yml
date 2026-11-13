@@ -41,6 +41,10 @@ on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   compile:
     runs-on: ubuntu-latest
@@ -166,3 +170,9 @@ jobs:
           set -euo pipefail
           cd android
           ./gradlew assembleArm64Debug testArm64DebugUnitTest --no-daemon
+          # ut-docs#5271: a build with -PupdateApkUrlBase uses only that base
+          # (the universal flavor also carries the per-ABI table), and bad
+          # values fail configuration.
+          UT_EXPECT_UPDATE_APK_URL_BASE=https://updates.example.test/apk/ \
+            ./gradlew testUniversalDebugUnitTest -PupdateApkUrlBase=https://updates.example.test/apk/ --no-daemon
+          bash ../scripts/ci/check-android-update-base.sh ./gradlew

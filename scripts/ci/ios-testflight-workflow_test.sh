@@ -137,8 +137,8 @@ check_wf() {
   local bind
   bind="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Bind the Go till server/)} p' "$wf")"
   # shellcheck disable=SC2016
-  if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}"' <<<"$bind"; then
-    echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=\${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=\${UT_MARKETPLACE_KEY_HEX}\")"
+  if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}"' <<<"$bind"; then
+    echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=\${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=\${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=\${UT_RELEASE_KEYS_HEX}\")"
   fi
   # ut-docs#3217: a step after the export/upload (and before the key is
   # removed) runs the audience check against the app's bundle ID.

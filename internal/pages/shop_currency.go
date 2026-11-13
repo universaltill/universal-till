@@ -131,7 +131,7 @@ func reconcileShopCurrency(ctx context.Context, d *common.Deps) {
 	if !adopted {
 		return
 	}
-	httpx.InitCurrency(st.Currency)
+	common.InitCurrencyFromState(st)
 	auditCloudDirective(ctx, d, "settings", common.KeyCurrency, "currency_adopted_from_cloud",
 		map[string]any{"from": till, "to": shop})
 	logging.L().Infof("[cloudsync] adopted the shop's currency %s from my. (was %s; no sales yet)", shop, till)

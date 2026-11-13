@@ -290,6 +290,25 @@ plant "TMUnknownKey" '<p>{{ TM "zz.guard_test.no_such_key" "count" 1 }}</p>'
 expect_fail "a {{ TM }} key missing from en.json"
 clear_fixture "TMUnknownKey"
 
+# ADR-0160 section 2 (code merges with English only): a PR that adds a key to
+# en.json alone, used by a template, must pass; ar/fa/tr stay untouched.
+cp web/locales/en.json /tmp/guard_i18n_en_backup.$$
+python3 - <<'PYEOF'
+import json
+d = json.load(open("web/locales/en.json"))
+d["zz.guard_test.english_only"] = "English only"
+json.dump(d, open("web/locales/en.json", "w"), ensure_ascii=False, indent=2)
+PYEOF
+plant "EnglishOnlyKey" '<p>{{ T "zz.guard_test.english_only" }}</p>'
+expect_pass "an en.json-only key (no ar/fa/tr translation)"
+clear_fixture "EnglishOnlyKey"
+# ...and the same template WITHOUT the en.json key must still fail.
+cp /tmp/guard_i18n_en_backup.$$ web/locales/en.json
+rm -f /tmp/guard_i18n_en_backup.$$
+plant "EnglishOnlyKeyMissing" '<p>{{ T "zz.guard_test.english_only" }}</p>'
+expect_fail "a template key absent from en.json"
+clear_fixture "EnglishOnlyKeyMissing"
+
 # Sanity: the guard must still pass clean on the real, unmodified tree
 # (proves this test file itself, and the fixtures' cleanup, leave no
 # residue behind).

@@ -3,6 +3,7 @@ id: inventory
 title: Bestand & Inventar
 section: Ihr Geschäft einrichten
 order: 120
+public: true
 summary: Verfolgt die vorrätigen Mengen je Artikel und Variante.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 # /locations is never screenshotted (docs-shots only captures routes[0]) —

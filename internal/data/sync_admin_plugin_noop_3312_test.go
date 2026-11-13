@@ -41,7 +41,7 @@ func applyFirst(t *testing.T, rrepo *SyncAdminRepo, bundle AdminBundle) {
 func TestApplyAdmin_IdenticalPluginBundleMovesNoVersion(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedPluginNoopPrimary(t, primary, replica)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -68,7 +68,7 @@ func TestApplyAdmin_IdenticalPluginBundleMovesNoVersion(t *testing.T) {
 func TestApplyAdmin_PluginRowChangesStillApply(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedPluginNoopPrimary(t, primary, replica)
 
 	prepo := NewSyncAdminRepo(primary.DB)
@@ -120,7 +120,7 @@ func TestApplyAdmin_PluginRowChangesStillApply(t *testing.T) {
 func TestApplyAdmin_LocalGlobalPluginSettingWithOtherIDIsReplaced(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedPluginNoopPrimary(t, primary, replica)
 	mustExec(t, replica, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('local-1', 'com.ut.pay', 'currency', '"usd"', 'global')`)
 	mustExec(t, replica, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id) VALUES ('local-reg', 'com.ut.pay', 'reader', '"tmr_1"', 'register', 'till-r')`)
@@ -147,7 +147,7 @@ func TestApplyAdmin_LocalGlobalPluginSettingWithOtherIDIsReplaced(t *testing.T) 
 func TestApplyAdmin_PluginSettingsSwappedKeysApply(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedPluginNoopPrimary(t, primary, replica)
 
 	prepo := NewSyncAdminRepo(primary.DB)

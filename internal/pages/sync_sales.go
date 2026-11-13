@@ -125,6 +125,18 @@ func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (jo
 // ut-docs#1686) is exactly that: a generic branch, not a third special case.
 func permanentJournalFailureReason(err error) string {
 	switch {
+	case errors.Is(err, data.ErrVoucherTopUpRefused) && errors.Is(err, data.ErrVoucherNotFound):
+		// ut-docs#4416: a top-up replay of a voucher this main till has no
+		// row for. Checked before the redemption case below, which would
+		// otherwise claim it (the top-up error wraps ErrVoucherNotFound).
+		// ForceVoucherTopUps lifts the void and ceiling refusals, never an
+		// unknown id, so retrying changes nothing.
+		return "unknown voucher on top-up replay"
+	case errors.Is(err, data.ErrVoucherTopUpRefused) && errors.Is(err, data.ErrVoucherNotMultiPurpose):
+		// ut-docs#4416: the voucher is single-purpose here (its VAT was
+		// fixed at issue); a top-up of it is refused even when forced, and
+		// would be refused identically on every retry.
+		return "single-purpose voucher on top-up replay"
 	case errors.Is(err, data.ErrVoucherNotFound):
 		// Unknown voucher on a redemption replay (ut-docs#1053 scenario 1):
 		// a pre-1.3.0 replica's voucher issue never journaled (the field
@@ -341,6 +353,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		// (warnIfVoucherOverdrawn) rather than poison this replica's
 		// journal forever.
 		AllowVoucherOverdraft: true,
+		// ut-docs#4416: a top-up journaled from an additional till was
+		// already paid for there; credit it even if the voucher was voided
+		// (it stays void) or is over the ceiling since, and surface that
+		// below (warnIfTopUpVoucherUnsound).
+		ForceVoucherTopUps: true,
 	}
 	// Vouchers issued in the journaled sale (ut-docs#1053): reconstructed
 	// with their ORIGINAL ids/labels/amounts so the primary books the same
@@ -479,6 +496,9 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// Also guarded by the SaleExists idempotency check, so at most once per
 	// sale.
 	warnIfVoucherOverdrawn(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
+	// …and for a force-applied top-up (ut-docs#4416) of a voucher that is
+	// void or over the ceiling by now.
+	warnIfTopUpVoucherUnsound(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
 	// This node's stock genuinely changed when replaying the remote sale, so
 	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
 	// the SaleExists idempotency check above, so it fires at most once per sale.
@@ -589,6 +609,31 @@ func warnIfVoucherOverdrawn(ctx context.Context, repo *data.POSRepo, in pos.Sale
 	warnIfVoucherOverdrawnReason(ctx, repo, in, source, "offline double-spend force-applied (ut-docs#1053)")
 }
 
+// warnIfTopUpVoucherUnsound surfaces a force-applied top-up (ut-docs#4416)
+// whose voucher ended up void (the credit landed, the voucher stays void) or
+// above pos.MaxVoucherIssueAmount, as a back-office Problem naming the
+// voucher — same Warnf-is-the-surfacing plumbing as warnIfVoucherOverdrawn.
+// Best-effort: the sale already committed.
+func warnIfTopUpVoucherUnsound(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
+	for _, vi := range in.VoucherIssues {
+		if !vi.TopUp {
+			continue
+		}
+		v, err := repo.GetVoucherBalance(ctx, nil, vi.VoucherID)
+		if err != nil {
+			continue
+		}
+		switch {
+		case v.Status == "void":
+			logging.L().Warnf("voucher top-up on a void voucher: %q was topped up by %s after it was voided (balance now %s, status still void) — a manager should refund the customer or reissue the voucher",
+				vi.VoucherID, source, money.FromMinor(v.BalanceMinor))
+		case v.BalanceMinor > pos.MaxVoucherIssueAmount.Minor():
+			logging.L().Warnf("voucher top-up over the limit: %q balance is %s after %s, above the maximum voucher balance — a manager should refund the customer or reissue the voucher",
+				vi.VoucherID, money.FromMinor(v.BalanceMinor), source)
+		}
+	}
+}
+
 // warnIfVoucherOverdrawnReason is warnIfVoucherOverdrawn generalized with an
 // explicit reason suffix — ut-docs#1053's journal-replay callsite keeps its
 // own wording via the wrapper above; pos_api.go's completeTender (ut-docs#1668)
@@ -617,7 +662,7 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("POST /api/sync/sales", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
@@ -659,6 +704,9 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 			// Another till's sales moved the shop-wide stock and the
 			// orders board every linked till reads (ADR-0114 §2).
 			d.NudgeLink(fleetlink.ScopeStock, fleetlink.ScopeOrders)
+			// ut-docs#5074 M4: those sales are in the sales copy's change
+			// log now; tell the other tills at once, not at the next 1 s look.
+			d.PokeSalesMirrorNudge()
 		}
 		if applied > 0 || quarantined > 0 {
 			_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "sales_synced",
@@ -711,6 +759,9 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	syncPushSales(ctx, d, client, primary, bearer)
 	syncPushNoSales(ctx, d, client, primary, bearer)
 	syncPushClearedBaskets(ctx, d, client, primary, bearer)
+	// ut-docs#5074 M7: this till's own day closes for the sales copy; a
+	// no-op (settings reads only) while the copy is off.
+	syncPushCloses(ctx, d, client, primary, bearer, lantls.PeerPinned)
 }
 
 // parseSalesPushCursor splits the stored sync.push_cursor, "<created_at>|<id>"
@@ -760,7 +811,8 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	repo := data.NewPOSRepo(d.Db)
 	cur, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
 	afterAt, afterID := parseSalesPushCursor(cur)
-	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, 50)
+	size := salesPushBatchSize(ctx, d)
+	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, size)
 	if err != nil || len(receipts) == 0 {
 		return
 	}
@@ -778,32 +830,77 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	// tick. RFC3339 UTC strings compare chronologically.
 	pushedAt := salesPushNow().UTC()
 	cutoff := pushedAt.Add(-salesPushSettle).Format(time.RFC3339)
-	newCursor := ""
-	for _, j := range batch {
-		if j.Sale.CreatedAt <= cutoff {
-			newCursor = j.Sale.CreatedAt + "|" + j.Sale.ID
+	url := strings.TrimSuffix(primary, "/") + "/api/sync/sales"
+	post := func(sub []journalSale) error {
+		raw, _ := json.Marshal(sub)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+		if err != nil {
+			return err
 		}
-	}
-	raw, _ := json.Marshal(batch)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimSuffix(primary, "/")+"/api/sync/sales", bytes.NewReader(raw))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	resp, err := client.Do(req)
-	if err != nil {
-		logging.L().Infof("sync push: primary unreachable (%v) — will retry", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := client.Do(req)
+		if err != nil {
+			logging.L().Infof("sync push: primary unreachable (%v) — will retry", err)
+			return err
+		}
+		defer resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+			return nil
+		case http.StatusRequestEntityTooLarge:
+			return fmt.Errorf("%w: %s at %d sale(s)", errPayloadTooLarge, resp.Status, len(sub))
+		}
 		logging.L().Errorf("sync push rejected: %s", resp.Status)
+		return fmt.Errorf("sync push rejected: %s", resp.Status)
+	}
+	// The cursor moves per accepted sub-batch, to its last settled sale, and
+	// never past a sale that sat inside the settle window (ut-docs#5428).
+	held, _, _ := d.Settings.Get(ctx, salesPushHeldKey)
+	held = strings.TrimSpace(held)
+	contacted := false
+	onAccepted := func(sub []journalSale) error {
+		if !contacted {
+			contacted = true
+			now := recordMainContact(ctx, d, time.Now())
+			_ = d.Settings.Set(ctx, "sync.last_push_at", now)
+		}
+		// The batch is ordered by (created_at, id), so the settled sales are
+		// a prefix of it: once one is past the cutoff, every later one is.
+		newCursor := ""
+		for _, j := range sub {
+			if j.Sale.CreatedAt <= cutoff {
+				newCursor = j.Sale.CreatedAt + "|" + j.Sale.ID
+			}
+		}
+		if newCursor != "" {
+			_ = d.Settings.Set(ctx, "sync.push_cursor", newCursor)
+		}
+		if held != "" {
+			for _, j := range sub {
+				if j.Sale.ID == held {
+					_ = d.Settings.Set(ctx, salesPushHeldKey, "")
+					logging.ResolveProblems(SalePushTooLargeProblemKey)
+					held = ""
+					break
+				}
+			}
+		}
+		return nil
+	}
+	sent, finalSize, big, err := postSalesHalving(batch, size, salesPushMaxRequests, post, onAccepted)
+	if big != nil {
+		holdOversizedSale(ctx, d, repo, big.Sale.ID, big.Sale.ReceiptNo)
+	}
+	// A 413 earlier in the tick still shrinks the learned size when a later
+	// request fails otherwise (review O2), so the next tick does not re-send
+	// the refused body; only a fully accepted tick grows it.
+	storeSalesPushBatchSize(ctx, d, size, finalSize, err == nil && sent == len(batch) && big == nil)
+	if err != nil {
 		return
 	}
-	if newCursor != "" {
-		_ = d.Settings.Set(ctx, "sync.push_cursor", newCursor)
+	if big != nil || sent < len(batch) {
+		return // held or capped: the normal tick retries; no rekick on a 413
 	}
 	// A sale held inside the settle window is already on the primary but
 	// still counts as queued; wake the push loop once the window has passed
@@ -812,10 +909,9 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 	// (the clock stepped back): it won't settle in 6s, so kicking would
 	// re-send the batch every 6s; the normal tick picks it up.
 	lastSale := batch[len(batch)-1].Sale
-	if newCursor != lastSale.CreatedAt+"|"+lastSale.ID && lastSale.CreatedAt <= pushedAt.Format(time.RFC3339) {
+	cur2, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
+	if cur2 != lastSale.CreatedAt+"|"+lastSale.ID && lastSale.CreatedAt <= pushedAt.Format(time.RFC3339) {
 		salesPushRekick(d, salesPushSettle+time.Second)
 	}
-	now := recordMainContact(ctx, d, time.Now())
-	_ = d.Settings.Set(ctx, "sync.last_push_at", now)
-	logging.L().Infof("sync push: %d sale(s) journaled to the primary", len(batch))
+	logging.L().Infof("sync push: %d sale(s) journaled to the primary", sent)
 }

@@ -6,7 +6,7 @@
      image whenever the table wasn't found or no LAN-dialable address
      could be built. */}}
 {{ if .ErrKey }}
-<p class="login-error">{{ T .ErrKey }}</p>
+<p class="login-error" role="alert">{{ T .ErrKey }}</p>
 {{ else }}
 <p class="muted">{{ printf (T "tables.qr.caption") .Label }}</p>
 <img src="{{ .QR }}" alt="" width="220" height="220" />

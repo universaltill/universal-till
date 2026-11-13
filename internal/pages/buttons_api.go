@@ -57,10 +57,12 @@ func saleScreenButtons(d *common.Deps, w http.ResponseWriter, r *http.Request, e
 	// template set, so it is built only when a render actually runs. A
 	// cache hit (the common case on GET /) never pays for the clone.
 	renderer := &lazyButtonsRenderer{funcs: httpx.FuncsFor(locale)}
-	// ut-docs#2499: the clamped live browsing mode — ClampBrowsingMode
-	// here rather than trusting RuntimeState verbatim, because a bare
-	// Deps (tests, helpers) carries the zero value "" and the sell
-	// screen must still render the real default, not a fourth shape.
+	// ut-docs#2499, #3438: the browsing mode for THIS operator — their
+	// personal one when allowed, else the shop's (d.ResolvedBrowsingMode).
+	// ClampBrowsingMode stays here because the resolver's fall-through
+	// returns the shop value verbatim, and a bare Deps (tests, helpers)
+	// carries the zero value "" while the sell screen must still render
+	// the real default, not a fourth shape.
 	//
 	// Granted (ut-docs#2361): the jiggle-mode edit/remove badges need to
 	// know up front whether THIS session already holds catalog_management
@@ -71,7 +73,7 @@ func saleScreenButtons(d *common.Deps, w http.ResponseWriter, r *http.Request, e
 	return &ui.ButtonsHTTP{
 		Store:        *d.BtnStore,
 		View:         renderer,
-		BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
+		BrowsingMode: common.ClampBrowsingMode(d.ResolvedBrowsingMode(r)),
 		Granted:      canPerform(d, r, "catalog_management"),
 		EditMode:     editMode,
 		// ut-docs#3605: the Designer's category controls render disabled
@@ -425,13 +427,12 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/buttons/add", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#2312: parsed here (ahead of ui.ButtonsHTTP.Add's own,
 		// idempotent ParseForm call below) so the elevation check has
-		// label/code/itemId/imageUrl to mirror as hidden fields on the
+		// label/code/itemId to mirror as hidden fields on the
 		// dialog's retry -- checkOrElevate itself never touches the body.
 		_ = r.ParseForm()
 		label := r.Form.Get("label")
 		code := r.Form.Get("code")
 		itemID := r.Form.Get("itemId")
-		imageURL := r.Form.Get("imageUrl")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			// ut-docs#2174: the retry target is the Designer's own
@@ -444,7 +445,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "label", Value: label},
 					{Name: "code", Value: code},
 					{Name: "itemId", Value: itemID},
-					{Name: "imageUrl", Value: imageURL},
 				}, elev)
 			return
 		}

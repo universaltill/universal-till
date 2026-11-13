@@ -3,6 +3,7 @@ id: promotions
 title: العروض الترويجية وأكواد الخصم
 section: إعداد متجرك
 order: 125
+public: true
 summary: أنشئ أكواد الخصم وعدّلها وألغِ تفعيلها ليستخدمها العملاء عند الدفع.
 routes: [/promotions]
 ---

@@ -70,14 +70,14 @@ async function sideScrollers(page: Page) {
 }
 
 // ut-docs#3653: a list page swept empty proves nothing about its rows.
-// /promotions and /kitchen-stations have no demo data, and both carry a
-// per-row inline edit form that ran off the phone card's start edge, so
-// give each one row to lay out. The handlers answer every outcome with a
+// /promotions and /kitchen-stations have no demo data (both now edit in a
+// record dialog; their old per-row inline forms ran off the phone card's
+// start edge), so give each one row to lay out. The handlers answer every outcome with a
 // 303 (errors as ?err=…), so check the redirect itself, not the followed
 // 200 — a drifted field name must fail here, not quietly sweep an empty list.
 test.beforeAll(async ({ request }) => {
   const seeds: [string, Record<string, string>, string][] = [
-    ['/api/promotions', { code: 'SWEEP3653', type: 'percent', value_percent: '10', description: 'Phone sweep row', starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '' }, '/promotions'],
+    ['/api/promotions', { code: 'SWEEP3653', type: 'percent', value_percent: '10', description: 'Phone sweep row', starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '' }, '/promotions'], // fixed-date:ok layout seed; /promotions lists by is_active, not dates
     ['/api/kitchen-stations', { name: 'Sweep station 3653', destination_type: 'printer', printer_address: '192.0.2.10:9100' }, '/kitchen-stations'],
   ];
   for (const [url, form, back] of seeds) {

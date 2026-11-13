@@ -3,6 +3,7 @@ package pages
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -32,6 +33,14 @@ func newSyncSalesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	return newSyncSalesTestDepsOn(t, db)
+}
+
+// newSyncSalesTestDepsOn is newSyncSalesTestDeps on a caller-supplied,
+// already-migrated DB (e.g. a till built from a join snapshot, ut-docs#5808).
+// The caller owns closing db and has seeded it (seedForPages) if needed.
+func newSyncSalesTestDepsOn(t *testing.T, db *sql.DB) (*http.ServeMux, *common.Deps) {
+	t.Helper()
 	// payments.method_id has a real FK to payment_methods(id). The real
 	// migration seed only ships cash/card/gift; several sync/voucher tests
 	// in this package use payment method id "voucher" directly (matching

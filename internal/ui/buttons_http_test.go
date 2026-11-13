@@ -47,9 +47,8 @@ func TestButtonsHTTPList_RendersTiles(t *testing.T) {
 	}
 }
 
-func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
+func TestButtonsHTTPAdd_IgnoresImageURL_6097(t *testing.T) {
 	h, db := newButtonsHTTPWithDB(t, "buttons_admin.html")
-	store := &h.Store
 	// One item per case: an item has one quick-button row, so re-adding an
 	// item under another code refreshes its existing row (ut-docs#2698 F1).
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Coffee', 350, 1)`)
@@ -57,11 +56,11 @@ func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i3','S3','Cocoa', 300, 1)`)
 
 	cases := []struct {
-		in, want string
+		in string
 	}{
-		{"coffee.png", "/public/images/coffee.png"},                // bare filename -> local images folder
-		{"/public/uploads/c.png", "/public/uploads/c.png"},         // already public path, untouched
-		{"https://cdn.example/c.png", "https://cdn.example/c.png"}, // absolute URL, untouched
+		{"coffee.png"},                // bare filename
+		{"/public/uploads/c.png"},     // public path
+		{"https://cdn.example/c.png"}, // absolute URL
 	}
 	for i, tc := range cases {
 		form := url.Values{"label": {"Coffee"}, "code": {"C" + string(rune('1'+i))}, "itemId": {"i" + string(rune('1'+i))}, "imageUrl": {tc.in}}
@@ -82,22 +81,17 @@ func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 			t.Fatalf("Add success body should be empty (the retired admin grid is gone), got: %s", rec.Body.String())
 		}
 	}
-	btns, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	// ut-docs#6097: imageUrl is accepted (older clients still send it) but
+	// ignored: no row stores an image_path.
+	var withPath, total int
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(image_path IS NOT NULL),0) FROM shortcut_buttons`).Scan(&total, &withPath); err != nil {
+		t.Fatalf("query: %v", err)
 	}
-	if len(btns) != len(cases) {
-		t.Fatalf("buttons = %d, want %d", len(btns), len(cases))
+	if total != len(cases) {
+		t.Fatalf("buttons = %d, want %d", total, len(cases))
 	}
-	got := map[string]string{}
-	for _, b := range btns {
-		got[b.Code] = b.ImageURL
-	}
-	for i, tc := range cases {
-		code := "C" + string(rune('1'+i))
-		if got[code] != tc.want {
-			t.Fatalf("image for %s = %q, want %q", code, got[code], tc.want)
-		}
+	if withPath != 0 {
+		t.Fatalf("%d buttons stored an image_path, want 0", withPath)
 	}
 }
 

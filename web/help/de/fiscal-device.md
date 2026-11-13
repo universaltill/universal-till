@@ -3,6 +3,7 @@ id: fiscal-device
 title: Fiskalgerät (Türkei)
 section: Ihr Geschäft einrichten
 order: 113
+public: false
 summary: "Sehen Sie, über welche Registrierkasse (YN ÖKC) die Kasse zahlt, ob sie ihre Druckfähigkeit bewiesen hat, und den zuletzt ausgestellten Beleg — das Gerät druckt den gesetzlichen Beleg, die Kasse führt dessen Nummer bei jedem Verkauf mit."
 routes: [/fiscal-device]
 keywords: [fiskal, türkei, türkiye, ÖKC, yazarkasa, registrierkasse, GİB, beleg, gerät, Z-Bericht]

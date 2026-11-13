@@ -2,15 +2,22 @@ package pages
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -154,14 +161,17 @@ func TestOpenShift_HTMLSummaryIsTranslated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Shift opened:") {
-		t.Fatalf("expected the shifts.open_success template, got:\n%s", body)
-	}
-
 	var shiftID string
 	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&shiftID); err != nil {
 		t.Fatal(err)
 	}
+	// ut-docs#5810: plain confirmation, never the internal shift id or an
+	// unfilled format verb.
+	if body := rec.Body.String(); !strings.Contains(body, "Shift opened.") ||
+		strings.Contains(body, shiftID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
+		t.Fatalf("expected the shifts.open_confirmed text without the shift id, got:\n%s", body)
+	}
+
 	if rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+shiftID+"&closing_cash=5000"); rec.Code != http.StatusOK {
 		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
 	}
@@ -177,8 +187,11 @@ func TestOpenShift_HTMLSummaryIsTranslated(t *testing.T) {
 	if recFa.Code != http.StatusOK {
 		t.Fatalf("open (fa locale): %d: %s", recFa.Code, recFa.Body.String())
 	}
-	if !strings.Contains(recFa.Body.String(), "شیفت باز شد") {
-		t.Fatalf("expected the fa translation of shifts.open_success, got:\n%s", recFa.Body.String())
+	// fa has no translation yet (ADR-0160 §2): falls back to English. Once
+	// Weblate delivers fa for shifts.open_confirmed, assert the fa text here
+	// again — this half then proves the HTML branch honours the locale.
+	if body := recFa.Body.String(); !strings.Contains(body, "Shift opened.") || strings.Contains(body, "%") {
+		t.Fatalf("expected the English fallback of shifts.open_confirmed, got:\n%s", body)
 	}
 }
 
@@ -279,6 +292,9 @@ func TestCloseShift_HTMLSummaryIsCurrencyAwareAndTranslated(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpx.InitCurrency("IRT")
+	// ut-docs#5410: these pin the symbol (word) form; auto shows the code.
+	httpx.InitCurrencyDisplay("symbol")
+	t.Cleanup(func() { httpx.InitCurrencyDisplay("") })
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 
 	openAndGetID := func() string {
@@ -709,6 +725,54 @@ func TestCloseShift_SkimAndCountProtocolValidationAre400(t *testing.T) {
 	}
 }
 
+// ut-docs#6159: non-canonical denomination keys and quoted-numeral counts
+// are refused at the write gate on both entry points (JSON and form).
+func TestCloseShift_CountProtocolShapeIs400OnJSONAndForm(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	const wantMsg = "count_protocol must be a flat JSON object of denomination:count"
+
+	regN := 0
+	openAndGetID := func() string {
+		regN++
+		regID := fmt.Sprintf("reg-6159-%d", regN)
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES(?,?,1)`, regID, "Till "+regID); err != nil {
+			t.Fatal(err)
+		}
+		rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"`+regID+`","cashier_id":"user1","opening_cash":10000}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+		}
+		var id string
+		if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE register_id=? AND closed_at IS NULL`, regID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	for _, cp := range []string{`{"abc":3}`, `{"100":"3"}`} {
+		shiftID := openAndGetID()
+		body, err := json.Marshal(map[string]any{"shift_id": shiftID, "closing_cash": 10000, "count_protocol": cp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := postShiftJSON(t, mux, "/api/shifts/close", string(body))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), wantMsg) {
+			t.Errorf("JSON %s: want 400 %q, got %d: %s", cp, wantMsg, rec.Code, rec.Body.String())
+		}
+
+		form := url.Values{"shift_id": {shiftID}, "closing_cash": {"10000"}, "count_protocol": {cp}}
+		req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		frec := httptest.NewRecorder()
+		mux.ServeHTTP(frec, req)
+		if frec.Code != http.StatusBadRequest || !strings.Contains(frec.Body.String(), wantMsg) {
+			t.Errorf("form %s: want 400 %q, got %d: %s", cp, wantMsg, frec.Code, frec.Body.String())
+		}
+	}
+}
+
 func TestRecordCashAdjustment(t *testing.T) {
 	// Auth is exercised separately below (TestRecordCashAdjustment_
 	// RequiresManagerPINWhenAmountRemovesCash and friends); this test is
@@ -797,12 +861,8 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// English locale: sanity check the fragment still renders correctly.
-	// This alone does NOT prove the fix — en.json's translated string is
-	// textually identical to the old hardcoded literal, so this assertion
-	// would pass unchanged against the pre-fix code too. The real
-	// regression proof is the fa-locale assertion below, which only
-	// passes once the message is actually routed through T().
+	// ut-docs#5814: plain confirmation, never the internal adjustment id or
+	// an unfilled format verb.
 	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
 		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -812,13 +872,18 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 	if recEn.Code != http.StatusOK {
 		t.Fatalf("adjustment: %d: %s", recEn.Code, recEn.Body.String())
 	}
-	if body := recEn.Body.String(); !strings.Contains(body, "Adjustment recorded:") {
-		t.Fatalf("expected the shifts.adjustment_success template, got:\n%s", body)
+	var adjID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM audit_log WHERE action='cash_adjustment' LIMIT 1`).Scan(&adjID); err != nil {
+		t.Fatal(err)
+	}
+	if body := recEn.Body.String(); !strings.Contains(body, "Adjustment recorded.") ||
+		strings.Contains(body, adjID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
+		t.Fatalf("expected the shifts.adjustment_confirmed text without the adjustment id, got:\n%s", body)
 	}
 
-	// A non-English locale actually renders translated prose, not the
-	// English template spliced in — this is the assertion that fails
-	// pre-fix (see #1289/#1406's own review record for this same class).
+	// fa has no translation yet (ADR-0160 §2): falls back to English. Once
+	// Weblate delivers fa for shifts.adjustment_confirmed, assert the fa text
+	// here again — this half then proves the HTML branch honours the locale.
 	reqFa := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
 		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
 	reqFa.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -829,8 +894,8 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 	if recFa.Code != http.StatusOK {
 		t.Fatalf("adjustment (fa locale): %d: %s", recFa.Code, recFa.Body.String())
 	}
-	if !strings.Contains(recFa.Body.String(), "اصلاح ثبت شد") {
-		t.Fatalf("expected the fa translation of shifts.adjustment_success, got:\n%s", recFa.Body.String())
+	if body := recFa.Body.String(); !strings.Contains(body, "Adjustment recorded.") || strings.Contains(body, "%") {
+		t.Fatalf("expected the English fallback of shifts.adjustment_confirmed, got:\n%s", body)
 	}
 }
 
@@ -1132,6 +1197,75 @@ func TestPfandRueckgabe_RecordsPayoutAndReducesExpectedCash(t *testing.T) {
 	}
 	if !strings.Contains(rec3.Body.String(), `"expected_cash":4500`) {
 		t.Fatalf("expected expected_cash=4500 reflecting the payout, got %s", rec3.Body.String())
+	}
+}
+
+// ut-docs#5814: the Pfand dialog shares respondAdjustmentSuccess; its HTML
+// confirmation must not carry the internal adjustment id either.
+func TestPfandRueckgabe_HTMLConfirmationHasNoInternalID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/pfandrueckgabe", strings.NewReader("amount=500"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var adjID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM audit_log WHERE action='cash_adjustment' LIMIT 1`).Scan(&adjID); err != nil {
+		t.Fatal(err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Adjustment recorded.") ||
+		strings.Contains(body, adjID) || strings.Contains(body, "%s") || strings.Contains(body, "%!") {
+		t.Fatalf("expected the plain confirmation without the adjustment id, got:\n%s", body)
+	}
+}
+
+// The JSON branch keeps returning adjustment_id for API clients.
+func TestRecordCashAdjustment_JSONStillReturnsAdjustmentID(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`); rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adjustment: %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			AdjustmentID string `json:"adjustment_id"`
+			Success      bool   `json:"success"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Data.AdjustmentID == "" || !out.Data.Success {
+		t.Fatalf("expected adjustment_id and success in JSON, got %s", rec.Body.String())
 	}
 }
 
@@ -1470,5 +1604,259 @@ func TestRecordCashAdjustment_ValidationErrors(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for an empty actor id, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#5755: the close summary carries the shift's no-sale drawer opens.
+// Informational only; times come from time.Now() (guard-fixed-dates).
+
+// nsOpenShift opens a shift on reg1 and returns its id; events recorded after
+// it fall in the shift window (inclusive at both ends, same-second included).
+func nsOpenShift(t *testing.T, mux *http.ServeMux, dp *common.Deps) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT OR IGNORE INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func nsAddEvents(t *testing.T, dp *common.Deps, n int, actor string) {
+	t.Helper()
+	repo := data.NewPOSRepo(dp.Db)
+	for i := 0; i < n; i++ {
+		if _, err := repo.InsertNoSaleEvent(context.Background(), nil, data.NoSaleEvent{
+			CreatedAt: time.Now().UTC().Format(time.RFC3339), RegisterID: "reg1", ActorID: actor,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func nsSeedActors(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('ns-a','alice','Alice','','cashier')`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('ns-b','bob','Bob','','cashier')`,
+	} {
+		if _, err := dp.Db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func nsCloseJSON(t *testing.T, mux *http.ServeMux, id string) json.RawMessage {
+	t.Helper()
+	rec := postShiftJSON(t, mux, "/api/shifts/close", `{"shift_id":"`+id+`","closing_cash":4900}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	d, _, errVal, _ := envelopeOf(t, rec.Body.Bytes())
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null, got %s", errVal)
+	}
+	return d
+}
+
+func TestCloseShift_JSONCarriesNoSaleCount(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	nsSeedActors(t, dp)
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 2, "ns-a")
+	nsAddEvents(t, dp, 1, "ns-b")
+
+	d := nsCloseJSON(t, mux, id)
+	var got struct {
+		NoSaleCount     int                   `json:"no_sale_count"`
+		NoSaleOperators []data.NoSaleOperator `json:"no_sale_operators"`
+		ExpectedCash    int64                 `json:"expected_cash"`
+		Variance        int64                 `json:"variance"`
+	}
+	if err := json.Unmarshal(d, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.NoSaleCount != 3 {
+		t.Fatalf("no_sale_count = %d, want 3 (%s)", got.NoSaleCount, d)
+	}
+	want := []data.NoSaleOperator{{CashierID: "ns-a", DisplayName: "Alice", Count: 2}, {CashierID: "ns-b", DisplayName: "Bob", Count: 1}}
+	if !reflect.DeepEqual(got.NoSaleOperators, want) {
+		t.Fatalf("operators = %+v, want %+v", got.NoSaleOperators, want)
+	}
+	// AC6: never money — same expected/variance as a control shift with no events.
+	if got.ExpectedCash != 5000 || got.Variance != -100 {
+		t.Fatalf("expected 5000/-100 unchanged, got %d/%d", got.ExpectedCash, got.Variance)
+	}
+	var details string
+	if err := dp.Db.QueryRow(`SELECT COALESCE(data_json,'') FROM audit_log WHERE entity_type='shift' AND entity_id=? AND action='close'`, id).Scan(&details); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(details, "no_sale") {
+		t.Fatalf("close audit payload must not carry no-sale data: %s", details)
+	}
+}
+
+func TestCloseShift_JSONOmitsNoSaleWhenZero(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	id := nsOpenShift(t, mux, dp)
+	d := string(nsCloseJSON(t, mux, id))
+	if strings.Contains(d, "no_sale_count") || strings.Contains(d, "no_sale_operators") {
+		t.Fatalf("expected no no-sale fields at 0, got %s", d)
+	}
+}
+
+func TestCloseShift_HTMLAppendsNoSaleLine(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	nsSeedActors(t, dp)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 3, "ns-a")
+
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	base := html.EscapeString(fmt.Sprintf(httpx.T("en", "shifts.close_success"),
+		httpx.FormatMoneyDisplay(5000, "en"), httpx.FormatMoneyDisplay(4900, "en"), httpx.FormatMoneyDisplay(-100, "en")))
+	want := "<div class='success'>" + base + "<br>No-sale drawer opens this shift: 3</div>" + shiftSlipActionsHTML(id)
+	if rec.Body.String() != want {
+		t.Fatalf("body = %q\nwant   %q", rec.Body.String(), want)
+	}
+}
+
+func TestCloseShift_HTMLExactlyUnchangedWhenZero(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	base := html.EscapeString(fmt.Sprintf(httpx.T("en", "shifts.close_success"),
+		httpx.FormatMoneyDisplay(5000, "en"), httpx.FormatMoneyDisplay(4900, "en"), httpx.FormatMoneyDisplay(-100, "en")))
+	if want := "<div class='success'>" + base + "</div>" + shiftSlipActionsHTML(id); rec.Body.String() != want {
+		t.Fatalf("body = %q\nwant   %q", rec.Body.String(), want)
+	}
+}
+
+func TestCloseShift_SkimMessageAlsoGetsNoSaleLine(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	nsSeedActors(t, dp)
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 2, "ns-b")
+
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=5000&skim=3000&skim_reason=to+safe")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	body := strings.TrimSuffix(rec.Body.String(), shiftSlipActionsHTML(id))
+	if !strings.Contains(body, "Skim:") || !strings.Contains(body, "New float:") {
+		t.Fatalf("expected the skim variant, got %s", body)
+	}
+	if !strings.HasSuffix(body, "<br>No-sale drawer opens this shift: 2</div>") {
+		t.Fatalf("expected the no-sale line at the end, got %s", body)
+	}
+}
+
+func TestCloseShift_NoSaleQueryErrorStillCloses(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	if _, err := dp.Db.Exec(`DROP TABLE no_sale_events`); err != nil {
+		t.Fatal(err)
+	}
+	d := string(nsCloseJSON(t, mux, id))
+	if strings.Contains(d, "no_sale_count") {
+		t.Fatalf("expected no no-sale field on a query error, got %s", d)
+	}
+	var closed sql.NullString
+	if err := dp.Db.QueryRow(`SELECT closed_at FROM shifts WHERE id=?`, id).Scan(&closed); err != nil || !closed.Valid || closed.String == "" {
+		t.Fatalf("shift must be closed: %v %v", closed, err)
+	}
+
+	id = nsOpenShift(t, mux, dp)
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "<br>") || !strings.Contains(rec.Body.String(), "Shift closed.") {
+		t.Fatalf("HTML close on error: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#5755 review: the close line's count uses the locale's digit shape,
+// like the money figures before it.
+func TestCloseShift_HTMLNoSaleLineUsesLocaleDigits(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	nsAddEvents(t, dp, 3, "")
+
+	rec := postShiftForm(t, mux, "/api/shifts/close?lang=fa", "shift_id="+id+"&closing_cash=4900")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	body := strings.TrimSuffix(rec.Body.String(), shiftSlipActionsHTML(id))
+	if !strings.HasSuffix(body, "۳</div>") || strings.HasSuffix(body, "3</div>") {
+		t.Fatalf("expected the no-sale count as Extended Arabic-Indic ۳, got %s", body)
+	}
+}
+
+// ut-docs#5841: the close result offers the shift slip.
+func shiftSlipActionsHTML(shiftID string) string {
+	return "<div class='x-report-actions'><button type='button' id='shift-slip-print' class='btn secondary' hx-post='/api/shifts/" + html.EscapeString(url.PathEscape(shiftID)) +
+		"/close-slip/print' hx-target='#shift-slip-print-msg' hx-swap='innerHTML' hx-indicator='#shift-slip-print-busy' hx-disabled-elt='this'>Print shift slip</button>" +
+		"<span id='shift-slip-print-busy' class='htmx-indicator muted' role='status'>Printing…</span></div>" +
+		"<span id='shift-slip-print-msg' class='x-report-print-msg' aria-live='polite'></span>"
+}
+
+func TestCloseShift_HTMLHasSlipButton(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	id := nsOpenShift(t, mux, dp)
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+id+"&closing_cash=4900")
+	body := rec.Body.String()
+	for _, want := range []string{"hx-post='/api/shifts/" + id + "/close-slip/print'", "hx-target='#shift-slip-print-msg'", "id='shift-slip-print-msg'", "Print shift slip"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("close result lacks %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "showModal") {
+		t.Error("no showModal")
+	}
+}
+
+func TestRespondCloseSuccess_SlipURLIsEscaped(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	newShiftsAPITestDeps(t)
+	httpx.InitCurrency("GBP")
+	rec := httptest.NewRecorder()
+	respondCloseSuccess(rec, httptest.NewRequest(http.MethodPost, "/api/shifts/close", nil), ShiftCloseResponse{Success: true, ShiftID: "a/b'c"})
+	body := rec.Body.String()
+	if !strings.Contains(body, "hx-post='/api/shifts/a%2Fb%27c/close-slip/print'") && !strings.Contains(body, "hx-post='/api/shifts/a%2Fb&#39;c/close-slip/print'") {
+		t.Errorf("id not path-escaped: %s", body)
+	}
+	if strings.Contains(body, "a/b'c") {
+		t.Errorf("raw id in markup: %s", body)
+	}
+}
+
+func TestCloseShift_JSONHasShiftID(t *testing.T) {
+	mux, dp := newShiftsAPITestDeps(t)
+	id := nsOpenShift(t, mux, dp)
+	d := nsCloseJSON(t, mux, id)
+	var got struct {
+		ShiftID string `json:"shift_id"`
+	}
+	if err := json.Unmarshal(d, &got); err != nil || got.ShiftID != id {
+		t.Fatalf("shift_id = %q (%v) in %s, want %q", got.ShiftID, err, d, id)
 	}
 }

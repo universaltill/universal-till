@@ -3,6 +3,7 @@ id: guided-tour
 title: Satış ekranında rehberli tur
 section: Günlük satış
 order: 6
+public: true
 summary: İlk oturum açışınızda kendiliğinden başlayan ve Yardım'dan istediğiniz zaman yeniden yapabileceğiniz, satış ekranında bir dakikalık bir tur.
 keywords: [tur, rehberli tur, tanıtım, giriş, ilk kez, işe alıştırma, yeni personel, ipuçları]
 ---

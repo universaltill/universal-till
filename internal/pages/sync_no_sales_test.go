@@ -271,3 +271,23 @@ func TestParseNoSalePushCursor(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5758: a replica's opens journaled over LAN sync never publish
+// till.drawer.no_sale — the replica already did, on its own bus.
+func TestSyncNoSalesAPI_PublishesNoTillDrawerEvent(t *testing.T) {
+	mux, dp := newSyncNoSalesTestDeps(t)
+	ctx := context.Background()
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+		t.Fatal(err)
+	}
+	ch := subscribeNoSaleEvents(t, dp, "com.test.signer", true)
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	body := []byte(`[{"id":"ns-1","created_at":"` + stamp + `"},{"id":"ns-2","created_at":"` + stamp + `"},{"id":"ns-1","created_at":"` + stamp + `"}]`)
+	if rec := postNoSales(t, mux, "token-abc", body); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	assertNoNoSaleEvent(t, ch)
+	if n := eventPublishedRows(t, dp.Db); n != 0 {
+		t.Fatalf("event_published rows = %d, want 0", n)
+	}
+}

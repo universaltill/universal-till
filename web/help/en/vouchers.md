@@ -3,6 +3,7 @@ id: vouchers
 title: Gift vouchers
 section: Everyday selling
 order: 25
+public: true
 summary: Sell gift vouchers by tapping a Gift voucher item — scan the card or let the till create a number — and take them as payment by scanning them at the sale screen or in the payment panel's Split tab.
 keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv, correct, correction, adjust, adjustment, top up, top-up, reload, add value]
 routes: [/vouchers, /vouchers/{id}]
@@ -21,7 +22,7 @@ Selling needs an item whose **Type** is *Gift voucher* in the catalogue (see [Ca
 3. **Value**: the voucher's value, a normal currency amount, e.g. `25.00`. It starts with the item's price when the item has one.
 4. **For** is optional — a name to remember who the voucher was bought for.
 5. **Can be spent on**: **Any purchase** is the everyday voucher; **Specific item (taxed now)** is described below. Tap **Add**.
-6. The voucher joins the basket as its own line, showing its card number. Take the payment as usual (**Payment**, cash, card, …). The receipt lists every voucher under **Vouchers issued** with its number, who it is for, and the number as a barcode, on the printed receipt and on screen, so scanning the receipt later redeems it like a card. For a number the till created, this receipt is where the customer finds it, so hand it over or write the number on the card.
+6. The voucher joins the basket as its own line, showing its card number. Take the payment as usual (**Payment**, cash, card, …). The receipt lists every voucher under **Vouchers issued** with its number, who it is for, and the number as a barcode, on the printed receipt and on screen, so scanning the receipt later redeems it like a card. For a number the till created, this receipt is where the customer finds it, so hand it over or write the number on the card. Turn on **Print each gift voucher on its own slip** (see [Receipts & printing](/help/printing)) to also print each voucher on its own slip, ready to hand over. Where the receipt shows its subtotal and tax lines, a **Vouchers issued** row in the totals (just above the total) carries the face value of the vouchers sold, so the rows add up to the total.
 
 A voucher can be sold on its own, with nothing else in the basket, or together with goods in one sale. Its basket line is always one voucher at its value: it has no quantity buttons or line discount, and a promotion or basket discount never reduces it. Tap ✕ on the line to drop the voucher — no reason is asked, because nothing has left the shop. Selling a voucher is not product revenue and moves no stock: it's recorded as money owed to whoever later spends it, and the goods are taxed when the voucher is spent — see the day-end notes below. A held sale keeps its voucher lines, and the voucher is issued when the sale is paid.
 
@@ -84,7 +85,7 @@ Good to know:
 
 - The page shows the newest 200 vouchers. When there are more it says so — search or filter to find older ones.
 - With no vouchers yet, the page tells you how to start: sell one with a Gift voucher item, or import balances from your previous system.
-- On an additional till, the list shows only the vouchers this till has seen — sold, imported or redeemed here. The full list is on the main till.
+- On an additional till, the list shows only the vouchers this till has seen — sold, imported or redeemed here. The full list is on the main till. To open a voucher sold elsewhere, search for its full card number: the till asks the main till for it.
 
 ## Correcting a balance
 
@@ -112,7 +113,7 @@ A customer can add value to a voucher they already have — the card keeps its n
 1. Open **Menu → Gift vouchers** and tap the voucher's card number.
 2. Under **Top up**, type the **Amount to add**, e.g. `20.00`, and tap **Add to sale**.
 3. The sale screen opens with a gift voucher line for this card number, marked *Top-up*. Add anything else the customer is buying, then take the payment as usual.
-4. When the sale is paid, the voucher's balance goes up by the amount. The receipt lists it under **Vouchers issued** as a *Gift voucher top-up*, with the card number, the amount added and the new balance, and the voucher's **History** shows a **Top-up** line linked to the receipt.
+4. When the sale is paid, the voucher's balance goes up by the amount. The receipt lists it under **Vouchers issued** as a *Gift voucher top-up*, with the card number, the amount added and the new balance, and the voucher's **History** shows a **Top-up** line linked to the receipt. With **Print each gift voucher on its own slip** on, a top-up also prints on its own slip with the amount added, the new balance and **Topped up** with the day of the top-up — see [Receipts & printing](/help/printing).
 
 A used-up voucher becomes **Active** again; its original value never changes. Nothing is added to the voucher until the sale is paid — tap ✕ on the line to drop the top-up. The day-end (Z) report counts a top-up with the vouchers sold in **GUTSCHEINE**. Voiding the sale takes the amount back off the voucher, but only while the customer hasn't spent it.
 
@@ -124,8 +125,30 @@ What can go wrong:
 - A voucher can be topped up once per sale, and it can't pay for its own top-up.
 - A top-up needs an active gift voucher item in the catalogue — if there is none, the page says so.
 - Voiding the sale is refused once part of the topped-up amount has been spent.
-- On an additional till, the page asks you to top up on the main till instead.
+- On an additional till, the main till must be reachable (and up to date) when you add the top-up; if it isn't, the page says so and nothing is added to the sale.
+- On an additional till, a sale that sold or topped up a voucher can't be voided: the till says so and nothing changes, and the voucher keeps its value.
+
+## Printing a voucher's slip again
+
+A customer who lost the gift slip they were handed can have it printed again, without printing the sale's receipt. A manager or admin does this from the voucher's page.
+
+1. Open **Menu → Gift vouchers** and tap the voucher's card number.
+2. Tap **Print voucher slip**. The slip comes out on this till's receipt printer, and the page shows "Slip sent to the printer." With no receipt printer set up on this till, the browser's print dialog opens with just the slip instead; choose a printer there (or save it as a PDF). The page then shows "Print dialog opened for this slip." On a kiosk set up from the till image with no printer at all there is no dialog to open, so the page shows "This till has no printer, so it can't print voucher slips." with a **Set up a receipt printer** link instead of the button. Receipts and gift voucher slips printed through the browser's print dialog are set up to leave out the web address, page title and date. If your browser still adds them, turn off *Headers and footers* (under *More settings* in Chrome and Edge) in the print dialog.
+
+The button shows for an **Active** voucher with a balance, whether or not a receipt printer is set up (except on a printerless kiosk, above) and whether or not **Print each gift voucher on its own slip** is on. The slip carries the shop name and the receipt's header lines (and logo, if your receipt shows one), **Gift voucher** and its value, **For …** when a name was entered, the barcode (on a Regular printer the number prints as text instead), **Issued** with the day the voucher was sold, a line **Reprinted** with today's date (so it can be told from the slip handed over at the sale; it never replaces the **Issued** date), and your own **Text on gift voucher slips** from the [Receipt designer](/help/designer) at the bottom, if you set one. A voucher added by **voucher import** has no **Issued** line, because the till doesn't know when it was really sold — the date it was imported would be misleading. The dates use your shop's date order. No receipt prints and the cash drawer doesn't open. A slip printed through the browser has no logo and prints black on white.
+
+The slip shows the voucher's **original value**, not what is left on it. When the two differ, the page says so above the button — check the current balance on the voucher's page before you hand the slip over.
+
+What can go wrong:
+
+- Only a manager or admin can print a slip.
+- With no receipt printer set up, the slip opens in the browser's print dialog, and the page also links to **Receipt printer** in Settings. The audit log records it as opened in the print dialog, because the till can't tell whether it was printed or the dialog was cancelled.
+- The print dialog can only print on a printer the device itself knows about. On a till with no printer at all it can only save a PDF, and in the Android app it opens Android's print dialog (a printer needs an Android print service, or choose Save as PDF). On a kiosk set up from the till image with no printer at all, the till doesn't open the dialog: it shows the no-printer hint and a **Set up a receipt printer** link instead.
+- If **Print failed** appears, see "Nothing is printing" in [Receipts & printing](/help/printing).
+- A voided or used-up voucher has no button; if it was voided or used up after you opened the page, the till says so and prints nothing.
+- On an additional till the slip prints on that till's own printer. It decides on the main till's status when the main till is reachable, and on this till's own record when it isn't.
+- Every slip printed or opened in the print dialog this way is recorded in the audit log.
 
 ## Day-end reports and other tills
 
-The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).
+The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused, and not on an additional till, which refuses that void) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -373,7 +374,11 @@ var adminTables = []adminTable{
 	//     bundle's fingerprint on every pull, permanently defeating the
 	//     ?have= unchanged-poll check for the ENTIRE bundle, not just this
 	//     table — pinned by TestAdminDumpFingerprint_StableAcrossTillAuthTouch.
-	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at"}},
+	//   - bearer_issued_at, bearer_prev_hash, bearer_prev_expires_at: the
+	//     main till's bearer-rotation state (migration 093, ut-docs#5198).
+	//     The previous hash is a sync-auth secret like bearer_hash; the two
+	//     timestamps are the main till's alone and would only go stale here.
+	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at", "bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at"}},
 }
 
 // nonAdminTables is every OTHER table in the schema, one reason each for why
@@ -396,8 +401,9 @@ var adminTables = []adminTable{
 // reviewer of a future migration, and several tables share one.
 var nonAdminTables = map[string]string{
 	// Already named in this var's own top comment above.
-	"sessions":    "till-local login sessions — meaningless off the issuing till",
-	"item_images": "item photos — files don't travel over this bundle (D2 limit)",
+	"cloud_notices": "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
+	"sessions":      "till-local login sessions — meaningless off the issuing till",
+	"item_images":   "item photos — files don't travel over this bundle (D2 limit)",
 
 	// Migration runner's own bookkeeping (created by internal/db's migrator,
 	// not a numbered migration file itself) — which migrations have applied
@@ -474,15 +480,16 @@ var nonAdminTables = map[string]string{
 	// itself; these underlying rows never travel because a row without the
 	// Ed25519-verified plugin FILES would leave a replica with a phantom
 	// plugin.
-	"plugins":               "installed-plugin rows — travel via SyncPluginsRepo's own bundle, not this one",
-	"plugin_catalog":        "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
-	"plugin_entries":        "plugin-contributed menu/hook entries — recreated on re-install, not synced",
-	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
-	"plugin_provides":       "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
-	"plugin_markets":        "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
-	"plugin_schedules":      "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",
-	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
-	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
+	"plugins":                 "installed-plugin rows — travel via SyncPluginsRepo's own bundle, not this one",
+	"plugin_catalog":          "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
+	"plugin_entries":          "plugin-contributed menu/hook entries — recreated on re-install, not synced",
+	"plugin_hooks":            "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_provides":         "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
+	"plugin_markets":          "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
+	"plugin_schedules":        "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",
+	"plugin_revoked_releases": "mirror of the marketplace revocation feed (ut-docs#5658): every till polls and records it for itself; rewritten wholesale on each poll, so syncing it till-to-till would only race the feed",
+	"plugin_install_status":   "install-progress bookkeeping — SyncPluginsRepo's own source table",
+	"plugin_permissions":      "granted permissions for one installed plugin instance — recreated on re-install",
 
 	// Sync's own internal bookkeeping — syncing the sync mechanism's state
 	// to itself would be circular.
@@ -617,6 +624,27 @@ var nonAdminTables = map[string]string{
 	// validates locally and the replay force-applies as before
 	// (AllowVoucherOverdraft, ut-docs#1053).
 	"vouchers": "shop-wide voucher balance, runtime-mutable across tills — kept per-till; cross-till redemption is reserved live on the primary and keyed (voucher_id, sale_id) for the journal replay (ADR-0084), not a synced table",
+
+	// ut-docs#5074: the read-only sales copy and the main till's change log.
+	// The copy travels by its own feed (GET /api/sync/sales-mirror, one-way,
+	// main → additional till), never in the admin bundle: a primary-wins
+	// bundle with deleteMissing would wipe every additional till's copy of
+	// other tills' sales, and the copy is per-till state by nature. Only
+	// internal/data/sales_mirror_repo.go reads these tables
+	// (guard-sales-mirror-isolation.sh); the names below are classification only.
+	"mirror_sale_arrivals":       "when the previous main till applied a sale this till made (ut-docs#5777) — local copy bookkeeping, same reasoning as mirror_sales",                 // sales-mirror:allow table classification
+	"mirror_sales":               "read-only copy of the shop's sales on an additional till (ut-docs#5074) — its own feed, never the admin bundle",                                    // sales-mirror:allow table classification
+	"mirror_sale_lines":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_line_modifiers": "child of mirror_sale_lines (ut-docs#5074) — same reasoning",                                                                                        // sales-mirror:allow table classification
+	"mirror_payments":            "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_charges":        "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_discounts":      "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_links":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_closes":              "read-only copy of every till's day closes (ut-docs#5074) — never report_archive, never the admin bundle",                                           // sales-mirror:allow table classification
+	"mirror_state":               "this till's own copy cursor/epoch/pause state (ut-docs#5074) — purely local",                                                                       // sales-mirror:allow table classification
+	"sales_mirror_log":           "the main till's change log feeding the sales copy (ut-docs#5074) — main-till-local, served by its own feed",                                        // sales-mirror:allow table classification
+	"sales_mirror_acks":          "the main till's per-till copy acknowledgements (ut-docs#5074) — main-till-local prune state",                                                       // sales-mirror:allow table classification
+	"peer_closes":                "the additional tills' own day closes the main till relays in the sales copy (ut-docs#5074 M7) — never the admin bundle, never this till's Z chain", // sales-mirror:allow table classification
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
@@ -696,6 +724,26 @@ func TourDoneSettingsKey(userID string) string {
 // the same id.
 const TillIdentityCloudIDSettingsKey = "till_identity.cloud_id"
 
+// TillIdentityOwnDiscoveryIDSettingsKey holds the discovery id this till
+// minted itself (ClearReplicaIdentity, or the ut-docs#5897 boot repair). Its
+// presence means lan_discovery.till_id is not inherited from a former main
+// till. Per till ("till_identity." prefix), like TillIdentityCloudIDSettingsKey.
+const TillIdentityOwnDiscoveryIDSettingsKey = "till_identity.discovery_id_own"
+
+// TillIdentityInheritedDiscoveryIDSettingsKey holds the former main till's id
+// the ut-docs#5897 boot repair replaced. Per till and kept live on a backup
+// restore (db.RestoreKeepsLivePrefixes), so a restore of a pre-repair backup,
+// which brings that id back into lan_discovery.till_id, is repaired again.
+const TillIdentityInheritedDiscoveryIDSettingsKey = "till_identity.discovery_id_inherited"
+
+// LANDiscoveryTillIDSettingsKey is the till's LAN discovery id: what the mDNS
+// advertiser announces, what verification codes and primary proofs are signed
+// with, and what the scan's "self" filter compares against
+// (discovery.TillIDSettingKey aliases it; data cannot import discovery).
+// Shop-wide (ShopWideSettingPrefixes), so a joined till holds its main till's
+// value; ClearReplicaIdentity mints a fresh one on promote (ut-docs#5893).
+const LANDiscoveryTillIDSettingsKey = "lan_discovery.till_id"
+
 // DeviceInfoIDSettingsKey holds the stable device id the device_id_get host
 // function hands a plugin holding device-info (ADR-0140, ut-docs#3862): a
 // v4 UUID minted on first use and never reset — not on a marketplace
@@ -711,6 +759,10 @@ const (
 	BackupCopiedAtSettingsKey  = "backup.last_copied_at"
 	BackupCopySinceSettingsKey = "backup.copy_reminder_since"
 )
+
+// BackupRetentionDaysSettingsKey is how many days of backups this till keeps
+// (ut-docs#3092). Per till: each till prunes its own disk.
+const BackupRetentionDaysSettingsKey = "backup.retention_days"
 
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
@@ -739,7 +791,10 @@ const (
 // registers each replica's own device (internal/enroll, POST
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
-	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey,
+	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey, BackupRetentionDaysSettingsKey,
+	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
+	// this till's own (each device pulls and tracks read state for itself).
+	"notices.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is
@@ -748,6 +803,9 @@ var PerTillSettingPrefixes = []string{
 	// ut-docs#2783: this till's own theme. A full key used as a prefix, like
 	// the two above; no other settings key starts with "theme".
 	ThemeSettingsKey,
+	// ut-docs#5479: when THIS till last looked for its built-in language's
+	// first-party bundle (a throttle; a replica takes the language from its main till).
+	"i18n.builtin_bundle_checked",
 	// The same three entries as db.TillCloudIdentityPrefixes (the join
 	// snapshot's redaction; internal/db can't import this package) —
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
@@ -1019,11 +1077,20 @@ type AdminApplyResult struct {
 	ErasedCustomerIDs []string
 }
 
+// ErrNotReplica: ApplyAdminWithResult refused because this till has no
+// sync.primary_url, i.e. it is not (or, after a promote that won the race,
+// no longer) a replica. Nothing was written (ut-docs#5896).
+var ErrNotReplica = errors.New("apply admin: this till is not a replica (no sync.primary_url)")
+
 // ApplyAdminWithResult makes this till's admin state match the bundle, in
 // one transaction: first delete rows the primary no longer has (children
 // first; sales-referenced rows fall back to is_active=0), then upsert
 // everything. Tables absent from the bundle are left untouched. The result
 // is only meaningful when err is nil (the transaction committed).
+//
+// Refuses with ErrNotReplica, writing nothing, when this till has no
+// sync.primary_url (checked inside the transaction, so a concurrent promote
+// always wins; ut-docs#5896).
 func (r *SyncAdminRepo) ApplyAdminWithResult(ctx context.Context, bundle AdminBundle) (AdminApplyResult, error) {
 	var res AdminApplyResult
 	if err := r.applyAdmin(ctx, bundle, &res); err != nil {
@@ -1038,6 +1105,21 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		return fmt.Errorf("apply admin: %w", err)
 	}
 	defer tx.Rollback()
+
+	// ut-docs#5896: the pull tick read sync.primary_url before its HTTP round
+	// trip and asset sync. A promote (ClearReplicaIdentity) that commits in
+	// between must win: the bundle carries the OLD main till's shop-wide
+	// lan_discovery.till_id and till.name. The DB uses _txlock=immediate, so
+	// this read is serialised against promote's tx; either promote committed
+	// first (blank: refuse) or this apply commits first (promote then
+	// overwrites).
+	primaryURL, _, err := AgentSettingRaw(ctx, tx, "sync.primary_url")
+	if err != nil {
+		return fmt.Errorf("apply admin: read sync.primary_url: %w", err)
+	}
+	if strings.TrimSpace(primaryURL) == "" {
+		return ErrNotReplica
+	}
 
 	// ut-docs#1589 (found in #1554's own review): permission_actions and
 	// BUILT-IN roles are migration-seeded catalog rows nothing in this
@@ -1191,11 +1273,31 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		// first, over the same recs slice, exactly as before; only the
 		// final write is batched.
 		toApply := recs
-		if t.name == "settings" || t.name == "country_settings" {
+		if t.name == "settings" || t.name == "country_settings" || t.name == "promotions" {
 			toApply = make([]map[string]any, 0, len(recs))
 			for _, rec := range recs {
 				if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
 					continue // defense in depth: never let a primary write per-till keys
+				}
+				if t.name == "promotions" {
+					// ut-docs#5590: an older main till can still send a promo
+					// whose customer_id names a customer that no longer exists
+					// (migration 097 repaired it here, and the customers table
+					// above no longer holds it). Raw, that fails the whole apply
+					// with FOREIGN KEY 787. Apply it the way 097 repairs it:
+					// unlinked AND inactive, never just unlinked (NULL means
+					// "any customer"). customers sync before promotions, so a
+					// customer arriving in this bundle is already present.
+					if cid, ok := rec["customer_id"]; ok && cid != nil {
+						var one int
+						err := tx.QueryRowContext(ctx, `SELECT 1 FROM customers WHERE id = ?`, fmt.Sprint(cid)).Scan(&one)
+						if errors.Is(err, sql.ErrNoRows) {
+							rec["customer_id"] = nil
+							rec["is_active"] = 0
+						} else if err != nil {
+							return fmt.Errorf("apply promotions: check customer: %w", err)
+						}
+					}
 				}
 				if t.name == "country_settings" {
 					// ut-docs#1669: upsertRows below writes archive_min_days
@@ -2189,6 +2291,11 @@ var ShopWideSettingPrefixes = []string{
 	// Fiscal posture and override state (fiscal.pending_sign_retries is
 	// per-till, above).
 	"fiscal.",
+	// The read-only sales copy's shop switch, epoch, window and caps
+	// (ut-docs#5074): set on the main till, carried to every till so each
+	// additional till knows whether to copy (sync.sales_mirror_off, the
+	// per-till kill switch, is under "sync." above).
+	"sales_mirror.",
 	// Kiosk behaviour, the idle-lock policy, shop-wide report options
 	// (reports.eod_* is per-till), auto-update schedule, setup state.
 	"kiosk.", "auth.", "reports.", "update.", "setup.",

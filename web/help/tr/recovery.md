@@ -3,6 +3,7 @@ id: recovery
 title: Kurtarma ekranı
 section: İşi yürütme
 order: 255
+public: true
 summary: Kasa başlatılamazsa ne görürsünüz ve o ekrandaki her eylem ne işe yarar.
 keywords: [kurtarma, hata, başlamıyor, çökme, yeniden dene, güvenli mod, bozuk, günlük, günlük dosyası, sorun giderme]
 ---

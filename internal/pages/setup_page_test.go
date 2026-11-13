@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -380,6 +381,12 @@ func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
 		"over 60 runes": {"till_name": {strings.Repeat("é", 61)}},
 	}
 	for label, extra := range cases {
+		// ut-docs#5862: a bad character has its own message; the rest keep
+		// the name-required one.
+		errKey := "tills.pairing.error.name_required_field"
+		if label == "control char" {
+			errKey = "common.error.name_invalid_characters"
+		}
 		t.Run(label, func(t *testing.T) {
 			mux, svc, d := newFullAuthDeps(t)
 			form := url.Values{
@@ -395,8 +402,8 @@ func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
 				t.Fatalf("code=%d loc=%q, want a 200 wizard re-render", rec.Code, rec.Header().Get("Location"))
 			}
 			body := rec.Body.String()
-			want := template.HTMLEscapeString(httpx.T("en", "tills.pairing.error.name_required_field"))
-			if !strings.Contains(body, `<p class="login-error">`+want+`</p>`) {
+			want := template.HTMLEscapeString(httpx.T("en", errKey))
+			if !strings.Contains(body, `<p class="login-error" role="alert">`+want+`</p>`) {
 				t.Errorf("re-render lacks the %q error: %s", want, body)
 			}
 			if !strings.Contains(body, "step: 4,") {
@@ -1233,4 +1240,52 @@ func TestSetupWizardSeedsGiftVoucherItemInShopLanguage(t *testing.T) {
 			t.Fatalf("gift voucher items after a refused submission = %q", got)
 		}
 	})
+}
+
+// ut-docs#5774: the wizard's shop-name cap is config.MaxStoreNameRunes (the
+// Settings and ut-cloud limit), counted in runes, not bytes.
+func TestSetupWizardShopNameLimitMatchesConfig(t *testing.T) {
+	limit := config.MaxStoreNameRunes
+	cases := []struct {
+		name    string
+		store   string
+		refused bool
+	}{
+		{"max ASCII runes", strings.Repeat("a", limit), false},
+		{"max multibyte runes", strings.Repeat("é", limit), false},
+		{"over max", strings.Repeat("a", limit+1), true},
+		{"over max multibyte", strings.Repeat("é", limit+1), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, svc, d := newFullAuthDeps(t)
+			rec := postForm(mux, "/api/setup", url.Values{
+				"pin": {"2468"}, "pin_confirm": {"2468"},
+				"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+				"store_name": {tc.store}, "till_name": {"Front"},
+			}, nil)
+			fb, _ := svc.NeedsFirstBoot(t.Context())
+			sn, _, _ := d.Settings.Get(t.Context(), "store.name")
+			if tc.refused {
+				if rec.Code != http.StatusOK || !fb || sn == tc.store {
+					t.Fatalf("code=%d firstBoot=%v: want refusal with nothing persisted", rec.Code, fb)
+				}
+				return
+			}
+			if fb || sn != tc.store {
+				t.Fatalf("code=%d firstBoot=%v saved=%d runes: want accepted", rec.Code, fb, len([]rune(sn)))
+			}
+		})
+	}
+}
+
+func TestShopNameInputsCarryConfigMaxlength(t *testing.T) {
+	withOSLocale(t, "", "") // an OS locale sends a fresh /setup to the language step first
+	want := `name="store_name" maxlength="` + strconv.Itoa(config.MaxStoreNameRunes) + `"`
+	mux, _, _ := newFullAuthDeps(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("GET /setup code=%d: body lacks %s", rec.Code, want)
+	}
 }

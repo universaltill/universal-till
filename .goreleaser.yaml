@@ -16,7 +16,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys={{ .Env.UT_RELEASE_KEYS_HEX }}"]
     goos: [linux]
     goarch: [amd64, arm64]
   - id: windows
@@ -24,7 +24,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys={{ .Env.UT_RELEASE_KEYS_HEX }}"]
     goos: [windows]
     goarch: [amd64]
     hooks:
@@ -48,7 +48,7 @@ builds:
       - CC=x86_64-w64-mingw32-gcc
       - CXX=x86_64-w64-mingw32-g++
     flags: [-trimpath, -tags=desktop]
-    ldflags: ["-s -w -H windowsgui -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -H windowsgui -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys={{ .Env.UT_RELEASE_KEYS_HEX }}"]
     goos: [windows]
     goarch: [amd64]
     hooks:
@@ -67,7 +67,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys={{ .Env.UT_RELEASE_KEYS_HEX }}"]
     goos: [darwin]
     goarch: [arm64]
   # Friendly .deb uninstaller (ut-docs#1083): backs the shop's database up
@@ -97,7 +97,7 @@ builds:
     main: ./cmd/unitill-uninstall
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys={{ .Env.UT_RELEASE_KEYS_HEX }}"]
     goos: [linux]
     goarch: [amd64, arm64]
     hooks:
@@ -322,9 +322,16 @@ release:
     copy: unzip and double-click `unitill-desktop.exe` (or `run-unitill.bat`
     for the browser flavour).
 
-    **macOS:** unzip, then double-click `run-unitill.command`. The first time,
-    macOS may say the developer is unidentified — right-click the file, choose
-    **Open**, then **Open** again (a one-time step until we ship a signed build).
+    **macOS (Apple Silicon — M1 or later; Intel Macs aren't supported):** open
+    **`unitill-pos-*-macOS-arm64.dmg`** and drag Universal Till to
+    Applications. The app is signed and notarized, so it opens after macOS's
+    one-time "downloaded from the internet" confirmation. The `.dmg` is added
+    shortly after the release is published — if it isn't listed yet, check back
+    or use the portable copy. If macOS still blocks the app, open System
+    Settings → Privacy & Security and choose **Open Anyway**. Portable copy:
+    extract the macOS `.tar.gz` and double-click `run-unitill.command`. That
+    file is not signed, so macOS blocks the first double-click — use **Open
+    Anyway** the same way (a one-time step).
 
     **Linux desktop app:** after installing the `.deb`, "Universal Till" is in
     the applications menu (its own window, like the mac/windows app). From the

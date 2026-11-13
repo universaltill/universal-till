@@ -26,7 +26,7 @@ var permissionGroups = []permissionGroup{
 	{Key: "staff", Actions: []string{"user_management", "permission_management"}},
 	{Key: "settings", Actions: []string{"settings", "sync_management", "data_management", "personal_display"}},
 	{Key: "plugins", Actions: []string{"plugin_management"}},
-	{Key: "system", Actions: []string{"issue_reporting"}},
+	{Key: "system", Actions: []string{"issue_reporting", "notices.view"}},
 }
 
 // permissionHiddenActions lists permission_actions rows /users/permissions

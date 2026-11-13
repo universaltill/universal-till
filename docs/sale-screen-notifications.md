@@ -49,6 +49,32 @@ It is the pattern for any admin page's message spot from here on — see
 2. **Client-side** (`#pos-alert` in `web/ui/pages/index.html`): filled by
    `app.js` on `htmx:responseError` / `htmx:sendError` with localized
    strings carried on `data-msg-*` attributes (JS stays locale-free).
+   A network failure of a PIN/confirm prompt's form (`data-after-request`
+   `elevation-done`) shows `data-msg-outcome-unknown` instead (ut-docs#5298:
+   the action may or may not have run). It is sticky: the self-heal does not
+   hide it and a later generic network alert does not overwrite it; only ✕,
+   a server error or an explicit new message clears it.
+   Prompt forms and, since ut-docs#5404, every user-initiated htmx request
+   (click/submit/change/input/key events) get a client timeout, except on the never-timed paths below
+   (`utRequestTimeoutMs()`, 30 s, alias `utPromptTimeoutMs()`, set on
+   `htmx:configRequest`); `htmx:timeout` on a GET shows the network text, on
+   any other verb (or a prompt) the sticky timeout text
+   `data-msg-outcome-timeout` (ut-docs#5463: "The till did not reply in time, so
+   this may or may not have been done"; the till was slow, the connection was
+   fine, falling back to the outcome-unknown text if a page lacks the
+   attribute). `htmx:sendError` on a prompt and the `utPostWithElevation`
+   fetch path keep `data-msg-outcome-unknown`. Never timed:
+   `load`/`every`/custom-event refreshes, `htmx.ajax`, boosted navigation,
+   multipart uploads, the backup/import/update/pairing-restart paths, the
+   tender/refund/kiosk-checkout paths (the server bounds them; its
+   payment-gate deadline is a 30 s floor) and the till-join paths, and
+   anything under `data-ut-no-timeout` (put it on a new long-running action).
+   A new long-running POST route goes in `UT_UNBOUNDED_PATHS` and in
+   `unboundedRoutes` (`internal/pages/unbounded_routes_test.go`), which
+   `TestUnboundedRoutesMatchAppJS` keeps paired.
+   `htmx.config.timeout` stays 0.
+   `utPostWithElevation` aborts each leg the same way after the same time,
+   except on those listed paths (ut-docs#5454).
    Before #213 a failed request surfaced nothing at all.
 3. **A response fragment that IS a notice** (ut-docs#238):
    `httpx.RenderNotice(w, locale, level, key, extra...)` writes the markup
@@ -82,6 +108,47 @@ A 400 response whose body is a rendered basket fragment (contains
 `id="basket"`) is swapped in and NOT treated as an htmx error — the
 specific server-rendered notice wins over the generic alert
 (`htmx:beforeSwap` handler in `app.js`).
+
+## Notices from Universal Till and partners (ADR-0176, ut-docs#5366)
+
+A fifth and sixth slot, same component, fed from the local `cloud_notices`
+table (never the network, never the sale path). Off unless the per-till
+setting `notices.enabled` is on; all of it needs the permission
+`notices.view` except the critical strip.
+
+- **Two new modifiers:** `.pos-notice.important` (warning tint) and
+  `.pos-notice.critical` (danger tint, 2 px border). Severity is also a glyph
+  shape (circle info, triangle important, octagon critical), never colour alone.
+- **Important toast** (`#notices-toast`, first child of `.products`, in flow,
+  `GET /notices/toast`): at most one, once per notice id+revision, 10 s
+  (`data-dismiss-ms`; `scheduleToastDismiss` honours it and pauses while the
+  toast is hovered, focused or touched), two-line body, Open + dismiss. It is
+  **never rendered while `#payment-overlay` is open**: app.js cancels the
+  poll, the server only marks a toast shown when it renders, so the notice
+  stays queued and appears once the overlay closes. Dismissing leaves the
+  notice in the inbox. Info notices never toast.
+- **Critical strip** (`#notices-strip`, `GET /notices/strip`, every page,
+  outside `<main>`): one line, sticky until a manager or admin presses
+  Acknowledge (`acked_at`, reported to the cloud; the notice stays unread until
+  opened). `.critical` is excluded from auto-expiry. A cashier without
+  `notices.view` sees the strip read-only ("A manager has been told. You can
+  keep selling."): no link, no button, no history. A partner can never send a
+  critical, and the till refuses one.
+- **Live region:** the two mounts are persistent `aria-live="polite"`
+  regions; never `role="alert"`, never focus-stealing.
+- **Bell** (`#notices-bell`, rail status group above Help; on a phone a row of
+  the burger drawer): unread count capped at "9+", a square badge with a
+  triangle when a critical is unread, and a count-aware label on the burger.
+- **Inbox** (`GET /notices`): Unread / All tabs, rows expand in place (opening
+  marks read), sender chip rendered by the server (partner = dashed outline),
+  Dismiss, Acknowledge on critical rows.
+- **Safe rendering:** titles and sender names go through `html/template`
+  escaping; bodies through `cloudnotice.RenderBody` (escape first, then bold,
+  italic, https links to `universaltill.com` hosts, line breaks); a link action
+  is re-validated at render (`cloudnotice.ParseLink`), `https` opens with
+  `rel="noopener noreferrer"`, no remote content.
+- **Nothing blocks a sale:** no overlay, no `showModal`, no sound; a failed
+  render is an empty fragment.
 
 ## Out of scope
 

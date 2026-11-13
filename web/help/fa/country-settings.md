@@ -3,6 +3,7 @@ id: country-settings
 title: تنظیمات کشور
 section: راه‌اندازی
 order: 145
+public: true
 summary: "واحد پول، نرخ مالیات و مدت نگهداری بایگانی پیش‌فرض هر کشور، و روش تغییر آن‌ها برای فروشگاه خودتان."
 keywords: [کشور, واحد پول, مالیات, نگهداری, بایگانی, منطقه, پیش‌فرض]
 routes: [/country-settings]

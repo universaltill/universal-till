@@ -52,8 +52,10 @@ type SalesAggregateHour struct {
 // SalesAggregatePayment is one payment method's net takings for the day,
 // mirroring EODMethod (In − Out: amount − change_given, sales minus
 // returns — so it INCLUDES tips, exactly like EODMethod.In) plus the
-// method's tips (EODTip). ExpectedCash is the cash method's net cash taken
-// (cash tendered − change given − cash refunded), zero for any other method.
+// method's tips (EODTip). ExpectedCash is the cash method's takings net of
+// change and refunds, MINUS cash tips — the Z-report's CashSales, not
+// expected drawer cash (no float, no adjustments, no tips); the wire name
+// expected_cash_minor is a shipped contract. Zero for any other method.
 type SalesAggregatePayment struct {
 	Method       string
 	Amount       money.Money
@@ -241,8 +243,8 @@ GROUP BY h ORDER BY h`, args...)
 	// Payment methods: EODMethod's In − Out and EODTip's tip sum, one pass.
 	rows, err = r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0)
-  - COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0),
+  `+tenderInSQL+`
+  - `+tenderOutSQL+`,
   COALESCE(SUM(p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
@@ -509,4 +511,30 @@ func (r *POSRepo) PruneSalesAggregateUploads(ctx context.Context, before string)
 		return 0, fmt.Errorf("prune sales aggregate uploads: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// ResetSalesAggregateUploads forgets every daily rollup this till uploaded
+// (ut-docs#5127): after the till moves into another shop, the days are owed
+// to the new shop, so they upload again under it. The cloud replaces a day
+// rather than adding to it, so a re-send never double-counts.
+func (r *POSRepo) ResetSalesAggregateUploads(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM sales_aggregate_uploads`); err != nil {
+		return fmt.Errorf("reset sales aggregate uploads: %w", err)
+	}
+	return nil
+}
+
+// HasTradingHistory reports whether this till has any sale (live or
+// archived) or any archived close report (ut-docs#5127): such a till must
+// never silently re-pair as a new device, which would leave that history
+// behind in its old shop.
+func (r *POSRepo) HasTradingHistory(ctx context.Context) (bool, error) {
+	var has bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sales)
+		OR EXISTS (SELECT 1 FROM sales_archive)
+		OR EXISTS (SELECT 1 FROM report_archive)`).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("check trading history: %w", err)
+	}
+	return has, nil
 }

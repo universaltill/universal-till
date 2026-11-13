@@ -1,11 +1,38 @@
 {{ define "content" }}
+<style>
+/* ut-docs#6167: margin 0 leaves the browser no margin box for its header/footer
+   (title, /invoice URL, date); .invoice-doc supplies its own inset below. */
+@page { margin: 0; }
+@media print {
+  html, body { background: #fff !important; }
+  body { display: block !important; overflow: visible !important; margin: 0 !important;
+         padding: 0 !important; min-block-size: 0 !important; }
+  /* Only the invoice prints: hide every element that neither is, contains nor sits in .invoice-doc
+     (rail, status bar, notices, scrim, OSK, panels) - the voucher-slip pattern (ut-docs#6152). */
+  body *:not(:has(.invoice-doc)):not(.invoice-doc):not(.invoice-doc *) { display: none !important; }
+  body *:has(.invoice-doc) { display: block !important; position: static !important; margin: 0 !important;
+    padding: 0 !important; border: 0 !important; block-size: auto !important; min-block-size: 0 !important;
+    max-inline-size: none !important; inline-size: auto !important; overflow: visible !important;
+    background: #fff !important; }
+  .invoice-doc { padding-inline: 15mm; padding-block: 15mm; box-sizing: border-box;
+    -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .invoice-actions { display: none !important; }
+  .invoice-doc, .invoice-doc * { color: #000 !important; }
+  .invoice-sheet { background: #fff !important; box-shadow: none !important; border: 0 !important;
+    border-radius: 0 !important; padding: 0 !important; }
+  .invoice-sheet tr { break-inside: avoid; }
+  /* keep a line's unit-price/modifier sub-row on the same page as the line */
+  .invoice-sheet tr:has(+ tr.muted) { break-after: avoid; }
+}
+</style>
+<div class="invoice-doc">
 <!-- ut-docs#4393: page-head-wrap + a wrapping action row, as journal_detail.html
      (ut-docs#4279) — at a 360px phone the title and Print / ← Receipt were
      forced onto one line: no sideways scroll, but the h1 was squeezed to
      ~120px and the invoice number broke mid-token. -->
 <div class="page-head page-head-wrap">
   <h1>{{ if .IsCreditNote }}{{ T "invoice.credit_note" }}{{ else if .Seller.VATNo }}{{ T "invoice.tax_title" }}{{ else }}{{ T "invoice.title" }}{{ end }} {{ .Inv.DisplayNo }}</h1>
-  <div style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center">
+  <div class="invoice-actions" style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center">
     <button class="btn" data-action="print">🖨 {{ T "invoice.print" }}</button>
     <a class="btn secondary" href="/journal/{{ .Sale.ReceiptNo }}"><span class="back-arrow" aria-hidden="true">←</span> {{ T "journal.detail.title" }}</a>
   </div>
@@ -58,5 +85,6 @@
   </table>
 
   <div style="text-align:center; margin-top:.8rem">{{ barcodesvg .Inv.DisplayNo }}</div>
+</div>
 </div>
 {{ end }}

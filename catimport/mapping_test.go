@@ -239,9 +239,25 @@ func TestMappableFieldsAreNeutral(t *testing.T) {
 	for _, f := range MappableFields() {
 		mappable[f] = true
 	}
+	// Neutral fields deliberately absent from the mapping screen.
+	neutralNotMappable := map[string]string{
+		"shopify_type":  "format-specific hint, not a column to map",
+		"reorder_level": "cloud never masters reorder levels (ADR-0036); ut-docs#2084",
+		"reorder_alert": "gate for reorder_level",
+	}
 	for f := range columnSynonyms {
-		if !formatOnlyFields[f] && !mappable[f] && f != "shopify_type" {
+		if _, exempt := neutralNotMappable[f]; !formatOnlyFields[f] && !mappable[f] && !exempt {
 			t.Errorf("neutral field %q is missing from MappableFields", f)
+		}
+	}
+}
+
+// ut-docs#2084: reorder level is read by synonyms only; the cloud mapping
+// screen's field list must not grow.
+func TestMappableFieldsExcludeReorder(t *testing.T) {
+	for _, f := range MappableFields() {
+		if f == "reorder_level" || f == "reorder_alert" {
+			t.Errorf("%q must not be mappable", f)
 		}
 	}
 }

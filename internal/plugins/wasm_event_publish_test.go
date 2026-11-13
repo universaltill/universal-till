@@ -109,11 +109,15 @@ func TestEventPublishRefusesOutsideOwnNamespace(t *testing.T) {
 		"com.test.other.tick", // another plugin's namespace
 		"sale.x",              // core namespace
 		"sale.completed",      // a real core event
-		"com.test.pubx.tick",  // own id without the dot boundary
-		"com.test.pub",        // the bare id, no event name
-		"com.test.pub.",       // empty name segment
-		"COM.TEST.PUB.TICK",   // not lower-case
-		"",                    // empty
+		"shift.opened",        // core roots added by ut-docs#5768
+		"till.drawer.no_sale",
+		"agent.action.result",
+		"charge.policy.ask",
+		"com.test.pubx.tick", // own id without the dot boundary
+		"com.test.pub",       // the bare id, no event name
+		"com.test.pub.",      // empty name segment
+		"COM.TEST.PUB.TICK",  // not lower-case
+		"",                   // empty
 	} {
 		if got := callPublish(t, m, hs, typ, []byte(`{}`)); got != hostErrDenied {
 			t.Errorf("publish %q = %d, want %d (denied)", typ, got, hostErrDenied)
@@ -714,5 +718,20 @@ func TestCorePublishKeepsPerEventAudit(t *testing.T) {
 	}
 	if n := auditCount(t, d, "event_dispatch", "status=enqueued"); n != 3 {
 		t.Fatalf("enqueued rows = %d, want 3", n)
+	}
+}
+
+// ut-docs#5768: a plugin id that shares a core root (as an install from
+// before the root was reserved could) is still refused at publish by the
+// core-root check, not only by the own-prefix rule.
+func TestCheckPluginEventName_NewCoreRoots(t *testing.T) {
+	for _, c := range []struct{ id, ev string }{
+		{"shift", "shift.opened"}, {"till", "till.drawer.no_sale"},
+		{"agent", "agent.action.result"}, {"charge", "charge.policy.ask"},
+		{"inventory", "inventory.adjusted"}, {"report", "report.generated"},
+	} {
+		if err := checkPluginEventName(c.id, c.ev); !errors.Is(err, errEventNameCoreRoot) {
+			t.Errorf("checkPluginEventName(%q, %q) = %v, want errEventNameCoreRoot", c.id, c.ev, err)
+		}
 	}
 }

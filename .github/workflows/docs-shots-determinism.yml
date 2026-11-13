@@ -42,6 +42,8 @@ on:
       - 'e2e/scripts/resolve-chromium.sh'
       - 'e2e/run-till.sh'
       - 'e2e/run-till-auth.sh'
+      - 'e2e/run-till-move.sh'
+      - 'e2e/fake-move-cloud.mjs'
       - 'e2e/seed_docs_sales/**'
       - 'e2e/package.json'
       - 'e2e/package-lock.json'
@@ -58,6 +60,10 @@ on:
 # this job — a required-status-check gate reads that as "waiting forever"
 # and makes those PRs permanently unmergeable. Same warning as
 # lang-pack-drift.yml's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   determinism:
     runs-on: ubuntu-latest

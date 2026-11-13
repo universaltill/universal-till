@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -115,14 +116,21 @@ func TestStoreHasOwner(t *testing.T) {
 	for _, c := range []struct {
 		name         string
 		plan, status string
+		claimed      string // entitlement.claimed row; "" = never told (ut-docs#3532)
 		want         bool
 	}{
-		{"no cached entitlement", "", "", false},
-		{"free plan, no subscription", "local", "none", false},
-		{"paid plan, active", "pro", "active", true},
-		{"paid plan, lapsed", "shop", "lapsed", true},
-		{"local plan, lapsed subscription", "local", "lapsed", true},
-		{"unknown plan", "gold", "none", false},
+		{"no cached entitlement", "", "", "", false},
+		{"free plan, no subscription", "local", "none", "", false},
+		{"paid plan, active", "pro", "active", "", true},
+		{"paid plan, lapsed", "shop", "lapsed", "", true},
+		{"local plan, lapsed subscription", "local", "lapsed", "", true},
+		{"unknown plan", "gold", "none", "", false},
+		{"claimed, free plan", "local", "none", "true", true},
+		{"claimed, nothing else cached", "", "", "true", true},
+		{"unclaimed signal beats a paid plan", "pro", "active", "false", false},
+		{"unclaimed signal, free plan", "local", "none", "false", false},
+		{"garbage signal falls back: free", "local", "none", "garbage", false},
+		{"garbage signal falls back: paid", "pro", "active", "garbage", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
@@ -132,9 +140,93 @@ func TestStoreHasOwner(t *testing.T) {
 			if c.status != "" {
 				_ = d.Settings.Set(t.Context(), entitlement.KeySubscriptionStatus, c.status)
 			}
+			if c.claimed != "" {
+				_ = d.Settings.Set(t.Context(), entitlement.KeyStoreClaimed, c.claimed)
+			}
 			if got := storeHasOwner(t.Context(), d.Settings); got != c.want {
 				t.Fatalf("storeHasOwner = %t, want %t", got, c.want)
 			}
 		})
+	}
+}
+
+// ut-docs#5157: a till whose data was restored onto a new device shows a
+// "connect again" chip until it is registered or paired again.
+func TestCloudAuthChip_RestoredVariantAndGating(t *testing.T) {
+	const label = "Restored on a new device — connect again"
+	for _, c := range []struct {
+		name     string
+		restored bool
+		status   enroll.Status
+		want     bool
+	}{
+		{"restored and unregistered", true, enroll.Status{}, true},
+		{"restored but registered again", true, enroll.Status{Registered: true}, false},
+		{"restored but vouched by the main till", true, enroll.Status{ViaMainTill: true}, false},
+		{"not restored", false, enroll.Status{}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
+			orig := restoredChipStatus
+			restoredChipStatus = func() enroll.Status { return c.status }
+			t.Cleanup(func() { restoredChipStatus = orig })
+			if c.restored {
+				if err := d.Settings.Set(t.Context(), "till_identity.restored_at", "2026-10-01T00:00:00Z"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec := getAs(mux, "/ui/cloud-auth-chip", &mgrUser)
+			body := rec.Body.String()
+			if !c.want {
+				if strings.Contains(body, "restored") {
+					t.Fatalf("restored chip must not show: %s", body)
+				}
+				return
+			}
+			for _, w := range []string{label, `data-cloud-auth="restored"`, `href="/settings#registration"`} {
+				if !strings.Contains(body, w) {
+					t.Fatalf("body lacks %q: %s", w, body)
+				}
+			}
+			if strings.Contains(body, "<dialog") || strings.Contains(body, "showModal") {
+				t.Fatalf("chip must never be a modal: %s", body)
+			}
+		})
+	}
+}
+
+// ut-docs#5162: a restored replica is told to join the main till again (the
+// status-bar chip and the Tills page); the "connect again" cloud chip would
+// point it at Settings → Registration, which is the wrong fix for a replica.
+func TestCloudAuthChip_RestoredHiddenOnReplica(t *testing.T) {
+	mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
+	orig := restoredChipStatus
+	restoredChipStatus = func() enroll.Status { return enroll.Status{} }
+	t.Cleanup(func() { restoredChipStatus = orig })
+	for k, v := range map[string]string{"till_identity.restored_at": "2026-10-01T00:00:00Z", "sync.primary_url": "http://192.168.1.5:8080"} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
+	if strings.Contains(body, "restored") {
+		t.Fatalf("the restored chip must not show on a replica: %s", body)
+	}
+}
+
+// ut-docs#3532: a claimed store that never subscribed (local/none) is told
+// to pair again, not to register a duplicate store.
+func TestCloudAuthChip_ClaimedFreeStoreSaysRepair(t *testing.T) {
+	mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{Show: true, Code: cloudsync.AuthCodeTokenRetired})
+	for k, v := range map[string]string{
+		entitlement.KeyPlan: "local", entitlement.KeySubscriptionStatus: "none", entitlement.KeyStoreClaimed: "true",
+	} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
+	if !strings.Contains(body, `data-cloud-auth="repair"`) {
+		t.Fatalf("claimed free store must see the repair chip, got %s", body)
 	}
 }

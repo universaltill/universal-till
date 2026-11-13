@@ -43,7 +43,7 @@ func readEntitlementCache(t *testing.T, db *sql.DB) map[string]string {
 var seededCache = map[string]string{
 	entitlement.KeyPlan:               "pro",
 	entitlement.KeySubscriptionStatus: "active",
-	entitlement.KeyExpiresAt:          "2026-12-01T00:00:00Z",
+	entitlement.KeyExpiresAt:          "2026-12-01T00:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 	entitlement.KeyLastConfirmedAt:    "2026-09-20T08:00:00Z",
 }
 

@@ -134,7 +134,7 @@
              downloaded APK. A file:// URI is rejected outright from API 24
              (FileUriExposedException) — this app's own minSdk — so the
              content:// grant is the only route, not a modern-Android nicety.
-             Scoped to the app's external files dir (res/xml/file_paths.xml),
+             Scoped to the app-private filesDir/updates (res/xml/file_paths.xml),
              never the shared Downloads collection. -->
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -145,6 +145,13 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- ut-docs#5190: item photo from the system camera (see CaptureFileProvider). -->
+        <provider
+            android:name=".CaptureFileProvider"
+            android:authorities="${applicationId}.captures"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <activity
             android:name=".MainActivity"

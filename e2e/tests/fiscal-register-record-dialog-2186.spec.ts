@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { watchConsole, gotoSettled, clickThenReload } from './helpers';
+import { watchConsole, gotoSettled, clickThenReload, answerTillConfirm } from './helpers';
 
 // ut-docs#2403: e2e coverage for /fiscal-register's record_dialog
 // VIEW-MODE behaviour shipped in ut-docs#2186, mirroring
@@ -85,8 +85,10 @@ async function deactivateRegister(page: Page, name: string): Promise<void> {
   await page.locator('#registers-table .register-row', { hasText: name }).first().click();
   const dlg = page.locator('#register-dialog');
   await expect(dlg).toBeVisible();
-  page.once('dialog', (d) => d.accept());
-  await clickThenReload(page, () => dlg.locator('form[data-record-when="active=1"] button[type="submit"]').click());
+  await clickThenReload(page, async () => {
+    await dlg.locator('form[data-record-when="active=1"] button[type="submit"]').click();
+    await answerTillConfirm(page, 'confirm');
+  });
   await page.waitForLoadState('networkidle');
 }
 
@@ -271,8 +273,10 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
     await expect(decommissionForm).toBeVisible();
     const decommissionBtn = decommissionForm.locator('button[type="submit"]');
 
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => decommissionBtn.click());
+    await clickThenReload(page, async () => {
+      await decommissionBtn.click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(row).toContainText('Decommissioned');
 
     // Reopen: decommission is now absent -- one-directional, no way back

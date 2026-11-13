@@ -420,6 +420,7 @@ type pluginSettingView struct {
 	Key, Value  string
 	Secret      bool // rendered masked; its value is never sent to the page
 	IsSet       bool // a value already exists (for the "leave blank to keep" hint)
+	Unreadable  bool // a sealed value exists but this till cannot open it: enter it again (ut-docs#5157)
 	PerTill     bool // register-scoped: this till's own value, never synced
 	Typed       bool // rendered as the typed takeaway-overrides editor instead
 	TaxRows     []taxOverrideRow
@@ -517,6 +518,7 @@ func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo,
 		}
 		if sv.Secret {
 			sv.IsSet = v != ""
+			sv.Unreadable = row.Unreadable
 			sv.Value = "" // never render a secret's value into the page — not even a refused, just-typed one
 			views = append(views, sv)
 			continue
@@ -877,7 +879,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	pageData := func(r *http.Request, pluginID string, views []pluginSettingView, formOnly bool, extra map[string]any) map[string]any {
 		out := map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"PluginID":  pluginID,
 			"Settings":  views,

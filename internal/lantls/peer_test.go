@@ -19,6 +19,11 @@ type peerTill struct {
 	base       string // plain base URL, what sync.primary_url holds
 	cert       *Cert
 	tls, plain atomic.Int32
+	// rotateHdr makes every answer carry BearerRotateHeader.
+	rotateHdr atomic.Bool
+	// requireBearer, when set, makes every request without exactly that
+	// bearer a 401 (ut-docs#5203).
+	requireBearer atomic.Value
 }
 
 func newPeerTill(t *testing.T) *peerTill {
@@ -37,6 +42,13 @@ func newPeerTill(t *testing.T) *peerTill {
 			p.tls.Add(1)
 		} else {
 			p.plain.Add(1)
+		}
+		if want, _ := p.requireBearer.Load().(string); want != "" && r.Header.Get("Authorization") != "Bearer "+want {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if p.rotateHdr.Load() {
+			w.Header().Set(BearerRotateHeader, "1")
 		}
 		fmt.Fprintf(w, "tls=%v", r.TLS != nil)
 	})}

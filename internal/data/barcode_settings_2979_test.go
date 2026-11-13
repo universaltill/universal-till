@@ -49,7 +49,7 @@ func TestNextBarcodeSymbologySet_NoRowStartsFromDefaults(t *testing.T) {
 func TestApplyAdmin_InvalidatesBarcodeSymbologyCache(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	repo := NewSettingsRepo(replica.DB)
 	if _, err := repo.EnabledBarcodeSymbologies(ctx); err != nil { // prime the cache
 		t.Fatal(err)

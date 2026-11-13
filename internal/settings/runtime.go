@@ -25,6 +25,12 @@ func (s *Store) LoadRuntimeConfig(ctx context.Context, cfg *config.Config) {
 		cfg.Locales.Currency = curr
 	}
 
+	// store.currency_display (ut-docs#5410): an unknown stored value is
+	// auto; unset leaves cfg's default.
+	if mode, _, _ := s.Get(ctx, "store.currency_display"); mode != "" {
+		cfg.Locales.CurrencyDisplay = displayOrAuto(mode)
+	}
+
 	locale, _, _ := s.Get(ctx, "store.locale")
 	if locale != "" {
 		cfg.Locales.Locale = locale
@@ -62,12 +68,13 @@ func (s *Store) storedTaxRate(ctx context.Context) (string, error) {
 // round-trip silently wrote UT_TAX_RATE's "20" over the shop's own rate.
 func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error {
 	kv := map[string]string{
-		"theme":               cfg.Theme,
-		"store.name":          cfg.StoreName,
-		"store.currency":      cfg.Locales.Currency,
-		"store.locale":        cfg.Locales.Locale,
-		"store.tax_inclusive": strconv.FormatBool(cfg.Locales.TaxInclusive),
-		"store.tax_rate":      taxrate.FormatPercent(cfg.Locales.TaxRateBP),
+		"theme":                  cfg.Theme,
+		"store.name":             cfg.StoreName,
+		"store.currency":         cfg.Locales.Currency,
+		"store.currency_display": displayOrAuto(cfg.Locales.CurrencyDisplay),
+		"store.locale":           cfg.Locales.Locale,
+		"store.tax_inclusive":    strconv.FormatBool(cfg.Locales.TaxInclusive),
+		"store.tax_rate":         taxrate.FormatPercent(cfg.Locales.TaxRateBP),
 	}
 	// ut-docs#4273: a placeholder (the UT_STORE_NAME default "My Store",
 	// blank, the cloud's default) is never written. LoadRuntimeConfig
@@ -90,4 +97,12 @@ func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error
 		}
 	}
 	return s.SetMany(ctx, kv)
+}
+
+// displayOrAuto normalises a config value to a storable display mode.
+func displayOrAuto(mode string) string {
+	if mode == "symbol" || mode == "code" {
+		return mode
+	}
+	return "auto"
 }

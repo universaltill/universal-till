@@ -3,6 +3,7 @@ id: invoices
 title: Faturalar ve vergili fatura
 section: İşi yürütme
 order: 220
+public: true
 summary: Bir satış için gerçek (vergili) fatura düzenleyin — kurumsal müşteriler veya başlıklı fatura gereken her yer için.
 routes: [/invoices, /invoice/{display_no}]
 ---

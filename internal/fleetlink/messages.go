@@ -26,11 +26,16 @@ const (
 	ScopeHeldSales Scope = "held_sales"
 	ScopeTables    Scope = "tables"
 	ScopeOrders    Scope = "orders"
+	// ScopeSalesMirror (ut-docs#5074, ADR-0114 amendment 2026-10-26): the
+	// main till's sales-copy change log moved; pull the copy from your
+	// cursor (GET /api/sync/sales-mirror). Like every scope it carries no
+	// data. An older till ignores the unknown scope (no bit).
+	ScopeSalesMirror Scope = "sales_mirror"
 )
 
 // allScopes fixes both the bit each scope owns in a peer's dirty mask and
 // the order scopes are listed in a sync frame.
-var allScopes = []Scope{ScopeAdmin, ScopePlugins, ScopeStock, ScopeHeldSales, ScopeTables, ScopeOrders}
+var allScopes = []Scope{ScopeAdmin, ScopePlugins, ScopeStock, ScopeHeldSales, ScopeTables, ScopeOrders, ScopeSalesMirror}
 
 func scopeBit(s Scope) uint32 {
 	for i, v := range allScopes {
@@ -162,6 +167,14 @@ func (c *CloudCheckinPayload) merge(scopes []string, linkVersion int64) {
 type FleetPayload struct {
 	Target string `json:"target"`
 	Now    bool   `json:"now"`
+}
+
+// PairingPayload is the one frame a pending link carries (main → joining
+// till, ADR-0114 amendment 2026-11-03, ut-docs#5297): the request's outcome,
+// never the token — the joining till fetches that over the per-id GET. A
+// paired till's Client never sees it (it does not travel on a bearer link).
+type PairingPayload struct {
+	Status string `json:"status"` // PairingApproved | PairingDenied | PairingExpired
 }
 
 // ByePayload says why a side is closing (ADR-0114 §2).

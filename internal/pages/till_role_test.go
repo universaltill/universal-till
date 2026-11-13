@@ -500,7 +500,7 @@ func TestDisplayMode_AdditionalToSelfOrderAsksFirstThenBecomesSatellite(t *testi
 		t.Fatalf("self_order on an additional till: %d %q, want the confirm prompt", rec.Code, rec.Header().Get("X-UT-Response"))
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`id="confirm-modal"`, "Make this a satellite?", "Make satellite", `name="confirm_satellite" value="1"`, `hx-post="/api/settings/display-mode"`} {
+	for _, want := range []string{`id="confirm-modal"`, "data-ut-escape-close", "data-ut-prompt", "Make this a satellite?", "Make satellite", `name="confirm_satellite" value="1"`, `hx-post="/api/settings/display-mode"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("confirm prompt missing %q:\n%s", want, body)
 		}

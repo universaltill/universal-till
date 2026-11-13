@@ -159,6 +159,13 @@ func TestCloudSetCatalogImage_CategorySetClear(t *testing.T) {
 	if n := cloudAuditCount(t, dp, "cloud_catalog_image_set", "cat-1"); n != 1 {
 		t.Fatalf("audit rows = %d", n)
 	}
+	// ut-docs#3601: a replay is a no-op although the kept icon is set.
+	if _, err := hooks.SetCatalogImage(ctx, setImage("category", "cat-1", body, nil, &calls)); err != nil {
+		t.Fatal(err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_catalog_image_set", "cat-1"); n != 1 {
+		t.Fatalf("a set replay added an audit row: %d", n)
+	}
 	// The categories report carries the served photo's sha (rule 5), the
 	// effective icon ("": the photo shows) and the stored one (ut-docs#3585).
 	var reported map[string]any
@@ -184,6 +191,12 @@ func TestCloudSetCatalogImage_CategorySetClear(t *testing.T) {
 	}
 	if n := cloudAuditCount(t, dp, "cloud_catalog_image_cleared", "cat-1"); n != 1 {
 		t.Fatalf("clear audit rows = %d", n)
+	}
+	if _, err := hooks.SetCatalogImage(ctx, cloudsync.CatalogImage{Entity: "category", ID: "cat-1", Clear: true}); err != nil {
+		t.Fatal(err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_catalog_image_cleared", "cat-1"); n != 1 {
+		t.Fatalf("a clear replay added an audit row: %d", n)
 	}
 	for _, c := range remoteCategoriesReport(ctx, dp) {
 		if c["id"] == "cat-1" && c["image_sha256"] != "" {

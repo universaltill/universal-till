@@ -802,7 +802,9 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // /vouchers (ut-docs#4251) have {wildcard} children (GET /help/{topic}), so a deeper path
 // (/help/a/b) is unclaimed and would fall through to the catch-all inside
 // core's namespace (ut-docs#3791).
-// /settings, /catalog, /users, /open-orders, /recovery register only
+// /settings, /catalog, /users, /open-orders, /recovery, /shifts (POST
+// /shifts/x-report, ut-docs#5797), /reports (POST /reports/eod/x-report,
+// ut-docs#5800) register only
 // literal multi-segment children (/settings/menu, /catalog/tax-codes) and
 // no subtree catch-all of their own, so any other child
 // (/settings/vendor-x) is unclaimed and falls through to the catch-all the
@@ -817,7 +819,8 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
-	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders",
+	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders", "/notices",
+	"/shifts", "/reports",
 }
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under
@@ -1337,6 +1340,13 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	defer tx.Rollback()
 
 	now := time.Now().UTC()
+
+	// 0-. A release the marketplace revoked is never persisted, whichever
+	// install path got here (ut-docs#5658). Nothing is written: the tx is
+	// rolled back. A different version of the same id passes.
+	if err := CheckNotRevoked(ctx, repo, tx, m.ID, m.Version); err != nil {
+		return err
+	}
 
 	// 0. Payment-entry keys become payment_methods ids verbatim — a key
 	// colliding with a built-in tender or another plugin's method must be

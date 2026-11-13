@@ -21,18 +21,34 @@ portable `.tar.gz` (unzip + double-click a `.command`).
   it uses the per-user dir `~/Library/Application Support/UniversalTill`
   (`internal/paths`), so it survives app replacement.
 
-## Signing & Gatekeeper (why it opens without a paid cert)
+## Signing & Gatekeeper
 
-The bundle is **ad-hoc codesigned** (`codesign --sign -`). This is required:
-Apple Silicon kills unsigned arm64 binaries on launch. Ad-hoc signing is *not*
-Apple notarization, so a **downloaded** copy is quarantined and Gatekeeper
-still asks the user to confirm the first launch. The `.dmg`
-(`packaging/macos/make-dmg.sh`) makes that easy:
+Release builds in `universaltill/universal-till` (`release.yml` `macos-app`)
+are always **Developer ID signed and notarized**. `macos-app` refuses to build
+(preflight step `scripts/ci/check-macos-release-secrets.sh`, ut-docs#6025) when
+any signing secret (`MACOS_SIGN_IDENTITY`, the `MACOS_CERT_*` pair), or a
+complete notary set (the API-key trio or the Apple-ID trio of `MACOS_NOTARY_*`),
+is missing. The job fails naming the missing secrets, the other platforms
+still publish, and no `.dmg` is attached. Fix the secret and re-run the failed
+jobs. `packaging/macos/make-dmg.sh` codesigns the `.dmg`,
+notarizes and staples it, and the `.dmg` is attached to the already-published
+release afterwards. A notarized download opens after macOS's one-time
+"downloaded from the internet" confirmation.
 
-- drag `Universal Till.app` to the `Applications` symlink, then either
-- **right-click the app → Open** once (the standard unsigned-app path), or
-- double-click **“Open Universal Till.command”** in the DMG, which clears the
+Builds without those secrets (forks and local builds only) are **ad-hoc codesigned**
+(`codesign --sign -`) — required, as Apple Silicon kills unsigned arm64
+binaries on launch. Ad-hoc signing is *not* notarization, so a **downloaded**
+copy is quarantined and Gatekeeper blocks the first launch. On macOS 15+
+right-click → Open no longer overrides Gatekeeper (ut-docs#3803); the user
+either:
+
+- opens System Settings → Privacy & Security and chooses **Open Anyway**
+  (a one-time step), or
+- double-clicks **“Open Universal Till.command”** in the DMG, which clears the
   quarantine attribute and launches it.
+
+The portable `tar.gz` (`run-unitill.command`) is never signed and needs
+**Open Anyway** the same way.
 
 ### Hardened runtime and entitlements (ut-docs#5023)
 
@@ -56,7 +72,7 @@ packaging/macos/make-dmg.sh   <version> dist/macos   # → dist/macos/unitill-po
 ```
 
 CI builds and attaches the `.dmg` on every `v*` tag (the `macos-app` job in
-`.github/workflows/release.yml`, on a `macos-14` Apple Silicon runner). The
+`.github/workflows/release.yml`, on a `macos-15` Apple Silicon runner). The
 download page offers it as the primary macOS download.
 
 ## Proper signing + notarization (removes the Gatekeeper prompt)
@@ -96,11 +112,14 @@ packaging/macos/make-dmg.sh   <version> dist/macos   # notarizes + staples the .
 (hardened runtime + secure timestamp, as notarization requires) and ad-hoc
 signs otherwise. `make-dmg.sh` notarizes + staples when the notary credentials
 are present. With neither, the current free ad-hoc behavior is unchanged.
+Setting `MACOS_REQUIRE_NOTARIZED=1` (release.yml does, upstream) makes
+`make-dmg.sh` fail instead of producing an ad-hoc or un-notarized `.dmg`.
 
 ### CI (release pipeline)
 
 The `macos-app` job in `.github/workflows/release.yml` signs + notarizes
-automatically once these **repo secrets** exist (absent → ad-hoc, as today):
+automatically once these **repo secrets** exist (absent → the job fails in its
+preflight step, ut-docs#6025; forks build ad-hoc):
 
 **Configured 2026-09-26 (ut-docs#2870).** Source of truth is the Key Vault
 `kv-unitill-dev` (`apple-devid-p12`, `apple-devid-p12-password`,
@@ -117,6 +136,9 @@ automatically once these **repo secrets** exist (absent → ad-hoc, as today):
 | `MACOS_NOTARY_ISSUER_ID` | the Issuer ID |
 | `MACOS_NOTARY_TEAM_ID` | 10-char Team ID |
 
+`MACOS_NOTARY_TEAM_ID` alone does not count: a partial Apple-ID trio is ignored
+while the API key is complete.
+
 The API key is preferred (`packaging/macos/notary-args.sh`): scoped, revocable
 in App Store Connect, not a personal Apple ID password. It is written to a
 0600 temp file for `notarytool --key` and deleted once notarization ends. The Apple
@@ -130,13 +152,76 @@ without `--wait`, writes the submission id to the job summary (check it with
 (`NOTARY_TIMEOUT`, 45m in CI; job `timeout-minutes: 90`). Only status
 `Accepted` passes. `publish-release` does not need `macos-app`: Linux, Windows
 and Android go live first, and `macos-dmg-attach` attaches the `.dmg` (and
-folds its `checksums.txt` line, then re-verifies every asset) after publish,
+folds its `checksums.txt` line, re-signs it when release signing is armed
+(ADR-0178: `checksums.txt.sig` keeps its line, the new bytes get a second),
+then re-verifies every asset) after publish,
 only if `macos-app` succeeded. On a timeout or rejection `macos-app` fails
 loudly and nothing is attached — never an un-notarized `.dmg`. Recover with
 "Re-run failed jobs" on that run (never cancel a release); that builds and
 submits a **new** `.dmg` — the recorded id is only for `notarytool info/log`
 diagnosis. Mac tills whose nightly auto-update falls between publish and the
 attach retry the next night (the updater fails closed on a missing `.dmg`).
+
+If `macos-app` is cancelled because GitHub never gave it a runner ("The job
+was not acquired by Runner of type hosted", ut-docs#5175),
+`.github/workflows/release-runner-retry.yml` re-runs it automatically
+(`scripts/ci/release-runner-retry.sh`): only when `publish-release`
+succeeded (post-publish case) and every failed job is runner-starved, at most
+once in practice (bounded by `MAX_ATTEMPTS=3`). Real failures are never
+retried automatically.
+
+A starved job *before* publish (ut-docs#5205), e.g. `linux-shells` on the
+hosted arm pool, skips `goreleaser` and `publish-release`, and the jobs that
+wait for the release (`windows-installer`, `macos-app`, `android-app`,
+`verify-versions`) are skipped too instead of failing. The runner retry then
+re-runs the failed jobs on attempt 1 only (`PREPUBLISH_MAX_ATTEMPTS=2`: a
+re-run started with `GITHUB_TOKEN` may not fire another `workflow_run`), and
+`cleanup-orphaned-tag` keeps the tag and draft for it. It asks the same script
+(`release-runner-retry.sh keep-tag`), so both agree; on attempt 2, with any
+real failure, or on any API error the tag is deleted as before and a fresh
+release is dispatched. `release-runner-retry_test.sh` pins the rule and the
+`release.yml` wiring. Every job that gates `publish-release` runs on Linux
+(`verify-versions` moved off `macos-14` in ut-docs#5200, pinned by
+`release-macos-nonblocking_test.sh`), so a starved macOS pool can only delay
+the .dmg, never the release.
+
+The macOS PR jobs `ios-ci` and `desktop-darwin` get the same treatment from
+`.github/workflows/ci-runner-retry.yml` (`scripts/ci/ci-runner-retry.sh`,
+ut-docs#5490): a runner-starved run is re-run once in practice; real failures
+and fork PRs' runs are not.
+
+A starved `goreleaser` or `android-app` (cancelled, ut-docs#5209) no longer
+cascades: `windows-installer`, `macos-app`, `android-app` and `verify-versions`
+skip when `goreleaser` was cancelled, and `verify-versions` also when
+`android-app` was. A goreleaser *failure* still runs them. The retry then sees
+only the one starved job and re-runs it.
+
+Before a pre-publish re-run the retry checks that the release tag still
+exists. `cleanup-orphaned-tag` runs seconds after the cancel and can delete the
+tag before the starvation annotation is readable, while the retry reads it
+fine later. The retry gets the tag from `head_branch` (tag push) or from
+`cleanup-orphaned-tag`'s keep warning (dispatch). If the tag is gone or
+cannot be confirmed, it does not re-run and prints a warning: for a dispatch,
+dispatch a fresh release and delete a leftover tag by hand if there is one;
+for a tag push, use "Re-run failed jobs" by hand if the tag exists. A starved
+`prepare` never made a tag, so that re-run needs no check. If the retry never
+comes (the `workflow_run` was not delivered, the retry job was itself starved,
+the re-run request failed or it was refused), `release-orphan-tag-sweep.yml`
+cleans up: it runs hourly and, for a `workflow_dispatch` Release run that
+failed at least 2 hours ago (within 72 hours) whose latest
+`cleanup-orphaned-tag` carries the keep warning and whose `publish-release`
+did not succeed, deletes the draft release(s) and then the tag, so the version
+is not burned (ut-docs#5211). Only the newest Release run (any event) is ever eligible, because a re-dispatch
+recreates the same tag name and its in-flight draft; an orphan from an older run
+is not swept (its version is already skipped) and needs a manual delete if
+wanted. Before deleting it also checks the tag is the annotated one that run's
+`prepare` created (object sha equal to the run's head sha, tagger
+`github-actions[bot]`, message `Release <tag>`) and that no published release
+exists for it (two independent lookups). It never touches a pushed tag, a tag whose
+release is published, or a run still in progress, and does nothing if the
+releases lookup fails. Its job holds only `contents: write` (delete the draft
+and tag ref), `actions: read` and `checks: read`. Dispatch a fresh release
+afterwards.
 
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the

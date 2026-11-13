@@ -16,13 +16,6 @@
 //                                  as repeated "ids" fields (the body shape
 //                                  /api/categories/reorder and
 //                                  /api/designer/categories/reorder share)
-//     data-reorder-refresh         optional htmx event fired on <body> after
-//                                  a save, for a page that must re-render
-//                                  from the server's truth. The Designer no
-//                                  longer sets it (ut-docs#3074: a re-render
-//                                  repainted the whole replica and lost the
-//                                  scroll position) -- it listens for
-//                                  list-reorder:saved instead
 //     data-reorder-live            id of a visually-hidden aria-live region
 //                                  for announcements
 //     data-reorder-msg             optional id of a visible message region
@@ -32,6 +25,16 @@
 //     data-reorder-msg-failed      shown when a save is refused / fails
 //   [data-reorder-id]              an item; data-reorder-name is its
 //                                  human-readable name for announcements
+//     [data-reorder-item-msg]      optional element(s) inside an item (an
+//                                  aria-live status line): a refused save
+//                                  shows its reason HERE, on the row the
+//                                  operator just moved, instead of in
+//                                  data-reorder-msg -- which may sit
+//                                  scrolled out of view above a long list
+//                                  (ut-docs#3104). Several: the LAST one
+//                                  whose container is shown wins (the
+//                                  Designer's open form has one under its
+//                                  Move buttons, the row one under its name)
 //
 // The gesture (Pointer Events + setPointerCapture, never HTML5 DnD — no
 // touch path on the till's WebKitGTK, the reason ut-docs#1221 dropped it):
@@ -110,7 +113,9 @@
   function state(list) {
     var s = states ? states.get(list) : list.__utReorder;
     if (!s) {
-      s = { pending: Promise.resolve(), good: ids(list) };
+      // subject: the item the operator moved last (its row reports a
+      // refusal); failBox: the message element a failure currently owns.
+      s = { pending: Promise.resolve(), good: ids(list), subject: null, failBox: null };
       if (states) states.set(list, s); else list.__utReorder = s;
     }
     return s;
@@ -144,24 +149,51 @@
       [item.getAttribute('data-reorder-name') || '', p.index, p.total]));
   }
 
-  function clearFailure(list) {
-    var id = list.getAttribute('data-reorder-msg');
-    var box = id ? document.getElementById(id) : null;
+  function clearBox(box) {
     if (box && box.getAttribute('data-reorder-owned') === '1') {
-      box.textContent = '';
+      // A row's slot is also the target of that row's own htmx forms: only
+      // wipe it while it still holds OUR failure, never their newer reply.
+      if (box.querySelector('[data-reorder-failure]')) box.textContent = '';
       box.removeAttribute('data-reorder-owned');
       if (box.getAttribute('data-reorder-unhid') === '1') { box.hidden = true; box.removeAttribute('data-reorder-unhid'); }
     }
   }
-  function showFailure(list, reason) {
+  function clearFailure(list) {
+    var id = list.getAttribute('data-reorder-msg');
+    clearBox(id ? document.getElementById(id) : null);
+    var s = state(list);
+    clearBox(s.failBox);
+    s.failBox = null;
+  }
+  // The refused row's own message slot, when the page gives its items one
+  // and the row is still in this list (ut-docs#3104).
+  function itemBox(list, item) {
+    if (!item || item.parentNode !== list) return null;
+    // The slot itself may be display:none while empty (:empty), so judge
+    // by its container: a slot in a closed form is not where anyone looks.
+    var slots = item.querySelectorAll('[data-reorder-item-msg]');
+    for (var i = slots.length - 1; i >= 0; i--) {
+      var host = slots[i].parentElement;
+      if (host && host.getClientRects().length > 0) return slots[i];
+    }
+    return null;
+  }
+  function showFailure(list, reason, item) {
     var text = list.getAttribute('data-reorder-msg-failed') || '';
     if (reason) text = text ? text + ' ' + reason : reason;
-    var id = list.getAttribute('data-reorder-msg');
-    var box = id ? document.getElementById(id) : null;
+    // One failure on screen at a time: drop an older one first.
+    clearFailure(list);
+    var box = itemBox(list, item);
+    if (!box) {
+      var id = list.getAttribute('data-reorder-msg');
+      box = id ? document.getElementById(id) : null;
+    }
     if (!box) { announce(list, text); return; }
+    state(list).failBox = box;
     box.textContent = '';
     var span = document.createElement('span');
     span.className = 'error';
+    span.setAttribute('data-reorder-failure', '');
     span.textContent = text;
     box.appendChild(span);
     box.setAttribute('data-reorder-owned', '1');
@@ -194,32 +226,6 @@
     }, function () { return ''; });
   }
 
-  function refreshAfterSave(list) {
-    var ev = list.getAttribute('data-reorder-refresh');
-    if (!ev || !window.htmx) return;
-    var a = document.activeElement;
-    var focusId = (a && a.id && list.contains(a)) ? a.id : '';
-    if (focusId) {
-      // The refresh replaces this list: put focus back on the same
-      // control's fresh twin once htmx has settled it, unless something
-      // else claimed focus meanwhile.
-      // ut-docs#3074 (#2713's leak): if the refresh never settles (dropped,
-      // failed), don't leave this listener on body to fire on some later,
-      // unrelated swap.
-      var timer = 0;
-      var onSettle = function () {
-        clearTimeout(timer);
-        document.body.removeEventListener('htmx:afterSettle', onSettle);
-        var el = document.getElementById(focusId);
-        var cur = document.activeElement;
-        if (el && el.getClientRects().length && (!cur || cur === document.body || !document.contains(a))) el.focus();
-      };
-      document.body.addEventListener('htmx:afterSettle', onSettle);
-      timer = setTimeout(function () { document.body.removeEventListener('htmx:afterSettle', onSettle); }, 5000);
-    }
-    window.htmx.trigger(document.body, ev);
-  }
-
   function persist(list) {
     var s = state(list);
     var url = list.getAttribute('data-reorder-url');
@@ -227,6 +233,10 @@
     s.pending = s.pending.then(function () {
       if (!document.contains(list)) return;
       var now = ids(list);
+      // The item moved last when THIS queued save starts (not when its move
+      // was made): a quick run of moves sends one order, reported on the
+      // latest row moved.
+      var subject = s.subject;
       if (same(now, s.good)) return;
       var body = new URLSearchParams();
       now.forEach(function (id) { body.append('ids', id); });
@@ -235,21 +245,20 @@
           s.good = now;
           clearFailure(list);
           list.dispatchEvent(new CustomEvent('list-reorder:saved', { bubbles: true, detail: { ids: now.slice() } }));
-          refreshAfterSave(list);
           return;
         }
-        return reasonOf(res).then(function (reason) { revert(list, reason); });
-      }, function () { revert(list, ''); });
+        return reasonOf(res).then(function (reason) { revert(list, reason, subject); });
+      }, function () { revert(list, '', subject); });
     }).catch(function () {
       // Never let one failure break every later save on this list.
     });
     return s.pending;
   }
 
-  function revert(list, reason) {
+  function revert(list, reason, item) {
     if (!document.contains(list)) return;
     applyOrder(list, state(list).good);
-    showFailure(list, reason);
+    showFailure(list, reason, item);
     list.dispatchEvent(new CustomEvent('list-reorder:reverted', { bubbles: true }));
   }
 
@@ -269,6 +278,7 @@
     else list.insertBefore(item, vis[j].nextSibling);
     if (focused && focused !== document.activeElement && document.contains(focused)) focused.focus();
     announceMoved(list, item);
+    state(list).subject = item;
     persist(list);
     return true;
   }
@@ -373,6 +383,7 @@
     }
     if (same(ids(d.list), d.start)) return;
     announceMoved(d.list, d.item);
+    state(d.list).subject = d.item;
     persist(d.list);
   }
 

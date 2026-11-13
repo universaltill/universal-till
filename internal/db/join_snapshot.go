@@ -1,6 +1,7 @@
 // Join snapshot (ut-docs#426): the full-DB copy served to a joining replica
-// over GET /api/sync/snapshot must NOT carry other tills' bearer_hash — the
-// sync-auth secret that must never leave the primary (same rule the D4
+// over GET /api/sync/snapshot must NOT carry other tills' bearer_hash (nor the
+// previous one a bearer rotation keeps, ut-docs#5198) — the sync-auth
+// secret that must never leave the primary (same rule the D4
 // admin-bundle redactCols in internal/data/sync_admin_repo.go enforces on
 // every incremental pull). Real disaster-recovery backups (Snapshot) keep
 // the real values: restoring one restores the shop's real till roster.
@@ -102,7 +103,7 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		cleanup()
 		return "", nil, fmt.Errorf("open join snapshot copy: %w", err)
 	}
-	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL`)
+	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL, bearer_prev_hash = NULL`)
 	if execErr == nil {
 		// ut-docs#2730: nor this till's own cloud identity — above all its
 		// store token. The joining replica gets its own device id at
@@ -110,6 +111,17 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		// (internal/enroll); no credential ever crosses the LAN. The same
 		// secure_delete(1) guarantee applies: the token's bytes are zeroed.
 		execErr = DeleteTillCloudIdentity(cdb)
+	}
+	if execErr == nil {
+		// ut-docs#5074: nor this till's sales-copy bookkeeping. A main till
+		// that was once an additional till (promoted) still holds its copy
+		// cursor, and every main till holds its change log and the other
+		// tills' acknowledgements: inherited, the joining till would believe
+		// it had copied up to that cursor and, if promoted later, serve
+		// another till's acks. The copied rows themselves stay (they are
+		// data, upserted by the joiner's first state re-sync). Empty tables
+		// while the copy has never been on.
+		execErr = resetSalesMirrorBookkeeping(cdb)
 	}
 	if closeErr := cdb.Close(); execErr == nil {
 		execErr = closeErr
@@ -226,4 +238,20 @@ func SweepOrphanedJoinSnapshots(dbPath string) (int, error) {
 		removed++
 	}
 	return removed, nil
+}
+
+// resetSalesMirrorBookkeeping empties the sales copy's local state and the
+// change log on a join-snapshot copy (ut-docs#5074, see RedactedJoinSnapshot).
+func resetSalesMirrorBookkeeping(cdb *sql.DB) error {
+	for _, q := range []string{
+		`DELETE FROM mirror_state`,         // sales-mirror:allow join snapshot never carries a copy cursor
+		`DELETE FROM sales_mirror_log`,     // sales-mirror:allow nor the main till's change log
+		`DELETE FROM sales_mirror_acks`,    // sales-mirror:allow nor other tills' acknowledgements
+		`DELETE FROM mirror_sale_arrivals`, // sales-mirror:allow nor the main till's own-sale arrival times (ut-docs#5777)
+	} {
+		if _, err := cdb.Exec(q); err != nil {
+			return fmt.Errorf("reset sales mirror bookkeeping: %w", err)
+		}
+	}
+	return nil
 }

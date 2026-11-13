@@ -3,6 +3,7 @@ id: plugins
 title: متجر الإضافات
 section: الاتصال والإضافات
 order: 330
+public: true
 summary: "أضف ميزات دون تغيير التطبيق الأساسي: مدفوعات، سمات، حزم لغات، تكاملات، أدوات ذكاء اصطناعي وأكثر."
 routes: [/plugins, /plugins/store, /plugins/store/{listing_id}, /plugins/{section}/{listing_id}, /plugins/{id}/settings]
 ---

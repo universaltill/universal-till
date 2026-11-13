@@ -159,6 +159,27 @@ GitHub Releases API mechanism the other platforms already use).
   (`MAJOR*10000 + MINOR*100 + PATCH`) so it always strictly increases,
   which Android's package manager requires to treat a new APK as an
   upgrade (true for sideloading too, not just Play).
+- **In-app update signer pin (ADR-0179, ut-docs#5436).** The shell installs a
+  downloaded update only if it is this app's package, newer, and signed by a
+  certificate whose SHA-256 digest is in `app/apk-signer-sha256.txt`
+  (compiled into `BuildConfig.APK_SIGNER_SHA256S`; the build fails on a
+  malformed or missing file). `-PutApkSignerPins=<comma list>` overrides it for
+  driven tests with a test key; an empty value builds dormant (package and
+  version checks only, logged `not pinned`). `release.yml` fails when a built
+  APK's signer is not in the file, or when the APK does not carry the digest in
+  its dex (built dormant). The check runs on a private copy in `filesDir/updates/`
+  that is also what the installer reads (no swap between check and install). On
+  API 28+ a signer whose rotation lineage contains a pinned key is accepted; API
+  24 to 27 see the old key, so keep the old digest while they exist. Never
+  advise uninstalling to recover: it deletes local data. A fork replaces the file
+  with its own digest; see `RELEASING.md`. A refusal is also reported to the
+  fleet roster (ut-docs#5446): `MainActivity` calls
+  `Mobile.reportAndroidUpdateRefused(<class>)`, raising the keyed problem
+  `androidupdate.refused` on the heartbeat problems feed (class only, never the
+  digest or package name) until `Mobile.reportAndroidUpdateAccepted()` after a
+  later APK passes. Classes (`UpdateLogic.RefuseClass`, mirrored by Go's
+  `internal/androidupdate`): `unreadable_apk`, `wrong_package`, `not_newer`,
+  `signer_unreadable`, `multiple_signers`, `signer_not_pinned`, `check_error`.
 - Live-verified: a real signed release APK installed and launched on the
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.
@@ -181,6 +202,13 @@ GitHub Releases API mechanism the other platforms already use).
   compile-time table by `Build.SUPPORTED_ABIS[0]` (`UpdateLogic.updateApkUrl`).
   `installUpdate()` still takes no argument. `scripts/ci/guard-android-abi-packages.sh`
   keeps the flavors, the compression and release.yml's published names in step.
+  The base of those names is the Gradle property `updateApkUrlBase` (default
+  our GitHub `releases/latest/download/`; `-PupdateApkUrlBase=https://…/`
+  overrides it; an empty or malformed value fails the build, never a fallback
+  to ours). `release.yml` passes
+  `https://github.com/$GITHUB_REPOSITORY/releases/latest/download/`, or the
+  repository variable `UT_ANDROID_UPDATE_APK_URL_BASE` for a non-GitHub
+  mirror, and fails if an APK's dex does not carry it (ut-docs#5271).
 - **Reliable update flow.** One shared page flow (`web/public/android-update.js`)
   for the status chip, the Settings form and the check-for-updates button. In
   `MainActivity`: the DownloadManager id is kept (SharedPreferences
@@ -545,6 +573,20 @@ the session that wrote it had no Android SDK:
 17. Background the app (Home) and send **Unlock kiosk** again — confirm
     my. shows `failed` / `no_shell` and nothing changes on the till.
 
+## Item photo: the system camera (ut-docs#5190)
+
+A file input with `capture` and image types (the catalog's **Take a Photo**)
+opens the system camera, not the document picker: `onShowFileChooser` checks
+`CaptureLogic.wantsCamera`, asks `CAMERA` on first use only, and launches
+`TakePicture` into a file under the private cache `captures/` directory. The
+camera app reaches it through `CaptureFileProvider` (authority
+`<applicationId>.captures`, `res/xml/file_paths_captures.xml`: that one
+directory, nothing else; separate from the update provider). The page gets the
+content Uri like any picked file. Permission refused or no camera app: the
+document picker, so the field is never dead. Captures older than an hour are
+swept on the next shot. The page uses this path whenever `window.AndroidKiosk`
+exists; desktop browsers keep the in-page viewfinder (#1472).
+
 ## Camera, microphone and screenshots (ut-docs#1435)
 
 Two gaps in the bug-report panel (🐞) on Android, both in `MainActivity`:
@@ -662,6 +704,43 @@ Capture: `adb logcat -s MainActivity GoLog` while reproducing, plus the
 till log. A `reload: activity recreated` with no `config change handled`
 line before it points at a configuration change the manifest still
 doesn't declare.
+
+## Screen stays on (ut-docs#5620)
+
+Nothing used to set `FLAG_KEEP_SCREEN_ON`, so the till followed the tablet's
+OS display timeout (seconds) in every mode. `MainActivity` now holds the flag
+from `onResume` to `onPause`, and drops it after an idle window
+(`ScreenAwakeLogic`: 0/15/30/60/120/240/480 minutes, default 120, touch
+re-arms it) so the OS can sleep an abandoned till. The choice is per device
+(SharedPreferences `screen_awake`), set from Settings -> Display via the
+`AndroidKiosk.get/setScreenAwakeMinutes` bridge (`web/public/screen-awake.js`).
+Kiosk lock-task mode does not change it. Not covered: a screen turned off with
+the power button, or Doze while the app is backgrounded.
+
+## Printing (ut-docs#6153)
+
+Android System WebView ignores `window.print()`, so the app exposes
+`window.AndroidKiosk.print()`. It takes no argument and opens Android's
+system print dialog for the page the WebView is showing (the receipt and the
+print-only voucher slip are laid out by their `@media print` CSS). The web
+side calls it through `UT.print` (`web/public/inline-actions.js`), the till's
+only print entry point; every other shell keeps `window.print()`.
+
+- Printers come from Android's print services (Mopria/IPP, vendor plugins);
+  "Save as PDF" is always there. ESC/POS receipt printers keep using the
+  hardware path (ADR-0023), not this dialog.
+- One dialog at a time: a second tap while one is open returns `false`
+  (cleared when the framework calls `onFinish`, or after two minutes).
+- Refused (returns `false`, nothing printed, never unpins) while the kiosk
+  lock is engaged (`kioskPinned` or lock-task mode). Only `/self-order*`
+  pages engage the lock and none of them prints. Under device-owner lock-task
+  the print spooler is not allowlisted and would be refused silently; under
+  screen pinning its "Add printer" path leads to Settings and the Play Store.
+  Do not add the spooler to `setLockTaskPackages`.
+- A refusal (including a 451 from the print POST) prints nothing; the web
+  never falls through to the no-op `window.print()` once the bridge exists.
+- Verified by the Gradle build and `PrintLogicTest` in CI only; the real
+  dialog and the lock-task behaviour need a device or emulator check.
 
 ## Not yet done
 

@@ -126,7 +126,7 @@ func registerSyncAssets(mux *http.ServeMux, d *common.Deps) {
 	for _, scope := range syncAssetScopes {
 		scope := scope
 		mux.HandleFunc("GET "+scope.listPath, func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := syncTill(r, tills); !ok {
+			if _, ok := syncTill(w, r, tills); !ok {
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 				return
@@ -144,7 +144,7 @@ func registerSyncAssets(mux *http.ServeMux, d *common.Deps) {
 		})
 
 		mux.HandleFunc("GET "+scope.filePath, func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := syncTill(r, tills); !ok {
+			if _, ok := syncTill(w, r, tills); !ok {
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 				return

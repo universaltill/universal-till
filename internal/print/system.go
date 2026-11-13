@@ -19,9 +19,21 @@ import (
 // This is the single entry point callers should use so every receipt/report
 // respects the printer type.
 func PrintDoc(ctx context.Context, c Config, doc Doc) error {
+	return PrintDocWithSlips(ctx, c, doc, nil)
+}
+
+// PrintDocWithSlips prints doc followed by each voucher slip (ut-docs#4247)
+// as ONE job: the slips can't be split from their receipt by another print,
+// and the result is one success or one failure. With nil slips the output is
+// byte-identical to PrintDoc.
+func PrintDocWithSlips(ctx context.Context, c Config, doc Doc, slips []VoucherSlip) error {
 	switch c.Mode {
 	case "system":
-		return systemPrint(ctx, c, RenderText(doc))
+		text := RenderText(doc)
+		for _, s := range slips {
+			text += "\f" + RenderVoucherSlipText(s)
+		}
+		return systemPrint(ctx, c, text)
 	case "off", "":
 		return nil
 	default:
@@ -32,7 +44,32 @@ func PrintDoc(ctx context.Context, c Config, doc Doc) error {
 		if tr == nil {
 			return nil
 		}
-		return tr.Print(ctx, Render(doc))
+		job := Render(doc)
+		for _, s := range slips {
+			job = append(job, RenderVoucherSlip(s)...)
+		}
+		return tr.Print(ctx, job)
+	}
+}
+
+// PrintVoucherSlip prints ONE voucher slip on its own — no receipt — as one
+// job (ut-docs#5740): ESC/POS for a thermal printer (one feed+cut, no drawer
+// kick), the plain-text slip via lp for a system printer, nothing when off.
+func PrintVoucherSlip(ctx context.Context, c Config, s VoucherSlip) error {
+	switch c.Mode {
+	case "system":
+		return systemPrint(ctx, c, RenderVoucherSlipText(s))
+	case "off", "":
+		return nil
+	default:
+		tr, err := NewTransport(c)
+		if err != nil {
+			return err
+		}
+		if tr == nil {
+			return nil
+		}
+		return tr.Print(ctx, RenderVoucherSlip(s))
 	}
 }
 

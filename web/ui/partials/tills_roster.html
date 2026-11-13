@@ -39,11 +39,11 @@
       {{/* ut-docs#405: PrimaryTillName is always populated (till.name syncs
            down like any other setting), so this row renders on a replica
            too — there it's the PRIMARY's row, not "this till". */}}
-      {{ if .SyncPrimary }}
-      <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.the_primary" }})</span></td>
-      {{ else }}
-      <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
-      {{ end }}
+      {{/* ut-docs#1294: the same "Till ID: <uuid>" the LAN scan prints for
+           this main till (tills.html/setup.html scan list), so an operator
+           can match the two by eye. Blank = not known yet. */}}
+      <td>{{ .PrimaryTillName }} {{ if .SyncPrimary }}<span class="muted">({{ T "tills.the_primary" }})</span>{{ else }}<span class="muted">({{ T "tills.this_till" }})</span>{{ end }}
+        <br><small class="muted till-id" data-testid="tills-main-discovery-id">{{ T "tills.discovery.result_name" }}: {{ if .MainTillDiscoveryID }}<bdi dir="ltr">{{ .MainTillDiscoveryID }}</bdi>{{ else }}—{{ end }}</small></td>
       <td>—</td>
       {{ if .LinkInfo }}<td>—</td><td>{{ .MainVersion }}</td>{{ end }}
       <td>—</td>
@@ -70,7 +70,7 @@
         {{ $to := "satellite" }}{{ $toLabel := T "tills.role.satellite" }}
         {{ if eq .Role "satellite" }}{{ $to = "additional" }}{{ $toLabel = T "tills.role.replica" }}{{ end }}
         <br><button class="btn secondary" hx-post="/api/tills/{{ .ID }}/role" hx-vals='{{ jsonVals "role" $to }}'
-                    hx-confirm="{{ printf (T "tills.role.change_confirm") .Name $toLabel }}"
+                    hx-confirm="{{ printf (T "tills.role.change_confirm") .Name $toLabel }}" data-confirm-ok="{{ T "tills.role.change_btn" }}" data-confirm-tone="neutral"
                     data-after-request="ok refresh-region:tills-roster">{{ T "tills.role.change_btn" }}</button>
         {{ end }}
       </td>
@@ -100,7 +100,7 @@
              carriers clear their old line) or the 10 s refresh removes it. */}}
         {{ if and (not $.SyncPrimary) .CanUpdateNow }}
         <form hx-post="/api/tills/{{ $row.ID }}/update-now" hx-swap="none"
-              hx-confirm="{{ printf (T "tills.update_now.confirm") $row.Name $.MainVersion }}"
+              hx-confirm="{{ printf (T "tills.update_now.confirm") $row.Name $.MainVersion }}" data-confirm-ok="{{ T "tills.update_now.btn" }}" data-confirm-tone="neutral"
               data-after-request="ok refresh-region:tills-roster; fail save-error:tills-update-now-error">
           <button type="submit" class="btn secondary">{{ T "tills.update_now.btn" }}</button>
         </form>
@@ -117,7 +117,7 @@
       {{ if not $.SyncPrimary }}
       {{/* ut-docs#2904: refresh only #tills-roster (tills.html) on success. */}}
       <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
-                  hx-confirm="{{ T "tills.revoke_confirm" }}" data-after-request="ok refresh-region:tills-roster">{{ T "tills.revoke" }}</button>
+                  hx-confirm="{{ T "tills.revoke_confirm" }}" data-confirm-ok="{{ T "tills.revoke" }}" data-after-request="ok refresh-region:tills-roster">{{ T "tills.revoke" }}</button>
       {{ end }}
       </td>
     </tr>
@@ -138,7 +138,7 @@
     <small class="muted">{{ if .Pending }}{{ T "tills.network_key.pending" }}{{ else }}{{ T "tills.network_key.idle" }}{{ end }}</small></p>
   {{ if not .Pending }}
   <form hx-post="/api/tills/rotate-tls-key" hx-swap="none"
-        hx-confirm="{{ T "tills.network_key.confirm" }}"
+        hx-confirm="{{ T "tills.network_key.confirm" }}" data-confirm-ok="{{ T "tills.network_key.btn" }}" data-confirm-tone="neutral"
         data-after-request="ok refresh-region:tills-roster; fail save-error:tills-network-key-error">
     <button type="submit" class="btn secondary">{{ T "tills.network_key.btn" }}</button>
   </form>

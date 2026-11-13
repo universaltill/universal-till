@@ -77,4 +77,107 @@ test.describe('catalog item form header at phone width (ut-docs#2000)', () => {
     await expect(page.locator('#item-form-panel-keypad')).toBeVisible();
     assertClean();
   });
+
+  // ut-docs#6138: the 360x640 phone (the common small Android) was
+  // measured at 28.2% in create mode but 32.3% in edit mode, where the
+  // extra +New button no longer fits beside Close/Save and wraps the action
+  // group onto a second row.
+  for (const mode of ['create', 'edit'] as const) {
+    test(`the pinned head is < 30% of a 360x640 viewport in ${mode} mode (ut-docs#6138)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: 360, height: 640 });
+      await page.goto('/catalog');
+      if (mode === 'create') {
+        await openNewItemForm(page);
+      } else {
+        await page.locator('[id^=catalog-row-]').first().click();
+        await expect(page.locator('#item-form-modal')).toBeVisible();
+        await expect(page.locator('#item-form-delete')).toBeVisible();
+      }
+      const head = (await page.locator('.catalog-form-head').boundingBox())!;
+      const fraction = head.height / 640;
+      expect(fraction, `${mode}: head is ${(fraction * 100).toFixed(1)}% (${head.height}px of 640)`).toBeLessThan(0.30);
+      if (mode === 'edit') {
+        // +New stays reachable by its accessible name.
+        await expect(page.getByRole('button', { name: /new/i }).first()).toBeVisible();
+        // Independent review (UX gate): fitting the head by shrinking the
+        // title left the h3 ~45px wide ("Edi…"), hiding which item is open.
+        // The title must show in full for a normal-length name...
+        const title = await page.locator('#item-form-title').evaluate((el) => ({
+          sw: el.scrollWidth, cw: el.clientWidth, text: el.textContent || '',
+        }));
+        expect(title.sw, `edit title "${title.text}" is truncated (${title.sw}px in ${title.cw}px)`).toBeLessThanOrEqual(title.cw);
+        // ...and Delete joins +New/Close/Save on ONE button row.
+        const tops = new Set<number>();
+        for (const id of ['#item-form-delete', '#item-form-reset', '#item-form-close-btn', '#item-form-submit']) {
+          tops.add(Math.round((await page.locator(id).boundingBox())!.y));
+        }
+        expect(tops.size, 'delete, +New, Close and Save must share one row at 360px').toBe(1);
+      }
+      assertClean();
+    });
+  }
+
+  // ut-docs#6138: the items list scrolled sideways by ~6px at 360px in fa.
+  for (const [route, lang] of [['/items', 'fa'], ['/items', 'ar'], ['/catalog', 'fa'], ['/catalog', 'ar']]) {
+    test(`${route} does not scroll horizontally at 360px in ${lang} (ut-docs#6138)`, async ({ page }) => {
+      await page.setViewportSize({ width: 360, height: 640 });
+      await page.goto(`${route}?lang=${lang}`);
+      await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+      const m = await page.evaluate(() => {
+        const se = document.scrollingElement!;
+        const offenders: string[] = [];
+        for (const el of Array.from(document.body.querySelectorAll('*'))) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && (r.right > se.clientWidth + 0.5 || r.left < -0.5)) {
+            offenders.push(`${el.tagName.toLowerCase()}#${el.id}.${(el as HTMLElement).className}`.slice(0, 80));
+          }
+        }
+        return { sw: se.scrollWidth, cw: se.clientWidth, offenders: offenders.slice(0, 6) };
+      });
+      expect(m.sw, `scrollWidth ${m.sw} vs clientWidth ${m.cw}; offenders: ${m.offenders.join(' | ')}`).toBe(m.cw);
+    });
+  }
+});
+
+// ut-docs#6176: just above the phone breakpoint (701-1023px) the edit-mode
+// title h3 was still ellipsised (161 of 263px at 701x900): the 12rem-basis
+// title group shares one row with +New/Close/Save (labelled, wide) and
+// shrinks to whatever is left.
+test.describe('edit-mode title is untruncated between the phone and kiosk widths (ut-docs#6176)', () => {
+  const sizes: Array<[number, number]> = [
+    [701, 900], [768, 1024], [800, 900], [900, 900], [1023, 900], [1023, 600], [1024, 600],
+  ];
+  for (const [w, h] of sizes) {
+    test(`${w}x${h}: full title, delete + action buttons on one row`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto('/catalog');
+      await page.locator('[id^=catalog-row-]').first().click();
+      await expect(page.locator('#item-form-modal')).toBeVisible();
+      await expect(page.locator('#item-form-delete')).toBeVisible();
+      const m = await page.evaluate(() => {
+        const t = document.getElementById('item-form-title')!;
+        const tops = ['item-form-delete', 'item-form-reset', 'item-form-close-btn', 'item-form-submit']
+          .map((id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top));
+        const head = document.querySelector('.catalog-form-head')!.getBoundingClientRect();
+        return {
+          sw: t.scrollWidth, cw: t.clientWidth, text: t.textContent || '', tops,
+          titleMid: Math.round((t.getBoundingClientRect().top + t.getBoundingClientRect().bottom) / 2),
+          btnBottom: Math.round(document.getElementById('item-form-delete')!.getBoundingClientRect().bottom),
+          headH: Math.round(head.height),
+        };
+      });
+      expect(m.sw, `title "${m.text}" truncated (${m.sw}px in ${m.cw}px)`).toBeLessThanOrEqual(m.cw);
+      expect(new Set(m.tops).size, `delete/+New/Close/Save must share one row (tops ${m.tops})`).toBe(1);
+      if (w >= 1024) {
+        // Kiosk floor: the 701-1023px own-line title must not reach it — the
+        // title stays on the button row and the head keeps its height (144px).
+        // The h3 is centred on the 48px buttons, so its midline lies inside their band.
+        expect(m.titleMid > m.tops[0] && m.titleMid < m.btnBottom, `title must share the button row at ${w}px (title mid ${m.titleMid}, buttons ${m.tops[0]}-${m.btnBottom})`).toBe(true);
+        expect(m.headH, `kiosk head grew to ${m.headH}px`).toBeLessThanOrEqual(150);
+      }
+      assertClean();
+    });
+  }
 });

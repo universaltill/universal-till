@@ -3,6 +3,7 @@ id: tax-codes
 title: Vergi kodları
 section: Dükkanı kurma
 order: 111
+public: true
 summary: "Vergi kodları oluşturun ve düzenleyin — salon içi oranı ve varsa farklı bir paket servis oranı — ve bunları etkinleştirin veya devre dışı bırakın."
 routes: [/catalog/tax-codes]
 keywords: [vergi, kdv, oran, paket servis, vergi kodu]

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
 
 // ut-docs#2185: /registers adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring locations-record-dialog-2124.spec.ts's proof for
@@ -89,11 +89,11 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
     await expect(dlg).toBeVisible();
     await expect(page.locator(LOCATION)).toHaveValue(val!);
 
-    // Deactivate — behind the real hx-confirm browser dialog (Playwright
-    // auto-dismisses an unhandled one, which would silently no-op the
-    // click, so accept it explicitly).
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
+    // Deactivate — behind the till's in-page hx-confirm dialog (ut-docs#5524).
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(row(page, renamed)).toContainText(/inactive/i);
 
     // Activate reverses it, from the same dialog — no confirm on this path.
@@ -158,4 +158,33 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
       assertClean();
     });
   }
+
+  // ut-docs#6046: the name is the keyboard path; focus returns to it on close.
+  test('name button opens on Enter and Space; a non-name cell tap opens; focus returns to the name', async ({ page }) => {
+    await page.goto('/registers');
+    const name = 'E2E Kbd ' + Date.now();
+    await createRegister(page, name);
+    // Deactivate it so the keyboard path is proven on the inactive-group row.
+    await row(page, name).click();
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
+    await expect(page.locator('.registers-inactive').getByText(name)).toHaveCount(1);
+    const nameBtn = row(page, name).locator('.record-row-open');
+    for (const key of ['Enter', ' ']) {
+      await nameBtn.focus();
+      await page.keyboard.press(key);
+      await expect(page.locator(DIALOG)).toBeVisible();
+      await expect(page.locator(NAME)).toHaveValue(name);
+      await page.keyboard.press('Escape');
+      await expect(page.locator(DIALOG)).toBeHidden();
+      await expect(nameBtn).toBeFocused();
+    }
+    await row(page, name).locator('td').nth(1).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(nameBtn).toBeFocused();
+  });
 });

@@ -235,6 +235,7 @@ func TestLineHandler_QtyChangeDoesNotClearDiscount(t *testing.T) {
 // (self_order_shop.go). Delta only applies on the key-addressed branch —
 // the buttons always render with the line's own LineKey.
 func TestLineHandler_DeltaIncrementsAndDecrementsQty(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#5411: these test qty mechanics, not the void gate (own test file)
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -266,6 +267,7 @@ func TestLineHandler_DeltaIncrementsAndDecrementsQty(t *testing.T) {
 // handler's existing qty-zero-voids-the-line behavior rather than a new
 // special case, and that delta never drives qty negative.
 func TestLineHandler_DeltaClampsAtZeroAndVoids(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#5411: these test qty mechanics, not the void gate (own test file)
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -387,11 +389,12 @@ func TestLineHandler_AbsoluteQtyRejectsPositiveInfinity(t *testing.T) {
 	}
 
 	rec := posPostForm(mux, "/api/pos/line", "code=ABC&qty=Inf")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("qty=Inf: want 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("qty=Inf: want 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(dp.Engine.Basket().Lines) != 0 {
-		t.Fatalf("qty=Inf must be treated as invalid (line voided), got %+v", dp.Engine.Basket().Lines)
+	// ut-docs#5411: an invalid qty is refused, never read as 0 (a void).
+	if ls := dp.Engine.Basket().Lines; len(ls) != 1 || ls[0].Qty != 1 {
+		t.Fatalf("qty=Inf must leave the line untouched, got %+v", ls)
 	}
 }
 
@@ -3211,6 +3214,7 @@ func TestLineHandler_DiscountAboveLineTotalRefused(t *testing.T) {
 // way to reach a discount above the line total; the − step is refused the
 // same way, so the cashier lowers the discount first.
 func TestLineHandler_QtyDropBelowDiscountRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#5411: these test qty mechanics, not the void gate (own test file)
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)

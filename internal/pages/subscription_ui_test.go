@@ -376,7 +376,7 @@ func TestSubscriptionViewPausedOnly(t *testing.T) {
 func TestSettingsSubscriptionCard_NavRowFilteredForNonManager(t *testing.T) {
 	for _, isManager := range []bool{true, false} {
 		found := false
-		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), isManager, true, true, true) {
+		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), isManager, true, true, true, true) {
 			if r.Key == "subscription" {
 				found = true
 			}

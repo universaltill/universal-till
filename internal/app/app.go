@@ -255,7 +255,27 @@ func Run(ctx context.Context) error {
 		log.Infof("replica identity applied — this till is now part of the shop")
 	}
 
+	// ut-docs#5172: the LAN bearer lives under secrets/ (excluded from backup),
+	// not in a settings row every DB backup would copy. After
+	// ApplyReplicaIdentity (a fresh join writes the row, which this migrates)
+	// and before anything reads settings or CheckRestoredInstall runs, so its
+	// held check and its clear of sync.bearer both go through the file. A
+	// failure keeps the row behaviour: sync must never break over this.
+	if err := data.KeepSyncBearerOutOfDB(ctx, database.DB, paths.Data("secrets", "sync-bearer")); err != nil {
+		log.Warnf("sync bearer stays in the database (ut-docs#5172): %v", err)
+	}
+
 	settingsStore := settings.NewStore(database.DB)
+
+	// ut-docs#5157: a data folder restored onto another device (iCloud)
+	// carries the old till's cloud identity. Detect it before anything reads
+	// that identity: after ApplyPendingRestore/ApplyReplicaIdentity, before
+	// LoadRuntimeConfig and enroll.Init (cfg still holds only the
+	// environment's pins here). Outside Init so demo mode, which skips Init,
+	// is covered too. Never blocks boot. The journal lookup keeps a restored
+	// replica's sync.restored_since after the original's newest entry even if
+	// the original's clock ran ahead (ut-docs#5185).
+	enroll.CheckRestoredInstall(ctx, cfg, settingsStore, data.NewPOSRepo(database.DB).NewestLocalJournalEntryAt)
 
 	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
 	// main till's pin, every replica → main till request goes over pinned
@@ -314,6 +334,11 @@ func Run(ctx context.Context) error {
 	// ApplyReplicaIdentity above, so a till that just joined a shop is
 	// already a replica here and is skipped. Best-effort, never fatal.
 	backfillItemSKUsOnPrimary(ctx, database.DB, log)
+
+	// ut-docs#5897: a till promoted before #5893 still advertises its former
+	// main till's discovery id. Re-mint once, before the advertiser and the
+	// HTTP server start. Best-effort, never fatal.
+	repairInheritedDiscoveryIDOnPrimary(ctx, database.DB, log)
 
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
@@ -497,11 +522,27 @@ func Run(ctx context.Context) error {
 		defer lantls.SetPeerReproof(deps.PrimaryWatch.Reproof)()
 	}
 
+	// Bearer rotation (ut-docs#5198): when the main till marks an answer as
+	// due, this till swaps its sync bearer in the background. Removed before
+	// the database closes, like the hooks above.
+	if deps != nil {
+		defer lantls.SetBearerRotate(pages.SyncBearerRotator(deps))()
+		// ut-docs#5203: a main till restored from a backup older than the
+		// last rotation is reached again with the previous bearer.
+		defer lantls.SetBearerFallback(pages.SyncBearerFallback(deps))()
+	}
+
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	// A revocation disables rows in the DB; ReloadPlugins makes the WASM
+	// runtime drop them in the same pass (ut-docs#5653).
+	var onRevoked func(context.Context) error
+	if deps != nil {
+		onRevoked = deps.ReloadPlugins
+	}
+	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, onRevoked, &wg)
 }
 
 // pluginShutdowner is the minimal internal/plugins.Supervisor surface

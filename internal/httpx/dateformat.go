@@ -17,16 +17,14 @@ import (
 // convention most of this product's shipped locales (fa/ar, and GB/FR/
 // ES/IT English/French/Spanish/Italian) already use, so only en-US
 // (month-first) and de/tr (dot-separated) / nl (hyphen-separated) need
-// an entry.
+// an entry. Callers pass the tag through DateLocale first (the FormatDate*
+// functions below do), so a bare language pick keeps the shop's region
+// (ut-docs#5748).
 func dateLayout(locale string) string {
-	lang := strings.ToLower(locale)
-	if lang == "en-us" {
+	if strings.EqualFold(strings.ReplaceAll(locale, "_", "-"), "en-us") {
 		return "01/02/2006"
 	}
-	if i := strings.IndexAny(lang, "-_"); i > 0 {
-		lang = lang[:i]
-	}
-	switch lang {
+	switch baseLang(locale) {
 	case "de", "tr":
 		return "02.01.2006"
 	case "nl":
@@ -36,18 +34,49 @@ func dateLayout(locale string) string {
 	}
 }
 
-// FormatDate renders t in locale's date-ordering convention, with digit
+// baseLang is the lower-cased language part of a locale tag ("en-US" -> "en").
+func baseLang(tag string) string {
+	lang := strings.ToLower(tag)
+	if i := strings.IndexAny(lang, "-_"); i > 0 {
+		lang = lang[:i]
+	}
+	return lang
+}
+
+// DateLocale returns the locale tag whose date ORDER a date shown or
+// printed in display should follow (ut-docs#5748). Date order is a shop
+// property: a bare language pick ("en" from the staff menu, ?lang=,
+// ut_lang, a kiosk customer pick) that is the shop locale's own language
+// keeps the shop's region, so "en" on an en-US shop is month-first and on
+// an en-GB shop day-first, and the screen and the paper agree. A display
+// tag that carries its own region, or names another language, is used as
+// given.
+func DateLocale(display string) string {
+	shop := DefaultLocale()
+	if display == "" {
+		return shop
+	}
+	if strings.ContainsAny(display, "-_") {
+		return display
+	}
+	if strings.EqualFold(display, baseLang(shop)) {
+		return shop
+	}
+	return display
+}
+
+// FormatDate renders t in the date-ordering convention of DateLocale(locale), with digit
 // shape following locale the same way FormatMoney does (LocalizeDigits) —
 // "2026-09-06" renders "06.09.2026" for de-DE, "۰۶/۰۹/۲۰۲۶" for fa.
 func FormatDate(t time.Time, locale string) string {
-	return LocalizeDigits(t.Format(dateLayout(locale)), locale)
+	return LocalizeDigits(t.Format(dateLayout(DateLocale(locale))), locale)
 }
 
 // FormatDateLatin is FormatDate without digit-shape substitution — for
 // contexts (ESC/POS receipt printing) that need Latin digits only in text
-// mode, same reasoning as FormatMoneyLatin.
+// mode, same reasoning as FormatMoneyPrint.
 func FormatDateLatin(t time.Time, locale string) string {
-	return t.Format(dateLayout(locale))
+	return t.Format(dateLayout(DateLocale(locale)))
 }
 
 // FormatDateTime renders t as FormatDate's date-ordering convention plus a
@@ -57,13 +86,13 @@ func FormatDateLatin(t time.Time, locale string) string {
 // what identifies the row, unlike FormatDate's date-only use (an invoice's
 // issue date).
 func FormatDateTime(t time.Time, locale string) string {
-	return LocalizeDigits(t.Format(dateLayout(locale)+" 15:04"), locale)
+	return LocalizeDigits(t.Format(dateLayout(DateLocale(locale))+" 15:04"), locale)
 }
 
 // FormatDateTimeLatin is FormatDateTime without digit-shape substitution —
 // same reasoning as FormatDateLatin.
 func FormatDateTimeLatin(t time.Time, locale string) string {
-	return t.Format(dateLayout(locale) + " 15:04")
+	return t.Format(dateLayout(DateLocale(locale)) + " 15:04")
 }
 
 // ParseStoredTime parses a timestamp the way the till stores them: RFC 3339

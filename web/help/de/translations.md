@@ -3,6 +3,7 @@ id: translations
 title: Übersetzungseditor
 section: Ihr Geschäft einrichten
 order: 150
+public: false
 summary: Manager können jede Beschriftung oder Meldung auf der Kasse in jeder Sprache der Kasse umformulieren.
 routes: [/translations]
 keywords: [übersetzungen, sprache, beschriftungen, formulierung]

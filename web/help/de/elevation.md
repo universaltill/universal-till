@@ -3,6 +3,7 @@ id: elevation
 title: Manager-Freigabe vor Ort
 section: Verbinden & erweitern
 order: 341
+public: true
 summary: Verlangt ein Bildschirm eine Manager-Freigabe, kann ein Manager oder Admin diese direkt vor Ort mit der eigenen PIN erteilen — kein Ab- und Neuanmelden nötig.
 keywords: [pin, freigabe, manager-pin, override, elevation, berechtigung]
 ---
@@ -29,7 +30,14 @@ eine kleine PIN-Abfrage.
 4. Eine falsche PIN, zu viele Versuche oder eine PIN, die jemandem gehört,
    der diese bestimmte Aktion immer noch nicht ausführen darf, zeigen
    allesamt einen klaren Grund im selben Dialog an, damit Sie wissen, was als
-   Nächstes zu versuchen ist.
+   Nächstes zu versuchen ist. Während die PIN geprüft wird, sind die Schaltflächen
+   ausgegraut, ein Ladekreis erscheint, und „Abbrechen“ wartet auf die Antwort.
+   Bricht die Verbindung währenddessen ab oder antwortet die Kasse nicht
+   innerhalb von 30 Sekunden, schließt sich der Dialog mit dem
+   Hinweis, dass die Aktion möglicherweise ausgeführt wurde oder auch nicht:
+   Prüfen Sie das, bevor Sie es erneut versuchen. Es wird nichts automatisch
+   wiederholt. Eine Sicherung oder Wiederherstellung, die Sie hier freigeben,
+   wird so nie abgebrochen: Sie wartet auf die Antwort der Kasse.
 
 ## Was aufgezeichnet wird
 

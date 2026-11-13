@@ -73,15 +73,17 @@ var keyConstName = regexp.MustCompile(`^(Key|key)[A-Z]|Key$`)
 // notSettingsKeyConsts are constants keyConstName matches that are not
 // settings keys, each with the reason.
 var notSettingsKeyConsts = map[string]string{
-	"httpx.genericErrKey":       "an i18n message key",
-	"pages.buttonsErrorKey":     "an i18n message key",
-	"pages.keyTillNameRequired": "an i18n message key (the wizard's till-name error, ut-docs#4146)",
-	"plugins.DocsEntryKey":      "a plugin manifest entry key",
-	"pages.reservedChargeKey":   "a charge-hook line key",
-	"ui.designerErrorServerKey": "an i18n message key",
-	"pos.ServiceChargeKey":      "a sale charge-line key",
-	"cloudsync.LANAddressKey":   "a cloud device-report field, not a setting (ut-docs#2774)",
-	"cloudsync.GuestTablesKey":  "a cloud device-report field, not a setting (ut-docs#4337)",
+	"httpx.genericErrKey":            "an i18n message key",
+	"pages.buttonsErrorKey":          "an i18n message key",
+	"pages.keyTillNameRequired":      "an i18n message key (the wizard's till-name error, ut-docs#4146)",
+	"pages.keyNameInvalidCharacters": "an i18n message key (the shared single-line name refusal, ut-docs#5862)",
+	"plugins.DocsEntryKey":           "a plugin manifest entry key",
+	"pages.reservedChargeKey":        "a charge-hook line key",
+	"ui.designerErrorServerKey":      "an i18n message key",
+	"pos.ServiceChargeKey":           "a sale charge-line key",
+	"cloudsync.LANAddressKey":        "a cloud device-report field, not a setting (ut-docs#2774)",
+	"cloudsync.GuestTablesKey":       "a cloud device-report field, not a setting (ut-docs#4337)",
+	"catimport.headLastKey":          "an i18n language-setting key (ADR-0160 §12, ut-docs#6043)",
 }
 
 // settingsKeyShape is what a settings key (or a key-family prefix built by

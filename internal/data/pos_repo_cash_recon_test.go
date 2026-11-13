@@ -658,3 +658,123 @@ func TestLastClosedShiftCarryForward(t *testing.T) {
 		t.Errorf("carry-forward: want latest close's new_float 1500, got %d", got)
 	}
 }
+
+// Cash-tip rule (ut-docs#5801): the shift-scoped primitive and the day-level
+// EOD reconciliation agree for one shift closed that day.
+func TestCashTipRule_ShiftBreakdownMatchesEOD(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	closedAt := b8At(anchor)
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at, local_date)
+VALUES('sale-rule', 'R-RULE', 'completed', 'sale', 'GBP', 40000, 0, 0, 40000, 'reg1', ?, ?, date(?, 'localtime'))`, closedAt, closedAt, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, paid_at)
+VALUES('pay-rule', 'sale-rule', 'cash', 42000, 'GBP', 0, 2000, ?)`, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-rule", "reg1", "user1", 10000, b8At(anchor.Add(-3*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift-rule", "cash_adjustment",
+		map[string]any{"shift_id": "shift-rule", "type": "adjustment", "amount": 500, "reason": "float top-up"}, b8At(anchor.Add(-2*time.Hour)), ""); err != nil {
+		t.Fatal(err)
+	}
+	expectedCash, err := dbx.repo.ComputeExpectedCash(ctx, "shift-rule", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-rule", expectedCash, expectedCash, 10000, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+	b, err := dbx.repo.ShiftCashBreakdown(ctx, "shift-rule", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := dbx.repo.EndOfDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := rep.CashReconciliation
+	if rc == nil {
+		t.Fatal("expected a cash reconciliation")
+	}
+	if rc.CashSales != b.CashSales.Minor() || b.CashSales.Minor() != 40000 {
+		t.Errorf("CashSales: EOD %d, breakdown %d, want 40000", rc.CashSales, b.CashSales.Minor())
+	}
+	if rc.TipsHeldOut != b.TipsHeldOut.Minor() || b.TipsHeldOut.Minor() != 2000 {
+		t.Errorf("TipsHeldOut: EOD %d, breakdown %d, want 2000", rc.TipsHeldOut, b.TipsHeldOut.Minor())
+	}
+	if rc.PayIns+rc.PayOuts != b.Adjustments.Minor() || b.Adjustments.Minor() != 500 {
+		t.Errorf("Adjustments: EOD %d, breakdown %d, want 500", rc.PayIns+rc.PayOuts, b.Adjustments.Minor())
+	}
+	if rc.Calculated != b.Expected.Minor() || b.Expected.Minor() != 52500 {
+		t.Errorf("Expected: EOD %d, breakdown %d, want 52500", rc.Calculated, b.Expected.Minor())
+	}
+	if rc.OpeningFloat != b.Opening.Minor() || b.Opening.Minor() != 10000 {
+		t.Errorf("Opening: EOD %d, breakdown %d, want 10000", rc.OpeningFloat, b.Opening.Minor())
+	}
+}
+
+// Cash refund rule (ut-docs#5803): the shift primitive nets a cash refund out
+// exactly as the EOD In/Out split does.
+func TestCashRefund_ShiftBreakdownMatchesEOD(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	closedAt := b8At(anchor)
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at, local_date)
+VALUES('sale-rf', 'R-RF', 'completed', 'sale', 'GBP', 40000, 0, 0, 40000, 'reg1', ?, ?, date(?, 'localtime')),
+      ('ret-rf', 'R-RFR', 'completed', 'return', 'GBP', 1500, 0, 0, 1500, 'reg1', ?, ?, date(?, 'localtime'))`,
+		closedAt, closedAt, closedAt, closedAt, closedAt, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, paid_at)
+VALUES('pay-rf', 'sale-rf', 'cash', 42000, 'GBP', 0, 2000, ?),
+      ('pay-rf-r', 'ret-rf', 'cash', 1500, 'GBP', 0, 0, ?)`, closedAt, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-rf", "reg1", "user1", 10000, b8At(anchor.Add(-3*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	expectedCash, err := dbx.repo.ComputeExpectedCash(ctx, "shift-rf", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-rf", expectedCash, expectedCash, 10000, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+	b, err := dbx.repo.ShiftCashBreakdown(ctx, "shift-rf", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := dbx.repo.EndOfDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := rep.CashReconciliation
+	if rc == nil {
+		t.Fatal("expected a cash reconciliation")
+	}
+	if rc.CashSales != b.CashSales.Minor() || b.CashSales.Minor() != 38500 {
+		t.Errorf("CashSales: EOD %d, breakdown %d, want 38500", rc.CashSales, b.CashSales.Minor())
+	}
+	if rc.Calculated != b.Expected.Minor() || b.Expected.Minor() != 50500 {
+		t.Errorf("Expected: EOD %d, breakdown %d, want 50500", rc.Calculated, b.Expected.Minor())
+	}
+	if sum := rc.OpeningFloat + rc.CashSales + rc.TipsHeldOut + rc.PayIns + rc.PayOuts; sum != rc.Calculated {
+		t.Errorf("identity: %d != Calculated %d", sum, rc.Calculated)
+	}
+	if rc.Variance != 0 {
+		t.Errorf("Variance = %d, want 0", rc.Variance)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -342,5 +343,95 @@ func TestRejoinDayClosesRefusedByTheCloudSaysWhy(t *testing.T) {
 	}
 	if b := s.join(t).Body.String(); !strings.Contains(b, "subscription is not active") {
 		t.Fatalf("refused day closes: %s", b)
+	}
+}
+
+// ut-docs#5162: a restored copy of a joined till can never upload its day
+// closes (its cloud identity is reset), so the day-close gate must not hold
+// the join forever. They stay in this till's backup copy, and the join says
+// so in the audit log.
+func TestCompleteJoin_RestoredReplicaSkipsDayCloseGate(t *testing.T) {
+	s := newRejoinShop(t)
+	ctx := context.Background()
+	for k, v := range map[string]string{
+		data.ReportRetentionModeKey: data.ReportRetentionModeCloud,
+		"sync.bearer":               "", // the restore check dropped it
+		"till_identity.restored_at": "2026-10-29T09:00:00Z",
+	} {
+		if err := s.till.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"z-1", "z-2"} {
+		if _, err := s.till.Db.Exec(`INSERT INTO report_archive (id, kind, period, content_json, created_at) VALUES (?, 'eod', ?, '{}', '2026-10-25T22:00:00Z')`, id, "2026-10-2"+id[2:]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := s.join(t)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restored copy's re-join: %d %s", rec.Code, rec.Body.String())
+	}
+	if !appdb.PendingRestore(s.tillPath) {
+		t.Fatal("the join staged no restore")
+	}
+	var payload string
+	if err := s.till.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'rejoin_day_closes_kept_local'`).Scan(&payload); err != nil {
+		t.Fatalf("no rejoin_day_closes_kept_local audit row: %v", err)
+	}
+	if !strings.Contains(payload, `"day_closes":2`) {
+		t.Fatalf("audit payload = %s, want the count of 2", payload)
+	}
+}
+
+// Without the restored flag the gate still refuses (the test above would
+// otherwise pass for any till).
+func TestCompleteJoin_NotRestoredStillRefusedOnDayCloses(t *testing.T) {
+	s := newRejoinShop(t)
+	ctx := context.Background()
+	if err := s.till.Settings.Set(ctx, data.ReportRetentionModeKey, data.ReportRetentionModeCloud); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.till.Db.Exec(`INSERT INTO report_archive (id, kind, period, content_json, created_at) VALUES ('z-1', 'eod', '2026-10-25', '{}', '2026-10-25T22:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := s.join(t); rec.Code == http.StatusOK {
+		t.Fatalf("a non-restored till's re-join with an unsent day close was accepted: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#5162: a restored copy (no bearer, provisional R<hex>- receipt
+// prefix) re-joins keeping its sales: the unsent ones are applied on the main
+// till under their own numbers, ones the main till already holds are skipped
+// by id, and the main till grants a new T<n>- instead of the R prefix.
+func TestRejoin_RestoredReplicaWithoutBearerReplaysAndGetsANewTillNo(t *testing.T) {
+	s := newRejoinShop(t)
+	ctx := context.Background()
+	for k, v := range map[string]string{
+		"sync.bearer": "", "sync.till_id": "", "sync.receipt_prefix": "R1a2b-",
+		"till_identity.restored_at": "2026-10-29T09:00:00Z",
+	} {
+		if err := s.till.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// "dup" is in the copy past its cursor but the original already pushed it.
+	seedLocalSale(t, s.till, "dup", "T2-000000004", "2026-10-26T09:00:00Z")
+	seedLocalSale(t, s.main, "dup", "T2-000000004", "2026-10-26T09:00:00Z")
+	seedLocalSale(t, s.till, "mine", "R1a2b-000000001", "2026-10-29T10:00:00Z")
+
+	rec := s.join(t)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restored copy's re-join: %d %s", rec.Code, rec.Body.String())
+	}
+	got := receiptsOn(t, s.main.Db, "dup", "mine")
+	if got["mine"] != "R1a2b-000000001" || got["dup"] != "T2-000000004" {
+		t.Fatalf("main till sales = %v, want mine under its R number and dup untouched", got)
+	}
+	var n int
+	if err := s.main.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE id = 'dup'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("dup sale rows on the main till = %d (err %v), want 1", n, err)
+	}
+	if p := stagedIdentity(t, s.tillPath).ReceiptPrefix; !regexp.MustCompile(`^T[0-9]+-$`).MatchString(p) {
+		t.Fatalf("staged receipt prefix = %q, want a granted T<n>-, not the provisional R prefix", p)
 	}
 }

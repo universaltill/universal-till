@@ -3,6 +3,7 @@ id: guided-tour
 title: Guided tour of the sale screen
 section: Everyday selling
 order: 6
+public: true
 summary: A one-minute walk around the sale screen that starts by itself the first time you sign in, and that you can take again from Help.
 keywords: [tour, guided tour, walkthrough, introduction, first time, onboarding, new staff, tips]
 ---

@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpserver"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/languard"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -76,6 +77,11 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 			} else if sErr != nil {
 				log.Infof("recovery mode: could not read the shop's configured currency, safe mode will show amounts in the default currency: %v", sErr)
 			}
+			// ut-docs#5410: and how it is written (auto|symbol|code); unset or
+			// unreadable stays auto.
+			if mode, found, mErr := settings.NewStore(safeModeDB.DB).Get(ctx, "store.currency_display"); mErr == nil && found {
+				httpx.InitCurrencyDisplay(mode)
+			}
 
 			// A readable file isn't the same as a queryable one (independent
 			// review, ut-docs#1436): ListSalesJournal joins tills/reads
@@ -102,7 +108,7 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 	if err != nil {
 		return Shutdown, fmt.Errorf("recovery mode: listen on %s: %w", cfg.ListenAddr, err)
 	}
-	srv := &http.Server{Handler: newHandler(cfg, failure, safeModeUsable, safeModeSQL, retry)}
+	srv := httpserver.New(newHandler(cfg, failure, safeModeUsable, safeModeSQL, retry))
 
 	serveErr := make(chan error, 1)
 	go func() {

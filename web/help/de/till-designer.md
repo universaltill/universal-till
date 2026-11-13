@@ -3,6 +3,7 @@ id: till-designer
 title: Schnellwahltasten
 section: Ihr Geschäft einrichten
 order: 115
+public: true
 summary: Ordnen Sie die Schnellwahltasten, das Produktraster und die Kategorien des Verkaufsbildschirms an — auf einer Live-Kopie des Verkaufsbildschirms selbst.
 routes: [/designer]
 keywords: [schnellwahltasten, designer, schaltflächen, layout, produktraster, schnellverkauf, verkaufsbildschirm, kategorien]

@@ -202,6 +202,14 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	if err := set("sync.cleared_basket_push_cursor", nowUTC()+"|"); err != nil {
 		return false, fmt.Errorf("apply identity cleared-basket cursor: %w", err)
 	}
+	// And for the primary's day closes in report_archive (ut-docs#5074 M7):
+	// only this till's own closes from now on go to the main till for the
+	// sales copy. (The main till also refuses any close id it holds itself.)
+	// In report_archive.created_at's own text form ("YYYY-MM-DD HH:MM:SS",
+	// UTC), so the string comparison orders it correctly against them.
+	if err := set("sync.close_push_cursor", time.Now().UTC().Format("2006-01-02 15:04:05")+"|"); err != nil {
+		return false, fmt.Errorf("apply identity close cursor: %w", err)
+	}
 	// The snapshot carried the primary's own register identity
 	// (sync.till_register_id, ut-docs#268) baked into its settings row —
 	// this replica must NOT start life believing it's the primary's
@@ -244,6 +252,12 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		if _, err := sqlDB.Exec(`DELETE FROM settings WHERE substr(key, 1, length(?)) = ?`, p, p); err != nil {
 			return false, fmt.Errorf("clear inherited %s* settings: %w", p, err)
 		}
+	}
+	// ut-docs#5177: a joined till is no longer a restored copy; the marker of
+	// one (enroll.clearClonedIdentity) must not make a later re-join rewrite
+	// the register of entries this till makes as a normal joined till.
+	if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'sync.restored_since'`); err != nil {
+		return false, fmt.Errorf("clear restored-copy marker: %w", err)
 	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
 	if _, err := sqlDB.Exec(`DELETE FROM sessions`); err != nil {

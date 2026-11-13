@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/taxrate"
@@ -20,8 +21,12 @@ import (
 const (
 	KeyTheme    = "theme"
 	KeyCurrency = "store.currency"
-	KeyCountry  = "store.country"
-	KeyRegion   = "store.region"
+	// KeyCurrencyDisplay is how amounts write the shop currency: auto
+	// (the registry decides per currency), symbol or code (ut-docs#5410).
+	// Empty reads as auto.
+	KeyCurrencyDisplay = "store.currency_display"
+	KeyCountry         = "store.country"
+	KeyRegion          = "store.region"
 	// KeyLocale is the shop's live-switchable default locale (ut-docs#861) —
 	// same key internal/settings/runtime.go's LoadRuntimeConfig/SaveRuntimeConfig
 	// already read/wrote at boot, but until #861 nothing but that one
@@ -393,6 +398,7 @@ func LoadStateChecked(ctx context.Context, store *settings.Store, cfg *config.Co
 	st := RuntimeState{
 		Theme:                  get(KeyTheme, cfg.Theme),
 		Currency:               get(KeyCurrency, cfg.Locales.Currency),
+		CurrencyDisplay:        ClampCurrencyDisplay(get(KeyCurrencyDisplay, httpx.CurrencyDisplayAuto)),
 		Country:                get(KeyCountry, "GB"),
 		Region:                 get(KeyRegion, ""),
 		Locale:                 get(KeyLocale, cfg.Locales.Locale),
@@ -612,6 +618,7 @@ func StateKV(ctx context.Context, store *settings.Store, st RuntimeState) map[st
 	kv := map[string]string{
 		KeyTheme:                  st.Theme,
 		KeyCurrency:               st.Currency,
+		KeyCurrencyDisplay:        ClampCurrencyDisplay(st.CurrencyDisplay),
 		KeyCountry:                st.Country,
 		KeyRegion:                 st.Region,
 		KeyLocale:                 st.Locale,
@@ -793,4 +800,23 @@ func buildSlotAmendments(pm *plugins.Manager, slot string) []uislot.Amendment {
 		return nil
 	}
 	return out
+}
+
+// ClampCurrencyDisplay returns mode if it is a storable currency display
+// mode, else auto (the empty/unset value is auto). Validation that must
+// refuse a bad value (the settings save) uses httpx.IsCurrencyDisplayMode.
+func ClampCurrencyDisplay(mode string) string {
+	if httpx.IsCurrencyDisplayMode(mode) {
+		return mode
+	}
+	return httpx.CurrencyDisplayAuto
+}
+
+// InitCurrencyFromState publishes the shop currency AND its display mode to
+// httpx. Every place that publishes the currency calls this, never
+// httpx.InitCurrency alone, so a new publisher cannot leave the display mode
+// stale (TestInitCurrencyOnlyThroughStateHelper, ut-docs#5410).
+func InitCurrencyFromState(st RuntimeState) {
+	httpx.InitCurrency(st.Currency)
+	httpx.InitCurrencyDisplay(st.CurrencyDisplay)
 }

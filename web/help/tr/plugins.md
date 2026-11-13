@@ -3,6 +3,7 @@ id: plugins
 title: Eklenti mağazası
 section: Bağlantı ve eklentiler
 order: 330
+public: true
 summary: "Çekirdek uygulamayı değiştirmeden özellik ekleyin: ödemeler, temalar, dil paketleri, entegrasyonlar, yapay zekâ araçları ve daha fazlası."
 routes: [/plugins, /plugins/store, /plugins/store/{listing_id}, /plugins/{section}/{listing_id}, /plugins/{id}/settings]
 ---

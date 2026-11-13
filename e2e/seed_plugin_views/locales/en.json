@@ -1,0 +1,20 @@
+{
+  "e2eviews.chat.title": "Sample chat",
+  "e2eviews.chat.placeholder": "Ask the sample plugin…",
+  "e2eviews.chat.tool": "sample lookup",
+  "e2eviews.wizard.title": "Sample setup",
+  "e2eviews.wizard.step1": "Connect",
+  "e2eviews.wizard.step2": "Configure",
+  "e2eviews.wizard.step3": "Finish",
+  "e2eviews.wizard.body1": "Scan the code to connect.",
+  "e2eviews.wizard.body2": "Choose your options.",
+  "e2eviews.wizard.body3": "All done.",
+  "e2eviews.wizard.qr_label": "Pairing code",
+  "e2eviews.wizard.next": "Next",
+  "e2eviews.wizard.back": "Back",
+  "e2eviews.job.title": "Sample task",
+  "e2eviews.job.intro": "Run a sample long task.",
+  "e2eviews.job.run": "Run task",
+  "e2eviews.job.progress": "Sample task halfway",
+  "e2eviews.job.done": "Sample task finished"
+}

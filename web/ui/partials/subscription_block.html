@@ -45,6 +45,7 @@
      only for CanRenew (manager/admin on a registered till that is not a
      replica registered via its main till). The endpoints refuse on their
      own. */}}
+{{/* #3434: CanRenew is false on iOS (plan_purchase.go). */}}
 {{ define "subscription_renew_open" }}
 {{ if .CanRenew }}
 <p><button type="button" class="btn primary btn-touch" data-testid="subscription-renew-open" data-sub-panel-open

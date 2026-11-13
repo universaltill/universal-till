@@ -81,6 +81,8 @@ data/backups/
 **/data/wasm-cache/
 # LAN TLS private key (ut-docs#2736) — never committed, wherever a run put it
 **/data/tls/
+# Key material a test run must never leave behind (ut-docs#5127)
+**/data/secrets/
 unitill-pos-setup-*.exe
 /unitill-desktop
 /unitill-uninstall
