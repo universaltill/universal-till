@@ -773,9 +773,10 @@
       return false;
     }
     var q = '{{ T "common.discard_confirm" }}';
+    var discardOk = '{{ T "common.discard" }}', keepEditing = '{{ T "common.keep_editing" }}';
     var opener = document.getElementById('modifier-empty-goto-modifiers');
     var ask = (window.UT && typeof window.UT.confirm === 'function')
-      ? window.UT.confirm(q, { opener: opener })
+      ? window.UT.confirm(q, { opener: opener, ok: discardOk, dismiss: keepEditing })
       : Promise.resolve(window.confirm(q)); // native-confirm:allow till-confirm.js not loaded: still ask, never a silent discard
     ask.then(function (ok) { if (ok === true) location.assign('/modifiers'); });
     return false; // always synchronous: inline-actions' goto-modifiers keeps preventing the default

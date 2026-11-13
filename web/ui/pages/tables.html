@@ -242,7 +242,7 @@
                  blocking finding) — the this-till/no-claim cases keep the
                  original, shorter wording. */}}
             <form method="post" action="/api/tables/{{ .ID }}/release" class="users-inline"
-                  data-submit="confirm" data-confirm-text="{{ if and .HasLiveClaim (ne .ClaimTillID "") }}{{ printf (T "tables.confirm.release_foreign_till") (or .ClaimTillName (T "tables.claim.unenrolled_till")) }}{{ else }}{{ T "tables.confirm.release" }}{{ end }}">
+                  data-submit="confirm" data-confirm-ok="{{ T "tables.release" }}" data-confirm-text="{{ if and .HasLiveClaim (ne .ClaimTillID "") }}{{ printf (T "tables.confirm.release_foreign_till") (or .ClaimTillName (T "tables.claim.unenrolled_till")) }}{{ else }}{{ T "tables.confirm.release" }}{{ end }}">
               <button type="submit" class="btn secondary">{{ T "tables.release" }}</button>
             </form>
             {{ end }}

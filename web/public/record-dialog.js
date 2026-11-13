@@ -200,8 +200,11 @@
   // another question already pending all resolve false: the edits are kept.
   function askDiscard(dialog, opener) {
     var q = dialog.getAttribute('data-discard-confirm') || '';
+    // Verb labels from the dialog; absent attribute -> the shell default (ut-docs#6148).
+    var okLabel = dialog.getAttribute('data-discard-ok') || '';
+    var dismissLabel = dialog.getAttribute('data-discard-dismiss') || '';
     return (window.UT && typeof window.UT.confirm === 'function')
-      ? window.UT.confirm(q, { opener: opener || null })
+      ? window.UT.confirm(q, { opener: opener || null, ok: okLabel || undefined, dismiss: dismissLabel || undefined })
       : Promise.resolve(window.confirm(q)); // native-confirm:allow till-confirm.js not loaded: still ask, never a silent discard
   }
 

@@ -127,6 +127,8 @@
     screenshotLimit: "{{ T "issuereport.screenshot_limit" }}",
     recordingKeptAfterReload: "{{ T "issuereport.recording_kept_after_reload" }}",
     discardConfirm: "{{ T "issuereport.discard_confirm" }}",
+    discardOk: "{{ T "issuereport.discard" }}",
+    discardKeep: "{{ T "issuereport.discard_keep" }}",
     saving: "{{ T "issuereport.saving" }}",
     saved: "{{ T "issuereport.saved" }}",
     saveError: "{{ T "issuereport.save_error" }}"
@@ -456,7 +458,7 @@
     document.getElementById('bugreport-discard').addEventListener('click', function (ev) {
       var btn = ev.currentTarget;
       var ask = (window.UT && typeof window.UT.confirm === 'function')
-        ? window.UT.confirm(T.discardConfirm, { opener: btn })
+        ? window.UT.confirm(T.discardConfirm, { opener: btn, ok: T.discardOk, dismiss: T.discardKeep })
         : Promise.resolve(window.confirm(T.discardConfirm)); // native-confirm:allow till-confirm.js not loaded: still ask, never a silent discard
       ask.then(function (ok) {
         if (ok !== true) return;            // Cancel: recording, draft and panel untouched

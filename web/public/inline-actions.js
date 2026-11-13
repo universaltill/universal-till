@@ -389,7 +389,14 @@
       }
       preventDefault(ctx);
       var sub = ctx.event && ctx.event.submitter;
-      window.UT.confirm(q, { opener: sub || f }).then(function (ok) {
+      // Verb labels / tone from the form, same attributes as the htmx path
+      // (ut-docs#6148); an absent attribute keeps the shell default.
+      window.UT.confirm(q, {
+        opener: sub || f,
+        ok: f.getAttribute('data-confirm-ok') || undefined,
+        dismiss: f.getAttribute('data-confirm-dismiss') || undefined,
+        tone: f.getAttribute('data-confirm-tone') === 'neutral' ? 'neutral' : undefined
+      }).then(function (ok) {
         if (!ok || !f.isConnected) return;
         // The submit handler runs synchronously inside requestSubmit; a form
         // that fails validation fires none, so the flag never outlives it.
