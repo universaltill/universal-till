@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -392,7 +393,10 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 	// printability is judged on the main till's row when it answers
 	// (voucherForPage), the slip's content on the shown row. Outcome is an
 	// inline fragment; every attempt that reached the printer (or was refused
-	// by ADR-0124) is audited as voucher/<id>/slip_printed.
+	// by ADR-0124) is audited as voucher/<id>/slip_printed. With no receipt
+	// printer the slip is handed to the browser's print dialog instead
+	// (ut-docs#6152): 200 + X-UT-Response: print-slip + an OOB slip
+	// fragment, audited {ok:true, via:"browser"} (the till can't see paper).
 	mux.HandleFunc("POST /vouchers/{id}/print-slip", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "settings") || (!auth.Disabled(os.Getenv("UT_AUTH")) && strings.TrimSpace(getSessionUserID(r)) == "") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
@@ -430,7 +434,19 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			writeCustomerDocumentsRefused(w, r)
 			return
 		case errors.Is(err, errNoReceiptPrinter):
-			voucherAdjustMessage(w, r, http.StatusConflict, "vouchers.print_slip.no_printer")
+			set := browserSlipSet{Lang: httpx.DefaultLocale(), Dir: slipDir(httpx.DefaultLocale()),
+				Slips: []browserVoucherSlip{browserVoucherSlipFor(actx, d, shown, time.Now())}}
+			body, rerr := renderBrowserSlips("voucher_slip_print_response", httpx.RequestLocale(r), map[string]any{"Set": set})
+			if rerr != nil {
+				logging.L().Errorf("voucher slip %s: browser slip: %v", id, rerr)
+				voucherAdjustMessage(w, r, http.StatusInternalServerError, "common.error.server")
+				return // no slip handed out, so no audit row
+			}
+			_ = repo.InsertAudit(actx, nil, actor, "voucher", id, "slip_printed",
+				map[string]any{"ok": true, "via": "browser"}, now, "")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("X-UT-Response", "print-slip")
+			_, _ = io.WriteString(w, string(body))
 			return
 		}
 		_ = repo.InsertAudit(actx, nil, actor, "voucher", id, "slip_printed",

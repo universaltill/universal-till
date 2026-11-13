@@ -208,6 +208,8 @@
     'ok-2xx': function (ctx) { var x = xhrOf(ctx); return !!(x && x.status >= 200 && x.status < 300); },
     // users.html / elevation: X-UT-Response tells success from a refusal.
     'ut-ok': function (ctx) { return header(ctx, 'X-UT-Response') === 'ok'; },
+    // ut-docs#6152: X-UT-Response equals the argument (e.g. print-slip).
+    'ut-response': function (ctx, arg) { return header(ctx, 'X-UT-Response') === arg; },
     // A settings save that answered with HTML (an elevation prompt) must
     // not reload over it.
     'not-html': function (ctx) { return header(ctx, 'Content-Type').indexOf('text/html') === -1; },
