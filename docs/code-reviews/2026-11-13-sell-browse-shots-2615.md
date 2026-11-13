@@ -98,3 +98,15 @@ Pre-flight: web/help topic updated (`en/sell.md`) + `make docs-shots` run (12 ne
 ## Verdict
 
 Approve. Merge once CI is green.
+
+## CI follow-up (desktop-shell deadcode)
+
+`guard-deadcode-baseline.sh` flagged `Library.MissingImages` (only called by
+`checkhelptopics`) and `parseTopic` (after F1, only tests called it). Adding
+baseline entries is forbidden in a feature PR (ut-docs#3406), so: `parseTopic`
+now takes the `lenient` flag itself (no wrapper), and `Builtin()` logs each
+missing inline image once at load. That is a real production caller, and it
+makes a shipped-but-missing picture visible in the till's log rather than
+silent. `internal/manual` and `checkhelptopics` tests pass, golangci-lint
+reports 0 issues, and the baseline-growth guard is green. CI re-runs
+deadcode itself, because the local toolchain can't build v0.48.0.
