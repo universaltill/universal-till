@@ -40,7 +40,7 @@
 html,body{background:#fff !important}
 .pos-container,.pos-container > .basket.receipt-view{border:0 !important;border-radius:0 !important;box-shadow:none !important;background:#fff !important;padding:0 !important;margin:0 !important;inline-size:auto !important;max-inline-size:none !important}
 .voucher-slips-print{display:block;background:#fff}
-.voucher-slip-sheet{break-before:page;page-break-before:always}
+.voucher-slip-sheet{break-before:page;page-break-before:always;padding-inline:6mm;padding-block:6mm}
 }
 </style>
 <div class="voucher-slips-print" lang="{{ .Lang }}" dir="{{ .Dir }}" aria-hidden="true" data-testid="receipt-voucher-slips">
@@ -56,12 +56,13 @@ html,body{background:#fff !important}
 <span class="tag" role="status" data-testid="voucher-slip-browser-opened">{{ T "vouchers.print_slip.browser_opened" }}</span>
 <div id="voucher-slip-print" class="voucher-slip-print-host" hx-swap-oob="true" aria-hidden="true" lang="{{ .Set.Lang }}" dir="{{ .Set.Dir }}">
   <style>{{ template "voucher_slip_paper_css" }}
+@page{margin:0}
 .voucher-slip-print-host{display:none}
 @media print{html,body{background:#fff !important}}
 @media print{body{display:block !important;overflow:visible !important}}
 @media print{body *:not(:has(.voucher-slip-print-host)):not(.voucher-slip-print-host):not(.voucher-slip-print-host *){display:none !important}}
 @media print{body *:has(.voucher-slip-print-host){display:block !important;position:static !important;margin:0 !important;padding:0 !important;border:0 !important;block-size:auto !important;min-block-size:0 !important;overflow:visible !important;background:#fff !important}}
-@media print{.voucher-slip-print-host{display:block !important}}
+@media print{.voucher-slip-print-host{display:block !important;padding-inline:6mm;padding-block:6mm}}
   </style>
   {{ range .Set.Slips }}{{ template "voucher_slip_paper" . }}{{ end }}
 </div>

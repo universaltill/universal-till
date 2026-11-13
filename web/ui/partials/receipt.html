@@ -60,6 +60,9 @@
   .receipt-ask-actions {display: flex; gap: 0.5rem;}
   .receipt-ask-actions .btn {flex: 1; min-height: 3rem;}
   .receipt-print-copy {display: none;}
+  /* ut-docs#6155: margin 0 leaves the browser no margin box for its header and
+     footer (URL, title, date); the print rules below inset the content instead. */
+  @page {margin: 0;}
   @media print {
     /* ut-docs#4730: print the customer-language copy instead of the screen card. */
     .receipt-wrap.has-print-copy > .receipt-card:not(.receipt-print-copy) {display: none;}
@@ -73,6 +76,8 @@
        theme's light --text would print near-invisible. */
     .receipt-card, .receipt-card * {color: #000 !important;}
     .receipt-card {background: #fff; border-color: #e5e7eb;}
+    /* 6mm clears a printer's unprintable edge; clone repeats it on page 2+. */
+    .receipt-wrap {padding-inline: 6mm; padding-block: 6mm; box-sizing: border-box; -webkit-box-decoration-break: clone; box-decoration-break: clone;}
     .receipt-card .totals {background: transparent; border-color: #e5e7eb;}
     .actions {display: none;}
     .nav {display: none !important;}
