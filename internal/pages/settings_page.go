@@ -3505,6 +3505,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "settings.retention.err_use_retention_card")
 			return
 		}
+		// ut-docs#6179: the gift voucher slip text takes the designer's rule
+		// here too, and the normalised text is what is stored.
+		if key == keyReceiptVoucherSlipText {
+			norm, err := normalizeVoucherSlipText(value)
+			if err != nil {
+				httpx.RefuseText(w, voucherSlipTextTooLongMsg(httpx.ResolveLocale(w, r)), http.StatusUnprocessableEntity)
+				return
+			}
+			value = norm
+		}
 		// ut-docs#5862 (review finding): this till's name keys take the
 		// Till name card's single-line rule here too, before the elevation
 		// gate, so the raw editor cannot store a name that card refuses.

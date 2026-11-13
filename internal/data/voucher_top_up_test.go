@@ -601,3 +601,31 @@ func TestVoucherTopUpsInSale_VoucherVoid(t *testing.T) {
 		t.Fatalf("forced top-up of a void voucher = %+v, want not reversed, VoucherVoid true", tops[0])
 	}
 }
+
+// TestVoucherTopUpsInSale_CreatedAt (ut-docs#6179): the top-up row's own time
+// comes back, so the slip can say "Topped up <date>".
+func TestVoucherTopUpsInSale_CreatedAt(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-created-at.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	tx, _ := repo.db.Begin()
+	if err := repo.CreateVoucher(ctx, tx, Voucher{ID: "GS-1", OriginalAmountMinor: 1000, BalanceMinor: 1000, Currency: "EUR", IssuedSaleID: "sale-a", CreatedAt: "2025-01-02T08:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordVoucherTransaction(ctx, tx, VoucherTransaction{ID: "i1", VoucherID: "GS-1", SaleID: "sale-a", Type: "issue", AmountMinor: 1000, CreatedAt: "2025-01-02T08:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Commit()
+	tx, _ = repo.db.Begin()
+	if _, err := repo.TopUpVoucher(ctx, tx, "GS-1", "sale-top", 500, topUpTestCeiling, false, "2025-01-10T09:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Commit()
+	tops, err := repo.VoucherTopUpsInSale(ctx, "sale-top")
+	if err != nil || len(tops) != 1 {
+		t.Fatalf("tops = %+v, err = %v", tops, err)
+	}
+	if tops[0].CreatedAt != "2025-01-10T09:00:00Z" {
+		t.Errorf("CreatedAt = %q, want the top-up row's time", tops[0].CreatedAt)
+	}
+}
