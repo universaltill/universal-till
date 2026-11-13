@@ -53,7 +53,7 @@
   .receipt-tracking-qr {border-top: 1px dashed var(--border); margin-block-start: 0.75rem; padding-block-start: 0.75rem; text-align: center;}
   .receipt-tracking-qr img {max-width: 160px; width: 100%; height: auto;}
   .receipt-tracking-caption {display: block; margin-block-start: 0.25rem; color: var(--text);}
-  .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
+  .receipt-printer-warning {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
   .receipt-ask {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem;}
   .receipt-ask-title {font-weight: 600; margin-bottom: 0.5rem;}
@@ -95,7 +95,12 @@
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">
       <span class="receipt-printer-message">{{ T "receipt.printer.unavailable" }}</span>
+      {{- /* ut-docs#6154: a printerless Pi kiosk can't open a usable print dialog — point at Settings (or a manager) instead of Retry. */}}
+      {{ if browserprintoff }}
+      {{ if allowed "settings" }}<a class="btn secondary receipt-printer-setup" data-testid="receipt-printer-setup" href="/settings#settings-printer">{{ T "receipt.printer.set_up" }}</a>{{ else }}<span class="receipt-printer-message" data-testid="receipt-printer-ask-manager">{{ T "receipt.printer.ask_manager" }}</span>{{ end }}
+      {{ else }}
       <button class="btn secondary receipt-printer-retry" type="button" data-action="print">{{ T "receipt.printer.retry" }}</button>
+      {{ end }}
     </div>
     {{ end }}
     {{ if eq .ReceiptPolicy "ask" }}

@@ -3976,6 +3976,9 @@ body.osk-padded #table-add-modal .modifier-actions {
   display: inline-flex; align-items: center; justify-content: center; }
 .notice-dismiss:hover { background: rgba(15, 23, 42, .08); }
 #pos-alert { margin-block-end: .6rem; }
+/* ut-docs#6154: the printerless-kiosk notice wraps so its link drops under the text at 360px / long locales. */
+#ut-print-unavailable { flex-wrap: wrap; }
+#ut-print-unavailable .notice-text { flex: 1 1 14rem; }
 
 /* ---------- Toasts (legacy overlay — self-order screens only; the sale
    screen uses .pos-notice above) ---------- */

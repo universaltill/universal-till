@@ -23,6 +23,11 @@
     {{/* ut-docs#6152: with no receipt printer the press opens the browser's
          print dialog on this page (the answer carries the slip, OOB into
          #voucher-slip-print); the hint says so before the press. */}}
+    {{ if and (not $s.printer) $s.browserOff }}
+    {{/* ut-docs#6154: printerless Pi kiosk — the browser dialog could only save a PDF nobody can reach, so no button; the hint sits where it was. */}}
+    <p class="muted" data-testid="voucher-slip-no-printer-hint" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.no_printer_hint" }}
+      <a href="/settings#settings-printer" style="display:inline-block;min-block-size:44px;line-height:44px">{{ T "receipt.printer.set_up" }}</a></p>
+    {{ else }}
     {{ if not $s.printer }}
     <p class="muted" data-testid="voucher-slip-browser-hint" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.browser_hint" }}
       <a href="/settings#settings-printer" style="display:inline-block;min-block-size:44px;line-height:44px">{{ T "settings.printer.title" }}</a></p>
@@ -34,6 +39,7 @@
       <button class="btn secondary" type="submit" data-testid="voucher-print-slip">{{ T "vouchers.print_slip.button" }}</button>
     </form>
     <span id="voucher-slip-busy" class="htmx-indicator muted" role="status">{{ T "vouchers.print_slip.printing" }}</span>
+    {{ end }}
     <div id="voucher-slip-msg" aria-live="polite" style="margin-block-start:.4rem"></div>
     <div id="voucher-slip-print" class="voucher-slip-print-host" aria-hidden="true"></div>
   </div>
