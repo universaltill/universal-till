@@ -1528,6 +1528,19 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    controls. Edit mode: the reverse. Toggled by setMode() in catalog.html. */
 .catalog-form.is-create .item-form-needs-item { display: none; }
 .catalog-form:not(.is-create) .item-form-needs-save { display: none; }
+/* ut-docs#6176: ut-docs#6138 gave the edit-mode title its own full-width line,
+   but only at <=700px. From 701px up to the kiosk floor (1024px, which keeps
+   the single-row head untouched) the labelled +New/Close/Save group leaves
+   the 12rem-basis title group as little as 161px at 701px and ~260px at
+   800px, so "Edit: <item name>" was still ellipsised (263px needed) and the
+   operator could not see which item was open. Same remedy as the phone
+   query, minus the icon-only collapse: the title takes its own line and
+   Delete joins the one action row (still a single button row, +~1 text
+   line of head height). */
+@media (min-width: 701px) and (max-width: 1023px) {
+  .catalog-form-head-title { display: contents; }
+  .catalog-form-head-title h3 { flex: 1 0 100%; }
+}
 @media (max-width: 700px) {
   .catalog-form-head { padding-inline: 1rem; }
   .catalog-form-body { padding-inline: 1rem; }
