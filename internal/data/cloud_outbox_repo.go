@@ -185,12 +185,18 @@ func (*CloudOutboxRepo) Counts(ctx context.Context, q SyncQuerier) (open, sealed
 	return open, sealed, nil
 }
 
-// OutboxItem is an item's uploadable local values (contract 1.0.0).
+// OutboxItem is an item's uploadable local values (contract 1.1.0).
+// NetQuantityValue/NetQuantityUnit are nil for none; they upload as a pair
+// (ut-docs#6082/#6202).
 type OutboxItem struct {
 	Name, Description, SKU string
 	PriceMinor             int64
 	CategoryID, TaxCodeID  string // "" = none
 	Active                 bool
+	IsWeighed              bool
+	AgeRestricted          bool
+	NetQuantityValue       *int64
+	NetQuantityUnit        *string
 }
 
 // OutboxBarcode is one item-level barcode: its stored key, type, primary.
@@ -203,9 +209,12 @@ type OutboxBarcode struct {
 // barcodes (primary first, then by key); ok is false when it is gone.
 func (*CloudOutboxRepo) OutboxItemValues(ctx context.Context, q SyncQuerier, id string) (OutboxItem, []OutboxBarcode, bool, error) {
 	var it OutboxItem
-	var desc, sku, cat, tax sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT name, description, sku, base_price, category_id, tax_code_id, is_active FROM items WHERE id = ?`, id).
-		Scan(&it.Name, &desc, &sku, &it.PriceMinor, &cat, &tax, &it.Active)
+	var desc, sku, cat, tax, nqUnit sql.NullString
+	var nqValue sql.NullInt64
+	err := q.QueryRowContext(ctx, `SELECT name, description, sku, base_price, category_id, tax_code_id, is_active,
+		is_weighed, age_restricted, net_quantity_value, net_quantity_unit FROM items WHERE id = ?`, id).
+		Scan(&it.Name, &desc, &sku, &it.PriceMinor, &cat, &tax, &it.Active,
+			&it.IsWeighed, &it.AgeRestricted, &nqValue, &nqUnit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return it, nil, false, nil
 	}
@@ -213,6 +222,12 @@ func (*CloudOutboxRepo) OutboxItemValues(ctx context.Context, q SyncQuerier, id 
 		return it, nil, false, fmt.Errorf("outbox item: %w", err)
 	}
 	it.Description, it.SKU, it.CategoryID, it.TaxCodeID = desc.String, sku.String, cat.String, tax.String
+	if nqValue.Valid {
+		it.NetQuantityValue = &nqValue.Int64
+	}
+	if nqUnit.Valid {
+		it.NetQuantityUnit = &nqUnit.String
+	}
 	rows, err := q.QueryContext(ctx, `SELECT barcode, COALESCE(barcode_type, ''), is_primary FROM item_barcodes WHERE item_id = ? ORDER BY is_primary DESC, barcode`, id)
 	if err != nil {
 		return it, nil, false, fmt.Errorf("outbox item barcodes: %w", err)

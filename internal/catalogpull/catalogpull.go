@@ -103,8 +103,10 @@ import (
 // option sets and the link lists naming them (ut-docs#4491). 3: item
 // variants (with their option values) and item barcodes (ut-docs#4521).
 // 4: every uploadable row's base, which the change upload diffs against
-// (ut-docs#4464); the re-pull also forgets every echo version.
-const ApplierVersion = 4
+// (ut-docs#4464); the re-pull also forgets every echo version. 5: an item's
+// is_weighed, age_restricted and net quantity in that base (ut-docs#6082/
+// #6202; migration 102 backfills the bases of an applier-4 till).
+const ApplierVersion = 5
 
 // Settings keys of the pull state. "cloudsync." is a per-till settings
 // family (data.PerTillSettingPrefixes): never LAN-synced, so the main

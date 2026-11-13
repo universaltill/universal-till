@@ -804,7 +804,9 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   retries. Best-effort, after the last commit; a removal counts as a change.
   Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
   `option_set` (applier version 2, ut-docs#4491), `item_variant`,
-  `item_barcode` (applier version 3, ut-docs#4521). Every other kind is
+  `item_barcode` (applier version 3, ut-docs#4521); version 5 re-pulls so
+  every item base holds `is_weighed`, `age_restricted` and the net-quantity
+  pair (ut-docs#6082/#6202). Every other kind is
   skipped, cursor advancing: `layout`, `staff`, `setting` (ut-docs#4492),
   and any unknown kind. Each applied
   row writes an `audit_log` row (`actor system`, action
@@ -964,12 +966,15 @@ channels. `internal/stockupload` uploads the rows whose quantity changed;
 
 The main till of a cloud-master store uploads its own catalogue edits
 (`internal/catalogpull` `Push`, contract ut-docs
-`reference/contracts/cloud-catalog-changes.md` 1.0.0), every tick **before**
+`reference/contracts/cloud-catalog-changes.md` 1.1.0), every tick **before**
 it pulls (`internal/cloudsync` `pullCloudCatalog`).
 
-- **What uploads (1.0.0):** items (`name`, `description`, `sku`,
-  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`, and the
-  whole item-level `barcodes` set), categories (`name`, `parent_cloud_id`,
+- **What uploads (1.1.0):** items (`name`, `description`, `sku`,
+  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`,
+  `is_weighed`, `age_restricted`, `net_quantity_value`, `net_quantity_unit`,
+  and the whole item-level `barcodes` set; the net-quantity pair always
+  uploads together — a change to either half sends both, ut-docs#6082/#6202),
+  categories (`name`, `parent_cloud_id`,
   `sort_order`, `active`), tax codes (`name`, `rate_basis_points`,
   `takeaway_rate_basis_points`, `active`). Other kinds and fields are not
   uploaded yet (the cloud's write path does not take them); a pull still
@@ -980,7 +985,9 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   `seal_seq` order; `cloud_outbox_suppress(one)` — a flag row that exists
   only inside the pull's own write transaction. `cloud_links` gains `base`
   (JSON of the uploadable fields the till last adopted from the cloud) and
-  `echo_version`.
+  `echo_version`. Migration 102 widens the item update trigger to the four
+  1.1.0 item columns and fills them into existing item bases from the local
+  row (a base that is not valid JSON is left alone).
 - **Marks are written by triggers** on `items`, `item_barcodes`,
   `categories` and `tax_codes` (insert, delete, update of an uploadable
   column), in the same transaction as the write, whatever path wrote it.

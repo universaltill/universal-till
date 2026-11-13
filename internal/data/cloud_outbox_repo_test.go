@@ -84,6 +84,30 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value`, v)
 	obExec(t, db, `UPDATE categories SET color = '#00ff00' WHERE id = 'c1'`)
 	wantMarks(t, db)
 
+	// ut-docs#6082/#6202 (migration 102): the flag and net-quantity
+	// columns upload now, so a write to any one of them alone marks the
+	// item; the same write is silent on an additional till and while the
+	// pull's suppress row exists.
+	for _, edit := range []string{
+		`UPDATE items SET is_weighed = 1 WHERE id = 'i1'`,
+		`UPDATE items SET age_restricted = 1 WHERE id = 'i1'`,
+		`UPDATE items SET net_quantity_value = 330 WHERE id = 'i1'`,
+		`UPDATE items SET net_quantity_unit = 'ml' WHERE id = 'i1'`,
+	} {
+		clearOutbox(t, db)
+		obExec(t, db, edit)
+		wantMarks(t, db, "item:i1")
+	}
+	clearOutbox(t, db)
+	obExec(t, db, `INSERT INTO settings (key, value) VALUES ('sync.primary_url', 'https://main.local:8443')`)
+	obExec(t, db, `UPDATE items SET is_weighed = 0, age_restricted = 0, net_quantity_value = NULL, net_quantity_unit = NULL WHERE id = 'i1'`)
+	wantMarks(t, db) // an additional till never marks
+	obExec(t, db, `DELETE FROM settings WHERE key = 'sync.primary_url'`)
+	obExec(t, db, `INSERT INTO cloud_outbox_suppress (one) VALUES (1)`)
+	obExec(t, db, `UPDATE items SET is_weighed = 1, age_restricted = 1 WHERE id = 'i1'`)
+	wantMarks(t, db) // the pull's own write marks nothing
+	obExec(t, db, `DELETE FROM cloud_outbox_suppress`)
+
 	// A barcode edit marks its item; so does a delete.
 	obExec(t, db, `INSERT INTO item_barcodes (barcode, item_id, is_primary) VALUES ('5000', 'i1', 1)`)
 	wantMarks(t, db, "item:i1")
