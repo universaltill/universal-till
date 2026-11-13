@@ -77,6 +77,24 @@ bug and the now-exposed test.
     npx playwright test --project=default  # skip the auth/setup specs
     npx playwright test --project=auth     # just login.spec.ts and its siblings
 
+### Touch targets (ut-docs#5989)
+
+`tests/touch-target-floor-5989.spec.ts` walks every till GET page
+(`TILL_GET_ROUTES` in `tests/helpers.ts`, plus `/self-order`) at phone
+440x956 and till 1024x600 and fails on any visible interactive element under
+44x44 CSS px (both dimensions; it fails below 43.5, as in
+`settings-checkbox-touch-row-5738`).
+
+- Scanned: links, buttons, summaries, form controls, ARIA widgets and elements with a click handler or `hx-*`
+  click trigger. A checkbox/radio/switch is measured through its label. Inline links inside prose are exempt (WCAG 2.5.8).
+  Not scanned: hidden/`aria-hidden`/closed-dialog content, dialogs and overlays opened later, auth-session chips.
+- Reviewed exception: `data-touch-ok="<reason>"` on the element or an ancestor (an empty reason does not count).
+- `scripts/ci/touch-target-baseline.txt` holds the misses that predate the spec. It is shrink-only: a fixed target
+  must be deleted from it (the spec fails on a stale line); new UI never goes in it.
+- Regenerate locally, never under `CI`:
+  `TOUCH_BASELINE_WRITE=1 npx playwright test touch-target-floor-5989 --project=default --workers=1`.
+- Keep "phone" out of the file name: `/phone/` specs also run in the WebKit lane.
+
 ### WebKit phone lane (ut-docs#3734)
 
 The iOS app (WKWebView) and the Pi shell (WebKitGTK) render in WebKit, so the

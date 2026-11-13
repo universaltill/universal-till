@@ -1,0 +1,97 @@
+# Touch targets under 44x44 CSS px that predate touch-target-floor-5989 (ut-docs#5989).
+# Shrink-only: <route><TAB><phone|till><TAB><signature><TAB><W>x<H> (size informational, not compared).
+# The spec fails on an entry that no longer violates, so a fixed target leaves this file.
+# New UI takes a data-touch-ok="<reason>" attribute instead; regenerate locally only:
+#   cd e2e && TOUCH_BASELINE_WRITE=1 npx playwright test touch-target-floor-5989 --project=default --workers=1
+/	phone	button#cat-tab-more	30x27
+/	till	#table-picker > button.btn.compact.secondary.table-picker-trigger[type=button][data-testid=table-picker-open]	92x43
+/	till	#ut-page > a.btn.btn-icon.compact.products-strip-edit.secondary[data-testid=products-add-link]	51x43
+/	till	#ut-page > a.sb-enrol.sb-item	218x23
+/	till	#ut-page > button.btn.btn-icon.compact.products-strip-search.secondary[type=button]	51x43
+/	till	#ut-page > input[type=number][name=qty]	58x43
+/	till	#ut-page > input[type=text][name=code]	179x43
+/	till	button#cat-tab-more	30x27
+/	till	button#order-type-dine-in	91x43
+/	till	button#order-type-takeaway	109x43
+/admin	phone	#shop-name-notice > a	107x23
+/admin	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/admin	phone	#ut-page > a.sb-enrol.sb-item	218x23
+/admin	till	#shop-name-notice > a	107x23
+/admin	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/admin	till	#ut-page > a.sb-enrol.sb-item	218x23
+/catalog/tax-codes	phone	#tax-codes-table > button.btn.danger[type=button]	97x33
+/catalog/tax-codes	phone	#tax-codes-table > button.btn.secondary.tax-code-edit[type=button]	49x33
+/catalog/tax-codes	phone	#ut-page > a	254x20
+/catalog/tax-codes	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/catalog/tax-codes	till	#tax-codes-table > button.btn.danger[type=button]	97x33
+/catalog/tax-codes	till	#tax-codes-table > button.btn.secondary.tax-code-edit[type=button]	49x33
+/catalog/tax-codes	till	#ut-page > a	254x20
+/catalog/tax-codes	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/categories	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/categories	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/designer	phone	[data-testid=designer-categories] > button.btn.compact.secondary[type=submit]	90x43
+/designer	phone	button#cat-tab-more	30x27
+/designer	phone	button#designer-cat-new	147x43
+/designer	till	[data-testid=designer-categories] > button.btn.compact.secondary[type=submit]	90x43
+/designer	till	button#cat-tab-more	30x27
+/designer	till	button#designer-cat-new	147x43
+/fiscal-device	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/fiscal-device	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/fiscal-register	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/fiscal-register	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/import	phone	#import-form > input[type=file][name=file]	365x43
+/import	till	#import-form > input[type=file][name=file]	872x41
+/journal	phone	#journal > a	99x20
+/journal	till	#journal > a	82x18
+/kitchen-stations	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/kitchen-stations	phone	#ut-page > input[type=checkbox][name=station_id]	13x13
+/kitchen-stations	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/kitchen-stations	till	#ut-page > input[type=checkbox][name=station_id]	13x13
+/modifiers	phone	#modifiers-list > a	159x21
+/modifiers	phone	#modifiers-list > button.modifier-chip-remove[type=button]	30x30
+/modifiers	phone	#modifiers-list > input[type=checkbox][name=categoryId] (label)	83x33
+/modifiers	phone	#modifiers-list > input[type=checkbox][name=isActive] (label)	67x22
+/modifiers	phone	#modifiers-list > input[type=checkbox][name=required] (label)	85x22
+/modifiers	till	#modifiers-list > a	159x21
+/modifiers	till	#modifiers-list > button.modifier-chip-remove[type=button]	30x30
+/modifiers	till	#modifiers-list > input[type=checkbox][name=categoryId] (label)	83x33
+/modifiers	till	#modifiers-list > input[type=checkbox][name=isActive] (label)	67x22
+/modifiers	till	#modifiers-list > input[type=checkbox][name=required] (label)	85x22
+/orders	phone	#orders > a	7x20
+/orders	phone	#orders > button.btn	66x33
+/orders	phone	#orders > button.btn.danger	112x33
+/orders	till	#orders > a	7x20
+/promotions	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/promotions	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/receipt-designer	phone	#rd-form > input[type=checkbox][name=show_barcode] (label)	365x42
+/receipt-designer	phone	#rd-form > input[type=checkbox][name=show_logo] (label)	187x21
+/receipt-designer	phone	#rd-form > input[type=checkbox][name=show_sku] (label)	188x21
+/receipt-designer	phone	#rd-form > input[type=checkbox][name=show_tax] (label)	214x21
+/receipt-designer	phone	#rd-form > input[type=checkbox][name=show_tracking_qr] (label)	234x21
+/receipt-designer	till	#rd-form > input[type=checkbox][name=show_barcode] (label)	400x21
+/receipt-designer	till	#rd-form > input[type=checkbox][name=show_logo] (label)	187x21
+/receipt-designer	till	#rd-form > input[type=checkbox][name=show_sku] (label)	188x21
+/receipt-designer	till	#rd-form > input[type=checkbox][name=show_tax] (label)	214x21
+/receipt-designer	till	#rd-form > input[type=checkbox][name=show_tracking_qr] (label)	234x21
+/registers	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/registers	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/settings/menu	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/settings/menu	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/shifts	phone	#shifts-page > summary	365x21
+/shifts	till	#shifts-page > summary	872x21
+/tables	phone	#floorplan > g.table-free.table-node[role=button]	77x33
+/tables	till	#floorplan > g.table-free.table-node[role=button]	69x30
+/tills	phone	#pairing-join-role > input[type=radio][name=role] (label)	361x39
+/tills	phone	#tills-roster > a.help-hint[data-testid=help-hint]	27x27
+/tills	phone	#tills-sales-mirror > a.help-hint[data-testid=help-hint]	27x27
+/tills	till	#pairing-join-role > input[type=radio][name=role] (label)	868x39
+/tills	till	#tills-roster > a.help-hint[data-testid=help-hint]	27x27
+/tills	till	#tills-sales-mirror > a.help-hint[data-testid=help-hint]	27x27
+/translations	phone	[data-testid=translate-mode-card] > a.help-hint[data-testid=help-hint]	27x27
+/translations	till	[data-testid=translate-mode-card] > a.help-hint[data-testid=help-hint]	27x27
+/users/permissions	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/users/permissions	phone	#ut-page > input[type=checkbox]	24x24
+/users/permissions	phone	#ut-page > input[type=checkbox][name=granted]	24x24
+/users/permissions	till	#ut-page > a.help-hint[data-testid=help-hint]	27x27
+/users/permissions	till	#ut-page > input[type=checkbox]	13x13
+/users/permissions	till	#ut-page > input[type=checkbox][name=granted]	13x13

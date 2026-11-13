@@ -1,5 +1,14 @@
 import { APIRequestContext, Page, expect, test } from '@playwright/test';
 
+// Every till GET page the sweeps walk. Shared by phone-layout-sweep-3297 and
+// touch-target-floor-5989; add every new GET page here.
+export const TILL_GET_ROUTES = ['/', '/admin', '/audit', '/backoffice', '/bluetooth-devices', '/catalog', '/catalog/option-sets',
+  '/catalog/tax-codes', '/categories', '/country-settings', '/designer', '/fiscal-device', '/fiscal-register',
+  '/help', '/import', '/inventory', '/items', '/journal', '/kitchen-stations', '/locations', '/menu',
+  '/modifiers', '/my-reports', '/open-orders', '/orders', '/plugins', '/plugins/store', '/promotions',
+  '/receipt-designer', '/registers', '/report-issue', '/reports', '/settings', '/settings/menu', '/shifts',
+  '/tables', '/tills', '/translations', '/users', '/users/permissions'];
+
 // ---------------------------------------------------------------------------
 // Form-layout geometry (ut-docs#300). Shared because the two surfaces that had
 // the inline-label defect live in different e2e projects: the payout dialog is
