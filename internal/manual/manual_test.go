@@ -635,15 +635,15 @@ func TestSearchSnippetKeepsOriginalCase(t *testing.T) {
 
 func TestParsePublicFlag(t *testing.T) {
 	for val, want := range map[string]bool{"true": true, "false": false} {
-		tp, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: " + val + "\n---\nbody\n"))
+		tp, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: "+val+"\n---\nbody\n"), nil)
 		if err != nil || tp.Public != want || !tp.PublicSet {
 			t.Errorf("public: %s -> %+v, %v", val, tp, err)
 		}
 	}
-	if tp, err := parseTopic([]byte("---\nid: a\ntitle: A\n---\nbody\n")); err != nil || tp.PublicSet {
+	if tp, err := parseTopic([]byte("---\nid: a\ntitle: A\n---\nbody\n"), nil); err != nil || tp.PublicSet {
 		t.Errorf("absent flag: %+v, %v", tp, err)
 	}
-	if _, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: yes\n---\nbody\n")); err == nil {
+	if _, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: yes\n---\nbody\n"), nil); err == nil {
 		t.Error("public: yes accepted")
 	}
 }
@@ -716,7 +716,7 @@ After text.
 `
 
 func TestPlanPurchaseBlock_Dropped(t *testing.T) {
-	tp, err := parseTopic([]byte(planPurchaseTopic))
+	tp, err := parseTopic([]byte(planPurchaseTopic), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -752,7 +752,7 @@ func TestPlanPurchaseBlock_Unbalanced(t *testing.T) {
 		"misspelt pair": "<!--plan-purchase-->\n\nx\n\n<!--/plan-purchase-->\n",
 		"with text":     "<!-- plan-purchase: iOS -->\n\nx\n\n<!-- /plan-purchase: iOS -->\n",
 	} {
-		if _, err := parseTopic([]byte(head + body)); err == nil {
+		if _, err := parseTopic([]byte(head+body), nil); err == nil {
 			t.Errorf("%s: want a parse error", name)
 		}
 	}

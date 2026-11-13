@@ -5,6 +5,14 @@
 // CommonJS on purpose — required both by docs-shots.spec.ts (Playwright
 // transpiles specs to CJS) and by the plain-node write-manifest.js entry.
 //
+// EXTRA SHOTS (ut-docs#2615). Beyond its header image <id>.png, a topic can
+// show more screenshots inline: an image reference `![alt](img/<id>-<part>.png)`
+// in web/help/en/<id>.md DECLARES the extra shot `<id>-<part>` (the English
+// markdown is the single source of truth - internal/manual resolves the same
+// reference per locale, and scripts/ci/guard-docs-shots.sh derives the same
+// set; the three stay in lockstep, see extraShotsByTopic below). How to
+// capture each one lives in docs-shots.spec.ts's `extraShots` recipes.
+//
 // HASH ALGORITHM — must stay in lockstep with scripts/ci/guard-docs-shots.sh
 // (the CI side recomputes the same values in python3):
 //
@@ -67,9 +75,10 @@ function sha256Hex(buf) {
 //
 // A topic can declare MORE than one route (e.g. one topic covering a
 // closely related cluster of pages), but only routes[0] is ever
-// screenshotted — internal/manual.go injects at most one generated image
-// (web/help/img/<locale>/<id>.png) per topic, keyed by topic id, right
-// after the topic's <h1>. There is no per-route screenshot slot. A topic
+// screenshotted for the header image - internal/manual.go injects one
+// generated image (web/help/img/<locale>/<id>.png) per topic, keyed by topic
+// id, right after the topic's <h1>. There is no per-route screenshot slot;
+// extra shots (extraShotsByTopic) each carry their own route in the spec. A topic
 // whose secondary routes (routes[1:]) show meaningfully different screens
 // from routes[0] will simply never get those screens captured for the
 // manual — confirmed, accepted gap for "inventory" (routes[0] /inventory;
@@ -82,9 +91,9 @@ function sha256Hex(buf) {
 // ownership check in internal/manual.go and guard-help-topics.sh already
 // allow this) or extending this harness (plus write-manifest.js and
 // scripts/ci/guard-docs-shots.sh, which must stay in lockstep with this
-// file's hash algorithm) to support more than one screenshot per topic —
-// neither is done here; left as a future backlog card if it's ever worth
-// the cost for a specific topic.
+// file's hash algorithm) to support more than one screenshot per topic -
+// the extra-shot mechanism (extraShotsByTopic, ut-docs#2615) now provides
+// that; /locations and /registers are still not adopted.
 function routedTopics() {
   const dir = path.join(repoRoot, 'web', 'help', 'en');
   const out = [];
@@ -109,6 +118,45 @@ function routedTopics() {
       }
     }
     if (id && routes && routes.length > 0) out.push({ id, route: routes[0] });
+  }
+  return out;
+}
+
+// extraShotsByTopic returns { [topicId]: stem[] } (stems sorted, unique) for
+// every English topic whose markdown references inline screenshots
+// (ut-docs#2615). MUST mirror internal/manual's inlineShotRe rule and
+// guard-docs-shots.sh's extra_shots(): a reference is exactly
+// `img/<stem>.png`, <stem> = `<topicId>-<part>`, <part> =
+// [a-z0-9]+(-[a-z0-9]+)* (so `<id>.png` itself, another topic's stem, absolute
+// URLs and /help/img/... paths are refused), and only a topic that declares
+// routes: can have extras. Throws on a violation so no run or manifest is
+// produced from a bad reference. (A reference inside a fenced code block
+// would count here; none exists.)
+const IMG_REF_RE = /!\[[^\]]*\]\(\s*([^)\s]*)[^)]*\)/g;
+const SHOT_DEST_RE = /^img\/([a-z0-9]+(?:-[a-z0-9]+)*)\.png$/;
+
+function extraShotsByTopic() {
+  const dir = path.join(repoRoot, 'web', 'help', 'en');
+  const routed = new Set(routedTopics().map((t) => t.id));
+  const out = {};
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.md')).sort()) {
+    const id = name.slice(0, -'.md'.length);
+    const text = fs.readFileSync(path.join(dir, name), 'utf8').replace(/\r\n/g, '\n');
+    const stems = new Set();
+    let m;
+    const re = new RegExp(IMG_REF_RE);
+    while ((m = re.exec(text))) {
+      const dm = SHOT_DEST_RE.exec(m[1]);
+      if (!dm || !dm[1].startsWith(`${id}-`)) {
+        throw new Error(`web/help/en/${name}: bad image reference "${m[1]}": inline images must be img/${id}-<name>.png`);
+      }
+      stems.add(dm[1]);
+    }
+    if (!stems.size) continue;
+    if (!routed.has(id)) {
+      throw new Error(`web/help/en/${name}: extra shots need a routed topic (declare routes:), found ${[...stems].join(', ')}`);
+    }
+    out[id] = [...stems].sort();
   }
   return out;
 }
@@ -214,10 +262,13 @@ function buildManifest() {
       'excluding a file whose only registered routes are all ' +
       'unscreenshotted, ut-docs#620, and excluding testdata/ fixtures, ' +
       'ut-docs#1351); ' +
-      'topic hashes = sha256 of the topic markdown (en fallback). ' +
+      'topic hashes = sha256 of the topic markdown (en fallback); ' +
+      'shots = per topic, the extra screenshots its English markdown references ' +
+      '(img/<id>-<part>.png, ut-docs#2615), each also captured per locale. ' +
       'Full spec in e2e/tests-docs/lib.js.',
     surface_sha256: surfaceHash(),
     topics,
+    shots: extraShotsByTopic(),
   };
 }
 
@@ -331,4 +382,4 @@ function fontPinProblem(resolved, pinned) {
   );
 }
 
-module.exports = { repoRoot, LOCALES, routedTopics, buildManifest, PINNED_FONTS, probePlatformFonts, fontPinProblem };
+module.exports = { repoRoot, LOCALES, routedTopics, extraShotsByTopic, buildManifest, PINNED_FONTS, probePlatformFonts, fontPinProblem };

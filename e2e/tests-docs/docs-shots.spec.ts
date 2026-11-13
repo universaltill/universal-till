@@ -14,7 +14,7 @@ import * as path from 'path';
 // e2e/run-till.sh (go run ./e2e/seed_demo) — the migrations stopped seeding
 // it in ut-docs#539. The AUTH till (8092) gets no sample data: the wizard
 // below never loads any (ut-docs#3709).
-const { repoRoot, LOCALES, routedTopics, PINNED_FONTS, probePlatformFonts, fontPinProblem } = require('./lib');
+const { repoRoot, LOCALES, routedTopics, extraShotsByTopic, PINNED_FONTS, probePlatformFonts, fontPinProblem } = require('./lib');
 
 const imgRoot = path.join(repoRoot, 'web', 'help', 'img');
 
@@ -38,9 +38,9 @@ const pinnedQuery: Record<string, string> = {
   invoices: 'from=2025-12-01&to=2025-12-31',
 };
 
-// DIALOG-OPEN SHOTS (ut-docs#5581). The manual keeps ONE image per topic
+// DIALOG-OPEN SHOTS (ut-docs#5581). The manual keeps ONE header image per topic
 // (internal/manual/manual.go injects web/help/img/<locale>/<id>.png after the
-// topic's <h1>), so a topic either shows its resting page (the default) or,
+// topic's <h1>; further inline shots are `extraShots` below), so a topic either shows its resting page (the default) or,
 // if it has a row in `dialogShots`, the same page with a record dialog OPEN on
 // a seeded row. Record dialogs are non-modal (.show(), the no-showModal rule),
 // so nothing blocks the status bar. At the 1024x600 reference viewport the
@@ -107,6 +107,103 @@ const dialogShots: Record<string, DialogShot> = {
     prefilled: { selector: '#promotion-form input[name="code"]', value: DOCS_PROMO_CODE },
   },
 };
+
+// EXTRA SHOTS (ut-docs#2615): further screenshots a topic shows INLINE, beside
+// the text they illustrate, next to its header image <id>.png. The English
+// markdown is the declaration: `![alt](img/<id>-<part>.png)` in
+// web/help/en/<id>.md declares the shot `<id>-<part>` (lib.js
+// extraShotsByTopic, internal/manual and guard-docs-shots.sh all read it from
+// there; every locale gets its own PNG, captured below).
+//
+// HOW TO ADD AN EXTRA SHOT:
+//   1. reference `![alt](img/<id>-<part>.png)` in web/help/en/<id>.md (the
+//      topic must declare routes:);
+//   2. add a recipe here under the stem `<id>-<part>`: the `route` to visit,
+//      an optional `setup` that puts the shared till into the shown state
+//      through the till's own endpoints, a `teardown` that RESTORES it (it
+//      always runs, in a finally - later shots share this till), and `ready`,
+//      which asserts the frame really shows the intended state, so a shot can
+//      never silently ship as the wrong picture;
+//   3. `make docs-shots`, commit the new PNGs and manifest.json.
+// A declared stem with no recipe, or a recipe no markdown references, throws
+// at load, before anything is captured or the manifest written. Extras run on
+// the default auth-off till (8091) only.
+type ExtraShot = {
+  route: string;
+  setup?: (page: Page) => Promise<void>;
+  teardown?: (page: Page) => Promise<void>;
+  ready: (page: Page) => Promise<void>;
+};
+
+const DEFAULT_BROWSING_MODE = 'category_tabs';
+
+// Sets sale.browsing_mode through the till's own endpoint (never the DB).
+async function setBrowsingMode(page: Page, mode: string) {
+  const res = await page.request.post('/api/settings/browsing-mode', { form: { mode } });
+  expect(res.status(), `setting browsing mode ${mode} failed`).toBe(204);
+}
+
+// The sale screen with the shared two-line basket staged, in one browsing mode.
+function browseShot(mode: string, ready: (page: Page) => Promise<void>): ExtraShot {
+  return {
+    route: '/',
+    setup: async (page) => {
+      await ensureBasketLines(page);
+      await setBrowsingMode(page, mode);
+    },
+    teardown: (page) => setBrowsingMode(page, DEFAULT_BROWSING_MODE),
+    ready,
+  };
+}
+
+// Category tiles: the category-tile grid IS the view; no strip, no chips.
+async function assertTilesLayout(page: Page) {
+  expect(await page.locator('#browsing-category-tiles .category-tile').count(), 'no category tiles').toBeGreaterThan(0);
+  await expect(page.locator('#browsing-category-chips')).toHaveCount(0);
+  await expect(page.locator('.tab-bar [data-cat-tab]')).toHaveCount(0);
+}
+
+// All items with filters: one item grid under a chip row whose All chip is on.
+async function assertFiltersLayout(page: Page) {
+  const all = page.locator('#browsing-category-chips .chip-all');
+  await expect(all).toBeVisible();
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#browsing-category-tiles')).toHaveCount(0);
+  expect(await page.locator('#buttons-grid-all .tile-cell').count(), 'no item tiles in the All grid').toBeGreaterThan(0);
+}
+
+// Category strip: category tabs (no All tab), first one selected, quick-button
+// tiles in its panel - never the "no quick buttons yet" note.
+async function assertStripLayout(page: Page) {
+  const tabs = page.locator('.tab-bar [data-cat-tab]');
+  expect(await tabs.count(), 'the strip needs at least two category tabs').toBeGreaterThanOrEqual(2);
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.chip-all')).toHaveCount(0);
+  await expect(page.locator('#browsing-category-tiles')).toHaveCount(0);
+  expect(await page.locator('.products-tab-panel:visible .tile-cell').count(), 'first tab shows no tiles').toBeGreaterThan(0);
+  await expect(page.locator('[data-testid=category-empty-state]:visible')).toHaveCount(0);
+}
+
+const extraShots: Record<string, ExtraShot> = {
+  'sell-browse-tiles': browseShot('category_tabs', assertTilesLayout),
+  'sell-browse-filters': browseShot('all_filter_chips', assertFiltersLayout),
+  'sell-browse-strip': browseShot('strip_overflow', assertStripLayout),
+};
+
+// Declaration (en markdown) and recipes must agree, both ways.
+const declaredExtraShots = extraShotsByTopic() as Record<string, string[]>;
+for (const [tid, stems] of Object.entries(declaredExtraShots)) {
+  for (const stem of stems) {
+    if (!extraShots[stem]) {
+      throw new Error(`web/help/en/${tid}.md references img/${stem}.png but docs-shots.spec.ts has no extraShots recipe for "${stem}"`);
+    }
+  }
+}
+for (const stem of Object.keys(extraShots)) {
+  if (!Object.values(declaredExtraShots).some((stems) => stems.includes(stem))) {
+    throw new Error(`extraShots recipe "${stem}" is dead: no web/help/en/*.md references img/${stem}.png`);
+  }
+}
 
 // Click the seeded row for real (the path record-dialog.js serves), then wait
 // until the dialog is open, prefilled, scrim synced, motion finished and
@@ -489,11 +586,49 @@ for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MO
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
       // The basket is server-side state shared across the run — staged once,
       // and only the sell screenshots want it in frame.
-      if (topic.id === 'sell') await ensureBasketLines(page);
+      if (topic.id === 'sell') {
+        await ensureBasketLines(page);
+        // sell.png always shows the default layout, whatever ran before it
+        // (the extra shots below change and restore the mode, ut-docs#2615).
+        await setBrowsingMode(page, DEFAULT_BROWSING_MODE);
+      }
       if (topic.id === 'invoices') await ensureInvoiceSeller(page);
       await ensureFullEffects(page);
       await capture(page, topic.id, locale, topic.route);
     });
+  }
+}
+
+// Extra inline shots (ut-docs#2615), after every default-till topic so nothing
+// above ever sees a changed till setting; each recipe restores it in finally.
+for (const stems of Object.values(declaredExtraShots)) {
+  for (const stem of stems) {
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${stem} (${locale})`, async ({ page }) => {
+        const shot = extraShots[stem];
+        await ensureFullEffects(page);
+        let primary: unknown;
+        try {
+          await shot.setup?.(page);
+          await capture(page, stem, locale, shot.route);
+          await shot.ready(page);
+        } catch (e) {
+          // capture() already wrote the PNG; a failed `ready` means it shows
+          // the wrong screen, so it must not stay on disk to be committed.
+          primary = e;
+          fs.rmSync(path.join(imgRoot, locale, `${stem}.png`), { force: true });
+          throw e;
+        } finally {
+          try {
+            await shot.teardown?.(page);
+          } catch (te) {
+            // Never let a teardown failure mask the original error.
+            if (primary === undefined) throw te;
+            console.error(`teardown of ${stem} (${locale}) also failed:`, te);
+          }
+        }
+      });
+    }
   }
 }
 

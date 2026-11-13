@@ -2,6 +2,7 @@ package pages
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,37 @@ func TestHelpTopicPageIncludesScreenshot(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `<img src="/help/img/en/sell.png"`) {
 		t.Error("topic page missing its screenshot")
+	}
+}
+
+// ut-docs#2615: /help/sell shows one screenshot per browsing layout, each
+// inside its own bullet of "Choosing how items are browsed", and every src is
+// served as image/png.
+func TestHelpSellShowsBrowseLayoutShots(t *testing.T) {
+	mux := helpMux(t)
+	rec := get(t, mux, "/help/sell?lang=en")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /help/sell: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	li := regexp.MustCompile(`(?s)<li>(.*?)</li>`)
+	for _, stem := range []string{"sell-browse-tiles", "sell-browse-filters", "sell-browse-strip"} {
+		src := "/help/img/en/" + stem + ".png"
+		found := false
+		for _, m := range li.FindAllStringSubmatch(body, -1) {
+			if strings.Contains(m[1], `src="`+src+`"`) && strings.Contains(m[1], `alt="Sell screen in the `) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no <li> carries %s with descriptive alt", src)
+		}
+		img := get(t, mux, src)
+		if img.Code != http.StatusOK || img.Header().Get("Content-Type") != "image/png" {
+			t.Errorf("GET %s: %d %q", src, img.Code, img.Header().Get("Content-Type"))
+		}
+	}
+	if ar := get(t, mux, "/help/sell?lang=ar"); ar.Code != http.StatusOK {
+		t.Errorf("GET /help/sell?lang=ar: %d", ar.Code)
 	}
 }
