@@ -93,7 +93,23 @@ const (
 	// joined a shop and minted its own device id), the till registers itself as
 	// a new device under the shared store — the store's fleet (ADR-0013).
 	keyDeviceRegistered = "marketplace.device_registered"
+	// keyRegisterBlockedUntil (RFC 3339, ut-docs#5145): the cloud answered a
+	// register with 409 device_live; the lazy path does not try again before
+	// this time. Under "marketplace.device_" on purpose: this till's own state,
+	// so it is neither admin-synced to a replica nor copied by a join snapshot
+	// (data.PerTillSettingPrefixes, db.TillCloudIdentityPrefixes).
+	keyRegisterBlockedUntil = RegisterBlockedUntilKey
 )
+
+// RegisterBlockedUntilKey is the settings key of the register block, for the
+// pages that read it (through RegisterBlockedUntil) and their tests.
+const RegisterBlockedUntilKey = "marketplace.device_register_blocked_until"
+
+// keyRegisterKeyRefused (RFC 3339, ut-docs#5145): the cloud knows another
+// approval key for this device and refused the signed re-register twice. The
+// lazy path stays quiet until an operator action; a successful register clears
+// it. Device-local like the block above ("marketplace.device_" prefix).
+const keyRegisterKeyRefused = "marketplace.device_register_key_refused"
 
 // StoreCountrySettingsKey is the settings.key a shop's chosen country lives
 // under (ADR-0026 setup wizard). Duplicated from
@@ -367,6 +383,165 @@ func IsServiceRefused(err error) bool {
 	return errors.As(err, &he) && he.Status == http.StatusForbidden && he.Code == ServiceRefusedCode
 }
 
+// DeviceLiveCode is the cloud's error code (409) for a register of a device
+// that was in use in the last 72 h (ut-docs#5145); data.usable_from says when
+// it may try again. Mirrors ut-cloud internal/paircontract.DeviceLiveCode.
+const DeviceLiveCode = "device_live"
+
+// deviceLiveRetry is how long the lazy path waits when the cloud gave no
+// usable usable_from: the till's existing hourly cadence.
+const deviceLiveRetry = time.Hour
+
+// IsDeviceLive reports whether err is the cloud refusing to re-register this
+// device because it was in use recently (HTTP 409 device_live), with the time
+// it may try again. usableFrom is zero when the answer carried none, or one
+// that does not parse. The refusal is not a lockout: the till keeps selling
+// and RegisterBlockedUntil keeps the lazy path quiet until then.
+func IsDeviceLive(err error) (usableFrom time.Time, ok bool) {
+	var he *RegisterHTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusConflict || he.Code != DeviceLiveCode {
+		return time.Time{}, false
+	}
+	var env struct {
+		Data struct {
+			UsableFrom string `json:"usable_from"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(he.Body), &env) == nil {
+		if at, perr := time.Parse(time.RFC3339, strings.TrimSpace(env.Data.UsableFrom)); perr == nil {
+			return at.UTC(), true
+		}
+	}
+	return time.Time{}, true
+}
+
+// RegisterBlockedUntil is when the lazy registration path may call the cloud
+// again after a device_live refusal; zero when there is no block in force (none
+// stored, unreadable, or already past). Local only, never a network call.
+func RegisterBlockedUntil(ctx context.Context, kv Settings) time.Time {
+	v, _, err := kv.Get(ctx, keyRegisterBlockedUntil)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil || !at.After(time.Now()) {
+		return time.Time{}
+	}
+	return at.UTC()
+}
+
+// The cloud's codes for the anonymous re-register proof (ut-docs#5145;
+// ut-cloud internal/paircontract).
+const (
+	ReregisterChallengeRequiredCode = "key_required"
+	StoreNotReusableCode            = "store_not_reusable"
+	maxDeviceLiveBlock              = 72*time.Hour + time.Hour // L3: usable_from is capped here
+	maxChallengeLen                 = 128
+)
+
+// ErrUpdateNeeded: the cloud wants a proof this build cannot make (key_required
+// with no usable challenge). The till says "update this till"; nothing is sent.
+var ErrUpdateNeeded = errors.New("the cloud asked for a key proof this till cannot make; the till's software is too old")
+
+// ErrReconnectUnavailable: Reconnect and StartAsNewStore only apply to a
+// main or standalone till, and Reconnect only to a registered one.
+var ErrReconnectUnavailable = errors.New("this till cannot reconnect or start a new shop this way")
+
+// keyRefusedError: the cloud knows another key for this device and refused the
+// signed proof (or the till has no key to sign with).
+type keyRefusedError struct{ cause error }
+
+func (e *keyRefusedError) Error() string {
+	return "register: the cloud knows another approval key for this till: " + e.cause.Error()
+}
+func (e *keyRefusedError) Unwrap() error { return e.cause }
+
+// IsKeyRefused reports whether err is the cloud refusing this till's key proof.
+func IsKeyRefused(err error) bool {
+	var k *keyRefusedError
+	return errors.As(err, &k)
+}
+
+// IsUpdateNeeded reports whether err is the "software too old" case.
+func IsUpdateNeeded(err error) bool { return errors.Is(err, ErrUpdateNeeded) }
+
+func httpCode(err error, status int, code string) bool {
+	var he *RegisterHTTPError
+	return errors.As(err, &he) && he.Status == status && (code == "" || he.Code == code)
+}
+
+// IsStoreNotReusable: the shop this till asked to rejoin was claimed or removed.
+func IsStoreNotReusable(err error) bool {
+	return httpCode(err, http.StatusConflict, StoreNotReusableCode)
+}
+
+// IsRateLimited: the cloud's limiter answered 429. Not a block.
+func IsRateLimited(err error) bool { return httpCode(err, http.StatusTooManyRequests, "") }
+
+// KeyRefusedAt is when the cloud refused this till's key proof; zero when it
+// has not (or the value is unreadable). Local only.
+func KeyRefusedAt(ctx context.Context, kv Settings) time.Time {
+	v, _, err := kv.Get(ctx, keyRegisterKeyRefused)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return time.Time{}
+	}
+	return at.UTC()
+}
+
+// challengeOf reads data.challenge from a key_required body; ok only for a
+// short, single-line value.
+func challengeOf(body string) (string, bool) {
+	var env struct {
+		Data struct {
+			Challenge string `json:"challenge"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(body), &env) != nil {
+		return "", false
+	}
+	c := env.Data.Challenge
+	if c == "" || len(c) > maxChallengeLen || strings.ContainsAny(c, "\r\n") {
+		return "", false
+	}
+	return c, true
+}
+
+// noteRegisterOutcome persists a device_live block (usable_from, else an
+// hour) and clears it on success. Best-effort: a failed write only means one
+// more refused attempt later.
+func noteRegisterOutcome(ctx context.Context, kv Settings, err error) {
+	if usable, ok := IsDeviceLive(err); ok {
+		if usable.IsZero() || !usable.After(time.Now()) {
+			usable = time.Now().Add(deviceLiveRetry)
+		} else if cap := time.Now().Add(maxDeviceLiveBlock); usable.After(cap) {
+			usable = cap // L3: a far-future usable_from must not silence the lazy path for good
+		}
+		if serr := kv.Set(ctx, keyRegisterBlockedUntil, usable.UTC().Format(time.RFC3339)); serr != nil {
+			logging.L().Warnf("enrolment: persist register block: %v", serr)
+		}
+		return
+	}
+	if IsKeyRefused(err) {
+		if serr := kv.Set(ctx, keyRegisterKeyRefused, time.Now().UTC().Format(time.RFC3339)); serr != nil {
+			logging.L().Warnf("enrolment: persist key refusal: %v", serr)
+		}
+		return
+	}
+	if err == nil {
+		for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused} {
+			if v, _, gerr := kv.Get(ctx, key); gerr == nil && v != "" {
+				if serr := kv.Set(ctx, key, ""); serr != nil {
+					logging.L().Warnf("enrolment: clear %s: %v", key, serr)
+				}
+			}
+		}
+	}
+}
+
 // RegisterNow performs one immediate, synchronous registration (and signing
 // key fetch) attempt — the Settings "Register now" button. The background
 // retry loop keeps running regardless; attempts are serialized. Bounded by
@@ -388,6 +563,13 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
 	}
 	defer releaseAttempt()
+	return registerLocked(ctx, cfg, kv, "")
+}
+
+// registerLocked is RegisterNow's body; the caller holds the attempt slot.
+// expectStoreID is only ever set by Reconnect.
+func registerLocked(ctx context.Context, cfg *config.Config, kv Settings, expectStoreID string) (Status, error) {
+	m := Effective(cfg).Marketplace
 	var firstErr error
 	if s := CurrentStatus(); !s.Registered {
 		// A replica never creates its own anonymous store — that would split
@@ -399,11 +581,13 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		if isReplica(ctx, kv) {
 			registerFn = func() error { return registerOnReplica(ctx, m, kv) }
 		} else if name := shopName(ctx, cfg, kv); name != "" {
-			registerFn = func() error { return register(ctx, m, name, kv) }
+			registerFn = func() error { return register(ctx, m, name, kv, expectStoreID) }
 		} else {
 			registerFn = func() error { return ErrStoreUnnamed }
 		}
-		if err := registerFn(); err != nil {
+		err := registerFn()
+		noteRegisterOutcome(ctx, kv, err) // ut-docs#5145
+		if err != nil {
 			firstErr = err
 		}
 	}
@@ -418,6 +602,85 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		}
 	}
 	return CurrentStatus(), firstErr
+}
+
+// reconnectGate: Reconnect and StartAsNewStore are for a main or standalone
+// till whose cloud identity is its own (not a replica's, not pinned by the
+// environment).
+func reconnectGate(ctx context.Context, kv Settings) error {
+	if isReplica(ctx, kv) || CurrentStatus().ViaMainTill {
+		return ErrReconnectUnavailable
+	}
+	mu.RLock()
+	pinned := tokenExplicit || explicitConfigured || deviceIDExplicit || storeIDExplicit
+	mu.RUnlock()
+	if pinned {
+		return ErrPairIdentityPinned
+	}
+	return nil
+}
+
+// CanReconnect reports whether Reconnect and StartAsNewStore apply to this till
+// (a main or standalone till with its own, not environment-pinned, identity).
+// A local read; Settings shows the two actions only when it is true.
+func CanReconnect(ctx context.Context, kv Settings) bool { return reconnectGate(ctx, kv) == nil }
+
+// Reconnect re-registers a REGISTERED till whose cloud sign-in was refused
+// (ADR-0116 D6, ut-docs#5145), keeping its device id and shop. The register call
+// carries expect_store_id, so the cloud answers store_not_reusable instead of
+// minting a new shop. The dead credential is not dropped first: on 200 the new
+// token overwrites it in place, and on any refusal the till is exactly as it
+// was. An operator action, never called by a background loop.
+func Reconnect(ctx context.Context, cfg *config.Config, kv Settings) (Status, error) {
+	m := Effective(cfg).Marketplace
+	if m.EndpointURL == "" {
+		return CurrentStatus(), ErrNotConfigured
+	}
+	if err := reconnectGate(ctx, kv); err != nil {
+		return CurrentStatus(), err
+	}
+	if !acquireAttempt(ctx) {
+		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
+	}
+	defer releaseAttempt()
+	mu.RLock()
+	storeID := cur.StoreID
+	registered := cur.Token != "" && storeID != ""
+	mu.RUnlock()
+	if !registered {
+		return CurrentStatus(), ErrReconnectUnavailable
+	}
+	// The name goes as the till has it, blank included: the cloud's re-use path
+	// ignores a blank name, while a made-up one (the store id) would be adopted
+	// and rename an unnamed shop (v2 M5).
+	err := register(ctx, m, shopName(ctx, cfg, kv), kv, storeID)
+	noteRegisterOutcome(ctx, kv, err)
+	return CurrentStatus(), err
+}
+
+// StartAsNewStore is "Register as a new shop" (ADR-0116 D6, ut-docs#5145): the
+// identity wipe of pairing (new device id, token and store cleared), then a
+// first-time register. The wipe comes first and is not undone when the register
+// fails: the till is then in the ordinary not-registered state (Register now
+// works), which is what the operator was told. Local sales data is untouched.
+func StartAsNewStore(ctx context.Context, cfg *config.Config, kv Settings) (Status, error) {
+	if Effective(cfg).Marketplace.EndpointURL == "" {
+		return CurrentStatus(), ErrNotConfigured
+	}
+	if err := reconnectGate(ctx, kv); err != nil {
+		return CurrentStatus(), err
+	}
+	if !acquireAttempt(ctx) {
+		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
+	}
+	defer releaseAttempt()
+	resetIdentityForPair(ctx, kv, false, "till-"+uuid.NewString())
+	for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused} {
+		if err := kv.Set(ctx, key, ""); err != nil {
+			logging.L().Warnf("enrolment: new shop: clear %s: %v", key, err)
+		}
+	}
+	return registerLocked(ctx, cfg, kv, "")
 }
 
 // Init loads (or creates) this till's marketplace identity, fills the empty
@@ -629,6 +892,12 @@ func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) conf
 		return Effective(cfg)
 	}
 	if s := CurrentStatus(); !s.Registered {
+		// ut-docs#5145: the cloud said this device was in use recently; the
+		// lazy path stays quiet until usable_from (a deliberate Register now
+		// still tries). Local read, so the till never waits on it.
+		if !RegisterBlockedUntil(ctx, kv).IsZero() || !KeyRefusedAt(ctx, kv).IsZero() {
+			return Effective(cfg)
+		}
 		if _, err := RegisterNow(ctx, cfg, kv); err != nil {
 			if errors.Is(err, ErrStoreUnnamed) {
 				logging.L().Infof("enrolment: registration waits until the shop is named (marketplace call will surface it)")
@@ -777,7 +1046,7 @@ func countryCode(v string) string {
 // (ut-docs#3849); the till holds no country list itself. A failed/absent
 // settings read is treated as "no signal" — best-effort, same tolerant
 // pattern used elsewhere in this file — and never fails registration.
-func register(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings) error {
+func register(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings, expectStoreID string) error {
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
@@ -812,8 +1081,9 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	fields["platform"] = devicePlatform()
 	// ut-docs#5127: the approval key is pinned in the transaction that
 	// mints the token. A till with no usable key still registers.
-	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
-		fields["approval_key"] = ak
+	ak := approvalkey.Shared().Report(deviceID, "")
+	if expectStoreID != "" {
+		fields["expect_store_id"] = expectStoreID // ut-docs#5145: reconnect, never a new shop
 	}
 	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
 	// the current version was accepted on this till. Operator-initiated
@@ -829,24 +1099,69 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 			fields["terms_locale"] = loc
 		}
 	}
-	payload, err := json.Marshal(fields)
-	if err != nil {
-		return err
-	}
 	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/register"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	// send posts the register body with the given approval_key object (nil:
+	// none) and returns the response, a 2xx for the caller to decode.
+	send := func(akObj map[string]any) (*http.Response, error) {
+		if akObj != nil {
+			fields["approval_key"] = akObj
+		}
+		payload, err := json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return httpClient.Do(req)
+	}
+	var akObj map[string]any
+	if ak != nil {
+		akObj = map[string]any{"kid": ak["kid"], "public_key": ak["public_key"], "pop": ak["pop"]}
+	}
+	resp, err := send(akObj)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	defer func() { resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return newRegisterHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+		he := newRegisterHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+		if resp.StatusCode != http.StatusConflict || he.Code != ReregisterChallengeRequiredCode {
+			return he
+		}
+		// ut-docs#5145: the cloud holds a key for this device and wants it
+		// proven. Sign the challenge it handed out (only that) and try once
+		// more; a second key_required is final.
+		challenge, ok := challengeOf(he.Body)
+		if !ok {
+			return fmt.Errorf("%w: %w", ErrUpdateNeeded, he)
+		}
+		if akObj == nil {
+			return &keyRefusedError{cause: he} // no key to prove with
+		}
+		sig, serr := approvalkey.Shared().SignReregister(deviceID, challenge)
+		if serr != nil {
+			return &keyRefusedError{cause: he}
+		}
+		proofObj := map[string]any{"kid": akObj["kid"], "public_key": akObj["public_key"], "pop": akObj["pop"],
+			"reregister": map[string]string{"challenge": challenge, "sig": sig}}
+		resp2, err := send(proofObj)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		resp = resp2
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			he2 := newRegisterHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+			if resp.StatusCode == http.StatusConflict && he2.Code == ReregisterChallengeRequiredCode {
+				return &keyRefusedError{cause: he2}
+			}
+			return he2
+		}
 	}
 	var envelope struct {
 		Data struct {

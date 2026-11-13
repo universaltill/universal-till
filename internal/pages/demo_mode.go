@@ -305,6 +305,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/enrol/claim-code":           true,
 	"POST /api/enrol/now":                  true,
 	"POST /api/enrol/pair":                 true,
+	"POST /api/enrol/reconnect":            true, // ut-docs#5145: a demo till never contacts the cloud
+	"POST /api/enrol/new-shop":             true, // ut-docs#5145: same
 	// ut-docs#5127 UT-1b: approving a move signs with the till's key and
 	// moves its cloud identity; a demo visitor never gets near it.
 	"GET /settings/cloud/move/{id}":             true,

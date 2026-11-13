@@ -2,6 +2,7 @@ package approvalkey
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -328,5 +329,75 @@ func TestKeyIDMatchesReportedKID(t *testing.T) {
 	kid, ok := s.KeyID()
 	if !ok || kid != v.KID {
 		t.Fatalf("KeyID = %q, %v; want %s", kid, ok, v.KID)
+	}
+}
+
+// ut-docs#5145: the till shows its key's 32-hex fingerprint in Settings so
+// support can bind a re-register to it; it must be the cloud's
+// approvalkey.Fingerprint (first 32 hex of SHA-256 over the public key, whose
+// first 16 are the KID).
+func TestFingerprintIsTheCloudsHalfSHA256AndExtendsTheKID(t *testing.T) {
+	v := loadVector(t)
+	s := storeWithSeed(t, v.SeedHex)
+	fp, err := s.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(pub)
+	if want := hex.EncodeToString(sum[:])[:32]; fp != want {
+		t.Fatalf("fingerprint = %q, want %q", fp, want)
+	}
+	if !strings.HasPrefix(fp, v.KID) || len(fp) != 32 {
+		t.Fatalf("fingerprint %q does not extend kid %q", fp, v.KID)
+	}
+	if got := FingerprintGroups(fp); got != fp[0:4]+" "+fp[4:8]+" "+fp[8:12]+" "+fp[12:16]+" "+fp[16:20]+" "+fp[20:24]+" "+fp[24:28]+" "+fp[28:32] {
+		t.Fatalf("groups = %q", got)
+	}
+	if FingerprintGroups("short") != "short" {
+		t.Fatal("a value that is not a fingerprint must pass through")
+	}
+}
+
+// ut-docs#5145: the shared re-register golden vector (ut-cloud
+// internal/approvalkey/testdata/reregister_vector.json, byte-identical).
+func TestSignReregisterMatchesGoldenVector(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "reregister_vector.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type vec struct{ SeedHex, PublicKey, DeviceID, Challenge, Message, Signature string }
+	var v vec
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	s := func(k string) string { x, _ := m[k].(string); return x }
+	v.SeedHex, v.PublicKey, v.DeviceID, v.Challenge, v.Message, v.Signature =
+		s("seed_hex"), s("public_key"), s("device_id"), s("challenge"), s("message"), s("signature")
+
+	st := storeWithSeed(t, v.SeedHex)
+	msg, err := ReregisterMessage(v.DeviceID, v.PublicKey, v.Challenge)
+	if err != nil || string(msg) != v.Message {
+		t.Fatalf("message = %q (%v), want %q", msg, err, v.Message)
+	}
+	got, err := st.SignReregister(v.DeviceID, v.Challenge)
+	if err != nil || got != v.Signature {
+		t.Fatalf("signature = %q (%v), want %q", got, err, v.Signature)
+	}
+	// Fields with a line break or nothing are refused; a till with no key
+	// never creates one just to sign.
+	if _, err := st.SignReregister("a\nb", v.Challenge); err == nil {
+		t.Fatal("line break accepted")
+	}
+	if _, err := st.SignReregister(v.DeviceID, ""); err == nil {
+		t.Fatal("empty challenge accepted")
+	}
+	empty := NewAt(filepath.Join(t.TempDir(), "secrets", "k"))
+	if _, err := empty.SignReregister(v.DeviceID, v.Challenge); err == nil {
+		t.Fatal("signed without a key")
 	}
 }

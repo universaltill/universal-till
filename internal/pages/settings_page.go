@@ -970,6 +970,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
 			// ut-docs#4720: the cloud-terms accept step / accepted line.
 			"terms": termsView(r.Context(), d, locale),
+			// ut-docs#5145: the cloud will not re-register this till yet.
+			"registerBlocked": registerBlockedView(r, d, locale),
+			"registerFacts":   registerFactsView(r, d, locale),
+			"reconnectPanel":  reconnectPanelView(r, d),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -1274,8 +1278,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 					html.EscapeString(httpx.T(locale, "settings.store_name.title")))
 				return
 			}
-			if key := enrolFailureKey(err); key != "" {
-				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, key)))
+			// ut-docs#5145: device_live is a standing state (selling is not
+			// affected), not a failure: neutral styling, no cross.
+			if usable, live := enroll.IsDeviceLive(err); live {
+				fmt.Fprintf(w, `<span class="muted">%s</span>`, deviceLiveText(locale, usable))
+				return
+			}
+			if msg := enrolFailureHTML(locale, err); msg != "" {
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, msg)
 				return
 			}
 			endpoint := html.EscapeString(enroll.Effective(d.Cfg).Marketplace.EndpointURL)
@@ -1302,6 +1312,122 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
+	})
+
+	// "Reconnect this till" (ADR-0116 D6, ut-docs#5145): a registered till of an
+	// ownerless shop whose cloud sign-in was refused proves its approval key and
+	// gets a new credential in the SAME shop. An operator action (a locked-out
+	// till never re-registers on its own); elevation-wired like Register now.
+	// Always-200 HTMX shape; the raw cloud text is logged, never rendered, and a
+	// refusal leaves the till exactly as it was.
+	mux.HandleFunc("POST /api/enrol/reconnect", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		if !enroll.CanReconnect(r.Context(), d.Settings) || !enroll.CurrentStatus().Registered {
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/reconnect", "#reconnect-msg",
+				httpx.T(locale, "elevation.summary.enrol_reconnect"), nil, elev)
+			return
+		}
+		status, err := enroll.Reconnect(r.Context(), d.Cfg, d.Settings)
+		if err != nil {
+			logging.L().Warnf("enrol reconnect failed: %v", err)
+			if _, live := enroll.IsDeviceLive(err); live {
+				fmt.Fprintf(w, `<span class="muted" tabindex="-1">%s</span>`, reconnectResultHTML(locale, err))
+				return
+			}
+			fmt.Fprintf(w, `<span class="error" tabindex="-1">❌ %s</span>`, reconnectResultHTML(locale, err))
+			return
+		}
+		clearAuthLockout()
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "reconnected", map[string]any{"store_id": status.StoreID})
+		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
+		fmt.Fprintf(w, `<span role="status" tabindex="-1">✅ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_ok")))
+	})
+
+	// "Register as a new shop" (ADR-0116 D6, ut-docs#5145): the identity wipe of
+	// pairing (new device id, token and store cleared), then a first-time
+	// register. Not undoable, so it asks first (confirm, then elevate, as
+	// POST /api/enrol/pair). The wipe is not undone when the register fails: the
+	// till is then in the ordinary not-registered state (Register now works).
+	mux.HandleFunc("POST /api/enrol/new-shop", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		if !tillLockedOutAnonymous(r.Context(), d) {
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			return
+		}
+		if r.Form.Get("confirm_new_shop") != "1" {
+			renderConfirmPrompt(w, r, confirmPrompt{
+				Action:    "/api/enrol/new-shop",
+				HxTarget:  "#new-shop-msg",
+				Title:     httpx.T(locale, "settings.till_registration.new_shop_title"),
+				Body:      httpx.T(locale, "settings.till_registration.new_shop_confirm"),
+				Confirm:   httpx.T(locale, "settings.till_registration.new_shop_yes"),
+				HelpTopic: "claim",
+				Danger:    true,
+				Hidden:    []elevationHiddenField{{Name: "confirm_new_shop", Value: "1"}},
+			})
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/new-shop", "#new-shop-msg",
+				httpx.T(locale, "elevation.summary.enrol_new_shop"),
+				[]elevationHiddenField{{Name: "confirm_new_shop", Value: "1"}}, elev)
+			return
+		}
+		before := enroll.CurrentStatus()
+		oldStore := before.StoreID
+		status, err := enroll.StartAsNewStore(r.Context(), d.Cfg, d.Settings)
+		wiped := status.DeviceID != before.DeviceID // the wipe mints a new device id
+		if err != nil && status.Registered && wiped {
+			// Registered, but the follow-up signing-key fetch failed: the wipe
+			// ran and the till IS in the new shop. Same as success; the key is
+			// fetched again by the next plugin action.
+			logging.L().Warnf("enrol new shop: registered, signing key fetch failed: %v", err)
+			clearAuthLockout()
+			settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "new_shop_registered", map[string]any{"old_store_id": oldStore, "store_id": status.StoreID})
+			requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
+			fmt.Fprintf(w, `<span role="status" tabindex="-1">✅ %s %s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_ok")),
+				html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_key_later")))
+			return
+		}
+		if err != nil && !wiped {
+			// Refused before the wipe (not configured, busy): nothing changed,
+			// so nothing is reported as reset or audited as reset.
+			logging.L().Warnf("enrol new shop refused: %v", err)
+			fmt.Fprintf(w, `<span class="error" tabindex="-1">❌ %s</span>`, reconnectResultHTML(locale, err))
+			return
+		}
+		if err != nil || !status.Registered {
+			if err != nil {
+				logging.L().Warnf("enrol new shop failed: %v", err)
+			}
+			clearAuthLockout() // the old identity is gone either way
+			settingsAudit(r, posRepo, elev, "enrollment", oldStore, "new_shop_identity_reset", nil)
+			// The wipe ran (StartAsNewStore does it first): say so, then why.
+			reason := ""
+			if err != nil {
+				if msg := reconnectResultHTML(locale, err); msg != "" {
+					reason = " " + msg
+				}
+			}
+			fmt.Fprintf(w, `<span class="error" tabindex="-1">❌ %s%s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_pending")), reason)
+			return
+		}
+		clearAuthLockout()
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "new_shop_registered", map[string]any{"old_store_id": oldStore, "store_id": status.StoreID})
+		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
+		fmt.Fprintf(w, `<span role="status" tabindex="-1">✅ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_ok")))
 	})
 
 	// ut-docs#4792: a till that registered before the terms step (or through

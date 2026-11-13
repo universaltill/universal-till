@@ -82,6 +82,53 @@
   {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "cloud_sync browser_catalog" "tse" false "check" true) }}
   {{ end }}
   </div>
+  {{/* ut-docs#5145: the cloud refused to re-register this till (it was in use
+       in the last 72 h). A standing state, not an error: role=status, never a
+       modal; selling is not affected. Device ID and key fingerprint (what
+       support needs to lift it) render for a viewer who may manage Settings
+       only. Values are LTR even in an RTL locale. */}}
+  {{ with .registerBlocked }}
+  <div class="set-gap-s register-blocked" data-testid="register-blocked" role="status">
+    <p>⏸ {{ .notice }}</p>
+    <p class="muted">{{ .help }}</p>
+  </div>
+  {{ end }}
+  {{/* ut-docs#5145 (H2): a registered till of an ownerless shop whose cloud
+       sign-in was refused. Standing state (role=status), never a modal;
+       selling is not affected. Two operator actions, Reconnect first and the
+       quiet "new shop" last. Nothing here types text. */}}
+  {{ with .reconnectPanel }}
+  <div class="set-gap-s register-blocked" data-testid="reconnect-panel" role="status">
+    <p>⏸ {{ T "settings.till_registration.lockout_notice" }}</p>
+    <p class="muted">{{ T "settings.till_registration.lockout_help" }}</p>
+    {{ if .keyRefused }}<p class="muted" data-testid="reconnect-key-refused">{{ T "settings.till_registration.key_refused" }}</p>{{ end }}
+  </div>
+  {{ end }}
+  {{/* The device ID and key fingerprint support asks for: a manager sees them
+       in every state (registered, not registered, blocked, locked out). Public
+       identifiers, not secrets. Values are LTR even in an RTL locale. */}}
+  {{ with .registerFacts }}
+  <dl class="register-facts set-gap-s" data-testid="register-facts">
+    {{ if .deviceID }}<div><dt>{{ T "settings.enrol.device" }}</dt><dd data-testid="register-facts-device"><bdi dir="ltr"><code>{{ .deviceID }}</code></bdi></dd></div>{{ end }}
+    <div><dt>{{ T "settings.till_registration.fingerprint" }}</dt>
+      {{ if .fingerprint }}<dd data-testid="register-facts-fingerprint"><bdi dir="ltr"><code>{{ .fingerprint }}</code></bdi></dd>
+      {{ else }}<dd class="muted">{{ .fingerprintUnavailable }}</dd>{{ end }}</div>
+  </dl>
+  {{ end }}
+  {{ if .reconnectPanel }}
+  <div class="set-gap-s reconnect-actions" id="reconnect-actions">
+    <button type="button" class="btn btn-touch" hx-post="/api/enrol/reconnect" hx-target="#reconnect-msg" hx-swap="innerHTML"
+            hx-sync="this:drop" hx-disabled-elt="#reconnect-actions button" hx-indicator="#reconnect-busy">{{ T "settings.till_registration.reconnect_btn" }}</button>
+    <span id="reconnect-busy" class="htmx-indicator muted" role="status">{{ T "settings.till_registration.reconnecting" }}</span>
+    <div id="reconnect-msg" aria-live="polite" class="set-gap-s"></div>
+    <div class="set-divider reconnect-newshop">
+      <p class="muted">{{ T "settings.till_registration.new_shop_hint" }}</p>
+      <button type="button" class="btn btn-touch secondary" hx-post="/api/enrol/new-shop" hx-target="#new-shop-msg" hx-swap="innerHTML"
+              hx-sync="this:drop" hx-disabled-elt="#reconnect-actions button">{{ T "settings.till_registration.new_shop_btn" }}</button>
+      <div id="new-shop-msg" aria-live="polite" class="set-gap-s"></div>
+    </div>
+  </div>
+  {{ end }}
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{/* ut-docs#4792: a till registered before the terms step (or via a
@@ -106,7 +153,7 @@
     <span id="terms-msg" aria-live="polite"></span>
     {{ end }}
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
-    {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+    {{ if and enroldevice (not .registerFacts) }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
     {{/* ADR-0148 (ut-docs#3615): the fleet list is a cloud call
          (enroll.Fleet), so an unpaid till does not load it. */}}
     {{ if not .cloudSyncOff }}

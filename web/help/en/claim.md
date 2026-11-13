@@ -57,7 +57,7 @@ If the cloud refuses this till's credential three times in a row, or this till's
 
 - **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
 - **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
-- **Register as a new store**: the store has no owner account, so the till can't be paired. Register it again as a new store; only the old fleet history is lost.
+- **Cloud sign-in lost**: the store has no owner account, so the till can't be paired. Tap the chip, then **Reconnect this till** in Settings → Till registration (same shop); only if that is refused, **Register as a new shop** (only the old fleet history is lost).
 - **Restored on a new device — connect again**: this till's data was restored from a phone or iCloud backup (or copied) onto a new device, so its cloud connection was reset; the sales on the till are not touched. Pair it with the shop again, or register it as a new store, in Settings → Till registration. The old device keeps its own connection.
 
 A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud. The restored chip goes away once the till is paired or registered again.
@@ -100,6 +100,18 @@ Good to know:
 - Three wrong PINs decline the move. If the owner cancels it in the cloud account, or nobody decides in time, the banner says so and nothing changes.
 - A move is refused, with nothing changed, when this till's shop has other tills, a fiscal device, a paid plan or another owner, when the two shops use different currencies, or when the code was not made by the other shop's owner. The message says which.
 - "This till's approval key changed" means the till cannot sign moves: contact support. A till whose old shop no longer recognises it and that has sales is not paired as a new till (its sales would be left behind); contact support to merge it.
+
+## When the cloud knows this till but will not sign it in
+
+A shop with no owner account has no pairing code, so the cloud decides by the till's **approval key** (a key the till keeps in its own data folder, never in a backup). Selling is never affected. What you see depends on the state:
+
+- **Cloud sign-in lost** (status bar): the till's cloud sign-in was refused three times. A manager opens Settings → Till registration. The device ID and the **key fingerprint** (32 characters in groups of four) are shown there, always, to managers only. Tap **Reconnect this till**: the till proves its key and gets a new sign-in in the same shop. If that is refused, the card says why (never the cloud's raw text).
+- **The cloud knows a different key for this till**: the key on this till is not the one the cloud holds (for example after restoring the data onto new hardware, or a damaged key file). Ask support to allow it. Read them the device ID and the key fingerprint from Settings; support matches both against the shop's fleet row (shop name, till name, version) and lets in one reconnect for 24 hours, once, only for a till holding that key. If they cannot match it, or you would rather not wait, use **Register as a new shop**.
+- **This till was in use recently** (**Cloud reconnect paused**): for a till on an older version that never reported a key, the cloud refuses a re-registration while the till was in use in the last 72 hours. This is a weaker check: an unpaid till often contacts the cloud rarely, so it can be past 72 hours while still selling. The till tries again by itself after the date shown (Register now tries at once). Support can allow one reconnect sooner, the same way.
+- **This till's software is too old to prove its identity**: update this till, then try again.
+- **Too many tries**: wait a few minutes.
+
+**Register as a new shop** (below Reconnect, with a confirmation) leaves the old shop behind in the cloud with this till's earlier cloud history, gives the till a new device ID and registers it as a new shop. Sales on the till stay on the till. It cannot be undone. If the new registration fails, the till is simply not registered yet and **Register now** tries again. A till whose database was wiped already has a new device ID and registers as a new shop by itself. A shop that has an owner re-pairs the till instead (Pair with a shop).
 
 ## The shop's currency
 
