@@ -2,8 +2,8 @@
 
 Date: 2026-11-13
 Repos: universal-till, branch `retire/4401-legacy-items-symlink-migration`
-(commit 42e234e on `origin/main` 79b1f19, plus the reviewer's uncommitted
-fixes below); ut-docs, branch `docs/4401-retire-items-symlink`
+(commit 42e234e on `origin/main` 79b1f19, plus the reviewer's fixes below, committed by the
+orchestrator in a67d9d1 and this record's final text after it); ut-docs, branch `docs/4401-retire-items-symlink`
 (`architecture/packaging.md`).
 Author: Opus 5 build (Dev; fell back from Sonnet). Tester: separate agent.
 Reviewer: Fable 5.2, independent — did not write the code.
@@ -107,7 +107,14 @@ not changed by my fixes.
 - `go build ./...`: ok. `go vet` on `internal/paths`, `packaging`,
   `internal/db`: ok.
 - `go test ./internal/paths/... ./packaging/... -race`: ok.
-- `go test ./internal/db/... -race -timeout 40m`: DB_RACE_RESULT
+- `go test ./internal/db/... -race -timeout 40m`: **not proven.** The package hit
+  the 40-minute timeout in this sandbox (panic `test timed out after 40m0s`
+  while `TestRecoverInterruptedRestoreDropsOldSidecarsBeforeFinishing` was 9 s
+  in — the package is simply slower than 40 min under `-race` here). No test
+  had failed and no data race was reported before the cut-off. The asset
+  tests alone (`-race -run 'BackupAsset|AssetScope|Assets'`) pass in 124 s,
+  and the Tester's full non-race run passed in 259 s. The diff's only change
+  in this package is a comment; CI's run is the full proof.
 - `golangci-lint run ./...`: 0 issues.
 - `sh -n` and `dash -n packaging/scripts/postinstall.sh`: ok.
   `TestPackagingShellScriptsParse`: ok.
@@ -128,8 +135,7 @@ inaccuracy → deferred); `en.json` n/a (no strings); ADR n/a (retires a
 transitional bridge as its own comment planned, no decision reversed);
 review record: this file, plus a pointer in ut-docs `code-reviews/`.
 
-**Verdict:** approve with fixes (R1–R3 applied in the working tree,
-uncommitted).
+**Verdict:** approve with fixes (R1–R3 applied; committed in a67d9d1).
 
 **Deferred (Backlog cards to file at close-out):**
 - R5a: correct the stale upload-path comment in
