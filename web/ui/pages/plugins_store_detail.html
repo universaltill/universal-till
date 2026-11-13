@@ -87,6 +87,7 @@
 {{ template "store_logo_js" }}
 <script>
 window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
+window.utTrustOk = {{ T "plugins.trust.confirm_ok" }};
 </script>
 <script>
 (function () {
@@ -153,7 +154,7 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
       // Function replacer: a vendor named "A$&B" must render literally.
       var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', function () { return vendor; });
       var ask = (window.UT && typeof window.UT.confirm === 'function')
-        ? window.UT.confirm(q, { opener: btn })
+        ? window.UT.confirm(q, { opener: btn, ok: window.utTrustOk })
         : Promise.resolve(window.confirm(q)); // native-confirm:allow till-confirm.js not loaded: consent still asked, fail-closed
       // ADR-0006 trust consent, asked in the till's own dialog (ut-docs#6116):
       // only an explicit Confirm installs. Cancel, Escape, a swap, Lock or a

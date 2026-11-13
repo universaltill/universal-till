@@ -52,6 +52,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   Every `hx-confirm` opener names its verb on the same tag:
   `data-confirm-ok="{{ T "key" }}"` (optional `data-confirm-dismiss`);
   `TestHxConfirm_EveryOpenerNamesItsVerb` (ut-docs#6117).
+  Every JS `UT.confirm(` caller passes a non-empty `ok` in its options
+  (`TestUTConfirm_EveryCallerNamesItsVerb`, escape `confirm-verb:allow
+  <reason>`; ut-docs#6148).
 
 ## Self-order kiosk isolation (`scripts/ci/guard-kiosk-engine.sh`)
 - The kiosk basket is `common.Deps.KioskEngine`, separate from the cashier's
