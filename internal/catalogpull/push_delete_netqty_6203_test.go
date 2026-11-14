@@ -16,7 +16,7 @@ func TestPushDeleteWithALoneNetQuantityHalfOmitsBoth_6203(t *testing.T) {
 		t.Run("base without "+drop, func(t *testing.T) {
 			h := newPushHarness(t)
 			id := h.seedWithItem(func(d map[string]any) { d["net_quantity_value"], d["net_quantity_unit"] = 330, "ml" })
-			h.exec(`UPDATE cloud_links SET base = json_remove(base, '$.`+drop+`') WHERE entity = 'item'`)
+			h.exec(`UPDATE cloud_links SET base = json_remove(base, '$.` + drop + `') WHERE entity = 'item'`)
 			if _, err := data.NewPOSRepo(h.db).DeleteUnusedItem(context.Background(), id); err != nil {
 				t.Fatal(err)
 			}
