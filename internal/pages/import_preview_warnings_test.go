@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/catimport"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/paths"
 )
@@ -161,7 +162,7 @@ func TestParseTimeImportWarnings(t *testing.T) {
 		NetQuantityIssue: catimport.NetQuantityIssueInvalid, NetQuantityIssueRaw: "nq",
 		ReorderLevelIssue: catimport.ReorderLevelIssueInvalid, ReorderLevelIssueRaw: "rl",
 	}
-	got := parseTimeImportWarnings(T, it)
+	got := parseTimeImportWarnings(T, "en", it)
 	wantSubs := []string{"img", "bc", "tax", "ta", "sku", "nq", "rl"}
 	if len(got) != len(wantSubs) {
 		t.Fatalf("want %d warnings, got %d: %q", len(wantSubs), len(got), got)
@@ -173,14 +174,24 @@ func TestParseTimeImportWarnings(t *testing.T) {
 	}
 
 	it.Barcode = "4006381333931"
-	for _, w := range parseTimeImportWarnings(T, it) {
+	for _, w := range parseTimeImportWarnings(T, "en", it) {
 		if strings.Contains(w, "bc") {
 			t.Errorf("a parsed barcode must not also warn its BarcodeIssue, got %q", w)
 		}
 	}
 
-	if ws := parseTimeImportWarnings(T, catimport.ImportItem{Name: "clean"}); len(ws) != 0 {
+	if ws := parseTimeImportWarnings(T, "en", catimport.ImportItem{Name: "clean"}); len(ws) != 0 {
 		t.Errorf("a clean row has no parse-time warnings, got %q", ws)
+	}
+
+	// ut-docs#5959: a gift voucher never stores a reorder level, so its
+	// invalid cell raises no warning.
+	gv := catimport.ImportItem{
+		ItemType:          catalogtypes.ItemTypeGiftVoucher,
+		ReorderLevelIssue: catimport.ReorderLevelIssueInvalid, ReorderLevelIssueRaw: "rl",
+	}
+	if ws := parseTimeImportWarnings(T, "en", gv); len(ws) != 0 {
+		t.Errorf("a voucher's invalid reorder level must not warn, got %q", ws)
 	}
 }
 
@@ -211,5 +222,19 @@ func TestImport_PreviewAndCommitShowTheSameParseTimeWarning(t *testing.T) {
 	assertPreviewRowWarns(t, rec.Body.String(), "To go", want)
 	if n := strings.Count(rec.Body.String(), "xyz"); n != 1 {
 		t.Fatalf("the commit summary must report the warning once, got %d", n)
+	}
+}
+
+// TestTranslateReorderLevelIssue_BoundsUngrouped pins #5959's review
+// finding: the message tells the operator to write the number without
+// thousands separators, so the range it shows must have none either —
+// "1.000.000" on a German till would be refused by the importer.
+func TestTranslateReorderLevelIssue_BoundsUngrouped(t *testing.T) {
+	T := func(string) string { return "%s|%s|%s" }
+	for _, locale := range []string{"en", "de"} {
+		got := translateReorderLevelIssue(T, locale, catimport.ReorderLevelIssueInvalid, "abc")
+		if got != "abc|0|1000000" {
+			t.Errorf("locale %s: got %q, want %q", locale, got, "abc|0|1000000")
+		}
 	}
 }
