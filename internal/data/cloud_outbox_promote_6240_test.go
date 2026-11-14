@@ -21,8 +21,8 @@ func seedPromoteReplica(t *testing.T, db *sql.DB, mode string) {
 	}
 }
 
-// linkRow inserts a local row and its cloud link with the given base (NULL
-// when base is ""), then clears the outbox the inserts may have marked.
+// linkItem inserts a local item and its cloud link with the given base (a nil
+// base is SQL NULL); callers clear the outbox the inserts may have marked.
 func linkItem(t *testing.T, db *sql.DB, id, icon string, base any) {
 	t.Helper()
 	obExec(t, db, `INSERT INTO items (id, sku, name, base_price, icon) VALUES (?, ?, 'N', 100, ?)`, id, "S-"+id, icon)
@@ -195,11 +195,43 @@ func TestMarkUnsentPromotedFields_Idempotent_6240(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("first run = %d, %v; want 2 marks", n, err)
 	}
+	if got := baseIconType(t, db, "category", "c1"); got != "text" {
+		t.Fatalf("category base icon type = %q", got)
+	}
+	before := allBases(t, db)
 	n, err = repo.MarkUnsentPromotedFields(context.Background(), db, "2000-01-01T00:00:00Z")
 	if err != nil || n != 0 {
 		t.Fatalf("second run = %d, %v; want 0", n, err)
 	}
-	if got := baseIconType(t, db, "category", "c1"); got != "text" {
-		t.Fatalf("category base icon type = %q", got)
+	if after := allBases(t, db); after != before {
+		t.Fatalf("second run changed bases:\n before %s\n after  %s", before, after)
+	}
+}
+
+func allBases(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var s sql.NullString
+	if err := db.QueryRow(`SELECT group_concat(entity || ':' || local_id || '=' || COALESCE(base, 'NULL'), ';') FROM (SELECT * FROM cloud_links ORDER BY entity, local_id)`).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	return s.String
+}
+
+// The sync.primary_url clause of the gate: called directly on a replica (the
+// identity still set) in cloud mode, it marks nothing, like the outbox
+// triggers. Base seeding is ungated, as in migration 103.
+func TestMarkUnsentPromotedFields_NoMarksOnReplica_6240(t *testing.T) {
+	d := openMigratedDB(t, "promote-replica.db")
+	db := d.DB
+	seedPromoteReplica(t, db, "cloud")
+	linkItem(t, db, "i1", "lucide:beer", `{"name":"x"}`)
+	clearOutbox(t, db)
+	n, err := NewCloudOutboxRepo().MarkUnsentPromotedFields(context.Background(), db, "2000-01-01T00:00:00Z")
+	if err != nil || n != 0 {
+		t.Fatalf("on a replica = %d, %v; want 0 marks", n, err)
+	}
+	wantMarks(t, db)
+	if got := baseIconType(t, db, "item", "i1"); got != "text" {
+		t.Fatalf("item base icon type = %q, want seeded text", got)
 	}
 }

@@ -832,7 +832,9 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   base for the field to the cloud's default and marks each row whose local
   value differs, so the first upload seeds the cloud and the pull keeps the
   till value meanwhile (no `ApplierVersion` bump: a re-pull without those
-  marks would reset till values). `icon` (item and category) is mastered
+  marks would reset till values). A replica never marks, so
+  `POST /api/sync/promote` re-runs that mark-and-seed step for each promoted
+  field (`data.promotedUploadFields`, ut-docs#6240). `icon` (item and category) is mastered
   since contract 1.2.0 (ut-docs#6071, migration 103): its value is the raw
   stored icon id, applied as served on a create, a mastered change or clear,
   and kept on a linked row while its upload is pending.

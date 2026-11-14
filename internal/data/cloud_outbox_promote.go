@@ -18,6 +18,8 @@ import (
 // localExpr must produce the value exactly as catalogpull encodes it in the
 // base: a boolean base is JSON true, which json_extract returns as 1.
 // Reference fields (*_cloud_id) need a link lookup and do not fit this shape.
+// A JSON-null base value counts as cloudDefault when marking (migration 103
+// skips it); the till never writes one (baseFromRow turns null into "").
 type promotedUploadField struct {
 	entity       string // cloud_outbox / cloud_links entity ("item", "category")
 	table        string // local table, aliased t in the SQL

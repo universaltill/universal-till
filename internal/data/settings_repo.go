@@ -311,7 +311,9 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// ClearReplicaIdentity promotes a replica (ADR-0011 D4): every sync.* key
+// ClearReplicaIdentity clears a replica's identity, settings only; the
+// promotion entry point is PromoteReplica, which also queues the unsent
+// promoted fields (ut-docs#6240). ADR-0011 D4: every sync.* key
 // goes EXCEPT the receipt prefix — the till keeps stamping T<n>- receipts
 // so its numbering never collides with the old primary's.
 //
@@ -353,9 +355,6 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // ApplyAdminWithResult's in-tx sync.primary_url check (ErrNotReplica), so it
 // cannot write the old main's lan_discovery.till_id or till.name back
 // (ut-docs#5896).
-//
-// It is settings only; POST /api/sync/promote uses PromoteReplica, which also
-// queues the unsent promoted fields (ut-docs#6240).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	return r.clearReplicaIdentity(ctx, nil)
 }
