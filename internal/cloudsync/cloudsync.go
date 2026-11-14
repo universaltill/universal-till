@@ -660,7 +660,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		}
 		return b, err
 	}
-	catalogApplied := false
+	var applied appliedKinds
 	// guest_order (ADR-0159 §5): at most maxGuestOrdersPerTick per tick —
 	// each one may take a few DB writes and a fiscal start — and the ids
 	// this tick already answered, so the retry pass below doesn't post the
@@ -711,7 +711,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			handleGuestOrder(ctx, cfg, db, d, hooks)
 			continue
 		}
-		handleGenericDirective(ctx, cfg, db, d, hooks, &fetchDeferred, &catalogApplied)
+		handleGenericDirective(ctx, cfg, db, d, hooks, &fetchDeferred, &applied)
 	}
 	// A guest_order result the cloud did not acknowledge on an earlier tick
 	// is re-posted until it answers 200 or 404 (ADR-0159 §4). Only the main
@@ -726,7 +726,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// sync), never after a mid-tick 402. A pull failure is logged and
 	// retried on the next trigger; it never fails the check-in.
 	if isMainTill && plan.post && !refusedMidTick && pullCloudCatalog(ctx, cfg, db, hooks) {
-		catalogApplied = true
+		applied.catalog = true
 	}
 	// ADR-0169 §8 (ut-docs#4763): the main till of a cloud-master store
 	// uploads its changed on-hand rows after a check-in that reached the
@@ -740,10 +740,21 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.
-	if isMainTill && catalogApplied && !refusedMidTick {
+	if isMainTill && applied.catalog && !refusedMidTick {
 		if err := pushSnapshotIfChanged(ctx, cfg, db, hooks.ItemTilePositions); err != nil {
 			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push after directives", err)
+		}
+	}
+	// Same for this till's own device report (ut-docs#5614): a setting, theme,
+	// quick-button layout or name a directive just changed reaches the cloud
+	// now, not a tick later. Any till (whichever applied it). Hash-gated;
+	// a failure is logged and the next check-in carries it (its 304 sees the
+	// changed state hash).
+	if applied.deviceReport && !refusedMidTick {
+		if err := pushDeviceReportIfChanged(ctx, cfg, settings, hooks, sum, hashErr == nil); err != nil {
+			pushRefused(ctx, settings, err, windowSeen)
+			logPushError("device report after directives", err)
 		}
 	}
 	// Issue-reporter status pull (ADR-0022, spec 012, ut-docs#348): the

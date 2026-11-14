@@ -77,6 +77,10 @@ type fakeCloud struct {
 	// real cloud does. noticesFn, when set, builds it from that object.
 	notices   json.RawMessage
 	noticesFn func(req map[string]any) json.RawMessage
+	// syncStatus, when set, is called with the 1-based /v1/stores/sync call
+	// number after the body is recorded; a non-zero result is written as the
+	// status instead of the 200 answer (ut-docs#5614).
+	syncStatus func(n int) int
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -90,6 +94,11 @@ func (f *fakeCloud) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.syncBodies = append(f.syncBodies, body)
+		callN := len(f.syncBodies)
+		forced := 0
+		if f.syncStatus != nil {
+			forced = f.syncStatus(callN)
+		}
 		dirs := f.directives
 		f.directives = nil // deliver once, like the real cloud resolves them
 		ent := f.entitlement
@@ -100,6 +109,13 @@ func (f *fakeCloud) handler() http.Handler {
 			}
 		}
 		f.mu.Unlock()
+		if forced != 0 {
+			w.WriteHeader(forced)
+			if forced == http.StatusPaymentRequired {
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "plan_required", "message": "plan required"}})
+			}
+			return
+		}
 		respData := map[string]any{"directives": dirs}
 		if _, asked := body["notices"]; asked && nb != nil {
 			respData["notices"] = nb
