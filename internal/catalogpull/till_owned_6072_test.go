@@ -208,8 +208,8 @@ func keysOf(m map[string]any) []string {
 }
 
 // Every field the feed's item and category rows carry is exactly one of:
-// cloud-written (applied on update), till-owned (kept), or icon (applied
-// until ut-docs#6071). A new wire field must be placed.
+// cloud-written (applied on update) or till-owned (kept). A new wire field
+// must be placed.
 func TestTillOwnedFieldsPartitionTheFeedRow_6072(t *testing.T) {
 	check := func(kind string, row map[string]any, written []string) {
 		t.Helper()
@@ -224,7 +224,6 @@ func TestTillOwnedFieldsPartitionTheFeedRow_6072(t *testing.T) {
 		}
 		put("cloud-written", written)
 		put("till-owned", tillOwnedFields[kind])
-		put("icon (interim)", []string{"icon"})
 		for _, k := range keysOf(row) {
 			if _, ok := seen[k]; !ok {
 				t.Errorf("%s: feed field %q is in no set: decide whether the cloud writes it", kind, k)
@@ -243,30 +242,8 @@ func TestTillOwnedFieldsPartitionTheFeedRow_6072(t *testing.T) {
 		}
 	}
 	check(kindItem, itemRowData("x", 1), []string{"name", "sku", "description", "price_minor", "category_cloud_id",
-		"tax_code_cloud_id", "active", "is_weighed", "age_restricted", "net_quantity_value", "net_quantity_unit"})
-	check(kindCategory, catRow(cCat, 1, "x", nil).Data, []string{"name", "parent_cloud_id", "sort_order", "active"})
-}
-
-// icon is applied as served on an update until ut-docs#6071 decides it:
-// #6071 flips these assertions.
-func TestPullAppliesIconAsServedUntil6071(t *testing.T) {
-	h := newHarness(t)
-	h.feed.add(catRow(cCat, 1, "Coffee", nil))
-	h.feed.add(itemFeedRow(1, 2, "Latte", 300))
-	h.mustRun()
-	cat := catRow(cCat, 3, "Coffee", nil)
-	cat.Data["icon"] = "lucide:coffee"
-	h.feed.add(cat)
-	it := itemRowData("Latte", 300)
-	it["icon"] = "lucide:coffee"
-	h.feed.add(feedRow{Kind: "item", CloudID: itemID(1), Version: 4, Data: it})
-	h.mustRun()
-	if got := h.list(`SELECT COALESCE(icon,'') FROM items WHERE id = ?`, itemID(1)); got != "lucide:coffee" {
-		t.Fatalf("item icon = %q, want the served icon applied", got)
-	}
-	if got := h.list(`SELECT COALESCE(icon,'') FROM categories WHERE id = ?`, cCat); got != "lucide:coffee" {
-		t.Fatalf("category icon = %q, want the served icon applied", got)
-	}
+		"tax_code_cloud_id", "active", "is_weighed", "age_restricted", "net_quantity_value", "net_quantity_unit", "icon"})
+	check(kindCategory, catRow(cCat, 1, "x", nil).Data, []string{"name", "parent_cloud_id", "sort_order", "active", "icon"})
 }
 
 // AC6 (Tester): on a linked row the mastered fields' clear cases still apply

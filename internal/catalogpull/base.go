@@ -9,8 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -27,13 +29,14 @@ import (
 // refused cloud value never looks like a till edit.
 
 // uploadFields are each kind's uploadable fields (contract
-// cloud-catalog-changes.md 1.1.0), in upload order. An item's
+// cloud-catalog-changes.md 1.2.0), in upload order. An item's
 // net_quantity_value and net_quantity_unit always travel together
-// (changedFields, ut-docs#6082/#6202).
+// (changedFields, ut-docs#6082/#6202). icon (item and category, 1.2.0,
+// ut-docs#6071) is the raw stored icon id, "" for none.
 var uploadFields = map[string][]string{
 	kindItem: {"name", "description", "sku", "price_minor", "category_cloud_id", "tax_code_cloud_id", "active", "barcodes",
-		"is_weighed", "age_restricted", "net_quantity_value", "net_quantity_unit"},
-	kindCategory: {"name", "parent_cloud_id", "sort_order", "active"},
+		"is_weighed", "age_restricted", "net_quantity_value", "net_quantity_unit", "icon"},
+	kindCategory: {"name", "parent_cloud_id", "sort_order", "active", "icon"},
 	kindTaxCode:  {"name", "rate_basis_points", "takeaway_rate_basis_points", "active"},
 }
 
@@ -44,11 +47,16 @@ var uploadFields = map[string][]string{
 // (a linked row) the pull and an upload answer leave the till's value alone
 // (ut-docs#6072). A create still applies them as served. When a contract
 // minor gives the cloud a write path for one (catalogwrite + the changes
-// contract, both sides), that release removes it here and bumps
-// ApplierVersion so every till re-pulls it. is_weighed, age_restricted and
-// the net quantity pair were never here: they upload since contract 1.1.0
-// (ut-docs#6082/#6202). icon is not here: it is applied
-// as served until ut-docs#6071 decides it (in-flight #6028 pins that).
+// contract, both sides), it moves to uploadFields and the till release
+// carries a migration that PROMOTES it (migration 103 for icon): each
+// linked row's base for the field is set to the cloud's default and every
+// row whose local value differs is marked, so its first upload seeds the
+// cloud and the pull's field-wise apply keeps the till value until then.
+// There is no ApplierVersion bump: a re-pull without those marks would
+// reset the till's values to the cloud's defaults. is_weighed,
+// age_restricted and the net quantity pair were never here: they upload
+// since contract 1.1.0 (ut-docs#6082/#6202); icon since 1.2.0
+// (ut-docs#6071).
 var tillOwnedFields = map[string][]string{
 	kindItem: {"unit", "color", "item_type", "stock_untracked", "sell_screen_hidden",
 		"sell_screen_removed", "modifier_group_cloud_ids", "modifier_opt_out_cloud_ids", "option_set_cloud_ids"},
@@ -207,6 +215,7 @@ func (r *runner) readLocal(ctx context.Context, q data.SyncQuerier, kind, localI
 			"active": rawJSON(it.Active), "barcodes": rawJSON(list),
 			"is_weighed": rawJSON(it.IsWeighed), "age_restricted": rawJSON(it.AgeRestricted),
 			"net_quantity_value": rawJSON(it.NetQuantityValue), "net_quantity_unit": rawJSON(it.NetQuantityUnit),
+			"icon": rawJSON(iconOut(it.Icon)),
 		}
 	case kindCategory:
 		c, ok, err := r.outbox.OutboxCategoryValues(ctx, q, localID)
@@ -218,7 +227,8 @@ func (r *runner) readLocal(ctx context.Context, q data.SyncQuerier, kind, localI
 		if err != nil {
 			return l, err
 		}
-		l.vals = values{"name": rawJSON(c.Name), "parent_cloud_id": parent, "sort_order": rawJSON(c.Sort), "active": rawJSON(c.Active)}
+		l.vals = values{"name": rawJSON(c.Name), "parent_cloud_id": parent, "sort_order": rawJSON(c.Sort), "active": rawJSON(c.Active),
+			"icon": rawJSON(iconOut(c.Icon))}
 	case kindTaxCode:
 		t, ok, err := r.outbox.OutboxTaxCodeValues(ctx, q, localID)
 		if err != nil || !ok {
@@ -323,7 +333,7 @@ func baseFromRow(kind string, f fields, old values) values {
 			continue
 		}
 		switch {
-		case name == "description" && null:
+		case (name == "description" || name == "icon") && null:
 			out[name] = rawJSON("")
 		case name == "sku" && (null || norm(raw) == `""`):
 			// The till keeps its own SKU for a blank one (applyItem):
@@ -569,6 +579,16 @@ func (r *runner) seedChunk(ctx context.Context, kind, after string) (seeded int,
 			}
 			base[f] = loc.vals[f]
 		}
+		// The cloud has never held a till icon (ut-docs#6071): its value
+		// is "", not the local one, so a local icon is a pending edit
+		// whose first upload seeds the cloud.
+		base["icon"] = rawJSON("")
+		hasIcon := loc.vals["icon"] != nil && norm(loc.vals["icon"]) != `""`
+		if hasIcon {
+			if err := r.outbox.EnsureOpenMark(ctx, tx, kind, l.LocalID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				return 0, "", 0, err
+			}
+		}
 		if kind == kindItem {
 			base[seededSKUField] = rawJSON(true)
 		}
@@ -576,6 +596,9 @@ func (r *runner) seedChunk(ctx context.Context, kind, after string) (seeded int,
 			return 0, "", 0, err
 		}
 		seeded++
+		if hasIcon {
+			continue // marked above for its icon, not an edit the base hides
+		}
 		if m, err := r.outbox.HasMark(ctx, tx, kind, l.LocalID); err != nil {
 			return 0, "", 0, err
 		} else if m {
@@ -586,4 +609,15 @@ func (r *runner) seedChunk(ctx context.Context, kind, after string) (seeded int,
 		return 0, "", 0, fmt.Errorf("catalogpull: seed bases: commit: %w", err)
 	}
 	return seeded, last, marked, nil
+}
+
+// iconOut is a local icon id as it uploads: itself when it is "" (none) or
+// a well-formed id, "" otherwise. A malformed stored id never uploads (the
+// cloud would refuse it, ut-docs#6071); it reads as unchanged, and the
+// sell screen draws the fallback glyph for it anyway.
+func iconOut(id string) string {
+	if id == "" || iconid.ValidFormat(id) {
+		return id
+	}
+	return ""
 }
