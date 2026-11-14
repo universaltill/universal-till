@@ -322,6 +322,12 @@ installs a release only if its `checksums.txt.sig` verifies; with none (source
 builds, or release signing not yet armed) it checks SHA-256 only. See
 `RELEASING.md`.
 
+**Release assets also carry build provenance** (ADR-0181): a signed record of
+which commit and workflow built each file, checked with
+`gh attestation verify --repo universaltill/universal-till`. It does not prove
+the commit is safe. The command and the limits are in `RELEASING.md`
+("Build provenance").
+
 ---
 
 ## ⚙️ Configuration
