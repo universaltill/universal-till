@@ -52,6 +52,9 @@ var uploadFields = map[string][]string{
 // linked row's base for the field is set to the cloud's default and every
 // row whose local value differs is marked, so its first upload seeds the
 // cloud and the pull's field-wise apply keeps the till value until then.
+// The migration only reaches a main till (a replica never marks), so the
+// field also gets a row in data.promotedUploadFields, which re-runs the
+// recipe when a replica is promoted (ut-docs#6240).
 // There is no ApplierVersion bump: a re-pull without those marks would
 // reset the till's values to the cloud's defaults. is_weighed,
 // age_restricted and the net quantity pair were never here: they upload
