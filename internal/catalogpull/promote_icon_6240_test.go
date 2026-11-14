@@ -92,7 +92,7 @@ func TestReplicaPromotedWithoutMarksLosesIcon_6240(t *testing.T) {
 
 // R5: each promoted field is an uploadable, no longer till-owned, field.
 func TestPromotedUploadFieldsAreUploadFields_6240(t *testing.T) {
-	for _, e := range data.PromotedUploadFields() {
+	for _, e := range data.PromotedUploadFieldKeys {
 		kind, key := e[0], e[1]
 		if !contains(uploadFields[kind], key) {
 			t.Errorf("%s.%s is promoted but not in uploadFields", kind, key)

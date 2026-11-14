@@ -7,7 +7,7 @@
 - `internal/data/cloud_outbox_promote.go` (new):
   - `promotedUploadFields` holds the item and category `icon` entries. The next promoted field (ut-docs#6081)
     adds a row here.
-  - `PromotedUploadFields()` exists for catalogpull's pin test.
+  - `PromotedUploadFieldKeys` (a package variable, so the deadcode guard sees no test-only func) exists for catalogpull's pin test.
   - `CloudOutboxRepo.MarkUnsentPromotedFields` runs the contract 1.2.0 "promoting a field to cloud-mastered"
     mark-and-seed step:
     - It marks each linked row whose local value is set and differs from its base. A missing or null base key
