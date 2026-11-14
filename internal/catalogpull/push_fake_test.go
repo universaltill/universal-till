@@ -271,6 +271,13 @@ func (c *fakeCloud) decide(ch Change) Answer {
 			a.Status = statusAccepted
 			return a
 		}
+		// As the cloud (contract 1.1.0): a lone net-quantity half in before
+		// is a 400 for the whole call.
+		_, bv := ch.Before["net_quantity_value"]
+		_, bu := ch.Before["net_quantity_unit"]
+		if bv != bu {
+			return Answer{ChangeID: ch.ChangeID, Status: statusRejected, Code: "invalid_request"}
+		}
 		for f, b := range ch.Before {
 			if c.value(ch.Kind, ch.CloudID, f) != changeValue(f, b) {
 				return conflict("delete")

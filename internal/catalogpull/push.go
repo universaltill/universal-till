@@ -374,7 +374,15 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 		}
 		ch.Op, ch.CloudID, ch.Before = opDelete, link.CloudID, map[string]json.RawMessage{}
 		_, seeded := base[seededSKUField]
+		_, haveV := base[netQuantityPair[0]]
+		_, haveU := base[netQuantityPair[1]]
 		for _, f := range uploadFields[m.Entity] {
+			if (f == netQuantityPair[0] || f == netQuantityPair[1]) && !(haveV && haveU) {
+				// The cloud refuses one net-quantity half alone (400 for
+				// the whole call, contract 1.1.0): send both or neither
+				// (ut-docs#6203).
+				continue
+			}
 			if f == "sku" && seeded {
 				// An unsettled seeded sku may be the till's own SKU for a
 				// blank cloud one, and a deleted row cannot wait for the
