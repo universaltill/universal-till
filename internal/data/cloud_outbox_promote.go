@@ -33,15 +33,16 @@ var promotedUploadFields = []promotedUploadField{
 	{entity: "category", table: "categories", localExpr: "COALESCE(t.icon, '')", baseKey: "icon", cloudDefault: ""},
 }
 
-// PromotedUploadFields lists (entity, baseKey) for each promoted field, so
-// catalogpull's test can pin each one to uploadFields.
-func PromotedUploadFields() [][2]string {
+// PromotedUploadFieldKeys lists (entity, baseKey) for each promoted field, so
+// catalogpull's test can pin each one to uploadFields. A variable, not a
+// func: only a test reads it (guard-deadcode-baseline.sh).
+var PromotedUploadFieldKeys = func() [][2]string {
 	out := make([][2]string, 0, len(promotedUploadFields))
 	for _, f := range promotedUploadFields {
 		out = append(out, [2]string{f.entity, f.baseKey})
 	}
 	return out
-}
+}()
 
 // MarkUnsentPromotedFields runs the recipe's mark-and-seed step for every
 // promotedUploadFields entry and returns the number of marks it opened. The
