@@ -936,7 +936,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// identity (keeping the receipt prefix — numbering must not collide
 	// with the old primary) so the push/pull loops stop on their next tick
 	// and the Tills page can pair new replicas from here. Documented
-	// procedure: docs architecture/lan-sync.md "Promoting a replica".
+	// procedure: docs architecture/lan-sync.md "Promoting a replica". It also
+	// queues the icons this till holds that the cloud never received, in the
+	// same transaction (ut-docs#6240).
 	mux.HandleFunc("POST /api/sync/promote", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		locale := httpx.ResolveLocale(w, r)
@@ -975,7 +977,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// ut-docs#5074 M6: what this till had sent its main till, read before
 		// the identity (and with it the push cursor) is cleared.
 		pushedUpTo, _, _ := d.Settings.Get(r.Context(), "sync.push_cursor")
-		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
+		if err := data.NewSettingsRepo(d.Db).PromoteReplica(r.Context()); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}

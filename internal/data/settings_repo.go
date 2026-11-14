@@ -353,7 +353,16 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // ApplyAdminWithResult's in-tx sync.primary_url check (ErrNotReplica), so it
 // cannot write the old main's lan_discovery.till_id or till.name back
 // (ut-docs#5896).
+//
+// It is settings only; POST /api/sync/promote uses PromoteReplica, which also
+// queues the unsent promoted fields (ut-docs#6240).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
+	return r.clearReplicaIdentity(ctx, nil)
+}
+
+// clearReplicaIdentity is ClearReplicaIdentity; a non-nil inTx runs after the
+// sync.% delete and before the commit, in the same transaction.
+func (r *SettingsRepo) clearReplicaIdentity(ctx context.Context, inTx func(context.Context, SyncQuerier) error) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
 	defer func() { done(err) }()
@@ -413,6 +422,11 @@ ON CONFLICT(key) DO UPDATE SET
 	if _, err = tx.ExecContext(ctx,
 		`DELETE FROM settings WHERE key LIKE 'sync.%' AND key != 'sync.receipt_prefix'`); err != nil {
 		return settingsObs.wrapf("clear_replica_identity", "clear replica identity", err)
+	}
+	if inTx != nil {
+		if err = inTx(ctx, tx); err != nil {
+			return settingsObs.wrapf("clear_replica_identity", "mark unsent promoted fields", err)
+		}
 	}
 
 	if err = tx.Commit(); err != nil {
