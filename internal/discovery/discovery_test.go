@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // openTestSettings mirrors internal/data/settings_repo_test.go's minimal
@@ -38,7 +38,7 @@ func openTestSettings(t *testing.T) *data.SettingsRepo {
 // at all. Needed specifically for the concurrency test below.
 func openFileBackedTestSettings(t *testing.T) *data.SettingsRepo {
 	t.Helper()
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

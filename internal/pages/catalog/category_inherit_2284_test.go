@@ -4,13 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#2284: the item editor's side of category-level modifier groups
@@ -21,7 +21,7 @@ import (
 func setupInheritDeps(t *testing.T) (*http.ServeMux, *db.DB) {
 	t.Helper()
 	chdirToRepoRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "inherit.db"))
+	dbase, err := db.Open(testsupport.MigratedDBFile(t, "inherit.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
