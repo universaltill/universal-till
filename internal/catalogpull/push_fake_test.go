@@ -267,6 +267,14 @@ func (c *fakeCloud) decide(ch Change) Answer {
 		}
 		return c.write(ch, ch.ChangedFields)
 	case opDelete:
+		// As the cloud (contract 1.1.0): a lone net-quantity half in before
+		// is a 400 for the whole call, checked at parse time before the
+		// row is looked up (ut-cloud catalogchanges/change.go).
+		_, bv := ch.Before["net_quantity_value"]
+		_, bu := ch.Before["net_quantity_unit"]
+		if bv != bu {
+			return Answer{ChangeID: ch.ChangeID, Status: statusRejected, Code: "invalid_request"}
+		}
 		if !live {
 			a.Status = statusAccepted
 			return a
