@@ -73,7 +73,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `sales_aggregate_uploads` — which daily per-till sales rollups the cloud
   has accepted (content-hash ledger for the ADR-0111 upload,
   ut-docs#2535; migration 038), plus the source fingerprint each was built
-  from, so a past day whose sales, voids and no-sale opens did not change is
+  from, so a past day whose sales, voids, no-sale opens and cleared baskets did not change is
   not rebuilt (ut-docs#2559; migration 085)
 - `no_sale_events` — "No sale" cash-drawer opens (`POST /api/pos/no-sale`,
   gated by the `cash_adjustment` permission or a manager PIN; recorded only
@@ -93,7 +93,9 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   (`POST /api/sync/cleared-baskets`, cursor
   `sync.cleared_basket_push_cursor`), where they are stored with `till_id` =
   the reporting till's `tills.id`, so the main till's report counts every
-  till's clears once (ut-docs#4711)
+  till's clears once (ut-docs#4711). The ADR-0111 rollup reports them as
+  `cleared_basket_count` / `cleared_basket_total_minor` per business date and
+  till, never as part of net sales (ut-docs#4721)
 
 ### 5. Shifts & audit
 

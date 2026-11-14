@@ -77,7 +77,11 @@ type salesAggregateUpload struct {
 	RefundCount     int                     `json:"refund_count"`
 	VoidCount       int                     `json:"void_count"`
 	NoSaleCount     int                     `json:"no_sale_count"`
-	DiscountCount   int                     `json:"discount_count"`
+	// Baskets cleared with New sale before payment (cleared_baskets,
+	// ut-docs#1122/#4721). Never part of net sales: no sale happened.
+	ClearedBasketCount      int   `json:"cleared_basket_count"`
+	ClearedBasketTotalMinor int64 `json:"cleared_basket_total_minor"`
+	DiscountCount           int   `json:"discount_count"`
 }
 
 type salesAggHourBucket struct {
@@ -299,7 +303,10 @@ func buildSalesAggregate(ctx context.Context, repo *data.POSRepo, storeID string
 		RefundCount:     agg.RefundCount,
 		VoidCount:       agg.VoidCount,
 		NoSaleCount:     agg.NoSaleCount, // "No sale" drawer opens (no_sale_events, ut-docs#2558)
-		DiscountCount:   agg.DiscountCount,
+		// Cleared baskets (cleared_baskets, ut-docs#4721); never net sales.
+		ClearedBasketCount:      agg.ClearedBasketCount,
+		ClearedBasketTotalMinor: agg.ClearedBasketTotal.Minor(),
+		DiscountCount:           agg.DiscountCount,
 	}
 	for _, h := range agg.Hourly {
 		up.Hourly = append(up.Hourly, salesAggHourBucket{Hour: h.Hour, NetSalesMinor: h.Net.Minor(), SalesCount: h.Count})
