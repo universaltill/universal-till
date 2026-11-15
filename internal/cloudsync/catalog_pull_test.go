@@ -387,3 +387,19 @@ func TestTickNeverUploadsOnAReplica(t *testing.T) {
 		t.Fatalf("a replica uploaded (%d calls)", calls)
 	}
 }
+
+// ut-docs#5098: a pull that reached the feed's end marks the first pull done
+// (the join's "Syncing your shop" state ends on it); a failed one does not.
+func TestTickMarksTheFirstPullDone_5098(t *testing.T) {
+	_, _, settings, _, err := tickWithFeed(t, "cloud", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := settings.Get(context.Background(), catalogpull.KeyFirstPullDone); v != "1" {
+		t.Fatalf("first_pull_done = %q, want 1", v)
+	}
+	_, _, settings, _, _ = tickWithFeed(t, "cloud", "", http.StatusServiceUnavailable)
+	if v, _, _ := settings.Get(context.Background(), catalogpull.KeyFirstPullDone); v != "" {
+		t.Fatalf("a failed pull marked the first pull done: %q", v)
+	}
+}

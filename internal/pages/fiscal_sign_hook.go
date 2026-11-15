@@ -466,13 +466,9 @@ type fiscalSignStartResponse struct {
 // (same pattern as printReceiptAsync/kitchen_print.go), which this function
 // returns without waiting for.
 //
-// ctx is accepted (matching dispatchFiscalSignAsk's own signature) but
-// genuinely unused in this function's own body — review finding, ut-docs#1519:
-// the goroutine deliberately uses context.Background() instead (it must
-// outlive the request), and none of the synchronous pre-checks above it
-// (HasSubscribers, the offline check) take a context. Kept for call-site
-// symmetry with dispatchFiscalSignAsk and in case a future synchronous
-// pre-check here needs one.
+// ctx is used only by the synchronous per-signer known-offline check
+// (ut-docs#3137); the goroutine deliberately uses context.Background()
+// instead, since it must outlive the request (ut-docs#1519).
 func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleInput) {
 	bus := plugins.SharedBus(d.Db)
 	if !bus.HasSubscribers(fiscalSignStartEvent) {
@@ -486,7 +482,7 @@ func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleIn
 	// dispatch never reaches the plugin at all for a tender the till already
 	// knows is offline, exactly as it skips the existing fiscal.sign.ask
 	// dispatch today.
-	if in.Offline {
+	if off, _ := fiscalKnownOffline(ctx, d, fiscalSignStartEvent, in.Offline); off {
 		return
 	}
 	payload := fiscalSignStartPayload{
@@ -609,8 +605,8 @@ type fiscalOrderStartPayload struct {
 //   - HasSubscribers first, so a till with no fiscal.order.start subscriber
 //     pays one map lookup under RLock — no allocation, no goroutine
 //     (asserted by TestFiscalOrderStart_ZeroPluginAllocatesNothing).
-//   - Known-offline short-circuit: offline is the request's own declared
-//     offline flag (the #offline-flag / #selforder-offline-flag signal every
+//   - Known-offline short-circuit (per signer, fiscalKnownOffline,
+//     ut-docs#3137): offline is the request's own declared offline flag (the #offline-flag / #selforder-offline-flag signal every
 //     fiscal dispatch already threads through, read with formFlagTruthy).
 //   - EventBus.Ask (not Publish — the event name has no ".ask" suffix) on a
 //     goroutine tracked via d.AsyncWork; never blocks the caller (ADR-0003).
@@ -626,7 +622,10 @@ func dispatchFiscalOrderStart(ctx context.Context, d *common.Deps, orderID, orde
 	if !bus.HasSubscribers(fiscalOrderStartEvent) {
 		return
 	}
-	if offline || orderID == "" {
+	if orderID == "" {
+		return
+	}
+	if off, _ := fiscalKnownOffline(ctx, d, fiscalOrderStartEvent, offline); off {
 		return
 	}
 	payload := fiscalOrderStartPayload{
@@ -715,7 +714,10 @@ func dispatchFiscalOrderCancel(ctx context.Context, d *common.Deps, orderID stri
 	if !bus.HasSubscribers(fiscalOrderCancelEvent) {
 		return
 	}
-	if offline || orderID == "" {
+	if orderID == "" {
+		return
+	}
+	if off, _ := fiscalKnownOffline(ctx, d, fiscalOrderCancelEvent, offline); off {
 		return
 	}
 	cancelledAt := time.Now().UTC().Format(time.RFC3339)
@@ -795,14 +797,15 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 	// Spending the 3s budget on a cloud call the till already knows cannot
 	// succeed would stall checkout on every single sale while offline — a
 	// real ADR-0003 regression even though it never exceeds the budget.
+	// Since ut-docs#3137 this is per signer (fiscalKnownOffline): a declared
+	// offline state skips only signers that need the network, and a till
+	// whose signer backend a fresh background probe found unreachable skips
+	// it too, without marking the sale offline.
 	// Checked BEFORE building the payload / the ADR-0077 D2 lookup just
 	// below: a known-offline tender skips this dispatch entirely, so neither
 	// is worth doing.
-	if in.Offline {
-		return fiscalSignResult{
-			Outcome: fiscalSignSkippedOffline,
-			Reason:  "known-offline: dispatch skipped without contacting the signing plugin",
-		}
+	if off, reason := fiscalKnownOffline(ctx, d, fiscalSignAskEvent, in.Offline); off {
+		return fiscalSignResult{Outcome: fiscalSignSkippedOffline, Reason: reason}
 	}
 	payload := buildFiscalSignPayload(in, time.Now().UTC())
 	// ADR-0077 D2: echo back whatever fiscal.sign.start (Decision 1) managed

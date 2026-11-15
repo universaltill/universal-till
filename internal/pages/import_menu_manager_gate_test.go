@@ -116,6 +116,42 @@ func TestImportExportEndpoints_RealSessionGatesByRole(t *testing.T) {
 	})
 }
 
+// Pins the ut-docs#720 decision: POST /api/data/import is gated by
+// import_export (like every other import entry point), NOT data_management
+// (which gates /api/data/export). A custom role holding only import_export
+// gets past the gate; one holding only data_management is refused.
+func TestDataImport_GatedByImportExportNotDataManagement(t *testing.T) {
+	dp := newImportTestDeps(t)
+	dp.AuthSvc = auth.NewService(dp.Db)
+	mux := http.NewServeMux()
+	registerImportDispatch(mux, dp)
+
+	for _, g := range []struct{ role, action string }{
+		{"import_only", "import_export"},
+		{"datamgmt_only", "data_management"},
+	} {
+		if _, err := dp.Db.Exec(`INSERT INTO roles (role) VALUES (?)`, g.role); err != nil {
+			t.Fatalf("create role %s: %v", g.role, err)
+		}
+		if _, err := dp.Db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, 1)`, g.role, g.action); err != nil {
+			t.Fatalf("grant %s to %s: %v", g.action, g.role, err)
+		}
+	}
+
+	post := func(role string) *httptest.ResponseRecorder {
+		req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/data/import", nil), auth.User{ID: "u-" + role, Role: role})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("import_only"); rec.Code == http.StatusForbidden {
+		t.Fatalf("import_export-only role = 403, want past the gate: %s", rec.Body.String())
+	}
+	if rec := post("datamgmt_only"); rec.Code != http.StatusForbidden {
+		t.Fatalf("data_management-only role = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // Positive counterpart to TestMenuPage_ManagerOnlyTilesGatedByRole, which
 // only exercises the no-session/UT_AUTH=off pair — a real cashier session
 // must not see the manager-only tiles either, and manager/admin/super_admin

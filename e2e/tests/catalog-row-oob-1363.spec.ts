@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#1363: catalog mutations answer with row-level HTMX out-of-band
 // fragments — one row inserted/updated/removed — instead of re-rendering
@@ -166,10 +166,12 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
 
     // ut-docs#1951: deactivate moved from a per-card button into the item
     // dialog — open it, then delete from there. Still asks via hx-confirm,
-    // same native dialog event as before.
-    page.once('dialog', (d) => d.accept());
+    // the till's in-page confirm now.
+    const noNative = noNativeDialogs(page);
     await page.locator(`.catalog-row[data-name="${doomed}"]`).click();
     await page.locator('#item-form-delete').click();
+    await answerTillConfirm(page, 'confirm');
+    noNative();
 
     // The doomed row is gone (OOB delete fragment)…
     await expect(page.locator(`.catalog-row[data-name="${doomed}"]`)).toHaveCount(0);

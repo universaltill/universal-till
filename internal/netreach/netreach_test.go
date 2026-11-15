@@ -1,11 +1,14 @@
 package netreach
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -92,7 +95,7 @@ func TestProbeURL(t *testing.T) {
 		{"http://127.1.2.3/api", "", false},
 		{"http://[::1]:8081/api", "", false},
 	} {
-		got, ok := probeURL(c.in, false)
+		got, ok := probeURL(c.in, healthPath, false)
 		if got != c.want || ok != c.ok {
 			t.Errorf("probeURL(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
 		}
@@ -293,5 +296,188 @@ func TestPanickingProbeStillClearsInFlight(t *testing.T) {
 	if n := tr.calls.Load(); n != 2 {
 		t.Fatalf("probes after a panicking one: %d, want 2 (inFlight stuck?)", n)
 	}
+	waitSettled(t, m, Unreachable)
+}
+
+// errTransport fails every request, counting calls and recording the path.
+type errTransport struct {
+	calls atomic.Int64
+	path  atomic.Value
+}
+
+func (e *errTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	e.calls.Add(1)
+	e.path.Store(r.URL.Path)
+	return nil, errors.New("no route to host")
+}
+
+// ut-docs#3137: Fresh is Status for decisions — Unknown unless the last
+// completed probe is younger than the TTL.
+func TestFreshUnknownUntilProbedThenStaleAgain(t *testing.T) {
+	tr := &errTransport{}
+	clk := newClock()
+	m := newTestMonitor(t, "https://signer.example.test", clk, &http.Client{Transport: tr})
+	if st := m.Fresh(); st != Unknown {
+		t.Fatalf("first Fresh = %v, want Unknown (probe just started)", st)
+	}
+	waitSettled(t, m, Unreachable)
+	if st := m.Fresh(); st != Unreachable {
+		t.Fatalf("Fresh within TTL = %v, want Unreachable", st)
+	}
+	if m.Status() != Unreachable {
+		t.Fatal("Status within TTL must agree")
+	}
+	clk.Add(DefaultTTL + time.Second)
+	if st := m.Fresh(); st != Unknown {
+		t.Fatalf("Fresh past TTL = %v, want Unknown", st)
+	}
+	// ... and Status keeps showing the last value for the status bar.
+	waitSettled(t, m, Unreachable)
+	if n := tr.calls.Load(); n != 2 {
+		t.Fatalf("probes = %d, want 2 (stale Fresh kicks a refresh)", n)
+	}
+}
+
+func TestFreshDisabledIsUnknown(t *testing.T) {
+	var m *Monitor
+	if m.Fresh() != Unknown {
+		t.Fatal("nil Monitor Fresh must be Unknown")
+	}
+	if New(Options{Endpoint: "http://127.0.0.1:9"}).Fresh() != Unknown {
+		t.Fatal("loopback Monitor Fresh must be Unknown")
+	}
+}
+
+func TestOptionsPathProbesRoot(t *testing.T) {
+	srv, _, path := testServer(t, http.StatusNotFound)
+	m := New(Options{Endpoint: srv.URL + "/some/api", Path: "/", Client: srv.Client(), Now: newClock().Now, allowLoopback: true})
+	m.Fresh()
+	waitSettled(t, m, Reachable)
+	if path.Load() != "/" {
+		t.Fatalf("probed path %v, want /", path.Load())
+	}
+}
+
+func TestSetCachesPerEndpointAndCaps(t *testing.T) {
+	s := NewSet(SetOptions{Max: 2, Now: newClock().Now, Client: &http.Client{Transport: &errTransport{}}})
+	a := s.For("https://a.example.test")
+	if a == nil || s.For("https://a.example.test") != a {
+		t.Fatal("same endpoint must return the cached Monitor")
+	}
+	b := s.For("https://b.example.test")
+	if b == nil || b == a {
+		t.Fatal("distinct endpoint must get its own Monitor")
+	}
+	if c := s.For("https://c.example.test"); c != nil {
+		t.Fatal("beyond Max must be nil (disabled)")
+	}
+	if s.For("https://a.example.test") != a {
+		t.Fatal("cached endpoint must stay reachable once the cap is hit")
+	}
+	if (*Monitor)(nil).Fresh() != Unknown {
+		t.Fatal("nil Monitor from a full Set must read Unknown")
+	}
+}
+
+func TestNilSetIsDisabledAndLoopbackRulesKept(t *testing.T) {
+	var s *Set
+	if s.For("https://a.example.test") != nil {
+		t.Fatal("nil Set must return nil")
+	}
+	if m := NewSet(SetOptions{}).For("http://localhost:8080"); m.Enabled() {
+		t.Fatal("loopback endpoint must stay disabled in a Set")
+	}
+}
+
+func TestSetMonitorsProbeConfiguredPath(t *testing.T) {
+	tr := &errTransport{}
+	s := NewSet(SetOptions{Path: "/", Now: newClock().Now, Client: &http.Client{Transport: tr}})
+	m := s.For("https://signer.example.test/ignored/path")
+	m.Fresh()
+	waitSettled(t, m, Unreachable)
+	if tr.path.Load() != "/" {
+		t.Fatalf("probed path %v, want /", tr.path.Load())
+	}
+}
+
+func TestSetConcurrentFor(t *testing.T) {
+	s := NewSet(SetOptions{Client: &http.Client{Transport: &errTransport{}}})
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.For("https://a.example.test") }()
+	}
+	wg.Wait()
+	if len(s.mons) != 1 {
+		t.Fatalf("monitors = %d, want 1", len(s.mons))
+	}
+}
+
+// ut-docs#3137 review, major 2: Refresh re-probes a held host once its
+// result is stale, so a quiet till's next sale reads a fresh state rather
+// than Unknown; a fresh result is left alone.
+func TestSetRefreshReprobesStaleMonitors(t *testing.T) {
+	clk := newClock()
+	tr := &errTransport{}
+	s := NewSet(SetOptions{TTL: 30 * time.Second, Now: clk.Now, Client: &http.Client{Transport: tr}})
+	m := s.For("https://signer.example.test")
+	m.Fresh()
+	waitSettled(t, m, Unreachable)
+	s.Refresh()
+	waitSettled(t, m, Unreachable)
+	if n := tr.calls.Load(); n != 1 {
+		t.Fatalf("fresh result re-probed: %d calls, want 1", n)
+	}
+	clk.Add(31 * time.Second)
+	// Fresh reads Unknown when stale, and kicks one probe itself (call 2).
+	if m.Fresh() != Unknown {
+		t.Fatal("stale result must read Unknown")
+	}
+	waitSettled(t, m, Unreachable)
+	clk.Add(31 * time.Second)
+	s.Refresh()
+	waitSettled(t, m, Unreachable)
+	if n := tr.calls.Load(); n != 3 {
+		t.Fatalf("Refresh did not re-probe a stale host: %d calls, want 3", n)
+	}
+	if m.Fresh() != Unreachable {
+		t.Fatal("after Refresh the host must read fresh")
+	}
+	var nilSet *Set
+	nilSet.Refresh() // must not panic
+}
+
+type refusedTransport struct{ err error }
+
+func (r refusedTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, r.err }
+
+// ut-docs#3137 review M3: a DownOnly Monitor (the per-signer probe) reads a
+// refused port or TLS failure as Reachable — the host answered — and only a
+// DNS failure, timeout or no-route error as Unreachable.
+func TestDownOnlyCountsOnlyNetworkDownErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want State
+	}{
+		{"dns", &net.DNSError{Err: "no such host", Name: "x", IsNotFound: true}, Unreachable},
+		{"timeout", context.DeadlineExceeded, Unreachable},
+		{"no route", &net.OpError{Op: "dial", Err: syscall.EHOSTUNREACH}, Unreachable},
+		{"net unreachable", &net.OpError{Op: "dial", Err: syscall.ENETUNREACH}, Unreachable},
+		{"refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, Reachable},
+		{"tls", errors.New("tls: handshake failure"), Reachable},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := New(Options{Endpoint: "https://signer.example.test", Now: newClock().Now, DownOnly: true,
+				Client: &http.Client{Transport: refusedTransport{c.err}}})
+			m.Status()
+			waitSettled(t, m, c.want)
+		})
+	}
+	// Without DownOnly (the status-bar light) a refused port stays Unreachable.
+	m := New(Options{Endpoint: "https://cloud.example.test", Now: newClock().Now,
+		Client: &http.Client{Transport: refusedTransport{&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}}}})
+	m.Status()
 	waitSettled(t, m, Unreachable)
 }

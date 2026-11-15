@@ -680,7 +680,6 @@ elevation.summary.barcode_symbology_off
 elevation.summary.barcode_symbology_on
 elevation.summary.browsing_mode
 elevation.summary.buttons_add
-elevation.summary.buttons_delete_item
 elevation.summary.buttons_hide
 elevation.summary.buttons_move
 elevation.summary.buttons_recategorize
@@ -1193,9 +1192,7 @@ kitchenstations.items.remove
 kitchenstations.items.search
 kitchenstations.items.set
 kitchenstations.items.title
-kitchenstations.new.submit
 kitchenstations.new.title
-kitchenstations.none
 kitchenstations.save
 kitchenstations.title
 kitchenstations.view_display
@@ -1536,7 +1533,6 @@ plugins.install.error.forbidden
 plugins.install.error.incompatible
 plugins.install.error.invalid_package
 plugins.install.error.invalid_request
-plugins.install.error.network
 plugins.install.error.not_entitled
 plugins.install.error.not_found
 plugins.install.error.page_conflict
@@ -1546,18 +1542,6 @@ plugins.install.error.registered_required
 plugins.install.error.replica_use_primary
 plugins.install.error.retryable
 plugins.install.error.version_mismatch
-plugins.install.modal.cancel
-plugins.install.modal.close
-plugins.install.modal.description
-plugins.install.modal.done
-plugins.install.modal.progress.complete
-plugins.install.modal.progress.downloading
-plugins.install.modal.progress.failed
-plugins.install.modal.progress.fetching
-plugins.install.modal.progress.initializing
-plugins.install.modal.progress.installing
-plugins.install.modal.progress.verifying
-plugins.install.modal.title
 plugins.install.success
 plugins.manage.action.disable
 plugins.manage.action.docs
@@ -1793,7 +1777,6 @@ promotions.col.value
 promotions.customer.any
 promotions.customer.search_ph
 promotions.deactivate
-promotions.edit
 promotions.error.code_exists
 promotions.error.create
 promotions.error.dates_invalid
@@ -1805,8 +1788,6 @@ promotions.field.description
 promotions.field.ends_at
 promotions.field.starts_at
 promotions.inactive
-promotions.list_empty
-promotions.new.submit
 promotions.new.title
 promotions.title
 promotions.type.amount
@@ -1961,7 +1942,6 @@ reports.eod.fiscal_device.iade_fisi
 reports.eod.fiscal_device.maker
 reports.eod.fiscal_device.mali_fis
 reports.eod.fiscal_device.match
-reports.eod.fiscal_device.mismatch
 reports.eod.fiscal_device.none
 reports.eod.fiscal_device.other
 reports.eod.fiscal_device.serial
@@ -2065,7 +2045,6 @@ reports.tips.tip_received
 reports.tips.type_service_charge
 reports.tips.type_tip
 reports.title
-reports.today
 reports.top_items
 reports.uncategorized
 reports.wd_fri
@@ -2419,7 +2398,6 @@ settings.enrol.not_registered
 settings.enrol.pair_btn
 settings.enrol.pair_busy
 settings.enrol.pair_failed
-settings.enrol.pair_help
 settings.enrol.pair_placeholder
 settings.enrol.pair_replica_no_store
 settings.enrol.pair_store_mismatch
@@ -2717,7 +2695,6 @@ shadow_documents.sale_recorded
 shifts.adjust
 shifts.adjust_type
 shifts.adjustment
-shifts.adjustment_success
 shifts.amount
 shifts.amount_hint
 shifts.cashier
@@ -2744,7 +2721,6 @@ shifts.note_hint
 shifts.open
 shifts.open_new
 shifts.open_since
-shifts.open_success
 shifts.opened_at
 shifts.opening_carried
 shifts.opening_cash
@@ -3017,8 +2993,6 @@ tender.voucher_check
 tender.voucher_id
 tender.voucher_id_placeholder
 tile_sheet.aria
-tile_sheet.delete_item
-tile_sheet.delete_item_confirm
 tile_sheet.edit
 tile_sheet.hidden_state
 tile_sheet.hide
@@ -3069,7 +3043,6 @@ tills.discovery.find_button
 tills.discovery.help
 tills.discovery.none_found
 tills.discovery.result_address
-tills.discovery.result_name
 tills.discovery.searching
 tills.discovery.title
 tills.enrolled

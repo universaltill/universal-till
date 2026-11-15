@@ -3,6 +3,7 @@ id: designer
 title: Fiş tasarımcısı
 section: İşi yürütme
 order: 240
+public: true
 summary: Fişinizde görünenleri (logo, başlık, alt yazı) özelleştirin — canlı önizleme ve kaydetmeden önce test baskısıyla.
 routes: [/receipt-designer]
 ---

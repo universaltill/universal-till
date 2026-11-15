@@ -466,6 +466,7 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		WindowMode:             "fullscreen",
 		LaunchOnStartup:        true,
 		BrowsingMode:           BrowsingModeAllFilterChips,
+		CurrencyDisplay:        "code",
 	}
 
 	if err := SaveState(ctx, store, want); err != nil {

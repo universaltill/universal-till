@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -112,4 +114,98 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+// TestStartupFailureInBrowser is ut-docs#5051: with no native window the
+// static startup-failure page is opened as a temp file in the default browser
+// and removed afterwards.
+func TestStartupFailureInBrowser(t *testing.T) {
+	dir := t.TempDir()
+	const page = "<html><body>could not start</body></html>"
+	var opened string
+	var content []byte
+	var mode os.FileMode
+	var lingered bool
+	order := ""
+	err := startupFailureInBrowser(dir, page,
+		func(u string) {
+			order += "open,"
+			ents, _ := os.ReadDir(dir)
+			if len(ents) != 1 {
+				t.Fatalf("want exactly one temp file in %q, got %v", dir, ents)
+			}
+			opened = filepath.Join(dir, ents[0].Name())
+			if want := fileURL(opened); u != want {
+				t.Errorf("open got %q, want the file URL %q", u, want)
+			}
+			content, _ = os.ReadFile(opened)
+			if st, e := os.Stat(opened); e == nil {
+				mode = st.Mode().Perm()
+			}
+		},
+		func() {
+			order += "linger"
+			lingered = true
+			if _, e := os.Stat(opened); e != nil {
+				t.Errorf("file must still exist while lingering: %v", e)
+			}
+		})
+	if err != nil {
+		t.Fatalf("startupFailureInBrowser = %v", err)
+	}
+	if !filepath.IsAbs(opened) || filepath.Dir(opened) != dir {
+		t.Errorf("opened %q, want an absolute path directly under %q", opened, dir)
+	}
+	if string(content) != page {
+		t.Errorf("content = %q, want %q", content, page)
+	}
+	if runtime.GOOS != "windows" && mode != 0o600 {
+		t.Errorf("mode = %v, want 0600", mode)
+	}
+	if !lingered || order != "open,linger" {
+		t.Errorf("order = %q, want open then linger", order)
+	}
+	if _, err := os.Stat(opened); !os.IsNotExist(err) {
+		t.Errorf("temp file still present after return: %v", err)
+	}
+}
+
+func TestStartupFailureInBrowser_RefusesRelativeDir(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	// "rel" exists, so only the absolute-path check stops a write into it.
+	if err := os.Mkdir("rel", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"", "rel"} {
+		called := false
+		err := startupFailureInBrowser(dir, "x", func(string) { called = true }, func() { called = true })
+		if err == nil {
+			t.Errorf("dir %q: want an error", dir)
+		}
+		if called {
+			t.Errorf("dir %q: open/linger must not run", dir)
+		}
+	}
+	if ents, _ := os.ReadDir(cwd); len(ents) != 1 {
+		t.Errorf("relative dir created files in cwd: %v", ents)
+	}
+	if ents, _ := os.ReadDir(filepath.Join(cwd, "rel")); len(ents) != 0 {
+		t.Errorf("relative dir created files in cwd/rel: %v", ents)
+	}
+}
+
+// TestFileURL: the temp page reaches the browser as an escaped file:// URL, so
+// a %TEMP% with spaces (a user name with a space) survives the command line
+// (ut-docs#5051).
+func TestFileURL(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"/tmp/unitill-startup-failure-1.html", "file:///tmp/unitill-startup-failure-1.html"},
+		{"/home/a b/x.html", "file:///home/a%20b/x.html"},
+		{"C:/Users/A B/AppData/Local/Temp/x.html", "file:///C:/Users/A%20B/AppData/Local/Temp/x.html"},
+	} {
+		if got := fileURL(c.in); got != c.want {
+			t.Errorf("fileURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
 }

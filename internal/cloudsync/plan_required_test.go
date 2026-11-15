@@ -93,7 +93,7 @@ func TestPostNon402LeavesEntitlementEmpty(t *testing.T) {
 func TestCheckin402CapturesEntitlementAndRetryAfter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writePlanRequired(w) }))
 	defer srv.Close()
-	status, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0)
+	status, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0, nil)
 	var se *statusError
 	if status != http.StatusPaymentRequired || !errors.As(err, &se) {
 		t.Fatalf("status=%d err=%#v, want 402 with a statusError", status, err)

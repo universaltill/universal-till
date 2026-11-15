@@ -9,8 +9,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // ADR-0166 §2-§4 (ut-docs#4610): the wizard's pair-first path. PairFirstTill
@@ -239,6 +241,37 @@ func TestPairFirstTillParsesShopType(t *testing.T) {
 	}
 }
 
+// ut-docs#5332 (ADR-0166 amendment 2026-11-04): store.had_main_till counts
+// only as a JSON true; absent (older cloud) or any other type is false and
+// never fails the decode.
+func TestPairProfileHadMainTill(t *testing.T) {
+	cases := []struct {
+		name, store string
+		want        bool
+	}{
+		{"true", `{"name":"A","had_main_till":true}`, true},
+		{"false", `{"name":"A","had_main_till":false}`, false},
+		{"absent (old cloud)", `{"name":"A"}`, false},
+		{"string true", `{"name":"A","had_main_till":"true"}`, false},
+		{"number one", `{"name":"A","had_main_till":1}`, false},
+		{"null", `{"name":"A","had_main_till":null}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p PairProfile
+			if err := json.Unmarshal([]byte(tc.store), &p); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if p.HadMainTill != tc.want {
+				t.Fatalf("HadMainTill = %v, want %v", p.HadMainTill, tc.want)
+			}
+			if p.Name != "A" {
+				t.Fatalf("Name = %q, other fields must still parse", p.Name)
+			}
+		})
+	}
+}
+
 // ut-docs#5058 (ADR-0166 §3 amendment 2026-10-26): replace codes. A replace
 // code without replace_device_id answers 409 replace_confirm_required with
 // the old till and the store block; the wizard confirms by sending the same
@@ -320,5 +353,56 @@ func TestPairFirstTillReplaceRefusalsKeepTheirCode(t *testing.T) {
 		if !errors.As(err, &he) || he.Status != 409 || he.Code != code {
 			t.Fatalf("%s: err = %v", code, err)
 		}
+	}
+}
+
+// ut-docs#5098: a failed pair attempt is a Problem the my. "Attention
+// needed" panel shows; a later successful pairing resolves it, so a freshly
+// joined, healthy shop does not report the first attempt's refusal.
+func TestPairFailureProblemClearsOnSuccessfulPair_5098(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	cloud := newFirstTillCloud(t, 409, `{"data":{"existing_till":{"name":"Front counter"}},"error":{"code":"store_has_till","message":"x"}}`)
+	kv, cfg := bootFirstBoot(t, cloud.srv.URL)
+	if _, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", ""); err == nil {
+		t.Fatal("want the store_has_till refusal")
+	}
+	if open := logging.OpenProblems(time.Now(), 0); len(open) != 1 {
+		t.Fatalf("open problems after the refusal = %+v, want 1", open)
+	}
+	cloud.mu.Lock()
+	cloud.status, cloud.reply = 200, firstTillAnswer
+	cloud.mu.Unlock()
+	p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Commit(context.Background(), cfg, kv); err != nil {
+		t.Fatal(err)
+	}
+	if open := logging.OpenProblems(time.Now(), 0); len(open) != 0 {
+		t.Fatalf("open problems after the successful pair = %+v, want none", open)
+	}
+}
+
+func TestSettingsPairFailureProblemClearsOnSuccessfulPair_5098(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	cloud := newFirstTillCloud(t, 403, `{"data":null,"error":{"code":"invalid_code","message":"x"}}`)
+	kv, cfg := bootFirstBoot(t, cloud.srv.URL)
+	if _, err := Pair(context.Background(), cfg, kv, pairCode); err == nil {
+		t.Fatal("want the refusal")
+	}
+	if open := logging.OpenProblems(time.Now(), 0); len(open) != 1 {
+		t.Fatalf("open problems after the refusal = %+v, want 1", open)
+	}
+	cloud.mu.Lock()
+	cloud.status, cloud.reply = 200, firstTillAnswer
+	cloud.mu.Unlock()
+	if _, err := Pair(context.Background(), cfg, kv, pairCode); err != nil {
+		t.Fatal(err)
+	}
+	if open := logging.OpenProblems(time.Now(), 0); len(open) != 0 {
+		t.Fatalf("open problems after the successful pair = %+v, want none", open)
 	}
 }

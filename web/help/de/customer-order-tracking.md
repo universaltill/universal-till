@@ -3,6 +3,7 @@ id: customer-order-tracking
 title: Kundenbestellverfolgung (QR)
 section: Täglicher Verkauf
 order: 46
+public: true
 summary: "Kunden scannen einen QR-Code, auf der Bestätigung des Selbstbedienungskiosks oder auf dem Beleg eines an der Kasse bonierten Verkaufs, um den Status ihrer Bestellung auf ihrem eigenen Telefon zu verfolgen. Teil der Tarife Shop, Pro und Multi-location."
 routes: [/o/{token}, /o/{token}/status]
 keywords: [verfolgung, QR, kunde, bestellstatus, selbstbedienung, telefon, beleg, kasse]

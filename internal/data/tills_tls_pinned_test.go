@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // ut-docs#2737 (ADR-0114 §7, Enforcement): the main till records, per till,
@@ -23,7 +24,7 @@ func TestTillsRepo_TLSPinnedIsRecordedPerTillAndGoesWithTheTill(t *testing.T) {
 	}
 	pinned := func(hash string) bool {
 		t.Helper()
-		row, ok, err := repo.TillByBearerHash(ctx, hash)
+		row, ok, err := repo.TillByBearerHashAt(ctx, hash, time.Now())
 		if err != nil || !ok {
 			t.Fatalf("TillByBearerHash(%s) = %v, %v", hash, ok, err)
 		}

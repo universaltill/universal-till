@@ -211,7 +211,7 @@ func registerThemes(mux *http.ServeMux, d *common.Deps) {
 // needs its own interval to keep going.
 func registerThemeSync(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/theme-sync", func(w http.ResponseWriter, r *http.Request) {
-		live := d.CurrentState().Theme
+		live := d.ResolvedTheme(r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<div id="theme-sync-poll" hx-swap-oob="true" hx-get="/ui/theme-sync" hx-trigger="every 30s" hx-swap="none" data-theme="%s"></div>`,
 			html.EscapeString(live))

@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -145,6 +146,13 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	if err := dp.Settings.Set(ctx, "sync.till_name", "Front Till"); err != nil {
 		t.Fatalf("set till_name: %v", err)
 	}
+	// A paired replica holds its bearer and till id (ut-docs#5162: without
+	// them the chip says "join again").
+	for k, v := range map[string]string{"sync.bearer": "b", "sync.till_id": "t"} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatalf("set %s: %v", k, err)
+		}
+	}
 
 	mux := http.NewServeMux()
 	registerSyncAdmin(mux, dp)
@@ -200,6 +208,41 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `class="nav-badge"`) {
 		t.Fatalf("expected NO badge dot once the replica is fresh/online, got %q", rec.Body.String())
+	}
+}
+
+// ut-docs#5162: a restored copy has no bearer: warn state, a badge, and the
+// join-again words instead of "following".
+func TestSyncChip_ReplicaWithoutBearerSaysRejoin(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newMigratedSyncDeps(t, "restored.db")
+	initPagesI18n(t)
+	ctx := t.Context()
+	for k, v := range map[string]string{
+		"sync.primary_url":     "http://primary.example",
+		"sync.till_name":       "Front Till",
+		"sync.last_contact_at": time.Now().UTC().Format(time.RFC3339), // fresh: would read ok if paired
+	} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	registerSyncAdmin(mux, dp)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `sync-chip warn`) {
+		t.Fatalf("an unpaired replica must render class=warn, got %q", body)
+	}
+	if !strings.Contains(body, "Join the main till again") {
+		t.Fatalf("expected the rejoin title/aria, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected the badge dot, got %q", body)
+	}
+	if !strings.Contains(body, `href="/tills"`) {
+		t.Fatalf("expected a link to /tills, got %q", body)
 	}
 }
 
@@ -261,7 +304,7 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	// TillByBearerHash bumps last_seen_at as a side effect of authenticating
 	// (see syncTill / registerSyncAdmin's admin-bundle endpoint) -- simulate
 	// a real replica poll to freshen it.
-	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+	if _, ok, err := tills.TillByBearerHashAt(ctx, hashBearer("token-abc"), time.Now()); err != nil || !ok {
 		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
 	}
 	rec = httptest.NewRecorder()
@@ -442,7 +485,7 @@ func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testin
 	}
 	// Freshen last_seen_at so staleness alone would render "ok" -- isolating
 	// the assertion below to the quarantine-driven warn path.
-	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+	if _, ok, err := tills.TillByBearerHashAt(ctx, hashBearer("token-abc"), time.Now()); err != nil || !ok {
 		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
 	}
 	if err := data.NewPOSRepo(dp.Db).InsertJournalQuarantine(ctx, data.JournalQuarantineEntry{
@@ -569,6 +612,9 @@ type pullTestPrimary struct {
 	dp      *common.Deps
 	server  *httptest.Server
 	visited []string
+	// onAdmin, when set, runs when /api/sync/admin is requested, before it
+	// is served (simulates a promote landing mid-pull, ut-docs#5896).
+	onAdmin func()
 }
 
 func newPullTestPrimary(t *testing.T) *pullTestPrimary {
@@ -584,6 +630,9 @@ func newPullTestPrimary(t *testing.T) *pullTestPrimary {
 	wrapped := http.NewServeMux()
 	wrapped.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		p.visited = append(p.visited, r.URL.Path)
+		if p.onAdmin != nil && r.URL.Path == "/api/sync/admin" {
+			p.onAdmin()
+		}
 		mux.ServeHTTP(w, r)
 	})
 	p.server = httptest.NewServer(wrapped)
@@ -757,5 +806,90 @@ func TestSyncPullTick_StockCorrectionsRunWhenQueueEmpty(t *testing.T) {
 	}
 	if v, _, _ := replica.Settings.Get(ctx, "sync.stock_version"); v == "" {
 		t.Fatalf("expected sync.stock_version set after a stock poll")
+	}
+}
+
+// ut-docs#5896: a promote (ClearReplicaIdentity) that commits after the pull
+// tick read sync.primary_url, but before it applies the bundle, must win. The
+// bundle carries the old main's shop-wide lan_discovery.till_id and till.name;
+// applying it would write them back onto the new main till.
+func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	if _, err := data.NewCatalogRepo(primary.dp.Db).CreateItem(ctx, catalogtypes.ItemInput{
+		Name: "Pulled Widget", BasePrice: 750, IsActive: true,
+	}); err != nil {
+		t.Fatalf("seed primary item: %v", err)
+	}
+	if err := primary.dp.Settings.Set(ctx, "lan_discovery.till_id", "OLD-MAIN-ID"); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.dp.Settings.Set(ctx, "till.name", "Old Main"); err != nil {
+		t.Fatal(err)
+	}
+
+	replica := newPullTestReplica(t, primary.server.URL)
+	for k, v := range map[string]string{
+		"sync.till_name":        "Till 2",
+		"sync.till_id":          "t2",
+		"lan_discovery.till_id": "OLD-MAIN-ID",
+	} {
+		if err := replica.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Promote while the pull is in flight: the tick has already read
+	// primary_url/bearer, and the answer still carries the old main's bundle.
+	primary.onAdmin = func() {
+		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(ctx); err != nil {
+			t.Errorf("promote: %v", err)
+		}
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	refreshCalls := 0
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) { refreshCalls++ })
+	restoreLog()
+
+	// The not-replica branch must be the one that returned: its INFO line is
+	// logged and the generic apply-error branch ("apply failed", ERROR) is not.
+	// Without this, stubbing the branch out still passes via the generic return.
+	if out := logs.String(); !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Fatalf("missing not-replica skip INFO line; log:\n%s", out)
+	} else if strings.Contains(out, "sync pull: apply failed") {
+		t.Fatalf("promote race logged as an apply failure; log:\n%s", out)
+	}
+	if refreshCalls != 0 {
+		t.Fatalf("refresh called %d times, want 0", refreshCalls)
+	}
+	id, _, _ := replica.Settings.Get(ctx, "lan_discovery.till_id")
+	if id == "OLD-MAIN-ID" || strings.TrimSpace(id) == "" {
+		t.Fatalf("lan_discovery.till_id = %q, want a freshly minted id (old main's id written back?)", id)
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "till.name"); v != "Till 2" {
+		t.Fatalf("till.name = %q, want Till 2", v)
+	}
+	for _, k := range []string{"sync.pull_version", "sync.last_pull_at", "sync.last_pull_ok_at", "sync.last_contact_at"} {
+		if v, _, _ := replica.Settings.Get(ctx, k); v != "" {
+			t.Fatalf("%s re-created after promote: %q", k, v)
+		}
+	}
+	var n int
+	if err := replica.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action = 'admin_pulled'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("admin_pulled audit rows = %d, want 0", n)
+	}
+	if err := replica.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE name = 'Pulled Widget'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("pulled item present after promote: %d", n)
+	}
+	if primary.hitStock() {
+		t.Fatal("stock pulled from the old main after promote")
 	}
 }

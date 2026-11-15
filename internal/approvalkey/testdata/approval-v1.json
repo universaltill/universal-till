@@ -1,0 +1,24 @@
+{
+  "seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "public_key_b64url": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "kid": "65b60673d6ed884b",
+  "approval": {
+    "decision": "approve",
+    "move_id": "0b1c7e52-6a58-4f0e-9d3e-2f5f1f6a7b01",
+    "device_id": "till-3f2a9c1e-7b4d-4e6a-8c10-5d9e0a1b2c3d",
+    "source_store": "store-src-001",
+    "target_store": "store-tgt-002",
+    "nonce": "ZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4CBgoM",
+    "expires_at": "2026-10-29T09:30:00Z"
+  },
+  "approval_message": "universaltill/till-move-approval/v1\napprove\n0b1c7e52-6a58-4f0e-9d3e-2f5f1f6a7b01\ntill-3f2a9c1e-7b4d-4e6a-8c10-5d9e0a1b2c3d\nstore-src-001\nstore-tgt-002\nZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4CBgoM\n2026-10-29T09:30:00Z",
+  "approval_signature_b64url": "KjEpCMKyaI5R4OtzsajPiEOYmxNwxVyP6d5ytUpTn8Hu4ZCDL4TmnwdXmrYbPDncw-CHd351IcLwOzRqRlbbCw",
+  "decline_message": "universaltill/till-move-approval/v1\ndecline\n0b1c7e52-6a58-4f0e-9d3e-2f5f1f6a7b01\ntill-3f2a9c1e-7b4d-4e6a-8c10-5d9e0a1b2c3d\nstore-src-001\nstore-tgt-002\nZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4CBgoM\n2026-10-29T09:30:00Z",
+  "decline_signature_b64url": "vfLn6iVHoa3yqNwYSMjdA5htPewtT_f9O_y_L3omRDlXQyobgEtSDpuCZs1LbeuEt3aXomPjNs5m-Mg5uyiIDQ",
+  "pop_device_id": "till-3f2a9c1e-7b4d-4e6a-8c10-5d9e0a1b2c3d",
+  "pop_store_external_id": "store-src-001",
+  "pop_message": "universaltill/approval-key/v1\ntill-3f2a9c1e-7b4d-4e6a-8c10-5d9e0a1b2c3d\nstore-src-001\nebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "pop_b64url": "yPadqGiwGJ8x3crC5rkb5-8l1Y-UgRka1_kyy-O9mLdwylQhFrQ41YhC6T61TJPKcryu3MBXZrGrIpQrlPZHDw",
+  "pop_pair_register_message": "universaltill/approval-key/v1\ntill-3f2a9c1e-7b4d-4e6a-8c10-5d9e0a1b2c3d\n\nebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "pop_pair_register_b64url": "VHD5uAv9mgIQ-QBc6YOcUIVyMZyalrvdAkBS_I28_89v3YEiGZeAZgu_lm5uCe7ZHqPI3UaLlRjcexOlM6N6CQ"
+}

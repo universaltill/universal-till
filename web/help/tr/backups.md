@@ -3,6 +3,7 @@ id: backups
 title: Yedekler
 section: İşi yürütme
 order: 250
+public: true
 summary: Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indirip güvenli bir yerde saklayabilirsiniz.
 ---
 
@@ -27,6 +28,8 @@ yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
 Geri yükleme, yedek başka bir kasada alınmış olsa bile bu kasanın mağazanızın bulut hesabıyla kendi bağlantısını korur. Dosya bu kasanın kullanabileceği bir yedek değilse, kasa mevcut verilerinizi korur ve Ayarlar → Yedekler geri yüklemenin uygulanmadığını söyler.
 
+Geri yüklemeden sonra fiş numaraları ve Z numaraları ileri atlar; böylece kasanın yedekten sonra verdiği bir numara ikinci kez kullanılmaz. Ardından alınan ilk gün sonu raporu, kasanın bir yedekten geri yüklendiğini ve numaraların hangi numaradan devam ettiğini belirtir.
+
 ## Bir dosyadan geri yükleme
 
 Bunu yeni bir kasada ya da bozulan bir kasanın yerine konan kasada, eski kasadan kopyaladığınız bir yedek dosyasıyla kullanın (bir USB bellek, başka bir bilgisayar, İndirilenler klasörü).
@@ -39,7 +42,7 @@ Eski kasanın `backups` klasöründeki bir dosyayı ya da **İndirilenler’e ka
 
 Kurulumun sonunda karşılama sayfasında aynı yeri açan bir **Yedeği geri yükle** düğmesi vardır.
 
-Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur: onları yeniden girin.
+Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur, kasanın bulut bağlantısı da yoktur. Bir telefon veya iCloud yedeğini başka bir cihaza geri yüklerseniz ya da veritabanını başka bir cihaza kopyalarsanız, o cihaz kayıtsız başlar ve **Yeni cihazda geri yüklendi — yeniden bağlanın** uyarısını gösterir: Ayarlar → Kasa kaydı'ndan onu mağazayla yeniden eşleştirin veya yeni mağaza olarak kaydedin. Eklenti anahtarlarını ve parolalarını her eklentinin ayarlar sayfasında yeniden girin; okunamadığını söyleyen bir alan yeni bir değer ister. Katılmış bir kasa ise bunun yerine **Ana kasaya yeniden katıl** gösterir — Birden çok kasa bölümüne bakın.
 
 ## Bir kasayı değiştirme
 
@@ -69,7 +72,7 @@ Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
 - İndirilen güncellemeler: 7 gün sonra silinir.
 - Kasa bir yükleme veya içe aktarma sırasında kapandığı için geride kalan yüklenmiş dosyalar: 24 saat sonra silinir.
 
-Disk neredeyse dolarsa — 500 MB'tan az veya diskin onda birinden az boş alan kalırsa, hangisi büyükse — kasa ertesi günü beklemeden hemen temizlik yapar ve yalnızca en gerekli olanları tutar: en yeni 3 yedek, geri yükleme sırasında kenara ayrılan en yeni kopya ve son bir günün sorun bildirimleri ile indirilen güncellemeleri. Yöneticiler, yeniden yer açılana kadar durum çubuğunda **Depolama neredeyse dolu** görür. Satış devam eder; daha fazla yer açmak için cihazdan gerekmeyen dosyaları silin veya cihazı kuran kişiye sorun.
+Disk neredeyse dolarsa — 500 MB'tan az veya diskin onda birinden (en fazla 5 GB) az boş alan kalırsa, hangisi büyükse — kasa ertesi günü beklemeden hemen temizlik yapar ve yalnızca en gerekli olanları tutar: en yeni 3 yedek, geri yükleme sırasında kenara ayrılan en yeni kopya ve son bir günün sorun bildirimleri ile indirilen güncellemeleri. Yöneticiler, yeniden yer açılana kadar durum çubuğunda **Depolama neredeyse dolu** görür. Satış devam eder; daha fazla yer açmak için cihazdan gerekmeyen dosyaları silin veya cihazı kuran kişiye sorun.
 
 Bu temizlik satışları, fişleri, denetim kaydını, Z raporlarını veya yasal olarak saklamanız gereken başka hiçbir kaydı asla silmez. Her kasa yalnızca kendi diskini temizler.
 

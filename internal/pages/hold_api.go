@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -476,9 +477,18 @@ func refreshHeldLinePhotos(ctx context.Context, catRepo *data.CatalogRepo, snap 
 		log.Printf("resume: refresh held line photos: %v", err)
 		return
 	}
+	// ut-docs#5124: an icon-only item (set on my.) has no thumbnail row.
+	icons, err := catRepo.ItemIcons(ctx)
+	if err != nil {
+		log.Printf("resume: refresh held line icons: %v", err)
+		icons = nil
+	}
 	for i := range snap.Lines {
 		if id := snap.Lines[i].ItemID; id != "" {
-			snap.Lines[i].ImageURL = thumbs[id]
+			if icons == nil && thumbs[id] == "" {
+				continue // icon read failed: keep the hold-time picture
+			}
+			snap.Lines[i].ImageURL = iconid.Picture(thumbs[id], icons[id])
 		}
 	}
 }

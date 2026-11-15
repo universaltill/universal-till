@@ -283,3 +283,28 @@ func TestShellRequestsAreBoardScoped(t *testing.T) {
 		t.Fatalf("scan found only %d shell requests — the scan is broken", seen)
 	}
 }
+
+// ut-docs#2743: the pairing push stream is long-lived like the order stream:
+// it must not refresh the idle timer, and it is never auth-exempt.
+func TestPairingStreamNeverExtendsTheSessionAndIsNotExempt(t *testing.T) {
+	db, h, token := pollRig(t)
+	setLastSeen(t, db, 9*time.Minute)
+	if rec := boardReq(h, http.MethodGet, "/api/pairings/stream", "", token); rec.Code != http.StatusOK {
+		t.Fatalf("got %d", rec.Code)
+	}
+	if ago := lastSeenAgo(t, db); ago < 9*time.Minute-5*time.Second {
+		t.Errorf("pairing stream extended the session: last_seen %v ago", ago)
+	}
+	if exempt("/api/pairings/stream") {
+		t.Fatal("/api/pairings/stream must not be auth-exempt")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/pairings/stream", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no cookie: got %d, want 401", rec.Code)
+	}
+	if displayBoardRequest(req) {
+		t.Fatal("a narrowed board session must not reach the pairing stream")
+	}
+}

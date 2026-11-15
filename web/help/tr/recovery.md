@@ -3,6 +3,7 @@ id: recovery
 title: Kurtarma ekranı
 section: İşi yürütme
 order: 255
+public: true
 summary: Kasa başlatılamazsa ne görürsünüz ve o ekrandaki her eylem ne işe yarar.
 keywords: [kurtarma, hata, başlamıyor, çökme, yeniden dene, güvenli mod, bozuk, günlük, günlük dosyası, sorun giderme]
 ---
@@ -58,6 +59,9 @@ açıldıktan hemen sonra durduğunda ve henüz gösterilecek bir şey olmadığ
 görünür. Yukarıdaki kurtarma ekranı değildir: o ekran, kasa programının
 çalışıyor olmasını gerektirir. Pencere ayrıca günlük dosyalarının bulunduğu
 klasörü ve küçük yazıyla destek için teknik bir ayrıntıyı gösterir.
+Pencere, kasa o dilde mevcutsa bilgisayarınızın dilinde, değilse
+İngilizce görünür. WebView2 olmayan bir Windows bilgisayarda (bir sonraki
+bölüme bakın) aynı mesaj bunun yerine varsayılan web tarayıcınızda açılır.
 
 1. Pencereyi kapatın ve Universal Till'i yeniden açın.
 2. Yine de başlamazsa Universal Till'i en son yükleyiciyle yeniden kurun.

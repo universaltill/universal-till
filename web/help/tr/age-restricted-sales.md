@@ -3,6 +3,7 @@ id: age-restricted-sales
 title: Yaş sınırlı satışlar
 section: Günlük satış
 order: 27
+public: true
 summary: Kimlik kontrolü gerektiren ürünleri (alkol, tütün, elektronik sigara ve benzerleri) işaretleyin. Kasa, ödemeden önce kasiyerden kimlik kontrolünü kaydetmesini ister; self-servis kiosk ise müşteriyi kasaya yönlendirir.
 keywords: [yaş, yaş sınırı, kimlik kontrolü, kimlik, alkol, tütün, elektronik sigara, reddetme, yaş kanıtı]
 ---

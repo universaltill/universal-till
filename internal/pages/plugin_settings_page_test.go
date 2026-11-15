@@ -1664,3 +1664,36 @@ func TestAIImageModelUnsupportedHint_SaysBuiltinStaysOn(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5157: a secret sealed under a key this till does not hold (a
+// phone/iCloud restore) says so under the field, in words, no modal.
+func TestPluginSettingsPage_UnreadableSecretSaysEnterItAgain(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	other := make([]byte, secrets.KeySize)
+	for i := range other {
+		other[i] = byte(i + 7)
+	}
+	foreign, err := secrets.Seal(other, []byte(`"sk-from-old-phone"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('un1', 'p1', 'api_key', ?, 'global')`, foreign); err != nil {
+		t.Fatal(err)
+	}
+	seedPluginSetting(t, dp, "p1", "endpoint_url", "https://plugin.example/api", "global")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := html.UnescapeString(rec.Body.String())
+	const msg = "The saved value can't be read on this till (for example after restoring onto a new device). Enter it again."
+	if strings.Count(body, msg) != 1 {
+		t.Fatalf("want the message exactly once (for the unreadable field only), got %d in %s", strings.Count(body, msg), body)
+	}
+	if strings.Contains(body, "sk-from-old-phone") || strings.Contains(body, "sealed:") {
+		t.Fatal("secret material reached the page")
+	}
+}

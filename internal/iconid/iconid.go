@@ -103,3 +103,17 @@ func EffectiveIcon(imagePath, icon string) string {
 	}
 	return ""
 }
+
+// Picture is the one /public/... picture an item shows anywhere (sell-screen
+// tile, basket line, item edit; ut-docs#3584, #5124): Resolve over its
+// item_images thumbnail path and its items.icon id. A photo or the generic
+// tile is returned as-is; else the icon id is drawn through the registry
+// (an unknown or malformed id as the neutral fallback, never the raw
+// value). "" = no picture.
+func Picture(imagePath, icon string) string {
+	path, id := Resolve(imagePath, icon)
+	if path != "" {
+		return path
+	}
+	return AssetPath(id)
+}

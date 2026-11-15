@@ -306,7 +306,7 @@ func TestButtonsUIFragment_HxValsSurvivesQuotedCode(t *testing.T) {
 	}
 }
 
-func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
+func TestButtonsAddValidatesPersistsAndIgnoresImage(t *testing.T) {
 	mux, d := newButtonsMux(t)
 
 	// Missing required fields -> 400 from the store's validation, with a
@@ -343,12 +343,13 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add = %d (%s)", rec.Code, rec.Body.String())
 	}
-	var image string
+	// ut-docs#6097: imageUrl is ignored, never stored.
+	var image sql.NullString
 	if err := d.Db.QueryRow(`SELECT image_path FROM shortcut_buttons WHERE barcode='ABC'`).Scan(&image); err != nil {
 		t.Fatalf("added button missing: %v", err)
 	}
-	if image != "/public/images/apple.png" {
-		t.Fatalf("image_path = %q, want /public/images/apple.png", image)
+	if image.Valid {
+		t.Fatalf("image_path = %q, want NULL", image.String)
 	}
 	// ut-docs#2174: the response used to be the re-rendered flat admin grid;
 	// the Designer is a live replica of the sale screen now and refreshes
@@ -375,8 +376,8 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 	if err := d.Db.QueryRow(`SELECT image_path FROM shortcut_buttons WHERE barcode='DEF'`).Scan(&image); err != nil {
 		t.Fatalf("added button missing: %v", err)
 	}
-	if image != "https://cdn.example.com/pear.png" {
-		t.Fatalf("image_path = %q, want the absolute URL untouched", image)
+	if image.Valid {
+		t.Fatalf("image_path = %q, want NULL", image.String)
 	}
 }
 

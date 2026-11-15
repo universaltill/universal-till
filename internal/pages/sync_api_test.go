@@ -17,10 +17,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -1878,5 +1880,49 @@ func TestSyncEnrollToken_LoopbackHostStillMintsADialableCode(t *testing.T) {
 	}
 	if strings.Contains(code, "127.0.0.1") {
 		t.Fatalf("the rendered code still mentions loopback: %q", code)
+	}
+}
+
+// TestSyncPromote_PromotedTillAdvertisesOwnDiscoveryID covers ut-docs#5893: a
+// joined till holds its main till's lan_discovery.till_id (shop-wide
+// setting). After promote, discovery.TillID must be a fresh id (what the
+// advertiser, verification codes and primary proof use) while the cloud id
+// (discovery.ReportedTillID) is unchanged.
+func TestSyncPromote_PromotedTillAdvertisesOwnDiscoveryID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	const oldID = "old-main-till-id"
+	for k, v := range map[string]string{
+		"sync.primary_url":                 "http://primary.example",
+		"sync.till_id":                     "cloud-till-T",
+		data.LANDiscoveryTillIDSettingsKey: oldID,
+	} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/promote", strings.NewReader("confirm=PROMOTE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	repo := data.NewSettingsRepo(dp.Db)
+	id, err := discovery.TillID(ctx, repo)
+	if err != nil {
+		t.Fatalf("discovery.TillID: %v", err)
+	}
+	if id == oldID {
+		t.Fatalf("promoted till still uses the old main till's discovery id %q", oldID)
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		t.Fatalf("expected a UUID discovery id, got %q: %v", id, err)
+	}
+	if rid, err := discovery.ReportedTillID(ctx, repo); err != nil || rid != "cloud-till-T" {
+		t.Fatalf("ReportedTillID = %q err=%v, want the kept cloud id cloud-till-T", rid, err)
 	}
 }

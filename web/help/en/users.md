@@ -3,6 +3,7 @@ id: users
 title: Users, PINs & shifts
 section: Connecting & extending
 order: 340
+public: true
 summary: Separate cashier and manager accounts with PIN login, and shift tracking so you know who sold what and when the drawer was counted.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 keywords: [pin, staff, roles, sign in, lock, permissions]
@@ -14,7 +15,7 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 
 ## How to use it
 
-1. Manage accounts under Users; managers can access settings and reports, cashiers can sell.
+1. Manage accounts under Users; managers can access settings and reports, cashiers can sell. You also reach Users (where PINs are set) and Permissions from Settings → Staff & security, each shown only to someone allowed to open that page.
 2. Each person signs in with their PIN on the till.
 3. Open and close shifts to track drawer counts per person.
 4. The first-boot setup wizard's shop name step needs a real name: you can't continue with it empty, and a default like "My Store" is refused, because the name is printed on every receipt and names your shop online. The same step also asks what to call this till, and that is required too: there is no default name, so type one (for example "Front counter") before you can continue — helpful once you have more than one till, and changeable later from Settings.
@@ -26,14 +27,14 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 10. The wizard's last screen also asks — once, and not ticked unless you tick it — whether to register this till with the Universal Till cloud right away. Tick it and, as soon as setup finishes, the till sends its device ID, your store name, shop country, region and software version to the Universal Till cloud marketplace, used for support, updates and licensing — your address is not sent. Leave it unticked and nothing is sent — the till registers only when you first use the plugin store or press Register now. Either way setup never waits on the internet: if you're offline when you tick it, setup still finishes and the till stays unregistered until you open the plugin store, press Register now, or come back online and check Settings → Till registration. You can change your answer any time from there; see [Store registration & claiming](/help/claim).
 11. The setup wizard signs you in as this till's first admin — it doesn't connect the till to YOUR account online. For the online back-office (My stores, fleet view) and paid features, see [Store registration & claiming](/help/claim).
 12. Creating a user, setting someone's PIN, or activating/deactivating an account needs a manager's or admin's role. Signed in as a cashier and try one of these anyway? The screen doesn't just refuse — it opens an in-place PIN prompt a manager or admin can approve right there, the same as [other manager-approval prompts](/help/elevation) elsewhere in the till.
-13. Your own name in the left-hand menu (👤) opens Change PIN; the Lock button next to it signs you straight out to the PIN pad.
+13. Your own name in the left-hand menu (person icon) opens Change PIN; the Lock button next to it signs you straight out to the PIN pad.
 14. Stuck at the sign-in screen on a fullscreen or kiosk till? The login screen has a collapsed "Locked out? Return to desktop" link: open it and enter a manager PIN to leave the till and return to the OS desktop — no sign-in needed first. It's the same manager-PIN-gated Exit to OS window action as in Settings → Display; see [Languages & display](/help/display) for what it does on each kind of till.
 
 ## Changing your own PIN
 
 Anyone can change their own PIN, no manager needed — a manager is only required to set or reset *someone else's* PIN from Users.
 
-1. Tap your name (👤) in the left-hand menu to open Change PIN.
+1. Tap your name (person icon) in the left-hand menu to open Change PIN.
 2. Enter your current PIN, then your new PIN twice.
 3. Submit: you're signed out and land back on the PIN pad — sign in again with the new PIN.
 
@@ -58,7 +59,7 @@ A super admin can go further than assigning cashier/manager/admin roles — they
 
 The page groups permissions under headings — Sales, Catalog, Stock, Reports, Staff, Settings, Plugins and System — so related ones sit together. Under each permission's name a short line says what it lets a person do, and where it applies an "Unlocks" line lists the menu tiles and left-hand menu entries that appear for a role once it's granted — for example, Reports unlocks the Reports tile. **Refunds** and **Cash adjustments** let a role refund a sale, or take cash out of the drawer (a payout, or a skim to the safe when closing a shift), without a manager PIN; a role without them still can — the refund or shift screen then shows a manager-PIN box, and a manager types their PIN there to approve it on the spot. On a tablet-sized screen the grid scrolls sideways inside its card while the permission names stay in place; on a phone each permission is its own card, with every role's checkbox listed under it.
 
-Shops on the Pro plan can also create their own roles, such as "Shift lead", in my.universaltill.com. Each custom role appears here as an extra column under its own name, marked "Managed in my.universaltill.com". Its checkboxes are read-only on the till: change what a custom role may do in my.universaltill.com, and the change reaches every till on its next sync. A custom role can do exactly what its ticked permissions allow, and nothing more. Where the till asks for a manager's PIN to approve something, a custom role's PIN isn't accepted.
+Shops on the Pro plan can also create their own roles, such as "Shift lead", in my.universaltill.com. Each custom role appears here as an extra column under its own name, marked "Managed in my.universaltill.com". Its checkboxes are read-only on the till: change what a custom role may do in my.universaltill.com, and the change reaches every till on its next sync. A custom role can do exactly what its ticked permissions allow, and nothing more. The Settings permission includes finding a customer by name or phone number when you target a promo code at one; erasing a customer (GDPR) still needs Data management. Where the till asks for a manager's PIN to approve something, a custom role's PIN isn't accepted.
 
 ## Becoming a super admin
 

@@ -3,6 +3,7 @@ id: promotions
 title: Aktionen & Aktionscodes
 section: Ihr Geschäft einrichten
 order: 125
+public: true
 summary: Erstellen, bearbeiten und deaktivieren Sie Aktionscodes, die Kunden an der Kasse einlösen.
 routes: [/promotions]
 keywords: [aktion, promotion, rabatt, gutscheincode, code]

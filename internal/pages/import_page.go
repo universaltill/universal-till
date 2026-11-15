@@ -60,6 +60,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	registerImportFromSystem(mux, d)
 	registerImportFromFile(mux, d)
 
+	registerJoinSyncPoll(mux, d)
+
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
 			// ut-docs#2095 (independent review, F3): from inside the /items
@@ -99,6 +101,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// on the standalone page: the /items Import dialog is reached from a
 		// catalog the operator is already working in.
 		welcome := r.URL.Query().Get("welcome") == "1" && !inItemsShell
+		// ut-docs#5098: a till that joined a shop with products never shows
+		// the empty-shop welcome. Products here: the sale screen. Still
+		// pulling: the "Syncing your shop" state (never a blocker).
+		joinSyncing := false
+		if welcome && r.URL.Query().Get("syncing") == "1" {
+			switch joinSyncStep(r.Context(), d) {
+			case joinSyncHasProducts:
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			case joinSyncWaiting:
+				joinSyncing = true
+			}
+		}
 		// The Sample data card (load / already loaded) renders in both
 		// modes — inside the /items dialog it is how a shop that skipped
 		// the welcome finds sample data later; its result's "Go to catalog"
@@ -121,7 +136,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"systemImporters":  systemImporters,
 			"canManagePlugins": canPerform(d, r, "plugin_management"),
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.import"),
-			"theme":            d.CurrentState().Theme,
+			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
 			// ut-docs#5070: a replacement till restores its backup instead
@@ -129,7 +144,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"canRestoreBackup": canPerform(d, r, "data_management"),
 			// ADR-0166 §5: the pair-first wizard lands here with the first
 			// pull running; a status chip, never a modal.
-			"cloudSyncing": welcome && r.URL.Query().Get("syncing") == "1",
+			// ut-docs#5098: the join's first pull is still running and the
+			// catalogue is empty so far: only the syncing state shows.
+			"joinSyncing": joinSyncing,
 			// The wizard's pairing did not complete: a visible note, never
 			// a claim that the shop is syncing.
 			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",
@@ -681,7 +698,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
 					log.Printf("[import] audit currency switch: %v", aerr)
 				}
-				httpx.InitCurrency(st.Currency)
+				common.InitCurrencyFromState(st)
 			}
 			// Same currency: only the confirmation is written (through the
 			// main till on a till that follows one, as above). On a main
@@ -1083,6 +1100,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				taxCodeCache[key] = id
 				return id, created, nil
 			}
+			// ut-docs#2654: placeholder icons match the shop's languages; one
+			// settings read for the whole import, not one per row.
+			iconMatcher := common.ShopIconMatcher(r.Context(), d.Settings)
 			for i := range rows {
 				if rows[i].Skipped {
 					continue
@@ -1246,6 +1266,21 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					failed++
 					continue
 				}
+				// ut-docs#2084: the file's reorder level is an item column, so
+				// it is written in this same transaction and a failure fails
+				// the row exactly like CreateItemTx (never a half-made item).
+				// Not carried by ItemInput: updateItemExec would then reset it
+				// on every item edit.
+				if it.HasReorderLevel && it.ItemType != catalogtypes.ItemTypeGiftVoucher {
+					if err := repo.SetItemReorderLevelTx(r.Context(), tx, itemID, it.ReorderLevel); err != nil {
+						_ = tx.Rollback()
+						log.Printf("[import] set reorder level for %q: %v", it.Name, err)
+						rows[i].Status = T("import.status.item_failed")
+						rows[i].Failed = true
+						failed++
+						continue
+					}
+				}
 				// stockWarning/stockRecorded are decided now (inside the
 				// transaction) but only turned into row status / a published
 				// event once tx.Commit() below actually lands them — same
@@ -1326,9 +1361,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// resolved from the .bkp archive's documents.zip is
 				// decoded/re-encoded and written exactly the way a manual
 				// upload does (POST /api/catalog/item/image), then recorded
-				// with the unconditional-overwrite SetItemThumbnail — this
-				// genuinely is "a real photo" (see that method's own doc
-				// comment for why that's the right one, not
+				// with SetItemPhoto — this genuinely is "a real photo": it
+				// overwrites the thumbnail and keeps the icon (ut-docs#3601;
+				// see SetItemThumbnail's doc comment for why that's the right
+				// kind of write, not
 				// EnsureDefaultThumbnail). Falls back to the ut-docs#1189
 				// placeholder icon whenever there's no image, or it fails to
 				// decode — same best-effort, never-fail-the-row spirit as
@@ -1381,7 +1417,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 								}
 								return fmt.Errorf("close thumbnail file: %w", closeErr)
 							}
-							return repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
+							return repo.SetItemPhoto(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
 						}()
 						if writeErr != nil {
 							// A resolvable photo that then failed to save
@@ -1398,7 +1434,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if !imageSet {
-					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, tillimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, iconMatcher.IconPath(it.Name, it.Category)); err != nil {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}
@@ -1700,13 +1736,20 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// warnings sat unnoticed among 209 rows that all rendered
 			// identically). Colour is never the only signal (icon too),
 			// and both are CSS vars so it stays legible across themes.
-			cls, statusHTML := "", htmlEscape(row.Status)
+			// statusAttr: at the phone tier (table-cards.js) the status is
+			// the fifth labelled cell, which waits behind More — so a warned,
+			// skipped or failed row keeps it on the collapsed card instead of
+			// leaving the tint as the only sign (ut-docs#4583). A clean "ok"
+			// stays behind More.
+			cls, statusAttr, statusHTML := "", "", htmlEscape(row.Status)
 			switch {
 			case row.Warned:
 				cls = ` class="row-warn"`
+				statusAttr = ` data-card-keep`
 				statusHTML = `<span class="row-warn-icon" aria-hidden="true">⚠</span>` + statusHTML
 			case row.Skipped || row.Failed:
 				cls = ` class="muted"`
+				statusAttr = ` data-card-keep`
 			}
 			if interactive && row.Skipped && len(row.FixFields) > 0 {
 				// Include/skip checkbox plus inline correction input(s) —
@@ -1763,9 +1806,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !commit && row.ItemType == catalogtypes.ItemTypeGiftVoucher {
 				nameHTML += ` <span class="tag import-item-type">` + htmlEscape(T("catalog.item_type.gift_voucher")) + `</span>`
 			}
-			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td%s>%s</td></tr>`,
 				cls, nameHTML, httpx.FormatMoney(row.PriceMinor, locale),
-				htmlEscape(row.Barcode), htmlEscape(row.Category), statusHTML)
+				htmlEscape(row.Barcode), htmlEscape(row.Category), statusAttr, statusHTML)
 		}
 		for _, row := range warnedRows {
 			writeRow(row)
@@ -1947,7 +1990,8 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// unit is CHECK-constrained by migration 060), so no csvSafe either.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
 		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
-		"Net quantity", "Net quantity unit", "Age restricted", "Item type"})
+		"Net quantity", "Net quantity unit", "Age restricted", "Item type",
+		"Reorder level"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -1966,11 +2010,17 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 		if e.NetQuantityValue != nil && e.NetQuantityUnit != nil {
 			nqValue, nqUnit = strconv.FormatInt(*e.NetQuantityValue, 10), *e.NetQuantityUnit
 		}
+		// "Reorder level" (ut-docs#2084): blank when 0 (= unset).
+		reorder := ""
+		if e.ReorderLevel > 0 {
+			reorder = strconv.Itoa(e.ReorderLevel)
+		}
 		_ = cw.Write([]string{
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
 			tax, takeaway, nqValue, nqUnit, yn(e.AgeRestricted), exportItemType(e.ItemType),
+			reorder,
 		})
 	}
 	cw.Flush()
@@ -2311,6 +2361,11 @@ func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []s
 	if it.NetQuantityIssue != "" {
 		warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
 	}
+	// A present-but-invalid reorder level imports the item with none
+	// (ut-docs#2084).
+	if it.ReorderLevelIssue != "" {
+		warnings = append(warnings, translateReorderLevelIssue(T, it.ReorderLevelIssue, it.ReorderLevelIssueRaw))
+	}
 	return warnings
 }
 
@@ -2381,6 +2436,19 @@ func translateNetQuantityIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.net_quantity"), raw)
 	default:
 		log.Printf("[import] unrecognised net quantity issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateReorderLevelIssue is translateNetQuantityIssue's counterpart for
+// ReorderLevelIssue (ut-docs#2084): the existing import-issue word plus the
+// field's own label and the file's raw cell, so no new locale key is needed.
+func translateReorderLevelIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.ReorderLevelIssueInvalid:
+		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.reorder_level"), raw)
+	default:
+		log.Printf("[import] unrecognised reorder level issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }

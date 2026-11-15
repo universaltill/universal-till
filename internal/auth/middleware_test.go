@@ -32,6 +32,7 @@ func TestExitToOSIsExemptButSettingsSurfaceStaysGated(t *testing.T) {
 	for _, p := range []string{
 		"/api/settings",
 		"/api/settings/window-mode",
+		"/api/settings/window-mode/toggle", // ut-docs#3735: F11 toggle is session-gated
 		"/api/settings/osk",
 		"/api/settings/exit-to-os/extra",
 		"/api/settings/exit-to-os-not-really",
@@ -154,6 +155,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join's best-effort enrolment withdrawal.
 		"/api/sync/enroll/withdraw",
+		// ut-docs#5198: a replica swapping its LAN bearer, syncTill-authed.
+		"/api/sync/bearer/rotate",
 		"/api/sync/admin",
 		"/api/sync/stock",
 		// ut-docs#460: the replica pull tick's plugin-set poll. Missing at
@@ -161,6 +164,11 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// authenticated perfectly and was still 401'd here, so plugin
 		// propagation silently never worked at all.
 		"/api/sync/plugins",
+		// ut-docs#5074: the sales copy's feed and state re-sync.
+		"/api/sync/sales-mirror",
+		"/api/sync/sales-mirror/state",
+		// ut-docs#5074 M7: the push tick's closes step.
+		"/api/sync/closes",
 		"/api/sync/assets",
 		"/api/sync/assets/file",
 		// ut-docs#2566: the categories scope of the photo sync surface.
@@ -488,5 +496,15 @@ func TestMiddleware_ResolvedSessionCarriesPermissionSnapshot(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if !first || !second {
 		t.Fatalf("snapshot missing from request ctx: first=%v second=%v", first, second)
+	}
+}
+
+// ut-docs#5074: the sales copy's manager routes keep needing a session; only
+// the bearer-authed feed and state re-sync are exempt.
+func TestSalesMirrorManagerRoutesNeedASession(t *testing.T) {
+	for _, p := range []string{"/api/sync/sales-mirror/status", "/api/sync/sales-mirror/enable", "/api/sync/sales-mirror/disable"} {
+		if exempt(p) {
+			t.Errorf("%s is session-exempt; it is a manager route", p)
+		}
 	}
 }

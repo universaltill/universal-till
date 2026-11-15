@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2174: /designer is a live, in-place-edited replica of the sale
 // screen's real product panel — the SAME buttons.html fragment the sale
@@ -9,7 +9,9 @@ import { watchConsole } from './helpers';
 // app.js utTileJiggle) are the real thing, not a fork — plus a
 // category-management section (create / rename+recolour / reorder /
 // deactivate) wired to /api/designer/categories*, each of which answers
-// 204 + HX-Trigger: buttons-changed so the replica refreshes in place.
+// 204; all but reorder add HX-Trigger: buttons-changed so the replica
+// refreshes in place (reorder answers a bare 204 and the page updates itself
+// from the list-reorder:saved event).
 //
 // This replaces designer-reorder-1221.spec.ts and
 // designer-reorder-buttons-overflow-1354.spec.ts, both of which pinned the
@@ -154,7 +156,7 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     const f = fixture('2');
     const newName = `Wysiwyg2174 New ${f.run}`;
     const renamed = `${newName} Renamed`;
-    page.on('dialog', (d) => d.accept());
+    const noNative = noNativeDialogs(page);
 
     await page.goto('/designer');
     await expect(replica(page)).toBeVisible();
@@ -178,7 +180,7 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     const id = (await row.getAttribute('data-cat-id'))!;
     // No quick buttons yet, so — exactly as on the sale screen — no tab.
     await expect(page.locator(`#cat-tab-${id}`)).toHaveCount(0);
-    await expect(row.locator('.designer-cat-meta')).toContainText('0 button');
+    await expect(row.locator('.designer-cat-meta')).toContainText('0 buttons');
 
     // Rename (+ recolour) in place.
     await row.locator('[data-cat-edit]').click();
@@ -194,7 +196,7 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
 
     // Reorder by keyboard: the new category is last, so "move later" is
     // disabled and "move earlier" works from the keyboard — and after the
-    // replica re-renders, focus is back on the same control (not <body>).
+    // order is applied in place, focus is back on the same control (not <body>).
     // ut-docs#2699: the pair lives in the row's inline form now.
     await page.locator(`#designer-cat-open-${id}`).click();
     const up = page.locator(`#designer-cat-up-${id}`);
@@ -212,12 +214,14 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     // offers Activate; reactivate → it offers the bin again.
     const deactivated = page.waitForResponse((r) => r.url().endsWith(`/api/designer/categories/${id}/active`) && r.request().method() === 'POST');
     await page.locator(`#designer-cat-active-${id}`).click();
+    await answerTillConfirm(page, 'confirm');
     expect((await deactivated).status()).toBe(204);
     await expect(catRow(page, renamed)).toHaveClass(/designer-cat-inactive/);
     await expect(page.locator(`#designer-cat-active-${id}`)).toHaveText(/Activate/);
     const reactivated = page.waitForResponse((r) => r.url().endsWith(`/api/designer/categories/${id}/active`) && r.request().method() === 'POST');
     await page.locator(`#designer-cat-active-${id}`).click();
     expect((await reactivated).status()).toBe(204);
+    noNative();
     await expect(catRow(page, renamed)).not.toHaveClass(/designer-cat-inactive/);
 
     // Leave it deactivated so the shared demo till's strip is untouched.
