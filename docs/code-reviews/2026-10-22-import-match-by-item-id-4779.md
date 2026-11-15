@@ -4,12 +4,12 @@
 **Built by:** Sonnet (Dev subagent) · **Reviewed by:** Opus 5.5 (independent subagent, fresh context)
 
 ## What shipped
-- **universal-till `catimport` (tag `catimport/v0.5.0`):** `ImportItem.ItemID` comes from the `id` column of our own my. export (source `my-export`, CSV). The cell is trimmed and CSV-defused, and dropped above 64 bytes or when it holds a control character or whitespace. It is not carried into the ADR-0051 `Row`.
+- **universal-till `catimport` (`catimport/VERSION` 0.7.0, tagged by CI):** `ImportItem.ItemID` comes from the `id` column of our own my. export (source `my-export`, CSV). The cell is trimmed and CSV-defused, and dropped above 64 bytes or when it holds a control character or whitespace. It is not carried into the ADR-0051 `Row`.
 - **ut-cloud:** `parsedRow.ItemID` → `claims.TillImportRow.ItemID`. The till-master planner matches the id first (ADR-0168 §3), then barcode, then SKU, then name.
   - An id that names one item while the row's barcode or SKU belongs to another is `conflicting_match`.
   - An id the read copy doesn't hold is ignored.
   - `markDuplicates` treats a repeated id as `duplicate_in_file` across the whole file, with no field, because no cell can clear it.
-  - The pin is bumped to `catimport/v0.5.0`.
+  - The pin is bumped to `catimport/v0.7.0`.
 - **ut-docs:** ADR-0168 §2 is amended: the source is read from the header row, `source_choice` is display-only, and the `?source=` hint is dropped. §3 gains the id rules. Contract `cloud-import-jobs` goes to 1.3.0.
 
 ## Findings (independent review)
@@ -37,4 +37,10 @@ Accepted residual risk: two rows with *different unknown* ids and the same name,
 - No UI surface changed, so there is no UX gate and no help-topic change.
 
 ## Verdict
-Safe to merge once CI is green. The order is universal-till → tag `catimport/v0.5.0` → ut-cloud (pin) → ut-docs.
+Safe to merge once CI is green. The order is universal-till → `catimport-tag.yml` tags `catimport/v0.7.0` → ut-cloud (pin) → ut-docs.
+
+## Addendum 2026-11-15 — rebase before merge (lane:cloud-41)
+- The owner approved merging (ut-docs#4779, 2026-11-12). `main` had moved to `catimport` 0.6.1 (#5957, #2084) and now tags from `catimport/VERSION` (ut-docs#5882), so the branch is rebased onto `main` and `catimport/VERSION` goes 0.6.1 → **0.7.0** (minor: new exported field `ImportItem.ItemID`). `catimport-tag.yml` cuts the tag on merge; nothing is tagged by hand.
+- The rebase applied cleanly; the diff against `main` is unchanged from the reviewed one apart from `VERSION`. Delta reviewed independently (see the PR); `catimport` build, vet and tests pass, and `guard-catimport-version.sh` passes.
+
+Pre-flight: rebased on origin/main, catimport build/vet/test green, guard-catimport-version.sh green, gofmt clean.
