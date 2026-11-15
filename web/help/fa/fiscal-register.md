@@ -3,6 +3,7 @@ id: fiscal-register
 title: دفتر ثبت مالیاتی (آلمان)
 section: راه‌اندازی فروشگاه
 order: 112
+public: false
 summary: "اطلاعات صندوق و دستگاه TSE مورد نیاز برای اعلامیهٔ §146a Abs. 4 AO آلمان را ثبت کنید، بر اساس محل کسب‌وکار گروه‌بندی شده — خودتان این اعلامیه را در Mein ELSTER ارسال می‌کنید."
 routes: [/fiscal-register]
 keywords: [مالیات, آلمان, AO, TSE, ELSTER, kassensichv, اعلامیه, صندوق, ثبت]

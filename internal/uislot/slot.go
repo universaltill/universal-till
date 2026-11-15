@@ -266,6 +266,10 @@ var CoreMenu = []Entry{
 	// bell would just be clutter). Not part of d.MenuSnapshot() either, so
 	// it must be declared here to render at all.
 	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
+	// ADR-0169 §9 (ut-docs#4768): orders taken at a web shop or marketplace.
+	// Launcher tile only, not the rail (sell-screen space wins); the same
+	// "reports" gate as the page (a cashier is sale-only, ut-docs#3079).
+	{Key: "/channel-orders", Href: "/channel-orders", LabelKey: "channel_orders.title", Icon: "download", Order: 1950, VisibleIf: "reports"},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
 	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
 	// ut-docs#4251: every gift voucher, its history, CSV export and the
@@ -581,9 +585,12 @@ var CoreSettings = []Entry{
 	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
 	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
 	{Key: "settings-idle-lock", Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800, Group: "settings.cat.staff.label"},
+	// ut-docs#3208: links to the Users (PINs) and Permissions pages.
+	{Key: "settings-staff-links", Href: "#settings-staff-links", LabelKey: "settings.staff_links.title", Order: 1850, Group: "settings.cat.staff.label"},
 	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
 	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
 	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
+	{Key: "settings-notices", Href: "#settings-notices", LabelKey: "settings.notices.title", Order: 2125, Group: "settings.cat.devices.label"},
 	// ut-docs#3115: Shop name, first in My shop (the template declares it
 	// right before the Currency card).
 	{Key: "settings-store-name", Href: "#settings-store-name", LabelKey: "settings.store_name.title", Order: 2150, Group: "settings.cat.shop.label"},

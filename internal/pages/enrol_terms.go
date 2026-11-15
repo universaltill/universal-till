@@ -16,8 +16,9 @@ import (
 // the cloud (Settings -> Register now, the auto-register opt-in toggle, the
 // setup wizard's opt-in) needs the operator to tick "accept_terms" once per
 // terms version; enroll.RecordTermsAcceptance then stores it per till and
-// enroll's register() sends it. Non-UI triggers (EnsureRegistered from a
-// plugin install) never ask and stay as they were.
+// enroll's register() sends it. The plugin store's first Download and the
+// install-from-marketplace API also ask (ut-docs#4791, termsGateLazyRegistration);
+// other lazy-registration triggers stay ungated (see that helper).
 
 // termsTicked reports whether the form carries the accept_terms checkbox.
 func termsTicked(r *http.Request) bool {
@@ -54,4 +55,30 @@ func termsView(ctx context.Context, d *common.Deps, locale string) map[string]an
 		v["line"] = fmt.Sprintf(httpx.T(locale, "settings.enrol.terms.accepted"), version, date)
 	}
 	return v
+}
+
+// termsGateLazyRegistration is the accept step for the plugin store's lazy
+// registration (ut-docs#4791). A till that is not yet registered and has not
+// accepted the current terms may only register (enroll.EnsureRegistered) once
+// the operator ticked the box: ticked records the acceptance (register()
+// then sends it) and returns refuse=false; not ticked returns refuse=true and
+// the caller answers 428 settings.enrol.terms_required without registering.
+// Already registered or already accepted: refuse=false, nothing recorded.
+//
+// Deliberately NOT gated, so a till can still register without the step:
+// the setup wizard's base-plugin install (offline-first, must not block the
+// wizard; its step 7 shows the accept step), cloud-directed installs, plugin
+// update and TSE kickoff. Such a till is recorded not_accepted and Settings
+// (ut-docs#4792) offers the box afterwards.
+func termsGateLazyRegistration(ctx context.Context, d *common.Deps, ticked bool, locale string) (refuse bool, err error) {
+	if enroll.CurrentStatus().Registered || termsAlreadyAccepted(ctx, d) {
+		return false, nil
+	}
+	if !ticked {
+		return true, nil
+	}
+	if err := enroll.RecordTermsAcceptance(ctx, d.Settings, locale); err != nil {
+		return false, err
+	}
+	return false, nil
 }

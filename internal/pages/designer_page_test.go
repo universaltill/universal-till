@@ -222,6 +222,11 @@ func TestButtonsPartial_EditMode(t *testing.T) {
 		`name="active" value="1"`,
 		`type="radio" name="color" value="#0f766e" checked`,
 		`id="designer-categories-msg"`,
+		// ut-docs#3104: each row's own status line is where list-reorder.js
+		// reports a refused move of that row (not the section-top box).
+		`id="designer-cat-msg-cat-a" role="status" aria-live="polite" data-reorder-item-msg>`,
+		// ...and, while its form is open, the line under its Move buttons.
+		`id="designer-cat-move-msg-cat-a" role="status" aria-live="polite" data-reorder-item-msg>`,
 		// A category with active items says up front that deactivating it
 		// will be refused, and why, before the operator taps anything.
 		`data-testid="designer-cat-blocked-cat-a"`,

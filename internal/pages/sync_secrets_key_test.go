@@ -152,9 +152,7 @@ func TestSecretsKeyFetcher_FetchesFromPrimaryWithBearer(t *testing.T) {
 	}
 
 	// Unreachable primary: error (the KeyStore's retry floor paces it).
-	dead := httptest.NewServer(http.NotFoundHandler())
-	dead.Close()
-	if _, err := SecretsKeyFetcher(fakeSettings{"sync.primary_url": dead.URL, "sync.bearer": "x"}, client)(context.Background()); err == nil {
+	if _, err := SecretsKeyFetcher(fakeSettings{"sync.primary_url": unreachableURL(), "sync.bearer": "x"}, client)(context.Background()); err == nil {
 		t.Fatal("unreachable primary must error")
 	}
 

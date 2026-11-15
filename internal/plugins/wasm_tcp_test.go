@@ -367,19 +367,16 @@ func TestHostTCPWildcardGrant(t *testing.T) {
 	}
 }
 
-// Dialing a dead port (listener closed before the call) fails fast with -3 —
+// Dialing a refused port (127.0.0.1:1, nothing listens) fails fast with -3 —
 // a broken terminal must never hang the till.
 func TestHostTCPConnectFailure(t *testing.T) {
 	guest := buildTCPGuest(t)
 	d := hostfnTestDB(t)
 	const pluginID = "com.test.tcpdead"
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close() // nothing is listening on this port anymore
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
+	const port = 1
 
 	seedPlugin(t, d, pluginID)
 	grantPerm(t, d, pluginID, "storage")

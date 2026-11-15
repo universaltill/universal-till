@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/universaltill/universal-till/catimport/barcode"
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -33,6 +34,7 @@ import (
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1190,6 +1192,8 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 	// opened by the user directive hooks.
 	directiveKeys := directivekey.New()
 	return cloudsync.Hooks{
+		// ADR-0176: the notices pull asks for the till's default UI language.
+		NoticeLang: httpx.DefaultLocale,
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			// First, so a refused store.country never reaches the fiscal
 			// posture reset below.
@@ -1389,7 +1393,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		CatalogTaxRateRefused: func(rateBP int, takeawayBP *int) bool {
 			return taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP)
 		},
-		CatalogItemPhotoReplaced: removeReplacedItemUpload,
+		CatalogItemPhotoReplaced: func(itemID, clearedPath string) {
+			removeReplacedItemUpload(itemID, clearedPath)
+			// ut-docs#5124: the open basket's line follows the new icon.
+			catalog.RefreshBasketPhoto(context.Background(), d, data.NewCatalogRepo(d.Db), itemID)
+		},
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},
@@ -1417,6 +1425,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Sealed customer rows (ADR-0168 §5, ut-docs#4748): main till only.
 		ImportCustomers: func(ctx context.Context, dir cloudsync.ImportCustomersDirective) (cloudsync.ImportCustomersResult, error) {
 			return cloudImportCustomers(ctx, d, directiveKeys, dir)
+		},
+		// Channel orders (ADR-0169 §9, ut-docs#4768): main till only.
+		ApplyChannelOrder: func(ctx context.Context, o cloudsync.ChannelOrderDirective) (string, error) {
+			return cloudApplyChannelOrder(ctx, d, o)
 		},
 		SaveUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
 			return cloudSaveUser(ctx, d, directiveKeys, u)
@@ -1456,6 +1468,16 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// cloudSetCategoryOrder.
 		SetCategoryOrder: func(ctx context.Context, ids []string) (string, error) {
 			return cloudSetCategoryOrder(ctx, d, ids)
+		},
+		// set_category_item_order (contract §3.14, ut-docs#3105): the
+		// owner's order of one category's items from my., main-till only.
+		// See cloudSetCategoryItemOrder. ItemTilePositions fills the
+		// snapshot's tile_pos (§3.7).
+		SetCategoryItemOrder: func(ctx context.Context, categoryID string, itemIDs []string) (string, error) {
+			return cloudSetCategoryItemOrder(ctx, d, categoryID, itemIDs)
+		},
+		ItemTilePositions: func(ctx context.Context) (map[string]int, error) {
+			return cloudButtonStore(d).TilePositions(ctx)
 		},
 		// set_catalog_image (contract §3.9, ut-docs#3076): an item or
 		// category image set or removed in my., main-till only. cloudsync
@@ -1529,6 +1551,18 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// See remoteCountryReport.
 			if c, ok := remoteCountryReport(ctx, d); ok {
 				extra["country"] = c
+			}
+			// ut-docs#5127 (design §2, fix H2): the key id of the till's
+			// approval key on EVERY check-in, from a main and an additional
+			// till alike (any till can move). The cloud cancels a freshly
+			// pinned key whose device syncs without the same approval_kid,
+			// so a thief's early pin dies at the genuine till's next sync.
+			// Only the kid rides here: the cloud reads nothing else from
+			// /sync, and the key itself is reported by the till's own POST
+			// (enroll.kickApprovalKeyReport). Never blocks: no usable key
+			// just reports nothing.
+			if kid, ok := approvalkey.Shared().KeyID(); ok {
+				extra["approval_kid"] = kid
 			}
 			// The main till's directive key, on every check-in (contract
 			// §1): created here at the first one. A satellite never
@@ -1699,7 +1733,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		},
 	})
 	if err != nil {
-		failure := plugins.ClassifyInstallError(err)
+		failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 		saveFailed(failure.MessageKey, failure.Retryable)
 		return "", err
 	}
@@ -1954,6 +1988,7 @@ func cloudRenameItem(ctx context.Context, d *common.Deps, itemID, name string) (
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
 	}
+	name = strings.TrimSpace(name) // the stored value, for the audit row and the message
 	if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
 		return "", err
 	}
@@ -2893,6 +2928,7 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 // and sync_admin.go's admin_pulled already use to distinguish a
 // cloud-originated mutation from an operator's own action at the till.
 func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
+	name = strings.TrimSpace(name) // the stored value, for the dedupe, audit row and message
 	repo := data.NewCatalogRepo(d.Db)
 	// Idempotency check first, gate second: on a replica, the item most
 	// directives replay against has usually already arrived via the normal

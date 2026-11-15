@@ -56,12 +56,12 @@
        server), never the primary's origin — can't strand an operator the
        way linking straight to primaryURL would (ut-docs#390). */}}
   {{ if .canManage }}<a href="/tills" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
-     title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}"
-     aria-label="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }} — {{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}">
+     title="{{ if .rejoin }}{{ T "sync.link.rejoin" }}{{ else if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}"
+     aria-label="{{ if .rejoin }}{{ T "sync.link.rejoin" }}{{ else if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }} — {{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}">
     {{/* Queued sales while still "online" is real backlog worth flagging —
          not just the offline case (independent review: queued previously
          surfaced as neither a badge nor visible text at rail width). */}}
-    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .offline .queued }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .offline .queued .rejoin }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
     <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}</span>
   {{ if .canManage }}</a>{{ else }}</span>{{ end }}
   {{- else -}}

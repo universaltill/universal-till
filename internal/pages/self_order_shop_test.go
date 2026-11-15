@@ -1288,6 +1288,9 @@ VALUES (?, 'Kiosk Fiscal Sign', '1.0.0', 'installed', './plugin.wasm', 'wasm', 1
 VALUES (?, ?, 'fiscal.sign.ask', 'fiscal.sign', 1)`, "hook-"+pluginID, pluginID)
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
 VALUES (?, ?, 'events:receive', 1)`, "perm-"+pluginID, pluginID)
+	// A signer that needs the network (ut-docs#3137: only those are skipped).
+	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+VALUES (?, ?, 'net:*', 1)`, "perm-net-"+pluginID, pluginID)
 
 	var invocations atomic.Int64
 	bus := plugins.SharedBus(d.DB)

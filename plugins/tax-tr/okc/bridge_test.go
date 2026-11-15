@@ -108,10 +108,9 @@ func TestBridgeSale_SplitTenderRefusedBeforeDial(t *testing.T) {
 }
 
 func TestBridgeSale_Unreachable(t *testing.T) {
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close() // nothing listens here any more
-	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: port, ConnectTimeoutMs: 500})
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: 1, ConnectTimeoutMs: 500})
 	if _, err := d.Sale(sale(1)); !errors.Is(err, okc.ErrDeviceUnreachable) {
 		t.Fatalf("err = %v, want ErrDeviceUnreachable", err)
 	}

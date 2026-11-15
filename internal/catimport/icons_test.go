@@ -88,7 +88,7 @@ func TestIconRegistry_Consistent(t *testing.T) {
 			t.Errorf("%q: vendored source missing: %v", d.Key, err)
 		}
 	}
-	for _, set := range []string{"lucide", "tabler"} {
+	for _, set := range []string{"lucide", "tabler", "ut"} {
 		if _, err := os.Stat(filepath.Join(root, "internal", "catimport", "iconsrc", set, "LICENSE")); err != nil {
 			t.Errorf("iconsrc/%s/LICENSE missing — the upstream licence must ship with the SVGs: %v", set, err)
 		}
@@ -238,5 +238,32 @@ func TestIconRegistry_EveryTileHasARegisteredID(t *testing.T) {
 		if got := iconid.AssetPath(d.Src); got != ic.Path {
 			t.Errorf("%q: iconid.AssetPath(%q) = %q, want the tile %q", ic.Key, d.Src, got, ic.Path)
 		}
+	}
+}
+
+// TestIconRegistry_BarberCoverage pins the barber / hair-care list of
+// ut-docs#4840: every key exists, and the two groups sit before "general".
+func TestIconRegistry_BarberCoverage(t *testing.T) {
+	for _, key := range []string{
+		"clippers", "trimmer", "shaver", "razor", "blades", "scissors", "shears",
+		"comb", "hairbrush", "shaving-brush", "cape", "hair-dryer", "pomade",
+		"hair-spray", "shampoo", "skin-care", "beard-oil", "aftershave", "beard",
+		"towel", "spray-bottle", "mirror", "barber-chair",
+	} {
+		d, ok := iconByKey[key]
+		if !ok {
+			t.Errorf("barber icon %q missing from the library", key)
+			continue
+		}
+		if d.Group != "barber" && d.Group != "grooming" {
+			t.Errorf("%q is in group %q, want barber or grooming", key, d.Group)
+		}
+	}
+	pos := map[string]int{}
+	for i, g := range iconGroups {
+		pos[g.Key] = i
+	}
+	if !(pos["sweets"] < pos["barber"] && pos["barber"] < pos["grooming"] && pos["grooming"] < pos["general"]) {
+		t.Errorf("group order wrong: %v", pos)
 	}
 }

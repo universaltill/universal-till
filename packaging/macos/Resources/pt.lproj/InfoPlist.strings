@@ -1,0 +1,2 @@
+/* Local Network permission text (ut-docs#5026). */
+"NSLocalNetworkUsageDescription" = "O Universal Till procura na rede da sua loja as impressoras de talões e as suas outras caixas, para que as possa ligar sem escrever endereços.";

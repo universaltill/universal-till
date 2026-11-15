@@ -73,7 +73,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `sales_aggregate_uploads` — which daily per-till sales rollups the cloud
   has accepted (content-hash ledger for the ADR-0111 upload,
   ut-docs#2535; migration 038), plus the source fingerprint each was built
-  from, so a past day whose sales, voids and no-sale opens did not change is
+  from, so a past day whose sales, voids, no-sale opens and cleared baskets did not change is
   not rebuilt (ut-docs#2559; migration 085)
 - `no_sale_events` — "No sale" cash-drawer opens (`POST /api/pos/no-sale`,
   gated by the `cash_adjustment` permission or a manager PIN; recorded only
@@ -93,7 +93,9 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   (`POST /api/sync/cleared-baskets`, cursor
   `sync.cleared_basket_push_cursor`), where they are stored with `till_id` =
   the reporting till's `tills.id`, so the main till's report counts every
-  till's clears once (ut-docs#4711)
+  till's clears once (ut-docs#4711). The ADR-0111 rollup reports them as
+  `cleared_basket_count` / `cleared_basket_total_minor` per business date and
+  till, never as part of net sales (ut-docs#4721)
 
 ### 5. Shifts & audit
 
@@ -114,7 +116,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `plugin_settings`
 - `plugin_hooks`
 - `plugin_permissions`
-- `shortcut_buttons`
+- `shortcut_buttons` — `image_path` is legacy: no longer written by this version (ut-docs#6097; an older till in a mixed fleet may still write it, and LAN sync copies it) and not read (ut-docs#6076); the column stays because migrations are append-only (ADR-0100) and LAN sync copies it as plain data. The tile picture is the item's `item_images` thumbnail, then `items.icon`
 
 ## ER Diagram
 
@@ -636,7 +638,7 @@ erDiagram
         string barcode
         string item_id
         string label
-        string image_path
+        string image_path "legacy: unread; no longer written (ut-docs#6097, #6076)"
         string updated_at
     }
 
@@ -671,9 +673,32 @@ erDiagram
 ## Customers — sealed import (ut-docs#4748, ADR-0168 §5)
 
 - Migration 087: `customers.postcode TEXT` (personal data like the rest: syncs to replicas, blanked on an erased shell), expression indexes on `lower(email)` and the postcode without spaces in upper case, `import_source_links.baseline_hash` / `erased_at`, and the main-till-only tables `customer_import_salt` (one random salt that never leaves the till) and `customer_erasure_hashes` (salted email/phone hashes of erased customers). None of the new tables syncs.
-- `internal/customerimport.Apply` applies one sealed `import_customers` chunk (at most 200 rows, 64 KiB) in one transaction: tombstoned link, then link, folded email, `phone_e164`, name + postcode only when exactly one customer fits; two candidates are `ambiguous_match`, an email and a phone naming different people `conflicting_match`; empty fields are filled, a differing field is kept and reported as row number + field name only; `force_fields` overwrites exactly the fields it names; each link stores a salted hash of the fields last imported, so the same rows again change nothing.
+- `internal/customerimport.Apply` applies one sealed `import_customers` chunk (at most 200 rows, 64 KiB) in one transaction: tombstoned link, then link, folded email, `phone_e164`, name + postcode only when exactly one customer fits; two candidates are `ambiguous_match`, an email and a phone naming different people `conflicting_match`; empty fields are filled, a differing field is kept and reported as row number + field name only; `force_fields` overwrites exactly the fields it names; each link stores a salted hash of the fields last imported, so the same rows again change nothing. A row's name is held to `data.CheckSingleLineName`, the till's admin rule (no line break, tab, control, U+2028/2029 or invisible format character except the RTL marks, ZWNJ/ZWJ and balanced isolates); such a row comes back `invalid_fields` naming `name` (ut-docs#5861).
 - `POSRepo.EraseCustomer` writes the suppression hashes and turns the customer's import links into tombstones in its own transaction; a later import skips that person and counts `erased_on_till`. A customer erased with neither an email, a phone nor an import link leaves nothing to match on.
 - The directive (`import_customers`: `job_id`, `chunk_index`, `sealed`) is main-till only; the seal is HPKE to the directive key with info `universaltill/import-customers/v1` and AAD store, directive id, type, job id and chunk index (`directivekey.CustomersAAD`). No customer value is logged or audited: audit rows and the result carry ids, counts and field names.
+
+## Store claimed signal from the cloud (ut-docs#3532, ADR-0060 amendment 2026-11)
+
+The entitlement block (ADR-0060 §3; a 402 `plan_required` body's block too)
+may carry `claimed`, a JSON boolean: `true` when the store has an owner. Only
+the boolean crosses; never the owner's identity. The till uses it only to word
+a rejected credential ("pair this till again" vs "register as a new store"),
+never as a sale gate or a modal.
+
+- **Cache (settings, per-till `entitlement.` family).** `entitlement.claimed`
+  = `true` | `false`, written by `entitlement.Block.Values` **only** when the
+  block carries a JSON boolean. Absent, `null` or a wrong type writes nothing
+  and never rejects the block, so the last value stands; nothing clears it. No
+  row means "never told". Read through `entitlement.StoreClaimed`
+  (`known` only for exactly `true`/`false`).
+- **Reader.** `pages.storeHasOwner` returns the cached value when known (it
+  overrides the plan inference both ways); otherwise it falls back to the older
+  inference from `entitlement.plan` / `subscription_status`, so an older cloud
+  changes nothing.
+- **Replicas.** `entitlement.Cached` relays `claimed` on the vouch answer
+  (`omitempty`; omitted when the main till was never told). The replica
+  writes it only when relayed and only under the existing
+  newer-confirmation-wins rule; an older replica ignores the field.
 
 ## Shop currency from the cloud (ut-docs#4539, ADR-0163 amendment 2026-10-16)
 
@@ -781,7 +806,9 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   retries. Best-effort, after the last commit; a removal counts as a change.
   Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
   `option_set` (applier version 2, ut-docs#4491), `item_variant`,
-  `item_barcode` (applier version 3, ut-docs#4521). Every other kind is
+  `item_barcode` (applier version 3, ut-docs#4521); version 5 re-pulls so
+  every item base holds `is_weighed`, `age_restricted` and the net-quantity
+  pair (ut-docs#6082/#6202). Every other kind is
   skipped, cursor advancing: `layout`, `staff`, `setting` (ut-docs#4492),
   and any unknown kind. Each applied
   row writes an `audit_log` row (`actor system`, action
@@ -794,6 +821,23 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   category_cloud_id / tax_code_cloud_id (null = clear), active, is_weighed,
   stock_untracked, age_restricted, color, icon, item_type, sell_screen_hidden,
   sell_screen_removed, net_quantity_value/unit (both null = clear).
+  **Till-owned fields** (`tillOwnedFields` in `internal/catalogpull/base.go`,
+  ut-docs#6072): the cloud has no write path for an item's unit, color,
+  item_type, stock_untracked, sell_screen_hidden, sell_screen_removed and its
+  three link lists, nor a category's color, sell_screen_hidden and
+  modifier_group_cloud_ids, but the feed always carries them at the cloud's
+  defaults. On a row the till already has (one with a `cloud_links` entry) —
+  a pull, an upload answer, a conflict answer, a resync or an applier re-pull
+  — they are not applied, so the till's values survive. A create applies them
+  as served. When the cloud gains a write path for one, it leaves that set
+  and the till release **promotes** it: a migration sets every linked row's
+  base for the field to the cloud's default and marks each row whose local
+  value differs, so the first upload seeds the cloud and the pull keeps the
+  till value meanwhile (no `ApplierVersion` bump: a re-pull without those
+  marks would reset till values). `icon` (item and category) is mastered
+  since contract 1.2.0 (ut-docs#6071, migration 103): its value is the raw
+  stored icon id, applied as served on a create, a mastered change or clear,
+  and kept on a linked row while its upload is pending.
   `modifier_group`: name, required, min_select, max_select, sort_order (the
   group row's own legacy column; not negative), active, options — the full
   ordered option set `[{id, name, price_delta_minor, active}]` (an option left
@@ -807,7 +851,8 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   **Link lists** — category `modifier_group_cloud_ids`; item
   `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
   `option_set_cloud_ids` — are each the whole ordered set: absent keeps the
-  till's links, `[]` clears them, `null` refuses the row (the contract's lists
+  till's links, `[]` clears them (on a create; on an update only once the
+  cloud masters the lists, see Till-owned fields), `null` refuses the row (the contract's lists
   are never null), and every id must resolve through `cloud_links`. Applying
   an item's option sets never generates variants (they arrive as their own
   rows, ut-docs#4521). The same holds for `options` and `values`: absent
@@ -864,17 +909,82 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   upload first (ut-docs#4464, below). Not yet built: reporting refusals
   back to the cloud as `apply_failed` (ut-docs#4493).
 
+## Stock on-hand upload — stock_upload_outbox (ut-docs#4763, ADR-0169 §8)
+
+The main till masters stock (ADR-0036); the cloud keeps a read-only
+`StockLevelMirror` so its allocation engine can push `stock.set` to sales
+channels. `internal/stockupload` uploads the rows whose quantity changed;
+`internal/cloudsync` (`stock_upload.go`) decides when and who.
+
+- **Tables (migration 091, main-till bookkeeping, never LAN-synced).**
+  `stock_upload_outbox(seq AUTOINCREMENT, item_id, variant_id, location_id, marked_at, attempts, retry_after)`
+  — one mark per inventory row, unique on (item, variant, location), so it
+  never outgrows `inventory`; `stock_upload_state(one, stream_id, started_at, rotated_at)`
+  — this till's stream id (a UUID naming its sequence) and when it began.
+- **Marks are written by triggers** on `inventory` (insert, and update of
+  `quantity` to a different value), in the same transaction as the write —
+  a sale, receipt, count, import, directive or LAN correction alike. A
+  re-mark replaces the row's mark under a fresh, higher `seq` (the till's
+  movement sequence). They run on every till, replica or not; only the main
+  till of a cloud-master store sends them. A deleted inventory row leaves no
+  mark. The migration marks every existing inventory row once.
+- **Upload:** `Pending` joins mark, inventory and `cloud_links` in one
+  statement (quantity and `seq` always agree). A row whose item (and variant)
+  has no cloud link waits. The quantity is sent as integer thousandths
+  (`on_hand_milli`, stock is kept to three decimals), clamped to +/- 10^12;
+  no float leaves the till. 500 rows per request, up to 20 requests per run,
+  a run bounded to 60 s. The inventory join uses `IS` so it probes
+  `ux_inventory_item` (a `COALESCE(..) = COALESCE(..)` join scanned inventory
+  once per mark: 12.9 s at 20,000 rows; `TestStockUploadQueriesUseTheInventoryIndex`
+  pins the plan). The cloud answers per row (`applied`, `stale`, `rejected`); a
+  mark is removed by its exact `seq`, so a sale made while the request was in
+  flight stays owed. Nothing is removed on a transport error or a refusal.
+  Poison control: a row whose cloud id is not a UUID, or whose location id the
+  cloud would refuse, is dropped before sending (logged by code); a batch the
+  cloud refuses with a 400 is bisected and only the single refused row dropped
+  (only if some part of the batch was accepted: a refusal of the whole request
+  keeps every mark); `rejected unknown_item` keeps the mark and retries up to 5
+  times, 15 min x attempt apart (`attempts`, `retry_after`), then drops it with
+  a log code. Orphan marks (inventory row gone) are purged in chunks of 1000
+  once nothing is left to send.
+- **When:** at the end of every check-in that reached the cloud (any tier,
+  after the catalogue pull/upload); on the realtime tier also from a loop that
+  wakes every 5 s, so a burst of sales is one request. Failures back the loop
+  off (30 s up to 5 min); it only starts a run when a mark is sendable (has an
+  inventory row and cloud links, and is not waiting out a retry delay), so marks
+  that can never be sent do not keep it dialling. **Who:** no `sync.primary_url`, cached
+  `catalog_master` = `cloud`, complete cloud enrolment. Never a sale gate.
+- **Self-heal:** a `stale` answer whose `stored_seq` is above the row's own
+  `seq`, or a stale answer coded `older_stream`, means this till's sequence
+  restarted below the cloud's or the cloud holds a newer stream; the till
+  rotates the stream (new `stream_id`, `started_at` strictly later), re-marks
+  everything, and the cloud replaces its rows only for a stream that started
+  later than the stored one (so a delayed request of an old stream changes
+  nothing). The request carries `stream_started_at`. A staged backup restore
+  rotates the stream at boot (`app.rotateStockStreamAfterRestore`), so the
+  mirror is re-sent in full instead of waiting for each row to change.
+  An `older_stream` answer is never acknowledged: at most one rotation per Run
+  and per 30 minutes (`stock_upload_state.rotated_at`), then the Run fails
+  (`stock_upload_stream_conflict`, marks kept, backoff). A stream start more
+  than a minute in the future is reset to now.
+- Endpoint and payload: ut-cloud `docs/api-reference.md`,
+  `POST /api/v1/stores/stock/levels`.
+
 ## Cloud catalogue upload — cloud_outbox (ut-docs#4464, ADR-0162 §5)
 
 The main till of a cloud-master store uploads its own catalogue edits
 (`internal/catalogpull` `Push`, contract ut-docs
-`reference/contracts/cloud-catalog-changes.md` 1.0.0), every tick **before**
+`reference/contracts/cloud-catalog-changes.md` 1.2.0), every tick **before**
 it pulls (`internal/cloudsync` `pullCloudCatalog`).
 
-- **What uploads (1.0.0):** items (`name`, `description`, `sku`,
-  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`, and the
-  whole item-level `barcodes` set), categories (`name`, `parent_cloud_id`,
-  `sort_order`, `active`), tax codes (`name`, `rate_basis_points`,
+- **What uploads (1.2.0):** items (`name`, `description`, `sku`,
+  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`,
+  `is_weighed`, `age_restricted`, `net_quantity_value`, `net_quantity_unit`,
+  `icon` (the raw stored icon id, `""` = none; a malformed stored id is never
+  uploaded, ut-docs#6071), and the whole item-level `barcodes` set; the net-quantity pair always
+  uploads together — a change to either half sends both, ut-docs#6082/#6202),
+  categories (`name`, `parent_cloud_id`,
+  `sort_order`, `active`, `icon`), tax codes (`name`, `rate_basis_points`,
   `takeaway_rate_basis_points`, `active`). Other kinds and fields are not
   uploaded yet (the cloud's write path does not take them); a pull still
   overwrites them.
@@ -884,7 +994,14 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   `seal_seq` order; `cloud_outbox_suppress(one)` — a flag row that exists
   only inside the pull's own write transaction. `cloud_links` gains `base`
   (JSON of the uploadable fields the till last adopted from the cloud) and
-  `echo_version`.
+  `echo_version`. Migration 102 widens the item update trigger to the four
+  1.1.0 item columns and fills them into existing item bases from the local
+  row (a base that is not valid JSON is left alone). Migration 103
+  (ut-docs#6071) widens the item and category update triggers to `icon`, sets
+  every linked base's `icon` to `""` (what the cloud holds: it never wrote
+  the column) and marks each linked row whose local icon is set, where the
+  trigger would mark; applier-3 links without a base get the same from
+  `seedBases`.
 - **Marks are written by triggers** on `items`, `item_barcodes`,
   `categories` and `tax_codes` (insert, delete, update of an uploadable
   column), in the same transaction as the write, whatever path wrote it.
@@ -1027,9 +1144,15 @@ data/plugins/
 - Includes version, URL, checksum, signature, trust tier
 
 **Revocation Endpoint**
-- `GET /v1/revocations`
-- Returns list of revoked plugin IDs and versions
-- Includes revocation reason and timestamp
+- `GET /v1/revocations` (relative to the marketplace endpoint URL)
+- Returns the revoked releases: `pluginId` is the marketplace **listing
+  UUID**, `manifestId` the plugin manifest id (cloud contract 0.0.11+),
+  plus `version`, `action` and `reason`
+- The till resolves the installed plugin via `manifestId`, then the
+  `plugin_install_status` row for the listing, then `pluginId` directly,
+  and disables it only on an exact version match; a sync that disabled
+  anything reloads the plugin manager so WASM modules unload (ut-docs#5653,
+  contract: ut-docs `reference/contracts/plugin-revocation-feed.md`)
 
 **Telemetry Endpoint**
 - `POST /v1/telemetry/report` with `Authorization: Bearer <device credential>`

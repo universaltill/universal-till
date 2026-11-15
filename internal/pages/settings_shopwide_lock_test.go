@@ -166,3 +166,18 @@ func TestShopWideLockRegions_MatchTemplateAndScope(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5162: a restored copy has no bearer, so it cannot reach its main
+// till at all; shop-wide settings are read-only until it joins again, exactly
+// as while the main till is unreachable.
+func TestLockedSettingsRegions_RestoredReplicaNeedingRejoin(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", "") // no bearer, no till id
+	if got := lockedSettingsRegions(t.Context(), d); len(got) == 0 {
+		t.Fatal("shop-wide regions stay editable on a replica that must join again")
+	}
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	if got := lockedSettingsRegions(t.Context(), d); len(got) != 0 {
+		t.Fatalf("a paired, reachable replica got regions locked: %v", got)
+	}
+}

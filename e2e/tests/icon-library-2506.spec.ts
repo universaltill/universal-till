@@ -40,7 +40,7 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     const tiles = page.locator(`${ICONS} .builtin-icon-tile`);
     expect(await tiles.count()).toBeGreaterThan(60);
     await expect(tiles.first()).toHaveAttribute('data-icon', 'none');
-    expect(await page.locator(`${ICONS} .builtin-icon-group-label`).count()).toBe(8);
+    expect(await page.locator(`${ICONS} .builtin-icon-group-label`).count()).toBe(10);
     // Every tile's <img> resolves (lazy images: scroll each into view).
     const broken: string[] = [];
     const imgs = page.locator(`${ICONS} .builtin-icon-tile img`);
@@ -83,12 +83,20 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     expect(await page.locator(`${ICONS} .builtin-icon-tile:visible`).count()).toBeGreaterThan(60);
   });
 
+  test('barber tools are searchable (ut-docs#4840)', async ({ page }) => {
+    await openNew(page);
+    await page.locator(SEARCH).fill('clipper');
+    await expect(page.locator(`${ICONS} [data-icon="clippers"]`)).toBeVisible();
+    await expect(page.locator(`${ICONS} [data-icon="beer"]`)).toBeHidden();
+    await expect(page.locator(`${ICONS} [data-icon="none"]`)).toBeVisible();
+  });
+
   test('arrow keys skip tiles the search hid', async ({ page }) => {
     await openNew(page);
     await page.locator(SEARCH).fill('wine');
     const wine = page.locator(`${ICONS} [data-icon="wine"]`);
     await wine.click();
-    await expect(wine).toHaveAttribute('aria-pressed', 'true');
+    await expect(wine).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('ArrowRight');
     const focused = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.icon ?? '');
     expect(['wine-bottle', 'none', 'champagne']).toContain(focused);
@@ -104,7 +112,7 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await page.locator('#categories-table .category-row', { hasText: name }).first().click();
     await expect(page.locator(DIALOG)).toBeVisible();
-    await expect(page.locator(`${ICONS} [data-icon="beer"]`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`${ICONS} [data-icon="beer"]`)).toHaveAttribute('aria-selected', 'true');
   });
 
   test('1024x600: the grid scrolls inside its box, Save stays reachable', async ({ page }) => {
@@ -174,7 +182,7 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     await expect(page.locator(DIALOG)).toBeVisible();
     await expect(page.locator(SEARCH)).toHaveValue('');
     await expect(page.locator(`${ICONS} [data-icon="coffee"]`)).toBeVisible();
-    await expect(page.locator(`${ICONS} .builtin-icon-group-label:visible`)).toHaveCount(8);
+    await expect(page.locator(`${ICONS} .builtin-icon-group-label:visible`)).toHaveCount(10);
   });
 
   test('Tab from the search box still reaches the filtered grid', async ({ page }) => {

@@ -1,0 +1,23 @@
+{{/* ut-docs#5070: POST /api/backup/upload's answer once the file passed
+     every check (db.ImportBackupFile) and is kept as an ordinary backup.
+     It says what is in the file and where its sales stop, then offers the
+     existing step-up restore for exactly that file. Nothing has changed
+     yet. Lands in #backup-upload-msg; no autofocus (no keyboard pops up). */}}
+<div class="backup-upload-ready" data-testid="backup-upload-ready">
+  <p><span aria-hidden="true">✓</span> {{ T "settings.backup.upload.ready" }} <bdi dir="ltr"><code>{{ .name }}</code></bdi></p>
+  <ul class="backup-upload-facts">
+    {{ if .shopName }}<li>{{ printf (T "settings.backup.upload.shop") .shopName }}</li>{{ end }}
+    {{ if .sales }}
+    <li>{{ printf (T "settings.backup.upload.sales") .sales }}</li>
+    <li>{{ printf (T "settings.backup.upload.newest_sale") .newestSale }}</li>
+    {{ else }}
+    <li>{{ T "settings.backup.upload.no_sales" }}</li>
+    {{ end }}
+  </ul>
+  <p>{{ T "settings.backup.upload.replaces" }}</p>
+  {{ if .hasLiveSales }}<p><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.backup.upload.live_sales" }}</p>{{ end }}
+  <form hx-post="/api/backup/restore" hx-target="#restore-msg" hx-swap="innerHTML">
+    <input type="hidden" name="name" value="{{ .name }}">
+    <button class="btn primary" type="submit" data-testid="backup-upload-restore">{{ T "settings.backup.upload.restore" }}</button>
+  </form>
+</div>

@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/discovery"
 )
 
-// ut-docs#3523, ADR-0116 D5/D6: Settings → Cloud → "Pair with a shop". The
+// ut-docs#3523, ADR-0116 D5/D6: Settings → Till registration → "Pair with a shop". The
 // owner's my. mints a short pairing code; the till clears exactly its own
 // cloud identity, mints a fresh device id and posts the code to
 // POST /v1/stores/pair (unauthenticated — the code is the credential). The
@@ -54,8 +55,18 @@ func newFakePairCloud(t *testing.T) *fakePairCloud {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/stores/pair", func(w http.ResponseWriter, r *http.Request) {
 		c.calls.Add(1)
-		var body map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		var anyBody map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&anyBody)
+		// Strings only; nested values (approval_key, ut-docs#5127) are kept
+		// as their JSON text under the same key.
+		body := map[string]string{}
+		for k, v := range anyBody {
+			if s, ok := v.(string); ok {
+				body[k] = s
+			} else if bb, err := json.Marshal(v); err == nil {
+				body[k] = string(bb)
+			}
+		}
 		c.mu.Lock()
 		c.lastBody = body
 		_, c.hadAuth = r.Header["Authorization"]
@@ -191,6 +202,8 @@ func TestPostPairSuccess(t *testing.T) {
 			t.Fatalf("pair body[%s] = %q, want %q (body %v)", k, body[k], v, body)
 		}
 	}
+	// approval_key rides along (ut-docs#5127); nothing else may.
+	delete(body, "approval_key")
 	if len(body) != len(want) {
 		t.Fatalf("pair body = %v, want exactly %v", body, want)
 	}
@@ -366,6 +379,10 @@ func TestPairMainTillAdoptsPairedIdentity(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", key, got, want)
 		}
 	}
+	// ut-docs#4836: adoption marks the till as paired with a my. shop.
+	if _, err := time.Parse(time.RFC3339, kv.get(keyPairedAt)); err != nil {
+		t.Fatalf("paired_at = %q, want an RFC3339 timestamp: %v", kv.get(keyPairedAt), err)
+	}
 	if kv.get(keyEnrolledAt) == "" || kv.get(keyEnrolledAt) == "2026-01-01T00:00:00Z" {
 		t.Fatalf("enrolled_at = %q, want a fresh timestamp", kv.get(keyEnrolledAt))
 	}
@@ -402,6 +419,9 @@ func TestPairRefusedLeavesIdentityCleared(t *testing.T) {
 	}
 	if st.Registered {
 		t.Fatalf("status = %+v after a refused pair, want not registered", st)
+	}
+	if kv.get(keyPairedAt) != "" {
+		t.Fatalf("paired_at = %q survived the identity reset, want cleared", kv.get(keyPairedAt))
 	}
 	if kv.get(keyToken) != "" || kv.get(keyStoreID) != "" || kv.get(keyEnrolledAt) != "" {
 		t.Fatalf("old identity survived: token=%q store=%q enrolled_at=%q", kv.get(keyToken), kv.get(keyStoreID), kv.get(keyEnrolledAt))
@@ -623,4 +643,83 @@ func TestPairReplicaStoreMismatchRefused(t *testing.T) {
 		t.Fatalf("the mismatch warning does not name the paired store:\n%s", logs.String())
 	}
 	assertPairSecretsNotLogged(t, logs)
+}
+
+// ut-docs#4836: the paired_at key discovery reads is the one enroll writes.
+func TestPairedAtKeyMatchesDiscovery(t *testing.T) {
+	if keyPairedAt != "marketplace.paired_at" || discovery.CloudPairedAtSettingKey != keyPairedAt {
+		t.Fatalf("paired_at key drift: enroll=%q discovery=%q", keyPairedAt, discovery.CloudPairedAtSettingKey)
+	}
+	if keyStoreID != "marketplace.store_id" || keyToken != "marketplace.token" {
+		t.Fatalf("store/token keys drifted from the literals in internal/discovery/join_watch.go")
+	}
+}
+
+// ut-docs#3557: PairPrecheck answers the refusals Pair makes before it
+// touches the identity, so the Settings card can raise them before it asks
+// the operator to confirm replacing a working connection.
+func TestPairPrecheckMatchesPairRefusals(t *testing.T) {
+	cases := map[string]struct {
+		code    string
+		replica bool
+		store   string
+		noEndpt bool
+		pinned  bool
+		want    error // nil = valid; errAny = any non-nil error
+	}{
+		"valid":              {code: pairCode, store: pairOldStore},
+		"empty":              {code: "  ", store: pairOldStore, want: errAny},
+		"over 128":           {code: strings.Repeat("A", 129), store: pairOldStore, want: errAny},
+		"no endpoint":        {code: pairCode, store: pairOldStore, noEndpt: true, want: ErrNotConfigured},
+		"env pinned":         {code: pairCode, store: pairOldStore, pinned: true, want: ErrPairIdentityPinned},
+		"replica no store":   {code: pairCode, replica: true, want: ErrPairReplicaNoStore},
+		"replica with store": {code: pairCode, replica: true, store: pairOldStore},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cloud := newFakePairCloud(t)
+			if tc.pinned {
+				t.Setenv("UT_MARKETPLACE_STORE_ID", pairOldStore)
+			}
+			kv, cfg := bootForPair(t, cloud.srv.URL, tc.replica, tc.store)
+			if tc.noEndpt {
+				cfg.Marketplace.EndpointURL = ""
+			}
+			err := PairPrecheck(context.Background(), cfg, kv, tc.code)
+			switch {
+			case tc.want == nil && err != nil:
+				t.Fatalf("PairPrecheck = %v, want nil", err)
+			case tc.want == errAny && err == nil:
+				t.Fatal("PairPrecheck accepted an invalid code")
+			case tc.want != nil && tc.want != errAny && !errors.Is(err, tc.want):
+				t.Fatalf("PairPrecheck = %v, want %v", err, tc.want)
+			}
+			// Pair itself agrees on every refusal.
+			if tc.want != nil {
+				if _, perr := Pair(context.Background(), cfg, kv, tc.code); perr == nil {
+					t.Fatal("Pair accepted what PairPrecheck refused")
+				}
+			}
+		})
+	}
+}
+
+var errAny = errors.New("any error")
+
+func TestPairPrecheckDoesNotTouchIdentity(t *testing.T) {
+	cloud := newFakePairCloud(t)
+	kv, cfg := bootForPair(t, cloud.srv.URL, false, pairOldStore)
+	before := len(kv.writes)
+	if err := PairPrecheck(context.Background(), cfg, kv, pairCode); err != nil {
+		t.Fatal(err)
+	}
+	if len(kv.writes) != before {
+		t.Fatalf("PairPrecheck wrote settings: %q", kv.writes[before:])
+	}
+	if kv.get(keyToken) != pairOldToken || kv.get(keyDeviceID) != pairOldDev || kv.get(keyStoreID) != pairOldStore {
+		t.Fatal("PairPrecheck changed the identity")
+	}
+	if n := cloud.calls.Load(); n != 0 {
+		t.Fatalf("pair calls = %d, want 0", n)
+	}
 }

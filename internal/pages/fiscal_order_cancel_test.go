@@ -124,6 +124,7 @@ func TestFiscalOrderCancel_KnownOfflineSkipsDispatch(t *testing.T) {
 		n.Add(1)
 		return nil, nil
 	})
+	grantSignerPerm(t, dp, "com.test.order-cancel-offline", "net:*")
 	dispatchFiscalOrderCancel(context.Background(), dp, "hold-off", true)
 	dp.WaitForAsyncWork()
 	if got := n.Load(); got != 0 {

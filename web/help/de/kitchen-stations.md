@@ -3,6 +3,7 @@ id: kitchen-stations
 title: Küchenstationen
 section: Den Betrieb führen
 order: 235
+public: true
 summary: Leiten Sie jede Speisekategorie — oder einen einzelnen Artikel — an einen eigenen Küchendrucker oder Küchenbildschirm, sodass die Grillbestellung am Grill und die Getränkebestellung an der Bar gedruckt wird.
 keywords: [küche, station, drucker, anzeige, bildschirm, routing, bon, grill, bar]
 routes: [/kitchen-stations, /kitchen-display/{station_id}]

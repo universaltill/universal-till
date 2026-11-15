@@ -2,12 +2,15 @@
 # Build "Universal Till.app" — a real macOS app bundle that runs the POS server
 # and shows it in an embedded WebView window (no browser chrome, no Terminal).
 #
-# The bundle is AD-HOC codesigned (`codesign --sign -`). That is REQUIRED for
-# Apple Silicon to run it at all (unsigned arm64 binaries are killed on launch);
-# it is NOT Apple notarization, so a *downloaded* copy is still quarantined and
-# Gatekeeper asks the user to right-click → Open once (or run the bundled
-# "Remove quarantine" helper). Proper notarization needs a paid Apple Developer
-# account — see docs/arch/desktop-app.md.
+# Release builds (release.yml, upstream) are Developer ID signed with the
+# hardened runtime and notarized by make-dmg.sh; they refuse to build without
+# the secrets (ut-docs#6025). Without MACOS_SIGN_IDENTITY (forks, local builds)
+# the bundle is AD-HOC codesigned (`codesign --sign -`), which Apple Silicon
+# requires to run it at all (unsigned arm64 binaries are killed on launch). A
+# downloaded ad-hoc copy is quarantined: on macOS 15+ the user opens it via
+# System Settings → Privacy & Security → Open Anyway, or the "Open Universal
+# Till.command" in the .dmg (ut-docs#3803). Developer ID signing requires an
+# Apple Developer ID — see docs/arch/desktop-app.md.
 #
 # Usage:  packaging/macos/build-app.sh [version] [output-dir]
 # Needs:  macOS with Xcode CLT (clang for CGO), Go, iconutil/sips (built in).
@@ -26,7 +29,7 @@ LDFLAGS="-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Ver
 # (UT_MARKETPLACE_KEY_HEX, from scripts/ci/resolve-marketplace-key.sh). Unset
 # locally = a source build that uses the env/lazy-fetch key.
 if [ -n "${UT_MARKETPLACE_KEY_HEX:-}" ]; then
-  LDFLAGS="$LDFLAGS -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}"
+  LDFLAGS="$LDFLAGS -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX:-}"
 fi
 
 echo "==> building binaries (arm64)"
@@ -38,8 +41,19 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
   go build -ldflags "$LDFLAGS" -o "$APP/Contents/MacOS/unitill-pos" .
 
 # The WebView shell (CGO + system WKWebView, behind the `desktop` build tag).
+# clang defaults the deployment target to the runner SDK's macOS, so a newer
+# runner image would silently raise the binary's minimum above Info.plist's
+# LSMinimumSystemVersion (ut-docs#5214; floor checked by guard-macos-min-version.sh).
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(plutil -extract LSMinimumSystemVersion raw packaging/macos/Info.plist)}"
+export MACOSX_DEPLOYMENT_TARGET
 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
   go build -tags desktop -ldflags "$LDFLAGS" -o "$APP/Contents/MacOS/unitill-desktop" ./cmd/unitill-desktop
+# Fail if the target did not take effect (forced internal linker, SDK change).
+minos="$(vtool -show-build "$APP/Contents/MacOS/unitill-desktop" | awk '$1 == "minos" { print $2; exit }')"
+if [ "$minos" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
+  echo "unitill-desktop minos is '${minos}', want ${MACOSX_DEPLOYMENT_TARGET} (ut-docs#5214)" >&2
+  exit 1
+fi
 
 echo "==> staging web assets"
 # web/ is a resource, not code, so it goes in Contents/Resources (codesign
@@ -56,6 +70,9 @@ cp packaging/pos.env.example "$APP/Contents/Resources/pos.env"
 
 echo "==> Info.plist"
 sed "s/__VERSION__/${VERSION}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+# Localised Local Network permission text (<lang>.lproj/InfoPlist.strings,
+# ut-docs#5026). Staged before codesign so the bundle seal covers it.
+cp -R packaging/macos/Resources/. "$APP/Contents/Resources/"
 
 echo "==> app icon"
 ICONSET="$(mktemp -d)/AppIcon.iconset"
@@ -96,7 +113,7 @@ fi
 # the hardened runtime + a secure timestamp, which is what notarization
 # requires. Without it we ad-hoc sign (`--sign -`): free, and required for
 # Apple Silicon to run the app at all, but a downloaded copy still hits
-# Gatekeeper (right-click → Open). See docs/arch/desktop-app.md.
+# Gatekeeper (Open Anyway / the .command helper). See docs/arch/desktop-app.md.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   echo "==> codesign with Developer ID: $MACOS_SIGN_IDENTITY"
   SIGN_ARGS=(--force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY")
@@ -105,16 +122,26 @@ else
   SIGN_ARGS=(--force --timestamp=none --sign -)
 fi
 # Sign inner binaries first, then the bundle, so --verify passes.
-codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/unitill-pos"
+# unitill-pos needs allow-unsigned-executable-memory (wazero compiles WASM to
+# machine code with mmap+mprotect) or the hardened runtime kills it on start
+# (ut-docs#5023). The bundle pass has no --deep: it re-signs nested code
+# and silently drops the entitlements just applied (the check below guards it).
+ENTITLEMENTS="$REPO_ROOT/packaging/macos/entitlements.plist"
+codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS" "$APP/Contents/MacOS/unitill-pos"
 codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/unitill-desktop"
-codesign "${SIGN_ARGS[@]}" --deep "$APP"
-codesign --verify --deep --strict "$APP" && echo "    signature valid"
+codesign "${SIGN_ARGS[@]}" "$APP"
+codesign --verify --deep --strict "$APP" || { echo "ERROR: bundle signature invalid" >&2; exit 1; }
+echo "    signature valid"
+POS_ENTS="$(codesign -d --entitlements - "$APP/Contents/MacOS/unitill-pos" 2>&1)" || true
+case "$POS_ENTS" in
+  *com.apple.security.cs.allow-unsigned-executable-memory*"[Bool] true"*) ;;
+  *) echo "ERROR: unitill-pos lost its allow-unsigned-executable-memory entitlement" >&2; exit 1 ;;
+esac
 
 echo
 echo "Built: $APP"
 if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
-  echo "NOTE: ad-hoc signed — downloaded copies need right-click → Open. Set"
-  echo "      MACOS_SIGN_IDENTITY (+ notarize in make-dmg.sh) for a clean open."
+  echo "NOTE: ad-hoc signed (fork/local build) — downloaded copies need Open Anyway in System Settings → Privacy & Security, or \"Open Universal Till.command\" in the .dmg. Set MACOS_SIGN_IDENTITY (+ notarize in make-dmg.sh) for a clean open."
 fi
 echo "Run locally:  open \"$APP\""
 echo "Distribute:   packaging/macos/make-dmg.sh \"$VERSION\" \"$OUTDIR\""

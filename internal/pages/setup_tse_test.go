@@ -166,9 +166,7 @@ func TestSetupWizardDE_TSEOfflineCompletesAndLeavesPendingKickoff(t *testing.T) 
 	mux, _, d := newFullAuthDeps(t)
 	restoreCurrencyAfter(t)
 	initTestPaths(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	configureTSECloud(d, dead.URL)
-	dead.Close()
+	configureTSECloud(d, unreachableURL())
 
 	rec := postForm(mux, "/api/setup", deWizardForm(), nil)
 	if rec.Code != http.StatusSeeOther {
@@ -1213,9 +1211,7 @@ func TestSetupWizardDE_PendingKickoffDoesNotSurfaceInline(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	restoreCurrencyAfter(t)
 	initTestPaths(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	configureTSECloud(d, dead.URL)
-	dead.Close()
+	configureTSECloud(d, unreachableURL())
 
 	rec := postForm(mux, "/api/setup", deWizardForm(), nil)
 	if rec.Code != http.StatusSeeOther {

@@ -30,7 +30,7 @@ func TestPlanNamesAreNotTranslated(t *testing.T) {
 	}
 	for _, name := range names {
 		m := load(name)
-		for _, k := range []string{"subscription.plan.shop", "subscription.plan.pro", "subscription.plan.chain"} {
+		for _, k := range []string{"subscription.plan.local_plus", "subscription.plan.shop", "subscription.plan.pro", "subscription.plan.chain"} {
 			if got, ok := m[k]; ok && got != en[k] {
 				t.Errorf("%s: %s = %q, want the product name %q", name, k, got, en[k])
 			}

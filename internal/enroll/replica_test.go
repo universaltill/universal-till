@@ -68,7 +68,7 @@ type fakePrimary struct {
 	leakToken bool
 	// entitlement, when set, rides in the answer as the main till's
 	// cached entitlement (ut-docs#2792).
-	entitlement map[string]string
+	entitlement map[string]any
 	// redeemCode, when set, rides in the answer as the cloud's one-time
 	// redeem code for the replica (ADR-0116 D3).
 	redeemCode string
@@ -509,9 +509,9 @@ func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
 	resetState()
 	fastRetries(t)
 	primary := newFakePrimary(t, 0, 0)
-	primary.entitlement = map[string]string{
+	primary.entitlement = map[string]any{
 		"plan": "pro", "subscription_status": "active",
-		"expires_at": "2026-12-31T00:00:00Z", "last_confirmed_at": "2026-09-20T10:00:00Z",
+		"expires_at": "2026-12-31T00:00:00Z", "last_confirmed_at": "2026-09-20T10:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 	}
 	kv := newFakeKV()
 	for k, v := range map[string]string{
@@ -532,7 +532,7 @@ func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
 	for k, want := range map[string]string{
 		"entitlement.plan":                "pro",
 		"entitlement.subscription_status": "active",
-		"entitlement.expires_at":          "2026-12-31T00:00:00Z",
+		"entitlement.expires_at":          "2026-12-31T00:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 		"entitlement.last_confirmed_at":   "2026-09-20T10:00:00Z",
 	} {
 		if got := kv.get(k); got != want {
@@ -661,5 +661,85 @@ func TestRegisterNowBusySlotIsSentinel(t *testing.T) {
 	_, err := RegisterNow(ctx, freshConfig("http://127.0.0.1:1"), newFakeKV())
 	if !errors.Is(err, ErrAttemptBusy) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want ErrAttemptBusy wrapping DeadlineExceeded", err)
+	}
+}
+
+// ut-docs#5162: a restored replica has no bearer until it joins again. That
+// is a steady state, not a failure: the loop waits the longest delay and
+// logs nothing.
+func TestReplicaAttempt_UnpairedIsQuiet(t *testing.T) {
+	logs := captureLog(t)
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), keySyncPrimaryURL, "http://192.168.1.5:8080") // bearer cleared by the restore check
+	fastRetries(t)
+	src := primarySource{kv: kv}
+	wait, ok := replicaAttempt(context.Background(), config.MarketplaceConfig{}, kv, src, 0)
+	if ok {
+		t.Fatal("an unpaired replica cannot succeed")
+	}
+	if want := replicaRetryDelays[len(replicaRetryDelays)-1]; wait != want {
+		t.Fatalf("wait = %v, want the longest backoff %v", wait, want)
+	}
+	if out := logs.String(); strings.Contains(out, "not a paired replica") || strings.Contains(out, "could not register") {
+		t.Fatalf("an unpaired replica must not log each try:\n%s", out)
+	}
+}
+
+// ut-docs#3532: the main till relays whether the store is claimed; the
+// replica stores it so its chip and installs word a rejected credential
+// the same way. A relay without the field leaves the replica's own value.
+func TestReplicaStoresRelayedClaimed(t *testing.T) {
+	resetState()
+	fastRetries(t)
+	primary := newFakePrimary(t, 0, 0)
+	primary.entitlement = map[string]any{
+		"plan": "local", "subscription_status": "none",
+		"expires_at": "", "last_confirmed_at": "2026-09-20T10:00:00Z", "claimed": true, // fixed-date:ok relayed confirmation, only compared with another fixed value
+	}
+	kv := newFakeKV()
+	for k, v := range map[string]string{
+		"sync.primary_url": primary.srv.URL,
+		"sync.bearer":      "replica-bearer",
+		"sync.till_id":     "till-row-2",
+		keyPublicKey:       pinnedKey,
+	} {
+		_ = kv.Set(context.Background(), k, v)
+	}
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1/api"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	t.Cleanup(func() { cancel(); wg.Wait() })
+
+	Init(ctx, cfg, kv, &wg)
+	waitFor(t, "relayed entitlement", func() bool { return kv.get("entitlement.last_confirmed_at") != "" })
+	if got := kv.get(entitlement.KeyStoreClaimed); got != "true" {
+		t.Fatalf("entitlement.claimed = %q, want true", got)
+	}
+	if c, known := entitlement.StoreClaimed(context.Background(), kv); !known || !c {
+		t.Fatalf("StoreClaimed on the replica = (%v, %v), want (true, true)", c, known)
+	}
+}
+
+func TestRelayWithoutClaimedKeepsReplicaValue(t *testing.T) {
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), entitlement.KeyStoreClaimed, "true")
+	_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")                                                                  // fixed-date:ok compared only with another fixed value
+	applyRelayedEntitlement(context.Background(), kv, &entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}) // fixed-date:ok compared only with another fixed value
+	if kv.get("entitlement.plan") != "pro" {
+		t.Fatal("control: the relay was not applied")
+	}
+	if got := kv.get(entitlement.KeyStoreClaimed); got != "true" {
+		t.Fatalf("entitlement.claimed = %q, want the replica's own value kept", got)
+	}
+}
+
+func TestOlderRelayedConfirmationDoesNotWriteClaimed(t *testing.T) {
+	no := false
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), entitlement.KeyStoreClaimed, "true")
+	_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")                                                                                // fixed-date:ok compared only with another fixed value
+	applyRelayedEntitlement(context.Background(), kv, &entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-18T10:00:00Z", Claimed: &no}) // fixed-date:ok compared only with another fixed value
+	if got := kv.get(entitlement.KeyStoreClaimed); got != "true" {
+		t.Fatalf("entitlement.claimed = %q, an older relay must not overwrite it", got)
 	}
 }

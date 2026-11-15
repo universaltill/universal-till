@@ -261,7 +261,7 @@ func TestDownloadToStoreValidation(t *testing.T) {
 
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 	if _, err := installer.DownloadToStore(ctx, MarketplaceInstallRequest{}); err == nil || !strings.Contains(err.Error(), "listing_id is required") {
 		t.Fatalf("empty listing accepted: %v", err)
 	}
@@ -312,14 +312,14 @@ func TestInstallFromStoreGuards(t *testing.T) {
 	// No public key configured → refuse to install anything from the store.
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 	if _, err := installer.InstallFromStore(ctx, "listing-1", "verified"); err == nil || !strings.Contains(err.Error(), "public key not configured") {
 		t.Fatalf("keyless install allowed: %v", err)
 	}
 
 	// Key configured but nothing staged.
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	installer2 := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", hex.EncodeToString(pub)), db)
+	installer2 := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", hex.EncodeToString(pub)), db)
 	if _, err := installer2.InstallFromStore(ctx, "listing-missing", "verified"); err == nil || !strings.Contains(err.Error(), "no downloaded bundle") {
 		t.Fatalf("missing stage accepted: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestInstallFromStoreGuards(t *testing.T) {
 func TestGetStoreDownloadCorruptAndOrphanRecords(t *testing.T) {
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 
 	dir := installer.storeDownloadsDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -364,7 +364,7 @@ func TestGetStoreDownloadCorruptAndOrphanRecords(t *testing.T) {
 	}
 
 	// And an empty/missing downloads dir lists empty.
-	installer2 := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer2 := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 	if got := installer2.ListStoreDownloads(); len(got) != 0 {
 		t.Fatalf("expected empty list, got %+v", got)
 	}
@@ -373,7 +373,7 @@ func TestGetStoreDownloadCorruptAndOrphanRecords(t *testing.T) {
 func TestDeleteStoreDownload(t *testing.T) {
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 
 	// Deleting a non-existent stage is a no-op, not an error.
 	if err := installer.DeleteStoreDownload("nothing-there"); err != nil {
@@ -411,7 +411,7 @@ func TestDeleteStoreDownload(t *testing.T) {
 func TestSweepStoreDownloadsRemovesStaleFiles(t *testing.T) {
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 
 	dir := installer.storeDownloadsDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -453,7 +453,7 @@ func TestSweepStoreDownloadsRemovesStaleFiles(t *testing.T) {
 func TestSweepStoreDownloadsRemovesStaleOrphan(t *testing.T) {
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 
 	dir := installer.storeDownloadsDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -481,7 +481,7 @@ func TestSweepStoreDownloadsRemovesStaleOrphan(t *testing.T) {
 func TestSweepStoreDownloadsIgnoresMissingDir(t *testing.T) {
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 
 	// No MkdirAll here — the dir genuinely doesn't exist.
 	installer.sweepStoreDownloads() // must not panic or error
@@ -494,7 +494,7 @@ func TestSweepStoreDownloadsIgnoresMissingDir(t *testing.T) {
 func TestListStoreDownloadsSweepsStaleEntries(t *testing.T) {
 	db := openMarketplaceInstallerDB(t)
 	defer db.Close()
-	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:0", ""), db)
+	installer := newTestMarketplaceInstaller(t, storeTestConfig("http://127.0.0.1:1", ""), db)
 
 	dir := installer.storeDownloadsDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

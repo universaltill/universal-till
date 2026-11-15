@@ -506,9 +506,7 @@ func TestPrune_ClockJumpStillNeedsSecondMiss(t *testing.T) {
 	h.clock = h.clock.Add(2 * time.Hour)
 	// The main is unreachable on the next tick: no manifest, no miss.
 	paths.Init(h.replicaRoot)
-	down := httptest.NewServer(http.NotFoundHandler())
-	down.Close()
-	syncAssets(context.Background(), down.Client(), down.URL, "tok-assets", h.pruner())
+	syncAssets(context.Background(), &http.Client{}, unreachableURL(), "tok-assets", h.pruner())
 	local := h.replicaFile("items", "itm001/thumb.png")
 	if !exists(local) {
 		t.Fatal("expected no prune without a second complete manifest")

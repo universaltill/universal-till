@@ -39,7 +39,8 @@ var (
 )
 
 // Value is one before/after cell, formatted for the operator's locale at
-// render time. Kind: "none" (—), "text", "money" (Minor) or "number".
+// render time. Kind: "none" (—), "text", "money" (Minor), "number", or
+// "key" (Text is a core locale key, translated at render).
 type Value struct {
 	Kind   string  `json:"kind"`
 	Text   string  `json:"text,omitempty"`
@@ -50,7 +51,10 @@ type Value struct {
 // Row is one change as the operator sees it: the item, the changed field
 // (a core locale key), before and after.
 type Row struct {
-	Item     string `json:"item"`
+	Item string `json:"item"`
+	// ItemKey, when set, is a core locale key shown instead of Item
+	// (translated at render; settings.set.v1 names the setting this way).
+	ItemKey  string `json:"item_key,omitempty"`
 	FieldKey string `json:"field"`
 	Before   Value  `json:"before"`
 	After    Value  `json:"after"`
@@ -69,9 +73,18 @@ type StockChange struct {
 	Delta      float64
 }
 
+// SettingChange is one applied settings write, for the caller's
+// after-commit refresh of the live runtime state.
+type SettingChange struct {
+	Key   string
+	Value string
+}
+
 // Result is what Apply did.
 type Result struct {
-	Changes int
+	// Settings: the keys settings.set.v1 wrote.
+	Settings []SettingChange
+	Changes  int
 	// CreatedItems: the ids catalog.item.create.v1 inserted.
 	CreatedItems []string
 	Stock        []StockChange

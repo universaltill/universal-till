@@ -50,7 +50,7 @@ var ErrCloudHostedPlugin = errors.New("plugin runs in the cloud, not on a till")
 var (
 	channelCapabilityEntities = []string{
 		"items", "variants", "categories", "images", "stock", "orders",
-		"fulfilment", "refunds", "cancel", "customers", "compare_at",
+		"fulfilment", "refunds", "cancel", "customers", "compare_at", "item_create",
 	}
 	channelCapabilityDirections = []string{"push", "pull", "both"}
 	channelKinds                = []string{"webshop", "marketplace"}
@@ -248,6 +248,9 @@ func validateChannelBlock(pluginID string, c *ManifestChannel) error {
 	if l := c.Limits; l != nil && (l.MaxOptions < 0 || l.MaxVariants < 0) {
 		return errors.New("manifest channel.limits must not be negative")
 	}
+	if err := validateChannelPushFields(c.PushFields); err != nil {
+		return err
+	}
 	if err := validateChannelWebhooks(c.Webhooks); err != nil {
 		return err
 	}
@@ -263,6 +266,24 @@ func validateChannelBlock(pluginID string, c *ManifestChannel) error {
 		if s.JitterS < 0 || s.JitterS > s.EveryS {
 			return fmt.Errorf("manifest channel.schedules[%d].jitter_s must be between 0 and every_s (got %d)", i, s.JitterS)
 		}
+	}
+	return nil
+}
+
+// channelPushFields are the values channel.push_fields may list (ut-docs#4911).
+var channelPushFields = []string{"name", "description", "sku", "barcodes", "price", "compare_at", "category_path"}
+
+// validateChannelPushFields: every value known, none twice. Empty = every field.
+func validateChannelPushFields(fields []string) error {
+	seen := map[string]bool{}
+	for _, f := range fields {
+		if !slices.Contains(channelPushFields, f) {
+			return fmt.Errorf("manifest channel.push_fields has unknown field %q (allowed: %s)", f, strings.Join(channelPushFields, ", "))
+		}
+		if seen[f] {
+			return fmt.Errorf("manifest channel.push_fields lists %q twice", f)
+		}
+		seen[f] = true
 	}
 	return nil
 }

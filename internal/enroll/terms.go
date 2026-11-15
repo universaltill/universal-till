@@ -79,9 +79,10 @@ func RecordTermsAcceptance(ctx context.Context, kv Settings, locale string) erro
 
 // AcceptedTerms returns the stored acceptance; ok is true only when it is of
 // the current TermsVersion (an older acceptance does not cover a new text).
-// register() sends the acceptance only when ok. Non-UI triggers
-// (EnsureRegistered from a plugin install) never ask: they send an
-// acceptance only if one is already recorded.
+// register() sends the acceptance only when ok. The plugin store's Download
+// and install-from-marketplace ask first (ut-docs#4791); the other lazy
+// triggers (wizard base plugins, cloud-directed installs, update, TSE) never
+// ask: they send an acceptance only if one is already recorded.
 func AcceptedTerms(ctx context.Context, kv Settings) (version, locale, acceptedAt string, ok bool) {
 	version, _, _ = kv.Get(ctx, keyTermsVersion)
 	if version != TermsVersion {

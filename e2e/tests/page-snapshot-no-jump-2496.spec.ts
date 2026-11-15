@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, stubPairingStream } from './fixtures';
 import { watchConsole } from './helpers';
 
 // ut-docs#2496 (reopened 2026-09-25) / ADR-0118: "it first removes the lower
@@ -224,6 +224,7 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
 
   test('a touch tap during the transition lands on the new page, never on the overlay', async ({ browser, baseURL }) => {
     const ctx = await browser.newContext({ baseURL, hasTouch: true });
+    await stubPairingStream(ctx); // ut-docs#2743: networkidle
     const page = await ctx.newPage();
     const assertClean = watchConsole(page);
     try {

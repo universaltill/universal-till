@@ -309,7 +309,7 @@ func TestTillRoleChange_RefusedOnAJoinedTill(t *testing.T) {
 func TestSyncAdminAPI_CarriesRequestingTillsRole(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	tills := data.NewTillsRepo(dp.Db)
-	satID, err := tills.InsertTillWithRole(t.Context(), "Kiosk", hashBearer("token-kiosk"), data.TillRoleSatellite)
+	satID, _, err := tills.EnrolTill(t.Context(), "Kiosk", hashBearer("token-kiosk"), data.TillRoleSatellite, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func newTillRoleSettingsFixture(t *testing.T, role string) *tillRoleSettingsFixt
 	initTillRoleI18n(t)
 	f := &tillRoleSettingsFixture{main: newMigratedSyncDeps(t, "main.db"), replica: newMigratedSyncDeps(t, "replica.db")}
 	var err error
-	f.selfID, err = data.NewTillsRepo(f.main.Db).InsertTillWithRole(t.Context(), "Kiosk", hashBearer("token-self"), role)
+	f.selfID, _, err = data.NewTillsRepo(f.main.Db).EnrolTill(t.Context(), "Kiosk", hashBearer("token-self"), role, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func TestDisplayMode_AdditionalToSelfOrderAsksFirstThenBecomesSatellite(t *testi
 		t.Fatalf("self_order on an additional till: %d %q, want the confirm prompt", rec.Code, rec.Header().Get("X-UT-Response"))
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`id="confirm-modal"`, "Make this a satellite?", "Make satellite", `name="confirm_satellite" value="1"`, `hx-post="/api/settings/display-mode"`} {
+	for _, want := range []string{`id="confirm-modal"`, "data-ut-escape-close", "data-ut-prompt", "Make this a satellite?", "Make satellite", `name="confirm_satellite" value="1"`, `hx-post="/api/settings/display-mode"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("confirm prompt missing %q:\n%s", want, body)
 		}

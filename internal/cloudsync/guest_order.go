@@ -57,6 +57,7 @@ const (
 	maxGuestOrderOptions    = 20
 	maxGuestOrderIDLen      = 64
 	maxGuestOrderRefLen     = 128
+	maxGuestOrderLocaleLen  = 35 // a BCP-47 tag (ut-docs#4715)
 	maxGuestOrdersPerTick   = 10
 	maxGuestResultRetries   = 20
 	guestOrderNotSupportedM = "guest_order is not supported on this till"
@@ -76,6 +77,9 @@ type GuestOrder struct {
 	DirectiveID string
 	TableToken  string
 	Lines       []GuestOrderLine
+	// Locale is the guest page's language (BCP-47, e.g. "de-DE"); "" when
+	// absent — untrusted, matched by the hook (ut-docs#4715).
+	Locale string
 }
 
 // GuestOrderLine is one ordered line: an item, an optional variant, an
@@ -190,7 +194,27 @@ func decodeGuestOrder(d directive) (o GuestOrder, refusal string) {
 		}
 		o.Lines = append(o.Lines, line)
 	}
+	if loc, ok := d.Payload["locale"].(string); ok {
+		o.Locale = cleanGuestLocale(loc)
+	}
 	return o, ""
+}
+
+// cleanGuestLocale returns loc trimmed when it is 1..35 bytes of
+// [A-Za-z0-9_-], else "" (the locale is optional, so a bad one is dropped).
+func cleanGuestLocale(loc string) string {
+	loc = strings.TrimSpace(loc)
+	if loc == "" || len(loc) > maxGuestOrderLocaleLen {
+		return ""
+	}
+	for _, c := range loc {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return ""
+		}
+	}
+	return loc
 }
 
 // guestOrderResult is one guest_order apply's outcome. deferred: the hook

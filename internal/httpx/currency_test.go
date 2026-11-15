@@ -3,9 +3,14 @@ package httpx
 import (
 	"regexp"
 	"testing"
+
+	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
 
 func TestFormatMoney(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	cases := []struct {
 		code, locale string
 		minor        int64
@@ -59,6 +64,9 @@ func TestFormatMoney(t *testing.T) {
 // FormatMoney itself stays free of bidi controls: it also feeds the ESC/POS
 // invoice raster, which has no bidi handling.
 func TestFormatMoneyDisplay(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	const lri, pdi = "\u2066", "\u2069"
 	cases := []struct {
 		code, locale string
@@ -327,18 +335,21 @@ func TestFormatMoney_LocaleGrouping(t *testing.T) {
 	InitCurrency("GBP")
 }
 
-// FormatMoneyLatin: same grouping convention as FormatMoney, but digit
+// FormatMoneyPrint: same grouping convention as FormatMoney, but digit
 // shape is always Latin — the ESC/POS receipt path (buildReceiptDoc) needs
 // this because non-Latin numeral glyphs need bitmap mode to print (spec).
-func TestFormatMoneyLatin(t *testing.T) {
+func TestFormatMoneyPrint_LatinDigitsAndGrouping(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	InitCurrency("EUR")
-	if got := FormatMoneyLatin(123456, "de-DE"); got != "€1.234,56" {
-		t.Errorf("FormatMoneyLatin de-DE = %q", got)
+	if got := FormatMoneyPrint(123456, "de-DE", "utf8"); got != "€1.234,56" {
+		t.Errorf("FormatMoneyPrint de-DE = %q", got)
 	}
-	// fa would digit-substitute under FormatMoney; Latin variant must not.
+	// fa would digit-substitute under FormatMoney; the print variant must not.
 	InitCurrency("IRR")
-	if got := FormatMoneyLatin(12345, "fa"); got != "12,345 ریال" {
-		t.Errorf("FormatMoneyLatin fa = %q, want Latin digits", got)
+	if got := FormatMoneyPrint(12345, "fa", "utf8"); got != "IRR 12,345" {
+		t.Errorf("FormatMoneyPrint fa = %q, want Latin digits and the code (no Arabic glyphs on a thermal head)", got)
 	}
 	InitCurrency("GBP")
 }
@@ -370,6 +381,9 @@ func TestFormatQty(t *testing.T) {
 // covering that the two mechanisms compose correctly, same as the
 // existing fa/ar regression checks above.
 func TestFormatMoney_IndianGrouping(t *testing.T) {
+	// These pin the symbol forms; auto mode is covered in currency_display_test.go.
+	InitCurrencyDisplay("symbol")
+	defer InitCurrencyDisplay("")
 	InitCurrency("INR")
 	cases := []struct {
 		locale string
@@ -599,5 +613,37 @@ func TestFuncsForBPPercentIsLocaleBound(t *testing.T) {
 		if got := fn(750); got != want {
 			t.Errorf("FuncsFor(%q) bpPercent(750) = %q, want %q", locale, got, want)
 		}
+	}
+}
+
+// An amount that carries its own currency code is formatted by that code's
+// ISO 4217 minor unit, whether or not the Settings picker offers it
+// (ut-docs#4768 review D1: a KWD channel order showed 125.00).
+func TestFormatMoneyIn_UsesTheCodesMinorUnit(t *testing.T) {
+	for _, c := range []struct {
+		minor      int64
+		code, want string
+	}{
+		{1200, "JPY", "¥1,200"},
+		{12500, "KWD", "KWD 12.500"},
+		{1250, "BHD", "BHD 1.250"},
+		{1200, "KRW", "KRW 1,200"},
+		{12345, "EUR", "€123.45"},
+		{12345, "CHF", "CHF 123.45"},
+	} {
+		if got := FormatMoneyIn(c.minor, c.code, "en"); got != c.want {
+			t.Errorf("FormatMoneyIn(%d, %s) = %q, want %q", c.minor, c.code, got, c.want)
+		}
+	}
+}
+
+// {{ moneyIn amount code }} is the template form.
+func TestMoneyInTemplateFunc(t *testing.T) {
+	f := FuncsFor("en")["moneyIn"].(func(any, string) string)
+	if got := f(int64(12500), "KWD"); got != "KWD 12.500" {
+		t.Errorf("moneyIn = %q", got)
+	}
+	if got := f(moneypkg.FromMinor(1200), "JPY"); got != "¥1,200" {
+		t.Errorf("moneyIn money = %q", got)
 	}
 }

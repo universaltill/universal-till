@@ -8,9 +8,10 @@ package iconid
 // the data has to sit at the leaf of that chain.
 //
 // Each entry is a tile at web/public/assets/category-icons/<Key>.svg
-// generated from the vendored upstream glyph named by ID (Lucide — ISC,
-// Tabler — MIT; catimport/iconsrc/<set>/<name>.svg with the LICENSE files
-// beside them). ID is that upstream glyph's own name, so it is also the
+// generated from the vendored glyph named by ID (Lucide — ISC, Tabler —
+// MIT, and "ut" — Universal Till's own original artwork, ut-docs#4840;
+// catimport/iconsrc/<set>/<name>.svg with the LICENSE files beside them).
+// ID is that glyph's own name, so it is also the
 // contract's icon id (manage-shop-catalog-api §0.12) — the id my.'s picker
 // stores for the same artwork. Rules, all pinned by tests:
 //   - a Key, once shipped, is never renamed or removed: shops' stored
@@ -112,6 +113,39 @@ var library = []LibraryIcon{
 	{"candy", "lucide:candy", "sweets", []string{"candy", "sweets", "confectionery"}},
 	{"lollipop", "lucide:lollipop", "sweets", []string{"lollipop"}},
 	{"chocolate", "tabler:chocolate", "sweets", []string{"chocolate", "chocolate bar", "praline"}},
+	// Barber tools (ut-docs#4840)
+	{"clippers", "ut:clippers", "barber", []string{"clippers", "clipper", "hair clippers", "cordless clipper", "haircut", "fade", "skin fade"}},
+	{"trimmer", "ut:trimmer", "barber", []string{"trimmer", "trimmers", "t-blade", "outliner", "detailer", "liner", "edger"}},
+	{"shaver", "tabler:razor-electric", "barber", []string{"shaver", "foil shaver", "electric shaver", "electric razor"}},
+	{"razor", "tabler:razor", "barber", []string{"razor", "safety razor", "straight razor", "cut throat", "shavette"}},
+	{"blades", "tabler:blade", "barber", []string{"blades", "razor blades", "double edge", "replacement blade", "blade set"}},
+	{"scissors", "lucide:scissors", "barber", []string{"scissors", "hair scissors", "cutting scissors"}},
+	{"shears", "tabler:scissors", "barber", []string{"shears", "thinning scissors", "thinners", "texturising", "texturizing"}},
+	{"comb", "ut:comb", "barber", []string{"comb", "combs", "cutting comb", "tail comb", "clipper guards", "attachment combs"}},
+	{"hairbrush", "ut:hairbrush", "barber", []string{"hairbrush", "hair brush", "brush", "paddle brush", "fade brush"}},
+	{"shaving-brush", "ut:shaving-brush", "barber", []string{"shaving brush", "neck duster", "duster", "badger"}},
+	{"cape", "ut:cape", "barber", []string{"cape", "capes", "cutting cape", "gown", "neck strips"}},
+	{"hair-dryer", "ut:hair-dryer", "barber", []string{"hair dryer", "hairdryer", "blow dryer", "blower"}},
+	{"mirror", "lucide:mirror-round", "barber", []string{"mirror", "hand mirror", "back mirror"}},
+	{"barber-chair", "ut:barber-chair", "barber", []string{"barber chair", "styling chair", "furniture", "salon chair"}},
+	{"towel", "lucide:towel-rack", "barber", []string{"towel", "towels", "hot towel", "neck towel"}},
+	{"spray-bottle", "tabler:spray", "barber", []string{"spray bottle", "water spray", "mister", "atomiser", "atomizer"}},
+	{"disinfectant", "tabler:hand-sanitizer", "barber", []string{"disinfectant", "sanitiser", "sanitizer", "barbicide", "hygiene", "cleaning"}},
+	{"clipper-oil", "lucide:droplet", "barber", []string{"clipper oil", "blade oil", "lubricant", "coolant"}},
+	{"charger", "lucide:plug", "barber", []string{"charger", "charging stand", "charging dock", "power cord", "cable"}},
+	{"battery", "lucide:battery-charging", "barber", []string{"battery", "rechargeable", "cordless battery"}},
+	{"spare-parts", "lucide:wrench", "barber", []string{"spare parts", "parts", "repair", "sharpening", "servicing", "maintenance"}},
+	// Hair & skin care (ut-docs#4840)
+	{"pomade", "ut:pomade", "grooming", []string{"pomade", "hair wax", "wax", "clay", "paste", "styling", "matte"}},
+	{"cream-tube", "lucide:tube-lotion", "grooming", []string{"gel", "hair gel", "cream", "shaving cream", "moisturiser", "moisturizer", "lotion", "face wash"}},
+	{"hair-spray", "lucide:spray-can", "grooming", []string{"hair spray", "hairspray", "spray", "texture spray", "sea salt spray", "deodorant"}},
+	{"shampoo", "lucide:soap-dispenser-droplet", "grooming", []string{"shampoo", "conditioner", "body wash", "soap", "hand wash"}},
+	{"beard-oil", "lucide:pipette", "grooming", []string{"beard oil", "oil", "serum", "dropper"}},
+	{"aftershave", "tabler:perfume", "grooming", []string{"aftershave", "after shave", "cologne", "fragrance", "perfume", "eau de toilette"}},
+	{"beard", "tabler:moustache", "grooming", []string{"beard", "moustache", "mustache", "beard care", "beard balm", "beard wax"}},
+	{"skin-care", "lucide:sparkles", "grooming", []string{"skin care", "skincare", "face care", "toner", "scrub", "face mask"}},
+	{"hair-colour", "lucide:droplets", "grooming", []string{"hair colour", "hair color", "hair dye", "dye", "tint", "bleach", "developer"}},
+	{"massage", "tabler:massage", "grooming", []string{"massage", "treatment", "facial", "head massage"}},
 	// General
 	{"generic", "", "general", []string{"item", "product", "other"}},
 	{"tag", "lucide:tag", "general", []string{"tag", "label", "price"}},

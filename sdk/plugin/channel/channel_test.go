@@ -74,6 +74,9 @@ func TestOrderCarriesNoPersonalFields(t *testing.T) {
 	// The wire types of an order have no field for a customer's name,
 	// address, email or phone: they are fetched live through AskContact and
 	// never stored. Walk the JSON tags of every type an order is made of.
+	// The one exemption mirrors the host gate (contract 9.3): `name` directly
+	// on an element of the top-level `lines` array, the product title. A
+	// `name` anywhere else (the customer included) still fails.
 	var walk func(rt reflect.Type, path string)
 	seen := map[reflect.Type]bool{}
 	walk = func(rt reflect.Type, path string) {
@@ -87,8 +90,9 @@ func TestOrderCarriesNoPersonalFields(t *testing.T) {
 		for i := 0; i < rt.NumField(); i++ {
 			f := rt.Field(i)
 			tag := strings.Split(f.Tag.Get("json"), ",")[0]
-			for _, banned := range []string{"name", "email", "phone", "address", "street", "city", "postcode", "zip"} {
-				if strings.Contains(tag, banned) {
+			productTitle := path == "Order.Lines" && rt == reflect.TypeOf(OrderLine{}) && tag == "name"
+			for _, banned := range []string{"name", "email", "phone", "mobile", "address", "street", "city", "postcode", "postal_code", "zip"} {
+				if strings.Contains(tag, banned) && !productTitle {
 					t.Errorf("%s.%s has json tag %q: personal data does not belong in a submitted order", path, f.Name, tag)
 				}
 			}
@@ -97,6 +101,97 @@ func TestOrderCarriesNoPersonalFields(t *testing.T) {
 	}
 	for _, v := range []any{Order{}, OrderUpdate{}, Refund{}, Customer{}} {
 		walk(reflect.TypeOf(v), reflect.TypeOf(v).Name())
+	}
+	if !seen[reflect.TypeOf(OrderLine{})] {
+		t.Fatal("the walk never reached OrderLine: the exemption would be untested")
+	}
+}
+
+// Contract 2 "Required fields of a submitted order record" and the cloud's
+// channelorder.Parse: a required number or boolean at zero/false must still
+// be on the wire, or the cloud rejects the record as invalid_order.
+func TestOrderZeroValuesKeepEveryRequiredKey(t *testing.T) {
+	o := Order{
+		Identity: Identity{ExternalID: "o-1", ExternalVersion: "1"},
+		PlacedAt: "2026-10-22T10:12:00Z", Currency: "GBP", Status: "new",
+		Lines: []OrderLine{{ExternalID: "l-1", Qty: 1}},
+	}
+	b, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"external_id", "external_version", "order_number", "placed_at", "currency", "status", "lines",
+		"shipping_minor", "shipping_tax_bp", "shipping_tax_included", "order_discount_minor", "tax_added_minor", "refund_total_minor", "total_minor"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("order key %q missing from %s", k, b)
+		}
+	}
+	for _, k := range []string{"payment_state", "customer", "cloud_id"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("optional order key %q sent when unset: %s", k, b)
+		}
+	}
+	lines, _ := got["lines"].([]any)
+	if len(lines) != 1 {
+		t.Fatalf("lines: %s", b)
+	}
+	line, _ := lines[0].(map[string]any)
+	for _, k := range []string{"external_id", "sku", "name", "qty", "unit_price_minor", "tax_bp", "tax_included", "discount_line_minor", "refunded_quantity", "restocked_quantity"} {
+		if _, ok := line[k]; !ok {
+			t.Errorf("line key %q missing from %s", k, b)
+		}
+	}
+	if _, ok := line["variant_external_id"]; ok {
+		t.Errorf("optional variant_external_id sent when unset: %s", b)
+	}
+}
+
+// The contract section 2 order example (invented data) must decode into Order
+// without an unknown field and encode back to the same JSON.
+func TestOrderContractExampleRoundTrips(t *testing.T) {
+	const example = `{
+  "external_id":"o-9001","external_version":"2026-10-22T10:12:00Z",
+  "order_number":"#1001","placed_at":"2026-10-22T10:12:00Z","currency":"GBP",
+  "status":"new","payment_state":"paid",
+  "lines":[{"external_id":"l-1","variant_external_id":"v-1","sku":"LS-M-BLU",
+    "name":"Linen shirt","qty":2,"unit_price_minor":3500,"tax_bp":2000,
+    "tax_included":true,"discount_line_minor":0,
+    "refunded_quantity":0,"restocked_quantity":0}],
+  "shipping_minor":399,"shipping_tax_bp":2000,"shipping_tax_included":true,
+  "order_discount_minor":0,"tax_added_minor":0,"refund_total_minor":0,
+  "total_minor":7399,
+  "customer":{"external_id":"c-77","country":"GB"}
+}`
+	var o Order
+	dec := json.NewDecoder(strings.NewReader(example))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&o); err != nil {
+		t.Fatal(err)
+	}
+	back, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, got map[string]any
+	if err := json.Unmarshal([]byte(example), &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(back, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("round trip differs:\nwant %v\n got %v", want, got)
+	}
+}
+
+// Contract 9.1: order_update and refund are the order shape, not a delta.
+func TestOrderUpdateAndRefundAreTheOrderShape(t *testing.T) {
+	if reflect.TypeOf(OrderUpdate{}) != reflect.TypeOf(Order{}) || reflect.TypeOf(Refund{}) != reflect.TypeOf(Order{}) {
+		t.Fatal("OrderUpdate and Refund must be the same type as Order (contract 9.1)")
 	}
 }
 
@@ -114,7 +209,7 @@ func TestHTTP_RoundTripAndBufferRetry(t *testing.T) {
 		return HTTPResponse{Status: 200, Headers: map[string]string{"X-A": "b"}, Body: big}, nil
 	}
 	UseFakeHost(t, h)
-	resp, err := HTTP(HTTPRequest{Method: "POST", URL: "https://a.demo-shop.example/api", Body: []byte(`{"q":1}`), CostHint: 12})
+	resp, err := HTTP(HTTPRequest{Method: "POST", URL: "https://a.demo-shop.example/api", Body: []byte(`{"q":1}`), CostHint: 12, Throttle: &Throttle{Available: 900, Maximum: 1000, RestoreRate: 50}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +218,9 @@ func TestHTTP_RoundTripAndBufferRetry(t *testing.T) {
 	}
 	if seen.Method != "POST" || string(seen.Body) != `{"q":1}` || seen.CostHint != 12 {
 		t.Fatalf("request did not survive: %+v", seen)
+	}
+	if seen.Throttle == nil || *seen.Throttle != (Throttle{Available: 900, Maximum: 1000, RestoreRate: 50}) {
+		t.Fatalf("throttle report did not survive: %+v", seen.Throttle)
 	}
 	if h.Calls[FnHTTP] != 2 {
 		t.Fatalf("the oversize first answer is retried once (2 calls), got %d", h.Calls[FnHTTP])
@@ -236,6 +334,68 @@ func TestDispatch_RoutesAsksAndRefusesUnknown(t *testing.T) {
 	}
 }
 
+func TestWebhookResult_OrderIDsRoundTripAndOmitWhenEmpty(t *testing.T) {
+	h := Handlers{
+		AskWebhook: func(e Event) (any, error) {
+			return WebhookResult{Account: "a", DedupeID: "d", Event: EventCustomerRedact, ResourceIDs: []string{"c-1"}, OrderIDs: []string{"o-1", "o-2"}}, nil
+		},
+	}
+	out, err := Dispatch(h, []byte(`{"id":"1","type":"`+AskWebhook+`","payload":{"headers":{},"body":""}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res WebhookResult
+	if err := json.Unmarshal(out, &res); err != nil || len(res.OrderIDs) != 2 || res.OrderIDs[1] != "o-2" {
+		t.Fatalf("order_ids lost: %s %v", out, err)
+	}
+	empty, _ := json.Marshal(WebhookResult{Account: "a", DedupeID: "d", Event: EventOrderChanged})
+	if strings.Contains(string(empty), "order_ids") {
+		t.Fatalf("empty order_ids must be omitted: %s", empty)
+	}
+}
+
+func TestWebhookResult_OrderIDsTruncatedRoundTripAndOmitWhenFalse(t *testing.T) {
+	in := WebhookResult{Account: "a", DedupeID: "d", Event: EventCustomerRedact, ResourceIDs: []string{"c-1"}, OrderIDs: []string{"o-1"}, OrderIDsTruncated: true}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res WebhookResult
+	if err := json.Unmarshal(b, &res); err != nil || !res.OrderIDsTruncated {
+		t.Fatalf("order_ids_truncated lost: %s %v", b, err)
+	}
+	if !strings.Contains(string(b), `"order_ids_truncated":true`) {
+		t.Fatalf("wrong key: %s", b)
+	}
+	in.OrderIDsTruncated = false
+	b, _ = json.Marshal(in)
+	if strings.Contains(string(b), "order_ids_truncated") {
+		t.Fatalf("false must be omitted: %s", b)
+	}
+}
+
+func TestConnectTestResult_LocationListEncodesSnakeCaseAndOmitsWhenEmpty(t *testing.T) {
+	b, err := json.Marshal(ConnectTestResult{AccountName: "Demo Shop", LocationList: []Location{
+		{ID: "gid://demo/Location/7", Name: "Main street", Active: true},
+		{ID: "gid://demo/Location/9", Name: "Warehouse", Active: false},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"location_list":[{"id":"gid://demo/Location/7","name":"Main street","active":true},{"id":"gid://demo/Location/9","name":"Warehouse","active":false}]`
+	if !strings.Contains(string(b), want) {
+		t.Fatalf("location_list wrong on the wire: %s", b)
+	}
+	var back ConnectTestResult
+	if err := json.Unmarshal(b, &back); err != nil || len(back.LocationList) != 2 || back.LocationList[1].Active {
+		t.Fatalf("location_list lost: %s %v", b, err)
+	}
+	empty, _ := json.Marshal(ConnectTestResult{AccountName: "Demo Shop"})
+	if strings.Contains(string(empty), "location_list") {
+		t.Fatalf("empty location_list must be omitted: %s", empty)
+	}
+}
+
 // The guest must link ONLY the "channel" module: importing the till's "ut"
 // SDK would add `ut` imports (storage, raw http, settings, secrets) a channel
 // guest must never have.
@@ -284,5 +444,59 @@ func TestWasmImportsMatchHostFunctionNames(t *testing.T) {
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("wasmimports %v != host function names %v", got, want)
+	}
+}
+
+func TestHTTP_NoThrottleStaysAbsentOnTheWire(t *testing.T) {
+	b, err := json.Marshal(HTTPRequest{URL: "https://a.demo-shop.example/x", CostHint: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "throttle") {
+		t.Fatalf("an absent report must not be sent: %s", b)
+	}
+	b, _ = json.Marshal(wireHTTPRequest{URL: "u", Throttle: &Throttle{Available: 1, Maximum: 2, RestoreRate: 3}})
+	if !strings.Contains(string(b), `"throttle":{"available":1,"maximum":2,"restore_rate":3}`) {
+		t.Fatalf("wire shape: %s", b)
+	}
+}
+
+// ut-docs#4904: a refund.create ack may report the refund money it moved; the
+// field is omitted when unset, so an older host never sees it.
+func TestAckRefundedAmountMinorIsOptionalOnTheWire(t *testing.T) {
+	if b, _ := json.Marshal(Ack{ExternalID: "o-1"}); strings.Contains(string(b), "refunded_amount_minor") {
+		t.Fatalf("an unset amount was sent: %s", b)
+	}
+	amount := int64(4000)
+	b, _ := json.Marshal(Ack{ExternalID: "o-1", RefundedAmountMinor: &amount})
+	if !strings.Contains(string(b), `"refunded_amount_minor":4000`) {
+		t.Fatalf("the amount is not on the wire: %s", b)
+	}
+	h := NewFakeHost()
+	h.Outbox = []OutboxOp{{ID: "op-r", Kind: OpRefundCreate}}
+	UseFakeHost(t, h)
+	if err := OutboxAck("op-r", Ack{ExternalID: "o-1", RefundedAmountMinor: &amount}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Acks["op-r"].RefundedAmountMinor; got == nil || *got != 4000 {
+		t.Fatalf("the host did not receive the amount: %v", got)
+	}
+}
+
+// ut-docs#4904: the fake host refuses an amount the cloud host refuses, so an
+// adapter's unit tests see the same -4 the real host answers.
+func TestFakeHostRefusesARefundedAmountTheCloudHostRefuses(t *testing.T) {
+	neg, huge, ok := int64(-1), int64(1)<<50+1, int64(10)
+	for name, a := range map[string]Ack{
+		"negative":        {RefundedAmountMinor: &neg},
+		"above 2^50":      {RefundedAmountMinor: &huge},
+		"beside an error": {RefundedAmountMinor: &ok, Error: &AckError{Code: "refund_exceeds_ceiling"}},
+	} {
+		h := NewFakeHost()
+		h.Outbox = []OutboxOp{{ID: "op-r", Kind: OpRefundCreate}}
+		UseFakeHost(t, h)
+		if err := OutboxAck("op-r", a); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: want ErrInvalid, got %v", name, err)
+		}
 	}
 }

@@ -79,3 +79,23 @@ func TestRegistryAssetsExist(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5124: Picture is the single item-picture rule shared by the tile,
+// the basket line and the item edit.
+func TestPicture(t *testing.T) {
+	beer := AssetPath("lucide:beer")
+	if beer == "" {
+		t.Fatal("registry lacks lucide:beer")
+	}
+	cases := []struct{ name, path, icon, want string }{
+		{"none", "", "", ""},
+		{"icon only", "", "lucide:beer", beer},
+		{"photo wins", "/public/assets/items/x/thumb.png", "lucide:beer", "/public/assets/items/x/thumb.png"},
+		{"unknown id falls back, never raw", "", "evil:<script>", AssetPath(Fallback)},
+	}
+	for _, c := range cases {
+		if got := Picture(c.path, c.icon); got != c.want {
+			t.Errorf("%s: Picture(%q,%q) = %q, want %q", c.name, c.path, c.icon, got, c.want)
+		}
+	}
+}

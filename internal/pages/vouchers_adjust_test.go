@@ -203,9 +203,7 @@ func TestVoucherAdjust_ReplicaPrimaryUnreachableRefuses(t *testing.T) {
 	mux, d := newVoucherImportTestMux(t)
 	repo := data.NewPOSRepo(d.Db)
 	vSeed(t, repo, data.Voucher{ID: "GS-1", OriginalAmountMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := unreachableURL()
 	setReplicaSettings(t, d.Settings, deadURL, "b-replica")
 
 	rec := vAdjust(t, mux, "GS-1", adjForm(adjUUID1, "1000", "5", "typo"), &vManager, true)

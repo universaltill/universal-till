@@ -147,15 +147,13 @@ func TestSetupInstallableTaxPlugin_IgnoresNonTaxListings(t *testing.T) {
 }
 
 // deadMarketplace points dp at a marketplace that refuses connections (a
-// closed local server fails immediately, no timeout wait) — a fully offline
-// first boot with nothing cached.
+// dial to port 1 on loopback fails immediately, no timeout wait) — a fully
+// offline first boot with nothing cached.
 func deadMarketplace(t *testing.T, dp *common.Deps) {
 	t.Helper()
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.EndpointURL = unreachableURL()
 	dp.Cfg.Marketplace.ClientID = "merchant-1"
 	dp.Cfg.Marketplace.StoreID = "store-1"
-	dead.Close()
 }
 
 // Catalog unreachable with nothing cached: catalogUnavailable=true (distinct
@@ -304,12 +302,9 @@ func TestSetupTaxPluginInstallFailureJoinsPendingList(t *testing.T) {
 	}
 
 	// ...then the network goes away before the operator taps the button. A
-	// closed local server fails immediately, so this doesn't wait out
-	// setupWizardTaxInstallTimeout's real 20s.
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
-	dp.Cfg.Marketplace.EndpointURL = deadURL
+	// dial to port 1 on loopback (unreachableURL) fails immediately, so this
+	// doesn't wait out setupWizardTaxInstallTimeout's real 20s.
+	dp.Cfg.Marketplace.EndpointURL = unreachableURL()
 
 	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
 	if rec.Code != http.StatusSeeOther {

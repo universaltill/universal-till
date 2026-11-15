@@ -89,7 +89,7 @@ func TestSnapshotIncludesStockLevels(t *testing.T) {
 	}
 
 	// Unchanged: no second push.
-	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), d.DB); err != nil {
+	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), d.DB, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(cloud.snapshots) != 1 {
@@ -101,7 +101,7 @@ func TestSnapshotIncludesStockLevels(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), d.DB); err != nil {
+	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), d.DB, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(cloud.snapshots) != 2 {

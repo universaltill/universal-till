@@ -227,3 +227,17 @@ func TestSyncPromote_ResolvesTheReplicasSyncProblems(t *testing.T) {
 		t.Fatalf("a promoted till still reports its replica sync problems: %+v", open)
 	}
 }
+
+// ut-docs#5428: the held-sale problem is replica-only and closes on promote.
+func TestResolveReplicaSyncProblems_ClosesSalePushTooLarge(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	logging.L().WarnProblemf(SalePushTooLargeProblemKey, "sync push: sale x is too large")
+	if !logging.HasOpenProblem(SalePushTooLargeProblemKey) {
+		t.Fatal("problem should be open")
+	}
+	resolveReplicaSyncProblems()
+	if logging.HasOpenProblem(SalePushTooLargeProblemKey) {
+		t.Fatal("promote should resolve the held-sale problem")
+	}
+}

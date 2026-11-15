@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- ut:clippers, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/ut/LICENSE -->
+  <rect width="64" height="64" fill="#E0E7FF"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#3730A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="6" y="4" width="12" height="5" rx="1"/>
+    <path d="M8 4V2"/>
+    <path d="M12 4V2"/>
+    <path d="M16 4V2"/>
+    <path d="M7 9h10l-1 11a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2z"/>
+    <path d="M12 13v3"/>
+  </g>
+</svg>

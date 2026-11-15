@@ -53,3 +53,14 @@ func TestPlansURL(t *testing.T) {
 		t.Fatalf("unknown intent = %q", got)
 	}
 }
+
+func TestPartnerURL(t *testing.T) {
+	got := PartnerURL("https://cloud.universaltill.com/api/", "store 1&x=2", "fa")
+	want := "https://cloud.universaltill.com/partner?lang=fa-ir&store=store+1%26x%3D2"
+	if got != want {
+		t.Fatalf("PartnerURL = %q, want %q", got, want)
+	}
+	if got := PartnerURL("http://127.0.0.1:8096", "s1", "../x"); got != "http://127.0.0.1:8096/partner?lang=en-gb&store=s1" {
+		t.Fatalf("bad locale = %q", got)
+	}
+}

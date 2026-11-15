@@ -1,11 +1,16 @@
 package catimport
 
-import "github.com/universaltill/universal-till/internal/iconid"
+import (
+	"strings"
+
+	"github.com/universaltill/universal-till/internal/iconid"
+)
 
 // Built-in category/item icon library (ut-docs#2506, first cut).
 //
 // Every icon is generated from a vendored upstream SVG under iconsrc/
-// (Lucide — ISC, Tabler — MIT; both LICENSE files sit next to the SVGs)
+// (Lucide — ISC, Tabler — MIT, and "ut", Universal Till's own artwork,
+// ut-docs#4840; each set's LICENSE file sits next to its SVGs)
 // into a 64×64 tile at web/public/assets/category-icons/<key>.svg by the
 // golden-file test in icons_render_test.go. TestCategoryIconTiles_InSync
 // fails when a tile, this registry and its source drift, so the files are
@@ -52,6 +57,8 @@ var iconGroups = []iconGroup{
 	{Key: "meals", Background: "#FFE4E6", Stroke: "#9F1239"},
 	{Key: "produce", Background: "#DCFCE7", Stroke: "#166534"},
 	{Key: "sweets", Background: "#FCE7F3", Stroke: "#9D174D"},
+	{Key: "barber", Background: "#E0E7FF", Stroke: "#3730A3"},
+	{Key: "grooming", Background: "#CCFBF1", Stroke: "#115E59"},
 	{Key: "general", Background: "#E2E8F0", Stroke: "#334155"},
 }
 
@@ -106,4 +113,43 @@ func BuiltinIconGroups() []BuiltinIconGroup {
 		})
 	}
 	return out
+}
+
+// PickerIconGroups is BuiltinIconGroups with each icon's Keywords replaced by
+// its search text for the picker filter (ut-docs#6042): the folded,
+// once-each words of its English keywords, its English label and its label
+// in each of locales (shop languages, default first), all via lookup
+// (exact locale, no fallback). A locale with no label adds nothing.
+func PickerIconGroups(locales []string, lookup LabelLookup) []BuiltinIconGroup {
+	groups := BuiltinIconGroups()
+	for gi := range groups {
+		for ii := range groups[gi].Icons {
+			ic := &groups[gi].Icons[ii]
+			sources := []string{ic.Keywords}
+			if lookup != nil {
+				seenLoc := map[string]bool{}
+				for _, loc := range append([]string{"en"}, locales...) {
+					if seenLoc[loc] {
+						continue
+					}
+					seenLoc[loc] = true
+					if v, ok := lookup(loc, ic.I18nKey); ok && strings.TrimSpace(v) != "" {
+						sources = append(sources, v)
+					}
+				}
+			}
+			seen := map[string]bool{}
+			var words []string
+			for _, src := range sources {
+				for _, w := range strings.Fields(FoldForSearch(src)) {
+					if !seen[w] {
+						seen[w] = true
+						words = append(words, w)
+					}
+				}
+			}
+			ic.Keywords = strings.Join(words, " ")
+		}
+	}
+	return groups
 }

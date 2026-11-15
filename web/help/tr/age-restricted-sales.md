@@ -3,6 +3,7 @@ id: age-restricted-sales
 title: Yaş sınırlı satışlar
 section: Günlük satış
 order: 27
+public: true
 summary: Kimlik kontrolü gerektiren ürünleri (alkol, tütün, elektronik sigara ve benzerleri) işaretleyin. Kasa, ödemeden önce kasiyerden kimlik kontrolünü kaydetmesini ister; self-servis kiosk ise müşteriyi kasaya yönlendirir.
 keywords: [yaş, yaş sınırı, kimlik kontrolü, kimlik, alkol, tütün, elektronik sigara, reddetme, yaş kanıtı]
 ---
@@ -47,8 +48,9 @@ yeniden ister.
 ## Self-servis kioskta
 
 Self-servis kiosk kimseyin kimliğini kontrol edemez, bu yüzden yaş sınırlı bir
-ürün içeren siparişin ödemesini almaz. Müşteri, personelin kimliği kontrol
-edeceği kasada ödeme yapmasını isteyen bir mesaj görür. Hiçbir ücret alınmaz ve
+ürün içeren siparişin ödemesini almaz. Müşteri ödemeye geçtiğinde, personelin
+kimliği kontrol edeceği kasada ödeme yapmasını isteyen bir mesaj görür ve ona
+seçebileceği bir ödeme yöntemi sunulmaz. Hiçbir ücret alınmaz ve
 sepeti olduğu gibi kalır. Kasada ödeme modunda sipariş her zamanki gibi kasaya
 gönderilir ve kasada ödenirken kasiyerin kimlik kontrolü uygulanır.
 
@@ -60,7 +62,7 @@ onaylanıp onaylanmadığı, hangi personelin yanıtladığı ve ne zaman. Redde
 Kayıt satışın kendisiyle birlikte yazılır; bu nedenle satışı olmayan bir kontrol
 asla bulunmaz.
 
-Bu kayıtlar mağazanızın geçmişinin bir parçasıdır. **İşlem geçmişini temizle** (Ayarlar → Veriler) bunları satışlarla birlikte arşivler ve o arşivi geri yüklerseniz geri getirir; **Katalog temizliği** ve **Örnek veriler** ise kimlik kontrolü kaydedilmiş her ürünü — yalnızca reddedilmiş olsa bile — korur.
+Bu kayıtlar mağazanızın geçmişinin bir parçasıdır. **İşlem geçmişini temizle** (Ayarlar → Veri yönetimi) bunları satışlarla birlikte arşivler ve o arşivi geri yüklerseniz geri getirir; **Katalog temizliği** ve **Örnek veriler** ise kimlik kontrolü kaydedilmiş her ürünü — yalnızca reddedilmiş olsa bile — korur.
 
 ## Bu özellik neyi yapar, neyi yapmaz
 

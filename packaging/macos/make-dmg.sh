@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Package "Universal Till.app" into a distributable .dmg with a drag-to-
 # Applications layout and a one-click "Open Universal Till" helper that clears
-# the download quarantine (so an unsigned/ad-hoc app opens without the
-# right-click dance).
+# the download quarantine (for an ad-hoc fork/local build: macOS 15+ otherwise
+# needs System Settings → Privacy & Security → Open Anyway; release builds are
+# Developer ID signed + notarized).
+#
+# MACOS_REQUIRE_NOTARIZED=1 (set by release.yml upstream, ut-docs#6025) turns
+# an ad-hoc or un-notarized result into a hard failure.
 #
 # Usage:  packaging/macos/make-dmg.sh [version] [dist-dir]
 # Assumes build-app.sh already produced "$DIST/Universal Till.app".
@@ -15,14 +19,19 @@ cd "$REPO_ROOT"
 
 APP="$DIST/Universal Till.app"
 [ -d "$APP" ] || { echo "no app at $APP — run build-app.sh first" >&2; exit 1; }
+if [ "${MACOS_REQUIRE_NOTARIZED:-}" = 1 ] && [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
+  echo "::error::MACOS_REQUIRE_NOTARIZED=1 but MACOS_SIGN_IDENTITY is empty — refusing an ad-hoc release .dmg (ut-docs#6025)" >&2
+  exit 1
+fi
 
 STAGE="$(mktemp -d)/dmg"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 
-# First-run helper: double-clicking it de-quarantines and opens the app, for
-# users who don't know the right-click → Open trick.
+# First-run helper: double-clicking it de-quarantines and opens the app, so a
+# quarantined ad-hoc app opens without the Open Anyway trip through System
+# Settings.
 cat > "$STAGE/Open Universal Till.command" <<'SH'
 #!/bin/bash
 cd "$(dirname "$0")"
@@ -99,6 +108,9 @@ if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
     xcrun stapler validate "$DMG"
     # Fails the build if Gatekeeper would not accept the notarized image.
     spctl --assess --type open --context context:primary-signature -v "$DMG"
+  elif [ "${MACOS_REQUIRE_NOTARIZED:-}" = 1 ]; then
+    echo "::error::MACOS_REQUIRE_NOTARIZED=1 but no complete notary credentials — refusing an un-notarized release .dmg (ut-docs#6025)" >&2
+    exit 1
   else
     echo "==> signed but not notarized (no notary credentials); Gatekeeper will still prompt"
   fi

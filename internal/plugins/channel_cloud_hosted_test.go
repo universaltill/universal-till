@@ -92,7 +92,7 @@ func TestImporter_RefusesCloudHostedPlugin(t *testing.T) {
 }
 
 func TestClassifyInstallError_CloudHostedIsPermanent(t *testing.T) {
-	f := ClassifyInstallError(errors.Join(errors.New("install"), ErrCloudHostedPlugin))
+	f := ClassifyInstallError(errors.Join(errors.New("install"), ErrCloudHostedPlugin), true)
 	if f.Retryable {
 		t.Fatal("a cloud-hosted plugin can never install on a till: not retryable")
 	}

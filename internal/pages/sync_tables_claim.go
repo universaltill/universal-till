@@ -67,7 +67,7 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 	// ordinary "someone else has it" answer (the replica renders the same
 	// occupied toast as a local race), never an error status.
 	mux.HandleFunc("POST /api/sync/tables/claim", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
@@ -97,7 +97,7 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 	// Release the calling till's own claim on table_id. Idempotent — a
 	// release with nothing to release is still 200/released.
 	mux.HandleFunc("POST /api/sync/tables/release", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
@@ -136,7 +136,7 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 	// can't tell it apart from a genuinely orphaned live-basket claim on
 	// its own. Idempotent, same as /release.
 	mux.HandleFunc("POST /api/sync/tables/release-all", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return

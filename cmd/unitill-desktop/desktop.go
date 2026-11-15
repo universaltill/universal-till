@@ -35,6 +35,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/procjob"
+	"github.com/universaltill/universal-till/web/locales"
 
 	"github.com/universaltill/universal-till/internal/recovery"
 )
@@ -206,20 +207,23 @@ func main() {
 	if err := procjob.KillWithParent(cmd.Process); err != nil {
 		logging.L().Warnf("till server %d is not tied to the shell's lifetime (it may outlive a crash): %v", cmd.Process.Pid, err)
 	}
-	// Reap the child to notice an early exit — except on macOS, where
-	// showWindow's close handler SIGTERMs the server by PID: a reaped PID
-	// can be reused by an unrelated process, while an unreaped zombie
-	// cannot. A nil channel there keeps the old wait-only behaviour.
-	var exited chan error
-	if runtime.GOOS != "darwin" {
-		exited = make(chan error, 1)
-		go func() {
-			defer logging.RecoverAndLog("desktop.childReap")
-			// On a panic exited is never signalled: waitForChild then sees only
-			// ready or timeout, so an early child exit is reported as a timeout.
-			exited <- cmd.Wait()
-		}()
-	}
+	// macOS close handler SIGTERMs the server by PID (webkit_darwin.go), so the
+	// PID is handed over at spawn time and cleared by markChildReaped the
+	// moment the child is reaped — a reaped PID can be reused by an
+	// unrelated process. No-op on other platforms.
+	setChildPid(cmd.Process.Pid)
+	// Reap the child on every platform to notice an early exit (a macOS
+	// kernel SIGKILL for an invalid code signature used to look like a plain
+	// 10s timeout and a blank window — ut-docs#5021).
+	exited := make(chan error, 1)
+	go func() {
+		defer logging.RecoverAndLog("desktop.childReap")
+		// On a panic exited is never signalled: waitForChild then sees only
+		// ready or timeout, so an early child exit is reported as a timeout.
+		err := cmd.Wait()
+		markChildReaped() // before exited is signalled, so the PID is cleared first
+		exited <- err
+	}()
 
 	// Wait (up to ~10s) for the server to accept connections, stopping early
 	// if it exits first (ut-docs#2760) so desktop.log says why.
@@ -234,13 +238,27 @@ func main() {
 	switch outcome {
 	case childExited:
 		logging.L().Errorf("till server exited before it accepted connections (%v); see till.log in the data folder for the reason — another Universal Till may already be running against the same data", exitErr)
+		// Nothing is listening: say so instead of opening the window on a
+		// dead URL (blank page, no guidance — ut-docs#5021).
+		reason := ""
+		if exitErr != nil {
+			reason = exitErr.Error()
+		}
+		logDir := filepath.Join(shellDataDir(os.Getenv("UT_DATA_DIR"), paths.Default()), "logs")
+		if p, on := shellLogPath(os.Getenv("UT_LOG_FILE"), os.Getenv("UT_DATA_DIR"), paths.Default(), runtime.GOOS); on {
+			logDir = filepath.Dir(p)
+		}
+		lang := availableShellLang(locales.FS, shellLang(os.Getenv, platformPreferredLang()))
+		page := startupFailurePage(loadShellTranslator(locales.FS, lang), lang, logDir, reason)
+		showStartupFailure("Universal Till", page, ctl)
+		return
 	case childTimedOut:
 		logging.L().Warnf("till server not answering on %s after 10s; opening the window anyway", addr)
 	}
 
 	// Blocks until the window closes. On macOS closing the window terminates the
-	// process (skipping the deferred Kill), so showWindow is told the server PID
-	// to stop it first.
+	// process (skipping the deferred Kill), so the window's close handler
+	// SIGTERMs the server PID set by setChildPid above.
 	showWindow("http://"+addr, "Universal Till", cmd.Process.Pid, ctl)
 }
 
