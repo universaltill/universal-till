@@ -294,6 +294,8 @@ func TestTillsPage_ReplicaShowsMainTillUnreachableNotice(t *testing.T) {
 	for k, v := range map[string]string{
 		"till.name":            "Front Counter",
 		"sync.primary_url":     "http://127.0.0.1:1",
+		"sync.bearer":          "b", // a paired replica (a restored copy has none, ut-docs#5162)
+		"sync.till_id":         "t",
 		"sync.last_contact_at": "2026-09-16T23:33:27Z",
 	} {
 		if err := dp.Settings.Set(ctx, k, v); err != nil {
@@ -322,5 +324,40 @@ func TestTillsPage_ReplicaShowsMainTillUnreachableNotice(t *testing.T) {
 	// The main till's row carries this replica's last contact, not "—".
 	if !strings.Contains(body, "2026") {
 		t.Fatal("the main till's row doesn't show when this till last reached it")
+	}
+}
+
+// ut-docs#5162: a restored copy keeps sync.primary_url but has no bearer. Its
+// Tills page says to join again, in a notice rather than a dialog, and does
+// not also claim the main till "isn't answering".
+func TestTillsPage_RestoredReplicaShowsRejoinNotice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	for k, v := range map[string]string{
+		"till.name":            "Front Counter",
+		"sync.primary_url":     "http://127.0.0.1:1",
+		"sync.last_contact_at": "2026-09-16T23:33:27Z", // old: would read unreachable if paired
+	} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, func(context.Context, time.Duration) ([]discovery.Candidate, error) {
+		return nil, nil
+	})
+	dp.PrimaryWatch.ContactFailed(ctx)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tills", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /tills = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="tills-needs-rejoin"`) || !strings.Contains(body, "notice-block-warn") ||
+		!strings.Contains(body, "Join the main till again") || !strings.Contains(body, "Don&#39;t revoke the till it was restored from") {
+		t.Fatalf("no join-again notice on the restored replica's Tills page: %s", body)
+	}
+	if strings.Contains(body, "tills-main-unreachable") {
+		t.Fatal("the unreachable notice must not show next to the join-again notice")
 	}
 }

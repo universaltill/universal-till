@@ -638,3 +638,125 @@ func TestCloudSetupShopTypeSideEffectsRunForTheCloudType(t *testing.T) {
 		t.Fatalf("%s = %q, want off for a service shop", data.OrderTypePromptModeKey, v)
 	}
 }
+
+// ut-docs#5127 path B: during a my.-first (cloud-paired) wizard the paired
+// credential is held in memory until the seed is written. A pending base
+// plugin (a language pack core does not bundle, a German fiscal plugin)
+// must not make the till register a till-born store of its own in that
+// window: Commit then adopts the paired identity and the till-born store
+// would be left behind as a silent orphan. UT-0 holds registration.
+func TestCloudSetupDoesNotRegisterATillBornStoreBeforeCommit(t *testing.T) {
+	mux, d, _, nonce := cloudWizard(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+
+	var registers atomic.Int32
+	var registersBeforeCommit int32 = -1
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/stores/pair"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(cloudStoreAnswer))
+		case strings.HasSuffix(r.URL.Path, "/v1/stores/register"):
+			registers.Add(1)
+			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
+		default:
+			mkt.server.Config.Handler.ServeHTTP(w, r)
+		}
+	}))
+	t.Cleanup(front.Close)
+	d.Cfg.Marketplace.EndpointURL = front.URL
+	d.Cfg.Marketplace.PublicKey = mkt.config().PublicKey
+
+	doCloudPair(mux, nonce, nil)
+	if err := addPendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+	prevCommit := commitCloudPairing
+	commitCloudPairing = func(ctx context.Context, d *common.Deps, p *enroll.FirstTillPairing) error {
+		registersBeforeCommit = registers.Load()
+		return prevCommit(ctx, d, p)
+	}
+	t.Cleanup(func() { commitCloudPairing = prevCommit })
+
+	rec := finalCloudPost(mux, nonce, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("final post: code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if registersBeforeCommit != 0 {
+		t.Fatalf("/v1/stores/register was called %d time(s) before the pairing was saved: a till-born store would be orphaned (ut-docs#5127)", registersBeforeCommit)
+	}
+	if enroll.RegistrationHeld() {
+		t.Fatal("registration is still held after the wizard finished")
+	}
+}
+
+// The hold follows the held pairing: dropped by "This is not my shop",
+// expired with it, cleared when setup finishes, and never taken by a pair
+// call that lands after setup finished (it would be stranded for good).
+func TestCloudPairHoldFollowsTheHeldPairing(t *testing.T) {
+	mux, _, _, nonce := cloudWizard(t)
+	doCloudPair(mux, nonce, nil)
+	if !enroll.RegistrationHeld() {
+		t.Fatal("a held pairing does not hold registration")
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, cloudPairReq("/api/setup/cloud-unpair", nonce, url.Values{}, nil))
+	if enroll.RegistrationHeld() {
+		t.Fatal("cloud-unpair left registration held")
+	}
+
+	s := &setupCloudState{}
+	s.ensureNonce()
+	prev := cloudPairNow
+	t.Cleanup(func() { cloudPairNow = prev; enroll.ReleaseRegistration() })
+	now := time.Now()
+	cloudPairNow = func() time.Time { return now }
+	s.hold(&enroll.FirstTillPairing{}, "Till 1")
+	if !enroll.RegistrationHeld() {
+		t.Fatal("hold() did not hold registration")
+	}
+	cloudPairNow = func() time.Time { return now.Add(cloudPairHold + time.Minute) }
+	if s.current() != nil || enroll.RegistrationHeld() {
+		t.Fatal("an expired pairing still holds registration")
+	}
+	cloudPairNow = func() time.Time { return now }
+	s.hold(&enroll.FirstTillPairing{}, "Till 1")
+	s.finish()
+	if enroll.RegistrationHeld() {
+		t.Fatal("finish() left registration held")
+	}
+	s.hold(&enroll.FirstTillPairing{}, "Till 1") // a late pair call after setup
+	if enroll.RegistrationHeld() || s.current() != nil {
+		t.Fatal("a pairing that landed after setup finished was held")
+	}
+}
+
+// After the pairing is saved the pending plugin is retried at once, not on
+// the 5-minute tick (ut-docs#5127, design 4.3).
+func TestCloudSetupNudgesBasePluginRetryAfterCommit(t *testing.T) {
+	mux, d, _, nonce := cloudWizard(t)
+	doCloudPair(mux, nonce, nil)
+	if err := addPendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Drain just before Commit: the install attempt's own nudge (a spec left
+	// pending) is already spent, so only the post-commit one can satisfy this.
+	prevCommit := commitCloudPairing
+	commitCloudPairing = func(ctx context.Context, d *common.Deps, p *enroll.FirstTillPairing) error {
+		select {
+		case <-basePluginRetryNudge:
+		default:
+		}
+		return prevCommit(ctx, d, p)
+	}
+	t.Cleanup(func() { commitCloudPairing = prevCommit })
+	if rec := finalCloudPost(mux, nonce, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("final post: code=%d", rec.Code)
+	}
+	select {
+	case <-basePluginRetryNudge:
+	default:
+		t.Fatal("no base-plugin retry was nudged after the pairing was saved")
+	}
+}

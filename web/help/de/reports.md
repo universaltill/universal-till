@@ -3,6 +3,7 @@ id: reports
 title: Berichte & Tagesabschluss
 section: Den Betrieb führen
 order: 210
+public: true
 summary: Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; tote Ware; umsatzstärkste Tage und Stunden; Margen; Steuerübersicht; Jahresvergleich — plus der Tagesabschlussbericht (Z) zum Kassieren.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
 keywords: [z-bericht, tagesabschluss, tageseinnahmen, journal, kassenjournal, schicht, prüfprotokoll, trinkgeld, tronc, servicegebühr, mitarbeiterzuweisung, yüzde usulü, trinkgeld-pool]
@@ -15,7 +16,7 @@ Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; to
 ## Verwendung
 
 1. Öffnen Sie „Berichte“: Die Zeile oben zeigt immer Ihre Kennzahlen für den gewählten Zeitraum (Umsatz, Verkäufe, Durchschnittsverkauf, Steuer, Rabatte, Rückerstattungen, Netto, Vorjahr) und eine Warnung bei niedrigem Bestand. Den Zeitraum wählen Sie mit den Chips darüber – Heute, Gestern, Diese Woche oder Dieser Monat; unter Benutzerdefiniert finden Sie weiterhin die bisherigen Auswahlfelder für eine Anzahl zurückliegender Tage, ein ganzes Jahr oder ein beliebiges Datum. Die Chips richten sich nach Ihrem Geschäftstagbeginn, sodass „Heute“ nach einem späten Abschluss noch der laufende Geschäftstag ist.
-2. Wählen Sie darunter einen Reiter — Umsatztrend, Artikel, Steuer, Prognose, Zahlungen & Kanäle, Trinkgeld oder Tagesabschluss (EOD) — und dieser Bericht lädt beim Öffnen.
+2. Wählen Sie darunter einen Reiter — Umsatztrend, Artikel, Steuer, Prognose, Zahlungen & Kanäle, Trinkgeld, Tagesabschluss (EOD) oder Online-Kanäle (sobald diese Kasse eine Online-Bestellung erfasst hat) — und dieser Bericht lädt beim Öffnen.
 3. Führen Sie Tagesabschluss (im Reiter „Tagesabschluss“) beim Schließen aus: Er summiert alles **seit Ihrem letzten Abschluss** — nicht den Kalendertag — und kann für Ihre Unterlagen gedruckt werden. Ein Café, das gestern um 19:19 Uhr geschlossen hat und heute um 19:19 Uhr schließt, erhält jeden Verkauf dazwischen im heutigen Bericht, einschließlich der Verkäufe von gestern Nacht nach 19:19 Uhr, die ein Kalendertag-Bericht sonst gestrandet hätte; alles, was nach dem heutigen Abschluss gebucht wird, gehört zum nächsten. Jeder Abschluss zeichnet den genauen Zeitpunkt auf, von dem bis zu dem er reicht, sodass Sie immer genau sehen können, was ein Bericht abdeckt: Der gedruckte Bericht trägt eine **Zeitraum**-Zeile, und die Archivliste zeigt dieselben beiden Zeitstempel nebeneinander (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in Ihrer eigenen Ortszeit. Ihr allererster Abschluss hat keinen früheren Abschluss, von dem aus er startet, und deckt daher alles bis zum Moment des Abschlusses ab und zeigt nur diesen einen Endzeitstempel.
 
 ## Berichtszeiträume
@@ -29,10 +30,21 @@ Neben der oberen Zeile wählen Sie, wie der Zeitraum berechnet wird:
   der Auswahl erscheint eine Datumsauswahl, damit Sie einen vergangenen
   Zeitraum betrachten können — wählen Sie z. B. Monat und ein Datum im
   Juli, um die Zahlen für Juli zu sehen, auch wenn heute im August ist.
-- Umsatztrend, Artikel, Steuer und Zahlungen & Kanäle verwenden jeweils den
-  ausgewählten Zeitraum, sodass sie immer mit den Zahlen oben übereinstimmen.
+- Umsatztrend, Artikel, Steuer und Zahlungen & Kanäle
+  verwenden jeweils den ausgewählten Zeitraum, sodass sie immer mit den Zahlen oben übereinstimmen.
+  Online-Kanäle folgt ebenfalls dem Zeitraum, ist aber von den Zahlen oben getrennt (siehe Online-Kanäle unten).
   Prognose und die Archivliste des Tagesabschlusses tun dies nicht — sie
   zeigen unabhängig vom Zeitraum-Umschalter ihre eigenen festen Fenster.
+
+## Online-Kanäle
+
+Der Reiter „Online-Kanäle“ summiert die Bestellungen aus Ihrem Webshop und von Marktplätzen (die unter „Online-Bestellungen“) für den gewählten Zeitraum: eine Zeile je Kanal und Währung. Er erscheint, sobald diese Kasse eine Online-Bestellung erfasst hat; nur die Hauptkasse erfasst sie.
+
+- Diese Bestellungen sind keine Kassenverkäufe. Sie stehen weder in den Zahlen oben in den Berichten noch in der Kassenlade, im Tagesabschluss (Z) oder im Fiskaljournal, und keine Umsatzzahl auf einem anderen Reiter ändert sich ihretwegen. Sie verringern aber den Bestand, daher können sich Bestandswarnungen, die Prognose und tote Ware nach einer Webbestellung ändern.
+- Bestellwert ist die Summe der Bestellungen, wie der Kanal sie gemeldet hat, mit Versand und einer vom Kanal hinzugefügten Steuer. Nach Erstattungen ist der Bestellwert abzüglich der Erstattungen.
+- Erstattungen sind das, was bisher für Bestellungen aus dem Zeitraum erstattet wurde, egal an welchem Tag erstattet wurde: Eine heute gewährte Erstattung für eine Bestellung vom letzten Monat erscheint im letzten Monat.
+- Eine Bestellung, die vor der Zahlung storniert wurde, wird nicht gezählt; der Reiter nennt die Anzahl. Eine Bestellung, die nach der Zahlung storniert wurde, wird gezählt, und ihre Erstattung nimmt sie wieder heraus.
+- Beträge bleiben in der Währung der jeweiligen Bestellung und werden nie über Währungen hinweg addiert. Verkaufen zwei oder mehr Kanäle in derselben Währung, addiert eine Summe-Zeile sie für diese Währung.
 
 ## Geschäftstagsbeginn
 
@@ -406,14 +418,14 @@ Der Reiter **Yüzde usulü** ist für Geschäfte in der Türkei, die einen
 *yüzde usulü*-Pool führen (İş Kanunu 4857 Art. 51): ein Prozentsatz, der
 eingenommen und unter den Mitarbeitern aufgeteilt wird. Er erscheint nur,
 wenn als Land des Geschäfts die Türkei eingestellt ist. Wie der Reiter
-Trinkgeld erfasst er, was eine Führungskraft ihm mitteilt — die Software
+Trinkgeld erfasst er, was ein Manager ihm mitteilt — die Software
 erkennt, berechnet oder bewegt von sich aus kein Geld und entscheidet
 nicht, ob Ihr Geschäft einen Pool führt oder zu welchem Prozentsatz.
 
 - **Keine Zeile auf dem Kundenbeleg** — eine türkische Servicegebühr-Zeile
   fügt diese Kasse einem Beleg nicht hinzu; eine Pool-Einnahme wird daher
-  separat von einer Führungskraft erfasst und erscheint nie auf einem Beleg.
-- **Eine Einnahme erfassen** — eine Führungskraft (Berechtigung
+  separat von einem Manager erfasst und erscheint nie auf einem Beleg.
+- **Eine Einnahme erfassen** — ein Manager (Berechtigung
   Mitarbeiterauszahlungen) wählt das Datum der Einnahme, den Betrag und
   optional eine Notiz zur Aufteilungsgrundlage („Küche 30 % / Service
   70 %“) und sendet ab. Das Datum darf nicht in der Zukunft liegen — erfasst

@@ -1,0 +1,44 @@
+# Deletes a release tag (and its draft release) that cleanup-orphaned-tag kept
+# for a runner retry which never came (ut-docs#5211). Release.yml keeps the tag
+# and draft of a workflow_dispatch run whose pre-publish job was starved of a
+# runner, expecting release-runner-retry.yml to re-run it; if that retry never
+# happens the tag would burn its version forever. Hourly, this sweeps those.
+#
+# What it never does (scripts/ci/release-orphan-tag-sweep.sh decides, with a
+# behaviour test): touch any run but the newest Release run (a re-dispatch may
+# have recreated the same tag with a draft in flight), touch a tag pushed by a
+# human, a run younger than ~2 h or older than 72 h, a run that is still in
+# progress, a run that did not leave
+# the keep warning, or any tag with a published release; on a failed lookup it
+# deletes nothing. It deletes only the annotated tag that run's `prepare` made
+# (sha, tagger and message checked). An orphan from a run that is no longer the
+# newest Release run is not swept (the version is already skipped by then);
+# delete it by hand if wanted.
+name: Release orphan tag sweep
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-orphan-tag-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # delete a draft release and its tag ref
+      actions: read # list Release runs and their jobs
+      checks: read # cleanup-orphaned-tag's annotations (keep vs delete)
+    steps:
+      - uses: actions/checkout@v7
+      - name: Sweep orphaned release tags
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/release-orphan-tag-sweep.sh

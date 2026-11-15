@@ -221,7 +221,7 @@ func TestReadCachedRoundTripsThroughRelayValues(t *testing.T) {
 	src := mapReader{
 		KeyPlan:               "pro",
 		KeySubscriptionStatus: StatusActive,
-		KeyExpiresAt:          "2026-12-31T00:00:00Z",
+		KeyExpiresAt:          "2026-12-31T00:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 		KeyLastConfirmedAt:    "2026-09-20T10:00:00Z",
 	}
 	c, ok := ReadCached(context.Background(), src)

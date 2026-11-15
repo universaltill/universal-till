@@ -3,6 +3,7 @@ id: quickstart
 title: Kasa nasıl kullanılır
 section: Günlük satış
 order: 5
+public: true
 summary: Normal bir gün için ihtiyacınız olan her şey, küçük adımlarla.
 ---
 

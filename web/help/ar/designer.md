@@ -3,6 +3,7 @@ id: designer
 title: مصمّم الإيصال
 section: إدارة العمل
 order: 240
+public: true
 summary: خصص ما يظهر على إيصالك (الشعار، الترويسة، التذييل) مع معاينة فورية وطباعة تجريبية قبل الحفظ.
 routes: [/receipt-designer]
 ---

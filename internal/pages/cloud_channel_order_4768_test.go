@@ -81,11 +81,19 @@ func TestCloudApplyChannelOrder_LeavesZReportDrawerAndFiscalJournalUnchanged(t *
 		t.Fatalf("message = %q", msg)
 	}
 
-	zAfter, _ := pos.EndOfDayInstant(t.Context(), from, to)
+	zAfter, err := pos.EndOfDayInstant(t.Context(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// GeneratedAt is time.Now at second resolution: not Z content (ut-docs#5137).
+	zBefore.GeneratedAt, zAfter.GeneratedAt = "", ""
 	if !reflect.DeepEqual(zBefore, zAfter) {
 		t.Errorf("Z report changed:\nbefore %+v\nafter  %+v", zBefore, zAfter)
 	}
-	journalAfter, _ := pos.ListRecentSales(t.Context(), 50)
+	journalAfter, err := pos.ListRecentSales(t.Context(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(journalBefore, journalAfter) {
 		t.Errorf("sales journal changed")
 	}

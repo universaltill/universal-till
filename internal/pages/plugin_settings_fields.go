@@ -289,3 +289,99 @@ func controlValue(m *plugins.Manifest, form map[string][]string, stored map[stri
 	}
 	return stored[key]
 }
+
+// settingVisibility answers, for one render or one save, which settings and
+// tabs are hidden (S1, ut-docs#4666) — the single place both
+// buildPluginSettingViews and validatePluginSettings ask, so the form that
+// is drawn and the form that is validated cannot disagree.
+//
+// A setting is skipped (not validated, not written) when its own show_when
+// is unmet or the tab it sits in is hidden. A controlling setting that is
+// itself skipped counts as holding its STORED value, not the submitted one:
+// the operator cannot see or change it, so what they typed there must not
+// decide what else shows (chained show_when, deferred from #4157's review).
+// The recursion is bounded by one visit per setting: a cycle the manifest
+// validation should already forbid reads the controller's current value.
+type settingVisibility struct {
+	m       *plugins.Manifest
+	stored  map[string]string
+	cur     map[string]string
+	skipMo  map[string]bool // memo of skipped()
+	working map[string]bool // keys being resolved: breaks a cycle
+}
+
+// newSettingVisibility prepares the checks for a manifest, the submitted
+// form (nil on a GET) and the stored control values.
+func newSettingVisibility(m *plugins.Manifest, form map[string][]string, stored map[string]string) *settingVisibility {
+	return &settingVisibility{m: m, stored: stored, cur: controlValues(m, form, stored), skipMo: map[string]bool{}, working: map[string]bool{}}
+}
+
+// effective is the value of a controlling setting as show_when sees it.
+func (v *settingVisibility) effective(key string) string {
+	if v.skipped(key) {
+		return v.stored[key]
+	}
+	return v.cur[key]
+}
+
+// fieldHidden reports whether a setting's own show_when hides it.
+func (v *settingVisibility) fieldHidden(key string) bool {
+	decl := v.m.SettingDecl(key)
+	if decl == nil || decl.ShowWhen == nil {
+		return false
+	}
+	return showWhenHidden(v.m, decl.ShowWhen, v.effective(decl.ShowWhen.Key))
+}
+
+// tabHidden reports whether a declared tab's show_when hides it.
+func (v *settingVisibility) tabHidden(id string) bool {
+	if v.m == nil || id == "" {
+		return false
+	}
+	for i := range v.m.SettingsTabs {
+		if t := v.m.SettingsTabs[i]; t.ID == id {
+			return t.ShowWhen != nil && showWhenHidden(v.m, t.ShowWhen, v.effective(t.ShowWhen.Key))
+		}
+	}
+	return false
+}
+
+// skipped reports whether a setting is hidden by its own show_when or by
+// its tab: neither validated nor written.
+func (v *settingVisibility) skipped(key string) bool {
+	if r, ok := v.skipMo[key]; ok {
+		return r
+	}
+	if v.working[key] {
+		return false
+	}
+	v.working[key] = true
+	r := v.fieldHidden(key)
+	if !r {
+		if decl := v.m.SettingDecl(key); decl != nil {
+			r = v.tabHidden(decl.Tab)
+		}
+	}
+	delete(v.working, key)
+	v.skipMo[key] = r
+	return r
+}
+
+// hideable reports whether a setting can ever be hidden (its own show_when
+// or its tab's), i.e. whether a setting controlled by it needs the stored
+// value to fall back on.
+func (v *settingVisibility) hideable(key string) bool {
+	decl := v.m.SettingDecl(key)
+	if decl == nil {
+		return false
+	}
+	if decl.ShowWhen != nil {
+		return true
+	}
+	for i := range v.m.SettingsTabs {
+		if t := v.m.SettingsTabs[i]; t.ID == decl.Tab {
+			return t.ShowWhen != nil
+		}
+	}
+	return false
+}

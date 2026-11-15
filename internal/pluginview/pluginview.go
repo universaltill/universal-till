@@ -158,6 +158,7 @@ type Component struct {
 	QR          *QR
 	WizardStep  *WizardStep
 	Confirm     *Confirm
+	ItemList    *ItemList
 	Chat        *Chat
 }
 
@@ -170,6 +171,27 @@ type Confirm struct {
 	Type     string `json:"type"`
 	Proposal string `json:"proposal"`
 }
+
+// ItemList is a list of catalogue items for core to draw (ut-docs#4128):
+// the plugin names item ids and, optionally, the gaps they were found by
+// (a 1..15 bitmask: 1 barcode, 2 image, 4 price, 8 category). Core looks
+// the items up itself and draws each one's name, thumbnail and link to its
+// edit page, and one link to the catalogue filtered the same way, only for
+// an operator who may manage the catalogue. The plugin supplies no word
+// and no URL.
+type ItemList struct {
+	Type    string   `json:"type"`
+	Items   []string `json:"items"`
+	Missing int      `json:"missing,omitempty"`
+}
+
+// MaxItemListItems and MaxItemLists bound item_list components.
+const (
+	MaxItemListItems = 50
+	MaxItemLists     = 3
+)
+
+var itemIDRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 // MaxConfirms bounds confirm components in one document (core's own
 // ceiling on open proposals per request is 3).
@@ -520,6 +542,9 @@ func decodeComponent(raw json.RawMessage) (Component, error) {
 	case "confirm":
 		c.Confirm = &Confirm{}
 		target = c.Confirm
+	case "item_list":
+		c.ItemList = &ItemList{}
+		target = c.ItemList
 	case "chat":
 		c.Chat = &Chat{}
 		target = c.Chat
@@ -542,6 +567,7 @@ type validator struct {
 	pagingParams map[string]bool
 	qrs          int
 	confirms     int
+	itemLists    int
 	chats        int
 }
 
@@ -704,6 +730,23 @@ func (v *validator) component(where string, c Component) {
 		}
 		if v.confirms++; v.confirms > MaxConfirms {
 			v.fail("%s: a document has at most %d confirm components", where, MaxConfirms)
+		}
+	case "item_list":
+		il := c.ItemList
+		if len(il.Items) == 0 || len(il.Items) > MaxItemListItems {
+			v.fail("%s needs 1..%d items", where, MaxItemListItems)
+		}
+		for _, id := range il.Items {
+			if !itemIDRe.MatchString(id) {
+				v.fail("%s: an item id must match %s", where, itemIDRe)
+				break
+			}
+		}
+		if il.Missing < 0 || il.Missing > 15 {
+			v.fail("%s missing must be 0..15", where)
+		}
+		if v.itemLists++; v.itemLists > MaxItemLists {
+			v.fail("%s: a document has at most %d item_list components", where, MaxItemLists)
 		}
 	case "chat":
 		v.chat(where, c.Chat)

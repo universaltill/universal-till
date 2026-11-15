@@ -3,6 +3,7 @@ id: promotions
 title: کدهای تخفیف
 section: راه‌اندازی فروشگاه
 order: 125
+public: true
 summary: کدهای تخفیفی که مشتریان هنگام پرداخت استفاده می‌کنند را ایجاد، ویرایش و غیرفعال کنید.
 routes: [/promotions]
 ---

@@ -3,6 +3,7 @@ id: backups
 title: Yedekler
 section: İşi yürütme
 order: 250
+public: true
 summary: Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indirip güvenli bir yerde saklayabilirsiniz.
 ---
 
@@ -27,6 +28,8 @@ yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
 Geri yükleme, yedek başka bir kasada alınmış olsa bile bu kasanın mağazanızın bulut hesabıyla kendi bağlantısını korur. Dosya bu kasanın kullanabileceği bir yedek değilse, kasa mevcut verilerinizi korur ve Ayarlar → Yedekler geri yüklemenin uygulanmadığını söyler.
 
+Geri yüklemeden sonra fiş numaraları ve Z numaraları ileri atlar; böylece kasanın yedekten sonra verdiği bir numara ikinci kez kullanılmaz. Ardından alınan ilk gün sonu raporu, kasanın bir yedekten geri yüklendiğini ve numaraların hangi numaradan devam ettiğini belirtir.
+
 ## Bir dosyadan geri yükleme
 
 Bunu yeni bir kasada ya da bozulan bir kasanın yerine konan kasada, eski kasadan kopyaladığınız bir yedek dosyasıyla kullanın (bir USB bellek, başka bir bilgisayar, İndirilenler klasörü).
@@ -39,7 +42,7 @@ Eski kasanın `backups` klasöründeki bir dosyayı ya da **İndirilenler’e ka
 
 Kurulumun sonunda karşılama sayfasında aynı yeri açan bir **Yedeği geri yükle** düğmesi vardır.
 
-Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur: onları yeniden girin.
+Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur, kasanın bulut bağlantısı da yoktur. Bir telefon veya iCloud yedeğini başka bir cihaza geri yüklerseniz ya da veritabanını başka bir cihaza kopyalarsanız, o cihaz kayıtsız başlar ve **Yeni cihazda geri yüklendi — yeniden bağlanın** uyarısını gösterir: Ayarlar → Kasa kaydı'ndan onu mağazayla yeniden eşleştirin veya yeni mağaza olarak kaydedin. Eklenti anahtarlarını ve parolalarını her eklentinin ayarlar sayfasında yeniden girin; okunamadığını söyleyen bir alan yeni bir değer ister. Katılmış bir kasa ise bunun yerine **Ana kasaya yeniden katıl** gösterir — Birden çok kasa bölümüne bakın.
 
 ## Bir kasayı değiştirme
 

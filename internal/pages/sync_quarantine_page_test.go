@@ -76,7 +76,7 @@ func TestSyncQuarantinePage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	// quarantineReasonKeys -- the raw allowlisted string persisted by
 	// quarantineJournalEntry must NOT appear verbatim; en.json's own
 	// translation of that key is what should render instead.
-	for _, want := range []string{"Front Counter", "T2-Q001", "Unknown voucher on redemption replay"} {
+	for _, want := range []string{"Front Counter", "T2-Q001", "Unknown voucher on replay (redemption or top-up)"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sync-quarantine page missing %q in rendered output:\n%s", want, body)
 		}

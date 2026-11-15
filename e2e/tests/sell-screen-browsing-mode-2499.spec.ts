@@ -218,7 +218,7 @@ test.describe('Sell screen browsing mode (ut-docs#2499)', () => {
     await expect(tiles.locator('.category-tile', { hasText: catB })).toBeVisible();
     // The count on the tile is ITEMS: catA has three active items, only
     // two of them quick buttons.
-    await expect(tileA).toContainText('3 item(s)');
+    await expect(tileA).toContainText('3 items');
 
     const modal = page.locator('#category-items-modal');
     await Promise.all([

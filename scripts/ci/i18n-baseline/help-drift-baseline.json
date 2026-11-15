@@ -61,20 +61,20 @@
       "locale": "ar",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 8,
+        "numbered_steps": 22,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 3
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 8,
+        "numbered_steps": 22,
         "sub_bullets": 3,
         "top_bullets": 11,
         "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size. Updated ut-docs#5074: English and every locale gained one section (heading +1, steps +5, no bold lead-ins) on the read-only copy of every sale on each till; the gap is unchanged. Updated at the ut-docs#5074 land merge: this branch's section on the copy of every sale and main's \"When a joined till was restored onto a new device\" section (ut-docs#5162) are both in English and this locale (headings 7->8); the gap is unchanged."
     },
     {
       "locale": "ar",
@@ -137,20 +137,20 @@
       "locale": "ar",
       "topic": "reports",
       "signature": {
-        "headings": 18,
+        "headings": 19,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 22,
+        "top_bullets": 27,
         "bold_leadins": 21
       },
       "english": {
-        "headings": 21,
+        "headings": 22,
         "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 25,
+        "top_bullets": 30,
         "bold_leadins": 25
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values. ut-docs#5427: English and every locale gained one section (Online channels: heading +1, top bullets +5) — the gap is unchanged."
     },
     {
       "locale": "ar",
@@ -178,36 +178,36 @@
         "headings": 8,
         "numbered_steps": 27,
         "sub_bullets": 0,
-        "top_bullets": 26,
+        "top_bullets": 27,
         "bold_leadins": 8
       },
       "english": {
         "headings": 8,
         "numbered_steps": 27,
         "sub_bullets": 0,
-        "top_bullets": 26,
+        "top_bullets": 27,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4252: a new \"Topping up a voucher\" section (one heading, four numbered steps, seven top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4252: a new \"Topping up a voucher\" section (one heading, four numbered steps, seven top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#5133: one top-level bullet (an additional till refuses to void a voucher sale) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "de",
       "topic": "reports",
       "signature": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 22,
+        "top_bullets": 27,
         "bold_leadins": 21
       },
       "english": {
-        "headings": 21,
+        "headings": 22,
         "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 25,
+        "top_bullets": 30,
         "bold_leadins": 25
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English (Turkey-only feature, de is not a market this card touches, so de itself is deliberately unchanged) — the pre-existing gap widens by exactly the one new English heading (English 18->19, de unchanged at 16). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English (Turkey-only feature, de is not a market this card touches, so de itself is deliberately unchanged) — the pre-existing gap widens by exactly the one new English heading (English 18->19, de unchanged at 16). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values. ut-docs#5427: English and every locale gained one section (Online channels: heading +1, top bullets +5) — the gap is unchanged."
     },
     {
       "locale": "de",
@@ -308,20 +308,20 @@
       "locale": "fa",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 8,
+        "numbered_steps": 22,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 3
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 8,
+        "numbered_steps": 22,
         "sub_bullets": 3,
         "top_bullets": 11,
         "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size. Updated ut-docs#5074: English and every locale gained one section (heading +1, steps +5, no bold lead-ins) on the read-only copy of every sale on each till; the gap is unchanged. Updated at the ut-docs#5074 land merge: this branch's section on the copy of every sale and main's \"When a joined till was restored onto a new device\" section (ut-docs#5162) are both in English and this locale (headings 7->8); the gap is unchanged."
     },
     {
       "locale": "fa",
@@ -482,17 +482,17 @@
         "headings": 8,
         "numbered_steps": 27,
         "sub_bullets": 0,
-        "top_bullets": 26,
+        "top_bullets": 27,
         "bold_leadins": 10
       },
       "english": {
         "headings": 8,
         "numbered_steps": 27,
         "sub_bullets": 0,
-        "top_bullets": 26,
+        "top_bullets": 27,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4252: a new \"Topping up a voucher\" section (one heading, four numbered steps, seven top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4252: a new \"Topping up a voucher\" section (one heading, four numbered steps, seven top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#5133: one top-level bullet (an additional till refuses to void a voucher sale) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "tr",
@@ -593,20 +593,20 @@
       "locale": "tr",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 8,
+        "numbered_steps": 22,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 7
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 8,
+        "numbered_steps": 22,
         "sub_bullets": 3,
         "top_bullets": 11,
         "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size. Updated ut-docs#5074: English and every locale gained one section (heading +1, steps +5, no bold lead-ins) on the read-only copy of every sale on each till; the gap is unchanged. Updated at the ut-docs#5074 land merge: this branch's section on the copy of every sale and main's \"When a joined till was restored onto a new device\" section (ut-docs#5162) are both in English and this locale (headings 7->8); the gap is unchanged."
     },
     {
       "locale": "tr",
@@ -707,20 +707,20 @@
       "locale": "tr",
       "topic": "reports",
       "signature": {
-        "headings": 18,
+        "headings": 19,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 22,
+        "top_bullets": 27,
         "bold_leadins": 23
       },
       "english": {
-        "headings": 21,
+        "headings": 22,
         "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 25,
+        "top_bullets": 30,
         "bold_leadins": 25
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values. ut-docs#5427: English and every locale gained one section (Online channels: heading +1, top bullets +5) — the gap is unchanged."
     },
     {
       "locale": "tr",
@@ -805,17 +805,17 @@
         "headings": 8,
         "numbered_steps": 27,
         "sub_bullets": 0,
-        "top_bullets": 26,
+        "top_bullets": 27,
         "bold_leadins": 10
       },
       "english": {
         "headings": 8,
         "numbered_steps": 27,
         "sub_bullets": 0,
-        "top_bullets": 26,
+        "top_bullets": 27,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4252: a new \"Topping up a voucher\" section (one heading, four numbered steps, seven top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4252: a new \"Topping up a voucher\" section (one heading, four numbered steps, seven top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#5133: one top-level bullet (an additional till refuses to void a voucher sale) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",
@@ -824,17 +824,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 17,
-        "top_bullets": 11,
-        "bold_leadins": 24
+        "top_bullets": 12,
+        "bold_leadins": 25
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 18,
-        "top_bullets": 13,
-        "bold_leadins": 27
+        "top_bullets": 14,
+        "bold_leadins": 28
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: English gained a \"CSV separator\" sub-bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one sub-bullet and one bold lead-in. ut-docs#4746: English gained a bold-led \"Deleting a never-sold item in Manage shop\" bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one top-level bullet and one bold lead-in."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: English gained a \"CSV separator\" sub-bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one sub-bullet and one bold lead-in. ut-docs#4746: English gained a bold-led \"Deleting a never-sold item in Manage shop\" bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one top-level bullet and one bold lead-in. ut-docs#4128: English and this locale gained one bold-led top-level bullet (\"Items with something missing\", the catalog's ?missing= filter), translated for real; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "de",
@@ -843,17 +843,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 18,
-        "top_bullets": 12,
-        "bold_leadins": 26
+        "top_bullets": 13,
+        "bold_leadins": 27
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 18,
-        "top_bullets": 13,
-        "bold_leadins": 27
+        "top_bullets": 14,
+        "bold_leadins": 28
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: a \"CSV separator\" sub-bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted. ut-docs#4746: a bold-led \"Deleting a never-sold item in Manage shop\" bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: a \"CSV separator\" sub-bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted. ut-docs#4746: a bold-led \"Deleting a never-sold item in Manage shop\" bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted. ut-docs#4128: English and this locale gained one bold-led top-level bullet (\"Items with something missing\", the catalog's ?missing= filter), translated for real; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "fa",
@@ -862,17 +862,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 17,
-        "top_bullets": 11,
-        "bold_leadins": 24
+        "top_bullets": 12,
+        "bold_leadins": 25
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 18,
-        "top_bullets": 13,
-        "bold_leadins": 27
+        "top_bullets": 14,
+        "bold_leadins": 28
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: English gained a \"CSV separator\" sub-bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one sub-bullet and one bold lead-in. ut-docs#4746: English gained a bold-led \"Deleting a never-sold item in Manage shop\" bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one top-level bullet and one bold lead-in."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: English gained a \"CSV separator\" sub-bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one sub-bullet and one bold lead-in. ut-docs#4746: English gained a bold-led \"Deleting a never-sold item in Manage shop\" bullet (de/tr in lockstep); this locale is not yet translated for it, so the gap grows by one top-level bullet and one bold lead-in. ut-docs#4128: English and this locale gained one bold-led top-level bullet (\"Items with something missing\", the catalog's ?missing= filter), translated for real; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "tr",
@@ -881,17 +881,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 18,
-        "top_bullets": 12,
-        "bold_leadins": 26
+        "top_bullets": 13,
+        "bold_leadins": 27
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 18,
-        "top_bullets": 13,
-        "bold_leadins": 27
+        "top_bullets": 14,
+        "bold_leadins": 28
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: a \"CSV separator\" sub-bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted. ut-docs#4746: a bold-led \"Deleting a never-sold item in Manage shop\" bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3127: both English and this locale gained one indented bullet (\"Remove background\", in step 1) and one top-level bullet (\"Setting up background removal\"), both bold lead-ins, translated for real, so the tracked gap is unchanged in size, shifted by +1 sub / +1 top / +2 bold. ut-docs#4214: English and every locale gained one bold-led \"Gift vouchers\" bullet (the item Type); the pre-existing gap is unchanged in size, just shifted by +1/+1. ut-docs#4225: English and every locale gained one bold-led .bkp voucher-product sub-bullet; the pre-existing gap is unchanged in size, just shifted. ut-docs#4431: a \"From another till system\" import sub-bullet (one indented bullet, one bold lead-in) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4526: English and this locale gained one sub-bullet with a bold lead-in (an export file an importer plugin recognises) in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4729: a \"CSV separator\" sub-bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted. ut-docs#4746: a bold-led \"Deleting a never-sold item in Manage shop\" bullet was added to English, de and tr in lockstep; the pre-existing gap (one top-level bullet, one bold lead-in) is unchanged in size, just shifted. ut-docs#4128: English and this locale gained one bold-led top-level bullet (\"Items with something missing\", the catalog's ?missing= filter), translated for real; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",
@@ -1144,20 +1144,20 @@
       "locale": "fa",
       "topic": "reports",
       "signature": {
-        "headings": 18,
+        "headings": 19,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 22,
+        "top_bullets": 27,
         "bold_leadins": 22
       },
       "english": {
-        "headings": 21,
+        "headings": 22,
         "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 25,
+        "top_bullets": 30,
         "bold_leadins": 25
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. fa matched English exactly before this change (no ut-docs#1962 drift existed on this locale/topic pair) — this entry is newly introduced by this card alone, not a fold-in of pre-existing drift. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. fa matched English exactly before this change (no ut-docs#1962 drift existed on this locale/topic pair) — this entry is newly introduced by this card alone, not a fold-in of pre-existing drift. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new section (yüzde usulü pool distribution for Türkiye) added to English and to this locale with a real translation matching the same structure — headings +1, top_bullets +7, bold_leadins +6 on BOTH sides, so the pre-existing gap this entry tracks is unchanged in size, just re-recorded at its new absolute values. ut-docs#5427: English and every locale gained one section (Online channels: heading +1, top bullets +5) — the gap is unchanged."
     },
     {
       "locale": "ar",

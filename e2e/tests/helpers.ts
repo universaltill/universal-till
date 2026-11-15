@@ -1,4 +1,4 @@
-import { APIRequestContext, Page, expect } from '@playwright/test';
+import { APIRequestContext, Page, expect, test } from '@playwright/test';
 
 // ---------------------------------------------------------------------------
 // Form-layout geometry (ut-docs#300). Shared because the two surfaces that had
@@ -709,4 +709,73 @@ export async function recordAlertAfterRequest(page: Page, pathFragment: string) 
 // failing fast — assert those directly.
 export async function clickThenReload(page: Page, click: () => Promise<void>) {
   await Promise.all([page.waitForEvent('load'), click()]);
+}
+
+// ut-docs#4629: true when the run was given the German language pack
+// (UT_E2E_I18N_OVERLAY_DIR, always set in CI; or a developer's own
+// UT_TEST_I18N_OVERLAY_DIR). Keyed on the env, never on CI: the pipeline
+// sandbox sets CI=1 without the pack and must still pass.
+export function germanPackExpected(): boolean {
+  return !!(process.env.UT_E2E_I18N_OVERLAY_DIR || process.env.UT_TEST_I18N_OVERLAY_DIR);
+}
+
+// On a `?lang=de` page: record whether real German rendered (annotation
+// `de-pack`, once per test) and, when the pack is configured, ASSERT it.
+export async function expectGermanIfPackLoaded(page: Page): Promise<void> {
+  const info = test.info();
+  if (info.annotations.some((a) => a.type === 'de-pack')) return;
+  // Case-insensitive: innerText honours text-transform, and the sale page's
+  // cart heading renders as WARENKORB, and the phone sale page shows only
+  // 'Vor Ort / Zum Mitnehmen / Artikel zum Bezahlen hinzufügen'.
+  const german = await page.evaluate(() => /Einstellungen|Zahlung|Warenkorb|Berichte|Katalog|Bezahlen|Vor Ort|Zum Mitnehmen/i.test(document.body.innerText));
+  info.annotations.push({ type: 'de-pack', description: german
+    ? 'German pack loaded: real German strings'
+    : 'German pack not loaded (UT_E2E_I18N_OVERLAY_DIR unset): ?lang=de rendered English' });
+  if (germanPackExpected()) {
+    expect(german, 'German pack configured (UT_E2E_I18N_OVERLAY_DIR) but ?lang=de rendered English').toBe(true);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ut-docs#5524: hx-confirm opens the till's own in-page dialog
+// (web/public/till-confirm.js, #ut-confirm), not the browser's window.confirm.
+// ---------------------------------------------------------------------------
+
+// Records every native 'dialog' event (and dismisses it so nothing hangs).
+// The returned function asserts none fired -- call it at the end of a test
+// that must never see the browser's own confirm.
+export function noNativeDialogs(page: Page): () => void {
+  const seen: string[] = [];
+  page.on('dialog', (d) => {
+    seen.push(`${d.type()}: ${d.message()}`);
+    void d.dismiss().catch(() => {});
+  });
+  return () => expect(seen, 'a native browser dialog opened').toEqual([]);
+}
+
+// Answers the open till confirm. 'confirm' waits for the Confirm button to be
+// armed (it ignores taps for ~350 ms so a double-tap on the opener cannot
+// land on it). Returns the question text so a caller can assert on it more.
+export async function answerTillConfirm(
+  page: Page,
+  answer: 'confirm' | 'cancel' | 'escape',
+  expectText?: string | RegExp,
+): Promise<string> {
+  const dlg = page.getByTestId('till-confirm');
+  await expect(dlg).toBeVisible();
+  const msg = (await dlg.locator('#ut-confirm-msg').textContent()) || '';
+  if (expectText !== undefined) {
+    if (typeof expectText === 'string') expect(msg).toContain(expectText);
+    else expect(msg).toMatch(expectText);
+  }
+  if (answer === 'confirm') {
+    await expect(dlg).toHaveAttribute('data-armed', '');
+    await page.getByTestId('till-confirm-ok').click();
+  } else if (answer === 'cancel') {
+    await page.getByTestId('till-confirm-cancel').click();
+  } else {
+    await page.keyboard.press('Escape');
+  }
+  await expect(dlg).toBeHidden();
+  return msg;
 }

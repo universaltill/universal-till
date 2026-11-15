@@ -13,12 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/listenport"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
@@ -958,5 +960,20 @@ func TestSetKioskPinned_ForwardsToKioskPackage(t *testing.T) {
 	SetKioskPinned(false)
 	if kiosk.KioskPinned() {
 		t.Fatal("kiosk.KioskPinned() = true after SetKioskPinned(false)")
+	}
+}
+
+// ut-docs#5446: MainActivity reports an in-app update refusal (class only)
+// and a later accepted APK, through two string/no-arg exports.
+func TestReportAndroidUpdateRefused_ForwardsToPackage(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(func() { ReportAndroidUpdateAccepted(); logging.ResetRecent() })
+	ReportAndroidUpdateRefused("signer_not_pinned")
+	if !logging.HasOpenProblem(androidupdate.ProblemKeyRefused) {
+		t.Fatal("no open problem after ReportAndroidUpdateRefused")
+	}
+	ReportAndroidUpdateAccepted()
+	if logging.HasOpenProblem(androidupdate.ProblemKeyRefused) {
+		t.Fatal("problem still open after ReportAndroidUpdateAccepted")
 	}
 }

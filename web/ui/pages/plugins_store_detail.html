@@ -100,9 +100,37 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}',
     'plugins.install.error.not_found': '{{ T "plugins.install.error.not_found" }}',
     'plugins.install.error.registered_required': '{{ T "plugins.install.error.registered_required" }}',
+    'plugins.install.error.pair_required': '{{ T "plugins.install.error.pair_required" }}',
+    'plugins.install.error.pair_again': '{{ T "plugins.install.error.pair_again" }}',
+    'plugins.install.error.till_removed': '{{ T "plugins.install.error.till_removed" }}',
+    'plugins.install.error.till_replaced': '{{ T "plugins.install.error.till_replaced" }}',
+    'plugins.install.error.till_moved': '{{ T "plugins.install.error.till_moved" }}',
+    'plugins.install.error.register_new': '{{ T "plugins.install.error.register_new" }}',
+    'plugins.install.error.service_unavailable': '{{ T "plugins.install.error.service_unavailable" }}',
     'settings.enrol.terms_required': '{{ T "settings.enrol.terms_required" }}',
     'settings.error.save_failed': '{{ T "settings.error.save_failed" }}'
   };
+  // The install request itself, reached only past the terms check and, for an
+  // unverified publisher, an explicit Confirm on the trust question.
+  function send(action, listing, card, termsBox) {
+    card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    msg.textContent = '⏳ ' + action + '…';
+
+    var body = { listing_id: listing };
+    if (action === 'download' && termsBox && termsBox.checked) body.accept_terms = 'on';
+    fetch('/api/plugins/store/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString()
+    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
+      if (res.ok) { UT.reload('plugin-store:' + action); return; }
+      msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
+      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    }); }).catch(function (e) {
+      msg.textContent = '✗ ' + e;
+      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    });
+  }
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('[data-store-action]');
     if (!btn) return;
@@ -122,26 +150,21 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     if ((action === 'download' || action === 'install') && card &&
         card.getAttribute('data-tier') === 'unverified') {
       var vendor = card.getAttribute('data-vendor') || '?';
-      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', vendor);
-      if (!window.confirm(q)) return;
+      // Function replacer: a vendor named "A$&B" must render literally.
+      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', function () { return vendor; });
+      var ask = (window.UT && typeof window.UT.confirm === 'function')
+        ? window.UT.confirm(q, { opener: btn })
+        : Promise.resolve(window.confirm(q)); // native-confirm:allow till-confirm.js not loaded: consent still asked, fail-closed
+      // ADR-0006 trust consent, asked in the till's own dialog (ut-docs#6116):
+      // only an explicit Confirm installs. Cancel, Escape, a swap, Lock or a
+      // pending question resolve false: no request, buttons stay enabled.
+      ask.then(function (ok) {
+        if (ok !== true || !btn.isConnected || !card.isConnected) return;
+        send(action, listing, card, termsBox);
+      });
+      return;
     }
-    card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-    msg.textContent = '⏳ ' + action + '…';
-
-    var body = { listing_id: listing };
-    if (action === 'download' && termsBox && termsBox.checked) body.accept_terms = 'on';
-    fetch('/api/plugins/store/' + action, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(body).toString()
-    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
-      if (res.ok) { UT.reload('plugin-store:' + action); return; }
-      msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
-      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    }); }).catch(function (e) {
-      msg.textContent = '✗ ' + e;
-      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    });
+    send(action, listing, card, termsBox);
   });
 })();
 </script>
