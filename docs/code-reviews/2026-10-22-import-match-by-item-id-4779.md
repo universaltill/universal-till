@@ -39,8 +39,8 @@ Accepted residual risk: two rows with *different unknown* ids and the same name,
 ## Verdict
 Safe to merge once CI is green. The order is universal-till → `catimport-tag.yml` tags `catimport/v0.7.0` → ut-cloud (pin) → ut-docs.
 
-## Addendum 2026-11-15 — rebase before merge (lane:cloud-41)
-- The owner approved merging (ut-docs#4779, 2026-11-12). `main` had moved to `catimport` 0.6.1 (#5957, #2084) and now tags from `catimport/VERSION` (ut-docs#5882), so the branch is rebased onto `main` and `catimport/VERSION` goes 0.6.1 → **0.7.0** (minor: new exported field `ImportItem.ItemID`). `catimport-tag.yml` cuts the tag on merge; nothing is tagged by hand.
-- The rebase applied cleanly; the diff against `main` is unchanged from the reviewed one apart from `VERSION`. Delta reviewed independently (see the PR); `catimport` build, vet and tests pass, and `guard-catimport-version.sh` passes.
+## Addendum 2026-11-15 — main merged in before merge (lane:cloud-41)
+- The owner approved merging (ut-docs#4779, 2026-11-12). `main` had moved to `catimport` 0.6.1 (#5957, #2084) and now tags from `catimport/VERSION` (ut-docs#5882), so `main` is merged into the branch and `catimport/VERSION` goes 0.6.1 → **0.7.0** (minor: new exported field `ImportItem.ItemID`). `catimport-tag.yml` cuts the tag on merge; nothing is tagged by hand.
+- The merge applied cleanly; the diff against `main` is unchanged from the reviewed one apart from `VERSION`. Delta reviewed independently (see the PR); `catimport` build, vet and tests pass, and `guard-catimport-version.sh` passes.
 
-Pre-flight: rebased on origin/main, catimport build/vet/test green, guard-catimport-version.sh green, gofmt clean.
+Pre-flight: origin/main merged in, catimport build/vet/test green, guard-catimport-version.sh green, gofmt clean.
