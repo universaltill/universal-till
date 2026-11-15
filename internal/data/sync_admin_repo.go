@@ -795,6 +795,10 @@ var PerTillSettingPrefixes = []string{
 	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
 	// this till's own (each device pulls and tracks read state for itself).
 	"notices.",
+	// ut-docs#5068: the number floors and marker a backup restore leaves on
+	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
+	// "restore.marker"): they guard this till's own receipt/Z sequences.
+	"restore.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is
