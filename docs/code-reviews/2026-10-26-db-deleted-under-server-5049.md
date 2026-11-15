@@ -48,3 +48,13 @@ shellcheck clean on the three scripts and on the extracted DMG heredoc, every gu
 (local-only failures: shellcheck 0.11 vs CI's pinned 0.9, and the winres step needing `RUNNER_TEMP`), full
 `go test ./...`. The uninstall abort path was checked by hand on the Linux script with stubbed `pgrep`/`pkill`;
 not run on a real Mac.
+
+## Rebase onto main (2026-11-15, PR sweep)
+The PR had gone `dirty`. The only conflict was the last line of `app.Run`: `main` had added the
+`onRevoked` argument to `server.Start` (ut-docs#5653). Resolution keeps `main`'s `onRevoked` wiring
+and passes it to `server.Start`, then applies this PR's lost-file check to the returned error. No
+other hunk changed. Re-verified: `gofmt -l internal/` empty, `go build ./...`, `go vet ./internal/app
+./internal/db`, `go test ./internal/db/... ./internal/app/...` green; `bash -n` on the three scripts.
+
+Pre-flight: review record updated (this file); web/help + docs-shots n/a (no UI surface or route);
+no `en.json` keys; no migration; README unaffected.
