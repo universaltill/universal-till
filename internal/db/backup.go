@@ -479,6 +479,9 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 		return false, fmt.Errorf("undo interrupted restore (journal %s, previous data expected at %s): %w", restoreSwapName, filepath.Join(bdir, aside), err)
 	}
 	clearRestoreSwap(dbPath)
+	// The restore never happened: the marker written before the swap owes a
+	// number jump for nothing (ut-docs#5068).
+	ClearNumberJumpPending(dbPath)
 	logging.L().Warnf("restore: undid a restore interrupted between its two file moves; the previous data is back")
 	return false, nil
 }

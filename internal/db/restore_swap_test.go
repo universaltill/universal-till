@@ -152,3 +152,31 @@ func TestRestoreSwapPending(t *testing.T) {
 		t.Fatal("journal not seen")
 	}
 }
+
+// ut-docs#5068 × #5089: ApplyPendingRestore records the owed number jump
+// before the swap. A crash between the renames that completes the staged
+// restore must keep owing it; one that undoes the restore must not, or the
+// till would jump its receipt and Z numbers for a restore that never landed.
+func TestRecoverInterruptedRestoreKeepsNumberJumpOnlyWhenRestoreLands(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		withPending bool
+		wantOwed    bool
+	}{
+		{"finished", true, true},
+		{"undone", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, _ := crashedSwap(t, tc.withPending)
+			if err := os.WriteFile(numberJumpPendingPath(path), []byte("token\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecoverInterruptedRestore(path); err != nil {
+				t.Fatalf("recover: %v", err)
+			}
+			if got := NumberJumpPending(path); got != tc.wantOwed {
+				t.Fatalf("number jump owed = %v, want %v", got, tc.wantOwed)
+			}
+		})
+	}
+}
