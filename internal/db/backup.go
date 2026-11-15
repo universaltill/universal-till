@@ -369,7 +369,7 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 	// a crash between the swap and the jump still jumps on the next boot
 	// (ut-docs#5068).
 	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil {
-		if err := os.WriteFile(numberJumpPendingPath(dbPath), []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644); err != nil {
+		if err := writeNumberJumpPending(dbPath); err != nil {
 			return false, fmt.Errorf("record the owed number jump: %w", err)
 		}
 	}
@@ -379,6 +379,7 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		// renames leaves no db file, and RecoverInterruptedRestore finishes
 		// (or undoes) it at the next boot instead of opening an empty DB.
 		if err := writeRestoreSwap(dbPath, filepath.Base(aside)); err != nil {
+			ClearNumberJumpPending(dbPath) // nothing moved yet: no jump owed
 			return false, fmt.Errorf("journal restore swap: %w", err)
 		}
 		if err := os.Rename(dbPath, aside); err != nil {
@@ -391,7 +392,9 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		_ = os.Remove(dbPath + "-shm")
 	}
 	if err := os.Rename(pending, dbPath); err != nil {
-		ClearNumberJumpPending(dbPath) // the swap failed: no jump owed
+		// The marker stays: with the live DB set aside, the journal makes
+		// RecoverInterruptedRestore finish this restore on the next attempt,
+		// and that restore owes its jump (or undoes it and drops the marker).
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
 	clearRestoreSwap(dbPath)
@@ -460,6 +463,14 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 		// The old DB's sidecars must not be replayed into the restored file.
 		_ = os.Remove(dbPath + "-wal")
 		_ = os.Remove(dbPath + "-shm")
+		// A backup restore (not a LAN join) owes its number jump. The marker
+		// is normally there already; re-owe it before the move in case power
+		// loss lost it (ut-docs#5068).
+		if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil && !NumberJumpPending(dbPath) {
+			if err := writeNumberJumpPending(dbPath); err != nil {
+				return false, fmt.Errorf("record the owed number jump: %w", err)
+			}
+		}
 		if err := os.Rename(pending, dbPath); err != nil {
 			return false, fmt.Errorf("finish interrupted restore: %w", err)
 		}
@@ -506,12 +517,41 @@ func NumberJumpPending(dbPath string) bool {
 // NumberJumpToken is the marker file's content: a unique id of this restore
 // (written as a timestamp). data.POSRepo.JumpNumbersAfterRestore stores it
 // with the jump so one restore never jumps twice.
+//
+// A marker left empty (power loss after the create, before the data hit the
+// disk) still names one restore: its modification time, stable across boots.
 func NumberJumpToken(dbPath string) string {
-	raw, err := os.ReadFile(numberJumpPendingPath(dbPath))
+	path := numberJumpPendingPath(dbPath)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(raw))
+	if tok := strings.TrimSpace(string(raw)); tok != "" {
+		return tok
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return "mtime-" + fi.ModTime().UTC().Format(time.RFC3339Nano)
+}
+
+// writeNumberJumpPending records the owed jump with a fresh token, synced to
+// disk like the swap journal so the renames that follow cannot outlive it.
+func writeNumberJumpPending(dbPath string) error {
+	f, err := os.OpenFile(numberJumpPendingPath(dbPath), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(time.Now().UTC().Format(time.RFC3339Nano) + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // ClearNumberJumpPending drops the marker once the jump is recorded.

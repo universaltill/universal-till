@@ -56,3 +56,34 @@ Fix round, re-reviewed: the audit goes through `exec(tx)`, so it really is in th
 ## Verdict
 
 Safe to merge once CI is green. The deferred lows are on ut-docs#5096, invoices on ut-docs#5094.
+
+## Round 2 — rebase onto main (2026-11-15, PR sweep, lane:cloud-41)
+
+The PR sat unmerged while `main` moved 429 commits, so it was rebased. Six files conflicted: `sync_admin_repo.go`, `backup.go`, `join_snapshot.go`, both db test files and `en.meta.json`. Both sides were kept in every hunk.
+
+`main` had gained three things this change interacts with:
+- the restore swap journal and `RecoverInterruptedRestore` (ut-docs#5089);
+- the live-DB keep list `RestoreKeepsLivePrefixes` (ut-docs#5069);
+- the sales-copy bookkeeping reset in the join snapshot (ut-docs#5074).
+
+**Built and reviewed by:**
+- the resolution and fixes were written by Opus 5.5 (orchestrator);
+- an independent Fable review checked them against `git range-diff`, then ran build, vet and the affected package tests.
+
+The textual resolution was confirmed correct, with nothing lost from either side.
+
+| # | Sev | Finding | Outcome |
+|---|---|---|---|
+| R1 | High | The second rename failing cleared the marker, but under #5089 the journal then *finishes* that restore on the next attempt. The till would reuse numbers. | **Fixed.** The marker stays on that failure. `RecoverInterruptedRestore`'s finish path now re-owes the jump for a backup restore (never a LAN join) when the marker is missing. Test: `TestRecoverInterruptedRestoreReowesLostNumberJump`; it fails without the fix (`token ""`). |
+| R2 | Medium | An undone interrupted restore kept the marker. The live data would jump for a restore that never landed. | **Fixed** in the undo path. Test: `TestRecoverInterruptedRestoreKeepsNumberJumpOnlyWhenRestoreLands`; the reviewer re-ran it, and it fails without the fix. |
+| R3 | High/Medium | A second restore of the same or an older backup computes the same floor, so numbers issued between the two restores repeat. The floors live only in the replaced DB. This already happens on `main` on every restore; it is not a regression of this PR. | **Deferred → ut-docs#6293** (carry the live floors through `keepLiveCloudIdentity`). |
+| R4 | Low | The marker was not fsynced, and an empty marker gave an empty token, so the jump was not idempotent. | **Fixed.** `writeNumberJumpPending` syncs like the journal. An empty marker's token falls back to its mtime. Test: `TestNumberJumpTokenFallsBackForEmptyMarker`. |
+| R5 | Low | A failed journal write left the marker behind. | **Fixed.** It is cleared there, since nothing has moved yet. |
+| R6 | Low | A folder-level restore of a main till (device clone, iCloud) never passes `ApplyPendingRestore`, so it gets no jump. | **Deferred → ut-docs#6294**. |
+
+**Gate:**
+- `go build ./...`, `gofmt` and `golangci-lint` on the touched packages: 0 issues.
+- `go test ./...`: green except `internal/plugins`, which hit the 10-minute package timeout in wazero compilation under parallel load. This diff does not touch it; it was re-run alone (see the PR).
+- Every non-self-test guard in `ci.yml`'s build job passes. Not runnable here: `guard-deadcode-baseline` (toolchain mismatch) and `guard-shellcheck-version` (no shellcheck).
+
+Pre-flight: help `web/help/*/backups.md` updated (round 1); `en.meta.json` updated for both new keys; `reference/` n/a (investigation-5058 is a historical record); README n/a (no claim changed); review record updated; follow-ups → ut-docs#6293, ut-docs#6294.
