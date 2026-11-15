@@ -57,6 +57,7 @@ const (
 	maxGuestOrderOptions    = 20
 	maxGuestOrderIDLen      = 64
 	maxGuestOrderRefLen     = 128
+	maxGuestOrderLocaleLen  = 35 // a BCP-47 tag (ut-docs#4715)
 	maxGuestOrdersPerTick   = 10
 	maxGuestResultRetries   = 20
 	guestOrderNotSupportedM = "guest_order is not supported on this till"
@@ -76,6 +77,9 @@ type GuestOrder struct {
 	DirectiveID string
 	TableToken  string
 	Lines       []GuestOrderLine
+	// Locale is the guest page's language (BCP-47, e.g. "de-DE"); "" when
+	// absent — untrusted, matched by the hook (ut-docs#4715).
+	Locale string
 }
 
 // GuestOrderLine is one ordered line: an item, an optional variant, an
@@ -190,7 +194,27 @@ func decodeGuestOrder(d directive) (o GuestOrder, refusal string) {
 		}
 		o.Lines = append(o.Lines, line)
 	}
+	if loc, ok := d.Payload["locale"].(string); ok {
+		o.Locale = cleanGuestLocale(loc)
+	}
 	return o, ""
+}
+
+// cleanGuestLocale returns loc trimmed when it is 1..35 bytes of
+// [A-Za-z0-9_-], else "" (the locale is optional, so a bad one is dropped).
+func cleanGuestLocale(loc string) string {
+	loc = strings.TrimSpace(loc)
+	if loc == "" || len(loc) > maxGuestOrderLocaleLen {
+		return ""
+	}
+	for _, c := range loc {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return ""
+		}
+	}
+	return loc
 }
 
 // guestOrderResult is one guest_order apply's outcome. deferred: the hook
@@ -303,7 +327,7 @@ func postStoredGuestOrderResult(ctx context.Context, cfg *config.Config, repo *d
 	}
 	err := postResult(ctx, cfg, directiveID, g.Status, g.Message, dataObj)
 	var se *statusError
-	if err != nil && !(errors.As(err, &se) && guestResultStatusIsFinal(se.StatusCode)) {
+	if err != nil && !(errors.As(err, &se) && resultStatusIsFinal(se.StatusCode)) {
 		logging.L().Warnf("cloudsync: guest_order %s result not delivered (retried next tick): %v", g.GuestOrderID, err)
 		return false
 	}
@@ -320,13 +344,14 @@ func postStoredGuestOrderResult(ctx context.Context, cfg *config.Config, repo *d
 	return true
 }
 
-// guestResultStatusIsFinal reports whether a non-200 answer to a
-// guest_order result post ends its retries. 404 (the cloud no longer holds
+// resultStatusIsFinal reports whether a non-200 answer to a directive
+// result post (guest_order, or a generic directive's stored result —
+// ut-docs#4797) ends its retries. 404 (the cloud no longer holds
 // the directive) is the ADR-0159 §4 case; any other 4xx except 401 (a
 // credential being rotated), 408 and 429 is a permanent refusal too — retrying it could never succeed, and since
 // retries run oldest first and stop at the first failure, one such row
 // would otherwise starve every later result (review of ut-docs#4337).
-func guestResultStatusIsFinal(code int) bool {
+func resultStatusIsFinal(code int) bool {
 	return code >= 400 && code < 500 && code != http.StatusUnauthorized && code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
 }
 

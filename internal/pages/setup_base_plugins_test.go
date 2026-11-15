@@ -908,11 +908,9 @@ func TestBasePluginsForCountry_IgnoresMalformedCustomDefaultLocale(t *testing.T)
 // spec stays pending for the background retry).
 func TestInstallBasePluginsForSetup_PTQueuesPortugueseLanguagePack(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.EndpointURL = unreachableURL()
 	dp.Cfg.Marketplace.ClientID = "merchant-1"
 	dp.Cfg.Marketplace.StoreID = "store-1"
-	dead.Close()
 
 	installBasePluginsForSetup(t.Context(), dp, "PT")
 
@@ -970,15 +968,13 @@ func TestInstallBasePluginsForSetup_NoMappingIsNoOp(t *testing.T) {
 func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 
-	// A closed local server: connections fail immediately (refused), so this
-	// test doesn't pay setupBasePluginAttemptTimeout's full 5s waiting on a
+	// Port 1 on loopback (unreachableURL): connections fail immediately
+	// (refused), so this test doesn't pay setupBasePluginAttemptTimeout's full 5s waiting on a
 	// real timeout — it's still exercising a genuine "catalog unreachable"
 	// failure, not a mocked-out error.
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.EndpointURL = unreachableURL()
 	dp.Cfg.Marketplace.ClientID = "merchant-1"
 	dp.Cfg.Marketplace.StoreID = "store-1"
-	dead.Close()
 
 	drainBasePluginRetryNudge()
 	installBasePluginsForSetup(t.Context(), dp, "DE")
@@ -1101,11 +1097,9 @@ func TestSetupWizardDE_HappyPathInstallsBasePluginSynchronously(t *testing.T) {
 func TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry(t *testing.T) {
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.EndpointURL = unreachableURL()
 	dp.Cfg.Marketplace.ClientID = "merchant-1"
 	dp.Cfg.Marketplace.StoreID = "store-1"
-	dead.Close()
 
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":         {"2468"},
@@ -1312,7 +1306,7 @@ func TestHandleInstallFromMarketplace_AppliesLocaleCatchUpForLanguagePack(t *tes
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, dp)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
-		strings.NewReader(`{"listing_id":"listing-lang-ur"}`))
+		strings.NewReader(`{"listing_id":"listing-lang-ur","accept_terms":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -1364,7 +1358,7 @@ func TestHandleInstallFromMarketplace_LocaleCatchUpFindsListingBeyondFirstCatalo
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, dp)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
-		strings.NewReader(`{"listing_id":"listing-lang-ur"}`))
+		strings.NewReader(`{"listing_id":"listing-lang-ur","accept_terms":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

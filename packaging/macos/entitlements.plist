@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- unitill-pos only (ut-docs#5023). The hardened runtime (needed for
+     notarization) forbids a process from making memory executable; the plugin
+     engine (wazero compiler) compiles WASM plugins to machine code at runtime
+     with a plain mmap + mprotect(RX), not MAP_JIT, so the kernel kills the till
+     server on start unless this is granted. com.apple.security.cs.allow-jit is
+     NOT enough for wazero (verified on a real hardened build). Do not add other
+     entitlements here (a test pins the list). -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

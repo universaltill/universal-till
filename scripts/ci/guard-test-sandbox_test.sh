@@ -75,6 +75,14 @@ check "a deleted last-listed tracked file is skipped, not fatal" \
 check "the helper's own EXIT trap removes the copy" test ! -e "${probe_out}"
 rm -rf "${scratch}"
 
+# The sandbox repo never starts a background gc or maintenance that could
+# still be writing .git/objects when the cleanup removes it (ut-docs#4941).
+gc_out="$(bash -c 'set -euo pipefail
+  source "$1"
+  enter_guard_test_sandbox web/help/img
+  printf "%s %s\n" "$(git config --local gc.auto)" "$(git config --local maintenance.auto)"' _ "${REAL_ROOT}/scripts/ci/guard-test-sandbox.sh" 2>&1 || echo "probe failed")"
+check "the sandbox repo has auto-gc and auto-maintenance off" test "${gc_out}" = "0 false"
+
 if [ "${FAIL_COUNT}" -gt 0 ]; then
   echo "${FAIL_COUNT} case(s) failed"
   exit 1

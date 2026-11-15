@@ -538,7 +538,7 @@ func TestLocalSalesSinceAndCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sales, err := dbx.repo.LocalSalesSince(ctx, "2026-01-01T00:00:00Z", 10)
+	sales, err := dbx.repo.LocalSalesSince(ctx, "2026-01-01T00:00:00Z", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,12 +546,69 @@ func TestLocalSalesSinceAndCount(t *testing.T) {
 		t.Fatalf("expected only the local sale's receipt, got %+v", sales)
 	}
 
-	n, err := dbx.repo.CountLocalSalesSince(ctx, "2026-01-01T00:00:00Z")
+	n, err := dbx.repo.CountLocalSalesSince(ctx, "2026-01-01T00:00:00Z", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("expected count 1, got %d", n)
+	}
+}
+
+// ut-docs#5090: sales sharing one created_at second must page exactly once
+// each through the composite (created_at, id) cursor, whatever the batch edge.
+func TestLocalSalesSince_CompositeCursorPagesSameSecond(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	const at = "2026-03-01T10:00:00Z"
+	seedLifecycleSale(t, dbx, "s-early", "R-EARLY", "sale", "completed", "2026-03-01T09:00:00Z", 100, 20)
+	for _, id := range []string{"s-a", "s-b", "s-c", "s-d"} {
+		seedLifecycleSale(t, dbx, id, "R-"+id, "sale", "completed", at, 100, 20)
+	}
+
+	var got []string
+	afterAt, afterID := "", ""
+	for i := 0; i < 10; i++ {
+		page, err := dbx.repo.LocalSalesSince(ctx, afterAt, afterID, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		got = append(got, page...)
+		last := page[len(page)-1]
+		var id string
+		if err := dbx.d.DB.QueryRowContext(ctx, `SELECT id FROM sales WHERE receipt_no = ?`, last).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		afterAt = at
+		if last == "R-EARLY" {
+			afterAt = "2026-03-01T09:00:00Z"
+		}
+		afterID = id
+	}
+	want := []string{"R-EARLY", "R-s-a", "R-s-b", "R-s-c", "R-s-d"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("paged receipts = %v, want %v", got, want)
+	}
+
+	// Mid-second cursor: only the remainder of that second is queued.
+	n, err := dbx.repo.CountLocalSalesSince(ctx, at, "s-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("count after (%s, s-b) = %d, want 2", at, n)
+	}
+
+	// Legacy bare created_at cursor (no id): re-includes that second once.
+	legacy, err := dbx.repo.LocalSalesSince(ctx, at, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) != 4 {
+		t.Fatalf("legacy cursor returned %v, want the 4 sales at %s", legacy, at)
 	}
 }
 

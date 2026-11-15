@@ -30,6 +30,9 @@
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
     <!-- ut-docs#3325: data-action / data-* hooks (see base.html). -->
     <script defer src="/public/inline-actions.js?v={{ assetv "public/inline-actions.js" }}"></script>
+    <!-- ut-docs#1103: arrow-key navigation for the radiogroup tile pickers
+         (opt-in via data-roving-radiogroup). -->
+    <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <!-- ut-docs#590: country/currency/tax start pre-filled from the OS locale
@@ -51,16 +54,18 @@
          6 admin PIN, 7 done. Step 8 (ADR-0166, ut-docs#4610) is the pair-first
          path's "Your shop": a till paired with its my.universaltill.com shop
          opens on it, and nxt()/prv() skip the steps the cloud already
-         answered (country, shop name) and the Germany-only one. -->
+         answered (country, shop name, shop type - ADR-0171) and the Germany-only one. -->
     <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false,
+                                       autoReg: false,
                                        cloud: {{ if .cloudShop }}true{{ else }}false{{ end }},
                                        cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
+                                       cloudShopType: {{ if .cloudShop }}{{ if .cloudShop.ShopType }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        seq: [2, 3, 4, 5, 6, 7],
-                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName); },
+                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName) || (s === 5 && this.cloud && this.cloudShopType); },
                                        nxt(f) { let i = this.seq.indexOf(f); for (i++; i < this.seq.length; i++) { if (!this.skip(this.seq[i])) return this.seq[i]; } return 7; },
                                        prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; } }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
@@ -68,7 +73,7 @@
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
       </div>
 
-      {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+      {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
       <form method="post" action="/api/setup">
         <input type="hidden" name="setup_nonce" value="{{ .setupNonce }}">
@@ -169,12 +174,15 @@
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
           <input type="hidden" name="country" :value="country">
-          <div class="picker-grid" role="group" aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
-            {{ range .countries }}
-            <button type="button" class="picker-tile" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-pressed="country === '{{ .Code }}'" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
+          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
+            {{ range $i, $c := .countries }}
+            <button type="button" class="picker-tile" role="radio" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-checked="country === '{{ .Code }}' ? 'true' : 'false'" :tabindex="country === '{{ .Code }}' || (!country && {{ $i }} === 0) ? 0 : -1" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
             {{ end }}
           </div>
-          <!-- Review finding (Should-fix 2): expanding used to leave focus
+          <!-- ut-docs#1103: the tiles above are a WAI-ARIA radiogroup (role=radio +
+               aria-checked, roving tabindex: the checked tile, else the first,
+               is the single tab stop; arrows/Home/End via radiogroup.js).
+               Review finding (Should-fix 2): expanding used to leave focus
                on this now-hidden button (dropped to <body>), so a keyboard/
                switch-access operator had to tab from the top of the
                document to reach the 13 tiles that just appeared, with no
@@ -182,9 +190,9 @@
                $nextTick waits for the newly-shown tiles to actually be in
                the DOM (x-show removes display:none synchronously, but
                .focus() on a still-transitioning element is unreliable)
-               before moving focus onto the selected tile, or the first
-               tile if nothing's picked yet. -->
-          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-pressed=true]') || $refs.countryGrid.querySelector('button')).focus())">{{ T "setup.country.show_all" }}</button>
+               before moving focus onto the aria-checked tile, or the first
+               radio if nothing's picked yet. -->
+          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-checked=true]') || $refs.countryGrid.querySelector('[role=radio]')).focus())">{{ T "setup.country.show_all" }}</button>
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
@@ -333,9 +341,9 @@
                unlike step 3's softer install_pending note this says plainly
                what that means, not just that a background retry exists. -->
           {{ if .taxPluginSkipped }}
-            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p>
+            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p> <!-- login-error-role:allow confirms the operator's own skip choice (not an error) and is read in order under the step heading -->
           {{ end }}
-          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}"
+          <input type="text" name="store_name" maxlength="{{ maxStoreNameRunes }}" placeholder="{{ T "setup.store.placeholder" }}"
                  value="{{ .storeName }}" x-model="storeName" aria-required="true">
           <label>{{ T "setup.till_name.title" }}
             <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true">
@@ -354,13 +362,17 @@
              show every tile directly, no "show all" toggle needed. Its own
              local x-data (shopType), nested inside the root step-nav
              x-data. -->
+        {{/* ADR-0171: not rendered at all when the cloud supplied the type, so
+             no shop_type field is posted from here (the server uses the held
+             pairing's value regardless). */}}
+        {{ if not (and .cloudShop .cloudShop.ShopType) }}
         <section x-show="step === 5" x-cloak data-step="5" x-data="{ shopType: '' }">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
           <input type="hidden" name="shop_type" :value="shopType">
-          <div class="picker-grid" role="group" aria-label="{{ T "setup.shop_type.title" }}">
-            {{ range .shopTypes }}
-            <button type="button" class="picker-tile" data-value="{{ . }}" :aria-pressed="shopType === '{{ . }}'" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
+          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.shop_type.title" }}">
+            {{ range $i, $t := .shopTypes }}
+            <button type="button" class="picker-tile" role="radio" data-value="{{ . }}" :aria-checked="shopType === '{{ . }}' ? 'true' : 'false'" :tabindex="shopType === '{{ . }}' || (!shopType && {{ $i }} === 0) ? 0 : -1" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
             {{ end }}
           </div>
           <div class="setup-nav">
@@ -368,6 +380,7 @@
             <button type="button" class="btn primary" @click="step = nxt(5)">{{ T "setup.next" }}</button>
           </div>
         </section>
+        {{ end }}
 
         <!-- Step 6 · admin PIN -->
         <section x-show="step === 6" x-cloak data-step="6">
@@ -395,11 +408,29 @@
                time-boxed registration attempt; on no (the default) the till
                keeps today's lazy registration (ADR-0015). Same
                labelled-checkbox idiom as the rest of the wizard. -->
+          {{/* ut-docs#4803: a till that joined a my. shop is already registered
+               and paired (ADR-0166), so the opt-in and the terms box are
+               not asked; the server ignores them on this path. */}}
+          {{ if .cloudShop }}
+          {{ if .cloudShop.HasName }}<p data-testid="setup-joined-shop">{{ T "setup.cloud.shop_name" }}: <strong>{{ .cloudShop.Name }}</strong></p>{{ end }}
+          {{ else }}
           <label class="set-row" style="margin-top:.6rem">
-            <input type="checkbox" name="auto_register">
+            <input type="checkbox" name="auto_register" x-model="autoReg">
             {{ T "setup.auto_register.label" }}
           </label>
           <p class="muted">{{ T "setup.auto_register.hint" }}</p>
+          {{/* ut-docs#4720: the cloud terms, asked only while the opt-in
+               above is ticked (shown + required then); without the tick the
+               server saves the opt-in as off and does not register. */}}
+          {{ if .terms.accepted }}
+          <p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
+          {{ else }}
+          <div class="terms-accept set-gap-s" x-show="autoReg" x-cloak>
+            <label class="set-row"><input type="checkbox" id="setup-accept-terms" name="accept_terms" :required="autoReg"> {{ .terms.label }}</label>
+            <a href="{{ .terms.url }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.terms.link" }}</a>
+          </div>
+          {{ end }}
+          {{ end }}
           {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
                rendered inline by the handler (renderSetupSlot) and
                read-only: the wizard is auth-exempt, plugin routes are not,
@@ -421,10 +452,15 @@
           {{ if .cloudShop.HasName }}<p>{{ T "setup.cloud.shop_name" }}: <strong data-cloud-field="name">{{ .cloudShop.Name }}</strong></p>{{ end }}
           {{ if .cloudShop.HasCountry }}<p>{{ T "setup.cloud.shop_country" }}: <strong data-cloud-field="country">{{ T .cloudShop.CountryNameKey }}</strong></p>{{ end }}
           {{ if .cloudShop.Currency }}<p>{{ T "setup.cloud.shop_currency" }}: <strong data-cloud-field="currency">{{ .cloudShop.Currency }}</strong></p>{{ end }}
+          {{ if .cloudShop.ShopType }}<p>{{ T "setup.cloud.shop_type" }}: <strong data-cloud-field="shop_type">{{ T (printf "setup.shop_type.%s" .cloudShop.ShopType) }}</strong></p>{{ end }}
           <p class="muted">{{ T "setup.cloud.hint" }}</p>
+          {{/* ut-docs#5058: after a confirmed replace the old till is already
+               gone, so "This is not my shop" is not offered (ADR-0166 §4
+               amendment); the step names the till this one replaced. */}}
+          {{ if .cloudShop.Replaced }}<p data-testid="setup-cloud-replaced">{{ printf (T "setup.cloud.replaced_note") (or .cloudShop.ReplacedName (T "setup.cloud.error.unnamed_till")) }}</p>{{ end }}
           <div class="setup-nav">
-            <button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
-                    hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>
+            {{ if not .cloudShop.Replaced }}<button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
+                    hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>{{ end }}
             <button type="button" class="btn primary" @click="step = nxt(8)">{{ T "setup.cloud.continue" }}</button>
           </div>
         </section>
@@ -569,9 +605,14 @@
                  code to the guarded first-boot route (nonce header), which holds
                  the pairing in memory and reloads /setup on "Your shop". No
                  address: the cloud is the other end. Errors land in place. */}}
-            <form x-show="role === 'main'" x-cloak hx-post="/api/setup/cloud-pair" hx-include="#setup-pairing-till-name" hx-target="#setup-cloud-msg" hx-swap="innerHTML"
+            {{/* ut-docs#5058: hx-disabled-elt names every submit by id, not
+                 "find …": htmx 1.9's find matches ONE element, and the
+                 Replace button of the confirm panel (swapped into
+                 #setup-cloud-msg) must be disabled during its request too,
+                 or a double tap sends two confirmations. */}}
+            <form id="setup-cloud-form" x-show="role === 'main'" x-cloak hx-post="/api/setup/cloud-pair" hx-include="#setup-pairing-till-name" hx-target="#setup-cloud-msg" hx-swap="innerHTML"
                   hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'
-                  hx-indicator="#setup-cloud-msg" hx-disabled-elt="find button[type=submit]"
+                  hx-indicator="#setup-cloud-msg" hx-disabled-elt="#setup-cloud-form button"
                   data-before-request="trim-validate:setup-pairing-till-name">
               <p class="muted">{{ T "setup.cloud.code_help" }}</p>
               <label>{{ T "tills.join_code" }}
@@ -616,6 +657,21 @@
           var msg = document.getElementById('setup-cloud-msg');
           if (msg) { msg.textContent = ev.detail.xhr.status === 429 ? T_CLOUD.tooMany : T_CLOUD.failed; }
         }
+      });
+      // ut-docs#5058: the "Replace <till>?" panel (setup_cloud_replace.html).
+      // Focus its heading, not a field, so no keyboard pops up; Cancel clears
+      // it and the code stays valid until it expires.
+      document.body.addEventListener('htmx:afterSwap', function (ev) {
+        if (ev.detail.target && ev.detail.target.id === 'setup-cloud-msg') {
+          var h = document.getElementById('setup-cloud-replace-title');
+          if (h) { h.focus(); }
+        }
+      });
+      document.body.addEventListener('click', function (ev) {
+        var btn = ev.target.closest && ev.target.closest('[data-replace-cancel]');
+        if (!btn) { return; }
+        var msg = document.getElementById('setup-cloud-msg');
+        if (msg) { msg.innerHTML = ''; }
       });
     </script>
 
@@ -700,7 +756,7 @@
                 var addr = hostOf(p.base_url);
                 var addrPart = addr ? (' · ' + esc(i18n.resultAddress) + ': ' + esc(addr)) : '';
                 return '<li style="padding:.3rem 0">' + esc(p.name)
-                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
+                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + '<bdi dir="ltr">' + esc(p.till_id) + '</bdi>' + addrPart + '</span> '
                   + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
                   + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name, #setup-pairing-join-role, #pairing-replace-local" '
                   // ut-docs#1540: this button lives outside any <form>, so

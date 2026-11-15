@@ -54,10 +54,12 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -82,6 +84,10 @@ const (
 	keyToken      = "marketplace.token"
 	keyPublicKey  = "marketplace.public_key"
 	keyEnrolledAt = "marketplace.enrolled_at"
+	// keyPairedAt (RFC3339) marks a till paired with a my. shop (adoptPaired
+	// only, never anonymous registration); discovery reads it to hide the
+	// "join a main till" banner (ut-docs#4836). Cleared on identity reset.
+	keyPairedAt = discovery.CloudPairedAtSettingKey
 	// keyDeviceRegistered holds the device_id last registered as a device under
 	// the store. When it differs from the current device_id (a replica that
 	// joined a shop and minted its own device id), the till registers itself as
@@ -422,6 +428,8 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 // callers can wait out shutdown instead of returning while it still runs.
 func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGroup) {
 	log := logging.L()
+	ReleaseRegistration() // a hold never outlives the process state it guarded
+	resetMoveState()      // ut-docs#5127: moves belong to the identity loaded below
 	// Locals here; the mu-guarded globals are set under the lock below
 	// (ut-docs#3021).
 	storeIDExplicitLocal := os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
@@ -486,6 +494,9 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// Startup fill: explicit (env) values win, the persisted identity fills
 	// the gaps. Safe to mutate cfg here — the server hasn't started yet.
 	m := &cfg.Marketplace
+	// ut-docs#5127: once per start, in the background, offline-safe. Runs
+	// after the startup fill below on the same config copy.
+	defer func() { kickApprovalKeyReport(ctx, *m, wg) }()
 	if m.DeviceID == "" {
 		m.DeviceID = id.DeviceID
 	}
@@ -573,6 +584,36 @@ func EnsureSigningKey(ctx context.Context, cfg *config.Config, kv Settings) conf
 	return Effective(cfg)
 }
 
+// registrationHoldMax bounds HoldRegistration: it must outlive the wizard's
+// own 30-minute pairing hold (pages.cloudPairHold) but can never strand a
+// till if nothing releases it (the wizard expires its held pairing lazily,
+// only when someone calls it again).
+const registrationHoldMax = 35 * time.Minute
+
+// registrationHeldUntil is the unix-nano deadline of the hold; 0 = none.
+var registrationHeldUntil atomic.Int64
+
+// HoldRegistration makes EnsureRegistered a no-op (it returns the effective
+// config without registering) until ReleaseRegistration, or at most
+// registrationHoldMax. The first-boot wizard takes it while a cloud pairing
+// is held in memory, so a plugin install queued before the pairing is saved
+// cannot register a till-born store that Commit would then orphan
+// (ut-docs#5127). Idempotent (a repeat refreshes the deadline); one Release
+// ends it. An explicit RegisterNow is deliberately not affected (it is only
+// reachable after setup); do not move the check into it.
+func HoldRegistration() {
+	registrationHeldUntil.Store(time.Now().Add(registrationHoldMax).UnixNano())
+}
+
+// ReleaseRegistration ends HoldRegistration.
+func ReleaseRegistration() { registrationHeldUntil.Store(0) }
+
+// RegistrationHeld reports whether HoldRegistration is in force.
+func RegistrationHeld() bool {
+	until := registrationHeldUntil.Load()
+	return until != 0 && time.Now().UnixNano() < until
+}
+
 // EnsureRegistered returns the effective config, first enrolling the till
 // when it isn't registered yet: store registration is lazy, and a plugin
 // download/install is the first interaction that actually needs a store
@@ -580,6 +621,13 @@ func EnsureSigningKey(ctx context.Context, cfg *config.Config, kv Settings) conf
 // config is returned regardless and the caller's marketplace call surfaces
 // its own error; the next attempt retries.
 func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) config.Config {
+	if RegistrationHeld() {
+		// A cloud pairing is held (my.-first wizard, ADR-0166): the till is
+		// about to adopt that shop's identity, so creating a till-born store
+		// now would leave it behind as an orphan (ut-docs#5127). Callers
+		// retry after the pairing is saved.
+		return Effective(cfg)
+	}
 	if s := CurrentStatus(); !s.Registered {
 		if _, err := RegisterNow(ctx, cfg, kv); err != nil {
 			if errors.Is(err, ErrStoreUnnamed) {
@@ -740,7 +788,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		country = countryCode(v)
 	}
 
-	fields := map[string]string{
+	fields := map[string]any{
 		"store_name":  storeName,
 		"device_id":   deviceID,
 		"device_name": DeviceName(ctx, kv),
@@ -762,6 +810,25 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	fields["platform"] = devicePlatform()
+	// ut-docs#5127: the approval key is pinned in the transaction that
+	// mints the token. A till with no usable key still registers.
+	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
+		fields["approval_key"] = ak
+	}
+	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
+	// the current version was accepted on this till. Operator-initiated
+	// registrations collect it first, as do the plugin store's Download and
+	// install-from-marketplace (ut-docs#4791); the other lazy triggers
+	// (wizard base plugins, cloud-directed installs, update, TSE) send it only
+	// if already recorded.
+	termsSent := ""
+	if v, loc, _, ok := AcceptedTerms(ctx, kv); ok {
+		termsSent = v
+		fields["terms_version"] = v
+		if loc != "" {
+			fields["terms_locale"] = loc
+		}
+	}
 	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err
@@ -800,6 +867,12 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	}
 
 	log := logging.L()
+	if termsSent != "" {
+		// The cloud now has the acceptance (ut-docs#4792): no resend needed.
+		if err := markTermsSent(ctx, kv, termsSent); err != nil {
+			log.Warnf("enrolment: persist terms sent marker: %v", err)
+		}
+	}
 	for key, value := range map[string]string{
 		keyStoreID:          d.StoreID,
 		keyMerchantID:       d.MerchantID,
@@ -818,6 +891,9 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	displayStoreID = d.StoreID
 	mu.Unlock()
 	log.Infof("enrolment: till registered with marketplace as %s (device %s)", d.StoreID, deviceID)
+	// ut-docs#5127: pin the approval key if the register body's copy was not
+	// taken (an older cloud ignores it). Background, never blocks.
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil)
 	return nil
 }
 
@@ -991,6 +1067,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
 		logging.L().Warnf("enrolment: persist device_registered: %v", err)
 	}
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
 	return nil
 }
 

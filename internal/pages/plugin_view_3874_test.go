@@ -32,13 +32,13 @@ func TestPluginView_QRWizardPagingRender_3874(t *testing.T) {
 		// wizard: position in words, aria-current, check mark, escaped label
 		`<p class="plugin-view-wizard-pos">` + httpx.T("en", "plugin.view.wizard_step_of")[:4],
 		`aria-label="` + httpx.T("en", "plugin.view.wizard_label") + `"`,
-		`<li class="done"><span aria-hidden="true">✓ </span>Connect<span class="visually-hidden"> ` + httpx.T("en", "plugin.view.step_done") + `</span></li>`,
-		`<li class="current" aria-current="step">Check &lt;b&gt;</li>`,
-		`<li class="upcoming">Done</li>`,
+		`<li class="done"><span aria-hidden="true">✓ </span><bdi>Connect</bdi><span class="visually-hidden"> ` + httpx.T("en", "plugin.view.step_done") + `</span></li>`,
+		`<li class="current" aria-current="step"><bdi>Check &lt;b&gt;</bdi></li>`,
+		`<li class="upcoming"><bdi>Done</bdi></li>`,
 		// qr: a core-made PNG data URI, core alt, escaped caption
 		`<img src="data:image/png;base64,`,
 		`alt="` + httpx.T("en", "plugin.view.qr_alt") + `"`,
-		`<figcaption>Scan &lt;me&gt;</figcaption>`,
+		`<figcaption dir="auto">Scan &lt;me&gt;</figcaption>`,
 		// paging: both links on the entry's route, the query kept
 		`href="/plugin/views?page=1&amp;q=tea&#43;%26&#43;milk" rel="prev"`,
 		`href="/plugin/views?page=3&amp;q=tea&#43;%26&#43;milk" rel="next"`,

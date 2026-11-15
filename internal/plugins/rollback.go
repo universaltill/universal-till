@@ -250,6 +250,10 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	if err != nil {
 		return fmt.Errorf("failed to parse manifest: %w", err)
 	}
+	// ADR-0169: a cloud-hosted plugin never has a version to restore on a till.
+	if err := manifest.RefuseOnTill(); err != nil {
+		return err
+	}
 
 	// Begin transaction
 	tx, err := rm.db.BeginTx(ctx, nil)
@@ -321,6 +325,12 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	// manifest may hide a protected key or restructure a key another
 	// plugin has since taken; a fresh install would refuse it, so must this.
 	if err := validateLayoutEntries(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
+	// A revoked release is never restored (ut-docs#5658): the record
+	// outlives the version switch that disabled it.
+	if err := CheckNotRevoked(ctx, repo, tx, pluginID, targetVersion); err != nil {
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 

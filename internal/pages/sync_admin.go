@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -136,7 +137,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// Primary side: admin-state bundle. `?have=` lets a replica poll
 	// cheaply — matching fingerprint returns no body worth applying.
 	mux.HandleFunc("GET /api/sync/admin", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
@@ -173,7 +174,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// poll it and correct their local levels to match.
 	stockRepo := data.NewSyncStockRepo(posRepo)
 	mux.HandleFunc("GET /api/sync/stock", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -200,7 +201,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// the marketplace itself through the Ed25519-verified installer.
 	pluginsRepo := data.NewSyncPluginsRepo(d.Db)
 	mux.HandleFunc("GET /api/sync/plugins", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -230,7 +231,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// them. Raw key bytes, base64 — no fingerprint/`?have=`, this is
 	// fetch-once-then-persist, not a bundle.
 	mux.HandleFunc("GET /api/sync/secrets-key", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -257,10 +258,15 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 			return strings.TrimSpace(v)
 		}
 		if primary := d.SyncPrimaryURL(r.Context()); primary != "" {
-			queued, _ := posRepo.CountLocalSalesSince(r.Context(), get("sync.push_cursor"))
+			queued, _ := countQueuedSales(r.Context(), posRepo, get("sync.push_cursor"))
 			fresh := withinLast(get("sync.last_contact_at"), 90*time.Second)
+			// A restored copy has no bearer or till id (ut-docs#5162).
+			rejoin := replicaUnpaired(r.Context(), d)
+			// A sale the main till refuses as too large holds the queue
+			// (ut-docs#5428): same warn hook, no separate text.
+			held := get(salesPushHeldKey) != ""
 			class := "ok"
-			if !fresh {
+			if !fresh || rejoin || held {
 				class = "warn"
 			}
 			label := get("sync.till_name")
@@ -277,6 +283,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 				"label":     label,
 				"queued":    queued,
 				"offline":   !fresh,
+				"rejoin":    rejoin,
 			})(w, r)
 			return
 		}
@@ -534,6 +541,16 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	if !out.Data.Unchanged {
 		basketCustomers := basketCustomersKnown(ctx, d, posRepo) // ut-docs#3253
 		applied, err := adminRepo.ApplyAdminWithResult(ctx, out.Data.Bundle)
+		if errors.Is(err, data.ErrNotReplica) {
+			// ut-docs#5896: promoted to main till while this pull was in
+			// flight. Benign race, not a failure. This till is no longer a
+			// replica, so stop here: no pull_version / last_pull_at /
+			// admin_pulled audit / refresh / last_pull_ok_at / main contact
+			// (promote just wiped those sync.* keys), and no plugin or stock
+			// pull from the old main.
+			logging.L().Infof("sync pull: skipped, this till was promoted to main till during the pull")
+			return
+		}
 		if err != nil {
 			logging.L().Errorf("sync pull: apply failed: %v", err)
 			// ut-docs#807: sync.last_contact_at deliberately NOT set here.
@@ -587,7 +604,7 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// only when this till's own journal is fully pushed — otherwise the
 	// primary hasn't counted our latest sales yet and a correction would
 	// briefly re-add sold stock.
-	if queued, err := posRepo.CountLocalSalesSince(ctx, get("sync.push_cursor")); err != nil || queued > 0 {
+	if queued, err := countQueuedSales(ctx, posRepo, get("sync.push_cursor")); err != nil || queued > 0 {
 		return
 	}
 	stockRepo := data.NewSyncStockRepo(posRepo)
@@ -893,6 +910,13 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 				row.PluginName, row.ListingID, row.Version)
 		}
 		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version); err != nil {
+			// ADR-0169: a plugin that runs in the cloud (type `channel`) can
+			// never be installed on a till, so there is nothing to follow —
+			// not a failure to retry every tick.
+			if errors.Is(err, plugins.ErrCloudHostedPlugin) {
+				logging.L().Infof("plugin sync: %s (%s) runs in the cloud, not on a till — nothing to follow", row.PluginName, row.ListingID)
+				continue
+			}
 			warnPluginSyncOnce(pluginSyncInstallKeyPrefix+row.ListingID, "plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
 				row.PluginName, row.ListingID, row.Version, err)
 			converged = false

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +15,11 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // ADR-0166 / ut-docs#4610: the wizard's "Main till" join choice pairs with the
@@ -32,6 +35,13 @@ type cloudPairStub struct {
 	mu     sync.Mutex
 	status int
 	reply  string
+	last   map[string]any // the latest /pair request body
+}
+
+func (c *cloudPairStub) lastBody() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last
 }
 
 func (c *cloudPairStub) set(status int, reply string) {
@@ -54,6 +64,11 @@ func cloudWizard(t *testing.T) (*http.ServeMux, *common.Deps, *cloudPairStub, st
 		// same endpoint.
 		if strings.HasSuffix(r.URL.Path, "/v1/stores/pair") {
 			stub.calls.Add(1)
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			stub.mu.Lock()
+			stub.last = b
+			stub.mu.Unlock()
 		}
 		stub.mu.Lock()
 		st, rep := stub.status, stub.reply
@@ -508,5 +523,240 @@ func TestImportWelcomeShowsPairingIncompleteNoteNotSyncing(t *testing.T) {
 	}
 	if plain := getImportAs(mux, "/import?welcome=1", mgrUser, false).Body.String(); strings.Contains(plain, "cloud-pair-incomplete") {
 		t.Error("note shown without pairfail=1")
+	}
+}
+
+// ut-docs#4803: a till that joined a my. shop is already registered, so the
+// last step must not ask the ADR-0071 opt-in or the terms; a fresh wizard still does.
+func TestSetupDoneStepAsksRegistrationOnlyOffThePairedPath(t *testing.T) {
+	mux, _, _, nonce := cloudWizard(t)
+	fresh := getSetup(mux, "?lang=en", "en").Body.String()
+	for _, want := range []string{`name="auto_register"`, `name="accept_terms"`} {
+		if !strings.Contains(fresh, want) {
+			t.Errorf("unpaired wizard lacks %q", want)
+		}
+	}
+	doCloudPair(mux, nonce, nil)
+	paired := getSetup(mux, "?lang=en", "en").Body.String()
+	for _, bad := range []string{`name="auto_register"`, `name="accept_terms"`} {
+		if strings.Contains(paired, bad) {
+			t.Errorf("paired wizard still renders %q", bad)
+		}
+	}
+	if !strings.Contains(paired, `data-testid="setup-joined-shop"`) || !strings.Contains(paired, "Cloud Cafe") {
+		t.Error("paired wizard does not show the joined shop on the last step")
+	}
+}
+
+// ADR-0171 §4 (ut-docs#4830): a shop type chosen on my. is kept with the held
+// pairing, the wizard skips its shop-type step and shows the type read-only,
+// and the SERVER saves the cloud's value whatever the form posts.
+
+func cloudAnswerWithShopType(st string) string {
+	return `{"data":{"store_id":"` + pairPageStore + `","merchant_id":"merchant-1","device_id":"x","device_token":"` + pairPageToken + `",` +
+		`"store":{"name":"Cloud Cafe","country":"DE","currency":"EUR","currency_decimals":2,"catalog_master":"cloud","shop_type":"` + st + `"}},"error":null}`
+}
+
+func heldWizardPage(t *testing.T, shopType string) (*http.ServeMux, *common.Deps, string, string) {
+	t.Helper()
+	mux, d, stub, nonce := cloudWizard(t)
+	stub.set(200, cloudAnswerWithShopType(shopType))
+	doCloudPair(mux, nonce, nil)
+	return mux, d, nonce, getSetup(mux, "?lang=en", "en").Body.String()
+}
+
+func TestCloudWizardWithKnownShopTypeSkipsTheShopTypeStep(t *testing.T) {
+	_, _, _, page := heldWizardPage(t, "cafe")
+	if strings.Contains(page, `data-step="5"`) || strings.Contains(page, `name="shop_type"`) {
+		t.Error("the shop-type step is still rendered for a cloud-known type")
+	}
+	if !strings.Contains(page, `data-cloud-field="shop_type"`) || !strings.Contains(page, "Café / coffee shop") {
+		t.Error("the Your shop step lacks the read-only type line")
+	}
+	if !strings.Contains(page, "cloudShopType: true") {
+		t.Error("the step navigator is not told to skip step 5")
+	}
+	// Without the rule itself, Next from step 4 lands on a step 5 that is not
+	// on the page: an empty card the owner cannot leave.
+	if !strings.Contains(page, "(s === 5 && this.cloud && this.cloudShopType)") {
+		t.Error("the step navigator has no rule that skips step 5")
+	}
+}
+
+func TestCloudWizardWithoutShopTypeStillAsksIt(t *testing.T) {
+	for _, st := range []string{"", "spaceship"} {
+		_, _, _, page := heldWizardPage(t, st)
+		if !strings.Contains(page, `data-step="5"`) || !strings.Contains(page, `name="shop_type"`) {
+			t.Errorf("shop_type=%q: the step is not asked", st)
+		}
+		if strings.Contains(page, `data-cloud-field="shop_type"`) {
+			t.Errorf("shop_type=%q: a read-only type line was shown", st)
+		}
+		if !strings.Contains(page, "cloudShopType: false") {
+			t.Errorf("shop_type=%q: navigator would skip the step", st)
+		}
+	}
+}
+
+func TestCloudSetupSavesTheCloudsShopTypeAndIgnoresAPostedOne(t *testing.T) {
+	mux, d, nonce, _ := heldWizardPage(t, "cafe")
+	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "retail") })
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "cafe" {
+		t.Fatalf("shop.type = %q, want the cloud's cafe (a crafted post must not override it)", v)
+	}
+}
+
+func TestCloudSetupWithAnEmptyCloudTypeAcceptsThePostedOne(t *testing.T) {
+	mux, d, nonce, _ := heldWizardPage(t, "")
+	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "retail") })
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "retail" {
+		t.Fatalf("shop.type = %q, want the posted retail", v)
+	}
+}
+
+func TestCloudSetupShopTypeSideEffectsRunForTheCloudType(t *testing.T) {
+	orig := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(orig) })
+	mux, d, nonce, _ := heldWizardPage(t, "service")
+	// A posted cafe must not win over the cloud's service.
+	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "cafe") })
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "service" {
+		t.Fatalf("shop.type = %q, want service", v)
+	}
+	// applyShopTypeOrderTypeDefault ran: a service shop has no eat-in.
+	if v, _, _ := d.Settings.Get(t.Context(), data.OrderTypePromptModeKey); v != data.OrderTypePromptModeOff {
+		t.Fatalf("%s = %q, want off for a service shop", data.OrderTypePromptModeKey, v)
+	}
+}
+
+// ut-docs#5127 path B: during a my.-first (cloud-paired) wizard the paired
+// credential is held in memory until the seed is written. A pending base
+// plugin (a language pack core does not bundle, a German fiscal plugin)
+// must not make the till register a till-born store of its own in that
+// window: Commit then adopts the paired identity and the till-born store
+// would be left behind as a silent orphan. UT-0 holds registration.
+func TestCloudSetupDoesNotRegisterATillBornStoreBeforeCommit(t *testing.T) {
+	mux, d, _, nonce := cloudWizard(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+
+	var registers atomic.Int32
+	var registersBeforeCommit int32 = -1
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/stores/pair"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(cloudStoreAnswer))
+		case strings.HasSuffix(r.URL.Path, "/v1/stores/register"):
+			registers.Add(1)
+			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
+		default:
+			mkt.server.Config.Handler.ServeHTTP(w, r)
+		}
+	}))
+	t.Cleanup(front.Close)
+	d.Cfg.Marketplace.EndpointURL = front.URL
+	d.Cfg.Marketplace.PublicKey = mkt.config().PublicKey
+
+	doCloudPair(mux, nonce, nil)
+	if err := addPendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+	prevCommit := commitCloudPairing
+	commitCloudPairing = func(ctx context.Context, d *common.Deps, p *enroll.FirstTillPairing) error {
+		registersBeforeCommit = registers.Load()
+		return prevCommit(ctx, d, p)
+	}
+	t.Cleanup(func() { commitCloudPairing = prevCommit })
+
+	rec := finalCloudPost(mux, nonce, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("final post: code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if registersBeforeCommit != 0 {
+		t.Fatalf("/v1/stores/register was called %d time(s) before the pairing was saved: a till-born store would be orphaned (ut-docs#5127)", registersBeforeCommit)
+	}
+	if enroll.RegistrationHeld() {
+		t.Fatal("registration is still held after the wizard finished")
+	}
+}
+
+// The hold follows the held pairing: dropped by "This is not my shop",
+// expired with it, cleared when setup finishes, and never taken by a pair
+// call that lands after setup finished (it would be stranded for good).
+func TestCloudPairHoldFollowsTheHeldPairing(t *testing.T) {
+	mux, _, _, nonce := cloudWizard(t)
+	doCloudPair(mux, nonce, nil)
+	if !enroll.RegistrationHeld() {
+		t.Fatal("a held pairing does not hold registration")
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, cloudPairReq("/api/setup/cloud-unpair", nonce, url.Values{}, nil))
+	if enroll.RegistrationHeld() {
+		t.Fatal("cloud-unpair left registration held")
+	}
+
+	s := &setupCloudState{}
+	s.ensureNonce()
+	prev := cloudPairNow
+	t.Cleanup(func() { cloudPairNow = prev; enroll.ReleaseRegistration() })
+	now := time.Now()
+	cloudPairNow = func() time.Time { return now }
+	s.hold(&enroll.FirstTillPairing{}, "Till 1")
+	if !enroll.RegistrationHeld() {
+		t.Fatal("hold() did not hold registration")
+	}
+	cloudPairNow = func() time.Time { return now.Add(cloudPairHold + time.Minute) }
+	if s.current() != nil || enroll.RegistrationHeld() {
+		t.Fatal("an expired pairing still holds registration")
+	}
+	cloudPairNow = func() time.Time { return now }
+	s.hold(&enroll.FirstTillPairing{}, "Till 1")
+	s.finish()
+	if enroll.RegistrationHeld() {
+		t.Fatal("finish() left registration held")
+	}
+	s.hold(&enroll.FirstTillPairing{}, "Till 1") // a late pair call after setup
+	if enroll.RegistrationHeld() || s.current() != nil {
+		t.Fatal("a pairing that landed after setup finished was held")
+	}
+}
+
+// After the pairing is saved the pending plugin is retried at once, not on
+// the 5-minute tick (ut-docs#5127, design 4.3).
+func TestCloudSetupNudgesBasePluginRetryAfterCommit(t *testing.T) {
+	mux, d, _, nonce := cloudWizard(t)
+	doCloudPair(mux, nonce, nil)
+	if err := addPendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Drain just before Commit: the install attempt's own nudge (a spec left
+	// pending) is already spent, so only the post-commit one can satisfy this.
+	prevCommit := commitCloudPairing
+	commitCloudPairing = func(ctx context.Context, d *common.Deps, p *enroll.FirstTillPairing) error {
+		select {
+		case <-basePluginRetryNudge:
+		default:
+		}
+		return prevCommit(ctx, d, p)
+	}
+	t.Cleanup(func() { commitCloudPairing = prevCommit })
+	if rec := finalCloudPost(mux, nonce, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("final post: code=%d", rec.Code)
+	}
+	select {
+	case <-basePluginRetryNudge:
+	default:
+		t.Fatal("no base-plugin retry was nudged after the pairing was saved")
 	}
 }

@@ -3,6 +3,7 @@ id: recovery
 title: Wiederherstellungsbildschirm
 section: Den Betrieb führen
 order: 255
+public: true
 summary: Was Sie sehen, wenn die Kasse nicht startet, und was jede Aktion auf diesem Bildschirm bewirkt.
 keywords: [wiederherstellung, fehler, startet nicht, absturz, erneut versuchen, sicherer modus, beschädigt, protokoll, logdatei, fehlersuche]
 ---
@@ -53,6 +54,28 @@ Die Kasse schreibt ein technisches Protokoll, nach dem der Support fragen kann:
 - **Linux-Kasse, als Dienst installiert:** `/opt/unitill/data/logs`
 
 `till.log` ist die neueste Datei, `till.log.1` bis `till.log.4` sind ältere, und `desktop.log` ist das Protokoll des App-Fensters selbst. Passwörter und Tokens werden entfernt, bevor irgendetwas geschrieben wird, und der Ordner wird nie größer als etwa 25 MB. Solange die Kasse läuft, findet ein Manager den Ordner auch unter Einstellungen → Diagnosemodus → **Protokolldateien**, mit Schaltflächen zum Kopieren des Pfads und einer Diagnose-Zusammenfassung für den Support. Die Android-App schreibt diese Dateien nicht.
+
+## Wenn die App ein Fenster „konnte nicht gestartet werden“ öffnet
+
+Auf einem Windows-, Mac- oder Linux-Computer kann die App statt der Kasse ein
+Fenster mit dem Titel „Universal Till konnte nicht gestartet werden“
+öffnen. Es erscheint, wenn das Kassenprogramm direkt nach dem Öffnen beendet
+wurde und es deshalb noch nichts anzuzeigen gibt. Das ist nicht der
+Wiederherstellungsbildschirm oben: Der setzt voraus, dass das Kassenprogramm
+läuft. Das Fenster zeigt außerdem den Ordner mit den Protokolldateien und in
+kleiner Schrift ein technisches Detail für den Support.
+Das Fenster erscheint in der Sprache Ihres Computers, sofern die Kasse in
+dieser Sprache verfügbar ist, sonst auf Englisch. Auf einem
+Windows-Computer ohne WebView2 (siehe nächster Abschnitt) öffnet sich
+dieselbe Meldung stattdessen in Ihrem Standard-Webbrowser.
+
+1. Schließen Sie das Fenster und öffnen Sie Universal Till erneut.
+2. Startet es immer noch nicht, installieren Sie Universal Till mit dem
+   neuesten Installationsprogramm neu. Die Neuinstallation behält Ihre
+   Verkäufe, Artikel und Einstellungen.
+3. Wenn Sie Hilfe brauchen, senden Sie dem Support die Dateien `desktop.log`
+   und `till.log` aus dem Ordner, den das Fenster anzeigt (siehe „Wo das
+   Protokoll der Kasse liegt“ oben).
 
 ## Unter Windows: Die Kasse öffnet sich im Webbrowser statt im eigenen Fenster
 

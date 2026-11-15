@@ -3,6 +3,7 @@ id: age-restricted-sales
 title: Age-restricted sales
 section: Everyday selling
 order: 27
+public: true
 summary: Flag items that need an ID check (alcohol, tobacco, vapes and similar). The till then asks the cashier to record an ID check before payment, and the self-order kiosk sends the customer to the counter.
 keywords: [age, age restricted, id check, identification, alcohol, tobacco, vape, challenge, refusal, proof of age]
 ---
@@ -48,8 +49,9 @@ when it is resumed.
 ## On the self-order kiosk
 
 A self-order kiosk cannot check anyone's ID, so it will not take payment for
-an order that includes an age-restricted item. The customer sees a message
-asking them to pay at the counter, where staff will check ID. Nothing is
+an order that includes an age-restricted item. When the customer goes to
+pay, the kiosk shows a message asking them to pay at the counter, where staff
+will check ID, and offers no payment method to tap. Nothing is
 charged and their basket is left as it was. In pay-at-counter mode the order
 is simply sent to the counter as usual, and the cashier's ID check applies
 when it is paid at the till.
@@ -62,7 +64,7 @@ and when. A refusal is kept even when the refused item was removed and the
 rest of the sale went ahead. The record is written together with the sale
 itself, so there is never a check without a sale.
 
-These records are part of your shop's history. **Clear transaction history** (Settings → Data) archives them together with the sales and brings them back if you restore that archive, and **Catalog cleanup** and **Remove sample data** keep any item an ID check was recorded for, even one that was only ever refused.
+These records are part of your shop's history. **Clear transaction history** (Settings → Data management) archives them together with the sales and brings them back if you restore that archive, and **Catalog cleanup** and **Remove sample data** keep any item an ID check was recorded for, even one that was only ever refused.
 
 ## What this does and does not do
 

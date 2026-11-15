@@ -9,13 +9,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/procrestart"
@@ -313,6 +316,17 @@ func pairingRestartHandler(d *common.Deps, gate apiGate) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": httpx.T(locale, "tills.pairing.nothing_to_restart")})
 			return
 		}
+		// ut-docs#5058 UT-5: a sale rung since the join was staged goes to
+		// the new main till before the restart wipes this database. If it
+		// cannot, the restart waits (the manager retries); nothing is lost.
+		if _, err := replayStagedJoin(r.Context(), d, d.Cfg.DBPath); err != nil {
+			logging.L().Errorf("join: send this till's latest sales to the new main till before the restart: %v", err)
+			locale := httpx.ResolveLocale(w, r)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil,
+				"error": fmt.Sprintf(httpx.T(locale, "tills.join_error.unsent_not_sent"), strconv.Itoa(countUnsentSales(r.Context(), d)))})
+			return
+		}
 		pairingRestartFn()
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"restarting": true}, "error": nil})
 	}
@@ -357,6 +371,12 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 				msg = httpx.T(locale, "tills.pairing.error.name_required")
 			}
 			pairWaitView(w, r, statusURL, "error", "", "", msg)
+			return
+		}
+		// ut-docs#5862: one line, no hidden formatting characters; refused
+		// here, before any request to the main till.
+		if _, err := data.CheckSingleLineName(name); err != nil {
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, keyNameInvalidCharacters))
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {
@@ -410,6 +430,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			return
 		}
 		defer resp.Body.Close()
+		if answerIsTillReplaced(resp) {
+			// ut-docs#5058: the shop's owner replaced that main till.
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.join_error.replaced"))
+			return
+		}
 		if resp.StatusCode != http.StatusOK {
 			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.refused"))
 			return

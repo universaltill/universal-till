@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, stubPairingStream } from './fixtures';
 import { watchConsole, openPhoneDrawer } from './helpers';
 import { WORKER_TILL_EFFECTS_LEVEL } from './worker-till';
 
@@ -349,6 +349,7 @@ test.describe('page zoom from the tapped element (ut-docs#2942, ADR-0122)', () =
   for (const how of ['mouse', 'touch'] as const) {
     test(`a ${how} tap mid-zoom lands on the control at its final position`, async ({ browser, baseURL }) => {
       const ctx = await browser.newContext({ baseURL, hasTouch: how === 'touch', viewport: { width: 1024, height: 600 } });
+      await stubPairingStream(ctx); // ut-docs#2743: networkidle
       const page = await ctx.newPage();
       const assertClean = watchConsole(page);
       try {

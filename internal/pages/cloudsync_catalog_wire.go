@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // The till-side hooks behind the manage-shop catalog directives (ut-docs
@@ -44,6 +45,9 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 		return "", err
 	}
 	removeReplacedItemUpload(p.ID, res.ClearedImagePath)
+	// ut-docs#5124: an open basket line shows the item's new icon (and never
+	// a just-deleted upload) without a re-ring.
+	catalog.RefreshBasketPhoto(ctx, d, repo, p.ID)
 	auditCloudDirective(ctx, d, "item", p.ID, "cloud_item_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created " + res.Name, nil
@@ -51,11 +55,11 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 	return "updated " + res.Name, nil
 }
 
-// removeReplacedItemUpload removes an item's uploaded photo file once an
-// icon from the cloud replaced it (ut-docs#3584), as the till's own icon
-// picker does (removeUploadedThumbnail) — for save_item and for the cloud
-// catalogue pull (ADR-0162 §4, ut-docs#4463). A replaced library tile has
-// no file; clearedPath "" is a no-op.
+// removeReplacedItemUpload removes an item's uploaded photo file when told
+// an icon replaced it — for save_item and for the cloud catalogue pull
+// (ADR-0162 §4, ut-docs#4463). Defensive: since ut-docs#6028 an icon never
+// replaces an uploaded photo, so this only ever sees a library tile's path
+// (no file, a no-op); clearedPath "" is a no-op too.
 func removeReplacedItemUpload(itemID, clearedPath string) {
 	if clearedPath != "" && safeCategoryID(itemID) && clearedPath == catalog.ItemThumbURL(itemID) {
 		catalog.RemoveItemUpload(itemID)
@@ -184,6 +188,86 @@ func categoryOrderAlreadyApplied(current []data.CategoryNode, ids []string) bool
 	return true
 }
 
+// cloudButtonStore is the sale-screen tile store the item-order directive
+// and the snapshot's tile_pos read: the shared one, or a fresh one over the
+// same DB when the deps carry none (tests).
+func cloudButtonStore(d *common.Deps) *ui.ButtonStore {
+	if d.BtnStore != nil {
+		return d.BtnStore
+	}
+	return ui.NewButtonStore(d.Db)
+}
+
+// cloudSetCategoryItemOrder is the set_category_item_order hook (contract
+// §3.14, ut-docs#3105): the owner's order of one category's items from my.
+// Primary-gated like every catalog directive; shortcut_buttons sync
+// primary-wins, so the order reaches satellite tills through that sync.
+//
+// The cloud-side decode already refuses a blank or duplicate id; this
+// re-checks, because nothing else validates a directive against the till.
+// Every refusal -- an unknown category (active or inactive both count), an
+// item with no items row, an item filed under a different category -- is
+// decided before anything is written. The tiles are then dealt into the
+// slots the category's tiles already hold (ButtonStore.UpdateCategoryOrder),
+// so no other category's tile moves; items the list leaves out follow in
+// their old order, and a listed item with no tile is skipped. Idempotent:
+// when the grid already has this order (a lost-result replay) nothing is
+// written and no audit row added, and the result is the same text.
+func cloudSetCategoryItemOrder(ctx context.Context, d *common.Deps, categoryID string, itemIDs []string) (string, error) {
+	if len(itemIDs) == 0 {
+		return "", errors.New("missing item_ids")
+	}
+	seen := make(map[string]bool, len(itemIDs))
+	for _, id := range itemIDs {
+		if strings.TrimSpace(id) == "" {
+			return "", errors.New("blank item id")
+		}
+		if seen[id] {
+			return "", fmt.Errorf("duplicate item id %s", id)
+		}
+		seen[id] = true
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	cats, err := repo.ListCategories(ctx)
+	if err != nil {
+		return "", err
+	}
+	catName, found := "", false
+	for _, c := range cats {
+		if c.ID == categoryID {
+			catName, found = c.Name, true
+			break
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("category %s is not on this till", categoryID)
+	}
+	itemCats, err := repo.ItemCategoryIDs(ctx, itemIDs)
+	if err != nil {
+		return "", err
+	}
+	for _, id := range itemIDs {
+		cat, ok := itemCats[id]
+		if !ok {
+			return "", fmt.Errorf("item %s is not on this till", id)
+		}
+		if cat != categoryID {
+			return "", fmt.Errorf("item %s is not in category %s on this till", id, categoryID)
+		}
+	}
+	tiles, changed, err := cloudButtonStore(d).UpdateCategoryOrder(ctx, categoryID, itemIDs)
+	if err != nil {
+		return "", err
+	}
+	if changed {
+		auditCloudDirective(ctx, d, "category", categoryID, "cloud_category_item_order_set", map[string]any{"category_id": categoryID, "item_ids": itemIDs})
+	}
+	return fmt.Sprintf("item order applied to %d items in category %s", tiles, catName), nil
+}
+
 func cloudDeleteCategory(ctx context.Context, d *common.Deps, id, moveItemsTo string) (string, error) {
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
@@ -227,11 +311,9 @@ func cloudDeleteItem(ctx context.Context, d *common.Deps, id string) (string, er
 		return "already deleted", nil
 	}
 	audit := map[string]any{"name": res.Name}
-	if res.Voids > 0 {
-		// ut-docs#4746: the voids were detached with the item.
-		audit["voids"] = res.Voids
-		audit["note"] = fmt.Sprintf("item deleted with %d voids", res.Voids)
-	}
+	// ut-docs#4746, #4778: live voids, comps, wastes and ID checks were
+	// detached with the item; the audit row says how many of each.
+	res.AddDetachedToAudit(audit)
 	auditCloudDirective(ctx, d, "item", id, "cloud_item_deleted", audit)
 	return "deleted item " + res.Name, nil
 }
@@ -425,7 +507,7 @@ func optionSetInUseMessage(setName string, items []data.AssignedItem) string {
 // cloudsync has already checked the payload's shape; this checks the id is
 // on this till BEFORE fetching anything, then writes through the same
 // functions the till's own upload and Remove use (catalog.StoreItemPhoto /
-// ClearItemPicture, storeCategoryPhoto / clearCategoryPicture), so the file,
+// ClearItemPhoto, storeCategoryPhoto / clearCategoryPicture), so the file,
 // the item_images row or categories.image_path, and what the sale screen
 // shows are exactly what a local upload produces. Satellites get the file
 // through the existing asset sync (/api/sync/assets, #2566/#2785); the
@@ -448,9 +530,10 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 	if !safeCategoryID(img.ID) {
 		return "", notHere
 	}
-	// current is what the entity shows now: its item_images path or its
-	// categories.image_path/icon ("" = no picture at all).
-	var name, current string
+	// curImage is the entity's stored image (item_images path /
+	// categories.image_path); the icon is kept by both set and clear
+	// (ut-docs#3585, #3601), so only the image decides a replay.
+	var name, curImage string
 	if img.Entity == "item" {
 		l, ok, err := repo.GetItemLabel(ctx, img.ID)
 		if err != nil {
@@ -460,15 +543,9 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 			return "", notHere
 		}
 		name = l.Name
-		if current, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
+		if curImage, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
 			return "", err
 		}
-		// ut-docs#3584: an icon id is the item's picture too.
-		icon, err := repo.ItemIcon(ctx, img.ID)
-		if err != nil {
-			return "", err
-		}
-		current += icon
 	} else {
 		c, ok, err := repo.CategoryPicture(ctx, img.ID)
 		if err != nil {
@@ -477,7 +554,7 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		if !ok {
 			return "", notHere
 		}
-		name, current = c.Name, c.ImagePath+c.Icon
+		name, curImage = c.Name, c.ImagePath
 	}
 	target := catalog.ItemThumbURL(img.ID)
 	if img.Entity == "category" {
@@ -493,17 +570,20 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 	if img.Clear {
 		msg := fmt.Sprintf("image removed from %s %s", img.Entity, name)
 		// Nothing shown and no stray photo file: a replay, or never set.
-		if current == "" && cloudsync.ServedImageSHA256(target) == "" {
+		if curImage == "" && cloudsync.ServedImageSHA256(target) == "" {
 			return msg, nil
 		}
 		var err error
 		if img.Entity == "item" {
-			err = catalog.ClearItemPicture(ctx, repo, img.ID)
+			err = catalog.ClearItemPhoto(ctx, repo, img.ID)
 		} else {
 			err = clearCategoryPicture(ctx, repo, img.ID)
 		}
 		if err != nil {
 			return "", err
+		}
+		if img.Entity == "item" {
+			catalog.RefreshBasketPhoto(ctx, d, repo, img.ID)
 		}
 		audit("cloud_catalog_image_cleared", nil)
 		return msg, nil
@@ -524,7 +604,7 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		return "", errors.New("the image from the cloud could not be read as a PNG or JPEG")
 	}
 	before := ""
-	if current == target {
+	if curImage == target {
 		before = cloudsync.ServedImageSHA256(target)
 	}
 	if img.Entity == "item" {
@@ -534,6 +614,9 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 	}
 	if err != nil {
 		return "", err
+	}
+	if img.Entity == "item" {
+		catalog.RefreshBasketPhoto(ctx, d, repo, img.ID)
 	}
 	if after := cloudsync.ServedImageSHA256(target); before == "" || after != before {
 		audit("cloud_catalog_image_set", map[string]any{"sha256": img.SHA256, "size": img.Size})

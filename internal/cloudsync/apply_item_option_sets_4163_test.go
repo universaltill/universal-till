@@ -94,7 +94,7 @@ func TestSnapshotReportsOptionSetIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	byID := map[string]map[string]any{}

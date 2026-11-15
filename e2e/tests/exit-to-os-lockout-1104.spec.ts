@@ -30,7 +30,7 @@ test('exit-to-os 429 (locked out) renders the lockout message, not the generic P
 
   const notice = msg.locator('.pos-notice.error');
   await expect(notice).toBeVisible();
-  await expect(notice.locator('.notice-text')).toHaveText('Too many attempts — wait 30 seconds');
+  await expect(notice.locator('.notice-text')).toHaveText('Too many attempts — try again shortly');
   await expect(notice.locator('.notice-text')).not.toHaveText('Incorrect PIN or not authorized.');
 
   await page.unroute('**/api/settings/exit-to-os');
@@ -55,7 +55,7 @@ test('exit-to-os 403 (wrong PIN) still renders the generic PIN error, not the lo
   const notice = msg.locator('.pos-notice.error');
   await expect(notice).toBeVisible();
   await expect(notice.locator('.notice-text')).toHaveText('Incorrect PIN or not authorized.');
-  await expect(notice.locator('.notice-text')).not.toHaveText('Too many attempts — wait 30 seconds');
+  await expect(notice.locator('.notice-text')).not.toHaveText('Too many attempts — try again shortly');
 
   await page.unroute('**/api/settings/exit-to-os');
   assertClean();

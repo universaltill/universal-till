@@ -1678,3 +1678,46 @@ func TestBuildReceiptDoc_IssuedVouchers(t *testing.T) {
 		t.Fatalf("a sale that issued nothing printed a voucher block: %+v", other.Vouchers)
 	}
 }
+
+// ut-docs#5748: printed receipt dates use the shop's order, same as the screen.
+func TestBuildReceiptDoc_DateFollowsShopOrder_5748(t *testing.T) {
+	defer httpx.SnapshotStateForTests()()
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+	at := time.Date(2025, 11, 6, 21, 33, 0, 0, time.Local)
+	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE sales SET created_at=? WHERE id='sale1'`, at.UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	for shop, want := range map[string]string{"en-US": "11/06/2025 21:33", "en-GB": "06/11/2025 21:33"} {
+		httpx.SetDefaultLocale(shop)
+		doc, err := buildReceiptDoc(context.Background(), dp, "R001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(doc.Meta, "\n")
+		if !strings.Contains(joined, want) {
+			t.Errorf("shop %s: meta %+v lacks %q", shop, doc.Meta, want)
+		}
+		if screen := httpx.FormatDateTime(at, "en"); screen != want {
+			t.Errorf("shop %s: screen (bare en) %q != paper %q", shop, screen, want)
+		}
+	}
+}
+
+func TestCustomerReceiptDoc_BareEnKeepsShopOrder_5748(t *testing.T) {
+	defer httpx.SnapshotStateForTests()()
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+	at := time.Date(2025, 11, 6, 21, 33, 0, 0, time.Local)
+	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE sales SET created_at=? WHERE id='sale1'`, at.UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	httpx.SetDefaultLocale("en-US")
+	doc, err := customerReceiptDoc(context.Background(), dp, "R001", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(doc.Meta, "\n"); !strings.Contains(joined, "11/06/2025 21:33") {
+		t.Errorf("customer en receipt on en-US shop not month-first: %+v", doc.Meta)
+	}
+}

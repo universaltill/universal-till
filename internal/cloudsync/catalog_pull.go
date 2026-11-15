@@ -76,6 +76,16 @@ func pullCloudCatalog(ctx context.Context, cfg *config.Config, db *sql.DB, hooks
 		scope := m.StoreID + "\n" + m.EndpointURL
 		reportCatalogApplyFailures(ctx, db, scope, catalogpull.NewHTTPReporter(httpClient, m.EndpointURL, m.StoreID, m.MerchantToken))
 	}
+	if res.Done && err == nil {
+		// The first pull of a joined till reached the feed's end: the join's
+		// "Syncing your shop" state ends (ut-docs#5098). Idempotent.
+		sr := data.NewSettingsRepo(db)
+		if v, ok, _ := sr.Get(ctx, catalogpull.KeyFirstPullDone); !ok || v != "1" {
+			if serr := sr.Set(ctx, catalogpull.KeyFirstPullDone, "1"); serr != nil {
+				logging.L().Warnf("cloudsync: record the finished first catalogue pull: %v", serr)
+			}
+		}
+	}
 	if res.Applied > 0 || res.Refused > 0 || res.Pruned > 0 {
 		logging.L().Infof("cloudsync: catalogue pull: %d applied, %d refused, %d skipped, %d pruned", res.Applied, res.Refused, res.Skipped, res.Pruned)
 	}

@@ -53,13 +53,17 @@
   .receipt-tracking-qr {border-top: 1px dashed var(--border); margin-block-start: 0.75rem; padding-block-start: 0.75rem; text-align: center;}
   .receipt-tracking-qr img {max-width: 160px; width: 100%; height: auto;}
   .receipt-tracking-caption {display: block; margin-block-start: 0.25rem; color: var(--text);}
-  .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
+  /* ut-docs#6184: theme warning tokens, not literals (a light-orange slab on dark). */
+  .receipt-printer-warning {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; background: var(--warning-tint); border: 1px solid var(--warning-tint-border); color: var(--warning-text); padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
   .receipt-ask {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem;}
   .receipt-ask-title {font-weight: 600; margin-bottom: 0.5rem;}
   .receipt-ask-actions {display: flex; gap: 0.5rem;}
   .receipt-ask-actions .btn {flex: 1; min-height: 3rem;}
   .receipt-print-copy {display: none;}
+  /* ut-docs#6155: margin 0 leaves the browser no margin box for its header and
+     footer (URL, title, date); the print rules below inset the content instead. */
+  @page {margin: 0;}
   @media print {
     /* ut-docs#4730: print the customer-language copy instead of the screen card. */
     .receipt-wrap.has-print-copy > .receipt-card:not(.receipt-print-copy) {display: none;}
@@ -73,6 +77,8 @@
        theme's light --text would print near-invisible. */
     .receipt-card, .receipt-card * {color: #000 !important;}
     .receipt-card {background: #fff; border-color: #e5e7eb;}
+    /* 6mm clears a printer's unprintable edge; clone repeats it on page 2+. */
+    .receipt-wrap {padding-inline: 6mm; padding-block: 6mm; box-sizing: border-box; -webkit-box-decoration-break: clone; box-decoration-break: clone;}
     .receipt-card .totals {background: transparent; border-color: #e5e7eb;}
     .actions {display: none;}
     .nav {display: none !important;}
@@ -90,7 +96,12 @@
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">
       <span class="receipt-printer-message">{{ T "receipt.printer.unavailable" }}</span>
+      {{- /* ut-docs#6154: a printerless Pi kiosk can't open a usable print dialog — point at Settings (or a manager) instead of Retry. */}}
+      {{ if browserprintoff }}
+      {{ if allowed "settings" }}<a class="btn secondary receipt-printer-setup" data-testid="receipt-printer-setup" href="/settings#settings-printer">{{ T "receipt.printer.set_up" }}</a>{{ else }}<span class="receipt-printer-message" data-testid="receipt-printer-ask-manager">{{ T "receipt.printer.ask_manager" }}</span>{{ end }}
+      {{ else }}
       <button class="btn secondary receipt-printer-retry" type="button" data-action="print">{{ T "receipt.printer.retry" }}</button>
+      {{ end }}
     </div>
     {{ end }}
     {{ if eq .ReceiptPolicy "ask" }}
@@ -105,7 +116,7 @@
          state change. The action row below stays exactly as it is for
          always/never and as the fallback once the prompt is answered.
          Review finding (2026-09-09): the block is hidden BEFORE
-         window.print() fires in the fallback path, and .receipt-ask is in
+         the print helper (UT.print) fires in the fallback path, and .receipt-ask is in
          the @media print hide list above — a failed reprint must never put
          "Would you like a receipt?" on the customer's own paper. -->
     <div class="receipt-ask" id="receipt-ask" role="group" aria-label="{{ T "receipt.ask.title" }}">
@@ -118,7 +129,7 @@
     {{ end }}
     {{/* ADR-0124 (ut-docs#3169): a 451 from the print POST is the
          customer-document gate's refusal, never a printer fault — neither
-         Print here nor the ask prompt's Print falls back to window.print()
+         Print here nor the ask prompt's Print falls back to the print helper (UT.print)
          on it. In a suppressed market this partial is not rendered at all
          (sale_recorded.html replaces it); this is defence in depth. */}}
     <div class="actions">
@@ -159,9 +170,13 @@
 <div class="totals">
   {{ if .ShowTax }}
   <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
-  <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
   {{ end }}
   {{ if gt .SaleDiscount 0 }}<div>{{ T "basket.discount" }}{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
+  {{ if .ShowTax }}
+  <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
+  {{ end }}
+  {{ if .ServiceCharge }}<div data-testid="receipt-service-charge">{{ T "journal.detail.service_charge" }}: {{ money .ServiceCharge }}</div>{{ end }}
+  {{ if and .ShowTax .VoucherIssueTotal }}<div data-testid="receipt-voucher-total">{{ T "receipt.vouchers.issued" }}: {{ money .VoucherIssueTotal }}</div>{{ end }}
   <div><strong>{{ T "basket.total" }}: {{ money .Total }}</strong></div>
 </div>
 {{ if .Payments }}

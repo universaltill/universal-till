@@ -18,6 +18,15 @@
   {{ if or (eq .topic.ID "sell") (eq .topic.ID "guided-tour") }}
   <p class="manual-tour-link"><a class="btn" data-testid="help-take-tour" href="/?tour=1&amp;stay=1">{{ T "tour.restart.button" }}</a></p>
   {{ end }}
+  {{/* ut-docs#5108: a registered till links straight to my.'s Support
+       partner screen; an unregistered one shows the prose only. */}}
+  {{ if and (eq .topic.ID "support-partner") .partnerURL }}
+  <div class="manual-partner-link" data-testid="help-partner-link">
+    <p>{{ T "help.support_partner.scan" }}</p>
+    {{ if .partnerQR }}<img class="manual-partner-qr" data-testid="help-partner-qr" src="{{ .partnerQR }}" width="220" height="220" alt="">{{ end }}
+    <p><a data-testid="help-partner-url" hx-boost="false" href="{{ .partnerURL }}" target="_blank" rel="noopener">{{ .partnerURL }}</a></p>
+  </div>
+  {{ end }}
 </article>
 {{ else }}
 <article class="manual-topic manual-intro" id="manual-topic">

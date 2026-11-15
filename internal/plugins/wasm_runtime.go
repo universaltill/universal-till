@@ -274,6 +274,11 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		return
 	}
 
+	// ADR-0169: a cloud-hosted plugin (type `channel`) is listed, never run on
+	// a till. Dropping it here keeps it out of the module map, the compile
+	// cache warm-up, the event subscriptions and the schedules below.
+	rows = withoutCloudHosted(ctx, db, rows)
+
 	w.mu.Lock()
 	w.unsubGen++
 	gen := w.unsubGen

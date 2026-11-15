@@ -23,7 +23,8 @@ import (
 //     by the pull loop) holds a candidate, and nothing (200, empty body —
 //     the nav fragments' "nothing to show") for a replica, a dismissed
 //     notice, no candidate, a caller who can't manage sync, or a till that
-//     already has enrolled replicas (it IS a main till — ut-docs#2721
+//     is paired with a my. shop (store id + token: it joined as the main
+//     till, ut-docs#4836) or already has enrolled replicas (it IS a main till — ut-docs#2721
 //     Tester finding: an empty sync.primary_url alone doesn't mean
 //     standalone). A till that already holds sales gets a warning that
 //     linking replaces them, plus a required confirm (ut-docs#3796).
@@ -38,6 +39,12 @@ func registerJoinNoticeUI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/join-notice", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if !canPerform(d, r, "sync_management") || d.SyncPrimaryURL(ctx) != "" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Joined a my. shop as its main till (setup wizard, #4610): not
+		// standalone even with no replica yet (ut-docs#4836).
+		if discovery.PairedWithCloudShop(ctx, d.Settings) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

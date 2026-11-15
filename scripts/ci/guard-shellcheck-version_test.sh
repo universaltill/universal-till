@@ -14,12 +14,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 GUARD="scripts/ci/guard-shellcheck-version.sh"
-BASELINE="0.9.0"
+# Keep in sync with ACCEPTED_VERSIONS in the guard (ut-docs#5208).
+ACCEPTED_NEW="0.11.0"
+# The Ubuntu 24 runner version, dropped once the ubuntu-latest migration
+# finished (ut-docs#5208) -- it must now be refused.
+DROPPED_OLD="0.9.0"
 FAIL_COUNT=0
 
 FAKE_BIN_DIR="$(mktemp -d)"
-# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
-# shellcheck disable=SC2317
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317/SC2329 false positive).
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   local status=$?
   rm -rf "${FAKE_BIN_DIR}"
@@ -65,12 +69,29 @@ expect_pass() {
   rm -f /tmp/guard_shellcheck_test_out.$$
 }
 
-# A shellcheck reporting exactly the pinned baseline must pass.
-make_fake_shellcheck "${BASELINE}"
-expect_pass "a shellcheck reporting the pinned baseline version" "${FAKE_BIN_DIR}:${PATH}"
+# A shellcheck reporting exactly the accepted version must pass:
+# 0.11.0 (Ubuntu 26 image).
+make_fake_shellcheck "${ACCEPTED_NEW}"
+expect_pass "a shellcheck reporting the Ubuntu 26 version (${ACCEPTED_NEW})" "${FAKE_BIN_DIR}:${PATH}"
 
-# A shellcheck reporting anything else — older or newer — must fail loudly,
-# not silently pass through.
+# The old Ubuntu 24 version is refused now that the ubuntu-latest migration
+# is complete and no job runs it any more (ut-docs#5208).
+make_fake_shellcheck "${DROPPED_OLD}"
+expect_fail "the dropped Ubuntu 24 version (${DROPPED_OLD}, ut-docs#5208)" "${FAKE_BIN_DIR}:${PATH}"
+
+# A shellcheck reporting anything else — older or newer than the accepted
+# version — must fail loudly, not silently pass through.
+make_fake_shellcheck "0.10.0"
+expect_fail "a shellcheck reporting a version between the dropped and accepted ones" "${FAKE_BIN_DIR}:${PATH}"
+
+# Exact match only: a pre-release or a version that merely contains an
+# accepted one must not slip through a looser (glob/prefix/regex) compare.
+make_fake_shellcheck "0.11.0-rc1"
+expect_fail "a pre-release of an accepted version (0.11.0-rc1)" "${FAKE_BIN_DIR}:${PATH}"
+
+make_fake_shellcheck "10.11.0"
+expect_fail "a version containing an accepted one (10.11.0)" "${FAKE_BIN_DIR}:${PATH}"
+
 make_fake_shellcheck "0.11.3"
 expect_fail "a shellcheck reporting a drifted (newer) version" "${FAKE_BIN_DIR}:${PATH}"
 

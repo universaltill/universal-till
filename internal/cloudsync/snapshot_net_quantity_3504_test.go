@@ -46,7 +46,7 @@ func TestSnapshotItemNetQuantity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, it := range cloud.snapshots[0]["items"].([]any) {

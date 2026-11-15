@@ -15,6 +15,19 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/shifts", func(w http.ResponseWriter, r *http.Request) {
 		repo := data.NewPOSRepo(d.Db)
 		current, hasOpen, _ := repo.CurrentOpenShift(r.Context())
+		// ut-docs#5755: the open shift's no-sale drawer opens, per cashier.
+		// Best-effort -- a failed query omits the row, never fails the page
+		// (and never shows a false 0). Declared before the local `data` map
+		// below shadows the data package.
+		noSaleCount, noSaleOK := 0, false
+		var noSaleOps []data.NoSaleOperator
+		if hasOpen {
+			if n, ops, nsErr := repo.NoSaleForShift(r.Context(), current.ID); nsErr == nil {
+				noSaleCount, noSaleOps, noSaleOK = n, ops, true
+			} else {
+				logging.L().Errorf("shift no-sale opens: %v", nsErr)
+			}
+		}
 		history, _ := repo.ListRecentShifts(r.Context(), 20)
 		// This till's own register identity (ut-docs#268), used only to
 		// preselect the shift-open picker (ut-docs#940) -- ambiguous
@@ -47,15 +60,39 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 				carryMinor = carried.Minor()
 			}
 		}
+		// ut-docs#5797: open shifts per register -- names for the Current card
+		// and the X report picker. Best-effort: on error the X section is
+		// hidden and the Current card shows raw ids. No figure is read here.
+		openShifts, osErr := repo.ListOpenShifts(r.Context())
+		if osErr != nil {
+			logging.L().Errorf("list open shifts: %v", osErr)
+		}
+		xDefault, hasX := pickXShift(openShifts, "", xTillRegister(r.Context(), d))
+		curRegName, curCashierName := current.RegisterID, current.CashierID
+		for _, o := range openShifts {
+			if o.ShiftID == current.ID {
+				curRegName, curCashierName = o.RegisterName, o.CashierName
+			}
+		}
 		data := map[string]any{
-			"title":          httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
-			"theme":          d.CurrentState().Theme,
-			"menuItems":      d.MenuSnapshot(),
-			"Current":        current,
-			"HasOpen":        hasOpen,
-			"History":        history,
-			"Registers":      registers,
-			"TillRegisterID": tillRegisterID,
+			"CurrentRegisterName": curRegName,
+			"CurrentCashierName":  curCashierName,
+			"HasX":                hasOpen && osErr == nil && hasX,
+			"XShifts":             openShifts,
+			"XShowPicker":         len(openShifts) > 1,
+			"XDefaultRegister":    xDefault.RegisterID,
+			"title":               httpx.T(httpx.RequestLocale(r), "page.title.shifts"),
+			"theme":               d.ResolvedTheme(r),
+			"menuItems":           d.MenuSnapshot(),
+			"Current":             current,
+			"HasOpen":             hasOpen,
+			"NoSaleOK":            noSaleOK,
+			"NoSaleCount":         noSaleCount,
+			"NoSaleOperators":     noSaleOps,
+			"History":             history,
+			"HasClosedHistory":    hasClosedShift(history),
+			"Registers":           registers,
+			"TillRegisterID":      tillRegisterID,
 			// Minor units plus a pre-formatted decimal for the number input
 			// (templates shouldn't do float math on money).
 			"CarryForwardMinor": carryMinor,
@@ -71,4 +108,17 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/shifts.html", data)(w, r)
 	})
+	registerShiftXReport(mux, d)
+	registerShiftCountDetail(mux, d) // ut-docs#1043
+}
+
+// hasClosedShift reports whether the history has a row whose count can be
+// shown (ut-docs#1043), so the count panel renders only then.
+func hasClosedShift(h []data.ShiftSummary) bool {
+	for _, s := range h {
+		if !s.Open {
+			return true
+		}
+	}
+	return false
 }

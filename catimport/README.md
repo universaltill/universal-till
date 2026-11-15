@@ -1,7 +1,8 @@
 # catimport — the shared catalogue parser
 
 `github.com/universaltill/universal-till/catimport` reads catalogue exports
-(generic CSV/XLSX with header synonyms, plus the grandfathered Loyverse,
+(generic CSV/XLSX with header synonyms — including a `Reorder level` /
+`Low stock` / `Stock Alert Count` column for the low-stock threshold — plus the grandfathered Loyverse,
 Square, SumUp and Shopify dialects) into neutral `ImportItem`s, and `ToRows`
 turns a parsed file into ADR-0051 interchange rows. The till and ut-cloud
 use this one copy (ADR-0164 §1, ut-docs#4525).
@@ -28,7 +29,8 @@ rows := catimport.ToRows(res) // []catimport.Row, money in minor units
   mapping (`not_generic`). A nil mapping is `Parse` / `ParseXLSX`.
 - **Packages:** `catimport` (CSV/XLSX parsing, detection, `Row`/`ToRows`),
   `catimport/barcode` (the ADR-0059 symbology registry), and
-  `catimport/catalogrules` (item types, the net-quantity rule).
+  `catimport/catalogrules` (item types, the net-quantity rule,
+  `CheckSingleLineName`; `catalogrules/namecases` is its shared case table).
 - **Pure.** No database, no files, no network. It never imports a till
   package (`internal/...`): `scripts/ci/guard-catimport-module.sh`.
 - **Few vendor formats.** A vendor's export is parsed by its
@@ -60,15 +62,22 @@ rows := catimport.ToRows(res) // []catimport.Row, money in minor units
 - universal-till builds this tree through `replace … => ./catimport` in its
   `go.mod`. A `replace` is not transitive, so another module that imports
   both universal-till and catimport needs the same `replace`, or a tag.
-- ut-cloud will require a tag, `catimport/vX.Y.Z`, with no `replace`,
-  once it consumes the module (card #4528). Its `manifest-contract-guard`
-  job will then run `scripts/ci/check-catimport-pin.sh`, which fails while
-  `catimport/` has changed since the pinned tag. That job's checkout of
-  universal-till needs `fetch-depth: 0` and `fetch-tags: true`: the check
-  diffs the tag against `HEAD`, so a shallow or tagless clone can't run it.
-- **After merging a change here:** tag the merge commit
-  `catimport/vX.Y.Z` (patch for a fix, minor for a new field or function)
-  and (once #4528 lands) bump ut-cloud's `require`.
+- ut-cloud requires a tag, `catimport/vX.Y.Z`, with no `replace`. Its
+  `manifest-contract-guard` job runs `scripts/ci/check-catimport-pin.sh`,
+  which fails while `catimport/` has changed since the pinned tag. That
+  job's checkout of universal-till needs `fetch-depth: 0` and
+  `fetch-tags: true`: the check diffs the tag against `HEAD`, so a shallow
+  or tagless clone can't run it.
+- **`catimport/VERSION`** holds the version as one line, bare `X.Y.Z` (no
+  `v`, no suffix). A PR that changes Go source, `go.mod` or `go.sum` here
+  bumps it in the same PR: patch for a fix, minor for a new exported name,
+  major for a break. README/`.md` edits need no bump.
+  `scripts/ci/guard-catimport-version.sh` (CI `build` job) enforces it.
+- **On merge,** `.github/workflows/catimport-tag.yml` creates the annotated
+  tag `catimport/v<VERSION>` on the merge commit. Never push the tag by
+  hand. If that run is red, read its error: fix it with a follow-up PR, or
+  use "Run workflow" on `main` to retry (idempotent).
+- **Then** bump ut-cloud's `require` to the new tag.
 
 Tests: `cd catimport && go test ./...` (the root `go test ./...` doesn't
 reach a nested module; CI runs both).

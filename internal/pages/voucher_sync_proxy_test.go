@@ -483,9 +483,7 @@ func TestPOSTender_CrossTillVoucherRedemption_FailedReleaseSurfacesProblem(t *te
 // unchanged, no different from before this card shipped.
 func TestPOSTender_CrossTillVoucherRedemption_PrimaryUnreachableFallsBackToLocalNotFound(t *testing.T) {
 	mux, dp := newVoucherTenderDeps(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := unreachableURL()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-replica")
 
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -612,9 +610,7 @@ func TestReserveVoucherOnPrimary_FallbackAndRefusalShapes(t *testing.T) {
 		}
 	}
 
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := unreachableURL()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-replica")
 	// A transport-level failure (connection refused here) is ALSO ambiguous
 	// in general — the request may or may not have reached the primary —
@@ -651,9 +647,7 @@ func TestReserveVoucherOnPrimary_FallbackAndRefusalShapes(t *testing.T) {
 // local mirror row is created (nothing was validated anywhere).
 func TestVoucherRedeemWriteThrough_PrimaryUnreachableFallsBack(t *testing.T) {
 	_, dp := newVoucherTenderDeps(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := unreachableURL()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-replica")
 
 	preauth, maybeReserved, err := voucherRedeemWriteThrough(context.Background(), dp, data.NewPOSRepo(dp.Db), "GS-NOWHERE", 300, "sale-1")

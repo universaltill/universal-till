@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- ut:pomade, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/ut/LICENSE -->
+  <rect width="64" height="64" fill="#CCFBF1"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#115E59" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="6" width="16" height="4" rx="1"/>
+    <path d="M5 10v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9"/>
+    <path d="M9 15h6"/>
+  </g>
+</svg>

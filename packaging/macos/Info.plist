@@ -18,6 +18,18 @@
   <string>unitill-desktop</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>ar</string>
+    <string>de</string>
+    <string>en</string>
+    <string>es</string>
+    <string>fa</string>
+    <string>pt</string>
+    <string>tr</string>
+  </array>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
@@ -28,6 +40,19 @@
   <string>Universal Till uses the camera to scan items and barcodes.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Universal Till may use the microphone for voice features.</string>
+  <!-- The till browses and advertises on the shop LAN (internal/discovery:
+       network printers, main/satellite pairing). macOS asks for Local Network
+       access the first time; this is the text it shows, localised through
+       Resources/<lang>.lproj/InfoPlist.strings (ut-docs#5026). The Bonjour
+       list is EXACTLY the service types discovery uses, pinned by
+       packaging/macos_local_network_test.go. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Universal Till looks for receipt printers and your other tills on your shop network, so you can connect them without typing addresses.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_unitill-sync._tcp</string>
+    <string>_pdl-datastream._tcp</string>
+  </array>
   <!-- The webview shell loads only its own localhost server. -->
   <key>NSAppTransportSecurity</key>
   <dict>

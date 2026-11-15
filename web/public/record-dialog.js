@@ -184,15 +184,41 @@
   }
 
   // The ONE discard guard, shared by every path that would drop the form's
-  // current contents: Close, Escape, AND opening again over a dirty form
-  // (review S1 — open() used to skip it, so New over an edit with unsaved
-  // text silently emptied the field). confirm() for consistency with the
-  // hx-confirm this codebase already uses everywhere else.
-  function confirmDiscard(dialog) {
+  // current contents: Close, Escape, and opening again over a dirty form
+  // (review S1 -- open() used to skip it, so New over an edit with unsaved
+  // text silently emptied the field). Asked in the till's own dialog
+  // (till-confirm.js, ut-docs#6116), never the browser's window.confirm,
+  // which makes the status bar inert. A clean form never asks and acts
+  // synchronously, exactly as before.
+  function isDirty(dialog) {
     var form = formOf(dialog);
-    if (!(form && snapshots && snapshots.has(dialog))) return true;
-    if (serialize(form) === snapshots.get(dialog)) return true;
-    return window.confirm(dialog.getAttribute('data-discard-confirm') || '');
+    if (!(form && snapshots && snapshots.has(dialog))) return false;
+    return serialize(form) !== snapshots.get(dialog);
+  }
+
+  // Resolves true only on an explicit Confirm. Cancel, Escape, a swap, Lock or
+  // another question already pending all resolve false: the edits are kept.
+  function askDiscard(dialog, opener) {
+    var q = dialog.getAttribute('data-discard-confirm') || '';
+    return (window.UT && typeof window.UT.confirm === 'function')
+      ? window.UT.confirm(q, { opener: opener || null })
+      : Promise.resolve(window.confirm(q)); // native-confirm:allow till-confirm.js not loaded: still ask, never a silent discard
+  }
+
+  // While a discard question for this dialog is open, further Close / Escape /
+  // New taps are ignored, so there is one question and no close under it.
+  var ASKING = 'data-record-discard-asking';
+
+  // Cancel: focus stays in the dialog with the edits intact. till-confirm has
+  // already refocused the opener; this only catches an opener outside the
+  // dialog (New / a row behind it) or one that is gone. Another question still
+  // open owns focus, so leave it alone.
+  function keepFocus(dialog) {
+    if (window.UT && typeof window.UT.confirmOpen === 'function' && window.UT.confirmOpen()) return;
+    if (!dialog.isConnected || !dialog.open || dialog.contains(document.activeElement)) return;
+    var form = formOf(dialog);
+    var f = (form && firstField(form)) || dialog.querySelector('.record-dialog-close');
+    if (f) f.focus();
   }
 
   // ut-docs#2020: hx-boost reads a form's method+action ONCE, when htmx
@@ -223,8 +249,20 @@
       console.error('record-dialog: row carries data-record-open but no data-record-action — refusing to open it', row);
       return;
     }
-    if (dialog.open && !confirmDiscard(dialog)) return;
+    if (dialog.hasAttribute(ASKING)) return;
+    if (!(dialog.open && isDirty(dialog))) { show(dialog, row, opener, action); return; }
+    var inside = dialog.contains(document.activeElement) ? document.activeElement : null;
+    dialog.setAttribute(ASKING, '');
+    askDiscard(dialog, inside).then(function (ok) {
+      dialog.removeAttribute(ASKING);
+      if (ok !== true) { keepFocus(dialog); return; }
+      // E1: the dialog or the asked-for row was swapped away while asking.
+      if (!dialog.isConnected || (row && !row.isConnected)) return;
+      show(dialog, row, opener, action);
+    });
+  }
 
+  function show(dialog, row, opener, action) {
     var form = formOf(dialog);
     var title = dialog.querySelector('[data-record-dialog-title]');
     var destructive = dialog.querySelector('[data-record-dialog-destructive]');
@@ -281,7 +319,7 @@
       dialog.dispatchEvent(new CustomEvent('record-dialog:open', { bubbles: true, detail: { row: row || null, mode: mode } }));
     }
     if (openers && !dialog.open) openers.set(dialog, opener || document.activeElement);
-    // The open/close motion is base.html's shared popup zoom (ADR-0122 §5,
+    // The open/close motion is ut-motion.js's shared popup zoom (ADR-0122 §5,
     // ut-docs#2944), which wraps .show() itself -- no per-dialog motion
     // here (#2338's own open ease was replaced by it).
     if (!dialog.open) dialog.show();
@@ -313,8 +351,21 @@
     }
   }
 
-  function close(dialog) {
-    if (!confirmDiscard(dialog)) return;
+  function close(dialog, opener) {
+    if (dialog.hasAttribute(ASKING)) return;   // a second Close/Escape while asking
+    if (!isDirty(dialog)) { finishClose(dialog); return; }   // synchronous, as before
+    dialog.setAttribute(ASKING, '');
+    askDiscard(dialog, opener).then(function (ok) {
+      dialog.removeAttribute(ASKING);
+      if (ok !== true) { keepFocus(dialog); return; }
+      // E1/E3: swapped away, or something else (lock, UT.closeAll) already
+      // closed it, which also owns where focus went.
+      if (!dialog.isConnected || !dialog.open) return;
+      finishClose(dialog);
+    });
+  }
+
+  function finishClose(dialog) {
     if (dialog.open) dialog.close();
     // Hand focus back to what opened the dialog (WCAG 2.4.3): the pencil
     // or New button the operator was on. Nothing is focused on the page
@@ -377,9 +428,9 @@
     }
     // Another <dialog> opened ON TOP of this one owns the focus while it is
     // up — the trap must not fight it. /categories has none today, but the
-    // ut-docs#2012 screens carry #plugin-install-modal, #hold-modal and
-    // friends, and yanking focus out of one of those would be this trap
-    // causing the very bug it exists to prevent.
+    // ut-docs#2012 screens carry #hold-modal and friends, and yanking focus
+    // out of one of those would be this trap causing the very bug it exists
+    // to prevent.
     var top = t.closest ? t.closest('dialog[open]') : null;
     if (top && top !== dialog) return;
     var list = focusables(dialog);
@@ -402,7 +453,7 @@
     var closer = t.closest('.record-dialog-close');
     if (closer) {
       var owner = closer.closest('[data-record-dialog]');
-      if (owner) { ev.preventDefault(); close(owner); }
+      if (owner) { ev.preventDefault(); close(owner, closer); }
       return;
     }
 
@@ -488,7 +539,7 @@
         if (ev.key !== 'Escape' && ev.key !== 'Esc') return;
         ev.preventDefault();
         ev.stopPropagation();
-        close(dialog);
+        close(dialog, document.activeElement);
       });
     });
   }

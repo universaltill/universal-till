@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -43,7 +44,20 @@ const autoRegisterAttemptTimeout = 5 * time.Second
 // Settings → "Register now". Settings' enrolment card shows the till as not
 // registered until then, which is the operator's signal. On no/absent, no
 // call at all — ADR-0015's lazy registration stays exactly as it is.
-func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
+func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn, acceptedTerms bool, locale string) {
+	// ut-docs#4720: registering sends the cloud-terms acceptance, so an
+	// opt-in without it (neither ticked now nor accepted before) is not a
+	// valid opt-in: it is saved as "false", logged, and nothing is sent.
+	// A tick records the acceptance first, then registers as before.
+	if optIn && !acceptedTerms && !termsAlreadyAccepted(ctx, d) {
+		logging.L().Infof("setup wizard: auto-register opted in without accepting the cloud terms; not registering")
+		optIn = false
+	} else if optIn && !termsAlreadyAccepted(ctx, d) {
+		if err := enroll.RecordTermsAcceptance(ctx, d.Settings, locale); err != nil {
+			logging.L().Errorf("setup wizard: record terms acceptance: %v", err)
+			optIn = false
+		}
+	}
 	val := "false"
 	if optIn {
 		val = "true"
@@ -79,6 +93,44 @@ type setupCountry struct {
 var setupShopTypes = plugins.ShopTypes()
 
 func isValidShopType(v string) bool { return plugins.IsKnownShopType(v) }
+
+// saveSetupShopType persists the wizard's shop type and runs what it drives
+// (ut-docs#539, taxonomy per ADR-0026): optional, only a known value is
+// saved - a garbage/absent value leaves the key unset, nothing else depends
+// on it being present. The one save for a picked type and a cloud-supplied
+// one (ADR-0171 §4). An error means the setting could not be written.
+func saveSetupShopType(ctx context.Context, d *common.Deps, raw string) error {
+	v := strings.TrimSpace(raw)
+	if v == "" || !isValidShopType(v) {
+		return nil
+	}
+	if err := d.Settings.Set(ctx, common.KeyShopType, v); err != nil {
+		return err
+	}
+	// ut-docs#1902: shop_type=service activates the builtin Salon
+	// layout (ADR-0088) - hides Tables/Kitchen stations, relabels
+	// Items to Services. Best-effort: a failure here must never
+	// block finishing setup over a cosmetic menu personalization -
+	// the shop still works, just with the generic everything-visible
+	// menu until a later Settings save retries it.
+	// ut-docs#2006: reload unless it's a genuine no-op (no error,
+	// nothing changed) - an error still reloads, since a failed
+	// reinstall can leave the DB changed (removeBuiltin succeeded)
+	// even though Sync itself returned an error.
+	changed, err := builtinlayouts.Sync(ctx, d.Db, v)
+	if err != nil {
+		logging.L().Warnf("setup: could not sync builtin layout for shop_type %q: %v", v, err)
+	}
+	if err != nil || changed {
+		if err := d.ReloadPlugins(ctx); err != nil {
+			logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
+		}
+	}
+	// ut-docs#3632: a retail/service shop has no eat-in, so it
+	// starts with the dine-in/takeaway choice switched off.
+	applyShopTypeOrderTypeDefault(ctx, d, v)
+	return nil
+}
 
 // wizardCountries reads the wizard's country list from country_settings
 // (ut-docs#660) — the compile-time setupCountries slice that used to live
@@ -168,18 +220,19 @@ const keyStoreNameRequired = "setup.error.store_name_required"
 // An existing key, shared with the pairing dialog's action-neutral wording.
 const keyTillNameRequired = "tills.pairing.error.name_required_field"
 
-// maxStoreNameRunes matches the shop-name inputs' maxlength="60".
-const maxStoreNameRunes = 60
+// keyNameInvalidCharacters is the shared refusal for a name with control,
+// line-break or invisible characters (ut-docs#5858, till names ut-docs#5862).
+const keyNameInvalidCharacters = "common.error.name_invalid_characters"
 
 // isRefusedStoreName reports whether a first-boot shop name must be refused:
 // blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
 // field's own placeholder text in the request's language, or longer than
-// the field's maxlength (enforced here too: the form's cap is client-side
-// only). Shared by the wizard and the bare POST /api/auth/setup fallback
+// config.MaxStoreNameRunes (the field's maxlength, enforced here too: the
+// form's cap is client-side only). Shared by the wizard and the bare POST /api/auth/setup fallback
 // (ut-docs#3096, #3116).
 func isRefusedStoreName(r *http.Request, name string) bool {
 	return config.IsPlaceholderStoreName(name) ||
-		utf8.RuneCountInString(strings.TrimSpace(name)) > maxStoreNameRunes ||
+		utf8.RuneCountInString(strings.TrimSpace(name)) > config.MaxStoreNameRunes ||
 		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
 }
 
@@ -390,7 +443,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired {
+		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		if errKey == keyCloudExpired {
@@ -430,13 +483,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#4146: likewise a refused till name (a control
 			// character, too long) is not echoed: the field would look
 			// filled while every resubmit fails with "required".
-			if errKey != keyTillNameRequired {
+			if errKey != keyTillNameRequired && errKey != keyNameInvalidCharacters {
 				data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 			}
 		}
 		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
 		// parallel within the 2 s slot budget; "" when none answers.
 		data["pluginSlot"] = renderSetupSlot(r, d, httpx.RequestLocale(r))
+		// ut-docs#4720: the cloud-terms accept step under the opt-in.
+		data["terms"] = termsView(r.Context(), d, httpx.RequestLocale(r))
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
@@ -618,7 +673,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// checked before anything is persisted.
 		tillName, tillNameErr := validateTillName(r.PostFormValue("till_name"))
 		if tillNameErr != nil {
-			renderWizard(w, r, keyTillNameRequired, "")
+			key := keyTillNameRequired
+			if errors.Is(tillNameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
+				key = keyNameInvalidCharacters
+			}
+			renderWizard(w, r, key, "")
 			return
 		}
 
@@ -686,7 +745,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if cloudHeld != nil {
 			persistCloudShopCurrency(r, d, cloudHeld)
 		}
-		httpx.InitCurrency(st.Currency)
+		common.InitCurrencyFromState(st)
 		// ut-docs#1027: live-apply the just-derived locale, same posture as
 		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
 		// this is safe even when no country matched (st.Locale left at
@@ -715,36 +774,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
 			return
 		}
-		// Shop type (ut-docs#539, taxonomy per ADR-0026): optional, only a
-		// known value is persisted — a garbage/absent value just leaves the
-		// key unset, nothing else depends on it being present.
-		if v := strings.TrimSpace(r.Form.Get("shop_type")); v != "" && isValidShopType(v) {
-			if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
-				http.Error(w, "setup failed", http.StatusInternalServerError)
-				return
-			}
-			// ut-docs#1902: shop_type=service activates the builtin Salon
-			// layout (ADR-0088) — hides Tables/Kitchen stations, relabels
-			// Items to Services. Best-effort: a failure here must never
-			// block finishing setup over a cosmetic menu personalization —
-			// the shop still works, just with the generic everything-visible
-			// menu until a later Settings save retries it.
-			// ut-docs#2006: reload unless it's a genuine no-op (no error,
-			// nothing changed) — an error still reloads, since a failed
-			// reinstall can leave the DB changed (removeBuiltin succeeded)
-			// even though Sync itself returned an error.
-			changed, err := builtinlayouts.Sync(r.Context(), d.Db, v)
-			if err != nil {
-				logging.L().Warnf("setup: could not sync builtin layout for shop_type %q: %v", v, err)
-			}
-			if err != nil || changed {
-				if err := d.ReloadPlugins(r.Context()); err != nil {
-					logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
-				}
-			}
-			// ut-docs#3632: a retail/service shop has no eat-in, so it
-			// starts with the dine-in/takeaway choice switched off.
-			applyShopTypeOrderTypeDefault(r.Context(), d, v)
+		// Shop type (ut-docs#539, ADR-0026). On the cloud path applyCloudShop
+		// already replaced the posted value with the cloud's (ADR-0171 §4).
+		if err := saveSetupShopType(r.Context(), d, r.Form.Get("shop_type")); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
 		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
@@ -781,6 +815,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency}, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
 
+		if cloudHeld == nil {
+			// A stale hold (a pairing the owner abandoned for a standalone
+			// setup) must not suppress this till's own registration.
+			cloud.drop()
+		}
+
 		// Country base-plugin auto-install (ut-docs#591): best-effort —
 		// persists the pending list before any network attempt, then makes
 		// one short-timeout synchronous attempt; either way this never
@@ -813,18 +853,62 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// first-boot gate closes this wizard. The code is spent; the
 			// welcome page says so and Settings -> Tills pairs again with
 			// a new code.
+			// ut-docs#5058 T4: a replacement main till numbers its receipts
+			// under its own prefix, whatever the commit's result (the old
+			// till is already replaced once /pair answered). First boot: no
+			// sale exists yet, so no number is repeated or skipped.
+			// ut-docs#5332: the same prefix after "Remove, then add" - the
+			// cloud's store.had_main_till says the shop had a main till
+			// before, so an ordinary code must not restart at 000000001.
+			// No old device id is known there, so none is passed.
+			prefix := ""
+			if rp := cloudHeld.p.Replaced; rp != nil {
+				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, rp.DeviceID)
+			} else if st := cloudHeld.p.Store; st != nil && st.HadMainTill {
+				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, "")
+			}
+			if prefix != "" {
+				if err := d.Settings.Set(r.Context(), "sync.receipt_prefix", prefix); err != nil {
+					logging.L().Warnf("setup wizard: set the replacement till's receipt prefix: %v", err)
+				}
+			}
 			if err := commitCloudPairing(r.Context(), d, cloudHeld.p); err != nil {
 				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
 				cloudPairFailed = true
+				// Still a brand-new till: the card's lines are true, so park it
+				// until the owner pairs again from Settings (ut-docs#5333).
+				master := ""
+				if cloudHeld.p.Store != nil {
+					master = cloudHeld.p.Store.CatalogMaster
+				}
+				deferNextSteps(r.Context(), d, master)
 			} else {
+				markJoinedShop(r.Context(), d)
+				master := ""
+				if cloudHeld.p.Store != nil {
+					master = cloudHeld.p.Store.CatalogMaster
+				}
+				markNextSteps(r.Context(), d, master)
 				requestOperatorCheckin(d, operatorCheckinWindow)
 				cloudSyncing = true
 			}
 		} else {
 			autoRegisterForSetup(r.Context(), d,
-				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1")
+				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1",
+				// The language the terms were shown in (termsView renders from the
+				// request locale), not st.Locale, which is the shop country's
+				// default by now (ut-docs#4720 review).
+				termsTicked(r), httpx.RequestLocale(r))
 		}
 		cloud.finish()
+		if cloudSyncing {
+			// ut-docs#5127: registration was held until the pairing was
+			// saved; a plugin left pending meanwhile retries now, under the
+			// paired identity, instead of waiting out the 5-minute tick.
+			// Not when saving failed: the retry would then register a
+			// till-born store that the owner's re-pair would orphan.
+			nudgeBasePluginRetry()
+		}
 
 		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
 		// best-effort posture as the base-plugin install above — the pending

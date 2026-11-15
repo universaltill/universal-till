@@ -451,11 +451,7 @@ func CategoryThumb(imagePath, icon string) string {
 // malformed id as the neutral fallback, never the raw value. "" = no
 // picture: the tile falls back to its colour swatch.
 func ItemThumb(imagePath, icon string) string {
-	path, id := iconid.Resolve(imagePath, icon)
-	if path != "" {
-		return path
-	}
-	return iconid.AssetPath(id)
+	return iconid.Picture(imagePath, icon)
 }
 
 // itemIcons is CatalogRepo.ItemIcons for the tile loaders: a read error
@@ -834,10 +830,9 @@ func (r SearchResult) AddVals() string {
 		code = r.SKU
 	}
 	b, _ := json.Marshal(map[string]string{
-		"label":    r.Name,
-		"code":     code,
-		"itemId":   r.ItemID,
-		"imageUrl": r.Image,
+		"label":  r.Name,
+		"code":   code,
+		"itemId": r.ItemID,
 	})
 	return string(b)
 }
@@ -1288,10 +1283,9 @@ func (s *ButtonStore) Save(list []Button) error {
 	var repoButtons []data.ShortcutButton
 	for _, b := range list {
 		repoButtons = append(repoButtons, data.ShortcutButton{
-			Label:    b.Label,
-			Barcode:  b.Code,
-			ItemID:   b.ItemID,
-			ImageURL: b.ImageURL,
+			Label:   b.Label,
+			Barcode: b.Code,
+			ItemID:  b.ItemID,
 		})
 	}
 	return s.repo.SaveButtons(context.Background(), repoButtons)
@@ -1373,8 +1367,9 @@ func (s *ButtonStore) updateOrderWith(ctx context.Context, current []Button, cod
 		// never one frozen at drag time — see LoadButtons' own
 		// COALESCE(NULLIF(sb.label,''), i.name) fallback, and
 		// MaterializeAndReorder's own doc comment. ImageURL is left empty
-		// for the same reason: LoadButtons already falls a NULL image_path
-		// back to the item's own catalog thumbnail.
+		// for the same reason: the tile picture always comes from the item
+		// (item_images thumbnail, then items.icon), so nothing is frozen on
+		// the row (ut-docs#6076).
 		materialize = append(materialize, data.ShortcutButton{
 			Label:   "",
 			Barcode: code,
@@ -1406,36 +1401,166 @@ func (s *ButtonStore) UpdateOrderSubset(ctx context.Context, codes []string) err
 	if err != nil {
 		return err
 	}
+	full := redealIntoSlots(current, codes)
+	if full == nil {
+		return ErrNoKnownCodes
+	}
+	return s.updateOrderWith(ctx, current, full)
+}
+
+// redealIntoSlots is UpdateOrderSubset's pure core (also UpdateCategoryOrder's):
+// the full code list after dealing subset, in its own order, into the
+// ascending slots those codes already hold in current. Codes not in current
+// are ignored and a repeated one counts once (first occurrence); nil when
+// none is known. Same rule as app.js's orderedCodes() and the jiggle Done.
+func redealIntoSlots(current []Button, subset []string) []string {
 	slotOf := make(map[string]int, len(current))
 	for i, b := range current {
 		if _, dup := slotOf[b.Code]; !dup {
 			slotOf[b.Code] = i
 		}
 	}
-	var subset []string
+	var known []string
 	var slots []int
-	seen := make(map[string]bool, len(codes))
-	for _, c := range codes {
+	seen := make(map[string]bool, len(subset))
+	for _, c := range subset {
 		i, ok := slotOf[c]
 		if !ok || seen[c] {
 			continue
 		}
 		seen[c] = true
-		subset = append(subset, c)
+		known = append(known, c)
 		slots = append(slots, i)
 	}
-	if len(subset) == 0 {
-		return ErrNoKnownCodes
+	if len(known) == 0 {
+		return nil
 	}
 	sort.Ints(slots)
 	full := make([]string, len(current))
 	for i, b := range current {
 		full[i] = b.Code
 	}
-	for i, c := range subset {
+	for i, c := range known {
 		full[slots[i]] = c
 	}
-	return s.updateOrderWith(ctx, current, full)
+	return full
+}
+
+// ErrNoItemTiles is UpdateCategoryOrder's refusal when none of the listed
+// items has a sale-screen tile (inactive, or removed from the quick buttons).
+var ErrNoItemTiles = errors.New("none of these items has a sale-screen tile")
+
+// ErrSharedTileCode is UpdateCategoryOrder's refusal when one of the
+// category's tile codes is also another tile's code (duplicate SKUs are
+// allowed): slots are found by code, so the re-deal would move the other
+// tile instead (ut-docs#3105 review).
+var ErrSharedTileCode = errors.New("two sale-screen tiles share a code in this category; give the items distinct SKUs or barcodes first")
+
+// UpdateCategoryOrder (ut-docs#3105, contract §3.14) orders one category's
+// items on the sale screen: each listed item's tile(s), in list order, then
+// every other tile of the category in its old relative order, dealt into the
+// slots the category's tiles already hold in Load()'s grid (redealIntoSlots)
+// -- so no other category's tile moves, exactly as a jiggle Done within one
+// category. Only DIRECT items count (BuildCategoryGroups groups by direct
+// category). A hidden item keeps its slot and is ordered like any other; a
+// listed item with no tile (inactive, removed) is skipped. tiles is how many
+// listed items were ordered; changed=false means the grid already had this
+// order, and nothing was written. ErrNoItemTiles when no listed item has a
+// tile. Load() runs outside the write transaction -- the same window the LAN
+// reorder route has -- so the last writer wins against a concurrent jiggle.
+func (s *ButtonStore) UpdateCategoryOrder(ctx context.Context, categoryID string, itemIDs []string) (tiles int, changed bool, err error) {
+	current, err := s.Load()
+	if err != nil {
+		return 0, false, err
+	}
+	var catCodes []string
+	codesOf := make(map[string][]string)
+	for _, b := range current {
+		if b.CategoryID != categoryID {
+			continue
+		}
+		catCodes = append(catCodes, b.Code)
+		if b.ItemID != "" {
+			codesOf[b.ItemID] = append(codesOf[b.ItemID], b.Code)
+		}
+	}
+	inGrid := make(map[string]int, len(current))
+	for _, b := range current {
+		inGrid[b.Code]++
+	}
+	for _, c := range catCodes {
+		if inGrid[c] > 1 {
+			return 0, false, ErrSharedTileCode
+		}
+	}
+	var subset []string
+	placed := make(map[string]bool, len(catCodes))
+	for _, id := range itemIDs {
+		codes := codesOf[id]
+		if len(codes) == 0 || placed[codes[0]] {
+			continue
+		}
+		tiles++
+		for _, c := range codes {
+			placed[c] = true
+			subset = append(subset, c)
+		}
+	}
+	if tiles == 0 {
+		return 0, false, ErrNoItemTiles
+	}
+	for _, c := range catCodes {
+		if !placed[c] {
+			subset = append(subset, c)
+		}
+	}
+	full := redealIntoSlots(current, subset)
+	same := len(full) == len(current)
+	for i := 0; same && i < len(full); i++ {
+		same = full[i] == current[i].Code
+	}
+	if same {
+		return tiles, false, nil
+	}
+	if err := s.updateOrderWith(ctx, current, full); err != nil {
+		return 0, false, err
+	}
+	return tiles, true, nil
+}
+
+// TilePositions maps each item to the 0-based position of its first tile in
+// Load()'s grid order (explicit rows incl. hidden, then the implicit tiles by
+// name), for the catalog snapshot's tile_pos (ut-docs#3105, contract §3.7).
+// An item with no tile (inactive, removed) is absent. It is Load()'s order
+// without the price/modifier/variant/photo lookups a snapshot doesn't need.
+func (s *ButtonStore) TilePositions(ctx context.Context) (map[string]int, error) {
+	rows, err := s.repo.LoadGridButtons(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pos := make(map[string]int, len(rows))
+	for i, b := range rows {
+		if _, dup := pos[b.ItemID]; !dup && b.ItemID != "" {
+			pos[b.ItemID] = i
+		}
+	}
+	items, err := s.catalogRepo.ListItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, removed, err := s.catalogRepo.SellScreenStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	next := len(rows)
+	for _, it := range items {
+		if _, seen := pos[it.ID]; seen || removed[it.ID] {
+			continue
+		}
+		pos[it.ID] = next
+		next++
+	}
+	return pos, nil
 }
 
 // synthesizedButtonCodePrefix marks a shortcut-button code that ButtonStore.Add
@@ -1504,10 +1629,9 @@ func (s *ButtonStore) Add(btn Button) error {
 	// transaction -- adding a tile for a hidden or removed item puts it back.
 	ctx := context.Background()
 	if err := s.repo.AddButton(ctx, data.ShortcutButton{
-		Label:    btn.Label,
-		Barcode:  btn.Code,
-		ItemID:   btn.ItemID,
-		ImageURL: btn.ImageURL,
+		Label:   btn.Label,
+		Barcode: btn.Code,
+		ItemID:  btn.ItemID,
 	}); err != nil {
 		return err
 	}
@@ -2280,16 +2404,13 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	itemID := strings.TrimSpace(r.Form.Get("itemId"))
-	img := strings.TrimSpace(r.Form.Get("imageUrl"))
-	if img != "" && !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") && !strings.HasPrefix(img, "/public/") {
-		// Treat as filename in local images folder
-		img = "/public/images/" + img
-	}
+	// ut-docs#6097: an "imageUrl" field is deliberately ignored (like any
+	// unknown form field), not refused: older Designers and satellites
+	// still send it, and the tile picture comes from the item's thumbnail.
 	err := h.Store.Add(Button{
-		Label:    r.Form.Get("label"),
-		Code:     r.Form.Get("code"),
-		ItemID:   itemID,
-		ImageURL: img,
+		Label:  r.Form.Get("label"),
+		Code:   r.Form.Get("code"),
+		ItemID: itemID,
 	})
 	if err != nil {
 		// ut-docs#1220: a raw http.Error(w, err.Error(), 400) here was

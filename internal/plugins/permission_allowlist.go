@@ -167,6 +167,13 @@ func isKnownPermission(perm string) bool {
 // path that never goes through ParseManifest, ManifestVerifier.VerifyManifest.
 func validatePermissions(m *Manifest) error {
 	for _, p := range m.Permissions {
+		// net:{account} (ADR-0169): a channel plugin's one permission, bound
+		// by the cloud channel host to the connection's verified account.
+		// validateChannelFields pins it as the ONLY permission of a channel
+		// plugin; on any other type it is not a permission at all.
+		if p == ChannelAccountPermission && m.CanonicalType == ChannelType {
+			continue
+		}
 		if !isKnownPermission(p) {
 			return fmt.Errorf("manifest permission %q is not a recognized permission shape", p)
 		}

@@ -56,6 +56,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-telemetry":                      "marketplace.telemetry_opt_in",             // POST /api/settings/telemetry
 	"settings-store-name":                     common.KeyStoreName,                        // POST /api/settings/store-name
 	"settings-currency":                       common.KeyCurrency,                         // POST /api/settings/save (currency form)
+	"settings-currency-display":               common.KeyCurrencyDisplay,                  // POST /api/settings/save (currency_display form)
 	"settings-language":                       common.KeyLocale,                           // POST /api/settings/save (locale form)
 	"settings-staff-languages":                common.KeyStaffLocales,                     // POST /api/settings/staff-languages
 	"settings-shop-type":                      common.KeyShopType,                         // POST /api/settings/shop-type
@@ -69,7 +70,7 @@ var shopWideLockRegions = map[string]string{
 // probe, so a dead main till never slows the page down.
 func lockedSettingsRegions(ctx context.Context, d *common.Deps) map[string]bool {
 	out := map[string]bool{}
-	if !tillFollowsMain(ctx, d) || replicaLinkView(ctx, d).State != linkUnreachable {
+	if !tillFollowsMain(ctx, d) || !replicaLinkView(ctx, d).mainTillGone() {
 		return out
 	}
 	for id := range shopWideLockRegions {

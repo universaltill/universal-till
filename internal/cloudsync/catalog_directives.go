@@ -30,20 +30,25 @@ import (
 var mainTillOnlyTypes = map[string]bool{
 	// ADR-0168 §5: customers are sealed to the main till's key and applied
 	// there only (ut-docs#4748).
-	"import_customers":       true,
-	"save_item":              true,
-	"save_category":          true,
-	"delete_category":        true,
-	"delete_item":            true, // ut-docs#3317
-	"save_modifier_group":    true,
-	"delete_modifier_group":  true,
-	"save_option_set":        true,
-	"delete_option_set":      true,
-	"save_item_variant":      true, // ut-docs#3477
-	"apply_item_option_sets": true, // ut-docs#4163
-	"set_category_order":     true,
-	"set_catalog_image":      true,
-	"set_net_quantity":       true, // ut-docs#3402
+	"import_customers": true,
+	// ADR-0169 §9 (ut-docs#4768): channel orders are recorded on the main
+	// till only, the sole stock master.
+	"channel_order":           true,
+	"channel_order_update":    true,
+	"save_item":               true,
+	"save_category":           true,
+	"delete_category":         true,
+	"delete_item":             true, // ut-docs#3317
+	"save_modifier_group":     true,
+	"delete_modifier_group":   true,
+	"save_option_set":         true,
+	"delete_option_set":       true,
+	"save_item_variant":       true, // ut-docs#3477
+	"apply_item_option_sets":  true, // ut-docs#4163
+	"set_category_order":      true,
+	"set_category_item_order": true, // ut-docs#3105
+	"set_catalog_image":       true,
+	"set_net_quantity":        true, // ut-docs#3402
 	// Till user directives (reference/till-user-directives.md §4): only
 	// the main till applies them; the admin bundle carries the result to
 	// the other tills (ADR-0115 §1).
@@ -77,7 +82,7 @@ var mainTillOnlyTypes = map[string]bool{
 // snapshot again (its hash gate keeps an unchanged push free).
 var catalogTypes = map[string]bool{
 	"save_item": true, "save_category": true, "delete_category": true, "delete_item": true,
-	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
+	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true, "set_category_item_order": true,
 	"save_option_set": true, "delete_option_set": true, "save_item_variant": true, "apply_item_option_sets": true,
 	"set_catalog_image": true, "set_net_quantity": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
@@ -86,6 +91,8 @@ var catalogTypes = map[string]bool{
 	"create_stock_location": true, "rename_stock_location": true, "set_stock_location_active": true,
 	// ...and registers (ut-docs#3642).
 	"set_register_location": true,
+	// A channel order moves stock, which the snapshot reports (ut-docs#4768).
+	"channel_order": true, "channel_order_update": true,
 }
 
 // payload is a presence-aware reader over a directive's payload: every
@@ -300,6 +307,49 @@ func decodeCategoryOrder(p payload) ([]string, string) {
 		arr[i] = id
 	}
 	return arr, ""
+}
+
+// decodeCategoryItemOrder reads a set_category_item_order payload (§3.14):
+// the category id and that category's item order as a JSON array inside a
+// string field. As strict as decodeCategoryOrder: a wrong shape, a blank id
+// or a duplicate fails the directive instead of reordering something the
+// owner didn't send.
+func decodeCategoryItemOrder(p payload) (string, []string, string) {
+	cat, ok := p.optStr("category_id")
+	if !ok {
+		return "", nil, "bad category_id"
+	}
+	if cat == nil || *cat == "" {
+		return "", nil, "missing category_id"
+	}
+	v, present := p["item_ids"]
+	if !present {
+		return "", nil, "missing item_ids"
+	}
+	raw, ok := v.(string)
+	if !ok {
+		return "", nil, "bad item_ids"
+	}
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return "", nil, "bad item_ids"
+	}
+	if len(arr) == 0 {
+		return "", nil, "missing item_ids"
+	}
+	seen := make(map[string]bool, len(arr))
+	for i := range arr {
+		id := strings.TrimSpace(arr[i])
+		if id == "" {
+			return "", nil, "blank item id"
+		}
+		if seen[id] {
+			return "", nil, "duplicate item id " + id
+		}
+		seen[id] = true
+		arr[i] = id
+	}
+	return *cat, arr, ""
 }
 
 // decodeSaveCategory reads a save_category payload (§3.2).

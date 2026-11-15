@@ -12,6 +12,7 @@ picked up in dependency order. Updated 2026-10-05.
 | `sale.completed` event (rich payload) | ✅ | ERP/webhook connectors |
 | `stock.adjusted` event | ✅ | inventory sync connectors |
 | `customer.erased` event (`{customer_id}` only; primary + replicas, ut-docs#3435) | ✅ | loyalty/CRM/integration plugins deleting their copy |
+| `till.drawer.no_sale` event (non-blocking; `{no_sale_id, register_id, till_id, actor_id, approver_id, created_at}`, never the reason; opening till only, not LAN-journaled replica opens; ut-docs#5758) | ✅ | fiscal/audit plugins recording a No sale drawer open |
 | `catalog.identify.confirmed` event (`{job_id, item_id, sku, stored}`; only to the plugin that answered the pick's `catalog.identify`; needs `view:inventory`, ut-docs#4007) | ✅ | identify plugins keeping their own counters / tuning |
 | `payment.<key>.authorize` (blocking, pre-tender) | ✅ | payment terminals |
 | `settings_get` + `net:*` host functions | ✅ | any configurable connector |

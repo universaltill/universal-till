@@ -3,6 +3,7 @@ id: power-supply
 title: تحذير مزود الطاقة
 section: الاتصال والإضافات
 order: 355
+public: true
 summary: على Raspberry Pi، يحذّر شريط الحالة عندما لا يستطيع مزود الطاقة توفير تيار كافٍ للشاشة اللمسية وملحقات USB الأخرى.
 ---
 

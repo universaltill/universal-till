@@ -497,6 +497,14 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			renderKioskCounterConfirmPicker(w, r, eng)
 			return
 		}
+		// ut-docs#3396: a basket holding an age-restricted item can never
+		// be paid here (the POST below fails closed), so the picker's first
+		// render says "pay at the counter" and offers no method, instead of
+		// letting the customer find out only after tapping one.
+		if kioskBasketAgeRestricted(r, repo, eng.Lines()) {
+			renderKioskPaymentPickerBlocked(w, r, eng, "age_check.kiosk_blocked")
+			return
+		}
 		methods, err := repo.ListActiveNonCashPaymentMethods(r.Context())
 		if err != nil {
 			http.Error(w, "failed to load payment methods", http.StatusInternalServerError)
@@ -596,15 +604,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		// too. The pay-at-counter branch above is deliberately NOT blocked:
 		// it takes no payment and parks the order for the till, which is
 		// exactly where an ID check can happen.
-		itemIDs := make([]string, 0, len(lines))
-		for _, l := range lines {
-			itemIDs = append(itemIDs, l.ItemID)
-		}
-		restricted, err := repo.AgeRestrictedItemIDs(r.Context(), itemIDs)
-		if err != nil || len(restricted) > 0 {
-			if err != nil {
-				logging.L().Errorf("self-order checkout: read age-restricted items: %v", err)
-			}
+		if kioskBasketAgeRestricted(r, repo, lines) {
 			w.WriteHeader(http.StatusConflict)
 			renderKioskPaymentPicker(w, r, eng, methods, "age_check.kiosk_blocked")
 			return
@@ -1418,4 +1418,31 @@ func renderKioskPaymentPicker(w http.ResponseWriter, r *http.Request, eng *pos.S
 		"Total":   eng.Basket().Total,
 		"ErrKey":  errKey,
 	})(w, r)
+}
+
+// renderKioskPaymentPickerBlocked renders the picker with errKey and no
+// payment method to tap: the basket can't be paid at the kiosk at all
+// (ut-docs#3396), so only the message and Cancel remain.
+func renderKioskPaymentPickerBlocked(w http.ResponseWriter, r *http.Request, eng *pos.Service, errKey string) {
+	httpx.RenderPartial("ui/partials/self_order_payment_picker.html", map[string]any{
+		"Total":   eng.Basket().Total,
+		"ErrKey":  errKey,
+		"Blocked": true,
+	})(w, r)
+}
+
+// kioskBasketAgeRestricted reports whether any basket line's item is
+// flagged items.age_restricted right now (ut-docs#3340). A failed read
+// counts as restricted: the kiosk fails closed.
+func kioskBasketAgeRestricted(r *http.Request, repo *data.POSRepo, lines []pos.BasketLine) bool {
+	itemIDs := make([]string, 0, len(lines))
+	for _, l := range lines {
+		itemIDs = append(itemIDs, l.ItemID)
+	}
+	restricted, err := repo.AgeRestrictedItemIDs(r.Context(), itemIDs)
+	if err != nil {
+		logging.L().Errorf("self-order checkout: read age-restricted items: %v", err)
+		return true
+	}
+	return len(restricted) > 0
 }

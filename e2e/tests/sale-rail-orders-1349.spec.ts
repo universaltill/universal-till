@@ -52,9 +52,10 @@ test.describe('sale-screen "Orders" rail shortcut (ut-docs#1349)', () => {
     // the tile it complements). Scoped to .menu-tile: the rail's own
     // visually-hidden label text for the same word is still in the DOM
     // (nav-rail-only hides via CSS, not removal), so a bare text locator
-    // matches both and fails strict mode.
+    // matches both and fails strict mode. Keyed on the href: "Online orders"
+    // (#4768) also contains the word.
     await page.goto('/menu');
     await page.waitForSelector('.menu-grid');
-    await expect(page.locator('.menu-tile', { hasText: 'Orders' })).toBeVisible();
+    await expect(page.locator('.menu-tile[href="/open-orders"]')).toBeVisible();
   });
 });

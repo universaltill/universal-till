@@ -30,8 +30,9 @@ import * as path from 'path';
 //   - a topic's secondary routes (routes[1:]) — same accepted gap as the
 //     docs-shots harness itself (ut-docs#900); only routes[0] is checked.
 const { routedTopics } = require('../tests-docs/lib');
-// PR-only carve-out for keys that are NEW in the PR (ut-docs#2805) — the
-// rule and the reason live in lib/new-keys.js, unit-tested by
+// PR-only carve-outs for keys NEW in the PR (ut-docs#2805) and keys the de
+// pack merely lags on (ut-docs#5583) — the rules and reasons live in
+// lib/new-keys.js, unit-tested by
 // lib/new-keys_test.js.
 const { partitionFindings } = require('./lib/new-keys');
 
@@ -83,8 +84,20 @@ function loadBaseEnglishCatalog(): Record<string, string> | null {
   return JSON.parse(fs.readFileSync(basePath, 'utf8')) as Record<string, string>;
 }
 
+// The de pack's catalog (ut-docs#5583) — read only when a base catalog is set
+// (PR runs), from de.json in the overlay dir audit-locale-render.sh already exports, so
+// pre-existing keys the pack merely lags on can be deferred too. Set base but
+// unreadable pack is a workflow bug: throws, never silently strict/lenient.
+function loadPackCatalog(): Record<string, string> | null {
+  if (!BASE_EN_CATALOG) return null;
+  const dir = process.env.UT_TEST_I18N_OVERLAY_DIR;
+  if (!dir) throw new Error('AUDIT_BASE_EN_JSON is set but UT_TEST_I18N_OVERLAY_DIR is not');
+  return JSON.parse(fs.readFileSync(path.join(dir, 'de.json'), 'utf8')) as Record<string, string>;
+}
+
 const EN_CATALOG = loadEnglishCatalog();
 const BASE_EN_CATALOG = loadBaseEnglishCatalog();
+const PACK_DE_CATALOG = loadPackCatalog();
 const ENGLISH_VALUES = loadEnglishCatalogValues(EN_CATALOG);
 const ALLOWLIST = loadAllowlist();
 
@@ -113,6 +126,9 @@ async function auditRoute(page: Page, topicId: string, route: string): Promise<F
   // that one route. Answer it with a non-200, non-5xx status so the browser
   // treats the connection as closed (no reconnect-on-timer), not errored.
   await page.route('**/api/orders/stream', (r) => r.fulfill({ status: 204 }));
+  // ut-docs#2743: a manager page on a main till also opens the pairing
+  // push stream (GET /api/pairings/stream) — same never-idle shape, same 204.
+  await page.route('**/api/pairings/stream', (r) => r.fulfill({ status: 204 }));
   await page.goto(url, { waitUntil: 'networkidle' });
 
   // Several topics lazy-load their body after first paint via an
@@ -204,19 +220,33 @@ function formatReport(flags: Flag[]): string {
   return lines.join('\n');
 }
 
-// Splits a test's findings, prints the deferred new-key ones as a GitHub
-// ::notice:: (still visible on the PR, never red), and returns only the
+// Splits a test's findings, prints the deferred ones (keys new in this PR, and
+// pre-existing keys the de pack merely lags on — ADR-0160 section 2) as GitHub
+// ::notice:: lines (still visible on the PR, never red), and returns only the
 // ones that must fail.
 function failuresAfterNewKeyCarveOut(flags: Flag[]): Flag[] {
-  const { failures, deferred } = partitionFindings(flags, EN_CATALOG, BASE_EN_CATALOG) as {
+  const { failures, deferredNew, deferredLag } = partitionFindings(
+    flags,
+    EN_CATALOG,
+    BASE_EN_CATALOG,
+    PACK_DE_CATALOG,
+  ) as {
     failures: Flag[];
-    deferred: Flag[];
+    deferredNew: Flag[];
+    deferredLag: (Flag & { keys: string[] })[];
   };
-  if (deferred.length > 0) {
-    const detail = deferred.map((f) => `[${f.topicId}] ${f.route} -> "${f.text}"`).join('; ');
+  if (deferredNew.length > 0) {
+    const detail = deferredNew.map((f) => `[${f.topicId}] ${f.route} -> "${f.text}"`).join('; ');
     console.log(
-      `::notice file=web/locales/en.json::${deferred.length} new key(s) not yet in the de pack — ` +
+      `::notice file=web/locales/en.json::${deferredNew.length} new key(s) not yet in the de pack — ` +
         `the pack PR follows after merge (ut-docs#1857). ${detail}`,
+    );
+  }
+  if (deferredLag.length > 0) {
+    const keys = [...new Set(deferredLag.flatMap((f) => f.keys))].sort().join(', ');
+    console.log(
+      `::notice file=web/locales/en.json::${deferredLag.length} finding(s) from keys the de pack lags on ` +
+        `(pre-existing, ADR-0160 §2: Weblate fills it later): ${keys}`,
     );
   }
   return failures;

@@ -1,0 +1,10 @@
+{{/* ut-docs#5071: no backup was copied off this till in 7 days. Rendered
+     by GET /ui/backup-copy-chip (backup_copy_chip.go) into the status bar's
+     #sb-backup-copy-mount, only for a viewer who may manage backups. A
+     status chip, never a modal: selling carries on. Words first, never
+     colour alone; the explanation is in the title. */}}
+<a href="/settings#settings-backup" class="sb-item sb-backup-copy" data-testid="sb-backup-copy"
+   title="{{ T "status.backup_copy.hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "hard-drive" }}</span>
+  <span class="sb-backup-copy-text">{{ T "status.backup_copy.label" }}</span>
+</a>

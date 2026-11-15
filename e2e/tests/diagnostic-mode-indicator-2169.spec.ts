@@ -115,6 +115,7 @@ async function ensureRegistered(page: Page) {
   const registerBtn = page.locator('#registration button[hx-post="/api/enrol/now"]');
   if (await registerBtn.count()) {
     await nameShop(page); // ut-docs#4272: registration waits for a real shop name
+    await page.locator('#enrol-accept-terms').check(); // ut-docs#4720: the cloud terms are accepted first
     await registerBtn.click();
     await expect(page.locator('#enrol-msg')).toContainText('✅');
     await page.goto('/settings#registration');

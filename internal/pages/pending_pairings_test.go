@@ -151,7 +151,7 @@ func TestPendingPairingsUI_EmptyStateWhenNonePending(t *testing.T) {
 	if strings.Contains(body, "<table") {
 		t.Fatalf("expected the empty-state branch (no table) when nothing is pending, got: %s", body)
 	}
-	if !strings.Contains(body, `hx-trigger="every 30s"`) {
+	if !strings.Contains(body, `hx-trigger="every 30s [!utPairingBusy()]`) {
 		t.Fatalf("expected the list to keep polling even when empty, got: %s", body)
 	}
 }
@@ -232,8 +232,10 @@ func TestPairingNoticeUI_EmptyWhenNothingPending(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Body.Len() != 0 {
-		t.Fatalf("expected an empty body when nothing is pending, got: %s", rec.Body.String())
+	// ut-docs#2743: no notice, but the stream marker is still emitted so the
+	// browser opens the push stream before the first request arrives.
+	if strings.Contains(rec.Body.String(), `id="pairing-notice"`) || !strings.Contains(rec.Body.String(), "data-pairing-stream") {
+		t.Fatalf("expected only the stream marker when nothing is pending, got: %s", rec.Body.String())
 	}
 }
 

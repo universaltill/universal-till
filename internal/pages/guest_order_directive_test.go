@@ -20,8 +20,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -585,5 +587,43 @@ func TestCloudGuestOrder_RedeliveryAfterARestartReplacesAYoungOrphan(t *testing.
 	}
 	if n := h.count("held_sales"); n != 1 {
 		t.Fatalf("%d held sales, want the order parked exactly once", n)
+	}
+}
+
+// ut-docs#4715 / #4705: the guest's page language becomes the parked
+// order's customer language, so the receipt printed at payment is in it. A
+// language this till has not installed (or none) leaves it "" = shop
+// language.
+func TestCloudGuestOrder_RecordsTheGuestsLanguageOnTheParkedOrder(t *testing.T) {
+	for _, tc := range []struct{ name, locale, want string }{
+		{"installed, exact base code", "tr", "tr"},
+		{"regional tag maps onto the installed base language", "tr-TR", "tr"},
+		{"not installed", "ja-JP", ""},
+		{"absent", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newGuestHarness(t)
+			i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+			if err != nil {
+				t.Fatalf("load i18n: %v", err)
+			}
+			httpx.InitI18n(i18n, "en")
+			o := h.order("g-loc", coffee(1, "o-oat"))
+			o.Locale = tc.locale
+			if out := h.apply(o); out.Refusal != "" {
+				t.Fatalf("refused: %q", out.Refusal)
+			}
+			held, ok, err := data.NewHeldSalesRepo(h.d.DB).Get(context.Background(), mustCounterID(t, h, "g-loc"))
+			if err != nil || !ok {
+				t.Fatalf("held sale: %v %v", ok, err)
+			}
+			var snap pos.BasketSnapshot
+			if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
+				t.Fatal(err)
+			}
+			if snap.CustomerLocale != tc.want {
+				t.Fatalf("CustomerLocale = %q, want %q (available %v)", snap.CustomerLocale, tc.want, httpx.AvailableLocales())
+			}
+		})
 	}
 }

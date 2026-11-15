@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/universaltill/universal-till/internal/logging"
 
@@ -210,6 +211,46 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	}
 
 	w.Navigate(url)
+	w.Run()
+}
+
+// setChildPid and markChildReaped are the macOS close-handler PID hooks
+// (webkit_darwin.go); no-ops here — other platforms stop the server through
+// main's deferred Kill.
+func setChildPid(int) {}
+
+func markChildReaped() {}
+
+// showStartupFailure shows the static startup-failure page (ut-docs#5021)
+// in a native window the size of the till's and blocks until it closes. No
+// till machinery: no prefs fetch, no polling, no live control ops (ctl, when
+// present, gets no-op ops like the other fallback paths and is closed here).
+// When the system WebView cannot be created (no WebView2 runtime) the reason
+// is logged and the page is opened in the default browser as a temp file
+// instead (ut-docs#5051): not the server's URL — the server is dead, so that
+// would only recreate the blank page this exists to replace.
+func showStartupFailure(title, html string, ctl *controlServer) {
+	if ctl != nil {
+		defer ctl.Close()
+		ctl.SetOps(&windowOps{
+			ExitToOS:  func() error { return nil },
+			ApplyMode: func(string) error { return nil },
+		})
+	}
+	waitForSafeStartup() // same reason as showWindow: before the window exists
+	w := newWebView(false)
+	if w == nil {
+		logging.L().Errorf("cannot show the startup-failure window, opening the page in the default browser instead: %s",
+			webViewInitFailureReason(webview.LastInitError(), webViewRuntimeVersion()))
+		if err := startupFailureInBrowser(os.TempDir(), html, fallbackOpen, startupFailureLinger); err != nil {
+			logging.L().Errorf("cannot show the startup-failure page in the browser: %v", err)
+		}
+		return
+	}
+	defer w.Destroy()
+	w.SetTitle(title)
+	w.SetSize(1280, 860, webview.HintNone)
+	w.SetHtml(html)
 	w.Run()
 }
 

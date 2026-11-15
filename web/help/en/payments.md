@@ -3,6 +3,7 @@ id: payments
 title: Payments
 section: Everyday selling
 order: 20
+public: true
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
 keywords: [cash, card, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---

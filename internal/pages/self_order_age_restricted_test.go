@@ -93,3 +93,66 @@ func TestSelfOrderShop_CheckoutUnrestrictedItemStillCompletes(t *testing.T) {
 		t.Fatalf("control checkout should complete one sale, got %d (code %d: %s)", n, rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#3396: the payment picker's first render (GET checkout) already
+// knows the basket holds a restricted item, so it says "pay at the counter"
+// straight away and offers no payment method — before, the customer only
+// found out from the 409 after tapping one. The POST gate above still fails
+// closed; this only moves the message earlier.
+func TestSelfOrderShop_CheckoutPickerTellsAgeRestrictedUpFront(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-cider", "CIDER", "5000002", "Cider", 450)
+	seedStock(t, d, "itm-cider", 10)
+	if _, err := d.DB.Exec(`UPDATE items SET age_restricted = 1 WHERE id = 'itm-cider'`); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000002"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("picker render: want 200, got %d: %s", rec.Code, body)
+	}
+	if !strings.Contains(body, "Please pay at the counter — staff will need to check ID for this order.") {
+		t.Fatalf("picker must say pay-at-counter up front, got: %s", body)
+	}
+	if strings.Contains(body, `name="method"`) {
+		t.Fatalf("picker must offer no payment method for a restricted basket, got: %s", body)
+	}
+	if !strings.Contains(body, "<h3>Pay at the counter</h3>") || strings.Contains(body, "Choose a payment method") {
+		t.Fatalf("a picker with nothing to pick must be headed Pay at the counter, got: %s", body)
+	}
+	if strings.Contains(body, "No payment methods") {
+		t.Fatalf("picker must not claim the shop has no payment methods, got: %s", body)
+	}
+}
+
+// Control: an unrestricted basket's picker still lists the methods and no
+// age message.
+func TestSelfOrderShop_CheckoutPickerUnrestrictedListsMethods(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="method"`) {
+		t.Fatalf("unrestricted picker must list payment methods, got: %s", body)
+	}
+	if strings.Contains(body, "check ID") {
+		t.Fatalf("unrestricted picker must not show the age message, got: %s", body)
+	}
+}

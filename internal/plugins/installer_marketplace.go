@@ -268,6 +268,11 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	if manifest == nil {
 		return nil, fmt.Errorf("verify manifest: manifest missing")
 	}
+	// ADR-0169: a cloud-hosted plugin (type `channel`) runs in the ut-cloud
+	// channel host, never on a till. Refused before anything is installed.
+	if err := manifest.RefuseOnTill(); err != nil {
+		return nil, err
+	}
 	if manifest.Signature != spec.Signature {
 		return nil, fmt.Errorf("signature mismatch between marketplace metadata and manifest")
 	}
@@ -310,6 +315,13 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// PersistManifest must not interleave with a Rollback, StoreVersion or
 	// uninstall of the same plugin (ut-docs#3273). No caller holds it here.
 	defer lockPluginTree(i.pluginBaseDir, manifest.ID)()
+
+	// Refuse a revoked release before the live dir is touched, so a refused
+	// re-install of an installed version keeps its files (ut-docs#5658).
+	// PersistManifest re-checks as the backstop.
+	if err := CheckNotRevoked(ctx, data.NewPluginRepo(i.db), nil, manifest.ID, manifest.Version); err != nil {
+		return nil, fmt.Errorf("persist plugin manifest: %w", err)
+	}
 
 	finalDir := filepath.Join(i.pluginBaseDir, manifest.ID, manifest.Version)
 	if err := os.RemoveAll(finalDir); err != nil && !os.IsNotExist(err) {

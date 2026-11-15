@@ -25,6 +25,7 @@ func SnapshotStateForTests() (restore func()) {
 	tr := i18nRef.Load()
 	locale := defaultLocale.Load()
 	currency := currencyCode.Load()
+	currencyMode := currencyDisplay.Load()
 	scale := uiScale.Load()
 	osk := oskMode.Load()
 	fx := effectsLevel.Load()
@@ -37,7 +38,8 @@ func SnapshotStateForTests() (restore func()) {
 	amendments := railAmendmentsSource.Load()
 	visibility := railVisibilitySource.Load()
 	translateMode := translateModeSource.Load()
-	cross, bridge, avail := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable
+	browserPrint := browserPrintSource.Load()
+	cross, bridge, avail, planBuy := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable, PlanPurchaseAllowed
 
 	// An atomic.Value can't go back to "never stored", so a value unset at
 	// snapshot time is restored as its type's zero value — which every
@@ -52,6 +54,7 @@ func SnapshotStateForTests() (restore func()) {
 		i18nRef.Store(restoreValue(tr, (*wiredTranslator)(nil)))
 		defaultLocale.Store(restoreValue(locale, ""))
 		currencyCode.Store(restoreValue(currency, ""))
+		currencyDisplay.Store(restoreValue(currencyMode, ""))
 		uiScale.Store(restoreValue(scale, 1.0))
 		oskMode.Store(restoreValue(osk, ""))
 		effectsLevel.Store(restoreValue(fx, ""))
@@ -64,6 +67,7 @@ func SnapshotStateForTests() (restore func()) {
 		railAmendmentsSource.Store(restoreValue(amendments, (func() []uislot.Amendment)(nil)))
 		railVisibilitySource.Store(restoreValue(visibility, (func(*http.Request, string) bool)(nil)))
 		translateModeSource.Store(restoreValue(translateMode, (func(*http.Request) bool)(nil)))
-		CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable = cross, bridge, avail
+		browserPrintSource.Store(restoreValue(browserPrint, (func(*http.Request) bool)(nil)))
+		CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable, PlanPurchaseAllowed = cross, bridge, avail, planBuy
 	}
 }

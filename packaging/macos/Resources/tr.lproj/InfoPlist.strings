@@ -1,0 +1,2 @@
+/* Local Network permission text (ut-docs#5026). */
+"NSLocalNetworkUsageDescription" = "Universal Till, adres yazmanıza gerek kalmadan bağlayabilmeniz için mağaza ağınızdaki fiş yazıcılarını ve diğer kasalarınızı arar.";

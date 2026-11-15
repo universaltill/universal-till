@@ -80,8 +80,9 @@ func TestLookupNotFoundEverywhere(t *testing.T) {
 }
 
 func TestLookupTransportErrorIsNotNotFound(t *testing.T) {
-	src, srv := newTestSource(t, func(w http.ResponseWriter, r *http.Request) {})
-	srv.Close() // connection refused from here on
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
+	src := Source{Name: "test", BaseURL: "http://127.0.0.1:1"}
 	c := NewClient(nil, []Source{src})
 	_, err := c.Lookup(context.Background(), "40084107")
 	if err == nil || errors.Is(err, ErrNotFound) {
@@ -170,10 +171,9 @@ func TestFetchImageNon200(t *testing.T) {
 }
 
 func TestFetchImageTransportError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	addr := strings.TrimPrefix(srv.URL, "http://")
-	srv.Close() // connection refused from here on
-	c := NewClient(&http.Client{Transport: &rewriteTransport{target: addr}}, nil)
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
+	c := NewClient(&http.Client{Transport: &rewriteTransport{target: "127.0.0.1:1"}}, nil)
 
 	if _, err := c.FetchImage(context.Background(), "https://images.openfoodfacts.org/gone.jpg"); err == nil {
 		t.Fatal("want a transport error when the image host is unreachable")

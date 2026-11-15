@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -311,14 +312,52 @@ func TestApply_ErasedCustomersAreNeverRecreated(t *testing.T) {
 	if n := count(t, d, `SELECT COUNT(*) FROM customers`); n != 1 {
 		t.Fatalf("customers = %d, only the stranger may exist", n)
 	}
-	// The suppression rows are hashes, not the address or number.
-	rs, _ := d.Query(`SELECT hash FROM customer_erasure_hashes`)
+	// The suppression rows are hashes, not the address or number. Rae's
+	// email and phone plus Sol's email give at least three, so the loop
+	// below cannot pass by seeing none.
+	if n := count(t, d, `SELECT COUNT(*) FROM customer_erasure_hashes`); n < 3 {
+		t.Fatalf("suppression rows = %d, want at least 3", n)
+	}
+	rs, err := d.Query(`SELECT hash FROM customer_erasure_hashes`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer rs.Close()
 	for rs.Next() {
 		var h string
-		_ = rs.Scan(&h)
-		if strings.Contains(h, "example") || strings.Contains(h, "7700") {
+		if err := rs.Scan(&h); err != nil {
+			t.Fatal(err)
+		}
+		if !isHexHMAC(h) {
 			t.Fatalf("a plain value in the suppression list: %q", h)
+		}
+	}
+	if err := rs.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// hexHMAC is the shape of data.Hash: hex HMAC-SHA256. No email or phone, in
+// any normalised form, has it. A substring check for the plain value would
+// match a random hash by chance (ut-docs#4910).
+var hexHMAC = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func isHexHMAC(s string) bool { return hexHMAC.MatchString(s) }
+
+func TestIsHexHMAC(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"433077005d021d9ec6bd4a849d7eb2a3c7d19d1f4bedfa4df7704f7964c88b8e", true}, // contains "7700" by chance
+		{"rae@example.test", false},
+		{"+447700900900", false},
+		{"07700900900", false},
+		{"447700900900", false},
+		{"", false},
+	} {
+		if got := isHexHMAC(tc.in); got != tc.want {
+			t.Errorf("isHexHMAC(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
@@ -520,5 +559,50 @@ func TestApply_MatchesPhonesNotYetBackfilled(t *testing.T) {
 	want(t, res, customerimport.Updated)
 	if n := count(t, d, `SELECT COUNT(*) FROM customers`); n != 1 {
 		t.Fatalf("customers = %d", n)
+	}
+}
+
+// ut-docs#5861: a customer name is held to data.CheckSingleLineName, the
+// rule the till's admin screens use (ut-docs#5858), so an import cannot
+// store a line break, C1 control or bidi override in a name. Address keeps
+// its own (multi-line) rule.
+func TestApply_NameRefusesLineBreaksAndInvisibleFormatting(t *testing.T) {
+	d := open(t)
+	refused := []customerimport.Row{
+		{Name: "Ada\nLovelace"},  // line break
+		{Name: "Ada\tLovelace"},  // tab
+		{Name: "Ada\u0085Pond"},  // C1 next line
+		{Name: "Ada\u2028Pond"},  // line separator
+		{Name: "\u202eAda Pond"}, // right-to-left override
+		{Name: "Ada\u200bPond"},  // zero-width space
+		{Name: "\u2067Ada Pond"}, // unbalanced isolate
+		{Name: "Ada\u00adPond", Email: "ada@example.test", ForceFields: []string{"name"}}, // soft hyphen, forced
+	}
+	rtl := "\u200fمریم\u200f احمدی" // RLM in an RTL name
+	rows := make([]customerimport.Row, 0, len(refused)+2)
+	for i, r := range refused {
+		r.Row = i + 1
+		rows = append(rows, r)
+	}
+	rows = append(rows,
+		customerimport.Row{Row: len(refused) + 1, Name: rtl},
+		customerimport.Row{Row: len(refused) + 2, Name: "Zoe Hill", Address: "1 High St\nLeeds"},
+	)
+	res := apply(t, d, rows...)
+	for i := range refused {
+		if res.Rows[i].Outcome != customerimport.Invalid || strings.Join(res.Rows[i].Fields, ",") != "name" {
+			t.Errorf("name %q: got %s %v, want invalid [name]", refused[i].Name, res.Rows[i].Outcome, res.Rows[i].Fields)
+		}
+	}
+	for _, r := range res.Rows[len(refused):] {
+		if r.Outcome != customerimport.Created {
+			t.Errorf("row %d: got %+v, want created", r.Row, r)
+		}
+	}
+	if n := count(t, d, `SELECT COUNT(*) FROM customers`); n != 2 {
+		t.Fatalf("customers = %d, want 2", n)
+	}
+	if n := count(t, d, `SELECT COUNT(*) FROM customers WHERE name = ?`, rtl); n != 1 {
+		t.Fatalf("the RTL name must be stored byte for byte, found %d", n)
 	}
 }

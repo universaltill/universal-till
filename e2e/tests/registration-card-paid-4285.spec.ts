@@ -88,6 +88,7 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
     const registerBtn = card.locator('button[hx-post="/api/enrol/now"]');
     if (await registerBtn.count()) {
       await nameShop(page); // ut-docs#4272: registration waits for a real shop name
+      await page.locator('#enrol-accept-terms').check(); // ut-docs#4720: the cloud terms are accepted first
       await registerBtn.click();
       await expect(page.locator('#enrol-msg')).toContainText('✅');
     } else {

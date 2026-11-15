@@ -34,6 +34,36 @@ import (
 // (data.PerTillSettingPrefixes).
 const JoinBannerDismissedSettingKey = "sync.join_banner_dismissed"
 
+// Settings keys of a till's my. (cloud) shop identity. store_id and token
+// are the enroll package's marketplace.store_id / marketplace.token (kept as
+// literals here because enroll imports discovery, not the reverse; enroll's
+// TestPairedAtKeyMatchesDiscovery and the join-notice tests fail if they
+// drift). Anonymous registration (ADR-0013) writes store_id and token too,
+// so they alone do not say "paired with a my. shop": CloudPairedAtSettingKey
+// does. enroll writes it (RFC3339) only when a my. shop pairing is adopted
+// (the setup wizard's "Join as Main till", ADR-0166 / #4610, and Settings
+// pairing) and clears it when the identity is reset.
+const (
+	cloudStoreIDSettingKey = "marketplace.store_id"
+	cloudTokenSettingKey   = "marketplace.token"
+	// CloudPairedAtSettingKey is shared with enroll (keyPairedAt).
+	CloudPairedAtSettingKey = "marketplace.paired_at"
+)
+
+// PairedWithCloudShop reports whether this till was paired with a my. shop
+// (paired_at marker plus store id and device token). Such a till is its
+// shop's MAIN till even with no replica enrolled yet and an empty
+// sync.primary_url, so it must never be offered "link this till to another
+// main till" (ut-docs#4836). A standalone till that registered anonymously
+// has store_id and token but no paired_at, so it still gets the banner.
+func PairedWithCloudShop(ctx context.Context, settings WatchSettings) bool {
+	get := func(key string) string {
+		v, _, _ := settings.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	return get(CloudPairedAtSettingKey) != "" && get(cloudStoreIDSettingKey) != "" && get(cloudTokenSettingKey) != ""
+}
+
 // JoinWatch caches the main till a standalone till could join. Safe for
 // concurrent use: the pull loop ticks it while the notice handler reads
 // Candidate. A nil *JoinWatch is valid and never has a candidate.
@@ -69,7 +99,8 @@ func (w *JoinWatch) Tick(ctx context.Context) {
 	if w == nil {
 		return
 	}
-	if w.get(ctx, "sync.primary_url") != "" || w.get(ctx, JoinBannerDismissedSettingKey) != "" {
+	if w.get(ctx, "sync.primary_url") != "" || w.get(ctx, JoinBannerDismissedSettingKey) != "" ||
+		PairedWithCloudShop(ctx, w.settings) {
 		w.mu.Lock()
 		w.candidate, w.found = Candidate{}, false
 		w.mu.Unlock()

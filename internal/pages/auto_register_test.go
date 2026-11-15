@@ -36,7 +36,7 @@ func TestSetupWizardAutoRegisterOptInPersistsAndAttemptsRegistration(t *testing.
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Shop"},
 		"till_name":     {"Till 1"},
-		"auto_register": {"on"},
+		"auto_register": {"on"}, "accept_terms": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup with auto_register=on: code=%d body=%s", rec.Code, rec.Body.String())
@@ -71,7 +71,7 @@ func TestSetupWizardAutoRegisterSendsTheTypedShopName(t *testing.T) {
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Café"},
 		"till_name":     {"Till 1"},
-		"auto_register": {"on"},
+		"auto_register": {"on"}, "accept_terms": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
@@ -87,13 +87,11 @@ func TestSetupWizardAutoRegisterSendsTheTypedShopName(t *testing.T) {
 // BEFORE the network attempt, so it survives), and still sign the admin in.
 func TestSetupWizardAutoRegisterOptInOfflineStillCompletesSetup(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	// A closed local server: connections are refused immediately, so the
-	// test exercises a genuine "marketplace unreachable" failure without
+	// Port 1 on loopback (unreachableURL): connections are refused at once,
+	// so the test exercises a genuine "marketplace unreachable" failure without
 	// paying the attempt timeout (same shape as
 	// TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry).
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	d.Cfg.Marketplace.EndpointURL = dead.URL
-	dead.Close()
+	d.Cfg.Marketplace.EndpointURL = unreachableURL()
 
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":           {"2468"},
@@ -102,7 +100,7 @@ func TestSetupWizardAutoRegisterOptInOfflineStillCompletesSetup(t *testing.T) {
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Shop"},
 		"till_name":     {"Till 1"},
-		"auto_register": {"on"},
+		"auto_register": {"on"}, "accept_terms": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup must complete even offline: code=%d body=%s", rec.Code, rec.Body.String())
@@ -187,7 +185,7 @@ func TestSetupWizardAutoRegisterPostsTypedTillName(t *testing.T) {
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Shop"},
 		"till_name":     {"Front Register"},
-		"auto_register": {"on"},
+		"auto_register": {"on"}, "accept_terms": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup with auto_register=on: code=%d body=%s", rec.Code, rec.Body.String())
@@ -235,7 +233,7 @@ func TestSettingsAutoRegisterRequiresElevation(t *testing.T) {
 	mkt := newFakeMarketplace(t, nil)
 	d.Cfg.Marketplace = mkt.config()
 
-	rec := postForm(mux, "/api/settings/auto-register", url.Values{"optIn": {"on"}}, &cashUser)
+	rec := postForm(mux, "/api/settings/auto-register", url.Values{"optIn": {"on"}, "accept_terms": {"on"}}, &cashUser)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
 		t.Fatalf("cashier toggle: code=%d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
 	}
@@ -256,7 +254,7 @@ func TestSettingsAutoRegisterOnPersistsAndTriggersRegistration(t *testing.T) {
 	d.Cfg.Marketplace = mkt.config()
 	nameShop(t, d) // an unnamed shop never registers (ut-docs#4272)
 
-	rec := postForm(mux, "/api/settings/auto-register", url.Values{"optIn": {"on"}}, &mgrUser)
+	rec := postForm(mux, "/api/settings/auto-register", url.Values{"optIn": {"on"}, "accept_terms": {"on"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("manager toggle on: code=%d body=%s, want 204", rec.Code, rec.Body.String())
 	}

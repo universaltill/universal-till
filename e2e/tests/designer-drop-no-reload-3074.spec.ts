@@ -156,6 +156,19 @@ async function moveButtonsConsistent(page: Page): Promise<string[]> {
   });
 }
 
+// ut-docs#3104: the on-screen top of every category row up to and
+// including `id`, rounded to whole pixels.
+async function rowTopsThrough(page: Page, id: string): Promise<number[]> {
+  return page.evaluate((stop) => {
+    const out: number[] = [];
+    for (const r of Array.from(document.querySelectorAll('.designer-cat-list > [data-reorder-id]'))) {
+      out.push(Math.round(r.getBoundingClientRect().top));
+      if (r.getAttribute('data-reorder-id') === stop) break;
+    }
+    return out;
+  }, id);
+}
+
 const reorderSaved = (page: Page) => page.waitForResponse(
   (r) => r.url().endsWith('/api/designer/categories/reorder') && r.request().method() === 'POST');
 
@@ -292,14 +305,40 @@ test.describe('Designer: a drop updates in place, no reload (ut-docs#3074)', () 
       const down = page.locator(`#designer-cat-down-${a}`);
       await centre(down);
       const before = await scrollState(page);
+      const tops = await rowTopsThrough(page, a);
       const w = await watch(page);
       await down.click();
       await expect.poll(() => listOrder(page, [a, b, c])).toEqual([a, b, c]);
-      await expect(page.locator('#designer-categories-msg')).toContainText('main till');
+      // ut-docs#3104: the reason shows on the row the operator moved, right
+      // under the Move button they pressed -- not in #designer-categories-msg
+      // at the top of the section, which sits above the viewport once the
+      // list is scrolled and pushed every row down a line.
+      const moveMsg = page.locator(`#designer-cat-move-msg-${a}`);
+      await expect(moveMsg).toContainText('main till');
+      await expect(moveMsg).toBeInViewport();
+      await expect(moveMsg).toHaveAttribute('aria-live', 'polite');
+      await expect(page.locator('#designer-categories-msg')).toBeEmpty();
+      await expect(page.locator(`#designer-cat-msg-${a}`)).toBeEmpty();
+      // Nothing above the moved row, nor the row's top, moves on screen.
+      expect(await rowTopsThrough(page, a)).toEqual(tops);
       expect(await stripOrder(page, [a, b, c])).toEqual([a, b, c]);
       expect(await moveButtonsConsistent(page)).toEqual([]);
       await expect(page.locator(`#designer-cat-form-${a}`)).toBeVisible();
       await expectInPlace(page, w, before);
+
+      // Collapsed row, keyboard move (Alt+ArrowDown on the row body): the
+      // form's line is hidden, so the reason goes on the row's own line
+      // under its name, and the earlier failure is cleared.
+      await page.locator(`#designer-cat-open-${a}`).click();
+      await expect(page.locator(`#designer-cat-form-${a}`)).toBeHidden();
+      await page.locator(`#designer-cat-open-${a}`).focus();
+      await page.keyboard.press('Alt+ArrowDown');
+      await expect.poll(() => listOrder(page, [a, b, c])).toEqual([a, b, c]);
+      const rowMsg = page.locator(`#designer-cat-msg-${a}`);
+      await expect(rowMsg).toContainText('main till');
+      await expect(rowMsg).toBeInViewport();
+      await expect(moveMsg).toBeEmpty();
+      await expect(page.locator('#designer-categories-msg')).toBeEmpty();
       assertClean();
     } finally {
       await cleanup(page, f);
