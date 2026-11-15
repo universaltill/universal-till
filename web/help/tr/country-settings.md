@@ -3,6 +3,7 @@ id: country-settings
 title: Ülke ayarları
 section: Kurulum
 order: 145
+public: true
 summary: "Her ülke için kullanılan varsayılan para birimi, vergi oranı ve arşiv saklama süresi ve bunları kendi dükkânınız için nasıl değiştireceğiniz."
 keywords: [ülke, para birimi, vergi, kdv, saklama, arşiv, bölge, varsayılan]
 routes: [/country-settings]

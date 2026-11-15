@@ -528,3 +528,39 @@ func TestSetCategorySortOrderKnown(t *testing.T) {
 		t.Fatalf("order = %v, want %s then %s first", got, inactive, active)
 	}
 }
+
+// ItemCategoryIDs backs set_category_item_order (ut-docs#3105, §3.14): one
+// batched read of (id, category_id) for the listed ids. An id with no items
+// row is absent from the map; an item with no category maps to "".
+func TestItemCategoryIDs(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+	cat, err := repo.CreateCategory(ctx, "Drinks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"it-in", "it-none", "it-inactive"} {
+		testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: id, SKU: id, Name: id, BasePrice: 100, IsActive: id != "it-inactive"})
+	}
+	if _, err := db.Exec(`UPDATE items SET category_id = ? WHERE id IN ('it-in','it-inactive')`, cat); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ItemCategoryIDs(ctx, []string{"it-in", "it-none", "it-inactive", "ghost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"it-in": cat, "it-none": "", "it-inactive": cat}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for id, c := range want {
+		if v, ok := got[id]; !ok || v != c {
+			t.Fatalf("got[%s] = %q,%v, want %q", id, v, ok, c)
+		}
+	}
+	if got, err := repo.ItemCategoryIDs(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty input: %v %v", got, err)
+	}
+}

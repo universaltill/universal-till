@@ -532,12 +532,7 @@ func TestCounterCheckout_TableOrderItemsAddedAtTillPrintAtPayment(t *testing.T) 
 // payment, and the guest is not told it is already on its way.
 func TestCounterCheckout_TableOrderPrinterDownAtCheckoutPrintsAtPayment(t *testing.T) {
 	h := newCounterHeldHarness(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadAddr := ln.Addr().String()
-	_ = ln.Close() // nothing listens here: every print fails fast
+	deadAddr := unreachableAddr() // nothing listens here: every print fails fast
 	if err := h.dp.Settings.Set(t.Context(), keyPrinterKitchen, deadAddr); err != nil {
 		t.Fatal(err)
 	}

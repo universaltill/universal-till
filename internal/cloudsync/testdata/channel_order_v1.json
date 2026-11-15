@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "connection_id": "0b3b9c34-5c1e-4a3e-8f55-3f7f3a9a7c02",
+  "plugin_key": "com.universaltill.channel-demo",
+  "external_order_id": "o-9001",
+  "external_version": "7",
+  "revision": 1,
+  "order_number": "#1001",
+  "placed_at": "2026-10-22T10:12:00Z",
+  "currency": "GBP",
+  "status": "new",
+  "payment_state": "paid",
+  "lines": [
+    {
+      "external_id": "l-1",
+      "cloud_item_id": "itm1",
+      "sku": "LS-M-BLU",
+      "name": "Linen shirt, blue, M",
+      "qty": 2,
+      "unit_price_minor": 3500,
+      "tax_bp": 2000,
+      "tax_included": true,
+      "discount_line_minor": 0,
+      "refunded_quantity": 0,
+      "restocked_quantity": 0
+    },
+    {
+      "external_id": "l-2",
+      "sku": "",
+      "name": "Gift wrap",
+      "qty": 1,
+      "unit_price_minor": 200,
+      "tax_bp": 2000,
+      "tax_included": true,
+      "discount_line_minor": 0,
+      "refunded_quantity": 0,
+      "restocked_quantity": 0
+    }
+  ],
+  "shipping_minor": 399,
+  "shipping_tax_bp": 2000,
+  "shipping_tax_included": true,
+  "order_discount_minor": 0,
+  "tax_added_minor": 0,
+  "refund_total_minor": 0,
+  "total_minor": 7599,
+  "customer_country": "GB"
+}

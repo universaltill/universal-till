@@ -88,7 +88,7 @@ func TestEntitlementAPI_FreshActiveShop(t *testing.T) {
 	seedEntitlement(t, dp, map[string]string{
 		entitlement.KeyPlan:               "shop",
 		entitlement.KeySubscriptionStatus: "active",
-		entitlement.KeyExpiresAt:          "2026-12-31T00:00:00Z",
+		entitlement.KeyExpiresAt:          "2026-12-31T00:00:00Z", // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 		entitlement.KeyLastConfirmedAt:    confirmed,
 	})
 
@@ -96,7 +96,7 @@ func TestEntitlementAPI_FreshActiveShop(t *testing.T) {
 		resp := getEntitlement(t, mux, role)
 		d := resp.Data
 		if d.EffectivePlan != "shop" || d.Plan != "shop" || d.SubscriptionStatus != "active" ||
-			d.ExpiresAt != "2026-12-31T00:00:00Z" || d.LastConfirmedAt != confirmed {
+			d.ExpiresAt != "2026-12-31T00:00:00Z" || d.LastConfirmedAt != confirmed { // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock
 			t.Fatalf("%s: data = %+v", role, d)
 		}
 		if d.GraceHours != 168 {

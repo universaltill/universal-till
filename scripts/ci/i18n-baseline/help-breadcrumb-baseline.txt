@@ -1,0 +1,5 @@
+# Reviewed exceptions for scripts/ci/guard-help-breadcrumbs.sh (ut-docs#4696).
+# Shrink-only: one entry per line,
+#   <loc>/<topic>.md:<item n>:<settings key> <concrete reason>
+# An entry that matches no current mismatch is stale and fails the guard --
+# delete the line once the translated breadcrumb uses the locale's label.

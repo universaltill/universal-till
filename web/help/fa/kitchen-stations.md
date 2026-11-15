@@ -3,6 +3,7 @@ id: kitchen-stations
 title: ایستگاه‌های آشپزخانه
 section: اداره کسب‌وکار
 order: 235
+public: true
 summary: "هر دسته غذا — یا حتی یک کالا — را به چاپگر یا نمایشگر آشپزخانه خودش هدایت کنید تا سفارش گریل کنار گریل و سفارش نوشیدنی کنار بار چاپ شود."
 routes: [/kitchen-stations, /kitchen-display/{station_id}]
 ---

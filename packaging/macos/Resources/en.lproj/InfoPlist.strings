@@ -1,0 +1,2 @@
+/* Local Network permission text (ut-docs#5026). */
+"NSLocalNetworkUsageDescription" = "Universal Till looks for receipt printers and your other tills on your shop network, so you can connect them without typing addresses.";

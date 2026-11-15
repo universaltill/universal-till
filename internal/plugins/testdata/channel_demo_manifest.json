@@ -1,0 +1,37 @@
+{
+  "id": "com.universaltill.channel-demo",
+  "name": "Demo channel",
+  "version": "1.0.0",
+  "runtime": "wasm",
+  "entrypoint": "plugin.wasm",
+  "canonical_type": "channel",
+  "device_arch": "any",
+  "hosts": ["cloud"],
+  "channel_contract": 1,
+  "permissions": ["net:{account}"],
+  "channel": {
+    "kind": "webshop",
+    "account": "^[a-z0-9-]+\\.demo-shop\\.example$",
+    "account_suffix": ".demo-shop.example",
+    "auth": {
+      "grants": ["code"],
+      "authorize_url": "https://{account}/oauth/authorize",
+      "token_url": "https://{account}/oauth/token",
+      "scopes": ["products", "inventory", "orders"],
+      "inject": {"header": "X-Demo-Token"}
+    },
+    "capabilities": {
+      "items": "both", "variants": "both", "categories": "both",
+      "images": "push", "stock": "push", "orders": "pull",
+      "fulfilment": "push", "refunds": "both", "cancel": "both",
+      "customers": "pull", "compare_at": "both"
+    },
+    "limits": {"max_options": 3, "max_variants": 100},
+    "stock_locations": true,
+    "webhooks": {
+      "topics": ["orders/create", "orders/updated", "app/uninstalled"],
+      "verify": {"header": "X-Demo-Hmac", "alg": "hmac-sha256", "encoding": "base64"}
+    },
+    "schedules": [{"event": "reconcile", "every_s": 900, "jitter_s": 60}]
+  }
+}

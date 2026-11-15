@@ -70,6 +70,16 @@
        fragment and a page has no such header; sell-screen-watch.js seeds
        from it. The badge template sits first, outside #buttons-grid. */}}
   {{ if not .EditMode }}{{ template "tile-badges-template" . }}{{ end }}
+  {{/* ADR-0176 (ut-docs#5366): the one slot for an "important" notice toast,
+       in flow at the top of the PRODUCTS pane (never the basket column, never
+       over the total or Pay). Static markup, so the cached sell screen stays
+       shared; hx-preserve keeps it (and a toast showing in it) across this
+       grid's own re-fetches. GET /notices/toast is empty unless the flag is
+       on and the operator may see notices. hx-swap="innerHTML" is explicit: the
+       grid root above sets outerHTML and htmx inherits it, which would swap
+       this mount away with its own (empty) answer. app.js skips the poll while the
+       payment overlay is open, which is what queues a toast during tender. */}}
+  {{ if not .EditMode }}<div id="notices-toast" class="notices-toast-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/toast" hx-trigger="load, every 15s, notices-check from:body"></div>{{ end }}
   {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
        one, ut-docs#2294 gave it its own grid of every active item, and
        both are retired here) -- it shows only category tabs plus the
@@ -328,7 +338,19 @@
         this.$watch('tab', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: v }); });
         this.$watch('q', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { q: v }); });
       },
-      openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
+      {{/* ut-docs#5483: WebKit (26.5) once left the field visible but
+           unfocused after $nextTick's focus() (#products-search carries
+           inputmode="none" from osk.js). One retry a frame later, only if
+           focus did not take, so a real tap always lands in the field. */}}
+      openSearch() {
+        this.searching = true;
+        this.$nextTick(() => {
+          const i = this.$refs.search;
+          if (!i) return;
+          i.focus();
+          if (document.activeElement !== i) requestAnimationFrame(() => { if (this.searching) i.focus(); });
+        });
+      },
       closeSearch() {
         this.searching = false;
         this.q = '';
@@ -741,7 +763,7 @@
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
               {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-              <span class="category-overflow-count">{{ printf (T "products.category_button_count") $g.VisibleButtons }}</span>
+              <span class="category-overflow-count">{{ TM "products.category_button_count_plural" "count" $g.VisibleButtons }}</span>
             </button>
             {{ end }}
           </div>
@@ -909,7 +931,7 @@
                   @click="openCategoryPopup($el)">
             {{ if .ImageURL }}<img class="category-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}
             <span class="category-tile-name">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-            <span class="category-tile-count">{{ printf (T "categories.item_count") .ItemCount }}</span>
+            <span class="category-tile-count">{{ TM "categories.item_count_plural" "count" .ItemCount }}</span>
           </button>
           {{ end }}
         </div>
@@ -1142,7 +1164,11 @@
        into the new order IN PLACE -- no buttons-changed re-render, which
        repainted the whole replica and lost the operator's scroll position
        (ut-docs#3074). On a refusal it puts the rows back and shows the
-       reason in #designer-categories-msg.
+       reason on the moved row itself (data-reorder-item-msg), where the
+       operator is looking: under the Move buttons while its form is open
+       (#designer-cat-move-msg-<id>), else under its name
+       (#designer-cat-msg-<id>). #designer-categories-msg can sit scrolled
+       out of view above a long list (ut-docs#3104); it stays the fallback.
        The help text describes the list ONCE (aria-describedby here, not
        on every row's button — a screen reader would repeat it per row);
        each row's button only names its keys (aria-keyshortcuts). */}}
@@ -1168,7 +1194,7 @@
         <span class="cat-thumb" aria-hidden="true">{{ if $c.Thumb }}<img src="{{ imgv $c.Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if $c.Color }}<span class="cat-thumb-swatch" style="--swatch: {{ $c.Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
         <span class="designer-cat-text">
           <span class="designer-cat-name">{{ $c.Name }}</span>
-          <span class="muted designer-cat-meta">{{ printf (T "products.category_button_count") $c.ButtonCount }} · {{ printf (T "categories.item_count") $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
+          <span class="muted designer-cat-meta">{{ TM "products.category_button_count_plural" "count" $c.ButtonCount }} · {{ TM "categories.item_count_plural" "count" $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
         </span>
       </button>
       <div class="list-actions designer-cat-actions">
@@ -1182,7 +1208,7 @@
         <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
-              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
+              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}" data-confirm-ok="{{ T "categories.deactivate" }}"{{ end }}>
           <input type="hidden" name="active" value="0">
           <button type="submit" class="btn secondary btn-icon btn-icon-danger" id="designer-cat-active-{{ $c.ID }}"
                   {{ if gt $c.ItemCount 0 }}aria-describedby="designer-cat-blocked-{{ $c.ID }}"{{ end }}
@@ -1201,7 +1227,7 @@
       {{ if and $c.IsActive (gt $c.ItemCount 0) }}
       <p class="muted designer-cat-blocked" id="designer-cat-blocked-{{ $c.ID }}" data-testid="designer-cat-blocked-{{ $c.ID }}">{{ printf (T "designer.category.deactivate_blocked_hint") $c.ItemCount }}</p>
       {{ end }}
-      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite"></p>
+      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite" data-reorder-item-msg></p>
       <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       <form class="designer-cat-form" id="designer-cat-form-{{ $c.ID }}" x-show="editing" x-cloak
             hx-post="/api/designer/categories/{{ $c.ID }}" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML" autocomplete="off">
@@ -1227,6 +1253,10 @@
             <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span> {{ T "designer.move_down" }}
           </button>
         </div>
+        {{/* ut-docs#3104: a refused Move earlier/later says why right here,
+             under the button just pressed -- on a phone the row's own line
+             above sits off-screen behind this tall form. */}}
+        <p class="designer-cat-msg" id="designer-cat-move-msg-{{ $c.ID }}" role="status" aria-live="polite" data-reorder-item-msg></p>
         <div class="designer-cat-form-actions">
           <button type="submit" class="btn primary compact" id="designer-cat-save-{{ $c.ID }}">{{ T "common.save" }}</button>
           <button type="button" class="btn secondary compact" @click="editing = false">{{ T "common.cancel" }}</button>
@@ -1686,7 +1716,7 @@
                    confirm() dialog that would only ever precede the SAME
                    eventual elevation either way. The confirm still guards
                    the real, granted path unchanged. */}}
-              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}"{{ end }}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}" data-confirm-ok="{{ T "confirm.remove" }}"{{ end }}
               hx-swap="none"
               aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
               title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">

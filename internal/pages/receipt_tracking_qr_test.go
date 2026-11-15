@@ -78,6 +78,10 @@ func TestReceiptTrackingQROffered(t *testing.T) {
 	if receiptTrackingQROffered(ctx, dp, "sale", "completed", on) {
 		t.Fatal("a Local till (no entitlement) must not offer a receipt tracking QR")
 	}
+	seedTrackingPlan(t, dp, entitlement.PlanLocalPlus)
+	if receiptTrackingQROffered(ctx, dp, "sale", "completed", on) {
+		t.Fatal("Local Plus does not include order tracking (Shop and up, ut-docs#4243)")
+	}
 	seedTrackingPlan(t, dp, entitlement.PlanShop)
 	if !receiptTrackingQROffered(ctx, dp, "sale", "completed", on) {
 		t.Fatal("a Shop till with the setting on must offer the QR on a normal sale")
@@ -243,7 +247,7 @@ func TestRenderReceipt_TrackingQRBlock(t *testing.T) {
 	funcs := httpx.FuncsFor("en")
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100}}
 	view := &receiptTrackingView{QRDataURI: "data:image/png;base64,AAAA", URL: "http://192.168.1.20:8080/o/abc?lang=en"}
-	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, view, "", "en")
+	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, view, "", "en", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +257,7 @@ func TestRenderReceipt_TrackingQRBlock(t *testing.T) {
 	if !strings.Contains(html, httpx.T("en", "receipt.tracking.caption")) {
 		t.Fatal("expected the tracking caption")
 	}
-	html, err = renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, nil, "", "en")
+	html, err = renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, nil, "", "en", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

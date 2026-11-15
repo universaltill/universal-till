@@ -3,6 +3,7 @@ id: recovery
 title: Recovery screen
 section: Running the business
 order: 255
+public: true
 summary: What you see if the till fails to start, and what each action on that screen does.
 keywords: [recovery, error, won't start, crash, retry, safe mode, corrupt, log, log file, troubleshooting]
 ---
@@ -51,6 +52,24 @@ The till writes a technical log that support may ask for:
 - **Linux till installed as a service:** `/opt/unitill/data/logs`
 
 `till.log` is the newest file, `till.log.1` to `till.log.4` are older ones, and `desktop.log` is the app window's own log. Passwords and tokens are removed before anything is written, and the folder never grows past about 25 MB. While the till is running, a manager can also find the folder under Settings → Diagnostic mode → **Log files**, with buttons to copy its path and a diagnostics summary to send to support. The Android app does not write these files.
+
+## If the app opens a "could not start" window
+
+On a Windows, Mac or Linux computer, the app can open a window titled
+"Universal Till could not start" instead of the till. It appears when the
+till program stopped right after it was opened, so there is nothing to show
+yet. It is not the recovery screen above: that one needs the till program to
+be running. The window also shows the folder with the log files and, in
+small text, a technical detail for support.
+The window is in your computer's language when the till is available in
+it, otherwise in English. On a Windows computer without WebView2 (see the
+next section) the same message opens in your default web browser instead.
+
+1. Close the window and open Universal Till again.
+2. If it still does not start, reinstall Universal Till from the latest
+   installer. Reinstalling keeps your sales, items and settings.
+3. If you need help, send support the `desktop.log` and `till.log` files
+   from the folder the window shows (see "Where the till's log is" above).
 
 ## On Windows: the till opens in your web browser instead of its own window
 

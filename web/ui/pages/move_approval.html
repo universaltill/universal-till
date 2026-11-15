@@ -1,0 +1,47 @@
+{{ define "content" }}
+{{/* ut-docs#5127 UT-1b (design-5127 §5): approve or decline moving this
+     till into another shop. A full page, never a dialog over the sale
+     screen. Approve needs the target shop's name typed and, like Decline,
+     a fresh manager/admin PIN (the elevation dialog, non-modal). Names sit
+     in <bdi> so mixed-script shop names lay out in ar/fa. */}}
+<div class="page-head">
+  <h1>{{ T "settings.move.title" }} {{ helpLink "claim" }}</h1>
+  <a class="btn secondary" href="/settings"><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.settings" }}</a>
+</div>
+
+{{ if .Gone }}
+<div class="card move-approval">
+  <p>{{ .Gone }}</p>
+</div>
+{{ else }}
+{{ with .Move }}
+<div class="card move-approval" data-testid="move-approval">
+  <dl class="move-route">
+    <dt>{{ T "settings.move.from" }}</dt><dd><bdi>{{ .From }}</bdi></dd>
+    <dt>{{ T "settings.move.into" }}</dt><dd><strong><bdi>{{ .Into }}</bdi></strong></dd>
+    <dt>{{ T "settings.move.expires" }}</dt><dd><bdi>{{ .Expires }}</bdi></dd>
+  </dl>
+  <p class="move-warning" role="note"><strong>{{ T "settings.move.warning" }}</strong></p>
+  <p class="muted">{{ T "settings.move.who" }}</p>
+
+  {{ if $.Offline }}<p class="error" role="status">{{ T "settings.move.offline" }}</p>{{ end }}
+
+  <div id="move-actions">
+    <form class="move-approve" hx-post="/api/cloud/move/{{ .ID }}" hx-target="#move-msg" hx-swap="innerHTML"
+          hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
+      <input type="hidden" name="decision" value="approve">
+      <label for="move-target-name">{{ T "settings.move.type_name" }} <bdi>{{ .Into }}</bdi></label>
+      <input type="text" id="move-target-name" name="target_name" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}autocomplete="off" spellcheck="false" required>
+      <button class="btn primary btn-touch" type="submit" {{ if $.Offline }}disabled{{ end }}>{{ T "settings.move.approve" }}</button>
+    </form>
+    <form class="move-decline" hx-post="/api/cloud/move/{{ .ID }}" hx-target="#move-msg" hx-swap="innerHTML"
+          hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
+      <input type="hidden" name="decision" value="decline">
+      <button class="btn secondary btn-touch" type="submit" {{ if $.Offline }}disabled{{ end }}>{{ T "settings.move.decline" }}</button>
+    </form>
+  </div>
+  <div id="move-msg" aria-live="polite" class="set-gap-s"></div>
+</div>
+{{ end }}
+{{ end }}
+{{ end }}

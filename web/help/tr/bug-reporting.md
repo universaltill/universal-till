@@ -3,31 +3,32 @@ id: bug-reporting
 title: Sorun bildirme
 section: Bağlantı ve eklentiler
 order: 360
-summary: "Kasada bir sorun mu var? Her ekrandan 🐞 düğmesiyle bir rapor gönderin — yazarak, sesli notla veya ekran kaydıyla."
+public: true
+summary: "Kasada bir sorun mu var? Her ekrandan Sorun bildir düğmesiyle bir rapor gönderin — yazarak, sesli notla veya ekran kaydıyla."
 routes: [/report-issue]
 keywords: [bug, issue, problem, report, support, recording, voice]
 ---
 
 # Sorun bildirme
 
-Kasada bir sorun mu var? Her ekrandan 🐞 düğmesiyle bir rapor gönderin — yazarak, sesli notla veya ekran kaydıyla.
+Kasada bir sorun mu var? Her ekrandan **Sorun bildir** düğmesiyle bir rapor gönderin — yazarak, sesli notla veya ekran kaydıyla.
 
 ## Nasıl kullanılır
 
-1. Yan menüdeki 🐞 düğmesine tıklayın (yalnızca yöneticiler ve adminler). Köşede küçük bir panel açılır — alttaki kasa çalışmaya devam eder, böylece sorunu anlatırken aynı anda yeniden deneyebilirsiniz. Görmeniz gereken bir şeyi kapatıyorsa, başlık çubuğundan tutup başka bir yere sürükleyebilirsiniz.
+1. Yan menüdeki **Sorun bildir** (böcek simgesi) düğmesine tıklayın (yalnızca yöneticiler ve adminler). Köşede küçük bir panel açılır — alttaki kasa çalışmaya devam eder, böylece sorunu anlatırken aynı anda yeniden deneyebilirsiniz. Görmeniz gereken bir şeyi kapatıyorsa, başlık çubuğundan tutup başka bir yere sürükleyebilirsiniz.
 2. Ne olduğunu yazın veya sesli not kaydedin; ekranınızı da kaydedebilir, ya da "Ekran görüntüsü al" ile o an ekranda olanın bir görüntüsünü ekleyebilirsiniz (birden fazla ekleyebilirsiniz). Kasanın son uyarı ve hata günlükleri otomatik olarak eklenir.
 3. "Raporu kaydet"e basın. Rapor anında bu kasaya kaydedilir — internet olmasa bile — ve mağaza bağlandığında otomatik olarak yüklenir.
-4. Panel, ekranlar arasında geçerken sizinle kalır — içindeki her şeyle birlikte. Farklı sayfalarda ekran görüntüleri alın, sorunu gösterirken kaydı çalışır durumda bırakın, ardından Raporu kaydet'e (ya da taslağı silmek için Vazgeç'e) basın. Panel kendi kendine asla kapanmaz; ✕ yalnızca gizler, 🐞 ise taslağınızla birlikte geri getirir. Kayıt sırasında bir sayfa tamamen yeniden yüklenirse (örneğin dil değiştirdikten sonra) kayıt o noktada durur ve o ana kadar kaydedilenler korunur.
+4. Panel, ekranlar arasında geçerken sizinle kalır — içindeki her şeyle birlikte. Farklı sayfalarda ekran görüntüleri alın, sorunu gösterirken kaydı çalışır durumda bırakın, ardından Raporu kaydet'e (ya da taslağı silmek için Vazgeç'e) basın. Panel kendi kendine asla kapanmaz; ✕ yalnızca gizler, **Sorun bildir** düğmesi ise taslağınızla birlikte geri getirir. Kayıt sırasında bir sayfa tamamen yeniden yüklenirse (örneğin dil değiştirdikten sonra) kayıt o noktada durur ve o ana kadar kaydedilenler korunur.
 
 Panele ☰ Menü'deki "Sorun bildir" kutucuğundan da ulaşabilirsiniz.
 
-Telefon genişliğindeki bir ekranda 🐞 "Sorun bildir" ☰ menüsündedir ve panel üst çubuğun altında tüm ekranı kaplar: büyük düğmeler, kendi satırında not alanı ve altında Raporu kaydet. Orada taşınamaz. Sorunu yeniden oluştururken ✕ ile gizleyin, ardından 🐞 ile taslağınız korunmuş olarak geri getirin. ☰ üstte dokunulabilir kalır.
+Telefon genişliğindeki bir ekranda **Sorun bildir** ☰ menüsündedir ve panel üst çubuğun altında tüm ekranı kaplar: büyük düğmeler, kendi satırında not alanı ve altında Raporu kaydet. Orada taşınamaz. Sorunu yeniden oluştururken ✕ ile gizleyin, ardından **Sorun bildir** ile taslağınız korunmuş olarak geri getirin. ☰ üstte dokunulabilir kalır.
 
 Android kasa uygulamasında, "Ekran görüntüsü al" uygulamanın gösterdiğini doğrudan yakalar — izin istemez. Sesli not da çalışır: ilk kez kaydettiğinizde Android mikrofon erişimi ister; bir kez izin verin, sonraki kayıtlar hemen başlar (izin vermediyseniz, telefonun Ayarlar → Uygulamalar → Universal Till → İzinler bölümünden tekrar açabilirsiniz). Ekran kaydı ve kamerayla fotoğraf çekme, Android uygulamasında henüz kullanılamıyor.
 
 iPhone ve iPad uygulamasında, ilk kez sesli not kaydettiğinizde iOS mikrofon erişimi ister; izin verin, sonraki kayıtlar hemen başlar (izin vermediyseniz, cihazın Ayarlar → Universal Till → Mikrofon bölümünden tekrar açabilirsiniz). "Ekran görüntüsü al", paylaşım istemi göstermeden doğrudan kasa ekranını yakalar — panel görüntüde yer almasın diye bir anlığına gizlenir. Ekran kaydı iPhone ve iPad uygulamasında henüz kullanılamıyor.
 
-Paneli ✕ ile kapatmak, taslağınız korunarak, siz yeniden 🐞'e basana kadar gizler: ekranlar arasında geçerken kapalı kalır ve Sorun bildir sayfası artık onu zorla açmaz. Bir taslağı gerçekten silen düğme Vazgeç'tir (önce sorar). Taslak yalnızca geçerli kasa oturumu boyunca saklanır; bir rapora en fazla 12 ekran görüntüsü sığar.
+Paneli ✕ ile kapatmak, taslağınız korunarak, siz yeniden **Sorun bildir**'e basana kadar gizler: ekranlar arasında geçerken kapalı kalır ve Sorun bildir sayfası artık onu zorla açmaz. Bir taslağı gerçekten silen düğme Vazgeç'tir (önce sorar). Taslak yalnızca geçerli kasa oturumu boyunca saklanır; bir rapora en fazla 12 ekran görüntüsü sığar.
 
 Gönderdikten sonra raporunuza ne olduğunu mu merak ediyorsunuz? [Raporlarım](/help/my-reports) sayfasına bakın — bu kasadan gönderilen tüm raporlar, her birinin güncel durumuyla. Bu sayfayı müdürler ve yöneticiler açabilir; kasiyerseniz onlardan birine sorun.
 

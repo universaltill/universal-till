@@ -20,6 +20,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -65,7 +66,8 @@ func storeRespOf(t *testing.T, rec *httptest.ResponseRecorder) (bool, string) {
 
 func TestStoreAPI_MissingListingID_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
 
 	for _, path := range []string{
 		"/api/plugins/store/download",
@@ -86,12 +88,13 @@ func TestStoreAPI_InstallerNotConfigured_500(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	// An invalid public key makes the manifest verifier (and so the
 	// installer) unconstructable — every lifecycle action must fail loudly.
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   "not-hex-at-all",
 	})
 
-	form := url.Values{"listing_id": {"lst-1"}}
+	form := url.Values{"listing_id": {"lst-1"}, "accept_terms": {"on"}}
 	for _, path := range []string{
 		"/api/plugins/store/download",
 		"/api/plugins/store/install",
@@ -115,7 +118,7 @@ func TestStoreAPI_DownloadFailureIs502(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-1"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-1"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("download from empty marketplace = %d, want 502 (%s)", rec.Code, rec.Body.String())
 	}
@@ -139,7 +142,7 @@ func TestStoreAPI_DownloadNotEntitled_403(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("download of a not-entitled listing = %d, want 403 (%s)", rec.Code, rec.Body.String())
 	}
@@ -163,7 +166,7 @@ func TestStoreAPI_DownloadListingNotFound_404(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-stale"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-stale"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("download of an unknown listing = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
@@ -187,7 +190,7 @@ func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-registered"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-registered"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("download of a registered-required listing = %d, want 403 (%s)", rec.Code, rec.Body.String())
 	}
@@ -196,10 +199,58 @@ func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
 	}
 }
 
+// TestStoreAPI_DownloadTillAuthCodes_403 pins ut-docs#3541: the download-token
+// route's till-auth answers surface as actionable pairing messages (403, so
+// the UI doesn't read it as the operator's own login expiring), not as the raw
+// "download failed: marketplace: <code>" 502.
+func TestStoreAPI_DownloadTillAuthCodes_403(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	// ut-docs#5187: data.reason picks replaced/moved; an unclaimed store
+	// (no plan/subscription settings) is told to register, an owned one to pair.
+	for _, tc := range []struct {
+		name, code, data, key string
+		paidPlan              bool
+	}{
+		{"store_auth_required", "store_auth_required", "null", "plugins.install.error.pair_required", false},
+		{"device_revoked", "device_revoked", "null", "plugins.install.error.till_removed", false},
+		{"device_revoked replaced", "device_revoked", `{"reason":"replaced","replaced_by":"till-2"}`, "plugins.install.error.till_replaced", false},
+		{"device_revoked moved", "device_revoked", `{"reason":"moved","moved_to":"store-2"}`, "plugins.install.error.till_moved", false},
+		{"token_retired owned", "token_retired", "null", "plugins.install.error.pair_again", true},
+		{"token_retired anonymous", "token_retired", "null", "plugins.install.error.register_new", false},
+		{"unauthorized anonymous", "unauthorized", "null", "plugins.install.error.register_new", false},
+		{"device_mismatch anonymous", "device_mismatch", "null", "plugins.install.error.pair_again", false},
+		{"service_unavailable", "service_unavailable", "null", "plugins.install.error.service_unavailable", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"data":` + tc.data + `,"error":{"code":"` + tc.code + `","message":"nope"}}`))
+			}))
+			t.Cleanup(srv.Close)
+			mux, d := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+			if tc.paidPlan {
+				if err := d.Settings.Set(t.Context(), entitlement.KeyPlan, "shop"); err != nil {
+					t.Fatalf("seed plan: %v", err)
+				}
+			}
+
+			rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}, "accept_terms": {"on"}}, nil)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("download = %d, want 403 (%s)", rec.Code, rec.Body.String())
+			}
+			if ok, msg := storeRespOf(t, rec); ok || msg != tc.key {
+				t.Fatalf("envelope wrong: success=%v msg=%q, want %q", ok, msg, tc.key)
+			}
+		})
+	}
+}
+
 func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   validStorePublicKey(t),
 	})
 
@@ -214,7 +265,8 @@ func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 
 func TestStoreAPI_DeleteDownloadRemovesStagedBundle(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
 
 	// Stage fake download files where the installer keeps them.
 	downloads := paths.Plugins("downloads")
@@ -252,7 +304,8 @@ func TestStoreAPI_DeleteDownloadRemovesStagedBundle(t *testing.T) {
 // directly (storeRespOf above hides it behind a compatibility shim).
 func TestStoreAPI_ResponsesUseDataErrorEnvelope(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
 
 	// Failure: data null, error carries the message.
 	rec := postForm(mux, "/api/plugins/store/download", url.Values{}, nil)
@@ -382,8 +435,9 @@ func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
 	// A signed, asset-only (runtime "none") manifest — no executable needed.
 	m, pubHex := signedAssetOnlyManifest(t, "com.test.storeinstall", "Store Install Plugin")
 
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   pubHex,
 	})
 

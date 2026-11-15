@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- tabler:blade, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/tabler/LICENSE -->
+  <rect width="64" height="64" fill="#E0E7FF"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#3730A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17.707 3.707l2.586 2.586a1 1 0 0 1 0 1.414l-.586 .586a1 1 0 0 0 0 1.414l.586 .586a1 1 0 0 1 0 1.414l-8.586 8.586a1 1 0 0 1 -1.414 0l-.586 -.586a1 1 0 0 0 -1.414 0l-.586 .586a1 1 0 0 1 -1.414 0l-2.586 -2.586a1 1 0 0 1 0 -1.414l.586 -.586a1 1 0 0 0 0 -1.414l-.586 -.586a1 1 0 0 1 0 -1.414l8.586 -8.586a1 1 0 0 1 1.414 0l.586 .586a1 1 0 0 0 1.414 0l.586 -.586a1 1 0 0 1 1.414 0"/>
+    <path d="M8 16l3.2 -3.2"/>
+    <path d="M12.8 11.2l3.2 -3.2"/>
+    <path d="M14 8l2 2"/>
+    <path d="M8 14l2 2"/>
+    <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/>
+  </g>
+</svg>

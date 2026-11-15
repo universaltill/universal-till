@@ -3,6 +3,7 @@ id: recovery
 title: Kurtarma ekranı
 section: İşi yürütme
 order: 255
+public: true
 summary: Kasa başlatılamazsa ne görürsünüz ve o ekrandaki her eylem ne işe yarar.
 keywords: [kurtarma, hata, başlamıyor, çökme, yeniden dene, güvenli mod, bozuk, günlük, günlük dosyası, sorun giderme]
 ---
@@ -49,6 +50,25 @@ Kasa, desteğin isteyebileceği teknik bir günlük yazar:
 - **Hizmet olarak kurulmuş Linux kasa:** `/opt/unitill/data/logs`
 
 `till.log` en yeni dosyadır, `till.log.1` ile `till.log.4` arası daha eskileridir ve `desktop.log` uygulama penceresinin kendi günlüğüdür. Herhangi bir şey yazılmadan önce parolalar ve belirteçler çıkarılır ve klasör hiçbir zaman yaklaşık 25 MB'ı aşmaz. Kasa çalışırken bir yönetici klasörü Ayarlar → Tanılama modu → **Günlük dosyaları** altında da bulabilir; orada yolu ve desteğe gönderilecek bir tanılama özetini kopyalama düğmeleri vardır. Android uygulaması bu dosyaları yazmaz.
+
+## Uygulama "başlatılamadı" penceresi açarsa
+
+Windows, Mac veya Linux bilgisayarda uygulama, kasa yerine "Universal Till
+başlatılamadı" başlıklı bir pencere açabilir. Bu pencere, kasa programı
+açıldıktan hemen sonra durduğunda ve henüz gösterilecek bir şey olmadığında
+görünür. Yukarıdaki kurtarma ekranı değildir: o ekran, kasa programının
+çalışıyor olmasını gerektirir. Pencere ayrıca günlük dosyalarının bulunduğu
+klasörü ve küçük yazıyla destek için teknik bir ayrıntıyı gösterir.
+Pencere, kasa o dilde mevcutsa bilgisayarınızın dilinde, değilse
+İngilizce görünür. WebView2 olmayan bir Windows bilgisayarda (bir sonraki
+bölüme bakın) aynı mesaj bunun yerine varsayılan web tarayıcınızda açılır.
+
+1. Pencereyi kapatın ve Universal Till'i yeniden açın.
+2. Yine de başlamazsa Universal Till'i en son yükleyiciyle yeniden kurun.
+   Yeniden kurulum satışlarınızı, ürünlerinizi ve ayarlarınızı korur.
+3. Yardıma ihtiyacınız olursa pencerenin gösterdiği klasördeki `desktop.log`
+   ve `till.log` dosyalarını destek ekibine gönderin (yukarıdaki "Kasanın
+   günlüğü nerede" bölümüne bakın).
 
 ## Windows'ta: kasa kendi penceresi yerine web tarayıcısında açılıyor
 

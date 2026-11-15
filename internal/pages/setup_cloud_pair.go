@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -98,8 +99,16 @@ func (s *setupCloudState) nonceOK(got string) bool {
 
 func (s *setupCloudState) hold(p *enroll.FirstTillPairing, tillName string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.nonce == "" {
+		// Setup finished while the pair call was in flight (finish() clears
+		// the nonce): holding now would strand the hold on a till that is
+		// already set up.
+		return
+	}
 	s.held = &heldCloudPairing{p: p, tillName: tillName, at: cloudPairNow()}
-	s.mu.Unlock()
+	// ut-docs#5127: no till-born store while the shop's identity is pending.
+	enroll.HoldRegistration()
 }
 
 // current is the held pairing, nil when none or older than cloudPairHold.
@@ -108,21 +117,24 @@ func (s *setupCloudState) current() *heldCloudPairing {
 	defer s.mu.Unlock()
 	if s.held != nil && cloudPairNow().Sub(s.held.at) > cloudPairHold {
 		s.held = nil
+		enroll.ReleaseRegistration()
 	}
 	return s.held
 }
 
 func (s *setupCloudState) drop() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.held = nil
-	s.mu.Unlock()
+	enroll.ReleaseRegistration()
 }
 
 // finish discards the nonce and any pairing: setup completed.
 func (s *setupCloudState) finish() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.held, s.nonce = nil, ""
-	s.mu.Unlock()
+	enroll.ReleaseRegistration()
 }
 
 // guard answers 403 unless the request is a same-origin call from the till's
@@ -137,14 +149,8 @@ func (s *setupCloudState) guard(allow []*net.IPNet, w http.ResponseWriter, r *ht
 	if !languard.HostAllowed(r.Host, allow) {
 		return deny()
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+	if !sameOriginRequest(r) {
 		return deny()
-	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, r.Host) {
-			return deny()
-		}
 	}
 	got := r.Header.Get(setupNonceHeader)
 	if got == "" {
@@ -169,6 +175,16 @@ func cloudPairErrorKey(err error) string {
 		case he.Status == http.StatusForbidden || he.Status == http.StatusBadRequest:
 			return "setup.cloud.error.invalid_code"
 		}
+		if he.Status == http.StatusConflict {
+			switch he.Code {
+			case "replace_target_changed":
+				return "setup.cloud.error.replace_target_changed"
+			case "replace_needs_owner":
+				return "setup.cloud.error.replace_needs_owner"
+			case "replace_code_main_till_only":
+				return "setup.cloud.error.replace_main_till_only"
+			}
+		}
 		return "setup.cloud.error.failed"
 	}
 	var netErr net.Error
@@ -184,14 +200,68 @@ func cloudPairMessage(w http.ResponseWriter, msg string) {
 	fmt.Fprintf(w, `<span class="error" role="alert">%s</span>`, html.EscapeString(msg))
 }
 
-// lastSeenDate is the date part of the cloud's RFC 3339 last_used_at ("" when
-// it isn't one).
-func lastSeenDate(raw string) string {
-	t, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return ""
+// maxReplaceTargetLen is the cloud's limit on replace_device_id.
+const maxReplaceTargetLen = 200
+
+// bidiIsolate wraps a cloud-supplied name or a date in Unicode first-strong
+// isolates, so it keeps its own direction inside an RTL sentence (ar, fa).
+func bidiIsolate(s string) string { return "\u2068" + s + "\u2069" }
+
+// stripBidiControls drops embedding/override/isolate controls (U+202A–U+202E,
+// U+2066–U+2069) from a value about to be wrapped by bidiIsolate, so a stray
+// PDI in a shop name or typed code can't close the isolate early and reorder
+// the sentence around it (ut-docs#3557 review).
+func stripBidiControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= '\u202A' && r <= '\u202E') || (r >= '\u2066' && r <= '\u2069') {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// unbreakableCode puts a WORD JOINER after each hyphen so a pairing code such
+// as "AB12-CD34-EF56" never wraps mid-code in a confirm dialog — the dialog
+// exists so the operator can read the code back (ut-docs#3557 test F1).
+func unbreakableCode(s string) string { return strings.ReplaceAll(s, "-", "-\u2060") }
+
+// cloudTillName is a till's fleet-row name, or the "unnamed" word.
+func cloudTillName(locale, name string) string {
+	if strings.TrimSpace(name) == "" {
+		return httpx.T(locale, "setup.cloud.error.unnamed_till")
 	}
-	return t.UTC().Format("2006-01-02")
+	return name
+}
+
+// lastSeenText is the cloud's RFC 3339 last-seen instant as "YYYY-MM-DD
+// HH:MM UTC" in a bidi isolate: the owner compares it with when the old till
+// died (design §2 R7), so the time matters, not only the date. "-" when the
+// cloud has none.
+func lastSeenText(raw string) string {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(raw))
+	if err != nil {
+		return "-"
+	}
+	// Non-breaking hyphens and spaces: a date split over two lines reads
+	// out of order in the RTL locales.
+	s := t.UTC().Format("2006-01-02 15:04") + " UTC"
+	s = strings.NewReplacer("-", "\u2060-\u2060", " ", "\u00a0").Replace(s)
+	return bidiIsolate(s)
+}
+
+// renderReplaceConfirm answers 409 replace_confirm_required with the
+// "Replace <old till>?" panel (ut-docs#5058, design §4.2). Nothing is held.
+func renderReplaceConfirm(w http.ResponseWriter, r *http.Request, locale string, rc *enroll.ReplaceConfirmError) {
+	_, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(rc.LastUsedAt))
+	httpx.RenderPartial("ui/partials/setup_cloud_replace.html", map[string]any{
+		"Name":        bidiIsolate(cloudTillName(locale, rc.Name)),
+		"LastSeen":    lastSeenText(rc.LastUsedAt),
+		"HasLastSeen": parseErr == nil,
+		// Only a cloud-master shop's products, staff and settings come
+		// back from the cloud (design §1 table, D5).
+		"CloudCatalog": rc.Store != nil && strings.EqualFold(strings.TrimSpace(rc.Store.CatalogMaster), "cloud"),
+		"DeviceID":     rc.DeviceID,
+	})(w, r)
 }
 
 func registerSetupCloudPair(mux *http.ServeMux, d *common.Deps, cs *setupCloudState, allow []*net.IPNet) {
@@ -208,25 +278,50 @@ func registerSetupCloudPair(mux *http.ServeMux, d *common.Deps, cs *setupCloudSt
 		locale := httpx.ResolveLocale(w, r)
 		tillName, nameErr := validateTillName(r.PostFormValue("name"))
 		if nameErr != nil {
-			cloudPairMessage(w, httpx.T(locale, keyTillNameRequired))
+			key := keyTillNameRequired
+			if errors.Is(nameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
+				key = keyNameInvalidCharacters
+			}
+			cloudPairMessage(w, httpx.T(locale, key))
 			return
+		}
+		// ut-docs#5058: the confirm panel's Replace button alone sends
+		// confirm_replace=1; only then does the cloud's replace target travel.
+		// A stale hidden field left by any other submit is ignored.
+		replaceID := ""
+		confirming := r.PostFormValue("confirm_replace") == "1"
+		if confirming {
+			replaceID = strings.TrimSpace(r.PostFormValue("replace_device_id"))
+			if replaceID == "" || len(replaceID) > maxReplaceTargetLen {
+				cloudPairMessage(w, httpx.T(locale, "setup.cloud.error.failed"))
+				return
+			}
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), cloudPairTimeout)
 		defer cancel()
 		// The code is a credential: never logged.
-		p, err := enroll.PairFirstTill(ctx, d.Cfg, r.PostFormValue("code"), tillName)
+		p, err := enroll.PairFirstTill(ctx, d.Cfg, r.PostFormValue("code"), tillName, replaceID)
 		if err != nil {
 			var has *enroll.StoreHasTillError
 			if errors.As(err, &has) {
-				name := has.Name
-				if name == "" {
-					name = httpx.T(locale, "setup.cloud.error.unnamed_till")
+				name := bidiIsolate(cloudTillName(locale, has.Name))
+				cloudPairMessage(w, fmt.Sprintf(httpx.T(locale, "setup.cloud.error.store_has_main_till"), name, lastSeenText(has.LastUsedAt)))
+				return
+			}
+			var rc *enroll.ReplaceConfirmError
+			if errors.As(err, &rc) {
+				if confirming {
+					// The cloud ignored the confirmation (a cloud that does
+					// not replace yet): never loop on the same panel.
+					cloudPairMessage(w, httpx.T(locale, "setup.cloud.error.replace_unsupported"))
+					return
 				}
-				date := lastSeenDate(has.LastUsedAt)
-				if date == "" {
-					date = "-"
-				}
-				cloudPairMessage(w, fmt.Sprintf(httpx.T(locale, "setup.cloud.error.store_has_till"), name, date))
+				renderReplaceConfirm(w, r, locale, rc)
+				return
+			}
+			var online *enroll.MainTillOnlineError
+			if errors.As(err, &online) {
+				cloudPairMessage(w, fmt.Sprintf(httpx.T(locale, "setup.cloud.error.main_till_online"), lastSeenText(online.LastSeen)))
 				return
 			}
 			// Already Warn-logged once by enroll.PairFirstTill.
@@ -280,10 +375,25 @@ type cloudShop struct {
 	Currency        string // a code this build knows, else ""
 	CurrencyDecimal *int
 	Tax             setupCountry
+	// ShopType is the type chosen on my. (ADR-0171), a valid ADR-0026 value
+	// or "": when set the wizard skips its shop-type step.
+	ShopType string
+	// Replaced is set when this pairing replaced the shop's main till
+	// (ut-docs#5058): "Your shop" then names it instead of offering "This
+	// is not my shop" — the owner confirmed before the code was spent
+	// (ADR-0166 §4 amendment). ReplacedName is the cloud's, "" if unnamed.
+	Replaced     bool
+	ReplacedName string
 }
 
 func cloudShopView(r *http.Request, h *heldCloudPairing, countries []setupCountry) cloudShop {
 	var v cloudShop
+	if rp := h.p.Replaced; rp != nil {
+		v.Replaced = true
+		if strings.TrimSpace(rp.Name) != "" {
+			v.ReplacedName = bidiIsolate(rp.Name)
+		}
+	}
 	st := h.p.Store
 	if st == nil {
 		return v
@@ -292,6 +402,9 @@ func cloudShopView(r *http.Request, h *heldCloudPairing, countries []setupCountr
 	// localized placeholder): a name it would refuse is asked locally.
 	if n := strings.TrimSpace(st.Name); n != "" && !isRefusedStoreName(r, n) {
 		v.Name, v.HasName = n, true
+	}
+	if isValidShopType(st.ShopType) {
+		v.ShopType = st.ShopType
 	}
 	code := strings.ToUpper(strings.TrimSpace(st.Country))
 	for _, c := range countries {
@@ -338,6 +451,12 @@ func applyCloudShop(r *http.Request, d *common.Deps, h *heldCloudPairing) {
 	if shop.Currency != "" {
 		set("currency", shop.Currency)
 		set("currency_touched", "1") // the shop chose it: KeyCurrencyConfirmed
+	}
+	// ADR-0171 §4: the cloud's shop type wins over any posted one, so the
+	// one shop-type save (saveSetupShopType) cannot be steered by a crafted
+	// post. With none from the cloud the posted value stays (asked locally).
+	if shop.ShopType != "" {
+		set("shop_type", shop.ShopType)
 	}
 }
 

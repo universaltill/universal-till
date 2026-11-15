@@ -5,6 +5,9 @@ import (
 	"html/template"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/universaltill/universal-till/internal/print"
 )
 
 // CurrencyInfo describes how a currency is written. Display is a symbol (£)
@@ -19,6 +22,12 @@ type CurrencyInfo struct {
 	Display  string // symbol or word
 	Suffix   bool   // display goes after the number (logical order)
 	Decimals int    // minor units per major = 10^Decimals
+	// PreferCode marks a currency whose symbol is a script-specific glyph
+	// (Arabic-script), so display mode "auto"
+	// (the default) writes the ISO code instead ("AED 12.50"). The
+	// registry is the single source of truth: no call site or template
+	// special-cases a currency (ut-docs#5410).
+	PreferCode bool
 	// Denominations lists the currency's real circulating physical
 	// banknotes and coins, in minor units, strictly descending (largest
 	// first — the order the shift-close cash-count grid renders in,
@@ -46,28 +55,28 @@ var currencyRegistry = []CurrencyInfo{
 		// is NOT in that category (current Europa-series note, still
 		// issued), so it is listed — review of ut-docs#1291.
 		Denominations: []int64{20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1}},
-	{Code: "IRR", Name: "Iranian Rial (ریال)", Display: "ریال", Suffix: true, Decimals: 0,
+	{Code: "IRR", Name: "Iranian Rial (ریال)", Display: "ریال", Suffix: true, PreferCode: true, Decimals: 0,
 		// Rial coins are obsolete; only banknotes circulate.
 		Denominations: []int64{1000000, 500000, 100000, 50000, 20000, 10000, 5000, 2000, 1000}},
-	{Code: "IRT", Name: "Iranian Toman (تومان)", Display: "تومان", Suffix: true, Decimals: 0,
+	{Code: "IRT", Name: "Iranian Toman (تومان)", Display: "تومان", Suffix: true, PreferCode: true, Decimals: 0,
 		// Same physical notes as IRR, quoted at 1/10th (1 toman = 10 rials).
 		Denominations: []int64{100000, 50000, 10000, 5000, 2000, 1000, 500, 200, 100}},
 	{Code: "TRY", Name: "Turkish Lira (₺)", Display: "₺", Decimals: 2,
 		// Notes: ₺200,100,50,20,10,5. Coins: ₺1, 50kr,25kr,10kr,5kr.
 		Denominations: []int64{20000, 10000, 5000, 2000, 1000, 500, 100, 50, 25, 10, 5}},
-	{Code: "AED", Name: "UAE Dirham (د.إ)", Display: "د.إ", Suffix: true, Decimals: 2,
+	{Code: "AED", Name: "UAE Dirham (د.إ)", Display: "د.إ", Suffix: true, PreferCode: true, Decimals: 2,
 		// Notes: 1000,500,200,100,50,20,10,5. Coins: 1dh, 50,25 fils.
 		Denominations: []int64{100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 100, 50, 25}},
-	{Code: "SAR", Name: "Saudi Riyal (ر.س)", Display: "ر.س", Suffix: true, Decimals: 2,
+	{Code: "SAR", Name: "Saudi Riyal (ر.س)", Display: "ر.س", Suffix: true, PreferCode: true, Decimals: 2,
 		// Notes: 500,200,100,50,10,5,1. Coins: 2 and 1 riyal, then
 		// 50,25,10,5,1 halala. The 2-riyal coin (200 halalas, sixth
 		// series 2016) was missing from the first draft — review of
 		// ut-docs#1291.
 		Denominations: []int64{50000, 20000, 10000, 5000, 1000, 500, 200, 100, 50, 25, 10, 5, 1}},
-	{Code: "IQD", Name: "Iraqi Dinar (د.ع)", Display: "د.ع", Suffix: true, Decimals: 0,
+	{Code: "IQD", Name: "Iraqi Dinar (د.ع)", Display: "د.ع", Suffix: true, PreferCode: true, Decimals: 0,
 		// Fils coins are obsolete; only banknotes circulate.
 		Denominations: []int64{50000, 25000, 10000, 5000, 1000, 500, 250}},
-	{Code: "AFN", Name: "Afghan Afghani (؋)", Display: "؋", Suffix: true, Decimals: 0,
+	{Code: "AFN", Name: "Afghan Afghani (؋)", Display: "؋", Suffix: true, PreferCode: true, Decimals: 0,
 		// Notes: 1000..10. Coins: 5,2,1 (rarely seen but still legal tender).
 		Denominations: []int64{1000, 500, 100, 50, 20, 10, 5, 2, 1}},
 	{Code: "INR", Name: "Indian Rupee (₹)", Display: "₹", Decimals: 2,
@@ -105,6 +114,20 @@ func CurrencyByCode(code string) CurrencyInfo {
 	return CurrencyInfo{Code: code, Name: code, Display: code + " ", Decimals: 2}
 }
 
+// isoMinorUnits is the ISO 4217 minor-unit exponent of a code the registry
+// does not carry, for an amount that arrives with its own currency (a channel
+// order, a plugin cell). Only the currencies that are not two-decimal are
+// listed; everything else is 2.
+func isoMinorUnits(code string) int {
+	switch code {
+	case "BIF", "CLP", "DJF", "GNF", "ISK", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF", "JPY":
+		return 0
+	case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND":
+		return 3
+	}
+	return 2
+}
+
 // IsKnownCurrency reports whether code is a real entry in the registry (the
 // only set the Settings/setup currency pickers actually offer) — unlike
 // CurrencyByCode, this genuinely rejects an unrecognised code instead of
@@ -127,7 +150,69 @@ func ActiveCurrency() CurrencyInfo {
 			code = s
 		}
 	}
-	return CurrencyByCode(code)
+	return CurrencyByCode(code).resolveDisplay(CurrencyDisplayMode())
+}
+
+// Currency display modes (store.currency_display, ut-docs#5410).
+const (
+	CurrencyDisplayAuto   = "auto"   // registry decides per currency (PreferCode)
+	CurrencyDisplaySymbol = "symbol" // always the registry symbol
+	CurrencyDisplayCode   = "code"   // always the ISO code
+)
+
+// IsCurrencyDisplayMode reports whether v is a storable display mode.
+func IsCurrencyDisplayMode(v string) bool {
+	switch v {
+	case CurrencyDisplayAuto, CurrencyDisplaySymbol, CurrencyDisplayCode:
+		return true
+	}
+	return false
+}
+
+// resolveDisplay returns c as it is written under mode: the code form is a
+// prefix with one space ("AED 12.50"), the symbol form is the registry's.
+// An unknown or empty mode is auto.
+func (c CurrencyInfo) resolveDisplay(mode string) CurrencyInfo {
+	if mode == CurrencyDisplaySymbol {
+		return c
+	}
+	if mode == CurrencyDisplayCode || c.PreferCode {
+		c.Display = c.Code
+		c.Suffix = false
+	}
+	return c
+}
+
+// FormatMoneyWith is the pure form of FormatMoney: c, locale, digit shape
+// and display mode are arguments, nothing is read from process state.
+func FormatMoneyWith(minor int64, c CurrencyInfo, locale string, digitShape bool, mode string) string {
+	return formatMoneyCurrency(minor, c.resolveDisplay(mode), locale, digitShape)
+}
+
+func hasArabicScript(s string) bool {
+	for _, r := range s {
+		if (r >= 0x0600 && r <= 0x077F) || (r >= 0xFB50 && r <= 0xFEFF) {
+			return true
+		}
+	}
+	return false
+}
+
+// FormatMoneyPrint renders minor units for a thermal printer: Latin digits,
+// the shop's display mode, no bidi controls, and the ISO code in place of a
+// symbol the printer's charset cannot print (an Arabic dirham sign on cp858
+// would otherwise print as '?'). Receipts, EOD reports and labels use it
+// instead of the old Latin-digit variant.
+func FormatMoneyPrint(minor int64, locale, charset string) string {
+	c := ActiveCurrency()
+	if !print.Encodable(c.Display, charset) || hasArabicScript(c.Display) {
+		// hasArabicScript: print.Encodable treats utf8 (the default charset
+		// for AED/SAR/IQD shops) as pass-through, but a thermal head has no
+		// Arabic glyphs, so the symbol would print as mojibake (review).
+		c.Display = c.Code
+		c.Suffix = false
+	}
+	return formatMoneyCurrency(minor, c, locale, false)
 }
 
 // Digit sets for locales that write numbers in their own numerals.
@@ -316,15 +401,6 @@ func FormatMoney(minor int64, locale string) string {
 	return formatMoney(minor, locale, true)
 }
 
-// FormatMoneyLatin is FormatMoney without digit-shape substitution — always
-// Latin (ASCII) digits, though grouping/decimal convention still follows
-// locale. For contexts that can't render non-Latin numeral glyphs in text
-// mode (ESC/POS receipt printing needs bitmap mode for that — see
-// buildReceiptDoc) but should still show a shop's own separator convention.
-func FormatMoneyLatin(minor int64, locale string) string {
-	return formatMoney(minor, locale, false)
-}
-
 // FormatMoneyDisplay is FormatMoney for on-screen HTML text: in an RTL
 // locale a negative amount whose symbol leads ("-¥۳۰۰", "-KWD ۰٫۵۰") is
 // wrapped in a left-to-right isolate (U+2066 ... U+2069) so it displays as
@@ -335,10 +411,18 @@ func FormatMoneyLatin(minor int64, locale string) string {
 // order. A suffix amount ("-۱۲٬۳۴۵ ریال") already reads sign-first right to
 // left with the word where a positive amount has it, so it is left alone.
 // Screen only: print paths (the ESC/POS raster has no bidi handling) keep
-// FormatMoney / FormatMoneyLatin, which never emit bidi controls.
+// FormatMoney / FormatMoneyPrint, which never emit bidi controls.
 func FormatMoneyDisplay(minor int64, locale string) string {
 	s := FormatMoney(minor, locale)
-	if minor < 0 && IsRTL(locale) && !ActiveCurrency().Suffix {
+	// ActiveCurrency is already resolved against the display mode, so a
+	// code prefix ("-AED ١٢٫٥٠") is isolated like any leading symbol.
+	c := ActiveCurrency()
+	if rtlIsolatePrefix(minor, c, locale) {
+		// A word/code prefix ("AED ١٢٫٥٠") is isolated for positives too:
+		// unwrapped, the RTL paragraph puts the code on the right of the
+		// digits ("١٢٫٥٠ AED", ut-docs#5410 Tester finding). A one-rune
+		// symbol positive already reads correctly (the symbol is an
+		// ET/neutral next to the digits), so it stays unwrapped.
 		return "\u2066" + s + "\u2069"
 	}
 	return s
@@ -353,7 +437,30 @@ func formatMoney(minor int64, locale string, digitShape bool) string {
 // money cell, ADR-0121 §7, ut-docs#3160). An unknown code renders as
 // "CODE 1.23" (CurrencyByCode's fallback).
 func FormatMoneyIn(minor int64, code, locale string) string {
-	return formatMoneyCurrency(minor, CurrencyByCode(code), locale, true)
+	c := CurrencyByCode(code)
+	if !IsKnownCurrency(code) {
+		// Not offered by the pickers: the ISO 4217 exponent, so a KWD amount
+		// is 12.500, not 125.00 (ut-docs#4768). CurrencyByCode keeps its
+		// two-decimal fallback for the active-currency paths.
+		c.Decimals = isoMinorUnits(c.Code)
+	}
+	return formatMoneyCurrency(minor, c.resolveDisplay(CurrencyDisplayMode()), locale, true)
+}
+
+// FormatMoneyInDisplay is FormatMoneyIn for on-screen HTML: the same RTL
+// left-to-right isolate FormatMoneyDisplay applies, for a code-prefixed or
+// negative prefix amount in a named currency ("USD ١٢٫٥٠" on an ar till).
+func FormatMoneyInDisplay(minor int64, code, locale string) string {
+	s := FormatMoneyIn(minor, code, locale)
+	c := CurrencyByCode(code).resolveDisplay(CurrencyDisplayMode())
+	if rtlIsolatePrefix(minor, c, locale) {
+		return "\u2066" + s + "\u2069"
+	}
+	return s
+}
+
+func rtlIsolatePrefix(minor int64, c CurrencyInfo, locale string) bool {
+	return IsRTL(locale) && !c.Suffix && (minor < 0 || utf8.RuneCountInString(strings.TrimSpace(c.Display)) > 1)
 }
 
 // FormatDecimal renders a plain decimal string ("-1234.5", digits with one
@@ -413,8 +520,8 @@ func formatMoneyCurrency(minor int64, c CurrencyInfo, locale string, digitShape 
 // on-screen, non-editable quantity display: receipt.html, invoice.html,
 // order_view.html, journal_detail.html, self_order_cart.html, Open
 // orders' pay-at-the-counter tab, and the reports tabs (top/slow items,
-// dead stock, by-department, and the archived-EOD by-article-group/
-// by-article/by-order-type breakdowns) — the quantity-side twin of
+// dead stock, by-department, and the archived-EOD list's counts and
+// by-article-group/by-article/by-order-type breakdowns, ut-docs#5784) — the quantity-side twin of
 // FormatMoney's own {{ money }} binding. Two things stay Latin-only
 // deliberately, via FormatQtyLatin below, not this: any ESC/POS print path
 // (a thermal printer can't render Arabic-Indic glyphs), and basket.html's
@@ -426,7 +533,7 @@ func FormatQty(qty float64, locale string) string {
 
 // FormatQtyLatin is FormatQty without digit-shape substitution — for
 // ESC/POS receipt/kitchen-ticket printing, same reasoning as
-// FormatMoneyLatin.
+// FormatMoneyPrint.
 func FormatQtyLatin(qty float64, locale string) string {
 	return formatGrouped(strconv.FormatFloat(qty, 'f', -1, 64), locale)
 }
@@ -635,13 +742,76 @@ func LocalizeMajor(plain, locale string) string {
 }
 
 // FormatPercentBP renders a basis-point rate as a two-decimal percent in
-// the locale's decimal separator (ut-docs#4176): 750 is "7,50%" on a de
-// till, "7.50%" on an en one. Separator only, Latin digits -- the same
-// scope as LocalizeMajor, so it is safe on a print path too. The sign stays
-// a suffix for every locale; per-locale placement (fr "7,50 %", tr "%7,50")
-// is a separate item.
+// the locale's decimal separator and CLDR sign placement (ut-docs#4176,
+// ut-docs#4281): 750 is "7.50%" on en, "7,50%" on pt, "7,50 %" on de/es/fr
+// and "%7,50" on tr. PRINT-SAFE: Latin digits, an ASCII "%" and an ASCII
+// space before it (an ASCII-charset ESC/POS printer prints NBSP as "?"), so
+// fa/ar keep "7.50%". On-screen callers use FormatPercentBPDisplay.
 func FormatPercentBP(bp int64, locale string) string {
-	return LocalizeMajor(fmt.Sprintf("%.2f", float64(bp)/100), locale) + "%"
+	return formatPercent(fmt.Sprintf("%.2f", float64(bp)/100), locale, false)
+}
+
+// FormatPercentBPDisplay is FormatPercentBP for the screen (ut-docs#4281):
+// the same placement, but with the locale's real affix -- NBSP (U+00A0)
+// before "%" on de/es, U+202F on fr -- plus the locale's digit shape and
+// the Arabic percent sign U+066A on fa/ur/ps/ar ("۷٫۵۰٪"). Never use it on
+// a print path.
+func FormatPercentBPDisplay(bp int64, locale string) string {
+	return formatPercent(fmt.Sprintf("%.2f", float64(bp)/100), locale, true)
+}
+
+// FormatPercentDisplay is the on-screen percent for an already-shaped plain
+// decimal string with a dot separator, such as taxrate.FormatPercent's
+// "7.5", "20" or "-3" (ut-docs#4281): the locale's separator, sign
+// placement and digit shape, as FormatPercentBPDisplay.
+func FormatPercentDisplay(plain, locale string) string {
+	return formatPercent(plain, locale, true)
+}
+
+// formatPercent is the shared body of the percent formatters: separator via
+// LocalizeMajor, affix via percentAffix, and (display only) digit shape. A
+// leading minus stays first, before any prefix sign.
+func formatPercent(plain, locale string, display bool) string {
+	neg := strings.HasPrefix(plain, "-")
+	plain = strings.TrimPrefix(plain, "-")
+	prefix, suffix := percentAffix(locale, display)
+	out := prefix + LocalizeMajor(plain, locale) + suffix
+	if display {
+		out = LocalizeDigits(out, locale)
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
+}
+
+// percentAffix returns the text before and after a percent's number for a
+// locale (ut-docs#4281), keyed by base language like numberSeparators and
+// localeDigits. display selects the screen glyphs; print gets ASCII only.
+func percentAffix(locale string, display bool) (prefix, suffix string) {
+	lang := strings.ToLower(locale)
+	if i := strings.IndexAny(lang, "-_"); i > 0 {
+		lang = lang[:i]
+	}
+	switch lang {
+	case "tr":
+		return "%", ""
+	case "de", "es":
+		if display {
+			return "", "\u00a0%"
+		}
+		return "", " %"
+	case "fr":
+		if display {
+			return "", "\u202f%"
+		}
+		return "", " %"
+	case "fa", "ur", "ps", "ar":
+		if display {
+			return "", "\u066a"
+		}
+	}
+	return "", "%"
 }
 
 // MoneyPlaceholderLocalAttr is MoneyPlaceholderAttr for a MoneyPatternLocal

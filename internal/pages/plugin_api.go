@@ -170,7 +170,8 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		// Parse request
 		var req struct {
-			ListingID string `json:"listing_id"`
+			ListingID   string `json:"listing_id"`
+			AcceptTerms bool   `json:"accept_terms"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
@@ -179,6 +180,20 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		if req.ListingID == "" {
 			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
+			return
+		}
+
+		// ut-docs#4791: an install on an unregistered till registers it, so
+		// the cloud terms must be accepted first. Gated before the status
+		// record below so a refusal leaves no "requested" state behind.
+		refuse, gerr := termsGateLazyRegistration(ctx, d, req.AcceptTerms, httpx.RequestLocale(r))
+		if gerr != nil {
+			log.Printf("install from marketplace: record terms acceptance: %v", gerr)
+			writeInstallResponse(w, http.StatusInternalServerError, false, "", "settings.error.save_failed")
+			return
+		}
+		if refuse {
+			writeInstallResponse(w, http.StatusPreconditionRequired, false, "", "settings.enrol.terms_required")
 			return
 		}
 
@@ -227,7 +242,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			},
 		})
 		if err != nil {
-			failure := plugins.ClassifyInstallError(err)
+			failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 				ListingID:  req.ListingID,
 				State:      plugins.InstallStateFailed,
@@ -384,6 +399,31 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// skip the check and activate a possibly-second answerer.
 		if active {
 			pluginRepo := data.NewPluginRepo(d.Db)
+			// ut-docs#5658: a release the marketplace revoked stays off. Local
+			// read, no network; fail closed on a DB error.
+			if cur, found, getErr := pluginRepo.GetPlugin(ctx, pluginID, ""); getErr != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data":  nil,
+					"error": fmt.Sprintf("cannot enable %s: revoked-release lookup failed: %v", pluginID, getErr),
+				})
+				return
+			} else if found {
+				if revErr := plugins.CheckNotRevoked(ctx, pluginRepo, nil, pluginID, cur.Version); revErr != nil {
+					if errors.Is(revErr, plugins.ErrRevokedRelease) {
+						writeReplicaGuard(w, "plugins.manage.error.revoked")
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: %v", pluginID, revErr),
+					})
+					return
+				}
+			}
 			declared := ""
 			for _, ev := range plugins.FiscalSignExclusiveEvents {
 				declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
@@ -697,7 +737,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 		},
 	})
 	if err != nil {
-		failure := plugins.ClassifyInstallError(err)
+		failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 			ListingID:  listingID,
 			PluginID:   pluginID,
@@ -857,6 +897,10 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 		// TODO: Extract actual user from session
 		if err := rollbackMgr.Rollback(ctx, pluginID, req.Version, "system"); err != nil {
+			if errors.Is(err, plugins.ErrRevokedRelease) {
+				writeReplicaGuard(w, "plugins.manage.error.revoked")
+				return
+			}
 			http.Error(w, fmt.Sprintf("Rollback failed: %v", err), http.StatusInternalServerError)
 			return
 		}

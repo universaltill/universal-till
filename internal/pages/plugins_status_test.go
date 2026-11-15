@@ -189,7 +189,7 @@ func TestInstallFromMarketplaceFailurePersistsOperatorVisibleStatus(t *testing.T
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, deps)
 
-	body, err := json.Marshal(map[string]string{"listing_id": "listing-failure"})
+	body, err := json.Marshal(map[string]any{"listing_id": "listing-failure", "accept_terms": true})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}

@@ -49,6 +49,11 @@ func testDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatalf("create settings: %v", err)
 	}
+	// Tick reads directive_results before applying (ut-docs#4797); a DB
+	// without it leaves every generic directive pending, by design.
+	if _, err := db.Exec(`CREATE TABLE directive_results (directive_id TEXT PRIMARY KEY, directive_type TEXT NOT NULL, status TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', posted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create directive_results: %v", err)
+	}
 	return db
 }
 
@@ -67,6 +72,11 @@ type fakeCloud struct {
 	// entitlement, when non-nil, is sent verbatim as the sync response's
 	// data.entitlement (ADR-0060 §3); nil = an old cloud that omits it.
 	entitlement json.RawMessage
+	// notices, when non-nil, is sent as the sync response's data.notices
+	// (ADR-0176) — only to a request that carried a notices object, as the
+	// real cloud does. noticesFn, when set, builds it from that object.
+	notices   json.RawMessage
+	noticesFn func(req map[string]any) json.RawMessage
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -83,8 +93,17 @@ func (f *fakeCloud) handler() http.Handler {
 		dirs := f.directives
 		f.directives = nil // deliver once, like the real cloud resolves them
 		ent := f.entitlement
+		nb := f.notices
+		if f.noticesFn != nil {
+			if rq, ok := body["notices"].(map[string]any); ok {
+				nb = f.noticesFn(rq)
+			}
+		}
 		f.mu.Unlock()
 		respData := map[string]any{"directives": dirs}
+		if _, asked := body["notices"]; asked && nb != nil {
+			respData["notices"] = nb
+		}
 		if ent != nil {
 			respData["entitlement"] = ent
 		}
@@ -1042,7 +1061,7 @@ func TestPushSnapshotIfChangedUploadFails(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err == nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB, nil); err == nil {
 		t.Fatal("want error when the catalog-snapshot upload fails")
 	}
 }
@@ -1262,7 +1281,7 @@ func TestPushSnapshotIfChangedRepoErrors(t *testing.T) {
 	if _, err := itemsDB.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := pushSnapshotIfChanged(context.Background(), cfg, itemsDB); err == nil {
+	if err := pushSnapshotIfChanged(context.Background(), cfg, itemsDB, nil); err == nil {
 		t.Fatal("want error when items table is gone")
 	}
 
@@ -1274,7 +1293,7 @@ func TestPushSnapshotIfChangedRepoErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.SeedItem(t, barcodesDB, testsupport.ItemSeed{ID: "it-1", SKU: "SKU1", Name: "Coke", BasePrice: 100, IsActive: true})
-	if err := pushSnapshotIfChanged(context.Background(), cfg, barcodesDB); err == nil {
+	if err := pushSnapshotIfChanged(context.Background(), cfg, barcodesDB, nil); err == nil {
 		t.Fatal("want error when item_barcodes table is gone")
 	}
 }

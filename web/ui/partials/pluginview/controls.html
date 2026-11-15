@@ -4,11 +4,14 @@
      slot, ut-docs#3872); without JS the plain form post renders the whole page.
      Typed fields carry a _kind.<name> hidden input so core can read the
      post without the original document (pluginview.DecodeForm). A form
-     with a file field posts multipart (ut-docs#3793). */}}
+     with a file field posts multipart (ut-docs#3793). The plugin's labels
+     run in their own direction (ut-docs#4834): <bdi> inside a <label> or
+     <button> (the label wraps its input), dir="auto" on an <option>,
+     which holds text only. */}}
 {{ define "pluginview_action" }}
 <form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML">
   <input type="hidden" name="_action" value="{{ .Action }}">
-  <button type="submit" class="btn btn-touch {{ .Style }}">{{ .Label }}</button>
+  <button type="submit" class="btn btn-touch {{ .Style }}"><bdi>{{ .Label }}</bdi></button>
 </form>
 {{ end }}
 
@@ -19,38 +22,38 @@
   {{- range $c.Fields }}
   {{- if eq .Kind "toggle" }}
   <input type="hidden" name="_kind.{{ .Name }}" value="toggle">
-  <label class="field-checks"><input type="checkbox" name="{{ .Name }}" value="true"{{ if .Checked }} checked{{ end }}> {{ .Label }}</label>
+  <label class="field-checks"><input type="checkbox" name="{{ .Name }}" value="true"{{ if .Checked }} checked{{ end }}> <bdi>{{ .Label }}</bdi></label>
   {{- else if eq .Kind "select" }}
-  <label>{{ .Label }}
+  <label><bdi>{{ .Label }}</bdi>
     <select name="{{ .Name }}"{{ if .Required }} required{{ end }}>
-      {{- range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>{{ end }}
+      {{- range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }} dir="auto">{{ .Label }}</option>{{ end }}
     </select>
   </label>
   {{- else if eq .Kind "money" }}
   <input type="hidden" name="_kind.{{ .Name }}" value="money">
-  <label>{{ .Label }}
+  <label><bdi>{{ .Label }}</bdi>
     <input type="text" name="{{ .Name }}" value="{{ .Value }}" inputmode="decimal" autocomplete="off" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }}{{ if .Required }} required{{ end }}>
   </label>
   {{- else if eq .Kind "number" }}
   <input type="hidden" name="_kind.{{ .Name }}" value="number">
-  <label>{{ .Label }}
+  <label><bdi>{{ .Label }}</bdi>
     <input type="text" name="{{ .Name }}" value="{{ .Value }}" inputmode="decimal" autocomplete="off" pattern="-?[0-9]+([.,][0-9]+)?"{{ if .Required }} required{{ end }}>
   </label>
   {{- else if eq .Kind "file" }}
-  <label>{{ .Label }}
+  <label><bdi>{{ .Label }}</bdi>
     <input type="file" name="{{ .Name }}"{{ if .Required }} required{{ end }}>
   </label>
   {{- else if eq .Kind "secret" }}
-  <label>{{ .Label }}
+  <label><bdi>{{ .Label }}</bdi>
     <input type="password" name="{{ .Name }}" value="" autocomplete="off"{{ if .Required }} required{{ end }}>
   </label>
   {{- else }}
-  <label>{{ .Label }}
+  <label><bdi>{{ .Label }}</bdi>
     <input type="text" name="{{ .Name }}" value="{{ .Value }}" autocomplete="off"{{ if .Required }} required{{ end }}>
   </label>
   {{- end }}
   {{- end }}
-  <button type="submit" class="btn btn-touch primary">{{ $c.Submit }}</button>
+  <button type="submit" class="btn btn-touch primary"><bdi>{{ $c.Submit }}</bdi></button>
 </form>
 {{ end }}
 
@@ -86,7 +89,7 @@
       {{- if .Poll }}
       <div class="plugin-chat-turn assistant plugin-chat-thinking" hx-get="{{ .Route }}?_job={{ .Poll.ID }}" hx-trigger="every 1s" hx-target="#{{ .Target }}" hx-swap="innerHTML">
         <span class="visually-hidden">{{ T "plugin.chat.assistant" }}</span>
-        <p class="plugin-chat-text" id="{{ .Target }}-chat-thinking">{{ if .Poll.Message }}{{ .Poll.Message }}{{ else }}{{ T "plugin.chat.thinking" }}{{ end }}</p>
+        <p class="plugin-chat-text" id="{{ .Target }}-chat-thinking">{{ if .Poll.Message }}<bdi>{{ .Poll.Message }}</bdi>{{ else }}{{ T "plugin.chat.thinking" }}{{ end }}</p>
         {{- if .Poll.HasPct }}
         <progress class="plugin-view-poll-bar" max="100" value="{{ .Poll.Pct }}" aria-labelledby="{{ .Target }}-chat-thinking">{{ .Poll.Pct }}%</progress>
         {{- end }}

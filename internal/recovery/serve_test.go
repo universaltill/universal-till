@@ -318,3 +318,42 @@ func TestServe_SafeModeReadsTheShopsRealCurrency(t *testing.T) {
 		t.Fatalf("httpx.ActiveCurrency().Code = %q, want %q (safe mode must read the shop's real configured currency, not default to GBP)", got, "TRY")
 	}
 }
+
+// ut-docs#5410: safe mode reads the shop's currency display mode too, so a
+// shop that chose "symbol" does not see codes (or the reverse) while the
+// till is in recovery.
+func TestServe_SafeModeReadsTheShopsCurrencyDisplay(t *testing.T) {
+	defer httpx.SnapshotStateForTests()()
+	addr := freeAddr(t)
+	cfg := testConfig(t, addr)
+
+	full, err := db.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	st := settings.NewStore(full.DB)
+	for k, v := range map[string]string{"store.currency": "AED", "store.currency_display": "symbol"} {
+		if err := st.Set(context.Background(), k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+	if err := full.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _, _ = Serve(ctx, cfg, Failure{Kind: KindMigration, Detail: "boom", RefCode: "9999-0000"}) }()
+	waitListening(t, addr)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && httpx.CurrencyDisplayMode() != "symbol" {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := httpx.CurrencyDisplayMode(); got != "symbol" {
+		t.Fatalf("CurrencyDisplayMode = %q, want symbol", got)
+	}
+	if got := httpx.ActiveCurrency().Display; got != "د.إ" {
+		t.Fatalf("AED display = %q, want the symbol", got)
+	}
+}

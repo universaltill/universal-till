@@ -206,11 +206,9 @@ func TestSetupWizardCatalogBrowseDoesNotRegisterStore(t *testing.T) {
 func TestSetupWizardCatalogUnreachableRendersBundledOnly(t *testing.T) {
 	resetLangCatalogForTest(t)
 	mux, _, d := newFullAuthDeps(t)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	d.Cfg.Marketplace.EndpointURL = dead.URL
+	d.Cfg.Marketplace.EndpointURL = unreachableURL()
 	d.Cfg.Marketplace.ClientID = "merchant-1"
 	d.Cfg.Marketplace.StoreID = "store-1"
-	dead.Close()
 
 	start := time.Now()
 	rec := getSetup(mux, "?lang=en", "")
@@ -355,12 +353,9 @@ func TestSetupLanguageInstallFailureFallsBackToPendingRetry(t *testing.T) {
 	}
 
 	// ...then the network goes away before the operator taps the tile. A
-	// closed local server fails immediately (connection refused), so the test
-	// never waits out setupWizardLanguageInstallTimeout's real 20s.
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
-	d.Cfg.Marketplace.EndpointURL = deadURL
+	// dial to port 1 on loopback (unreachableURL) fails immediately
+	// (connection refused), so the test never waits out setupWizardLanguageInstallTimeout's real 20s.
+	d.Cfg.Marketplace.EndpointURL = unreachableURL()
 
 	rec := postForm(mux, "/api/setup/language", url.Values{"locale": {"de"}}, nil)
 	if rec.Code != http.StatusSeeOther {

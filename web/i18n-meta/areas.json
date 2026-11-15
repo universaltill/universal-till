@@ -29,7 +29,8 @@
         "osk",
         "suggest",
         "filter",
-        "ai"
+        "ai",
+        "notices"
       ]
     },
     "catalog": {
@@ -61,7 +62,8 @@
         "kitchenstations",
         "kitchen",
         "kitchendisplay",
-        "tracking"
+        "tracking",
+        "channel_orders"
       ]
     },
     "reports": {
@@ -108,7 +110,8 @@
         "status",
         "diagnostics",
         "recovery",
-        "uninstall"
+        "uninstall",
+        "desktop"
       ]
     },
     "setup": {

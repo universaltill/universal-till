@@ -103,7 +103,7 @@ func registerSyncCatalog(mux *http.ServeMux, d *common.Deps) {
 		fail := func(status int, code, message string) {
 			writeSyncOrdersJSON(w, status, nil, syncUserError{Code: code, Message: message})
 		}
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			fail(http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return

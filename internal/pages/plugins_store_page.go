@@ -2,7 +2,6 @@ package pages
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -192,7 +191,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 		cats := storeCategories(items)
 		httpx.Render("ui/pages/plugins_store.html", map[string]any{
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
-			"theme":            d.CurrentState().Theme,
+			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"Items":            items,
 			"Categories":       cats,
@@ -219,13 +218,19 @@ func PluginStoreDetailHandler(d *common.Deps) http.HandlerFunc {
 		}
 		listingID := r.PathValue("listing_id")
 		items, err := storeListings(r, d)
+		locale := httpx.RequestLocale(r)
+		termsGate := !enroll.CurrentStatus().Registered && d.SyncPrimaryURL(r.Context()) == "" && !termsAlreadyAccepted(r.Context(), d)
 		for _, it := range items {
 			if it.ListingID == listingID {
 				httpx.Render("ui/pages/plugins_store_detail.html", map[string]any{
-					"title":     it.Name + " — " + httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
-					"theme":     d.CurrentState().Theme,
+					"title":     it.Name + " — " + httpx.T(locale, "page.title.plugin_store"),
+					"theme":     d.ResolvedTheme(r),
 					"menuItems": d.MenuSnapshot(),
 					"Item":      it,
+					// ut-docs#4791: the first Download registers an
+					// unregistered till, so ask for the cloud terms there.
+					"TermsGate": termsGate,
+					"terms":     termsView(r.Context(), d, locale),
 				})(w, r)
 				return
 			}
@@ -321,6 +326,19 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, "listing_id required")
 			return
 		}
+		// ut-docs#4791: the first Download on an unregistered till registers
+		// it, so the cloud terms must be ticked first; refused = nothing is
+		// registered or downloaded. The error is the i18n key.
+		refuse, gerr := termsGateLazyRegistration(r.Context(), d, termsTicked(r), httpx.RequestLocale(r))
+		if gerr != nil {
+			logging.L().Errorf("store download: record terms acceptance: %v", gerr)
+			respond(w, http.StatusInternalServerError, "settings.error.save_failed")
+			return
+		}
+		if refuse {
+			respond(w, http.StatusPreconditionRequired, "settings.enrol.terms_required")
+			return
+		}
 		// Store registration is lazy — a download is the first interaction
 		// that needs a store identity, so enrol before building the request.
 		checkinAfterRegistration(d, enroll.EnsureRegistered(r.Context(), d.Cfg, d.Settings)) // ADR-0148 §2
@@ -336,28 +354,12 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
-			// ut-docs#673: a paid listing without an approved entitlement (or
-			// one still awaiting approval) fails this way — give the operator
-			// the specific, actionable reason instead of a generic gateway
-			// error, same pattern as the replica_use_primary key above.
-			var apiErr *marketplace.APIError
-			if errors.As(err, &apiErr) && apiErr.Code == "not_entitled" {
-				respond(w, http.StatusForbidden, "plugins.install.error.not_entitled")
-				return
-			}
-			// ut-docs#703: a listing that doesn't exist at all (stale catalog
-			// cache, a listing removed from the marketplace) — distinct from
-			// not_entitled, same pattern as the case above.
-			if errors.As(err, &apiErr) && apiErr.Code == "listing_not_found" {
-				respond(w, http.StatusNotFound, "plugins.install.error.not_found")
-				return
-			}
-			// ut-docs#704: an anonymous till hitting a "registered" access-tier
-			// listing (ADR-0013) — the cloud REST path now returns this code
-			// instead of a generic 500. Surface the actionable "claim your
-			// store" message, same pattern as the cases above.
-			if errors.As(err, &apiErr) && apiErr.Code == "registered_required" {
-				respond(w, http.StatusForbidden, "plugins.install.error.registered_required")
+			// ut-docs#673/#703/#704/#3541: marketplace codes (not entitled,
+			// unknown listing, claim your store, till not paired / removed)
+			// get the specific, actionable reason instead of a generic
+			// gateway error; the code -> key/status table lives in plugins.
+			if f, ok := plugins.MarketplaceCodeFailure(err, storeHasOwner(r.Context(), d.Settings)); ok {
+				respond(w, f.Status, f.MessageKey)
 				return
 			}
 			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))

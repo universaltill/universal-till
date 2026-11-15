@@ -3,6 +3,7 @@ id: age-restricted-sales
 title: Altersbeschränkte Verkäufe
 section: Täglicher Verkauf
 order: 27
+public: true
 summary: Markieren Sie Artikel, für die eine Ausweiskontrolle nötig ist (Alkohol, Tabak, E-Zigaretten und Ähnliches). Die Kasse verlangt dann vor der Zahlung, dass die Kassiererin die Ausweiskontrolle erfasst, und das Selbstbedienungsterminal schickt die Kundschaft zur Kasse.
 keywords: [alter, altersbeschränkt, ausweiskontrolle, ausweis, alkohol, tabak, e-zigarette, ablehnung, altersnachweis, jugendschutz]
 ---
@@ -47,14 +48,15 @@ diesen Artikel. Es wird nichts belastet, und der Warenkorb bleibt unverändert.
 
 Eine Ausweiskontrolle gilt für eine Kundin oder einen Kunden: Sie wird
 gelöscht, wenn der Verkauf abgeschlossen oder der Warenkorb geleert wird, und
-ein geparkter Vorgang fragt beim Fortsetzen erneut.
+eine geparkte Bestellung fragt beim Fortsetzen erneut.
 
 ## Am Selbstbedienungsterminal
 
 Ein Selbstbedienungsterminal kann niemandes Ausweis prüfen. Deshalb nimmt es
 für eine Bestellung mit einem altersbeschränkten Artikel keine Zahlung an. Die
-Kundschaft sieht eine Meldung mit der Bitte, an der Kasse zu bezahlen, wo das
-Personal den Ausweis prüft. Es wird nichts belastet, und der Warenkorb bleibt
+Kundschaft sieht schon beim Bezahlen eine Meldung mit der Bitte, an der Kasse
+zu bezahlen, wo das Personal den Ausweis prüft, und bekommt keine Zahlungsart
+zur Auswahl. Es wird nichts belastet, und der Warenkorb bleibt
 unverändert. Im Modus „An der Kasse bezahlen“ geht die Bestellung wie gewohnt an
 die Kasse, und beim Bezahlen dort gilt die Ausweiskontrolle der Kasse.
 
@@ -67,7 +69,7 @@ bleibt erhalten, auch wenn der abgelehnte Artikel entfernt wurde und der Rest
 des Verkaufs stattgefunden hat. Der Eintrag wird zusammen mit dem Verkauf selbst
 geschrieben, es gibt also nie eine Kontrolle ohne Verkauf.
 
-Diese Einträge gehören zur Geschichte Ihres Geschäfts. **Transaktionshistorie löschen** (Einstellungen → Daten) archiviert sie zusammen mit den Verkäufen und stellt sie wieder her, wenn Sie dieses Archiv wiederherstellen; die **Katalogbereinigung** und das Entfernen der **Beispieldaten** behalten jeden Artikel, für den eine Ausweiskontrolle festgehalten wurde – auch einen, der nur abgelehnt wurde.
+Diese Einträge gehören zur Geschichte Ihres Geschäfts. **Transaktionshistorie löschen** (Einstellungen → Datenverwaltung) archiviert sie zusammen mit den Verkäufen und stellt sie wieder her, wenn Sie dieses Archiv wiederherstellen; die **Katalogbereinigung** und das Entfernen der **Beispieldaten** behalten jeden Artikel, für den eine Ausweiskontrolle festgehalten wurde – auch einen, der nur abgelehnt wurde.
 
 ## Was diese Funktion leistet und was nicht
 

@@ -3,6 +3,7 @@ id: vouchers
 title: Hediye çekleri
 section: Günlük satış
 order: 25
+public: true
 summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
 keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme, bakiye yükleme, yükle, değer ekle]
 routes: [/vouchers, /vouchers/{id}]
@@ -84,7 +85,7 @@ Bilmekte fayda var:
 
 - Sayfa en yeni 200 çeki gösterir. Daha fazlası varsa bunu belirtir — daha eskileri bulmak için arayın veya filtreleyin.
 - Henüz hiç çek yoksa sayfa nasıl başlayacağınızı söyler: bir Hediye çeki ürünüyle satın veya önceki sisteminizden bakiyeleri içe aktarın.
-- Ek bir kasada liste yalnızca bu kasanın gördüğü çekleri gösterir — burada satılan, içe aktarılan veya kullanılan. Tam liste ana kasadadır.
+- Ek bir kasada liste yalnızca bu kasanın gördüğü çekleri gösterir — burada satılan, içe aktarılan veya kullanılan. Tam liste ana kasadadır. Başka bir yerde satılan bir çeki açmak için tam kart numarasını arayın: kasa onu ana kasaya sorar.
 
 ## Bakiyeyi düzeltmek
 
@@ -124,8 +125,9 @@ Neler ters gidebilir:
 - Bir hediye çekine satış başına bir kez bakiye yüklenebilir ve hediye çeki kendi yüklemesini ödeyemez.
 - Bakiye yükleme için katalogda etkin bir hediye çeki ürünü gerekir — yoksa sayfa bunu söyler.
 - Yüklenen tutarın bir kısmı harcandıktan sonra satışı iptal etmek reddedilir.
-- Ek bir kasada sayfa, bakiyeyi ana kasada yüklemenizi ister.
+- Ek bir kasada, bakiye yüklemesini eklerken ana kasaya ulaşılabilir (ve güncel) olmalıdır; değilse sayfa bunu söyler ve satışa hiçbir şey eklenmez.
+- Ek bir kasada, hediye çeki satan veya hediye çekine bakiye yükleyen bir satış iptal edilemez: kasa bunu söyler, hiçbir şey değişmez ve hediye çeki değerini korur.
 
 ## Gün sonu raporları ve diğer kasalar
 
-Gün sonu (Z) raporunun, o gün satılan, harcanan ve düzeltilen hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.
+Gün sonu (Z) raporunun, o gün satılan, harcanan ve düzeltilen hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken ve bu iptali reddeden ek kasada değil) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.

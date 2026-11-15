@@ -1,0 +1,7 @@
+<!-- Universal Till original icon, see LICENSE -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="4" width="14" height="7" rx="3.5" />
+  <path d="M17 6h3a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-3" />
+  <circle cx="7" cy="7.5" r="1" />
+  <path d="M9 11l-1 9a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1l1-9" />
+</svg>

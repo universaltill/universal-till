@@ -92,3 +92,80 @@ func TestCatalogItemsViewArgs(t *testing.T) {
 		}
 	}
 }
+
+// catalog.gaps.v1 (ut-docs#4128): active items missing a barcode, an own
+// photo, a price or a category — the AI assistant's "which items have no
+// barcode?" and the catalog's ?missing= filter share one query.
+func TestCatalogGapsView_4128(t *testing.T) {
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "catalog-gaps.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbo.Close()
+	ctx := context.Background()
+	mustExec(t, dbo, `INSERT INTO categories(id, name) VALUES('c1', 'Drinks')`)
+	mustExec(t, dbo, `INSERT INTO items(id, sku, name, category_id, base_price, is_active, unit, is_weighed) VALUES
+		('full',  'F-1', 'Full',    'c1', 350, 1, 'each', 0),
+		('nobc',  'N-1', 'No code', 'c1', 350, 1, 'each', 0),
+		('nopic', 'P-1', 'No pic',  'c1', 350, 1, 'each', 0),
+		('free',  'Z-1', 'Zero',    'c1', 0,   1, 'each', 0),
+		('nocat', 'C-1', 'No cat',  NULL, 350, 1, 'each', 0),
+		('off',   'O-1', 'Inactive', NULL, 0,  0, 'each', 0)`)
+	for _, id := range []string{"full", "nobc", "free", "nocat", "nopic", "off"} {
+		if id != "nopic" {
+			mustExec(t, dbo, `INSERT INTO item_images(id, item_id, role, path) VALUES('img-`+id+`', '`+id+`', 'thumbnail', '/public/assets/items/`+id+`/thumb.png')`)
+		}
+		if id != "nobc" {
+			mustExec(t, dbo, `INSERT INTO item_barcodes(item_id, barcode, is_primary) VALUES('`+id+`', 'B-`+id+`', 1)`)
+		}
+	}
+	// A placeholder icon is not the shop's own photo.
+	mustExec(t, dbo, `INSERT INTO item_images(id, item_id, role, path) VALUES('img-nopic', 'nopic', 'thumbnail', '/public/assets/icons/generic.svg')`)
+
+	v, ok := LookupCoreView("catalog.gaps.v1")
+	if !ok {
+		t.Fatal("catalog.gaps.v1 not registered")
+	}
+	if v.Permission != "view:inventory" || v.DataClass != DataClassCatalog {
+		t.Fatalf("permission/class = %q/%q", v.Permission, v.DataClass)
+	}
+	ids := func(mask int) string {
+		out, err := RunCoreView(ctx, dbo.DB, v, map[string]int{"missing": mask, "offset": 0, "limit": 50}, CoreViewMaxResult)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows []CatalogGapRow
+		if err := json.Unmarshal(out, &rows); err != nil {
+			t.Fatal(err)
+		}
+		s := ""
+		for _, r := range rows {
+			s += r.ItemID + " "
+		}
+		return s
+	}
+	for mask, want := range map[int]string{
+		GapBarcode:            "nobc ",
+		GapImage:              "nopic ",
+		GapPrice:              "free ",
+		GapCategory:           "nocat ",
+		GapBarcode | GapImage: "nobc nopic ",
+	} {
+		if got := ids(mask); got != want {
+			t.Errorf("mask %d: got %q want %q", mask, got, want)
+		}
+	}
+	// Ordered by name (No cat, No code, No pic, Zero), then id.
+	if got := ids(15); got != "nocat nobc nopic free " {
+		t.Errorf("mask 15 order: %q", got)
+	}
+	if _, err := v.ParseArgs([]byte(`{"missing":0}`)); err == nil {
+		t.Error("missing=0 accepted")
+	}
+	// Paging.
+	out, _ := RunCoreView(ctx, dbo.DB, v, map[string]int{"missing": 15, "offset": 1, "limit": 1}, CoreViewMaxResult)
+	var one []CatalogGapRow
+	if err := json.Unmarshal(out, &one); err != nil || len(one) != 1 {
+		t.Fatalf("page = %s (%v)", out, err)
+	}
+}

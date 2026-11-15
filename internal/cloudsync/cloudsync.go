@@ -67,6 +67,14 @@ func init() {
 	// later; the poll stays as the NAT-safe fallback.
 	tickIntervalNS.Store(int64(2 * time.Minute))
 	firstDelayNS.Store(int64(15 * time.Second))
+	// UT_TEST_CLOUDSYNC_TICK_MS (e2e harness only -- never set on a real
+	// till, like UT_TEST_I18N_OVERLAY_DIR): a throwaway till that talks to a
+	// fake cloud checks in every N ms (200 minimum) so a spec can watch a
+	// notice arrive without waiting two minutes (ut-docs#5366).
+	if ms, err := strconv.Atoi(os.Getenv("UT_TEST_CLOUDSYNC_TICK_MS")); err == nil && ms >= 200 {
+		tickIntervalNS.Store(int64(ms) * int64(time.Millisecond))
+		firstDelayNS.Store(int64(ms) * int64(time.Millisecond))
+	}
 }
 
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
@@ -135,10 +143,14 @@ type Hooks struct {
 	// opens the sealed rows, applies them and returns counts and per-row
 	// outcomes. nil on a till without it, which then fails the directive.
 	ImportCustomers func(ctx context.Context, d ImportCustomersDirective) (ImportCustomersResult, error)
-	RenameItem      func(ctx context.Context, itemID, name string) (string, error)
-	DeactivateItem  func(ctx context.Context, itemID string) (string, error)
-	CreateItem      func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
-	AddBarcode      func(ctx context.Context, itemID, barcode string) (string, error)
+	// ApplyChannelOrder handles "channel_order" and "channel_order_update"
+	// (ADR-0169 §9, ut-docs#4768): record the channel's order and move stock
+	// (pages.cloudApplyChannelOrder). Idempotent on the order's revision.
+	ApplyChannelOrder func(ctx context.Context, o ChannelOrderDirective) (string, error)
+	RenameItem        func(ctx context.Context, itemID, name string) (string, error)
+	DeactivateItem    func(ctx context.Context, itemID string) (string, error)
+	CreateItem        func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
+	AddBarcode        func(ctx context.Context, itemID, barcode string) (string, error)
 	// FiscalTSEReady handles the payload-less "fiscal_tse_ready" directive
 	// (ADR-0053, ut-docs#802): the cloud finished reseller-provisioning this
 	// shop's TSE, so the till must fetch its operational signing credential
@@ -281,6 +293,19 @@ type Hooks struct {
 	// category list and Designer reorders make — unlisted categories keep
 	// their relative order after the listed ones. Audited, idempotent.
 	SetCategoryOrder func(ctx context.Context, ids []string) (string, error)
+	// SetCategoryItemOrder handles "set_category_item_order" (contract
+	// §3.14, ut-docs#3105): the owner's order of one category's items from
+	// my. Main-till only. apply decodes and validates the payload; the
+	// hook refuses an unknown category, an unknown item or one in another
+	// category (nothing written), then deals the listed items' sale-screen
+	// tiles into the slots the category's tiles already hold -- no other
+	// category's tile moves. Audited on a real change, idempotent.
+	SetCategoryItemOrder func(ctx context.Context, categoryID string, itemIDs []string) (string, error)
+	// ItemTilePositions supplies the snapshot's per-item tile_pos (contract
+	// §3.7, ut-docs#3105): item id -> 0-based position of its first
+	// sale-screen tile. nil, or an error, leaves tile_pos out of the
+	// snapshot; the cloud then keeps the values it had (§3.7).
+	ItemTilePositions func(ctx context.Context) (map[string]int, error)
 	// SetCatalogImage handles "set_catalog_image" (contract §3.9,
 	// ut-docs#3076): an item or category image set or removed in my.
 	// Main-till only like the catalog hooks above. apply decodes and
@@ -403,6 +428,9 @@ type Hooks struct {
 	// Never on a failed tick, a block-less 402 or a gated (skipped) tick.
 	// Best-effort: it logs, it never fails the tick. Nil = unsupported.
 	ShopCurrency func(ctx context.Context)
+	// NoticeLang, when non-nil, returns the till's UI locale for the notices
+	// pull (ADR-0176 §4 "lang"). Nil = "en".
+	NoticeLang func() string
 
 	// fetchCatalogImage is set by tick (it needs the cloud endpoint and
 	// credential from cfg) and bound into each set_catalog_image's
@@ -469,6 +497,8 @@ type ModifierGroupOption struct {
 // till's early return or an unpaid till's gated one (ADR-0148; nil error,
 // no contact) and for any failure.
 func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
+	// ut-docs#5058: a replaced till records it on the first such answer.
+	defer func() { recordReplaced(ctx, db, err) }()
 	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
 	// before the registration/connectivity gates below — ut-docs#637 review:
 	// this used to sit at the tail of Tick (see the pull side, still there),
@@ -517,11 +547,13 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// till-state part is what the hash covers. An unpaid check-in skips the
 	// GET and POSTs (planUnpaidCheckin).
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
+	nc := newNoticeClient(db, settings, hooks)
+	nc.attach(ctx, &req)
 	sum, hashErr := stateHash(req.devices)
 	var plan checkinPlan
 	if unpaid {
 		plan = planUnpaidCheckin(ctx, settings, sum)
-	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion); err != nil {
+	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion, nc); err != nil {
 		if _, ok := planRequired(err); ok {
 			// A lapse learned from the GET is this start's contact: no
 			// start-up check-in follows it (amendment §4).
@@ -574,7 +606,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// (ut-docs#4385).
 	refusedMidTick := false
 	if isMainTill {
-		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+		if err := pushSnapshotIfChanged(ctx, cfg, db, hooks.ItemTilePositions); err != nil {
 			refusedMidTick = pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push", err)
 		}
@@ -679,22 +711,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			handleGuestOrder(ctx, cfg, db, d, hooks)
 			continue
 		}
-		fetchDeferred = false
-		status, msg := apply(ctx, d, hooks)
-		if fetchDeferred && status == "failed" {
-			logging.L().Warnf("cloudsync: directive %s (%s) left pending: %s", d.ID, d.Type, msg)
-			continue
-		}
-		if status == "applied" && catalogTypes[d.Type] {
-			catalogApplied = true
-		}
-		if err := postResult(ctx, cfg, d.ID, status, msg, nil); err != nil {
-			// Leave it pending on the cloud; the next tick re-applies (the
-			// hooks are idempotent for the supported types) and re-reports.
-			logging.L().Warnf("cloudsync: result for %s not delivered: %v", d.ID, err)
-		} else {
-			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
-		}
+		handleGenericDirective(ctx, cfg, db, d, hooks, &fetchDeferred, &catalogApplied)
 	}
 	// A guest_order result the cloud did not acknowledge on an earlier tick
 	// is re-posted until it answers 200 or 404 (ADR-0159 §4). Only the main
@@ -711,11 +728,20 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	if isMainTill && plan.post && !refusedMidTick && pullCloudCatalog(ctx, cfg, db, hooks) {
 		catalogApplied = true
 	}
+	// ADR-0169 §8 (ut-docs#4763): the main till of a cloud-master store
+	// uploads its changed on-hand rows after a check-in that reached the
+	// cloud, after the catalogue pull/upload above (so a just-created item's
+	// cloud link exists). Logged, never returned: the marks stay and the next
+	// trigger retries, so it can never fail the check-in (or a sale, which
+	// only writes the marks).
+	if isMainTill && !refusedMidTick {
+		uploadCloudStock(ctx, cfg, db)
+	}
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.
 	if isMainTill && catalogApplied && !refusedMidTick {
-		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+		if err := pushSnapshotIfChanged(ctx, cfg, db, hooks.ItemTilePositions); err != nil {
 			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push after directives", err)
 		}
@@ -744,6 +770,11 @@ const maxCategoryLinkIDs = 200
 
 // apply routes one directive to its hook. Unknown types and nil hooks fail
 // cleanly so the cloud shows WHY nothing happened.
+// statusRetry is apply's status for a directive that failed for a reason on
+// this till that may pass: nothing is stored or posted, the cloud delivers it
+// again (handleGenericDirective).
+const statusRetry = "retry"
+
 func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return strings.TrimSpace(v) }
 	// JSON numbers decode as float64; tolerate string form too.
@@ -1241,6 +1272,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SetCategoryOrder(ctx, ids)
+	case "set_category_item_order":
+		if hooks.SetCategoryItemOrder == nil {
+			return "failed", "set_category_item_order is not supported on this till"
+		}
+		cat, ids, bad := decodeCategoryItemOrder(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SetCategoryItemOrder(ctx, cat, ids)
 	case "set_catalog_image":
 		if hooks.SetCatalogImage == nil {
 			return "failed", "set_catalog_image is not supported on this till"
@@ -1365,6 +1405,22 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hook(ctx, r)
+	case "channel_order", "channel_order_update":
+		// ADR-0169 §9 (ut-docs#4768): main till only (mainTillOnlyTypes).
+		if hooks.ApplyChannelOrder == nil {
+			return "failed", d.Type + " is not supported on this till"
+		}
+		o, bad := decodeChannelOrder(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		// Decode refusals above are final. Anything the hook fails on (db
+		// busy, no stock location yet, a cancelled context) is the till's
+		// state, not the payload's: leave the directive pending so the next
+		// delivery retries it (sales-channel-v1.md §5.1).
+		if msg, err = hooks.ApplyChannelOrder(ctx, o); err != nil {
+			return statusRetry, err.Error()
+		}
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
@@ -1423,6 +1479,10 @@ type syncRequest struct {
 	storeID string
 	devices []map[string]any
 	hasStop bool // a diagnostics stop report rides the device record
+	// notices is the optional ADR-0176 request object (nil = feature off) and
+	// onNotices receives the response's raw notices block when it has one.
+	notices   map[string]any
+	onNotices func(json.RawMessage)
 }
 
 // buildSyncRequest assembles this device's report for the sync POST.
@@ -1518,10 +1578,14 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 // pushSync sends the device report and returns the store's pending
 // directives.
 func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, req syncRequest) ([]directive, error) {
-	payload, _ := json.Marshal(map[string]any{
+	pl := map[string]any{
 		"store_id": req.storeID,
 		"devices":  req.devices,
-	})
+	}
+	if req.notices != nil {
+		pl["notices"] = req.notices
+	}
+	payload, _ := json.Marshal(pl)
 	body, err := postBody(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
 		if _, ok := planRequired(err); ok {
@@ -1531,6 +1595,9 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// token_retired. Same rules as a 200's; the tick still fails
 			// with the 402 below.
 			applyPlanRequiredCredential(ctx, settings, body)
+			// ut-docs#5127: a till-born shop is usually unpaid, so the
+			// moves waiting for this till ride the 402 as well.
+			applySyncMoves(body)
 		}
 		cachePlanRequired(ctx, settings, err)
 		return nil, err
@@ -1555,10 +1622,16 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// ServerTime: the cloud's clock (RFC 3339), for stock count
 			// mode's clock conversion (ut-docs#4749). Optional.
 			ServerTime string `json:"server_time"`
+			// Notices is ADR-0176's optional block; raw so a malformed one
+			// can never fail the decode of the directives beside it.
+			Notices json.RawMessage `json:"notices"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
+	}
+	if req.onNotices != nil && len(resp.Data.Notices) > 0 && string(resp.Data.Notices) != "null" {
+		req.onNotices(resp.Data.Notices)
 	}
 	cacheEntitlement(ctx, settings, resp.Data.Entitlement, time.Now())
 	if st, err := time.Parse(time.RFC3339, resp.Data.ServerTime); err == nil {
@@ -1572,7 +1645,25 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 	// doesn't pin the token; every cloud caller sends it from the next
 	// request (enroll.Effective). Never fails the sync.
 	enroll.ApplyRotatedCredential(ctx, settings, resp.Data.DeviceID, resp.Data.DeviceToken)
+	applySyncMoves(body)
 	return resp.Data.Directives, nil
+}
+
+// applySyncMoves hands a sync answer's pending_moves / ended_moves (the 200
+// and the 402 plan_required, ut-docs#5127 CL-2b) to enroll, which keeps the
+// moves waiting for this till's approval. Absent fields (the feature off, an
+// older cloud) change nothing; a malformed body is ignored.
+func applySyncMoves(body []byte) {
+	var env struct {
+		Data struct {
+			PendingMoves json.RawMessage `json:"pending_moves"`
+			EndedMoves   json.RawMessage `json:"ended_moves"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &env) != nil {
+		return
+	}
+	enroll.ApplySyncMoves(env.Data.PendingMoves, env.Data.EndedMoves)
 }
 
 // cacheEntitlement records the sync response's entitlement block in the
@@ -1787,6 +1878,12 @@ type snapshotItemRow struct {
 	// path and items.icon, the same read the category report uses
 	// (ut-docs#2717), so my. draws and preselects what the till draws.
 	Icon string `json:"icon"`
+	// IconStored (ut-docs#6028) is the raw items.icon, "" for none — set
+	// even while a photo hides it (Icon above is the displayed one), so my.'s
+	// picker shows the icon actually stored; the item counterpart of the
+	// categories report's icon_stored (ut-docs#3585). A lone library tile
+	// reports its id in Icon and "" here, as for categories.
+	IconStored string `json:"icon_stored"`
 	// EverSold (ut-docs#3317) is true once the item or one of its variants
 	// has a sale line here (live or archived). my. offers Delete only while
 	// it is false; the cloud keeps it true once any till reported it.
@@ -1803,6 +1900,13 @@ type snapshotItemRow struct {
 	// Omitted when the item is on the sell screen — the same as an older
 	// till that never sends it, which the cloud reads as visible.
 	SellScreen string `json:"sell_screen,omitempty"`
+	// TilePos (ut-docs#3105, contract §3.7) is the 0-based position of the
+	// item's first sale-screen tile in the till's grid order (global; only
+	// the relative order within a category matters to my.), so my. shows the
+	// effective item order. Omitted for an item with no tile, and for every
+	// item when the till could not work the positions out. A hidden item
+	// keeps its slot, so it has a value.
+	TilePos *int `json:"tile_pos,omitempty"`
 }
 
 // snapshotNetQuantity is an item's net quantity on the wire (ut-docs#3504):
@@ -1872,8 +1976,9 @@ func snapshotStockLevels(levels []data.LowStockItem) []snapshotStockLevelRow {
 // from what the cloud already has (tracked via a content hash in settings).
 // Schema 2 (contract §3.7): every item, inactive included, with its full
 // barcode set, modifier links, the till's own resolved groups and its
-// variants nested.
-func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) error {
+// variants nested. tilePositions (nil allowed) fills each item's tile_pos
+// (§3.7, ut-docs#3105).
+func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB, tilePositions func(context.Context) (map[string]int, error)) error {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 
@@ -1914,6 +2019,16 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		logging.L().Warnf("cloudsync: snapshot ever-sold items: %v", err)
 		sold = nil
 	}
+	// tile_pos (ut-docs#3105): a read error only costs the field, as for
+	// photos above -- never a half-filled one.
+	var tilePos map[string]int
+	if tilePositions != nil {
+		var err error
+		if tilePos, err = tilePositions(ctx); err != nil {
+			logging.L().Warnf("cloudsync: snapshot tile positions: %v", err)
+			tilePos = nil
+		}
+	}
 	rows := make([]snapshotItemRow, 0, len(items))
 	for _, it := range items {
 		row := snapshotItemRow{
@@ -1927,10 +2042,14 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			Variants:     make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256:  ServedImageSHA256(thumbs[it.ID]),
 			Icon:         iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
+			IconStored:   it.Icon,
 			SellScreen:   it.SellScreen,
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]
+		}
+		if p, ok := tilePos[it.ID]; ok {
+			row.TilePos = &p
 		}
 		if sold != nil {
 			v := sold[it.ID]
@@ -2148,6 +2267,7 @@ func postBody(ctx context.Context, cfg *config.Config, path string, payload []by
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			se.Code, _ = parseCloudErrorEnvelope(buf.Bytes())
+			se.Replaced = parseReplacedSignal(buf.Bytes())
 		case http.StatusPaymentRequired:
 			se.Entitlement = planRequiredEntitlement(buf.Bytes())
 		}
@@ -2195,6 +2315,10 @@ type statusError struct {
 	// and its own ADR-0148 gate takes over. Decoded for 402 only; empty for
 	// every other status and when the body carries no block.
 	Entitlement json.RawMessage
+	// Replaced is a 401 device_revoked's data {reason: "replaced",
+	// replaced_at, replaced_by} (ut-docs#5058, design C6): the owner
+	// replaced this till as the shop's main till. nil for any other 401.
+	Replaced *ReplacedSignal
 }
 
 func (e *statusError) Error() string {

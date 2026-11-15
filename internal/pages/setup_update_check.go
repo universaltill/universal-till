@@ -54,10 +54,11 @@ func setupUpdateBannerHTML(locale, latest string) string {
 	// container in web/ui/pages/setup.html (review finding B1, ut-docs#1165)
 	// — this button lives inside the same wizard <form> and must never
 	// serialize a later step's PIN fields to this unauthenticated endpoint.
-	return fmt.Sprintf(`<div class="setup-update-banner"><p>%s (v%s)</p><button type="button" class="btn primary" hx-post="/api/setup/update-apply" hx-target="#setup-update-check" hx-swap="innerHTML" hx-params="none" hx-confirm="%s">%s</button></div>`,
+	return fmt.Sprintf(`<div class="setup-update-banner"><p>%s (v%s)</p><button type="button" class="btn primary" hx-post="/api/setup/update-apply" hx-target="#setup-update-check" hx-swap="innerHTML" hx-params="none" hx-confirm="%s" data-confirm-ok="%s">%s</button></div>`,
 		html.EscapeString(httpx.T(locale, "setup.update.prompt")),
 		html.EscapeString(latest),
 		html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
+		html.EscapeString(httpx.T(locale, "status.update_now")),
 		html.EscapeString(httpx.T(locale, "status.update_now")))
 }
 

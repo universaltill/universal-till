@@ -349,6 +349,10 @@ func followErrorCode(err error) string {
 	if errors.Is(err, selfupdate.ErrUnsupported) {
 		return "unsupported"
 	}
+	// Before the substring cases: the text names checksums.txt (ADR-0178).
+	if errors.Is(err, selfupdate.ErrSignature) {
+		return "signature"
+	}
 	var netErr *url.Error
 	msg := err.Error()
 	switch {

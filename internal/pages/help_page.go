@@ -2,6 +2,8 @@ package pages
 
 import (
 	"bytes"
+	"encoding/base64"
+	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
@@ -9,6 +11,9 @@ import (
 	"strings"
 	"sync"
 
+	qrcode "github.com/skip2/go-qrcode"
+
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/manual"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -50,7 +55,7 @@ func registerHelp(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		q := r.URL.Query().Get("q")
 		httpx.RenderPartial("ui/partials/help_results.html", map[string]any{
-			"results": l.Search(locale, q),
+			"results": l.SearchFor(locale, q, planPurchaseAllowed()),
 			"query":   q,
 		})(w, r)
 	})
@@ -105,11 +110,14 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 			return
 		}
 		topic = t
+		if !planPurchaseAllowed() { // ut-docs#3434: no purchase instructions in the iOS app
+			topic = topic.WithoutPlanPurchase()
+		}
 	}
 
 	data := map[string]any{
 		"title":     httpx.T(locale, "page.title.help"),
-		"theme":     d.CurrentState().Theme,
+		"theme":     d.ResolvedTheme(r),
 		"menuItems": d.MenuSnapshot(),
 		"sections":  l.Tree(locale),
 		"topic":     topic,
@@ -117,6 +125,23 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 	if topic != nil {
 		data["title"] = topic.Title
 		data["currentID"] = topic.ID
+	}
+
+	// ut-docs#5108: the Support partner topic points at my.'s Support
+	// partner screen. Only a registered till has a store to name; an
+	// unregistered one gets the prose alone. Pure string/QR work — no
+	// network, so it is the same offline.
+	// Guarded on the one resolved copy (CredentialsComplete), so a Pair
+	// in between can't mix two identities into the link.
+	if topicID == "support-partner" {
+		if m := enroll.Effective(d.Cfg).Marketplace; enroll.CredentialsComplete(m) {
+			target := enroll.PartnerURL(m.EndpointURL, m.StoreID, locale)
+			data["partnerURL"] = target
+			if png, err := qrcode.Encode(target, qrcode.Medium, 220); err == nil {
+				// A fixed data:image/png prefix over our own encoder's bytes.
+				data["partnerQR"] = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
+			}
+		}
 	}
 
 	// htmx caps historyCacheSize at 10 snapshots (web/public/vendor/htmx.min.js

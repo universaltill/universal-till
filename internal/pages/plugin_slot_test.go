@@ -305,7 +305,7 @@ func TestPluginSlot_ActionAnswersIntoPanel_3872(t *testing.T) {
 	if !strings.Contains(body, `hx-target="#plugin-slot-reports-panels-1"`) || strings.Contains(body, `#plugin-view"`) {
 		t.Fatalf("slot action must keep targeting its panel:\n%s", body)
 	}
-	if !strings.Contains(body, `<h2 class="plugin-view-title">SAVED title</h2>`) || strings.Contains(body, `id="plugin-view-title"`) {
+	if !strings.Contains(body, `<h2 class="plugin-view-title" dir="auto">SAVED title</h2>`) || strings.Contains(body, `id="plugin-view-title"`) {
 		t.Fatalf("slot action keeps its title in the panel, no OOB heading:\n%s", body)
 	}
 	// It clears its own panel's failure slot, never the page's (ut-docs#3879).

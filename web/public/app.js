@@ -55,14 +55,19 @@ window.utCurrency = (function(){
     var num = groupDigits(major.toString());
     if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
     num = shapeDigits(num);
-    var out = suffix ? num + ' ' + display : display + num;
-    if (!neg) return out;
+    // ut-docs#5410: a word or code ("AED", "XYZ ") leads with one space,
+    // the twin of Go's formatMoneyCurrency; a one-rune symbol hugs the digits.
+    var word = display.trim();
+    var out = suffix ? num + ' ' + display : (Array.from(word).length > 1 ? word + ' ' + num : display + num);
+    var rtl = document.documentElement && document.documentElement.dir === 'rtl';
+    // ut-docs#5410: a positive word/code prefix ("AED 12.50") is isolated in
+    // RTL too, twin of Go's FormatMoneyDisplay; one-rune symbols stay bare.
+    if (!neg) return (rtl && !suffix && Array.from(word).length > 1) ? '\u2066' + out + '\u2069' : out;
     // ut-docs#3880, the twin of Go's formatMoney/FormatMoneyDisplay: the
     // sign leads the whole amount ("-£42.50", never "£-42.50"), and on an
     // RTL page a prefix-symbol negative is one left-to-right isolate so
     // the sign stays left of the symbol.
     out = '-' + out;
-    var rtl = document.documentElement && document.documentElement.dir === 'rtl';
     return rtl && !suffix ? '\u2066' + out + '\u2069' : out;
   }
   // ut-docs#2819: strict grammar, the client twin of Go's
@@ -1037,8 +1042,17 @@ function renderNotice(el, level, text){
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
-    if (toast.classList.contains('error')) return; // errors persist until dismissed
+    // ut-docs#6154: a reusable notice (shown again by later actions) is never
+    // auto-removed, hidden or not; only its own dismiss button hides it.
+    if (toast.hasAttribute('data-reusable') || toast.hidden) return;
+    // errors persist until dismissed; a critical notice (ADR-0176) stays until
+    // a manager acknowledges it -- it never auto-expires.
+    if (toast.classList.contains('error') || toast.classList.contains('critical')) return;
     toast.dataset.dismissed = '1';
+    // ADR-0176: a notice toast carries its own duration (data-dismiss-ms) and
+    // pauses while hovered, focused or touched.
+    var ms = parseInt(toast.dataset.dismissMs, 10);
+    if (ms > 0) { utPausableDismiss(toast, ms); return; }
     setTimeout(function(){
       toast.classList.add('hide');
       setTimeout(function(){
@@ -1049,6 +1063,62 @@ function scheduleToastDismiss(){
     }, 2500);
   });
 }
+
+// utPausableDismiss removes a notice toast after ms, pausing the countdown
+// while the pointer, keyboard focus or a finger is on it (ut-docs#5366: an
+// operator reading it or reaching for Open must never lose it mid-tap).
+function utPausableDismiss(toast, ms) {
+  var left = ms, started = 0, timer = 0;
+  toast.style.setProperty('--notice-ms', ms + 'ms');
+  function gone() {
+    toast.classList.add('hide');
+    setTimeout(function(){ if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+  }
+  function run() { started = Date.now(); timer = setTimeout(gone, left); toast.classList.remove('paused'); }
+  function pause() {
+    if (!timer) return;
+    clearTimeout(timer); timer = 0;
+    left = Math.max(1000, left - (Date.now() - started));
+    toast.classList.add('paused');
+  }
+  ['mouseenter', 'focusin', 'touchstart'].forEach(function(ev){ toast.addEventListener(ev, pause, { passive: true }); });
+  ['mouseleave', 'focusout', 'touchend', 'touchcancel'].forEach(function(ev){
+    toast.addEventListener(ev, function(){ if (!timer) run(); }, { passive: true });
+  });
+  run();
+}
+
+// ADR-0176 (ut-docs#5366) notices glue. (1) A toast is never shown while the
+// payment overlay is open: the poll is cancelled, so the notice simply stays
+// queued on the server (it is only marked shown when it renders), and the
+// poll is re-run the moment the overlay closes. (2) The phone burger's label
+// is count-aware while something is unread.
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var el = evt.detail && evt.detail.elt;
+  if (!el || el.id !== 'notices-toast') return;
+  var po = document.getElementById('payment-overlay');
+  if (po && po.open) evt.preventDefault();
+});
+document.addEventListener('close', function (evt) {
+  if (evt.target && evt.target.id === 'payment-overlay' && window.htmx) htmx.trigger(document.body, 'notices-check');
+}, true);
+function utNoticesBurgerLabel() {
+  var badge = document.getElementById('notices-burger-badge');
+  var btn = document.querySelector('.nav-drawer-toggle');
+  if (!badge || !btn) return;
+  if (!btn.dataset.labelOpenBase) btn.dataset.labelOpenBase = btn.getAttribute('data-label-open') || '';
+  var label = badge.dataset.label || btn.dataset.labelOpenBase;
+  btn.setAttribute('data-label-open', label); // utNavDrawer reads it when the drawer closes
+  if (btn.getAttribute('aria-expanded') !== 'true') btn.setAttribute('aria-label', label);
+}
+document.addEventListener('htmx:oobAfterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (t && t.id === 'notices-burger-badge') utNoticesBurgerLabel();
+});
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (t && t.id === 'notices-bell') utNoticesBurgerLabel();
+});
 
 // ADR-0098: app.js loads once per document (defer) -- the readyState guard
 // covers the deferred-script case; boosted arrivals come through afterSwap.
@@ -1065,6 +1135,84 @@ document.addEventListener('htmx:oobAfterSwap', function (evt) {
   var t = evt.detail && evt.detail.target;
   if (!t || !t.classList || !t.classList.contains('plugin-view-alert') || !t.firstElementChild || !t.scrollIntoView) return;
   t.scrollIntoView({ block: 'nearest' });
+});
+
+// ut-docs#4379: a chat question re-renders the whole chat component into its
+// target (the thinking bubble, then the answer), which drops focus from the
+// question box, so a follow-up meant tapping it again. A question the
+// operator sent marks the target; when the swap that ends the thinking
+// lands (no thinking bubble left), focus goes back to the question box --
+// unless the operator has moved on to another control meanwhile. A first
+// load, or a swap nobody asked a question for, never takes focus.
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  if (!d.elt || !d.target || !d.elt.classList || !d.elt.classList.contains('plugin-chat-ask')) return;
+  d.target.setAttribute('data-ut-chat-refocus', '');
+});
+// A failed question (#3879: HX-Reswap none, the alert scrolled into view)
+// clears the mark and leaves focus alone, so the alert stays on screen;
+// so does any request into the target that never swapped (network drop,
+// plain-text 5xx) -- afterRequest fires after afterSwap in htmx 1.9.
+function chatRefocusFailed(evt) {
+  var d = evt.detail || {};
+  if (d.target && d.target.removeAttribute && !d.successful) d.target.removeAttribute('data-ut-chat-refocus');
+}
+document.addEventListener('htmx:afterRequest', chatRefocusFailed);
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var d = evt.detail || {};
+  var t = d.target;
+  if (!t || !t.hasAttribute || !t.hasAttribute('data-ut-chat-refocus')) return;
+  if (d.xhr && d.xhr.status >= 400) { t.removeAttribute('data-ut-chat-refocus'); return; }
+  if (t.querySelector('.plugin-chat-thinking')) return; // still thinking: keep the mark
+  t.removeAttribute('data-ut-chat-refocus');
+  var a = document.activeElement;
+  if (a && a !== document.body && !t.contains(a)) return; // operator moved on
+  var q = t.querySelector('.plugin-chat-ask input[name="question"]');
+  if (q) q.focus({ preventScroll: true });
+});
+
+// ut-docs#5749: hx-disabled-elt disables the control for the length of the
+// request, and a disabled element cannot hold focus, so a keyboard operator
+// who pressed Enter on a submit button was dropped onto <body> and lost their
+// place. When a request starts from (or inside) an hx-disabled-elt scope and
+// the focused control is within the requesting element, remember it per xhr.
+// htmx 1.9 re-enables the disabled elements just BEFORE htmx:afterRequest
+// (afterSwap still sees them disabled), so restore there: back to that
+// control, or -- if the swap removed it, or it sits in a dialog that just
+// closed -- to the result region (the target's live region, else the target;
+// an outerHTML swap that replaced the target is found again by id), so the
+// outcome is read out. Only when focus really fell to <body>: a deliberate
+// move (the chat refocus above, a dialog, the operator tabbing on
+// mid-request) is left alone. A swap delayed past afterRequest (swap:Nms,
+// view transitions -- unused today) would undo this restore.
+var disabledFocus = new WeakMap();
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  var a = document.activeElement;
+  if (!d.xhr || !d.elt || !d.elt.closest || !d.elt.closest('[hx-disabled-elt]')) return;
+  if (!a || a === document.body || !d.elt.contains(a)) return;
+  disabledFocus.set(d.xhr, { el: a, target: d.target, targetId: d.target && d.target.id });
+});
+document.addEventListener('htmx:afterRequest', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && disabledFocus.get(d.xhr);
+  if (!rec) return;
+  disabledFocus.delete(d.xhr);
+  var a = document.activeElement;
+  if (a && a !== document.body) return; // focus was moved on purpose
+  if (rec.el.isConnected && !rec.el.disabled) {
+    rec.el.focus({ preventScroll: true });
+    if (document.activeElement === rec.el) return;
+  }
+  var t = rec.target;
+  if ((!t || !t.isConnected) && rec.targetId) t = document.getElementById(rec.targetId);
+  if (!t || !t.isConnected) return;
+  t = t.closest('[aria-live],[role=status],[role=alert]') || t;
+  if (!t.hasAttribute('tabindex')) {
+    t.setAttribute('tabindex', '-1');
+    t.addEventListener('blur', function () { t.removeAttribute('tabindex'); }, { once: true });
+  }
+  t.focus({ preventScroll: true });
 });
 
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
@@ -1164,13 +1312,36 @@ document.addEventListener('htmx:afterSettle', function (evt) {
   });
 })();
 
+// ut-docs#5411: a quantity edit that needs a manager's PIN leaves the typed
+// number in the qty box while the basket still holds the old one. The server
+// sends HX-Trigger-After-Settle: ut-basket-resync with the prompt (ut-docs#5417); re-render the live basket
+// so the box shows the real quantity until the approver confirms.
+document.addEventListener('ut-basket-resync', function(){
+  if (!window.htmx) return;
+  // ut-docs#5417: the resync replaces #basket, and the prompt's hint lives in
+  // it (#shrinkage-hint). Carry the same hint nodes across (not a copy, so the
+  // dialog's own reference to them stays valid for Cancel/Escape), but only
+  // while the dialog is still open: an approval that already cleared the slot
+  // must not get a stale hint back.
+  var old = document.getElementById('shrinkage-hint');
+  var kept = old ? Array.prototype.slice.call(old.childNodes) : [];
+  var p = window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+  if (!kept.length || !p || typeof p.then !== 'function') return;
+  p.then(function(){
+    var slot = document.getElementById('shrinkage-hint');
+    var dlg = document.getElementById('elevation-modal');
+    if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
+    kept.forEach(function(n){ slot.appendChild(n); });
+  });
+});
+
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
   var btn = e.target.closest ? e.target.closest('.notice-dismiss') : null;
   if (!btn) return;
   var notice = btn.closest('.pos-notice');
   if (!notice) return;
-  if (notice.id === 'pos-alert') { notice.hidden = true; return; } // reusable slot
+  if (notice.id === 'pos-alert' || notice.hasAttribute('data-reusable')) { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
   notice.classList.add('hide');
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
@@ -1316,11 +1487,31 @@ document.addEventListener('click', function(e){
   function showAlert(kind){
     var alertBox = document.getElementById('pos-alert');
     if (!alertBox) return;
-    var msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
+    // ut-docs#5298: the "may not have completed" text is sticky -- a later
+    // generic network alert (status polls on an offline till) must not
+    // replace it; a server error or explicit new message still does.
+    if (kind === 'network' && alertBox.dataset.sticky === '1' && !alertBox.hidden) return;
+    var msg;
+    if (kind === 'outcome' || kind === 'timeout') {
+      // ut-docs#5463: 'timeout' = the till answered too slowly (not a dropped link).
+      msg = kind === 'timeout'
+        ? (alertBox.dataset.msgOutcomeTimeout || alertBox.dataset.msgOutcomeUnknown)
+        : alertBox.dataset.msgOutcomeUnknown;
+      alertBox.dataset.sticky = '1';
+    }
+    else {
+      delete alertBox.dataset.sticky;
+      msg = kind === 'network' ? alertBox.dataset.msgNetwork : alertBox.dataset.msgServer;
+    }
     // Unhide BEFORE writing the text: a role=alert region that changes
     // while display:none doesn't reliably announce to screen readers.
     alertBox.hidden = false;
     alertBox.querySelector('.notice-text').textContent = msg || '';
+    // #pos-alert sits at the top of the document: on a scrolled page the
+    // outcome message would be off-screen (ut-docs#5298). No smooth scroll.
+    if (kind === 'outcome' || kind === 'timeout') {
+      try { alertBox.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+    }
   }
   // htmx never swaps a non-2xx response into its target by default — it
   // fires htmx:responseError instead and discards the body. That's fine
@@ -1356,11 +1547,12 @@ document.addEventListener('click', function(e){
     if (!d || !d.xhr || d.xhr.status < 400) return;
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
     if (path.indexOf('/api/pos/') === 0) {
-      // Sale-screen carve-out (ut-docs#213): only a 400 whose body is a
-      // rendered basket fragment (e.g. modifier validation) swaps in place
+      // Sale-screen carve-out (ut-docs#213): only a 400 or 409 whose body is a
+      // rendered basket fragment (e.g. modifier validation, or ut-docs#5417's
+      // "line changed" refusal) swaps in place
       // of the generic alert — anything else on this path falls through to
       // the #pos-alert banner via htmx:responseError below.
-      if (d.xhr.status === 400 && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
+      if ((d.xhr.status === 400 || d.xhr.status === 409) && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
         d.shouldSwap = true;
         d.isError = false;
       }
@@ -1385,7 +1577,88 @@ document.addEventListener('click', function(e){
     d.isError = false;
   });
   document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
-  document.body.addEventListener('htmx:sendError', function(){ showAlert('network'); });
+  // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
+  // data-after-request="elevation-done") failing at network level means the
+  // confirmed action may or may not have run (ut-docs#5298).
+  // ut-docs#5335 / #5404: a prompt's own request (htmx form or
+  // utPostWithElevation leg) and, since #5404, every ordinary user-initiated
+  // htmx request (see utIsTimedRequest) is abandoned after this long with no
+  // response and handled like a network failure (#5298: outcome unknown, no
+  // replay). Per request only -- htmx.config.timeout stays 0.
+  // Listed paths (UT_UNBOUNDED_PATHS) are exempt on every leg, prompts
+  // included (ut-docs#5454): the server owns their deadline.
+  var UT_REQUEST_TIMEOUT_MS = 30000;
+  // Test-only override: e2e sets window.__utPromptTimeoutMs via
+  // page.addInitScript so specs don't wait 30 s. Read at request time.
+  window.utRequestTimeoutMs = function () {
+    var o = window.__utPromptTimeoutMs;
+    return (typeof o === 'number' && isFinite(o) && o > 0) ? o : UT_REQUEST_TIMEOUT_MS;
+  };
+  window.utPromptTimeoutMs = window.utRequestTimeoutMs; // #5335 name, kept
+  function utIsPromptElt(el) {
+    return !!(el && el.closest && el.closest('[data-after-request~="elevation-done"]'));
+  }
+  // ut-docs#5404: user events whose request gets the timeout. Custom events
+  // (`x-changed from:body`, `revealed`) are background refreshes: unbounded.
+  var UT_USER_EVENTS = { click: 1, dblclick: 1, submit: 1, change: 1, input: 1, keyup: 1, keydown: 1, search: 1 };
+  // Legitimately long or restarting endpoints: never timed. Tender, refund
+  // and kiosk checkout wait on a card terminal / fiscal device (the server
+  // bounds them: paymentGateTimeout is a 30 s floor and a plugin's timeout
+  // can be longer, wasm_runtime.go); a join backs up and replaces this till's data
+  // behind a 60 s LAN client. A client abort there would show "may not have
+  // been done" while the sale or join is still completing.
+  // Keep paired with `unboundedRoutes` in internal/pages/unbounded_routes_test.go
+  // (TestUnboundedRoutesMatchAppJS reads this list): a new long-running POST
+  // route goes in both.
+  var UT_UNBOUNDED_PATHS = ['/api/backup/', '/api/import', '/api/catalog/export-save',
+                            '/api/update/apply', '/api/setup/update-apply',
+                            '/api/pos/tender', '/api/refund', '/api/self-order/checkout',
+                            '/api/sync/join', '/api/setup/join'];
+  function utPathOf(p) {
+    try { return new URL(p || '', window.location.href).pathname; } catch (e) { return String(p || ''); }
+  }
+  function utIsUnboundedPath(p) {
+    var path = utPathOf(p);
+    if (/\/pairing-restart$/.test(path)) return true; // till restarts itself
+    for (var i = 0; i < UT_UNBOUNDED_PATHS.length; i++) {
+      if (path.indexOf(UT_UNBOUNDED_PATHS[i]) === 0) return true;
+    }
+    return false;
+  }
+  window.utIsUnboundedPath = utIsUnboundedPath; // #5454: utPostWithElevation (outside this IIFE)
+  // True when this ordinary request should be bounded. Opt out a new
+  // long-running action with data-ut-no-timeout on it or an ancestor.
+  function utIsTimedRequest(d, el) {
+    if (!el || !el.closest) return false;
+    if (el.closest('[data-ut-no-timeout]')) return false;
+    var te = d.triggeringEvent;
+    if (!te || !UT_USER_EVENTS[te.type]) return false; // load/every/intersect/htmx.ajax/custom
+    if (d.boosted) return false;                       // page navigation, not an action
+    if (el.closest('[hx-encoding="multipart/form-data"],form[enctype="multipart/form-data"]')) return false;
+    return true;
+  }
+  // htmx 1.9.12 reads detail.timeout back into xhr.timeout after this event.
+  document.body.addEventListener('htmx:configRequest', function(ev){
+    var d = ev.detail;
+    if (!d) return;
+    var el = d.elt || ev.target;
+    if (d.timeout > 0) return; // hx-request / etc already set one
+    if (utIsUnboundedPath(d.path)) return; // #5404/#5454: server owns the deadline, prompt forms too
+    if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
+  });
+  document.body.addEventListener('htmx:sendError', function(ev){
+    showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
+  });
+  // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
+  // then this. Only requests we bounded can reach ontimeout. A GET is safe to
+  // repeat (network text); anything else may have applied (sticky timeout text,
+  // ut-docs#5463: the till was slow, the link was fine).
+  document.body.addEventListener('htmx:timeout', function(ev){
+    var d = ev.detail || {};
+    var rc = d.requestConfig || {};
+    var verb = String(rc.verb || '').toLowerCase();
+    showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'timeout' : 'network');
+  });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
   // variants, and fires this event via HX-Trigger-After-Swap once the
@@ -1477,7 +1750,7 @@ document.addEventListener('click', function(e){
   document.body.addEventListener('htmx:afterRequest', function(ev){
     if (!ev.detail || !ev.detail.successful) return;
     var alertBox = document.getElementById('pos-alert');
-    if (alertBox && !alertBox.hidden) alertBox.hidden = true;
+    if (alertBox && !alertBox.hidden && alertBox.dataset.sticky !== '1') alertBox.hidden = true;
   });
 })();
 
@@ -2264,6 +2537,12 @@ utSellCamera(function(){
     // ut-docs#2534: and the all_filter_chips chip row -- switching the
     // category is how another category's order is reached.
     // ut-docs#2465: and the Move to category dialog.
+    // ut-docs#5524: and the till's confirm dialog (the remove badge's
+    // hx-confirm) -- a native confirm never delivered pointer events to the
+    // page, this one does, so answering it must not end the edit session;
+    // nor must a stray tap on the scrim behind it.
+    if (el.closest('#ut-confirm')) return true;
+    if (window.UT && window.UT.confirmOpen && window.UT.confirmOpen() && el.closest('#ut-scrim')) return true;
     return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, #tile-move-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
   }
   function visibleCells(gridEl) {
@@ -2437,6 +2716,9 @@ utSellCamera(function(){
   function showAlert(text, kind) {
     var box = document.getElementById('pos-alert');
     if (!box) return;
+    // A generic network failure must not replace a visible outcome-unknown message.
+    if (!text && kind === 'network' && box.dataset.sticky === '1' && !box.hidden) return;
+    delete box.dataset.sticky; // an explicit new message replaces the sticky one (ut-docs#5298)
     var msg = text || (kind === 'network' ? box.dataset.msgNetwork : box.dataset.msgServer);
     box.hidden = false;
     var span = box.querySelector('.notice-text');
@@ -2500,7 +2782,7 @@ utSellCamera(function(){
   function postButtons(url, fd, onSaved) {
     var watch = window.utSellScreenWatch;
     var saved = (watch && typeof watch.ownWrite === 'function') ? watch.ownWrite() : function () {};
-    return new Promise(function (resolve) {
+    return new Promise(function (resolve, reject) {
       window.utPostWithElevation(url, fd, function (res) {
         if (res.ok) { saved(res.headers.get('X-UT-Sell-Version')); onSaved(); resolve(); return; }
         res.text().then(function (text) {
@@ -2513,7 +2795,7 @@ utSellCamera(function(){
         // one it's still showing.
         refetchGrid();
         resolve();
-      });
+      }).then(resolve, reject);
     }).catch(function () {
       showAlert('', 'network');
       refetchGrid();
@@ -2754,6 +3036,10 @@ utSellCamera(function(){
   // retired sheet offered by keyboard (Move earlier/later) is still there.
   document.addEventListener('keydown', function (e) {
     if (!active) return;
+    // ut-docs#5275: a confirm / PIN prompt (dialog[data-ut-prompt]) raised
+    // by an edit-mode action owns the keyboard: Escape cancels the prompt
+    // (base.html), never edit mode underneath it.
+    if (document.querySelector('dialog[data-ut-prompt][open]')) return;
     // ut-docs#2465: inside the Move to category dialog, Escape closes the
     // dialog (focus back on the badge), never edit mode; Tab stays in it.
     if (moveDialog() && moveDialog().open && e.target.closest && e.target.closest('#tile-move-dialog')) {
@@ -2854,8 +3140,8 @@ utSellCamera(function(){
 
   // ---- htmx interplay ----
   // The remove badge's own hx-confirm/hx-post: if a drag is still
-  // unsaved, confirm first (htmx's own question, so the operator sees the
-  // same dialog either way), then persist the order, THEN let htmx issue
+  // unsaved, confirm first (the same question, asked in the same till
+  // dialog -- till-confirm.js, ut-docs#5524 -- either way), then persist the order, THEN let htmx issue
   // the remove -- its buttons-changed refresh re-renders the grid from the
   // server, which would otherwise silently drop the unsaved reorder.
   document.body.addEventListener('htmx:confirm', function (e) {
@@ -2863,9 +3149,21 @@ utSellCamera(function(){
     if (!elt || !elt.classList || !elt.classList.contains('tile-badge-remove')) return;
     if (!dirty) return; // nothing pending: htmx's own confirm + request as usual
     e.preventDefault();
-    if (e.detail.question && !window.confirm(e.detail.question)) return;
-    dirty = false;
-    persistOrder().then(function () { e.detail.issueRequest(true); });
+    var q = e.detail.question;
+    var ask = (q && window.UT && window.UT.confirm && document.getElementById('ut-confirm'))
+      ? window.UT.confirm(q, {
+        opener: elt,
+        // Same labels as the till-confirm.js handler gives this opener (ut-docs#6117).
+        tone: (elt.closest('[data-confirm-tone]') || elt).getAttribute('data-confirm-tone') === 'neutral' ? 'neutral' : 'danger',
+        ok: (elt.closest('[data-confirm-ok]') || elt).getAttribute('data-confirm-ok') || '',
+        dismiss: (elt.closest('[data-confirm-dismiss]') || elt).getAttribute('data-confirm-dismiss') || ''
+      })
+      : Promise.resolve(!q || window.confirm(q)); // native-confirm:allow script/shell missing: native fallback (ut-docs#5524)
+    ask.then(function (ok) {
+      if (!ok) return; // Cancel: the reorder stays dirty, the tile stays
+      dirty = false;
+      persistOrder().then(function () { e.detail.issueRequest(true); });
+    });
   });
   // Any OTHER refetch of the grid root while a reorder is unsaved (a
   // modifiers-changed from elsewhere): persist first, then re-trigger it.
@@ -2908,7 +3206,8 @@ utSellCamera(function(){
 // checkOrElevate site is a normal hx-post button/form, so the dialog's own
 // OOB swap (hx-swap-oob="true" into the shared #elevation-modal
 // placeholder, web/ui/layouts/base.html) is handled by htmx automatically
-// — this helper exists ONLY for the two sites that bypass htmx.
+// — this helper exists ONLY for the sites that bypass htmx (settings resets,
+// EOD range/archive export, postButtons).
 //
 // url/params: the endpoint and its (non-PIN) form fields, exactly what
 // would otherwise go straight into a fetch() body.
@@ -2919,8 +3218,27 @@ utSellCamera(function(){
 // onCancel(): optional — called if the user dismisses the dialog (Cancel,
 // or any other way it closes) before a terminal response was ever reached,
 // so the caller can undo whatever "request in flight" UI state (disabled
-// button, spinner text) it set before calling this. Never called once
-// onDone has fired.
+// button, spinner text) it set before calling this. Exactly one of
+// onDone / onCancel fires. While the PIN retry is in flight the form carries
+// .htmx-request + aria-busy and its buttons are disabled (#5291, mirroring
+// #5288), so Cancel/Escape are inert; a close by any other path mid-flight
+// defers to the response: a terminal answer goes to onDone, a re-prompt to
+// onCancel, and the closed dialog is never re-opened.
+//
+// Outcome contract (ut-docs#5298). The returned promise settles when the
+// whole flow ends, and exactly one of these happens:
+//  - onDone(r) runs: the promise resolves with onDone's result, or rejects
+//    (untagged) if onDone throws or rejects.
+//  - The operator cancels: onCancel() runs, the promise resolves undefined.
+//  - A NETWORK failure on either leg (fetch itself rejected, or no response
+//    within window.utPromptTimeoutMs(), default 30 s, ut-docs#5335, unless the URL
+//    is a utIsUnboundedPath path, ut-docs#5454; the timer
+//    is cleared before onDone so body reads are unbounded): neither
+//    callback runs, any open dialog is closed, and the promise rejects with
+//    the fetch error tagged e.utNetworkError = true. The action may or may
+//    not have run, so it is never reported as a cancel; callers show
+//    window.utElevationErrorText(e) from their existing .catch. Nothing is
+//    retried or replayed.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -2928,8 +3246,19 @@ utSellCamera(function(){
 // always carries Content-Disposition: attachment, and a real error is
 // http.Error's text/plain, so text/html is unambiguous.
 window.utPostWithElevation = function (url, params, onDone, onCancel) {
+ return new Promise(function (resolveAll, rejectAll) {
   var openDialog = null;
-  var finished = false; // true once onDone has fired or close() was called for it
+  var finished = false; // true once close() was called for it (we closed it ourselves)
+  var ended = false; // exactly one of onDone / onCancel / network failure ever happens (#5291, #5298)
+  function cancelOnce() { if (ended) return; ended = true; if (onCancel) onCancel(); resolveAll(); }
+  function failOnce(e) { if (ended) return; ended = true; rejectAll(e); }
+  function doneOnce(r) {
+    if (ended) return;
+    ended = true;
+    var p;
+    try { p = onDone(r); } catch (err) { rejectAll(err); return; }
+    Promise.resolve(p).then(resolveAll, rejectAll);
+  }
   function close() {
     finished = true;
     if (!openDialog) return;
@@ -2951,44 +3280,95 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     if (old) old.replaceWith(dialog); else document.body.appendChild(dialog);
     openDialog = dialog;
     if (typeof dialog.show === 'function') dialog.show();
+    var form = dialog.querySelector('form');
     // Fires on Cancel (elevation_prompt.html's button calls
     // this.closest('dialog').close()) and on our own close() above — the
     // `finished` guard means it's a no-op in the latter case, so this is
-    // purely the "user backed out" signal.
+    // purely the "user backed out" signal. Closed mid-flight by some other
+    // path: the response decides (a terminal answer still reaches onDone).
     dialog.addEventListener('close', function () {
-      if (!finished && onCancel) onCancel();
+      if (finished) return;
+      if (form && form.classList.contains('htmx-request')) return;
+      cancelOnce();
     }, { once: true });
-    var form = dialog.querySelector('form');
     if (form) {
+      // ut-docs#5291: this form is not htmx-driven, so mark the retry in
+      // flight ourselves — the same .htmx-request class, aria-busy and
+      // disabled buttons #5288 relies on (base.html Escape, inline-actions
+      // closeDialog), so Cancel/Escape are inert while it runs.
+      var busyBtns = [];
+      var setBusy = function (on) {
+        if (on) {
+          form.classList.add('htmx-request');
+          form.setAttribute('aria-busy', 'true');
+          busyBtns = Array.prototype.filter.call(
+            dialog.querySelectorAll('button:not([data-osk-toggle])'),
+            function (b) { return !b.disabled; });
+          busyBtns.forEach(function (b) { b.disabled = true; });
+        } else {
+          form.classList.remove('htmx-request');
+          form.removeAttribute('aria-busy');
+          busyBtns.forEach(function (b) { b.disabled = false; });
+          busyBtns = [];
+        }
+      };
       form.addEventListener('submit', function (ev) {
         ev.preventDefault();
+        if (form.classList.contains('htmx-request')) return; // like hx-sync="this:drop"
+        setBusy(true);
         // The retry's own promise chain is otherwise disconnected from
-        // whatever the caller attached to the original send(params) call
-        // (this listener fires later, asynchronously) — without this
-        // catch, a network failure on the RETRY specifically would be an
-        // unhandled rejection that never reaches the caller's .catch(),
-        // leaving its UI state (disabled button, spinner text) stuck.
-        send(new FormData(form)).catch(function (e) {
+        // the first send (this listener fires later, asynchronously), so
+        // its failure is routed to the returned promise here. A network
+        // failure rejects it tagged (outcome unknown, ut-docs#5298); any
+        // other failure keeps releasing the caller as a cancel.
+        send(new FormData(form), function () { setBusy(false); }).catch(function (e) {
+          setBusy(false);
           if (window.console) console.error('utPostWithElevation: retry failed', e);
           close();
-          if (onCancel) onCancel();
+          if (e && e.utNetworkError) failOnce(e); else cancelOnce();
         });
       });
     }
     return true;
   }
-  function send(bodyParams) {
+  function send(bodyParams, settle) {
     var body = new URLSearchParams();
     if (bodyParams instanceof FormData) {
       bodyParams.forEach(function (v, k) { body.append(k, v); });
     } else {
       Object.keys(bodyParams || {}).forEach(function (k) { body.append(k, bodyParams[k]); });
     }
+    // ut-docs#5335: per-leg timer, started here so the PIN retry's clock
+    // starts at the PIN submit. No AbortController (old WebView): no timeout.
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = null, timedOut = false;
+    function stopTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
+    function tagNet(e) {
+      stopTimer();
+      if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
+      var n = new Error(String(e));
+      n.utNetworkError = true;
+      throw n;
+    }
+    if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
+      body: body.toString(),
+      signal: ctl ? ctl.signal : undefined
+    }).catch(function (e) {
+      // ut-docs#5298: only fetch()'s own rejection is a network failure
+      // (an abort from the #5335 timer included).
+      tagNet(e);
     }).then(function (r) {
+      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; throw t; }
+      // Clear the busy state before every outcome (close, re-prompt,
+      // redirect) — on the re-prompt branch only once its body is read, so
+      // a second tap can't start a parallel retry in the gap (#5291 review).
+      var cd0 = r.headers.get('Content-Disposition') || '';
+      var ct0 = r.headers.get('Content-Type') || '';
+      var isPrompt = r.status !== 401 && cd0.indexOf('attachment') === -1 && ct0.indexOf('text/html') !== -1;
+      if (settle && !isPrompt) settle();
       // ut-docs#2157: the auth middleware's non-htmx 401 (session expired)
       // answers with Content-Type: application/json, never text/html, so it
       // falls straight past the elevation-dialog branch below into
@@ -2997,14 +3377,21 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // renders its {code,message} error OBJECT directly, showing the
       // literal string "[object Object]" instead of a way back to sign in.
       // One fix here covers every utPostWithElevation caller.
-      if (r.status === 401) { close(); window.location.href = '/login'; return; }
+      if (r.status === 401) { stopTimer(); close(); ended = true; resolveAll(); window.location.href = '/login'; return; }
       var cd = r.headers.get('Content-Disposition') || '';
       var ct = r.headers.get('Content-Type') || '';
       if (cd.indexOf('attachment') === -1 && ct.indexOf('text/html') !== -1) {
         // Read the body ONLY here, and only decide what to do with it
         // afterward — never also hand `r` to onDone from this branch (its
         // body is already consumed by the time showDialog resolves).
-        return r.text().then(function (html) {
+        // The timer keeps running across this small body read (#5335).
+        return r.text().catch(tagNet).then(function (html) {
+          stopTimer();
+          if (settle) settle();
+          // A re-prompt means the action was NOT done. If the operator's
+          // dialog was closed — or removed/replaced by another prompt — by
+          // some other path meanwhile, never re-open it.
+          if (openDialog && (!openDialog.open || !openDialog.isConnected)) { close(); cancelOnce(); return; }
           if (!showDialog(html)) {
             close();
             // Nothing left to show the caller — this genuinely shouldn't
@@ -3013,15 +3400,34 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
             // state the same way a cancelled dialog would, rather than
             // leaving a disabled button stuck forever.
             if (window.console) console.error('utPostWithElevation: elevation response had no #elevation-modal', html);
-            if (onCancel) onCancel();
+            cancelOnce();
           }
         });
       }
+      // Cleared BEFORE onDone: a caller's own body read (export blob) must
+      // never be aborted by the prompt timeout (#5335).
+      stopTimer();
       close();
-      return onDone(r);
+      doneOnce(r);
     });
   }
-  return send(params);
+  send(params).catch(function (e) {
+    close();
+    if (e && e.utNetworkError) failOnce(e);
+    else if (!ended) { ended = true; rejectAll(e); }
+  });
+ });
+};
+
+// ut-docs#5298: the translated "may not have completed" text (pos_alert.html data attr).
+window.utOutcomeUnknownText = function () {
+  var b = document.getElementById('pos-alert');
+  return (b && b.dataset.msgOutcomeUnknown) || '';
+};
+// For a utPostWithElevation .catch: the outcome-unknown text for a network
+// failure, else e unchanged.
+window.utElevationErrorText = function (e) {
+  return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 
 // ut-docs#2024 (moved here by ut-docs#2173): toggles the two fade classes
@@ -3086,7 +3492,7 @@ window.utTabBarFade = function (el) {
 // id, e.g. basket.html's `id="basket"`).
 (function () {
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
-  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // ADR-0119: UT.motionOff() (ut-motion.js) is reduced motion OR
   // the Light effects level; the bare media query is only the fallback for
   // a page outside base.html that loads this file without it.
   var PANES = ['items-panel', 'admin-panel', 'manual-panel'];
@@ -3180,7 +3586,7 @@ window.utTabBarFade = function (el) {
   // the same in WebView2, Android WebView and WebKitGTK. Uniform scale plus
   // translation (so RTL needs nothing), transform and opacity only, from
   // opacity 0.4, never blank. The transform is TRANSIENT (fill 'none') and
-  // registered with UT.trackZoom, so a tap, a popup opening (base.html's
+  // registered with UT.trackZoom, so a tap, a popup opening (ut-motion.js's
   // dialog wrapper) or the next pane swap finish() it: a position:fixed
   // dialog inside the pane is never shown inside a transformed ancestor
   // (the #2338 hazard). A pane that settles with a dialog already open
@@ -3192,16 +3598,13 @@ window.utTabBarFade = function (el) {
     var box = el.getBoundingClientRect();
     if (!box.width || !box.height) return;
     var vw = window.innerWidth, vh = window.innerHeight;
-    // ut-docs#2988: scale is still about the element's own centre (no
-    // inline transform-origin -- CSS default stays 50%/50% of `box`), but
-    // Catalog (a real item list) and Inventory (several cards) routinely
-    // make the pane far taller than the viewport, so `box`'s centre sits
-    // well below the fold. Anchoring the "grow from" maths to that centre
-    // made the visible top of the pane slide in from off-screen instead of
-    // reading as a zoom out of the tapped row. `vis` is `box` clipped to
-    // the viewport -- what a shop owner can actually see growing. (The
-    // window only: a pane inside its own clipping scroller would need that
-    // ancestor's box here too; none of the three panes is one today.)
+    // ut-docs#2988: Catalog (a real item list) and Inventory (several
+    // cards) routinely make the pane far taller than the viewport, so
+    // `box`'s centre sits below the fold. `vis` is `box` clipped to the
+    // viewport -- what a shop owner can actually see growing -- and the
+    // zoom is anchored on ITS centre V. (The window only: a pane inside
+    // its own clipping scroller would need that ancestor's box too; none
+    // of the three panes is one today.)
     var visLeft = Math.max(box.left, 0);
     var visTop = Math.max(box.top, 0);
     var visRight = Math.min(box.right, vw);
@@ -3216,25 +3619,34 @@ window.utTabBarFade = function (el) {
       r = { left: vw / 2, top: vh, width: 0, height: 0 };
     }
     var s = Math.min(1, Math.max(0.1, r.width / visW));
-    // With `transform: translate(dx,dy) scale(s)` about the element's
-    // centre C, a point P maps to C + d + s(P - C). Solving that for the
-    // ON-SCREEN centre V to land exactly on the origin's centre O gives
-    // dx/dy below (ut-docs#2988) -- for a pane that's fully on screen,
-    // V === C and this reduces to the plain "origin centre minus pane
-    // centre" this had before.
-    var Cx = box.left + box.width / 2, Cy = box.top + box.height / 2;
+    // ut-docs#3010: transform-origin is pinned inline, in px, at V (set
+    // once, static -- ADR-0122's transform+opacity rule holds), so a pane
+    // that grows or shrinks mid-zoom (Inventory's hx-trigger=load cards)
+    // cannot move the anchor, as the default 50%/50% origin would. With
+    // `translate(d) scale(s)` about V a point P maps to V + d + s(P - V),
+    // so V itself lands on the origin centre O when d = O - V.
     var Vx = visLeft + visW / 2, Vy = visTop + visH / 2;
     var Ox = r.left + r.width / 2, Oy = r.top + r.height / 2;
-    var dx = Ox - Cx - s * (Vx - Cx);
-    var dy = Oy - Cy - s * (Vy - Cy);
+    var dx = Ox - Vx;
+    var dy = Oy - Vy;
     var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms')) || 300;
+    var anim = null;
+    // Only the latest zoom on this pane clears the origin: an earlier zoom
+    // finished by htmx:beforeSwap dispatches its 'finish' event a frame
+    // later, after this call has set the new origin (ut-docs#3010 review).
+    var clear = function () { if (el.utZoomAnim === anim) { el.style.transformOrigin = ''; el.utZoomAnim = null; } };
     try {
-      var anim = el.animate([
+      el.style.transformOrigin = (Vx - box.left) + 'px ' + (Vy - box.top) + 'px';
+      anim = el.animate([
         { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')', opacity: 0.4 },
         { transform: 'none', opacity: 1 }
       ], { duration: ms, easing: 'cubic-bezier(.32, .72, 0, 1)', fill: 'none' });
+      // Cleared on finish AND cancel (finishZooms/cancel paths); nothing persists.
+      el.utZoomAnim = anim;
+      anim.addEventListener('finish', clear);
+      anim.addEventListener('cancel', clear);
       UT.trackZoom(anim);
-    } catch (e) { /* motion only -- the pane is already in place */ }
+    } catch (e) { el.utZoomAnim = null; el.style.transformOrigin = ''; /* motion only -- the pane is already in place */ }
   }
 })();
 
@@ -3364,7 +3776,7 @@ window.utTabBarFade = function (el) {
   }
 
   // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or Escape --
-  // base.html's shared data-ut-escape-close handler since ut-docs#2097)
+  // ut-motion.js's shared data-ut-escape-close handler since ut-docs#2097)
   // behaves like Cancel for the rest of THIS sale -- suppress the
   // sale-start nag, without touching the per-item/per-Pay gates. `close`
   // does not bubble, so this has to be a capturing document-level
@@ -3610,6 +4022,21 @@ window.utTabBarFade = function (el) {
   var body = document.body;
 
   function toggleBtn() { return document.querySelector('.nav-drawer-toggle'); }
+  // Scrim going on/off while the drawer is open re-evaluates the dead rows.
+  if (window.MutationObserver) {
+    new MutationObserver(function () {
+      if (body.classList.contains('nav-drawer-open')) syncDeadRows(true);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  }
+  // ut-docs#6118: over a popup every drawer row but Lock is dead (CSS) and
+  // must be dead for screen readers too; cleared on close and scrim-off.
+  function syncDeadRows(open) {
+    var dead = open && document.documentElement.classList.contains('ut-scrim-on');
+    document.querySelectorAll('#nav-drawer a, #nav-drawer button').forEach(function (el) {
+      if (dead && !el.closest('.session-lock')) el.setAttribute('aria-disabled', 'true');
+      else el.removeAttribute('aria-disabled');
+    });
+  }
   function setDrawer(open, restoreFocus) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
@@ -3619,9 +4046,21 @@ window.utTabBarFade = function (el) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
     }
+    syncDeadRows(open);
     if (open) {
-      var first = document.querySelector('#nav-drawer a, #nav-drawer button');
+      var scrimOn = document.documentElement.classList.contains('ut-scrim-on');
+      var lock = scrimOn && document.querySelector('#nav-drawer .session-lock button');
+      var first = lock || (scrimOn ? null : document.querySelector('#nav-drawer a, #nav-drawer button'));
       if (first) first.focus();
+      if (lock) {
+        // Lock is the last row and the status foot overlays the drawer's end:
+        // scroll to the end (the drawer's end padding reserves the foot) once
+        // measureBar has set that padding.
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          var dr = document.getElementById('nav-drawer');
+          if (dr && body.classList.contains('nav-drawer-open')) dr.scrollTop = dr.scrollHeight;
+        }); });
+      }
     } else if (restoreFocus && btn) {
       btn.focus();
     }
@@ -3663,6 +4102,16 @@ window.utTabBarFade = function (el) {
       if (bar) bar.focus();
     }
   }
+
+  // ut-docs#6118: a row dead over a popup stays dead for AT activation too.
+  // Capture phase: htmx's boosted-link listener sits on the anchor itself.
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t instanceof Element && t.closest('#nav-drawer [aria-disabled="true"]')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
 
   document.addEventListener('click', function (e) {
     var t = e.target;

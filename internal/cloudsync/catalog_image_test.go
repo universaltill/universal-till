@@ -268,7 +268,7 @@ func TestSnapshotImageSHA256(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	shas := func(snap map[string]any) map[string]any {
@@ -288,7 +288,7 @@ func TestSnapshotImageSHA256(t *testing.T) {
 		t.Fatalf("image_sha256 = %v", got)
 	}
 	// Unchanged: no second push.
-	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), db); err != nil || len(cloud.snapshots) != 1 {
+	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), db, nil); err != nil || len(cloud.snapshots) != 1 {
 		t.Fatalf("unchanged re-push: %v, %d snapshots", err, len(cloud.snapshots))
 	}
 	// A replaced photo (same size, new bytes, new mtime) changes the snapshot.
@@ -300,7 +300,7 @@ func TestSnapshotImageSHA256(t *testing.T) {
 	if err := os.Chtimes(file, later, later); err != nil {
 		t.Fatal(err)
 	}
-	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), db); err != nil || len(cloud.snapshots) != 2 {
+	if err := pushSnapshotIfChanged(ctx, testCfg(srv.URL), db, nil); err != nil || len(cloud.snapshots) != 2 {
 		t.Fatalf("changed photo: %v, %d snapshots", err, len(cloud.snapshots))
 	}
 	if got := shas(cloud.snapshots[1]); got["it-photo"] != hexSum(photo2) {

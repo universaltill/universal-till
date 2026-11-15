@@ -1,6 +1,12 @@
 <div class="payment-picker">
-  <h3>{{ T "selforder.checkout.title" }}</h3>
+  <h3>{{ if .Blocked }}{{ T "selforder.counter.title" }}{{ else }}{{ T "selforder.checkout.title" }}{{ end }}</h3>
   <p class="payment-picker-total">{{ T "basket.total" }}: {{ money .Total }}</p>
+  {{ if .Blocked }}
+  {{/* ut-docs#3396: nothing is payable here, so the reason is the picker's
+       content, inline -- not the floating toast, which would sit over the
+       title and Cancel. */}}
+  <div class="pos-notice error payment-picker-blocked" role="alert"><span class="notice-text">{{ T .ErrKey }}</span></div>
+  {{ else }}
   {{ if .ErrKey }}<div class="toast toast-error">{{ T .ErrKey }}</div>{{ end }}
   {{ if .Methods }}
   <!-- hx-include carries the shop page's hidden offline flag (driven by
@@ -18,6 +24,7 @@
   </form>
   {{ else }}
   <p class="muted">{{ T "selforder.checkout.no_methods" }}</p>
+  {{ end }}
   {{ end }}
   <button type="button" class="btn secondary"
           data-action="close-clear:selforder-modal">

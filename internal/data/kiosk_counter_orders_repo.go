@@ -247,6 +247,7 @@ func (r *KioskCounterOrdersRepo) Create(ctx context.Context, order KioskCounterO
 	var tillPrefix, primaryURL, tillID string
 	_ = tx.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&tillPrefix)
+	tillPrefix = customerFacingPrefix(tillPrefix)
 	if strings.TrimSpace(tillPrefix) == "" {
 		_ = tx.QueryRowContext(ctx,
 			`SELECT value FROM settings WHERE key = 'sync.primary_url'`).Scan(&primaryURL)

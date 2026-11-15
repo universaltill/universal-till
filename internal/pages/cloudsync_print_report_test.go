@@ -2,7 +2,6 @@ package pages
 
 import (
 	"context"
-	"net"
 	"strings"
 	"testing"
 
@@ -107,13 +106,7 @@ func TestCloudPrintReport_NoPrinterFails(t *testing.T) {
 
 func TestCloudPrintReport_UnreachablePrinterFails(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close() // nothing listens there now
-	setNetworkPrinter(t, dp, addr)
+	setNetworkPrinter(t, dp, unreachableAddr())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	if _, err := cloudPrintReport(ctx, dp, samplePrintReport(0)); err == nil || !strings.HasPrefix(err.Error(), "print failed") {
