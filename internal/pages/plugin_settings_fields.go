@@ -172,7 +172,7 @@ func allASCIIDigits(s string) bool {
 func formatSettingLimit(kind string, n int64, locale string) string {
 	switch kind {
 	case plugins.SettingTypePercent:
-		return httpx.FormatPercentBP(n, locale)
+		return httpx.FormatPercentBPDisplay(n, locale)
 	case plugins.SettingTypeMoney:
 		return httpx.FormatMoney(n, locale)
 	}
