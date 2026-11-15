@@ -3,6 +3,7 @@ id: updates
 title: Software-Updates
 section: Verbinden & erweitern
 order: 350
+public: true
 summary: Die Kasse prüft auf neue Versionen und teilt mit, wenn eine verfügbar ist; auf den meisten Plattformen aktualisiert sie sich mit einem Klick selbst.
 keywords: [update, version, aktualisierung, zeitplan]
 ---

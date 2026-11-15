@@ -17,6 +17,9 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8098 UT_CSP_
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
 # ut-docs#3814: no LAN discovery (mDNS) from a throwaway till. Overridable.
 : "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
+# ut-docs#5237: never poll the real GitHub releases from a throwaway till —
+# a new release would show "Update now" mid-run and move the status bar. Overridable.
+: "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
 
 cd "$ROOT"
 # The demo catalogue the sale screen and Items page render (ut-docs#539

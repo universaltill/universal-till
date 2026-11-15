@@ -53,7 +53,7 @@ func TestClassifyInstallError(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			failure := ClassifyInstallError(assertErr(tc.err))
+			failure := ClassifyInstallError(assertErr(tc.err), true)
 			if failure.MessageKey != tc.key {
 				t.Fatalf("message key = %q, want %q", failure.MessageKey, tc.key)
 			}
@@ -85,7 +85,7 @@ func TestClassifyInstallError_NotEntitled(t *testing.T) {
 		{"wrapped APIError", fmt.Errorf("install: %w", apiErr)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			failure := ClassifyInstallError(tc.err)
+			failure := ClassifyInstallError(tc.err, true)
 			if failure.MessageKey != "plugins.install.error.not_entitled" {
 				t.Fatalf("message key = %q, want plugins.install.error.not_entitled", failure.MessageKey)
 			}
@@ -112,7 +112,7 @@ func TestClassifyInstallError_ListingNotFound(t *testing.T) {
 		{"wrapped APIError", fmt.Errorf("install: %w", apiErr)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			failure := ClassifyInstallError(tc.err)
+			failure := ClassifyInstallError(tc.err, true)
 			if failure.MessageKey != "plugins.install.error.not_found" {
 				t.Fatalf("message key = %q, want plugins.install.error.not_found", failure.MessageKey)
 			}
@@ -234,3 +234,82 @@ type testErr string
 func (e testErr) Error() string { return string(e) }
 
 func assertErr(message string) error { return testErr(message) }
+
+// TestMarketplaceCodeFailure pins the single marketplace-code -> till-message
+// table (ut-docs#3541): the three listing/entitlement codes plus the till-auth
+// codes ut-cloud's download-token route can answer. None is retryable.
+func TestMarketplaceCodeFailure(t *testing.T) {
+	cases := []struct {
+		name     string
+		code     string
+		reason   string
+		hasOwner bool
+		key      string
+		status   int
+	}{
+		{"not_entitled", "not_entitled", "", true, "plugins.install.error.not_entitled", 403},
+		{"listing_not_found", "listing_not_found", "", true, "plugins.install.error.not_found", 404},
+		{"registered_required", "registered_required", "", true, "plugins.install.error.registered_required", 403},
+		{"store_auth_required", "store_auth_required", "", true, "plugins.install.error.pair_required", 403},
+		{"removed, no reason", "device_revoked", "", true, "plugins.install.error.till_removed", 403},
+		{"removed, unknown reason", "device_revoked", "whatever", true, "plugins.install.error.till_removed", 403},
+		{"replaced", "device_revoked", "replaced", true, "plugins.install.error.till_replaced", 403},
+		{"moved", "device_revoked", "moved", true, "plugins.install.error.till_moved", 403},
+		{"replaced, unclaimed store", "device_revoked", "replaced", false, "plugins.install.error.till_replaced", 403},
+		{"unauthorized, owned", "unauthorized", "", true, "plugins.install.error.pair_again", 403},
+		{"token_retired, owned", "token_retired", "", true, "plugins.install.error.pair_again", 403},
+		{"device_mismatch, owned", "device_mismatch", "", true, "plugins.install.error.pair_again", 403},
+		{"unauthorized, unclaimed", "unauthorized", "", false, "plugins.install.error.register_new", 403},
+		{"token_retired, unclaimed", "token_retired", "", false, "plugins.install.error.register_new", 403},
+		{"device_mismatch, unclaimed", "device_mismatch", "", false, "plugins.install.error.pair_again", 403},
+		{"service_unavailable", "service_unavailable", "", true, "plugins.install.error.service_unavailable", 403},
+	}
+	for _, tc := range cases {
+		for _, wrapped := range []bool{false, true} {
+			var err error = &marketplace.APIError{Code: tc.code, Reason: tc.reason, Message: "x"}
+			if wrapped {
+				err = fmt.Errorf("download: %w", err)
+			}
+			f, ok := MarketplaceCodeFailure(err, tc.hasOwner)
+			if !ok {
+				t.Fatalf("%s (wrapped=%v): not mapped", tc.name, wrapped)
+			}
+			if f.MessageKey != tc.key || f.Retryable || f.Message == "" || f.Status != tc.status {
+				t.Errorf("%s (wrapped=%v): got %+v, want key %q non-retryable status %d", tc.name, wrapped, f, tc.key, tc.status)
+			}
+			if got := ClassifyInstallError(err, tc.hasOwner); got.MessageKey != tc.key || got.Retryable {
+				t.Errorf("ClassifyInstallError(%s) = %+v, want key %q non-retryable", tc.name, got, tc.key)
+			}
+		}
+	}
+	for _, err := range []error{
+		&marketplace.APIError{Code: "something_else"},
+		fmt.Errorf("plain failure"),
+		nil,
+	} {
+		if _, ok := MarketplaceCodeFailure(err, true); ok {
+			t.Errorf("MarketplaceCodeFailure(%v) mapped, want false", err)
+		}
+	}
+}
+
+func TestClassifyInstallError_NewKeysResolveInLocales(t *testing.T) {
+	i18n, err := config.NewI18nFS(locales.FS, "en")
+	if err != nil {
+		t.Fatalf("load embedded locales: %v", err)
+	}
+	for _, key := range []string{
+		"plugins.install.error.registered_required",
+		"plugins.install.error.pair_required",
+		"plugins.install.error.pair_again",
+		"plugins.install.error.till_removed",
+		"plugins.install.error.till_replaced",
+		"plugins.install.error.till_moved",
+		"plugins.install.error.register_new",
+		"plugins.install.error.service_unavailable",
+	} {
+		if got := i18n.T("en", key); got == key {
+			t.Errorf("locale key %q missing in en.json", key)
+		}
+	}
+}

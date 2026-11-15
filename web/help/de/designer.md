@@ -3,6 +3,7 @@ id: designer
 title: Belegdesigner
 section: Den Betrieb führen
 order: 240
+public: true
 summary: Passen Sie an, was Ihr Beleg zeigt (Logo, Kopf-, Fußzeile) — mit Live-Vorschau und Testdruck vor dem Speichern.
 routes: [/receipt-designer]
 keywords: [beleg, logo, layout, fußzeile]

@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"testing"
 )
@@ -169,7 +170,7 @@ func allReceiptNos(t *testing.T, repo *TillsRepo) []string {
 func TestEnrolTill_HighWaterTravelsInTheAdminBundle(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "hw-primary.db")
-	replica := openMigratedDB(t, "hw-replica.db")
+	replica := openReplicaDB(t, "hw-replica.db")
 	if _, _, err := NewTillsRepo(primary.DB).EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -182,5 +183,114 @@ func TestEnrolTill_HighWaterTravelsInTheAdminBundle(t *testing.T) {
 	}
 	if v := settingValue(t, ctx, NewTillsRepo(replica.DB), TillNoHighWaterSettingsKey); v != "2" {
 		t.Fatalf("replica's %s = %q after the admin pull, want 2", TillNoHighWaterSettingsKey, v)
+	}
+}
+
+// ut-docs#5074 design §3.6: a prefix seen only in this till's read-only sales
+// copy (another till's sales, mirror_sales) is taken too — a promoted till
+// that holds the copy must never hand that prefix out again.
+func TestTillsRepo_ReceiptPrefixesInUseIncludesTheSalesCopy(t *testing.T) {
+	d := openMigratedDB(t, "tills-prefix-copy.db")
+	ctx := context.Background()
+	mustExec(t, d, `INSERT INTO mirror_sales (id, src_seq, epoch, origin_till_id, receipt_no, status, sale_type, tender_type,
+  currency, subtotal, discount_total, tax_total, total, rounding, service_charge_amount, service_charge_tax_basis_bp,
+  voucher_issue_total, offline, created_at, local_date, received_at)
+  VALUES ('m1', 1, 'e', 't9', 'T9-000000003', 'completed', 'sale', 'cash', 'GBP', 1, 0, 0, 1, 0, 0, 0, 0, 0, 'x', '2026-10-26', 'x'),
+         ('m2', 2, 'e', 'main', '000000004', 'completed', 'sale', 'cash', 'GBP', 1, 0, 0, 1, 0, 0, 0, 0, 0, 'x', '2026-10-26', 'x')`)
+	got, err := receiptPrefixesInUse(ctx, d.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["T9-"] || len(got) != 1 {
+		t.Fatalf("prefixes in use = %v, want T9- from the sales copy only", got)
+	}
+	// The enrolment that follows numbers past it.
+	_, no, err := NewTillsRepo(d.DB).EnrolTill(ctx, "Till X", "hash-x", TillRoleAdditional, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if no <= 9 {
+		t.Fatalf("new till number %d reuses or precedes T9- seen only in the copy", no)
+	}
+}
+
+// ut-docs#5162: a restored copy of a joined till asks to keep a provisional
+// R<4 hex>- prefix. It is no T<n>-, so the main till grants a fresh number
+// instead, and two copies of one till can never share one.
+func TestEnrolTill_ProvisionalRestorePrefixGetsANewTillNo(t *testing.T) {
+	d := openMigratedDB(t, "tills-restored.db")
+	ctx := context.Background()
+	repo := NewTillsRepo(d.DB)
+	if _, n, err := repo.EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil || n != 2 {
+		t.Fatalf("first till = %d, %v; want 2", n, err)
+	}
+	for _, p := range []string{"R1a2b-", "Rffff-"} {
+		id, n, err := repo.EnrolTill(ctx, "Restored copy "+p, "h-"+p, TillRoleAdditional, p)
+		if err != nil || n < 3 {
+			t.Fatalf("requested %q = %d, %v; want a fresh T<n>- (n >= 3)", p, n, err)
+		}
+		_ = id
+	}
+}
+
+// ut-docs#5058 T4: a replacement main till must not reuse the dead till's
+// receipt (and invoice) numbers.
+func TestReplacementMainTillPrefix_NeverEqualsTheReplacedTill(t *testing.T) {
+	shape := regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+	restored := regexp.MustCompile(`^R[0-9a-f]{4}-$`)
+	for _, tc := range []struct{ newID, oldID string }{
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-aaaaaaaa-0000-4000-8000-000000000001"},
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a0000-1111-4000-8000-000000000002"}, // same first 4 hex
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a9c1e-0000-4000-8000-000000000002"}, // same first 8 hex
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", "main-till"},                                 // legacy / non-uuid old id
+		{"till-3f2a9c1e-0000-4000-8000-000000000001", ""},
+	} {
+		got := ReplacementMainTillPrefix(tc.newID, tc.oldID)
+		if !shape.MatchString(got) {
+			t.Errorf("(%q,%q) = %q, want M<8 hex>-", tc.newID, tc.oldID, got)
+		}
+		if got == "" || restored.MatchString(got) || tillNoOf(got) != 0 {
+			t.Errorf("(%q,%q) = %q collides with the main/restored/T<n> prefixes", tc.newID, tc.oldID, got)
+		}
+		// The old till's own prefix, if it was itself a replacement.
+		if got == ReplacementMainTillPrefix(tc.oldID, "") {
+			t.Errorf("(%q,%q) = %q equals the old till's own prefix", tc.newID, tc.oldID, got)
+		}
+		if again := ReplacementMainTillPrefix(tc.newID, tc.oldID); again != got {
+			t.Errorf("not deterministic: %q vs %q", got, again)
+		}
+	}
+}
+
+// ut-docs#5058 review F2: always 8 hex, and the matcher agrees.
+func TestReplacementMainTillPrefix_AlwaysEightHex(t *testing.T) {
+	got := ReplacementMainTillPrefix("till-3f2a9c1e-0000-4000-8000-000000000001", "till-aaaaaaaa-0000-4000-8000-000000000001")
+	if got != "M3f2a9c1e-" {
+		t.Errorf("got %q, want M3f2a9c1e-", got)
+	}
+	// Same first 8 hex as the replaced till: next 8 hex chars.
+	got = ReplacementMainTillPrefix("till-3f2a9c1e-0000-4000-8000-000000000001", "till-3f2a9c1e-0000-4000-8000-000000000002")
+	if got != "M00004000-" {
+		t.Errorf("fallback got %q, want M00004000-", got)
+	}
+	for _, p := range []string{got, "M3f2a9c1e-"} {
+		if !IsReplacementMainTillPrefix(p) {
+			t.Errorf("IsReplacementMainTillPrefix(%q) = false", p)
+		}
+	}
+	for _, p := range []string{"", "T2-", "R1a2b-", "M3f2a-", "M3F2A9C1E-", "M3f2a9c1e", "M3f2a9c1e-1", "Mzzzzzzzz-"} {
+		if IsReplacementMainTillPrefix(p) {
+			t.Errorf("IsReplacementMainTillPrefix(%q) = true", p)
+		}
+	}
+}
+
+// Documents the collision T4 fixes: a fresh install has no sync.* rows, so
+// its first receipt is the same 000000001 a replaced original main till had.
+func TestNextReceiptNo_FreshInstallHasNoPrefix(t *testing.T) {
+	d := openMigratedDB(t, "fresh-receipt.db")
+	got, err := NewPOSRepo(d.DB).NextReceiptNo(context.Background(), nil)
+	if err != nil || got != "000000001" {
+		t.Fatalf("NextReceiptNo = %q, %v; want 000000001", got, err)
 	}
 }

@@ -33,6 +33,11 @@
 //     button (.t-cards-toggle)    cells keeps the rest behind a toggle;
 //                                 the button is display:none above 480px
 //                                 (not on a data-cards-collapse="off" table)
+//   [data-card-keep]              set by the page, per row: a cell that
+//                                 never waits behind More — a flagged
+//                                 row's status, so its ⚠ and reason show on
+//                                 the collapsed card and the tint is never
+//                                 the only signal (ut-docs#4583)
 //
 // Captions come from <body data-show-more / data-show-less> (base.html,
 // common.show_more / common.show_less) so this file stays locale-free.
@@ -137,7 +142,10 @@
       c.setAttribute('data-label', label);
       labelled++;
       if (labelled === 1) c.classList.add('t-cards-title');
-      else if (collapse && labelled > MAX_SHOWN) { c.classList.add('t-cards-extra'); hasExtra = true; }
+      else if (collapse && labelled > MAX_SHOWN && !c.hasAttribute('data-card-keep')) {
+        c.classList.add('t-cards-extra');
+        hasExtra = true;
+      }
     });
 
     var holder = tr.querySelector(':scope > .t-cards-more');

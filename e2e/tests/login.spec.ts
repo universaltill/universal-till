@@ -201,7 +201,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
       expect(box?.height ?? 0, 'country tile must be a real, tappable height').toBeGreaterThan(20);
 
       await gbTile.tap();
-      await expect(gbTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(gbTile).toHaveAttribute('aria-checked', 'true');
       // Tapping the tile did the old <select>'s @change job: prefilled the
       // hidden currency/tax fields client-side, no server round trip.
       // Alpine's :value binding sets the live DOM property, not the HTML
@@ -212,13 +212,14 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await expect(countryStep.locator('input[name=currency_touched]')).toHaveValue('1');
 
       // Keyboard operability is not a regression from the native <select>:
-      // a real <button> tile is independently focusable and Enter-activates,
-      // same as the France tile below proves by actually switching country.
+      // tiles are a roving-tabindex radiogroup (ut-docs#1103), so FR has
+      // tabindex=-1 here, but programmatic .focus() still works and Enter
+      // still activates the button, as the France tile below proves.
       const frTile = countryStep.locator('button.picker-tile[value="FR"]');
       await frTile.focus();
       await p.keyboard.press('Enter');
-      await expect(frTile).toHaveAttribute('aria-pressed', 'true');
-      await expect(gbTile).toHaveAttribute('aria-pressed', 'false');
+      await expect(frTile).toHaveAttribute('aria-checked', 'true');
+      await expect(gbTile).toHaveAttribute('aria-checked', 'false');
       await expect(countryStep.locator('input[name=currency]')).toHaveValue('EUR');
 
       await countryStep.locator('.setup-nav button', { hasText: 'Next' }).click();
@@ -232,7 +233,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await expect(shopTypeStep.locator('button.picker-tile')).toHaveCount(6);
       const cafeTile = shopTypeStep.locator('button.picker-tile[data-value="cafe"]');
       await cafeTile.tap();
-      await expect(cafeTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(cafeTile).toHaveAttribute('aria-checked', 'true');
       await expect(shopTypeStep.locator('input[name=shop_type]')).toHaveValue('cafe');
     } finally {
       await ctx.close();
@@ -304,10 +305,26 @@ test.describe.serial('first-boot setup and PIN login', () => {
       // count all 14 regardless of visibility — :visible scopes it to what
       // is actually shown, same as everywhere else this test checks state.
       await expect(gbTile).toBeVisible();
-      await expect(gbTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(gbTile).toHaveAttribute('aria-checked', 'true');
       await expect(showAllBtn).toBeVisible();
       await expect(step(2).locator('button.picker-tile[value="FR"]')).toBeHidden();
       await expect(step(2).locator('button.picker-tile:visible')).toHaveCount(1);
+
+      // ut-docs#1103 R5: arrows/Home/End on the lone visible (checked) tile
+      // are a no-op - no hidden country selected, no auto-expand.
+      const countryBefore = await step(2).locator('input[name=country]').inputValue();
+      const currencyBefore = await step(2).locator('input[name=currency]').inputValue();
+      const touchedBefore = await step(2).locator('input[name=currency_touched]').inputValue();
+      await gbTile.focus();
+      for (const k of ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'Home', 'End']) await p.keyboard.press(k);
+      await expect(gbTile).toBeFocused();
+      await expect(gbTile).toHaveAttribute('aria-checked', 'true');
+      await expect(step(2).locator('input[name=country]')).toHaveValue(countryBefore);
+      await expect(step(2).locator('input[name=currency]')).toHaveValue(currencyBefore);
+      await expect(step(2).locator('input[name=currency_touched]')).toHaveValue(touchedBefore);
+      await expect(showAllBtn).toBeVisible();
+      await p.keyboard.press('Tab');
+      await expect(showAllBtn).toBeFocused();
 
       // Tapping the toggle reveals the rest, GB retains its selection at
       // its normal (alphabetical) position — not duplicated, not lost. Not
@@ -324,8 +341,11 @@ test.describe.serial('first-boot setup and PIN login', () => {
         })
         .toBeGreaterThan(1);
       await expect(gbTile).toBeVisible();
-      await expect(gbTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(gbTile).toHaveAttribute('aria-checked', 'true');
       await expect(showAllBtn).toBeHidden();
+      // #1103 R6: expanding focuses the checked tile, the group's single tab stop.
+      await expect(gbTile).toBeFocused();
+      await expect(step(2).locator('.picker-grid [tabindex="0"]')).toHaveCount(1);
     } finally {
       await ctx.close();
     }
@@ -391,6 +411,223 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // above are what do that; this just documents the minimum still holds.
     expect(kiosk.tileHeight, 'country tile at 1024x600 must meet the 44px touch-target minimum').toBeGreaterThanOrEqual(44);
     expect(waveshare.tileHeight, 'country tile at 1920x1200 must meet the 44px touch-target minimum').toBeGreaterThanOrEqual(44);
+  });
+
+  // ut-docs#1103: WAI-ARIA radiogroup (roving tabindex, arrow keys) via
+  // web/public/radiogroup.js.
+  test('setup country tiles are a radiogroup with one tab stop and arrow-key selection (ut-docs#1103)', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1024, height: 600 } });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' });
+    try {
+      await p.goto('/setup');
+      await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
+      const st = p.locator('[data-step="2"]');
+      await st.locator('h1').waitFor();
+      const grid = st.locator('.picker-grid');
+      await expect(grid).toHaveAttribute('role', 'radiogroup');
+      expect(await grid.getAttribute('aria-label')).toBeTruthy();
+      const showAll = st.locator('button', { hasText: 'Show all countries' });
+      if (await showAll.isVisible()) await showAll.click();
+      const tiles = grid.locator('.picker-tile');
+      const n = await tiles.count();
+      expect(n).toBeGreaterThan(2);
+      for (let i = 0; i < n; i++) {
+        await expect(tiles.nth(i)).toHaveAttribute('role', 'radio');
+        await expect(tiles.nth(i)).toHaveAttribute('aria-checked', /^(true|false)$/);
+      }
+      await expect(grid.locator('.picker-tile[aria-pressed]')).toHaveCount(0);
+
+      const gb = grid.locator('.picker-tile[value="GB"]');
+      await gb.click();
+      await expect(grid.locator('[tabindex="0"]')).toHaveCount(1);
+      await expect(gb).toHaveAttribute('tabindex', '0');
+
+      const vis = grid.locator('.picker-tile:visible');
+      const values = await vis.evaluateAll((els) => els.map((e) => (e as HTMLButtonElement).value));
+      const idx = values.indexOf('GB');
+      const expectAt = async (i: number) => {
+        const t = vis.nth(i);
+        await expect(t).toBeFocused();
+        await expect(t).toHaveAttribute('aria-checked', 'true');
+        await expect(t).toHaveAttribute('tabindex', '0');
+        await expect(st.locator('input[name=country]')).toHaveValue(values[i]);
+        // A tile with no data-currency keeps the previous currency (@click: d.currency || currency).
+        const cur = await t.getAttribute('data-currency');
+        if (cur) await expect(st.locator('input[name=currency]')).toHaveValue(cur);
+        await expect(st.locator('input[name=currency_touched]')).toHaveValue('1');
+        await expect(grid.locator('[aria-checked="true"]')).toHaveCount(1);
+        await expect(grid.locator('[tabindex="0"]')).toHaveCount(1);
+      };
+      await gb.focus();
+      await p.keyboard.press('ArrowRight');
+      await expectAt((idx + 1) % n);
+      await expect(gb).toHaveAttribute('aria-checked', 'false');
+      await expect(gb).toHaveAttribute('tabindex', '-1');
+      await p.keyboard.press('ArrowLeft');
+      await expectAt(idx);
+      await p.keyboard.press('ArrowDown');
+      await expectAt((idx + 1) % n);
+      await p.keyboard.press('ArrowUp');
+      await expectAt(idx);
+      await p.keyboard.press('End');
+      await expectAt(n - 1);
+      await p.keyboard.press('ArrowDown');
+      await expectAt(0);
+      await p.keyboard.press('ArrowUp');
+      await expectAt(n - 1);
+      await p.keyboard.press('Home');
+      await expectAt(0);
+
+      await p.keyboard.press('Tab');
+      expect(await p.evaluate(() => !!document.activeElement?.closest('.picker-grid'))).toBe(false);
+      await p.keyboard.press('Shift+Tab');
+      await expectAt(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('setup country arrows mirror Left/Right under RTL (ut-docs#1103)', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1024, height: 600 } });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' });
+    try {
+      await p.goto('/setup');
+      await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
+      const st = p.locator('[data-step="2"]');
+      await st.locator('h1').waitFor();
+      const showAll = st.locator('button', { hasText: 'Show all countries' });
+      if (await showAll.isVisible()) await showAll.click();
+      const grid = st.locator('.picker-grid');
+      const vis = grid.locator('.picker-tile:visible');
+      const values = await vis.evaluateAll((els) => els.map((e) => (e as HTMLButtonElement).value));
+      const idx = values.indexOf('GB');
+      expect(idx).toBeGreaterThan(0);
+      expect(idx).toBeLessThan(values.length - 1); // ArrowLeft below needs a tile after GB
+      await p.evaluate(() => { document.documentElement.dir = 'rtl'; });
+      const at = async (i: number) => {
+        await expect(vis.nth(i)).toBeFocused();
+        await expect(vis.nth(i)).toHaveAttribute('aria-checked', 'true');
+      };
+      await grid.locator('.picker-tile[value="GB"]').click();
+      await grid.locator('.picker-tile[value="GB"]').focus();
+      await p.keyboard.press('ArrowLeft');
+      await at(idx + 1);
+      await p.keyboard.press('ArrowRight');
+      await at(idx);
+      await p.keyboard.press('ArrowRight');
+      await at(idx - 1);
+      await p.keyboard.press('ArrowDown');
+      await at(idx);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('setup shop-type tiles: first tile is the tab stop, focusing it does not select (ut-docs#1103)', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1024, height: 600 } });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' });
+    try {
+      const step = (n: number) => p.locator(`[data-step="${n}"]`);
+      await p.goto('/setup');
+      await step(1).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(2).locator('h1').waitFor();
+      await step(2).locator('button.picker-tile[value="GB"]').click();
+      await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await p.locator('input[name=store_name]').fill('Radio Test Shop');
+      await p.locator('input[name=till_name]').fill('Front till');
+      await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
+
+      const st = step(5);
+      await st.locator('h1').waitFor();
+      const grid = st.locator('.picker-grid');
+      await expect(grid).toHaveAttribute('role', 'radiogroup');
+      const tiles = grid.locator('.picker-tile');
+      const n = await tiles.count();
+      expect(n).toBe(6);
+      await expect(grid.locator('[aria-checked="true"]')).toHaveCount(0);
+      await expect(grid.locator('[tabindex="0"]')).toHaveCount(1);
+      await expect(tiles.first()).toHaveAttribute('tabindex', '0');
+
+      await tiles.first().focus();
+      await expect(st.locator('input[name=shop_type]')).toHaveValue('');
+      await p.keyboard.press('Space');
+      await expect(tiles.first()).toHaveAttribute('aria-checked', 'true');
+      await expect(st.locator('input[name=shop_type]')).toHaveValue((await tiles.first().getAttribute('data-value')) || '');
+      await p.keyboard.press('ArrowDown');
+      await expect(tiles.nth(1)).toBeFocused();
+      await expect(tiles.nth(1)).toHaveAttribute('aria-checked', 'true');
+      await p.keyboard.press('End');
+      await expect(tiles.nth(n - 1)).toHaveAttribute('aria-checked', 'true');
+      await p.keyboard.press('ArrowDown');
+      await expect(tiles.first()).toBeFocused();
+      await expect(tiles.first()).toHaveAttribute('aria-checked', 'true');
+      await p.keyboard.press('End');
+      await p.keyboard.press('Home');
+      await expect(tiles.first()).toBeFocused();
+      await expect(grid.locator('[aria-checked="true"]')).toHaveCount(1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  // ut-docs#5602: on a short till screen (1024x600 kiosk Pi) the wizard
+  // card's dead top margin pushed Back/Next below the fold when the "PINs do
+  // not match" error re-rendered the PIN step. Needs the first-boot till, so
+  // it lives in this serial block before the wizard is completed; a failed
+  // POST /api/setup (mismatched PINs) consumes nothing.
+  test("PIN mismatch keeps the wizard's Back/Next above the fold at 1024x600, phone and desktop (ut-docs#5602)", async ({ browser }) => {
+    const viewports = [
+      { name: 'kiosk 1024x600', width: 1024, height: 600 },
+      { name: 'phone 360x740', width: 360, height: 740 },
+      { name: 'desktop 1280x800', width: 1280, height: 800 },
+    ];
+    for (const vp of viewports) {
+      const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+      const p = await ctx.newPage();
+      await p.emulateMedia({ reducedMotion: 'reduce' });
+      try {
+        await p.goto('/setup');
+        await expect(p, `${vp.name}: needs the first-boot till (/setup must not redirect)`).toHaveURL(/\/setup/);
+        // Jump to the admin PIN step (Alpine) instead of clicking through six steps.
+        await p.evaluate(() => {
+          (document.querySelector('main.setup-card') as any)._x_dataStack[0].step = 6;
+        });
+        await p.fill('input[name=pin]', '1234');
+        await p.fill('input[name=pin_confirm]', '5678');
+        await Promise.all([
+          p.waitForResponse((r) => r.url().includes('/api/setup') && r.request().method() === 'POST'),
+          p.evaluate(() => (document.querySelector('form[action="/api/setup"]') as HTMLFormElement).submit()),
+        ]);
+
+        await expect(p.locator('.login-error[role="alert"]'), vp.name).toContainText(/PINs do not match/i);
+        await p.evaluate(() => document.fonts.ready);
+
+        const m = await p.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll('section[data-step="6"] .setup-nav .btn'));
+          return {
+            innerHeight: window.innerHeight,
+            scrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+            btns: btns.map((e) => {
+              const r = e.getBoundingClientRect();
+              return { top: r.top, bottom: r.bottom, height: r.height };
+            }),
+          };
+        });
+        expect(m.btns.length, vp.name).toBe(2);
+        for (const b of m.btns) {
+          expect(b.top, `${vp.name}: button top`).toBeGreaterThanOrEqual(0);
+          expect(b.bottom, `${vp.name}: button bottom within ${m.innerHeight}`).toBeLessThanOrEqual(m.innerHeight);
+          expect(b.height, `${vp.name}: button height`).toBeGreaterThanOrEqual(44);
+        }
+        expect(m.scrollWidth, `${vp.name}: horizontal overflow`).toBeLessThanOrEqual(m.innerWidth);
+      } finally {
+        await ctx.close();
+      }
+    }
   });
 
   test('completing the wizard creates the admin PIN and logs in', async () => {
@@ -577,8 +814,9 @@ test.describe.serial('first-boot setup and PIN login', () => {
       page.waitForResponse((r) => r.url().includes('/api/shifts/open')),
       page.locator('#open-shift-form button[type=submit]').click(),
     ]);
-    // Check the status, not the text: the success message carries the new
-    // shift's UUID, which can itself contain "500" (ut-docs#3155 CI).
+    // Check the status, not the text: the success message used to carry
+    // the shift's UUID, which could contain "500" (ut-docs#3155 CI); it no
+    // longer does (ut-docs#5810), but the status stays the robust check.
     expect(resp.status()).toBeLessThan(500);
 
     const result = page.locator('#shift-result');
@@ -772,6 +1010,49 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await form.locator('button[type=submit]').click();
       await expect(msg).toContainText("can't be reached");
       await expect(msg).not.toContainText('Incorrect PIN');
+      assertOwnClean();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  // ut-docs#1105: #1099's "operable by touch alone" criterion had no
+  // standing browser assertion — the test above runs in a non-touch
+  // context and fill()s the PIN. A kiosk at the login screen has no
+  // physical keyboard, so the escape hatch is only real if tapping its
+  // PIN field opens the on-screen keyboard in numeric mode and the keys
+  // actually type into it. Own touch-capable, cookie-less context (same
+  // pattern as the setup-field OSK test above); no submit, so no lockout
+  // budget is spent.
+  test('the login-screen exit-to-OS PIN field opens the numeric on-screen keyboard on a touch device', async ({ browser }) => {
+    const ctx = await browser.newContext({ hasTouch: true });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
+    const assertOwnClean = watchConsole(p);
+    try {
+      await p.goto('/login');
+      await expect(p.locator('.pin-pad')).toBeVisible();
+
+      const details = p.locator('details.login-exit-os');
+      await details.locator('summary').tap();
+      const pinField = p.locator('#login-exit-os-form [name="manager_pin"]');
+      await expect(pinField).toBeVisible();
+
+      await pinField.tap();
+      const osk = p.locator('#osk');
+      await expect(osk).toBeVisible();
+      // Numeric layout: a digit pad, not qwerty (same check as
+      // osk-central-guard.spec.ts's numeric-inputmode case).
+      await expect(osk.locator('button[data-k="1"]')).toBeVisible();
+      // The native keyboard stays suppressed, so the OSK is the only input.
+      await expect(pinField).toHaveAttribute('inputmode', 'none');
+      await expect(osk.locator('button[data-k="q"]')).toHaveCount(0);
+      expect(await osk.locator('.osk-key').count(), 'the numeric layout has far fewer keys than a full qwerty layout').toBeLessThan(20);
+
+      // Typing through the OSK alone fills the field.
+      for (const k of ['4', '7', '1', '9']) await osk.locator(`button[data-k="${k}"]`).tap();
+      await expect(pinField).toHaveValue('4719');
+      await expect(pinField).toBeFocused();
       assertOwnClean();
     } finally {
       await ctx.close();

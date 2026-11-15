@@ -41,6 +41,8 @@ var eventDataClasses = map[string][]string{
 	"sale.completed":  {data.DataClassSales, data.DataClassCustomers, data.DataClassStaff},
 	"stock.adjusted":  {data.DataClassStock},
 	"customer.erased": {data.DataClassCustomers},
+	// actor/approver staff ids; a cash-drawer journal entry
+	"till.drawer.no_sale": {data.DataClassSales, data.DataClassStaff},
 	// the item photo and the catalog item it was matched to
 	"catalog.identify":           {data.DataClassCatalog},
 	"catalog.identify.confirmed": {data.DataClassCatalog},
@@ -73,6 +75,22 @@ func eventClassesFor(pluginID string, ev Event) ([]string, bool) {
 		return nil, true
 	}
 	return EventDataClasses(ev.Type)
+}
+
+// isAskJob: the page layer's job for the operator's ui ask — it runs under
+// the plugin's own prefix, with the operator's request as payload (the same
+// class set as ui.action.ask: none). Only core's job path puts a JobCall and
+// the ask operator on ctx, so a manifest-named payment or button trigger
+// event with the same name never matches (ut-docs#4129 review).
+func isAskJob(ctx context.Context, pluginID string, ev Event) bool {
+	if ev.Hop != 0 || !strings.HasPrefix(ev.Type, pluginID+".") {
+		return false
+	}
+	if _, ok := JobFrom(ctx); !ok {
+		return false
+	}
+	_, ok := AskOperatorFrom(ctx)
+	return ok
 }
 
 // eventGate is what Sync learned about a plugin's installed manifest, read
@@ -130,6 +148,9 @@ func (w *WasmRuntime) checkEventDataClasses(ctx context.Context, pluginID string
 		return fmt.Errorf("%w: %s: installed manifest of %s was unreadable at load", ErrEventDataClassDenied, ev.Type, pluginID)
 	}
 	classes, ok := eventClassesFor(pluginID, ev)
+	if !ok && isAskJob(ctx, pluginID, ev) {
+		classes, ok = nil, true
+	}
 	if !ok {
 		w.auditEventDenial(ctx, db, pluginID, ev.Type, AIAgentPermission, "event has no AI data class")
 		return fmt.Errorf("%w: %s has no AI data class", ErrEventDataClassDenied, ev.Type)

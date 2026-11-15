@@ -11,7 +11,7 @@ import (
 func TestAdminDumpApply_VariantsFollowItemOffOn_4348(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1', 'FW', 'Flat White', 320, 1)`)
 	mustExec(t, primary, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES

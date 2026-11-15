@@ -3,6 +3,7 @@ id: inventory
 title: موجودی و انبار
 section: راه‌اندازی فروشگاه
 order: 120
+public: true
 summary: موجودی هر کالا و تنوع را دنبال می‌کند.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 ---

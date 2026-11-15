@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -27,6 +28,10 @@ import (
 // cloudAuthChipStatus is the chip's source; a var so tests can pin it.
 var cloudAuthChipStatus = cloudsync.AuthChipStatus
 
+// restoredChipStatus is the registration state the restored variant gates
+// on; a var so tests can pin it.
+var restoredChipStatus = enroll.CurrentStatus
+
 // The chip's variants (data-cloud-auth in the partial).
 const (
 	cloudAuthNone     = ""
@@ -34,6 +39,7 @@ const (
 	cloudAuthRepair   = "repair"
 	cloudAuthRegister = "register"
 	cloudAuthReplaced = "replaced" // ut-docs#5058: replaced as main till
+	cloudAuthRestored = "restored" // ut-docs#5157: data restored onto a new device
 )
 
 // cloudAuthChipVariant picks the chip's words.
@@ -51,15 +57,21 @@ func cloudAuthChipVariant(st cloudsync.AuthChip, hasOwner bool) string {
 }
 
 // storeHasOwner reports whether this till's store is known to be claimed.
-// The till keeps no "claimed" flag and the sync contract sends none, so the
-// only local evidence of an owner is the cached entitlement (ADR-0060 §4):
-// a subscription — paid plan, or a status other than none — can only exist
-// on an owner's account. Without that evidence the store counts as
-// anonymous. Known gap: a claimed store that never subscribed looks
-// anonymous until the cloud sends an owner signal.
+// The cloud's own signal wins: the entitlement block's `claimed` boolean,
+// cached as entitlement.claimed (ADR-0060 amendment 2026-11, ut-docs#3532).
+// It is authoritative both ways, so a claimed store that never subscribed
+// is "owned" and a store the cloud calls unclaimed is not, whatever plan is
+// cached. Only when the till was never told (an older cloud, or no check-in
+// since the upgrade) does it fall back to the older inference from the
+// cached entitlement (ADR-0060 §4): a subscription — paid plan, or a status
+// other than none — can only exist on an owner's account; with no evidence
+// at all the store counts as anonymous. Wording only, never a sale gate.
 func storeHasOwner(ctx context.Context, kv interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 }) bool {
+	if claimed, known := entitlement.StoreClaimed(ctx, kv); known {
+		return claimed
+	}
 	plan, _, err := kv.Get(ctx, entitlement.KeyPlan)
 	if err != nil {
 		return false
@@ -97,6 +109,20 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				"replacedHint": replacedHintText(locale, rp),
 			})(w, r)
 			return
+		}
+		// ut-docs#5157: this till's data was restored onto a new device and
+		// its cloud identity reset. Shown until it is registered or paired
+		// again (or its main till vouches for it), after the replaced case.
+		// A replica is told to join the main till again instead (status bar
+		// and Tills page, ut-docs#5162): Registration is the wrong fix there.
+		if d != nil && d.Settings != nil && d.SyncPrimaryURL(r.Context()) == "" && enroll.RestoredState(r.Context(), d.Settings) {
+			if es := restoredChipStatus(); !es.Registered && !es.ViaMainTill {
+				httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+					"variant":   cloudAuthRestored,
+					"canManage": canPerform(d, r, "settings"),
+				})(w, r)
+				return
+			}
 		}
 		st := cloudAuthChipStatus()
 		if !st.Show {

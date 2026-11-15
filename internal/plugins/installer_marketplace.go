@@ -316,6 +316,13 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// uninstall of the same plugin (ut-docs#3273). No caller holds it here.
 	defer lockPluginTree(i.pluginBaseDir, manifest.ID)()
 
+	// Refuse a revoked release before the live dir is touched, so a refused
+	// re-install of an installed version keeps its files (ut-docs#5658).
+	// PersistManifest re-checks as the backstop.
+	if err := CheckNotRevoked(ctx, data.NewPluginRepo(i.db), nil, manifest.ID, manifest.Version); err != nil {
+		return nil, fmt.Errorf("persist plugin manifest: %w", err)
+	}
+
 	finalDir := filepath.Join(i.pluginBaseDir, manifest.ID, manifest.Version)
 	if err := os.RemoveAll(finalDir); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("clean existing plugin dir: %w", err)

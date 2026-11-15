@@ -9,13 +9,16 @@
        replaced — ut-docs#5058: the owner replaced this till as main till;
                   "Replaced by <name>", shown from the first refused call
                   and after a restart (persisted), never a modal
+       restored — ut-docs#5157: this till's data was restored onto a new
+                  device, so its cloud connection was reset; "Restored on
+                  a new device — connect again" until paired/registered
      Words first, never colour alone. Only a viewer who may open Settings
      gets a link (an <a> with no href is plain text), so a cashier never
      gets one that 403s; the explanation is in the title for everyone.
      The link goes to Settings → Registration until the "Pair with a shop"
      screen (ut-docs#3523) exists. */}}
 <a {{ if .canManage }}href="/settings#registration" {{ end }}class="sb-item sb-cloud-auth is-{{ .variant }}" data-testid="sb-cloud-auth" data-cloud-auth="{{ .variant }}"
-   title="{{ if eq .variant "replaced" }}{{ .replacedHint }}{{ else }}{{ T "status.cloud_auth.hint" }}{{ end }}">
+   title="{{ if eq .variant "replaced" }}{{ .replacedHint }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored_hint" }}{{ else }}{{ T "status.cloud_auth.hint" }}{{ end }}">
   <span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span>
-  <span class="sb-cloud-auth-text">{{ if eq .variant "replaced" }}{{ printf (T "status.cloud_auth.replaced") .replacedBy }}{{ else if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.register_new" }}{{ end }}</span>
+  <span class="sb-cloud-auth-text">{{ if eq .variant "replaced" }}{{ printf (T "status.cloud_auth.replaced") .replacedBy }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored" }}{{ else if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.register_new" }}{{ end }}</span>
 </a>

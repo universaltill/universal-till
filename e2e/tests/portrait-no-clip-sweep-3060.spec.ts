@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, expectGermanIfPackLoaded } from './helpers';
 
 // ut-docs#3060: the portrait and phone no-clip sweep. #3050 fixed the sale
 // screen on an upright tablet and #3059 the <=480px phone tier, but nothing
@@ -20,9 +20,12 @@ import { watchConsole } from './helpers';
 //  - on the phone, scrolled to the end, nothing of the receipt stays under
 //    the pinned tender panel while the status row is up.
 // German is a language-pack plugin (ut-plugin-language-de), not a core
-// locale: a till without the pack renders `?lang=de` in English. Locally,
-// run with UT_TEST_I18N_OVERLAY_DIR=<ut-plugin-language-de>/locales to get
-// the real German strings; the test records which one it saw.
+// locale: a till without the pack renders `?lang=de` in English. The test
+// records which one it saw and ASSERTS real German when
+// UT_E2E_I18N_OVERLAY_DIR/UT_TEST_I18N_OVERLAY_DIR is set (always in CI,
+// ut-docs#4629). Locally run with
+// UT_E2E_I18N_OVERLAY_DIR=<ut-plugin-language-de>/locales; without it the
+// de cases only annotate.
 //
 // The owner's extra case: at display scale (ui_scale) 2 the stacked basket
 // overflowed sideways at 540-900px wide (measured on main: 800x1280 +7px,
@@ -71,12 +74,7 @@ async function open(page: Page, path: string, lang: string, theme: string) {
   await page.waitForLoadState('load');
   await useTheme(page, theme);
   await expect(page.locator('html')).toHaveAttribute('dir', lang === 'fa' ? 'rtl' : 'ltr');
-  if (lang === 'de' && !test.info().annotations.some((a) => a.type === 'de-pack')) {
-    const german = await page.evaluate(() => /Einstellungen|Zahlung|Warenkorb|Berichte|Katalog/.test(document.body.innerText));
-    test.info().annotations.push({ type: 'de-pack', description: german
-      ? 'German pack loaded: real German strings'
-      : 'German pack not loaded (UT_TEST_I18N_OVERLAY_DIR unset): ?lang=de rendered English' });
-  }
+  if (lang === 'de') await expectGermanIfPackLoaded(page);
 }
 
 // Every problem with `root` (a page's <main> or an open dialog) at the

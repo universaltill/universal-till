@@ -3,6 +3,7 @@ id: customer-order-tracking
 title: تتبع الطلب من العميل (QR)
 section: البيع اليومي
 order: 46
+public: true
 summary: "يمسح العملاء رمز QR، من شاشة التأكيد في كشك الطلب الذاتي أو من إيصال عملية بيع مسجّلة على الصندوق، ليتابعوا حالة طلبهم على هواتفهم الخاصة. جزء من خطط Shop وPro وMulti-location."
 routes: [/o/{token}, /o/{token}/status]
 ---

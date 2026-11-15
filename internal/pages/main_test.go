@@ -8,6 +8,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
@@ -80,7 +81,17 @@ func TestMain(m *testing.M) {
 		panic("TestMain: secrets temp dir: " + err.Error())
 	}
 	secrets.SetDefault(secrets.NewKeyStoreAt(filepath.Join(secretsDir, "plugin_settings_key.bin"), nil))
+	// Every device report creates the till's approval key under
+	// paths.Data("secrets") (ut-docs#5127); a test that forgets its own
+	// paths.Init must not drop it into the repo's ./data. Tests that set
+	// their own root still win.
+	dataDir, err := os.MkdirTemp("", "ut-pages-data-")
+	if err != nil {
+		panic("TestMain: data temp dir: " + err.Error())
+	}
+	paths.Init(dataDir)
 	code := m.Run()
 	_ = os.RemoveAll(secretsDir)
+	_ = os.RemoveAll(dataDir)
 	os.Exit(code)
 }

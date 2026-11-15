@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -219,18 +220,19 @@ const keyStoreNameRequired = "setup.error.store_name_required"
 // An existing key, shared with the pairing dialog's action-neutral wording.
 const keyTillNameRequired = "tills.pairing.error.name_required_field"
 
-// maxStoreNameRunes matches the shop-name inputs' maxlength="60".
-const maxStoreNameRunes = 60
+// keyNameInvalidCharacters is the shared refusal for a name with control,
+// line-break or invisible characters (ut-docs#5858, till names ut-docs#5862).
+const keyNameInvalidCharacters = "common.error.name_invalid_characters"
 
 // isRefusedStoreName reports whether a first-boot shop name must be refused:
 // blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
 // field's own placeholder text in the request's language, or longer than
-// the field's maxlength (enforced here too: the form's cap is client-side
-// only). Shared by the wizard and the bare POST /api/auth/setup fallback
+// config.MaxStoreNameRunes (the field's maxlength, enforced here too: the
+// form's cap is client-side only). Shared by the wizard and the bare POST /api/auth/setup fallback
 // (ut-docs#3096, #3116).
 func isRefusedStoreName(r *http.Request, name string) bool {
 	return config.IsPlaceholderStoreName(name) ||
-		utf8.RuneCountInString(strings.TrimSpace(name)) > maxStoreNameRunes ||
+		utf8.RuneCountInString(strings.TrimSpace(name)) > config.MaxStoreNameRunes ||
 		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
 }
 
@@ -441,7 +443,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired {
+		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		if errKey == keyCloudExpired {
@@ -481,7 +483,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#4146: likewise a refused till name (a control
 			// character, too long) is not echoed: the field would look
 			// filled while every resubmit fails with "required".
-			if errKey != keyTillNameRequired {
+			if errKey != keyTillNameRequired && errKey != keyNameInvalidCharacters {
 				data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 			}
 		}
@@ -671,7 +673,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// checked before anything is persisted.
 		tillName, tillNameErr := validateTillName(r.PostFormValue("till_name"))
 		if tillNameErr != nil {
-			renderWizard(w, r, keyTillNameRequired, "")
+			key := keyTillNameRequired
+			if errors.Is(tillNameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
+				key = keyNameInvalidCharacters
+			}
+			renderWizard(w, r, key, "")
 			return
 		}
 
@@ -739,7 +745,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if cloudHeld != nil {
 			persistCloudShopCurrency(r, d, cloudHeld)
 		}
-		httpx.InitCurrency(st.Currency)
+		common.InitCurrencyFromState(st)
 		// ut-docs#1027: live-apply the just-derived locale, same posture as
 		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
 		// this is safe even when no country matched (st.Locale left at
@@ -809,6 +815,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency}, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
 
+		if cloudHeld == nil {
+			// A stale hold (a pairing the owner abandoned for a standalone
+			// setup) must not suppress this till's own registration.
+			cloud.drop()
+		}
+
 		// Country base-plugin auto-install (ut-docs#591): best-effort —
 		// persists the pending list before any network attempt, then makes
 		// one short-timeout synchronous attempt; either way this never
@@ -841,11 +853,42 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// first-boot gate closes this wizard. The code is spent; the
 			// welcome page says so and Settings -> Tills pairs again with
 			// a new code.
+			// ut-docs#5058 T4: a replacement main till numbers its receipts
+			// under its own prefix, whatever the commit's result (the old
+			// till is already replaced once /pair answered). First boot: no
+			// sale exists yet, so no number is repeated or skipped.
+			// ut-docs#5332: the same prefix after "Remove, then add" - the
+			// cloud's store.had_main_till says the shop had a main till
+			// before, so an ordinary code must not restart at 000000001.
+			// No old device id is known there, so none is passed.
+			prefix := ""
+			if rp := cloudHeld.p.Replaced; rp != nil {
+				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, rp.DeviceID)
+			} else if st := cloudHeld.p.Store; st != nil && st.HadMainTill {
+				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, "")
+			}
+			if prefix != "" {
+				if err := d.Settings.Set(r.Context(), "sync.receipt_prefix", prefix); err != nil {
+					logging.L().Warnf("setup wizard: set the replacement till's receipt prefix: %v", err)
+				}
+			}
 			if err := commitCloudPairing(r.Context(), d, cloudHeld.p); err != nil {
 				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
 				cloudPairFailed = true
+				// Still a brand-new till: the card's lines are true, so park it
+				// until the owner pairs again from Settings (ut-docs#5333).
+				master := ""
+				if cloudHeld.p.Store != nil {
+					master = cloudHeld.p.Store.CatalogMaster
+				}
+				deferNextSteps(r.Context(), d, master)
 			} else {
 				markJoinedShop(r.Context(), d)
+				master := ""
+				if cloudHeld.p.Store != nil {
+					master = cloudHeld.p.Store.CatalogMaster
+				}
+				markNextSteps(r.Context(), d, master)
 				requestOperatorCheckin(d, operatorCheckinWindow)
 				cloudSyncing = true
 			}
@@ -858,6 +901,14 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				termsTicked(r), httpx.RequestLocale(r))
 		}
 		cloud.finish()
+		if cloudSyncing {
+			// ut-docs#5127: registration was held until the pairing was
+			// saved; a plugin left pending meanwhile retries now, under the
+			// paired identity, instead of waiting out the 5-minute tick.
+			// Not when saving failed: the retry would then register a
+			// till-born store that the owner's re-pair would orphan.
+			nudgeBasePluginRetry()
+		}
 
 		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
 		// best-effort posture as the base-plugin install above — the pending

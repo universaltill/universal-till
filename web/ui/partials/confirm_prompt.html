@@ -18,16 +18,29 @@
      Data: Action / HxTarget / Hidden as elevation_prompt.html (the dialog's
      form IS the confirmed retry, Hidden carrying the original fields plus
      the caller's confirming one), Title / Body / Confirm (pre-translated
-     text), HelpTopic (a manual topic for the title's "?", or empty).
+     text), HelpTopic (a manual topic for the title's "?", or empty),
+     Danger (red confirm button; Cancel gets the autofocus instead).
 
      data-after-request="elevation-done" is reused as-is: a re-prompt (an
      elevation prompt or another confirm) replaced this dialog by OOB swap
      already; anything else is terminal — close the dialog so the answer
      swapped into HxTarget is visible. */}}
+{{/* ut-docs#5275: data-ut-escape-close = Escape is Cancel (base.html's
+     handler; no request). data-ut-prompt = web/public/inline-actions.js
+     returns focus to the opener and removes this prompt's own hint on
+     Cancel/Escape. All logic lives there (CSP, ut-docs#2913), not in the
+     script below. */}}
+{{/* ut-docs#5288: hx-disabled-elt also greys Cancel (every button in this dialog but the PIN
+     pad's OSK toggle) while THIS form's request is in flight, and base.html's
+     Escape / inline-actions.js closeDialog ignore a close while the form has
+     .htmx-request. Closing mid-request would leave the (non-idempotent)
+     action done with no answer shown, and a late re-prompt could re-open the
+     dialog. Never an abort: htmx:abort is client-side only. htmx re-enables
+     the buttons when the request ends, answer or failure. */}}
 <span class="elevation-hint muted">{{ .Title }}</span>
-<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true" data-ut-focus-trap>
+<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true" data-ut-focus-trap data-ut-escape-close data-ut-prompt>
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
-        hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
+        hx-sync="this:drop" hx-disabled-elt="#confirm-modal button:not([data-osk-toggle])"
         data-after-request="elevation-done">
     <h3>{{ .Title }}{{ with .HelpTopic }} {{ helpLink . }}{{ end }}</h3>
     <p>{{ .Body }}</p>
@@ -35,8 +48,8 @@
     <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
     {{ end }}
     <div class="modifier-actions">
-      <button type="button" class="btn secondary" data-action="close-closest">{{ T "common.cancel" }}</button>
-      <button type="submit" class="btn primary" autofocus>{{ .Confirm }}</button>
+      <button type="button" class="btn secondary" data-action="close-closest"{{ if .Danger }} autofocus{{ end }}>{{ T "common.cancel" }}</button>
+      <button type="submit" class="btn {{ if .Danger }}danger{{ else }}primary{{ end }}"{{ if not .Danger }} autofocus{{ end }}>{{ .Confirm }}</button>
     </div>
   </form>
   <script>
