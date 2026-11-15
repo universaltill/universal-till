@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -142,19 +141,20 @@ func validateEODAnnotation(s string) error {
 func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) string, hdr rateTableHeader) []string {
 	n := len(rates)
 	rate, netS, taxS, grossS := make([]string, n), make([]string, n), make([]string, n), make([]string, n)
-	// tight: header floors, in runes like the cells below (a translated
-	// header, ut-docs#4330, can be longer than the en one and non-ASCII).
-	tw := [4]int{0, utf8.RuneCountInString(hdr.Net), utf8.RuneCountInString(hdr.Tax), utf8.RuneCountInString(hdr.Gross)}
+	// tight: header floors, in display columns like the cells below (a
+	// translated header, ut-docs#4330, can be longer than the en one and
+	// non-ASCII, with ZWNJ/combining marks that take no column, #4689).
+	tw := [4]int{0, print.DisplayWidth(hdr.Net), print.DisplayWidth(hdr.Tax), print.DisplayWidth(hdr.Gross)}
 	for i := range rates {
 		rate[i], netS[i], taxS[i], grossS[i] = fmtRateBP(rates[i]), money(net[i]), money(tax[i]), money(gross[i])
 		for j, s := range []string{rate[i], netS[i], taxS[i], grossS[i]} {
-			// Rune count, not len(): fmt's %*s pads to RUNES and the
-			// ESC/POS renderer clips footer lines at Width RUNES, so a byte
-			// count charges every £ (2 bytes, 1 column) a phantom column —
-			// enough to push a tight-collapsed £1M row to 44 visible
-			// columns and clip the gross's pence after all (ut-docs#1004
-			// review finding).
-			if r := utf8.RuneCountInString(s); r > tw[j] {
+			// Display columns, not len(): the ESC/POS renderer clips footer
+			// lines at Width display columns, so a byte count charges every
+			// £ (2 bytes, 1 column) a phantom column — enough to push a
+			// tight-collapsed £1M row to 44 visible columns and clip the
+			// gross's pence after all (ut-docs#1004 review finding). Zero-
+			// width ZWNJ/combining marks take none (ut-docs#4689).
+			if r := print.DisplayWidth(s); r > tw[j] {
 				tw[j] = r
 			}
 		}
@@ -169,12 +169,29 @@ func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) strin
 		w = tw
 	}
 	lines := make([]string, 0, n+1)
-	lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], hdr.Net, w[2], hdr.Tax, w[3], hdr.Gross))
+	lines = append(lines, padEnd("", w[0])+" "+padStart(hdr.Net, w[1])+" "+padStart(hdr.Tax, w[2])+" "+padStart(hdr.Gross, w[3]))
 	for i := range rates {
-		lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s",
-			w[0], rate[i], w[1], netS[i], w[2], taxS[i], w[3], grossS[i]))
+		lines = append(lines, padEnd(rate[i], w[0])+" "+padStart(netS[i], w[1])+" "+padStart(taxS[i], w[2])+" "+padStart(grossS[i], w[3]))
 	}
 	return lines
+}
+
+// padStart left-pads s with spaces to width display columns (print.DisplayWidth,
+// not runes: fmt's %*s counts a ZWNJ or combining mark as a column, ut-docs#4689);
+// an s already that wide is returned as is, like fmt.
+func padStart(s string, width int) string {
+	if n := width - print.DisplayWidth(s); n > 0 {
+		return strings.Repeat(" ", n) + s
+	}
+	return s
+}
+
+// padEnd right-pads s with spaces to width display columns; see padStart.
+func padEnd(s string, width int) string {
+	if n := width - print.DisplayWidth(s); n > 0 {
+		return s + strings.Repeat(" ", n)
+	}
+	return s
 }
 
 // rateTableHeader is the Net/Tax/Gross column header rateTableRows prints,
@@ -255,19 +272,18 @@ func eodPeriodMeta(rep data.EODReport, locale string) string {
 // format, this guarantees the amount is never pushed
 // past the printer's own line-clip by an overlong label (ut-docs#1010
 // review finding 1 — sale_lines.name_snapshot is free-text and can easily
-// exceed a fixed pad width). Rune-based throughout, matching kvRow/clip's
-// own reasoning: Width tracks visible columns, and a byte-based cut can
-// split a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text) mid-rune.
+// exceed a fixed pad width). Measured in display columns like internal/print
+// (print.DisplayWidth / print.Clip), not runes: Width tracks visible columns,
+// a ZWNJ or combining mark takes none (fa/ar labels, ut-docs#4689), and a
+// byte-based cut can split a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text).
 func footerRow(label, amount string) string {
-	space := print.Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
+	space := print.Width - print.DisplayWidth(label) - print.DisplayWidth(amount)
 	if space < 1 {
-		max := print.Width - utf8.RuneCountInString(amount) - 1
+		max := print.Width - print.DisplayWidth(amount) - 1
 		if max < 0 {
 			max = 0
 		}
-		if r := []rune(label); len(r) > max {
-			label = string(r[:max])
-		}
+		label = print.Clip(label, max)
 		space = 1
 	}
 	return label + strings.Repeat(" ", space) + amount
@@ -276,10 +292,12 @@ func footerRow(label, amount string) string {
 // eodRow prints a Z-report row the way "%-20s %s" always has, so an en
 // row stays byte-for-byte the same, but a translated label long enough to
 // push the amount past print.Width goes through footerRow instead, which
-// clips the label and keeps the amount (ut-docs#4397).
+// clips the label and keeps the amount (ut-docs#4397). The 20-column pad is
+// by display columns, not fmt's runes (ut-docs#4689).
 func eodRow(label, amount string) string {
-	if utf8.RuneCountInString(fmt.Sprintf("%-20s", label))+1+utf8.RuneCountInString(amount) <= print.Width {
-		return fmt.Sprintf("%-20s %s", label, amount)
+	padded := padEnd(label, 20)
+	if print.DisplayWidth(padded)+1+print.DisplayWidth(amount) <= print.Width {
+		return padded + " " + amount
 	}
 	return footerRow(label, amount)
 }
@@ -341,10 +359,10 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		var tipTotal int64
 		for _, tp := range rep.Tips {
 			label := method(tp.Method)
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
+			doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
 			tipTotal += tp.Amount
 		}
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", T("receipt.paper.total"), money(tipTotal)))
+		doc.Footer = append(doc.Footer, eodRow(T("receipt.paper.total"), money(tipTotal)))
 	}
 	// Per-VAT-rate breakdown (ut-docs#1003) + department breakdown (E1b) +
 	// per-register breakdown, as footer lines so they print on the Z-report
