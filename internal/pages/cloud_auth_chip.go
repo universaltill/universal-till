@@ -20,7 +20,7 @@ import (
 //
 //	device_revoked                          → "Removed from the shop's cloud account"
 //	token_retired / unauthorized, claimed   → "This till needs pairing again"
-//	token_retired / unauthorized, anonymous → "Register as a new store"
+//	token_retired / unauthorized, anonymous → "Cloud sign-in lost" (ut-docs#5145)
 //
 // device_revoked always gets its own words: only an owner can revoke, so
 // an anonymous store never sees it.
@@ -40,6 +40,7 @@ const (
 	cloudAuthRegister = "register"
 	cloudAuthReplaced = "replaced" // ut-docs#5058: replaced as main till
 	cloudAuthRestored = "restored" // ut-docs#5157: data restored onto a new device
+	cloudAuthBlocked  = "blocked"  // ut-docs#5145: the cloud will not re-register this till yet
 )
 
 // cloudAuthChipVariant picks the chip's words.
@@ -124,15 +125,61 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ut-docs#5145: a refused re-register (409 device_live) beats the 401
+		// variants: a till with no credential has no 401 streak, and must not be
+		// told to "Register as a new store" while the cloud refuses to. A local
+		// read of a setting, so the chip renders offline. For a viewer who may
+		// not open Settings the title is neutral (no date, no ID, no key).
+		if until, blocked := registerBlocked(r.Context(), d); blocked {
+			canManage := canPerform(d, r, "settings")
+			locale := httpx.ResolveLocale(w, r)
+			hint := httpx.T(locale, "status.cloud_auth.blocked_hint_short")
+			if canManage {
+				hint = blockedHintText(locale, until)
+			}
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":     cloudAuthBlocked,
+				"canManage":   canManage,
+				"blockedHint": hint,
+			})(w, r)
+			return
+		}
+		// ut-docs#5145: the cloud knows another key for this unregistered till.
+		if registerKeyRefused(r.Context(), d) {
+			canManage := canPerform(d, r, "settings")
+			locale := httpx.ResolveLocale(w, r)
+			hint := httpx.T(locale, "status.cloud_auth.blocked_hint_short")
+			if canManage {
+				hint = httpx.T(locale, "status.cloud_auth.key_refused_hint")
+			}
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":     cloudAuthBlocked,
+				"canManage":   canManage,
+				"blockedHint": hint,
+			})(w, r)
+			return
+		}
 		st := cloudAuthChipStatus()
 		if !st.Show {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		variant := cloudAuthChipVariant(st, storeHasOwner(r.Context(), d.Settings))
+		canManage := canPerform(d, r, "settings")
+		hint := ""
+		if variant == cloudAuthRegister {
+			// ut-docs#5145: a manager is told where to reconnect; a viewer who
+			// may not open Settings gets the neutral line.
+			locale := httpx.ResolveLocale(w, r)
+			hint = httpx.T(locale, "status.cloud_auth.blocked_hint_short")
+			if canManage {
+				hint = httpx.T(locale, "status.cloud_auth.locked_out_hint")
+			}
+		}
 		httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
-			"variant":   variant,
-			"canManage": canPerform(d, r, "settings"),
+			"variant":     variant,
+			"canManage":   canManage,
+			"blockedHint": hint,
 		})(w, r)
 	})
 }

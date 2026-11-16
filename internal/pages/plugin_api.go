@@ -213,6 +213,19 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		// that needs a store identity, so enrol here if the till hasn't yet.
 		// The effective config fills any fields the operator didn't set.
 		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+		// ut-docs#5145: the cloud refused to re-register this till (it was in
+		// use recently). Say so, in the install result, instead of failing on
+		// the missing credential further down; Settings has the date.
+		if _, blocked := registerBlocked(ctx, d); blocked && !enroll.CredentialsComplete(effCfg.Marketplace) {
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:  req.ListingID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: "plugins.install.error.device_live",
+				Retryable:  true,
+			})
+			writeInstallResponse(w, http.StatusConflict, false, "", "plugins.install.error.device_live")
+			return
+		}
 		checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's install
 		// The signing key is fetched lazily (ADR-0148 audit item 3).
 		effCfg = enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
