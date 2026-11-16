@@ -28,6 +28,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/lantls"
@@ -270,6 +271,9 @@ func Run(ctx context.Context) error {
 	}
 
 	settingsStore := settings.NewStore(database.DB)
+	// #3048: the Stripe Terminal cloud calls of the native shells use this
+	// till's own enrolment; the bearer stays in Go.
+	defer devicepay.SetSource(devicepaySource{cfg: cfg})()
 
 	// ut-docs#5157: a data folder restored onto another device (iCloud)
 	// carries the old till's cloud identity. Detect it before anything reads

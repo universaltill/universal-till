@@ -72,6 +72,7 @@ import (
 	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/kiosk"
@@ -608,6 +609,19 @@ func ReportAndroidUpdateRefused(reasonClass string) {
 // a later update APK passed the signer check.
 func ReportAndroidUpdateAccepted() {
 	androidupdate.ReportAccepted()
+}
+
+// TapToPayCloud runs one allowlisted Stripe Terminal cloud operation for the
+// native shell (#3048, ADR-0125): op is one of onboarding_link,
+// connect_status, location, connection_token; bodyJSON is the request body.
+// The till's own device credential stays inside Go
+// (internal/devicepay): the shell never sees a URL or a bearer. A failure is
+// an error whose message starts with a closed code: bad_request,
+// connect_incomplete, offline or cloud_error.
+func TapToPayCloud(op string, bodyJSON string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return devicepay.Call(ctx, op, bodyJSON)
 }
 
 // defaultListenPort is the port a till with nothing persisted asks for

@@ -977,3 +977,15 @@ func TestReportAndroidUpdateRefused_ForwardsToPackage(t *testing.T) {
 		t.Fatal("problem still open after ReportAndroidUpdateAccepted")
 	}
 }
+
+// #3048: TapToPayCloud is the only door from the Android shell to the cloud's
+// Stripe Terminal endpoints. With no enrolled till it must refuse by code
+// (never panic, never reach a network), and an unknown op is a bad request.
+func TestTapToPayCloud_RefusesCodedWithoutALinkedTill(t *testing.T) {
+	if _, err := TapToPayCloud("connection_token", "{}"); err == nil || !strings.HasPrefix(err.Error(), "offline") {
+		t.Fatalf("unlinked till: err=%v, want offline", err)
+	}
+	if _, err := TapToPayCloud("not_an_op", "{}"); err == nil || !strings.HasPrefix(err.Error(), "bad_request") {
+		t.Fatalf("unknown op: err=%v, want bad_request", err)
+	}
+}

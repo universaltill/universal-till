@@ -742,6 +742,75 @@ only print entry point; every other shell keeps `window.print()`.
 - Verified by the Gradle build and `PrintLogicTest` in CI only; the real
   dialog and the lock-task behaviour need a device or emulator check.
 
+## Tap to Pay (Stripe Terminal, off by default) (ut-docs#3048, ADR-0125)
+
+Tap to Pay on the phone's own NFC, with the Stripe Terminal Android SDK. It is a
+**compile-time flag, default off, honoured by the `arm64` flavor only**:
+
+```sh
+./gradlew -PtapToPay=true assembleArm64Debug     # real adapter + SDK (debug = Stripe's simulated reader)
+./gradlew assembleArm64Debug                     # normal build: stub, no SDK
+```
+
+| Build | SDK on classpath | Manifest additions | `AndroidTapToPay` bridge | Kotlin |
+|---|---|---|---|---|
+| `armv7`, `universal` (any property) | no | none | never registered | 2.0.21 |
+| `arm64` without the flag (every `release.yml` build) | no | none | never registered | 2.0.21 |
+| `arm64` with `-PtapToPay=true` | yes (`stripeterminal-core` + `-taptopay` 6.0.0) | NFC, location, SDK permissions | registered | 2.3.21 |
+
+There is no runtime, page or remote switch. `release.yml` never passes the flag;
+`scripts/ci/guard-android-tap-to-pay-flag.sh` fails any workflow other than
+`android-ci.yml` (compile and JVM tests only) that does, until an owner-signed card
+adds `android/tap-to-pay-release-approved.txt`. `android-ci.yml` proves the shipped
+flavors carry no `com/stripe/stripeterminal` class and no Tap to Pay manifest entries
+(`check-android-stripe-sdk.sh`, `guard-android-manifest-features.sh ... shipped`), and
+compiles + unit-tests the real adapter with the flag on.
+
+**Spike results (2026-11-16, Stripe Terminal Android 6.0.0):**
+- Kotlin: the SDK is compiled with Kotlin 2.3 and pulls `kotlin-stdlib` 2.3.x, which the
+  app's 2.0.21 compiler cannot read. A flag-on build therefore uses Kotlin 2.3.21 (chosen
+  in `settings.gradle.kts` only when `-PtapToPay=true`); all other builds keep 2.0.21.
+  `kotlinOptions.jvmTarget` is a hard error on 2.3, so the build uses the
+  `kotlin { compilerOptions }` DSL (same JVM 17 target).
+- minSdk: the SDK AARs declare 26 (app: 24). The overlay manifest uses
+  `tools:overrideLibrary`; this is safe only because every SDK touch is behind
+  `SDK_INT >= 33` (`TillApplication`, `TapToPayPlatform.create`).
+- Manifest: the SDK adds Bluetooth, `ACCESS_COARSE_LOCATION`, `READ_PHONE_STATE`, NFC, USB
+  features (all `required=false` except the permissions) and a separate `:stripetaptopay`
+  process (the SDK starts a second `Application` there, so `TillApplication` returns early
+  in it). The overlay replaces `ACCESS_FINE_LOCATION` (the main manifest caps it at API 30)
+  and keeps NFC/telephony features optional so Play never derives `required="true"`.
+- arm64 debug APK size: 45.3 MB without the SDK, 87.0 MB with it (+41.7 MB, mostly the SDK's native libraries; debug APKs, not release-measured; shipped builds are unaffected while the flag is off).
+
+**Device minimums (Stripe docs, fetched 2026-11-16):** Android 13+, ARM, NFC, not rooted,
+locked bootloader, security patch under 12 months, Google Mobile Services with the Play
+Store, hardware keystore >= 100, Developer options off, location permission and
+location services on. Emulators, the TECLAST tablet (Developer options on, no NFC recorded),
+the iMin Falcon 1 (Android 11) and Fire tablets cannot take a live tap: the page sees
+`supported:false` and renders nothing. Whether a *sideloaded* self-signed APK passes
+Stripe's attestation is **unverified** (no Google approval step is documented; checklist D12).
+
+**Code layout** (`com.universaltill.pos.tap`): `TapToPayCapability` (pure device rules),
+`TapToPayMessages` (strict JSON), `TapToPayFlow` (one payment: collect window 18 s, hard
+deadline 24 s, never `declined` on a timer once confirm began, late results kept),
+`TapToPayEngine` (single-flight, bounded result store), `TapToPayShell` (WebMessage glue).
+Interfaces `Reader`, `CloudApi`, `PendingStore`, `Scheduler` have fakes in `src/test`.
+`src/ttpStub` (no-op) and `src/ttpReal` (`StripeTerminalReader`, `TillApplication`,
+manifest overlay) are chosen by the flag. Cloud calls go through Go
+(`Mobile.tapToPayCloud`, `internal/devicepay`): the device credential never reaches Kotlin
+or the page.
+
+**Bridge v1** (`window.AndroidTapToPay`, `WebViewCompat.addWebMessageListener`, exact origin
+`http://<till host>`, main frame only; absent when the flag is off): the page sends
+`postMessage(JSON.stringify({v:1,id,op,...}))` and reads replies/events from `onmessage`.
+Ops: `capabilities`, `education`, `prepare`, `start {amount_minor, currency (gbp|eur),
+idempotency_key}`, `cancel {request_id}`, `result {request_id}`, `open_settings
+{target: location|nfc|app}`. Results are `succeeded|declined|cancelled|unknown`; `unknown`
+is never shown as declined (retry on the same basket with the same key; a later
+`late:true` result can correct it). The result is **advisory**: a sale is recorded only
+when the `stripe_tap` plugin verifies the PaymentIntent server-side. No card data is in
+any message. Amounts are minor units, 1..9,999,999.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)
