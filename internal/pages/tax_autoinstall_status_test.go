@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -233,5 +234,43 @@ func TestPluginsPage_AutoInstalledTaxPluginNoteAndConfirm(t *testing.T) {
 	}
 	if !strings.Contains(body, "Eat-in sales will use each") {
 		t.Fatalf("uninstall confirm must say what changes:\n%s", body)
+	}
+}
+
+// Reviewer (ADR-0172 §5): a dismiss before the plugin id is known records
+// only "market:<XX>". A stale spec (or an in-flight tick) holding the
+// automatic spec must still never install it.
+func TestTaxAutoInstall_MarketOnlyDeclineBlocksStaleSpec(t *testing.T) {
+	dp, _ := autoInstalledTaxDeps(t)
+	if err := dp.Settings.Set(t.Context(), common.KeyTaxAutoInstallDeclined, "market:"+autoTaxCountry); err != nil {
+		t.Fatal(err)
+	}
+	spec := basePluginSpec{CanonicalType: "tax", Market: autoTaxCountry}
+	if err := addPendingBasePlugins(t.Context(), dp, []basePluginSpec{spec}); err != nil {
+		t.Fatal(err)
+	}
+	basePluginRetryTick(t.Context(), dp)
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), autoTaxPluginID); active {
+		t.Fatal("a declined automatic tax install must never run, whatever the declined record holds")
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("the stale spec must be dropped, got %+v", pending)
+	}
+}
+
+// Reviewer (ADR-0172 §2.1): a PROMPTED install consents to the tile's
+// listing, which names the country. A listing with no markets (every market)
+// is never picked for it, even when it is the only tax listing.
+func TestTaxPromptedInstall_NeverPicksNoMarketsListing(t *testing.T) {
+	dp, mkt := autoInstalledTaxDeps(t)
+	e := autoTaxCatalogEntry()
+	e.Markets = nil
+	mkt.setCatalog(e)
+	err := resolveAndInstallBasePlugin(t.Context(), dp, basePluginSpec{CanonicalType: "tax", Market: autoTaxCountry, Prompted: true})
+	if !errors.Is(err, errBasePluginNotPublished) {
+		t.Fatalf("err = %v, want errBasePluginNotPublished", err)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), autoTaxPluginID); active {
+		t.Fatal("a no-markets listing must not be installed by a prompted tile")
 	}
 }

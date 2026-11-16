@@ -201,6 +201,13 @@ func resolveAndInstallTaxForMarket(ctx context.Context, d *common.Deps, spec bas
 	country := strings.ToUpper(strings.TrimSpace(spec.Market))
 	auto := !spec.Prompted
 	if auto {
+		// An operator who dismissed or uninstalled it keeps it declined, whatever
+		// was recorded (a plugin id, or only the market when no id was known
+		// yet) and whenever a stale spec or an in-flight tick still holds it
+		// (ADR-0172 §5). Done: the caller drops the spec, no chip.
+		if taxAutoInstallDeclined(ctx, d) != "" {
+			return nil
+		}
 		// The chip (ADR-0172 §5) follows every attempt of the automatic path.
 		defer func() {
 			if err != nil {
@@ -212,7 +219,7 @@ func resolveAndInstallTaxForMarket(ctx context.Context, d *common.Deps, spec bas
 	if err != nil {
 		return err
 	}
-	if len(all) == 0 {
+	if len(all) == 0 || (spec.Prompted && !slices.ContainsFunc(all, func(p marketplace.PluginSummary) bool { return len(p.Markets) > 0 })) {
 		if spec.Prompted {
 			return errBasePluginNotPublished // the operator consented: keep waiting for it (ut-docs#3210)
 		}
@@ -226,6 +233,12 @@ func resolveAndInstallTaxForMarket(ctx context.Context, d *common.Deps, spec bas
 	var pre plugins.PreInstallCheck
 	if spec.Prompted {
 		for i := range all {
+			// The tile only ever offers a listing that NAMES the country
+			// (taxTileFor): a listing with no markets (every market) is never
+			// what the operator consented to (ADR-0172 §2.1, ADR-0129 §4).
+			if len(all[i].Markets) == 0 {
+				continue
+			}
 			if best == nil || updates.Newer(all[i].Version, best.Version) {
 				best = &all[i]
 			}

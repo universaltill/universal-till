@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // ADR-0172 §2 (ut-docs#6285): which tax plugin, if any, a till may install
@@ -74,16 +73,4 @@ func TestTaxAutoInstallEligible_Manifest(t *testing.T) {
 	if err := taxAutoInstallEligible(nil, "XX"); err == nil {
 		t.Fatal("a nil manifest is never eligible")
 	}
-}
-
-func taxListing(id string, mut func(p *marketplace.PluginSummary)) marketplace.PluginSummary {
-	p := marketplace.PluginSummary{
-		ID: id, ListingID: id, Name: "Tax " + id, Version: "1.0.0", CanonicalType: "tax",
-		Markets: []string{"XX"}, TrustTier: "official",
-		Permissions: []string{"events:receive", "sales:read", "storage"},
-	}
-	if mut != nil {
-		mut(&p)
-	}
-	return p
 }
