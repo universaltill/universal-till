@@ -86,4 +86,25 @@ Tester file.
 
 ## Reviewer
 
-_To be filled in by the Reviewer._
+Reviewed for ut-docs#4371 (combined batch). Opus 5.5 reviewed Sonnet's code, reading `gh pr diff` against ADR-0160 §2, §5 and §9, the Architect design and the Tester notes. Both Tester defects were already fixed on the branch (`sed -n 1,5p`, refreshed surface hash). I re-checked them: `guard-pipefail-grep-q.sh` 0, `guard-docs-shots.sh` 0.
+
+Pre-flight: ADR n/a (ADR-0160 §9.3 decides it) · README updated · help n/a (no rendered surface changed) · no secret, no real shop name.
+
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| 1 | blocker | PR was `DIRTY`: `web/help/img/manifest.json` (docs-shots surface hash) conflicted with main. | Rebased on `origin/main`, regenerated the hash with `update-docs-shots-surface-hash.sh` (commit keeps `Docs-Shots-Unchanged: true`), and `guard-docs-shots.sh` passes. |
+| 2 | should-fix (security) | `build-locale-overlay.sh` followed symlinks. A symlink in the cloned repo (`sale/de.json -> /home/runner/...`) would read a file outside the clone into the overlay, and from there into test output and artifacts. Area ids are already safe (`^[a-z0-9-]+$` blocks `..`), and so is the locale code. | Fixed: the script refuses a symlink at `meta/`, `meta/areas.json`, each area dir and each `<area>/<code>.json`. Two new test cases cover the file and dir symlink. TDD checked: they fail on the old script (2 FAILED) and pass on the fix (all cases). Real clone: 3552 de keys. |
+| 3 | should-fix (leftover) | `internal/plugins/plugins.go` `syncLocales` doc still said first-party plugins without bundle.json are "today's de/es/pt packs". | Fixed: comment only. |
+| 4 | nit | `audit-locale-render.spec.ts` comment read "deferred until Weblate has the German strings that follow the merge". | Reworded. |
+| 5 | nit | Identifiers `loadPackCatalog` / `packDe` and test name strings still say "pack". | Accepted: internal names; the comments define them as the overlay. |
+| 6 | nit | Fixture `com.universaltill.language-de-old` / `-de-new` also matches `hasFirstPartyBundle`'s regional-suffix rule (`old`/`new` are 3 letters). | Accepted: those tests assert only `PluginActive` for the highest semver, and the full `go test` is green (Tester). |
+
+**Security, the overlay clone.** Both workflows use `permissions: contents: read`. The clone is a plain anonymous `git clone` with no token in the URL and no `actions/checkout` credential, and it reads JSON only, with nothing executed. It tracks `main` unpinned, the same trust the pack's `main` had. ut-translations `main` is written by org members and the sync job (Weblate push is pending, #6442). The strings only render in test tills that run with a read-only token and no persisted credential. Acceptable, and the pin-on-breakage procedure is documented in `e2e.yml`.
+
+**Correctness.** e2e still gets German through `UT_E2E_I18N_OVERLAY_DIR` to the default-project worker tills only. `expectGermanIfOverlayLoaded` still asserts German whenever the env is set (Tester control run: 18/18 German with it, 18/18 English without). `locale-render-audit.yml` keeps `UT_LOCALE_AUDIT_STRICT: "1"` and the push-only `continue-on-error`, and both PR carve-outs are unchanged in `new-keys.js` (comments only). The audit script no longer `exec`s Playwright, so its EXIT trap can remove the temp overlay, and the exit code still propagates under `set -e`. `audit-nav-i18n-parity.sh` and `checkhelpbreadcrumbs` read `UT_TEST_I18N_OVERLAY_DIR/<loc>.json`, which is the flat file the builder writes, and the breadcrumb self-test unsets the new var. No assertion was weakened: the fixture id swap keeps each test's meaning (listing ids unchanged, same expectations), and `ui.locale` stays allowlisted because bundles still declare it.
+
+**Leftovers.** `git grep` for `ut-plugin-language-|lang-pack-drift|_PACK_DIR|fill_from_plugin|import_existing|untranslated\.txt` outside `docs/code-reviews`: no hits. `build-locale-overlay` is referenced only where it is used. Generic "language-pack plugin" for third-party language plugins is kept on purpose.
+
+**Deferred.** `CLAUDE.md`'s help bullet says help translations "come via Weblate". Weblate has no help component, and ut-docs `reference/translation.md` now says so. The bullet predates this change; it needs a card.
+
+**Verdict:** approve after the fixes above (pushed).

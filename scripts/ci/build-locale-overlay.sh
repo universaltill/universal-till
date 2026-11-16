@@ -49,9 +49,18 @@ command -v jq > /dev/null || fail "jq is required"
 AREAS_FILE="${TRANSLATIONS}/meta/areas.json"
 [[ -f "${AREAS_FILE}" ]] || fail "${AREAS_FILE} not found (is --translations a ut-translations checkout?)"
 
+# A clone can carry symlinks; one pointing outside the checkout (a runner
+# file, a secret) would be read into the overlay. ut-translations has none,
+# so any symlink on the read path is refused.
+refuse_symlink() { [[ ! -L "$1" ]] || fail "refusing symlink: $1"; }
+refuse_symlink "${TRANSLATIONS}/meta"
+refuse_symlink "${AREAS_FILE}"
+
 files=()
 while IFS= read -r area; do
   [[ "${area}" =~ ^[a-z0-9-]+$ ]] || fail "unsafe area id in meta/areas.json: '${area}'"
+  refuse_symlink "${TRANSLATIONS}/${area}"
+  refuse_symlink "${TRANSLATIONS}/${area}/${LOCALE}.json"
   [[ -f "${TRANSLATIONS}/${area}/${LOCALE}.json" ]] && files+=("${TRANSLATIONS}/${area}/${LOCALE}.json")
 done < <(jq -r 'keys[]' "${AREAS_FILE}")
 

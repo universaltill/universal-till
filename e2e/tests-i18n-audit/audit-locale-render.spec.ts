@@ -74,8 +74,8 @@ function loadAllowlist(): Set<string> {
 
 // The base BRANCH's en.json (ut-docs#2805) — set by
 // locale-render-audit.yml on pull_request runs only (AUDIT_BASE_EN_JSON),
-// so findings for keys this PR adds can be deferred until Weblate has the German strings
-// that follow the merge. Unset/empty (push to main, workflow_dispatch, a
+// so findings for keys this PR adds can be deferred: Weblate translates them
+// only after the merge. Unset/empty (push to main, workflow_dispatch, a
 // local run) => null => strict, nothing deferred. Set but unreadable is a
 // workflow bug, so it throws rather than quietly going strict.
 function loadBaseEnglishCatalog(): Record<string, string> | null {

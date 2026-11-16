@@ -119,6 +119,21 @@ gen 600 k > "${TREE}/sale/de.json"
 run --translations "${TREE}" --locale de --out "${OUTDIR}"
 t "output keys sorted" overlay_is 'keys_unsorted | first' a
 
+# 10. a symlinked locale file or area dir is refused (it could point outside
+#     the clone).
+new_tree
+gen 600 a > "${TMP}/outside.json"
+ln -s "${TMP}/outside.json" "${TREE}/sale/de.json"
+run --translations "${TREE}" --locale de --out "${OUTDIR}"
+t "symlinked locale file refused" failed_mentioning symlink
+new_tree
+mkdir -p "${TMP}/outside-area"
+gen 600 a > "${TMP}/outside-area/de.json"
+rmdir "${TREE}/sale"
+ln -s "${TMP}/outside-area" "${TREE}/sale"
+run --translations "${TREE}" --locale de --out "${OUTDIR}"
+t "symlinked area dir refused" failed_mentioning symlink
+
 if [[ "${failures}" -gt 0 ]]; then
   echo "build-locale-overlay_test.sh: ${failures} case(s) FAILED"
   exit 1
