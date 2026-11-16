@@ -515,6 +515,7 @@ func TestInstallBasePluginsForSetup_MergesWithLanguageStepPending(t *testing.T) 
 	// Exactly these two, no more (a plain len check — a same-spec-added-
 	// twice regression would otherwise pass the membership loop below
 	// silently, per independent review finding 2).
+	pending = withoutAutoTax(pending) // ADR-0172: setup also queues the country's automatic tax spec
 	if len(pending) != 2 {
 		t.Fatalf("pending = %+v, want exactly [es, de] — no duplicates, nothing extra", pending)
 	}
