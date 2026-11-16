@@ -110,8 +110,8 @@ func TestUncoveredRoutes(t *testing.T) {
 	}
 }
 
-// de ships no web/locales/de.json (its UI strings come from the external
-// ut-plugin-language-de pack — see manualOnlyLocales' own doc comment), so
+// de ships no web/locales/de.json (its UI strings come from its Weblate
+// bundle (com.universaltill.language-de) — see manualOnlyLocales' own doc comment), so
 // without manualOnlyLocales it would be invisible to a glob of web/locales
 // and this guard would silently never check it. This is the regression this
 // test exists to catch: en can gain a topic with no German counterpart and

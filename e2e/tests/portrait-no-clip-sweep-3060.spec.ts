@@ -19,12 +19,12 @@ import { watchConsole, expectGermanIfPackLoaded } from './helpers';
 //    inside the dialog, never off the screen;
 //  - on the phone, scrolled to the end, nothing of the receipt stays under
 //    the pinned tender panel while the status row is up.
-// German is a language-pack plugin (ut-plugin-language-de), not a core
-// locale: a till without the pack renders `?lang=de` in English. The test
+// German is a Weblate language bundle, not a core
+// locale: a till without it renders `?lang=de` in English. The test
 // records which one it saw and ASSERTS real German when
 // UT_E2E_I18N_OVERLAY_DIR/UT_TEST_I18N_OVERLAY_DIR is set (always in CI,
 // ut-docs#4629). Locally run with
-// UT_E2E_I18N_OVERLAY_DIR=<ut-plugin-language-de>/locales; without it the
+// UT_E2E_I18N_OVERLAY_DIR=<dir from scripts/ci/build-locale-overlay.sh>; without it the
 // de cases only annotate.
 //
 // The owner's extra case: at display scale (ui_scale) 2 the stacked basket
