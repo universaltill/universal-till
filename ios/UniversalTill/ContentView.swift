@@ -40,6 +40,12 @@ struct ContentView: View {
                     .background(.regularMaterial)
                 }
             }
+            .overlay(alignment: .bottom) {
+                // Tap to Pay readiness (ut-docs#3049): non-modal, flag-gated.
+                if TapToPayRegistration.enabled {
+                    TapToPayStatusBanner(model: TapToPayBridge.shared.status)
+                }
+            }
             // No actions: iOS supplies its own localised OK button.
             .alert(Text("external_link_failed"), isPresented: $linkFailed) {}
         }
