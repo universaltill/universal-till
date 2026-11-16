@@ -1130,9 +1130,12 @@ jobs:
   # cross-built for linux/arm under qemu-arm -strace and checks every syscall
   # against the Android 9 allow-list. Always on (no path filter): path-filtered
   # PR triggers proved unreliable (see android-ci.yml's header).
+  # The last step SIMULATES the kill: a pinned Linux 4.9 armhf kernel under
+  # qemu-system-arm with the byte-exact AOSP android-9.0.0_r61 app filter; the
+  # pristine build must be killed (SIGSYS, statx), the fork must boot.
   armv7-seccomp:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     # Least privilege: checkout only; no secrets, no writes.
     permissions:
       contents: read
@@ -1141,8 +1144,8 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
-      - name: Install qemu-user
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user
+      - name: Install qemu-user and qemu-system-arm
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends qemu-user qemu-system-arm
       - name: libc fork pin
         run: bash scripts/ci/guard-libc-fork.sh
       - name: Fork == upstream + reviewed patch (only when the pin, patch or guard changed)
@@ -1154,7 +1157,7 @@ jobs:
             echo "pin, patch and guard unchanged, skipping the network proof"
           fi
       - name: armv7 boot stays inside the Android 9 seccomp allow-list
-        run: bash scripts/ci/guard-armv7-seccomp.sh
+        run: bash scripts/ci/guard-armv7-seccomp.sh "" "${RUNNER_TEMP}/smoke-fork"
       # NEGATIVE proof: with the replace removed (pristine libc) the same guard
       # must FAIL and name statx, otherwise it cannot see the bug.
       - name: armv7 guard must fail on pristine libc
@@ -1163,8 +1166,24 @@ jobs:
           cp go.mod go.sum "${T}/"
           go mod edit -modfile="${T}/go.mod" -dropreplace modernc.org/libc
           go mod tidy -modfile="${T}/go.mod"
-          if bash scripts/ci/guard-armv7-seccomp.sh "${T}/go.mod" > "${T}/out" 2>&1; then
+          if bash scripts/ci/guard-armv7-seccomp.sh "${T}/go.mod" "${RUNNER_TEMP}/smoke-pristine" > "${T}/out" 2>&1; then
             echo "::error::guard passed on pristine libc; it can no longer see the bug"; cat "${T}/out"; exit 1
           fi
           grep -q statx "${T}/out" || { echo "::error::guard failed on pristine libc but did not name statx"; cat "${T}/out"; exit 1; }
           echo "negative proof ok: pristine libc is rejected"
+      # ut-docs#6300 simulator: pinned kernel (sha256, https) cached between runs.
+      - name: Cache the simulator kernel
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ut-armv7sim
+          key: armv7sim-kernel-500d153687354a9085d1b50e5c03659ccf56c5d4330f2929f04134486c470894
+      - name: armv7 seccomp SIMULATOR (pristine libc is killed, fork boots)
+        run: bash scripts/ci/sim-armv7-seccomp.sh --fork "${RUNNER_TEMP}/smoke-fork" --pristine "${RUNNER_TEMP}/smoke-pristine" --log "${RUNNER_TEMP}/sim.log"
+      - name: Upload the simulator console log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: armv7-sim-console
+          path: ${{ runner.temp }}/sim.log
+          retention-days: 7
+          if-no-files-found: ignore

@@ -230,6 +230,11 @@ fails: clone upstream at the new tag, `patch -p1 < scripts/ci/libc-ut.patch`
 never moved), update the `replace`, run `go mod tidy` and
 `scripts/ci/guard-libc-fork.sh --verify-upstream`.
 
+After a re-fork run `bash scripts/ci/sim-armv7-seccomp.sh` locally (needs `qemu-system-arm`;
+`brew install qemu` on a Mac): it must report GREEN, i.e. pristine libc killed by the Android 9
+seccomp filter and the fork booting under it (CI runs it in the `armv7-seccomp` job).
+It simulates the AOSP filter under qemu; it does not replace the Fire OS 7 hardware check.
+
 ## Notes / gaps
 
 - **macOS is Apple-Silicon only and unsigned** — Gatekeeper warns on first run.
