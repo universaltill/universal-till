@@ -124,6 +124,9 @@ const dialogShots: Record<string, DialogShot> = {
 //      always runs, in a finally - later shots share this till), and `ready`,
 //      which asserts the frame really shows the intended state, so a shot can
 //      never silently ship as the wrong picture;
+//      Optional `interact` runs on the loaded page after the htmx settle and
+//      before the screenshot, for client-only state (e.g. opening a kiosk dialog);
+//      it must leave no focus ring, hover or running animation (ut-docs#338);
 //   3. `make docs-shots`, commit the new PNGs and manifest.json.
 // A declared stem with no recipe, or a recipe no markdown references, throws
 // at load, before anything is captured or the manifest written. Extras run on
@@ -132,6 +135,10 @@ type ExtraShot = {
   route: string;
   setup?: (page: Page) => Promise<void>;
   teardown?: (page: Page) => Promise<void>;
+  // Runs on the loaded page, after the htmx settle and before the screenshot, to
+  // put client-only state in frame (e.g. open a kiosk dialog); must leave no
+  // focus ring, hover or running animation.
+  interact?: (page: Page) => Promise<void>;
   ready: (page: Page) => Promise<void>;
 };
 
@@ -184,7 +191,111 @@ async function assertStripLayout(page: Page) {
   await expect(page.locator('[data-testid=category-empty-state]:visible')).toHaveCount(0);
 }
 
+// Walk-up GET /self-order Reset()s the shared KioskEngine and clears the
+// kiosk language cookie (self_order_page.go). No ?table= -> never a session.
+async function resetKiosk(page: Page) {
+  const res = await page.request.get('/self-order');
+  expect(res.status(), 'resetting the kiosk basket failed').toBe(200);
+}
+
+// POST /api/settings/kiosk-payment-mode: no PIN under UT_AUTH=off, so 204.
+async function setKioskPaymentMode(page: Page, mode: 'kiosk' | 'counter') {
+  const res = await page.request.post('/api/settings/kiosk-payment-mode', { form: { mode } });
+  expect(res.status(), `setting kiosk payment mode ${mode} failed`).toBe(204);
+}
+
+// Two lines, one at qty 2: Coca-Cola x2, Pepsi x1 (variant-free demo items;
+// a variant-bearing code is refused by /api/self-order/scan).
+async function stageKioskBasket(page: Page) {
+  await resetKiosk(page);
+  for (const code of ['5000000000012', '5000000000012', '5000000000029']) {
+    const res = await page.request.post('/api/self-order/scan', { form: { code } });
+    expect(res.status(), `kiosk scan ${code} failed`).toBe(200);
+  }
+}
+
+// A non-empty kiosk basket blocks Settings -> Data cleanup, so always empty it.
+async function restoreKiosk(page: Page) {
+  await resetKiosk(page);
+  await setKioskPaymentMode(page, 'kiosk');
+}
+
+// Lazy tile photos arrive in an htmx fragment; wait until all are decoded.
+async function kioskImagesLoaded(page: Page) {
+  await page.waitForFunction(() => [...document.images].every((i) => i.complete));
+}
+
+// Tap an opener on /self-order/shop and wait for #selforder-modal to be open,
+// filled, settled and still (same guarantees as openDialog for record dialogs).
+async function openKioskModal(page: Page, opener: string) {
+  const btn = page.locator(opener);
+  await expect(btn, `kiosk opener ${opener} missing`).toHaveCount(1);
+  await btn.click();
+  const dlg = page.locator('#selforder-modal');
+  await expect(dlg).toHaveAttribute('open', '');
+  await expect(dlg).toBeVisible();
+  await page.waitForFunction(() => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'), null, { timeout: 10_000 }).catch(() => {});
+  await page.waitForFunction(() =>
+    [...(document.querySelector('#selforder-modal') as HTMLElement).getAnimations({ subtree: true })].every((a) => a.playState !== 'running'));
+  await kioskImagesLoaded(page);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()); // showModal autofocus ring
+  await page.mouse.move(0, 0); // park the pointer on the inert backdrop: no :hover in frame
+}
+
+const KIOSK_STAGE = async (page: Page) => { await setKioskPaymentMode(page, 'kiosk'); await stageKioskBasket(page); };
+
 const extraShots: Record<string, ExtraShot> = {
+  'self-order-shop': {
+    route: '/self-order/shop',
+    setup: KIOSK_STAGE,
+    interact: kioskImagesLoaded,
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      expect(await page.locator('#selforder-cart .selforder-cart-line').count()).toBe(2);
+      await expect(page.locator('#selforder-cart .selforder-checkout')).toBeVisible();
+      expect(await page.locator('.selforder-cats .cat-chip').count()).toBeGreaterThan(1);
+      await expect(page.locator('#selforder-modal')).not.toHaveAttribute('open', '');
+    },
+  },
+  // Apple Juice 1L (itm006) has Pack of 6 / Pack of 12 variants.
+  'self-order-options': {
+    route: '/self-order/shop',
+    setup: KIOSK_STAGE,
+    interact: (page) => openKioskModal(page, '#selforder-grid .selforder-tile[hx-get*="item=itm006"]'),
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      const m = page.locator('#selforder-modal .modifier-picker');
+      await expect(m).toBeVisible();
+      expect(await m.locator('fieldset.modifier-group input[type=radio]').count()).toBeGreaterThanOrEqual(2);
+      await expect(m.locator('button[type=submit]')).toBeVisible(); // Add to cart
+    },
+  },
+  // Card mode: "Choose a payment method".
+  'self-order-checkout': {
+    route: '/self-order/shop',
+    setup: KIOSK_STAGE,
+    interact: (page) => openKioskModal(page, '#selforder-cart .selforder-checkout'),
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      const p = page.locator('#selforder-modal .payment-picker');
+      await expect(p).toBeVisible();
+      expect(await p.locator('.payment-picker-method').count()).toBeGreaterThanOrEqual(1);
+      await expect(p.locator('.payment-picker-blocked')).toHaveCount(0);
+    },
+  },
+  // Pay-at-counter: "Pay at the counter" + Place order. No checkout is POSTed.
+  'self-order-counter': {
+    route: '/self-order/shop',
+    setup: async (page) => { await stageKioskBasket(page); await setKioskPaymentMode(page, 'counter'); },
+    interact: (page) => openKioskModal(page, '#selforder-cart .selforder-checkout'),
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      const p = page.locator('#selforder-modal .payment-picker');
+      await expect(p).toBeVisible();
+      await expect(p.locator('.payment-picker-methods')).toHaveCount(0);
+      expect(await p.locator('form[hx-post="/api/self-order/checkout"] button[type=submit]').count()).toBe(1);
+    },
+  },
   'sell-browse-tiles': browseShot('category_tabs', assertTilesLayout),
   'sell-browse-filters': browseShot('all_filter_chips', assertFiltersLayout),
   'sell-browse-strip': browseShot('strip_overflow', assertStripLayout),
@@ -310,7 +421,7 @@ async function assertPinnedFonts(page: Page, locale: string) {
   fontsVerified.add(locale);
 }
 
-async function capture(page: Page, id: string, locale: string, route: string) {
+async function capture(page: Page, id: string, locale: string, route: string, interact?: (page: Page) => Promise<void>) {
   const shot = dialogShots[id];
   if (shot) {
     // Reduced motion makes UT.motionOff() true, so the popup zoom (ADR-0122 §5)
@@ -318,6 +429,8 @@ async function capture(page: Page, id: string, locale: string, route: string) {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     if (shot.seed) await shot.seed(page);
   }
+  // Same reason as dialog shots: no popup zoom may start in an interact frame.
+  if (interact) await page.emulateMedia({ reducedMotion: 'reduce' });
   const sep = route.includes('?') ? '&' : '?';
   let url = `${route}${sep}lang=${locale}`;
   if (pinnedQuery[id]) url += `&${pinnedQuery[id]}`;
@@ -374,6 +487,7 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   await page.evaluate(() => (document as any).fonts.ready);
 
   if (shot) await openDialog(page, shot);
+  if (interact) await interact(page);
 
   // fonts.ready resolves when any font FILES have loaded, not when the
   // browser has actually repainted the glyphs with them — a one-frame gap
@@ -610,7 +724,7 @@ for (const stems of Object.values(declaredExtraShots)) {
         let primary: unknown;
         try {
           await shot.setup?.(page);
-          await capture(page, stem, locale, shot.route);
+          await capture(page, stem, locale, shot.route, shot.interact);
           await shot.ready(page);
         } catch (e) {
           // capture() already wrote the PNG; a failed `ready` means it shows
