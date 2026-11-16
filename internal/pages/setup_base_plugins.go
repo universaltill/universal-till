@@ -885,7 +885,7 @@ func basePluginRetryTick(ctx context.Context, d *common.Deps) {
 // between the caller's own read and this write (see basePluginRetryTick)
 // is preserved rather than clobbered, the same merge-safe-write reasoning
 // addPendingBasePlugins already applies on the add side. Symmetric with
-// dismissPendingBasePlugin, just batched: dismiss removes one spec a
+// dismissPendingBasePluginSpec, just batched: dismiss removes one spec a
 // merchant chose from Settings; this removes every spec a retry pass
 // actually installed in one call.
 func removePendingBasePlugins(ctx context.Context, d *common.Deps, installed []basePluginSpec) error {
@@ -944,7 +944,7 @@ type pendingBasePluginView struct {
 // display shape. A merchant sees exactly what's still pending — "the
 // merchant sees which one and why" (ut-docs#591 AC) — with a dismiss action
 // per entry that removes just that one from common.KeyPendingBasePlugins
-// (dismissPendingBasePlugin below), satisfying "a merchant can decline
+// (dismissPendingBasePluginSpec below), satisfying "a merchant can decline
 // anything auto-installed" for the not-yet-installed case; once a plugin IS
 // installed, the existing uninstall flow already covers removal.
 func pendingBasePluginViews(specs []basePluginSpec, notPublished map[basePluginSpec]bool) []pendingBasePluginView {
@@ -966,17 +966,10 @@ func pendingBasePluginViews(specs []basePluginSpec, notPublished map[basePluginS
 	return views
 }
 
-// dismissPendingBasePlugin drops one spec (matched on CanonicalType+Locale)
-// from the pending list without installing it — the settings page's dismiss
-// button. A spec already gone (raced with a successful install, or a
-// double-click) is a clean no-op, not an error.
-func dismissPendingBasePlugin(ctx context.Context, d *common.Deps, canonicalType, locale string) error {
-	return dismissPendingBasePluginSpec(ctx, d, basePluginSpec{CanonicalType: canonicalType, Locale: locale})
-}
-
-// dismissPendingBasePluginSpec is dismissPendingBasePlugin for the exact spec
-// (type, locale and market): a tax spec names a market, not a locale, so
-// type+locale alone would not tell two tax specs apart (ADR-0172). Prompted
+// dismissPendingBasePluginSpec drops one spec, matched exactly on type,
+// locale and market, from the pending list without installing it (the
+// settings page's dismiss button; a spec already gone is a clean no-op). A tax spec names a market, not a
+// locale, so type+locale alone would not tell two tax specs apart (ADR-0172). Prompted
 // does not take part in the match: the operator dismisses "the tax plugin for
 // this market", whichever door queued it.
 func dismissPendingBasePluginSpec(ctx context.Context, d *common.Deps, spec basePluginSpec) error {

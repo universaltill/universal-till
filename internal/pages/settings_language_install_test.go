@@ -263,7 +263,7 @@ func TestSettingsLanguageChipReportsPackThatNeverArrived(t *testing.T) {
 	if rec := postForm(mux, "/api/settings/save", url.Values{"locale": {"de"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("save de = %d", rec.Code)
 	}
-	if err := dismissPendingBasePlugin(t.Context(), d, "language", "de"); err != nil {
+	if err := dismissPendingBasePluginSpec(t.Context(), d, basePluginSpec{CanonicalType: "language", Locale: "de"}); err != nil {
 		t.Fatalf("dismiss: %v", err)
 	}
 	chip := getLanguageChip(t, mux, &mgrUser)

@@ -23,7 +23,7 @@ import (
 // plugin: free, first-party, non-fiscal, no network, and naming the country
 // explicitly in its `markets`. Everything else stays prompted (ADR-0129 §4).
 // This file is the eligibility rule (§2): the catalogue-side filter
-// (resolveCountryTaxPlugin) and the check on the VERIFIED manifest
+// (taxListingEligible, shared by the wizard tile and the installer) and the check on the VERIFIED manifest
 // (taxAutoInstallEligible). Neither names a country or a plugin: the
 // choice comes from what the plugin declares (core-neutral guard).
 
@@ -179,33 +179,6 @@ func countryTaxListings(ctx context.Context, d *common.Deps, country string) ([]
 		out = append(out, p)
 	}
 	return out, nil
-}
-
-// resolveCountryTaxPlugin returns the one tax listing for country that
-// passes ADR-0172 §2.1-§2.3, or nil when there is not EXACTLY one (the till
-// never picks between two tax plugins). listings counts the tax listings
-// meant for the country, eligible or not, so a caller can fall back to the
-// prompted tile when listings >= 1 and nothing was chosen. An unreachable
-// catalogue is an error, never "nothing eligible".
-func resolveCountryTaxPlugin(ctx context.Context, d *common.Deps, country string) (chosen *marketplace.PluginSummary, listings int, err error) {
-	country = strings.ToUpper(strings.TrimSpace(country))
-	if country == "" {
-		return nil, 0, nil
-	}
-	all, err := countryTaxListings(ctx, d, country)
-	if err != nil {
-		return nil, 0, err
-	}
-	var eligible []*marketplace.PluginSummary
-	for i := range all {
-		if taxListingEligible(&all[i], country) == "" {
-			eligible = append(eligible, &all[i])
-		}
-	}
-	if len(eligible) == 1 {
-		return eligible[0], len(all), nil
-	}
-	return nil, len(all), nil
 }
 
 // resolveAndInstallTaxForMarket is resolveAndInstallBasePlugin's branch for a

@@ -807,7 +807,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				if st := loadTaxAutoInstallStatus(r.Context(), d); st != nil && st.PluginName != "" {
 					name = st.PluginName
 				}
-				pendingBasePluginRows[i].ConfirmText = sprintfKey(loc, "settings.plugins.uninstall_tax_confirm", name)
+				pendingBasePluginRows[i].ConfirmText = sprintfKey(loc, "settings.plugins.dismiss_tax_pending_confirm", name)
 			}
 		}
 		// ut-docs#1913: the same four conditions that gate whether
