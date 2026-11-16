@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, expectGermanIfPackLoaded } from './helpers';
+import { watchConsole, expectGermanIfOverlayLoaded } from './helpers';
 
 // ut-docs#4628: at 800x1280 (10" tablet portrait) the two-pane Settings shell
 // kept the section nav beside the panel, leaving the panel ~355px wide: the
@@ -30,7 +30,7 @@ for (const vp of VIEWPORTS) {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto(`/settings?lang=${lang}`);
       await expect(page.locator('html')).toHaveAttribute('dir', lang === 'fa' ? 'rtl' : 'ltr');
-      if (lang === 'de') await expectGermanIfPackLoaded(page);
+      if (lang === 'de') await expectGermanIfOverlayLoaded(page);
 
       const sections = await page.locator('#settings-nav-index li').evaluateAll((lis) =>
         lis.map((li) => li.getAttribute('data-key') || '').filter((k) => k && document.getElementById(k)));

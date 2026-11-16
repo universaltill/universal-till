@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { watchConsole, expectGermanIfPackLoaded } from './helpers';
+import { watchConsole, expectGermanIfOverlayLoaded } from './helpers';
 
 // ut-docs#3060: the portrait and phone no-clip sweep. #3050 fixed the sale
 // screen on an upright tablet and #3059 the <=480px phone tier, but nothing
@@ -74,7 +74,7 @@ async function open(page: Page, path: string, lang: string, theme: string) {
   await page.waitForLoadState('load');
   await useTheme(page, theme);
   await expect(page.locator('html')).toHaveAttribute('dir', lang === 'fa' ? 'rtl' : 'ltr');
-  if (lang === 'de') await expectGermanIfPackLoaded(page);
+  if (lang === 'de') await expectGermanIfOverlayLoaded(page);
 }
 
 // Every problem with `root` (a page's <main> or an open dialog) at the
