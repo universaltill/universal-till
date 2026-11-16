@@ -25,7 +25,7 @@ object StripeErrorMapper {
 }
 
 object CloudErrors {
-    private val known = setOf("offline", "connect_incomplete", "cloud_error", "bad_request", "not_enrolled")
+    private val known = setOf("offline", "connect_incomplete", "cloud_error", "not_enrolled")
 
     /**
      * Go's TapToPayCloud error text is a stable code. The cloud's own

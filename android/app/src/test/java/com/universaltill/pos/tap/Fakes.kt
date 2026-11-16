@@ -89,6 +89,7 @@ class FakeReader(private val sched: FakeScheduler) : Reader {
     var connectError: String? = null
     var connectDelayMs = 0L
     var intentError: String? = null
+    var intentResult: IntentResult? = null
     var autoCollect: CollectOutcome? = CollectOutcome.Collected
     var autoConfirm: ConfirmOutcome? = ConfirmOutcome.Succeeded(null, null, null)
     var cancelIntentOk = true
@@ -110,6 +111,7 @@ class FakeReader(private val sched: FakeScheduler) : Reader {
 
     override fun createIntent(amountMinor: Long, currency: String, key: String, cb: (IntentResult) -> Unit) {
         createCalls += listOf(amountMinor, currency, key)
+        intentResult?.let { return cb(it) }
         val e = intentError
         cb(if (e != null) IntentResult.Failed(e) else IntentResult.Created("pi_${++n}"))
     }

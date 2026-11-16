@@ -286,6 +286,8 @@ class TapToPayEngineTest {
         assertEquals("insecure_environment", start().getString("error"))
         reader.connectError = "connect_incomplete"
         assertEquals("connect_incomplete", start().getString("error"))
+        reader.connectError = "intent_canceled"
+        assertEquals("intent_canceled", start().getString("error"))
     }
 
     @Test fun lateResultOverwritesStoredResultAndEmitsLateEvent() {

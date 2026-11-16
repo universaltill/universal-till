@@ -30,7 +30,8 @@ approved = os.path.isfile(os.environ["MARKER"])
 
 SELF = re.compile(r"(guard-android-tap-to-pay-flag|check-android-stripe-sdk)[^/]*$")
 # tapToPay (any case, also ORG_GRADLE_PROJECT_tapToPay / -PtapToPay) assigned something
-ASSIGN = re.compile(r"tap[_-]?to[_-]?pay[\"']?\s*[=:]\s*[\"']?([^\s\"'#]*)", re.IGNORECASE)
+# Anchored: the iOS switch UT_TAP_TO_PAY (own guard, guard-ios-tap-to-pay-default-off.sh) must not match.
+ASSIGN = re.compile(r"(?:(?<![A-Za-z0-9_])|(?<=-P)|(?<=ORG_GRADLE_PROJECT_))tap[_-]?to[_-]?pay[\"']?\s*[=:]\s*[\"']?([^\s\"'#]*)", re.IGNORECASE)
 FORBIDDEN_IN_CI_STEP = re.compile(r"release|bundle|publish|upload|sign|attach", re.IGNORECASE)
 
 files = []

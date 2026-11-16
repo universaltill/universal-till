@@ -55,6 +55,18 @@ class TapToPayFlow(
                 reader.createIntent(req.amountMinor, req.currency, req.key) { r ->
                     when (r) {
                         is IntentResult.Failed -> if (s == S.STARTING) refuse(r.code)
+                        is IntentResult.Settled ->
+                            if (s == S.STARTING) {
+                                intentId = r.id
+                                answer(null)
+                                finish(TapStatus.SUCCEEDED, "ok", r.chargeId, null, r.cardBrand, r.last4)
+                            }
+                        is IntentResult.Unresolved ->
+                            if (s == S.STARTING) {
+                                intentId = r.id
+                                answer(null)
+                                finish(TapStatus.UNKNOWN, r.reason)
+                            }
                         is IntentResult.Created ->
                             if (s == S.STARTING) intentReady(r.id) else reader.cancelIntent(r.id) {} // arrived after we gave up
                     }

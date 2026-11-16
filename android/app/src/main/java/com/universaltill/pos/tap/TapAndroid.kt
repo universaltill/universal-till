@@ -149,7 +149,15 @@ fun parseConnectionToken(body: String): String {
 }
 
 /** session_create reply: the cloud-created PaymentIntent's client secret plus the amount/currency it holds. */
-data class CloudSession(val clientSecret: String, val amountMinor: Long?, val currency: String?)
+class CloudSession(val clientSecret: String, val amountMinor: Long?, val currency: String?) {
+    // plain class: the client secret must never reach a log or a failed-assertion message
+    override fun toString() = "CloudSession(amountMinor=$amountMinor, currency=$currency)"
+
+    override fun equals(other: Any?) =
+        other is CloudSession && other.clientSecret == clientSecret && other.amountMinor == amountMinor && other.currency == currency
+
+    override fun hashCode() = clientSecret.hashCode()
+}
 
 fun parseSession(body: String): CloudSession {
     val j = try { JSONObject(body.trim()) } catch (_: Exception) { throw CloudException("cloud_error") }

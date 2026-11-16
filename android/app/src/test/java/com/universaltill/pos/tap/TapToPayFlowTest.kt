@@ -168,6 +168,30 @@ class TapToPayFlowTest {
         assertNull(store.only); assertTrue(sink.results.isEmpty())
     }
 
+    @Test fun alreadySucceededCloudIntentIsSucceededNeverCollected() {
+        reader.intentResult = IntentResult.Settled("pi_9", "ch_9", "visa", "4242")
+        run()
+        assertNull(accepted)
+        assertEquals(TapStatus.SUCCEEDED, last.status); assertEquals("pi_9", last.paymentIntentId); assertEquals("ch_9", last.chargeId)
+        assertTrue(reader.collectIds.isEmpty()); assertNull(store.only)
+    }
+
+    @Test fun movedOrUnreadableCloudIntentIsUnknownWithARecordNeverDeclined() {
+        reader.intentResult = IntentResult.Unresolved("pi_8", "amount_mismatch")
+        run()
+        assertNull(accepted)
+        assertEquals(TapStatus.UNKNOWN, last.status); assertEquals("pi_8", last.paymentIntentId); assertEquals("amount_mismatch", last.reason)
+        assertTrue(reader.collectIds.isEmpty())
+        assertEquals(PendingState.UNKNOWN, store.only?.state)
+    }
+
+    @Test fun canceledCloudIntentIsItsOwnStartErrorAndWritesNoRecord() {
+        reader.intentError = "intent_canceled"
+        run()
+        assertEquals("intent_canceled", accepted)
+        assertNull(store.only); assertTrue(sink.results.isEmpty()); assertTrue(reader.collectIds.isEmpty())
+    }
+
     @Test fun acceptedIsAnsweredExactlyOnce() {
         run()
         sched.advance(60_000)

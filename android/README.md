@@ -802,7 +802,14 @@ shared with iOS): the device credential and the op allow-list stay in Go. Ops us
 `connection_token` (`{secret}`), `onboarding_status` (`{onboarded, charges_enabled,
 location_id}`), `session_create` (`{client_secret, amount_minor, currency}`). The cloud
 creates the PaymentIntent; `StripeTerminalReader` retrieves it by client secret and
-collects only on a fresh `requires_payment_method` intent of exactly this amount.
+collects only on a fresh `requires_payment_method` intent of exactly this amount. Same
+decision table as iOS for an intent the cloud returns for a retried key: `succeeded` (matching
+amount) is reported `succeeded` without collecting; `processing`/`requires_capture`/
+`requires_confirmation`/unrecognised status, a mismatch on a moved intent, or a failed read-back
+is `unknown` with an unresolved record (never declined, never collected, never recreated);
+a `canceled` intent is the start error `intent_canceled`: the page must mint a NEW idempotency
+key for a new attempt (same key = same cancelled intent forever). #6454 should issue a fresh
+intent for a cancelled keyed one.
 
 **Bridge v1** (`window.AndroidTapToPay`, `WebViewCompat.addWebMessageListener`, exact origin
 `http://<till host>`, main frame only; absent when the flag is off): the page sends
@@ -818,7 +825,11 @@ engine, reader and the persisted pending/paid records are process-scoped, so rec
 or finishing the Activity never forgets a payment. Results are `succeeded|declined|cancelled|unknown`; `unknown`
 is never shown as declined (retry on the same basket with the same key; a later
 `late:true` result can correct it). The page-supplied amount and currency are trusted only because the result is advisory
-(a server-side basket is the plugin path's job, not this JS bridge's). The result is **advisory**: a sale is recorded only
+(**OWNER/ARCHITECT SIGN-OFF REQUIRED BEFORE THE FLAG IS EVER TURNED ON**: amount, currency and
+key are page-supplied and now mint cloud PaymentIntents with the till's device credential; they
+must come from a server-side basket / the plugin path. This conflicts with the
+`mobile/mobile.go` statement that "the web page never starts a payment", which the iOS design
+guarantees by having no JS bridge). The result is **advisory**: a sale is recorded only
 when the `stripe_tap` plugin verifies the PaymentIntent server-side. No card data is in
 any message. Amounts are minor units, 1..9,999,999.
 

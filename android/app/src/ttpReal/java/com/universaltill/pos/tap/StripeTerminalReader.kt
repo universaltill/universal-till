@@ -147,30 +147,39 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
     }
 
     private fun retrieveOnMain(session: CloudSession, amountMinor: Long, currency: String, cb: (IntentResult) -> Unit) {
-        val t = try { terminal() } catch (e: Throwable) { return cb(IntentResult.Failed("not_ready")) }
+        // The intent id is the client secret's prefix: known even when the read-back fails.
+        val knownId = session.clientSecret.substringBefore("_secret_")
+        val t = try { terminal() } catch (e: Throwable) { return cb(IntentResult.Unresolved(knownId, "outcome_unknown")) }
         t.retrievePaymentIntent(
             session.clientSecret,
             object : PaymentIntentCallback {
                 override fun onSuccess(paymentIntent: PaymentIntent) = onMain {
-                    val id = paymentIntent.id
-                    // Only a fresh, untouched intent for exactly this amount may be collected on. A retry of the
-                    // same key can return an intent that already moved (succeeded/processing): never collect it
-                    // again; the plugin settles it server-side through session_status.
-                    val fresh = paymentIntent.status == PaymentIntentStatus.REQUIRES_PAYMENT_METHOD
+                    val id = paymentIntent.id ?: knownId
                     val same =
                         paymentIntent.amount == amountMinor &&
                             paymentIntent.currency.equals(currency, ignoreCase = true) &&
                             (session.amountMinor == null || session.amountMinor == amountMinor) &&
                             (session.currency == null || session.currency.equals(currency, ignoreCase = true))
-                    if (id == null || !fresh || !same) {
-                        cb(IntentResult.Failed("not_ready"))
-                    } else {
-                        intents[id] = paymentIntent
-                        cb(IntentResult.Created(id))
+                    // Same decision table as the iOS coordinator: money that moved on this key is never collected
+                    // again, never reported declined, and a mismatch on an untouched intent is a plain refusal.
+                    when (paymentIntent.status) {
+                        PaymentIntentStatus.REQUIRES_PAYMENT_METHOD ->
+                            if (same) {
+                                intents[id] = paymentIntent
+                                cb(IntentResult.Created(id))
+                            } else {
+                                cb(IntentResult.Failed("not_ready"))
+                            }
+                        PaymentIntentStatus.CANCELED -> cb(IntentResult.Failed("intent_canceled"))
+                        PaymentIntentStatus.SUCCEEDED ->
+                            if (same) cb(IntentResult.Settled(id, paymentIntent.latestChargeId, null, null))
+                            else cb(IntentResult.Unresolved(id, "amount_mismatch"))
+                        // processing, requires_capture, requires_confirmation, anything unrecognised
+                        else -> cb(IntentResult.Unresolved(id, if (same) "outcome_unknown" else "amount_mismatch"))
                     }
                 }
 
-                override fun onFailure(e: TerminalException) = onMain { cb(IntentResult.Failed("not_ready")) }
+                override fun onFailure(e: TerminalException) = onMain { cb(IntentResult.Unresolved(knownId, "outcome_unknown")) }
             },
         )
     }

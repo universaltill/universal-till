@@ -20,7 +20,7 @@ class TapToPayEngine(
 ) {
     private companion object {
         const val RESULT_KEEP = 8
-        val START_ERRORS = setOf("offline", "connect_incomplete", "not_ready", "insecure_environment")
+        val START_ERRORS = setOf("offline", "connect_incomplete", "not_ready", "insecure_environment", "intent_canceled")
     }
 
     private class Info(val key: String, val amountMinor: Long, val currency: String)

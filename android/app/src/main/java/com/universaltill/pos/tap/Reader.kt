@@ -15,7 +15,23 @@ interface Scheduler {
 sealed class IntentResult {
     data class Created(val id: String) : IntentResult()
 
-    /** [code] is a start-error token: offline, connect_incomplete, not_ready. */
+    /**
+     * The cloud returned an intent that already succeeded (a retry of a paid key): never collected again.
+     * The flow reports it as succeeded.
+     */
+    data class Settled(val id: String, val chargeId: String?, val cardBrand: String?, val last4: String?) : IntentResult()
+
+    /**
+     * An intent exists but may have moved money (processing, requires_capture/confirmation, unknown status, an
+     * amount/currency mismatch on a moved intent, or it could not be read back). Reported as unknown, never
+     * declined, never collected or recreated. [reason] is a result reason token.
+     */
+    data class Unresolved(val id: String, val reason: String) : IntentResult()
+
+    /**
+     * [code] is a start-error token: offline, connect_incomplete, not_ready, or intent_canceled (the cloud's
+     * intent for this key was cancelled: the page must use a NEW key for a new attempt).
+     */
     data class Failed(val code: String) : IntentResult()
 }
 
