@@ -98,6 +98,10 @@ internal/pages/eod_tax_bands.go: unreachable func: computeEODTaxBands
 internal/pages/kitchen_print.go: unreachable func: buildKitchenTicket
 internal/pages/setup_language_catalog.go: unreachable func: resetSetupLanguageCatalog
 internal/pages/setup_tax_catalog.go: unreachable func: resetSetupTaxCatalog
+internal/paybroker/paybroker.go: unreachable func: Allowed
+internal/paybroker/paybroker.go: unreachable func: Call
+internal/paybroker/paybroker.go: unreachable func: HTTPError.Error
+internal/paybroker/paybroker.go: unreachable func: errorCode
 internal/pihealth/pihealth.go: unreachable func: CheckNow
 internal/plugins/ipc.go: unreachable func: EventBus.GetEventMode
 internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
