@@ -316,3 +316,9 @@ type AuthChip struct {
 func AuthChipStatus() AuthChip {
 	return tillAuth.status()
 }
+
+// ClearAuthLockout ends the 401 lock-out (ADR-0116 D6): called when a manager's
+// Reconnect gave the till a working credential, so the status chip goes away and
+// the scheduler leaves its hourly wait without waiting for the next tick to
+// succeed (ut-docs#5145).
+func ClearAuthLockout() { tillAuth.observe(nil) }
