@@ -678,7 +678,7 @@ We'll even link to notable forks in this README! 🎉
 - **Windows** (x64, ARM64) ✅
 - **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
-- **Android** (tablets, POS terminals) ✅
+- **Android** (tablets, POS terminals) ✅ — including 32-bit armv7 devices on Android 8-10 / Fire OS 7, whose app seccomp filter kills unknown syscalls; CI runs the armv7 boot under qemu against the Android 9 allow-list (ADR-0188). Fire OS 7 hardware check pending (ut-docs#6300)
 - **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 

@@ -1,0 +1,158 @@
+diff -ruN a/syscall_musl.go b/syscall_musl.go
+--- a/syscall_musl.go
++++ b/syscall_musl.go
+@@ -12,6 +12,9 @@
+ )
+ 
+ func ___syscall_cp(tls *TLS, n, a, b, c, d, e, f long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	switch n {
+ 	case SYS_nanosleep:
+ 		// int nanosleep(const struct timespec *req, struct timespec *rem)
+@@ -85,6 +88,9 @@
+ }
+ 
+ func X__syscall0(tls *TLS, n long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	switch n {
+ 	case __NR_sched_yield:
+ 		runtime.Gosched()
+@@ -100,6 +106,9 @@
+ }
+ 
+ func X__syscall1(tls *TLS, n, a1 long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	r1, _, err := unix.Syscall(uintptr(n), uintptr(a1), 0, 0)
+ 	if err != 0 {
+ 		return long(-err)
+@@ -109,6 +118,9 @@
+ }
+ 
+ func X__syscall2(tls *TLS, n, a1, a2 long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	r1, _, err := unix.Syscall(uintptr(n), uintptr(a1), uintptr(a2), 0)
+ 	if err != 0 {
+ 		return long(-err)
+@@ -118,6 +130,9 @@
+ }
+ 
+ func X__syscall3(tls *TLS, n, a1, a2, a3 long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	r1, _, err := unix.Syscall(uintptr(n), uintptr(a1), uintptr(a2), uintptr(a3))
+ 	if err != 0 {
+ 		return long(-err)
+@@ -127,6 +142,9 @@
+ }
+ 
+ func X__syscall4(tls *TLS, n, a1, a2, a3, a4 long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	r1, _, err := unix.Syscall6(uintptr(n), uintptr(a1), uintptr(a2), uintptr(a3), uintptr(a4), 0, 0)
+ 	if err != 0 {
+ 		return long(-err)
+@@ -136,6 +154,9 @@
+ }
+ 
+ func X__syscall5(tls *TLS, n, a1, a2, a3, a4, a5 long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	r1, _, err := unix.Syscall6(uintptr(n), uintptr(a1), uintptr(a2), uintptr(a3), uintptr(a4), uintptr(a5), 0)
+ 	if err != 0 {
+ 		return long(-err)
+@@ -145,6 +166,9 @@
+ }
+ 
+ func X__syscall6(tls *TLS, n, a1, a2, a3, a4, a5, a6 long) long {
++	if utPre411Kernel(n) {
++		return -long(unix.ENOSYS)
++	}
+ 	r1, _, err := unix.Syscall6(uintptr(n), uintptr(a1), uintptr(a2), uintptr(a3), uintptr(a4), uintptr(a5), uintptr(a6))
+ 	if err != 0 {
+ 		return long(-err)
+diff -ruN a/syscall_ut_pre411.go b/syscall_ut_pre411.go
+--- a/syscall_ut_pre411.go
++++ b/syscall_ut_pre411.go
+@@ -0,0 +1,30 @@
++// Universal Till patch (universaltill/universal-till#6300, ut-docs ADR-0188).
++// Not part of upstream modernc.org/libc.
++
++//go:build linux && (amd64 || arm64 || loong64 || ppc64le || s390x || riscv64 || 386 || arm)
++
++package libc // import "modernc.org/libc"
++
++import "runtime"
++
++// utFirstNewSyscallArm is the first 32-bit ARM syscall number added after
++// Linux 4.10: statx is 397, and every time64 variant (clock_gettime64 403 ..
++// futex_time64 422), pidfd_* and faccessat2 follow it.
++const utFirstNewSyscallArm = 397
++
++// utARMPrivateBase is __ARM_NR_BASE: the ARM-private calls (breakpoint,
++// cacheflush, usr26, usr32, set_tls) live at 0x0f0001.. and are known to every
++// kernel and allowed by Android's app filter, so they are never gated.
++const utARMPrivateBase = 0x0f0000
++
++// utPre411Kernel reports whether syscall n must be answered with -ENOSYS
++// without ever reaching the kernel. musl's 32-bit code tries the newest
++// syscall first (statx, clock_gettime64, ...) and falls back to the legacy
++// one on -ENOSYS. Android 8-10 app seccomp filters do not know the new numbers
++// and kill the process with SIGSYS instead of returning -ENOSYS, so the
++// fallback is never reached. Answering from user space gives musl the exact
++// answer a 4.9 kernel would, and the fallback runs. 32-bit ARM only; every
++// other GOARCH compiles this to a constant false.
++func utPre411Kernel(n long) bool {
++	return runtime.GOARCH == "arm" && n >= utFirstNewSyscallArm && n < utARMPrivateBase
++}
+diff -ruN a/syscall_ut_pre411_test.go b/syscall_ut_pre411_test.go
+--- a/syscall_ut_pre411_test.go
++++ b/syscall_ut_pre411_test.go
+@@ -0,0 +1,37 @@
++//go:build linux && (amd64 || arm64 || arm)
++
++package libc // import "modernc.org/libc"
++
++import (
++	"runtime"
++	"testing"
++)
++
++func TestUTPre411Kernel(t *testing.T) {
++	tls := NewTLS()
++	defer tls.Close()
++	got := X__syscall5(tls, long(SYS_statx), -100, 0, 0, 0, 0)
++	if utPre411Kernel(long(SYS_statx)) != (got == -long(ENOSYS)) {
++		t.Fatalf("filter and X__syscall5 disagree: filter=%v got=%d", utPre411Kernel(long(SYS_statx)), got)
++	}
++}
++
++func TestUTPre411KernelRange(t *testing.T) {
++	arm := runtime.GOARCH == "arm"
++	for _, c := range []struct {
++		n    long
++		want bool
++	}{
++		{396, false},      // pkey_free, last pre-4.11 number: reaches the kernel
++		{397, arm},        // statx
++		{403, arm},        // clock_gettime64
++		{439, arm},        // faccessat2
++		{0x0effff, arm},   // last ordinary number
++		{0x0f0002, false}, // __ARM_NR_cacheflush
++		{0x0f0005, false}, // __ARM_NR_set_tls
++	} {
++		if got := utPre411Kernel(c.n); got != c.want {
++			t.Errorf("utPre411Kernel(%#x) = %v, want %v", c.n, got, c.want)
++		}
++	}
++}

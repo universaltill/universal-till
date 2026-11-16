@@ -220,6 +220,16 @@ ranking it correctly once that next stable actually ships. See
 `universaltill/ut-docs#1432` for the beta channel, the till's channel
 setting, and full platform parity — all tracked as separate follow-ups.
 
+## Re-forking libc (modernc.org/libc, ADR-0188)
+
+`go.mod` replaces `modernc.org/libc` with `github.com/universaltill/modernc-libc`
+(upstream plus one patch) so the armv7 Android app survives Android 8-10 seccomp
+(ut-docs#6300). When a sqlite bump raises the libc require, `guard-libc-fork.sh`
+fails: clone upstream at the new tag, `patch -p1 < scripts/ci/libc-ut.patch`
+(rebase it if it no longer applies), commit, tag `vX-ut.1` on the fork (tags are
+never moved), update the `replace`, run `go mod tidy` and
+`scripts/ci/guard-libc-fork.sh --verify-upstream`.
+
 ## Notes / gaps
 
 - **macOS is Apple-Silicon only and unsigned** — Gatekeeper warns on first run.
