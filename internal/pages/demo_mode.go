@@ -533,6 +533,7 @@ var demoAllowedRoutes = map[string]bool{
 	// stamp the demo message into the nav).
 	"GET /ui/bugreport-chip":               true,
 	"GET /ui/cloud-auth-chip":              true,
+	"GET /ui/move-pending-chip":            true, // ut-docs#5287: read-only chip, empty unless a move waits
 	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
 	"GET /ui/backup-copy-chip":             true, // ut-docs#5071; reads two settings
 	"GET /ui/settings/language-install":    true, // ut-docs#4477; reads local settings only
