@@ -49,7 +49,7 @@ sha256() {
   if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 command -v "${QEMU}" >/dev/null || { echo "sim-armv7-seccomp: ${QEMU} not found (apt install qemu-system-arm | brew install qemu)" >&2; exit 2; }
-"${QEMU}" --version | head -n1
+"${QEMU}" --version | sed -n 1p
 
 WORK="$(mktemp -d -t armv7sim-XXXXXX)"
 trap 'rm -rf "${WORK}"' EXIT
