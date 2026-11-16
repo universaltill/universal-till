@@ -29,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/logging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
@@ -2234,10 +2235,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	//
 	// icon-state tells the picker what to show when it opens for a given
 	// item: which built-in key (if any) is currently selected, whether the
-	// current thumbnail is instead a custom upload (a built-in choice and a
-	// custom photo are mutually exclusive — picking one always replaces
-	// the other, same as the existing upload-over-placeholder behaviour),
-	// and which key the shop-language IconMatcher would suggest for
+	// current thumbnail is instead a custom upload (an uploaded photo wins
+	// over a built-in pick, which is kept as its fallback — ut-docs#4846;
+	// fallback_key says which), and which key the shop-language IconMatcher would suggest for
 	// this item's actual name/category — so a still-imageless item shows a
 	// sensible preselected tile instead of nothing.
 	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
@@ -2299,17 +2299,38 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 		}
+		// ut-docs#4846: under a photo, the stored icon is its fallback; name
+		// the library tile it maps to (exact id match: an unknown id maps to
+		// no tile, never to the neutral Fallback).
+		fallbackKey := ""
+		if hasPath && isCustom && !iconid.IsLibraryTile(path) {
+			icon, err := repo.ItemIcon(r.Context(), itemID)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+				return
+			}
+			if icon != "" {
+				for _, ic := range tillimport.BuiltinIcons() {
+					if iconid.IDForAssetPath(ic.Path) == icon {
+						fallbackKey = ic.Key
+						break
+					}
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"selected_key":  selectedKey,
 			"is_custom":     isCustom,
 			"suggested_key": suggestedKey,
 			"thumbnail_url": thumbnailURL,
+			"fallback_key":  fallbackKey,
 		}, "")
 	})
 
 	// Choosing (or clearing) a built-in icon. icon="" (or "none") clears
 	// back to no thumbnail at all — distinct from picking "generic", which
-	// is a real, visible choice. Deliberately NOT requirePrimary-gated,
+	// is a real, visible choice. On an item with an uploaded photo a pick is
+	// kept underneath it as the fallback icon (ut-docs#4846). Deliberately NOT requirePrimary-gated,
 	// same reasoning as item/image above: this only ever touches
 	// item_images, which sync_admin_repo.go's adminTables explicitly
 	// excludes (files/icon choices don't travel over the sync bundle).
@@ -2347,11 +2368,23 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "unknown icon", http.StatusBadRequest)
 			return
 		}
-		if err := repo.SetItemThumbnail(r.Context(), itemID, path); err != nil {
+		// ut-docs#4846: on an item with a photo the pick is stored as its
+		// fallback icon and the photo (row and file) stays.
+		kept, err := repo.PickItemIcon(r.Context(), itemID, path)
+		if errors.Is(err, data.ErrItemNotFound) {
+			http.Error(w, "item not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
-		removeUploadedThumbnail(itemID)
+		if kept {
+			// The editor reads this to say the photo still shows.
+			w.Header().Set("HX-Trigger", "item-icon-photo-kept")
+		} else {
+			removeUploadedThumbnail(itemID)
+		}
 		RefreshBasketPhoto(r.Context(), d, repo, itemID)
 		writeRowOOB(w, r, itemID, false)
 	})

@@ -3002,16 +3002,62 @@ func (r *CatalogRepo) ItemThumbnailsFor(ctx context.Context, itemIDs []string) (
 // clear it. See internal/data/shortcuts_repo.go's own doc comment for the
 // same gap independently observed from the shortcuts-button angle.
 //
-// ut-docs#3601: this is the till picker's library pick, so it replaces BOTH
-// the thumbnail and items.icon (SetItemPicture(path, "")) — it must not
-// leave an older icon drawn over the tile it chose (iconid.Resolve: tile +
-// icon → icon). An uploaded photo goes through SetItemPhoto, which keeps the
-// icon.
+// ut-docs#3601: a library tile written here replaces BOTH the thumbnail and
+// items.icon (SetItemPicture(path, "")) — it must not leave an older icon
+// drawn over the tile it chose (iconid.Resolve: tile + icon → icon). An
+// uploaded photo goes through SetItemPhoto, which keeps the icon. The till
+// picker's library pick is PickItemIcon (ut-docs#4846), which does not
+// replace a photo.
 func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string) error {
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
 	}
 	return r.SetItemPicture(ctx, itemID, path, "")
+}
+
+// PickItemIcon is the till picker's library pick (ut-docs#4846, owner
+// decision C): on an item with an uploaded photo only items.icon is written
+// (the photo keeps showing; the icon is its fallback once the photo is
+// removed); otherwise the tile replaces the thumbnail and clears the icon,
+// as SetItemThumbnail does. The id-less generic tile cannot be stored as an
+// icon, so on a photo item it writes nothing. tilePath must be a library tile
+// (the handler passes catimport.IconPath). keptPhoto reports that the photo
+// was kept, so the caller must not delete its file. The photo check and the
+// write share one transaction, so a photo uploaded meanwhile is never
+// overwritten with a stale path.
+func (r *CatalogRepo) PickItemIcon(ctx context.Context, itemID, tilePath string) (keptPhoto bool, err error) {
+	if itemID == "" || !iconid.IsLibraryTile(tilePath) {
+		return false, fmt.Errorf("pick item icon: %q is not a library tile", tilePath)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("pick item icon: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var thumb string
+	err = tx.QueryRowContext(ctx, `SELECT
+	        COALESCE((SELECT path FROM item_images WHERE item_id = items.id AND role = 'thumbnail' LIMIT 1), '')
+	        FROM items WHERE id = ?`, itemID).Scan(&thumb)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrItemNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("pick item icon: read: %w", err)
+	}
+	if photo := thumb != "" && !iconid.IsLibraryTile(thumb); photo {
+		keptPhoto = true
+		if id := iconid.IDForAssetPath(tilePath); id != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = ? WHERE id = ?`, id, itemID); err != nil {
+				return false, fmt.Errorf("pick item icon: icon: %w", err)
+			}
+		}
+	} else if err := setItemPictureExec(ctx, tx, itemID, tilePath, ""); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("pick item icon: commit: %w", err)
+	}
+	return keptPhoto, nil
 }
 
 // SetItemPhoto stores an uploaded photo (/public/assets/items/<id>/thumb.png)

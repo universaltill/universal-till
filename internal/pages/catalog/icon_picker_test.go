@@ -222,11 +222,10 @@ func TestChooseIcon_FirstEverThumbnailIsStillAPlainRowFragment(t *testing.T) {
 	}
 }
 
-// TestChooseIcon_ReplacesACustomUpload: choosing a built-in icon after a
-// photo was already uploaded must replace it, not add a second row — the
-// two are mutually exclusive, same as SetItemThumbnail's existing
-// overwrite behaviour for uploads.
-func TestChooseIcon_ReplacesACustomUpload(t *testing.T) {
+// TestChooseIcon_KeepsACustomUpload: choosing a built-in icon after a photo
+// was already uploaded keeps the photo (one thumbnail row, unchanged) and
+// stores the pick as items.icon, its fallback (ut-docs#4846, decision C).
+func TestChooseIcon_KeepsACustomUpload(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Item", BasePrice: 100, IsActive: true})
 	if _, err := db.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img1','itm1','/public/assets/items/itm1/thumb.png','thumbnail')`); err != nil {
@@ -249,8 +248,15 @@ func TestChooseIcon_ReplacesACustomUpload(t *testing.T) {
 	if err := db.QueryRow(`SELECT path FROM item_images WHERE item_id = 'itm1' AND role = 'thumbnail'`).Scan(&path); err != nil {
 		t.Fatal(err)
 	}
-	if path != "/public/assets/category-icons/pastry.svg" {
-		t.Errorf("path = %q, want the pastry icon path to have replaced the upload", path)
+	if path != "/public/assets/items/itm1/thumb.png" {
+		t.Errorf("path = %q, want the upload kept", path)
+	}
+	var icon string
+	if err := db.QueryRow(`SELECT COALESCE(icon,'') FROM items WHERE id = 'itm1'`).Scan(&icon); err != nil {
+		t.Fatal(err)
+	}
+	if icon != "tabler:cake-roll" {
+		t.Errorf("icon = %q, want the pastry id stored as the fallback", icon)
 	}
 }
 
@@ -291,15 +297,12 @@ func TestChooseIcon_RejectsPathTraversalItemID(t *testing.T) {
 	}
 }
 
-// TestChooseIcon_RemovesUploadedThumbnailFile is review finding F1
-// (ut-docs#1844): choosing a built-in icon over an existing uploaded photo
-// must remove the now-superseded FILE, not just repoint item_images —
-// catalog_row.html/catalog_variants.html's imgExists check and
-// self_order_shop.go's hardcoded ImageURL both resolve a photo by the
-// "items/<id>/thumb.png" path CONVENTION regardless of what item_images
-// says, so a stale file there would keep showing the old photo on those
-// surfaces even after the operator picked a different image.
-func TestChooseIcon_RemovesUploadedThumbnailFile(t *testing.T) {
+// TestChooseIcon_ReplacingATileRemovesNoPhotoFile: with only a library tile
+// in the thumbnail row, a pick replaces the tile and removes any stale
+// items/<id>/thumb.png (review finding F1, ut-docs#1844: the convention-based
+// readers would otherwise keep showing it). With a photo row the file stays
+// (ut-docs#4846, TestChooseIcon_PhotoItemKeepsPhotoAndStoresFallback_4846).
+func TestChooseIcon_ReplacingATileRemovesStaleFile(t *testing.T) {
 	mux, db := iconPickerFileTestDeps(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Item", BasePrice: 100, IsActive: true})
 
@@ -308,9 +311,9 @@ func TestChooseIcon_RemovesUploadedThumbnailFile(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(thumbPath, []byte("fake-png-bytes"), 0o644); err != nil {
-		t.Fatalf("seed uploaded file: %v", err)
+		t.Fatalf("seed stale file: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img1','itm1','/public/assets/items/itm1/thumb.png','thumbnail')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img1','itm1','/public/assets/category-icons/drink.svg','thumbnail')`); err != nil {
 		t.Fatalf("seed thumbnail row: %v", err)
 	}
 
@@ -319,7 +322,7 @@ func TestChooseIcon_RemovesUploadedThumbnailFile(t *testing.T) {
 		t.Fatalf("choose icon: code %d body %s", rec.Code, rec.Body.String())
 	}
 	if _, err := os.Stat(thumbPath); !os.IsNotExist(err) {
-		t.Fatalf("expected the superseded uploaded file to be removed, stat err = %v", err)
+		t.Fatalf("expected the stale uploaded file to be removed, stat err = %v", err)
 	}
 }
 
