@@ -194,7 +194,7 @@ jobs:
             android/app/build/outputs/apk/universal/debug/*.apk \
             android/app/build/outputs/apk/armv7/debug/*.apk
           for v in arm64Debug universalDebug armv7Debug; do
-            m="$(find android/app/build/intermediates/merged_manifests -path "*/${v}/*" -name AndroidManifest.xml | head -n1)"
+            m="$(find android/app/build/intermediates/merged_manifests -path "*/${v}/*" -name AndroidManifest.xml | sed -n 1p)"
             [ -n "${m}" ] || { echo "no merged manifest for ${v}" >&2; exit 1; }
             bash scripts/ci/guard-android-manifest-features.sh "${m}" shipped
           done
@@ -209,5 +209,5 @@ jobs:
           ./gradlew -PtapToPay=true assembleArm64Debug testArm64DebugUnitTest --no-daemon
           cd ..
           bash scripts/ci/check-android-stripe-sdk.sh present android/app/build/outputs/apk/arm64/debug/*.apk
-          m="$(find android/app/build/intermediates/merged_manifests -path '*/arm64Debug/*' -name AndroidManifest.xml | head -n1)"
+          m="$(find android/app/build/intermediates/merged_manifests -path '*/arm64Debug/*' -name AndroidManifest.xml | sed -n 1p)"
           bash scripts/ci/guard-android-manifest-features.sh "${m}"

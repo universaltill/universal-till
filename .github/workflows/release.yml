@@ -835,7 +835,7 @@ jobs:
             # missed, the BUILT release must carry no Stripe SDK class and no Tap to
             # Pay manifest entry (NFC, an Application class, uncapped location).
             bash scripts/ci/check-android-stripe-sdk.sh absent "$APK"
-            MERGED="$(find android/app/build/intermediates/merged_manifests -path "*/${flavor}Release/*" -name AndroidManifest.xml | head -n1)"
+            MERGED="$(find android/app/build/intermediates/merged_manifests -path "*/${flavor}Release/*" -name AndroidManifest.xml | sed -n 1p)"
             [ -n "$MERGED" ] || { echo "::error::no merged manifest for ${flavor}Release (#3048)"; exit 1; }
             bash scripts/ci/guard-android-manifest-features.sh "$MERGED" shipped
             "${BUILD_TOOLS}/apksigner" verify "$APK"
