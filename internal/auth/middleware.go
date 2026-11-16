@@ -393,6 +393,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/main-till-status":     true,
 	"/ui/net-status":           true, // status-bar light, fetch every 10 s (ut-docs#3095)
 	"/ui/subscription-chip":    true, // status-bar subscription chip, every 60 s (ut-docs#2569)
+	"/ui/tax-autoinstall-chip": true, // import.html + Settings: the automatic tax plugin install chip, every 5 s (ADR-0172 §5)
 	"/ui/sync-chip":            true,
 	"/ui/fiscal-chip":          true,
 	"/ui/diagnostics-chip":     true,

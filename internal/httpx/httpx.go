@@ -1510,6 +1510,10 @@ var renderFiles = []string{
 	// ut-docs#4720: the cloud-terms accept step under Register now and the
 	// auto-register toggle (the setup wizard, rendered standalone, inlines it).
 	"ui/partials/enrol_terms.html",
+	// ADR-0172 §5 (ut-docs#6287): the automatic tax plugin install's status
+	// chip is included by import.html (the setup landing) and settings.html
+	// and polled standalone by GET /ui/tax-autoinstall-chip.
+	"ui/partials/tax_autoinstall_chip.html",
 	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
 	// response AND settings.html's own page render (when a restore is
 	// already staged from an earlier visit) both need this exact markup,

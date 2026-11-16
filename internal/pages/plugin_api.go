@@ -639,6 +639,12 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			log.Printf("warning: failed to clear install status for %s: %v", pluginID, err)
 		}
 
+		// ADR-0172 §5: uninstalling the automatically installed tax plugin
+		// declines it: the pending spec goes and the retry never reinstalls it.
+		if _, auto := taxAutoInstalledPlugin(ctx, d, pluginID); auto {
+			declineTaxAutoInstall(ctx, d, pluginID)
+		}
+
 		// Reload so the nav/menu no longer shows the plugin's entries.
 		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)

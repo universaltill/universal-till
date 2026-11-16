@@ -859,6 +859,10 @@ var PerTillSettingPrefixes = []string{
 	// the main till's queue overwrote a replica's at every pull. A full key
 	// used as a prefix; the rest of setup.* stays shop-wide.
 	"setup.pending_base_plugins",
+	// ADR-0172 §5 (ut-docs#6287): this till's own tax auto-install status
+	// chip and its "declined" record. Plugins install per machine, so both
+	// are per till, like the queue above.
+	"setup.tax_autoinstall.",
 	// ut-docs#3091: this till's running version, when it first ran it, and
 	// whether its release notes were seen (AppVersionSettingsKey above).
 	// "app.version" as a prefix also covers app.version_first_run_at.

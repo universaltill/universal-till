@@ -46,6 +46,8 @@
 <section class="card import-welcome" data-testid="import-welcome" aria-labelledby="import-welcome-title">
   {{ if .cloudPairFailed }}<p class="muted" role="alert" data-testid="cloud-pair-incomplete">{{ T "setup.cloud.pair_incomplete" }}</p>{{ end }}
   <h2 id="import-welcome-title">{{ T "import.welcome.title" }}</h2>
+  {{/* ADR-0172 §5: the automatic tax plugin install, if the till is doing one. */}}
+  {{ if .taxAutoInstall }}{{ template "tax_autoinstall_chip.html" .taxAutoInstall }}{{ end }}
   <p class="muted">{{ T "import.welcome.intro" }}</p>
   <div class="import-welcome-grid">
     <div class="import-welcome-option" data-welcome-option="file">

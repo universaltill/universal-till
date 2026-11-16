@@ -27,6 +27,9 @@
           <span class="tag" x-text="'v' + p.version"></span>
         </div>
         <p class="muted" x-text="p.id" style="font-size:.8rem; word-break:break-all"></p>
+        {{/* ADR-0172 §5 (ut-docs#6287): the tax plugin the till installed by
+             itself says so (server flag, never derived from a country here). */}}
+        <p class="muted" x-show="p.autoNote" x-text="p.autoNote" data-testid="plugin-auto-installed-note" style="font-size:.85rem"></p>
         <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem; flex-wrap:wrap">
           {{/* ut-docs#628 follow-up: reuse the same token-based tag pattern
                shifts.html/inventory.html already use (rgba tint matching
@@ -81,7 +84,7 @@
                     }).catch(function (e) { vLoading = false; versions = null; vError = String(e); });
                   }">{{ T "plugins.manage.action.versions" }}</button>
           <button class="btn danger"
-                  @click="actAfterConfirm('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?', $event.currentTarget, '/api/plugins/' + p.id + '/uninstall', 'POST')">{{ T "plugins.manage.action.uninstall" }}</button>
+                  @click="actAfterConfirm(p.uninstallConfirm || ('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?'), $event.currentTarget, '/api/plugins/' + p.id + '/uninstall', 'POST', undefined, '{{ T "plugins.manage.action.uninstall" }}')">{{ T "plugins.manage.action.uninstall" }}</button>
         </div>
         {{/* ut-docs#2239: version history is fetched lazily on first open per
              card (not eagerly with the rest of pluginsJSON at page load) so a
@@ -149,9 +152,9 @@
   };
   // Uninstall / roll back ask first, in the till's own dialog (ut-docs#6116).
   // act() runs only on an explicit Confirm.
-  window.actAfterConfirm = function (question, opener, url, method, body) {
+  window.actAfterConfirm = function (question, opener, url, method, body, okLabel) {
     var ask = (window.UT && typeof window.UT.confirm === 'function')
-      ? window.UT.confirm(question, { opener: opener })
+      ? window.UT.confirm(question, okLabel ? { opener: opener, ok: okLabel } : { opener: opener })
       : Promise.resolve(window.confirm(question)); // native-confirm:allow till-confirm.js not loaded: still ask, never act unconfirmed
     ask.then(function (ok) { if (ok === true) window.act(url, method, body); });
   };
