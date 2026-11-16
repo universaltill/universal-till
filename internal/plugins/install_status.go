@@ -162,7 +162,7 @@ func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 		return InstallFailure{MessageKey: "plugins.install.error.service_unavailable", Message: "Plugin downloads are not available for this shop.", Status: http.StatusForbidden}, true
 	case "unauthorized", "token_retired":
 		if !hasOwner {
-			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Register this till as a new store.", Status: http.StatusForbidden}, true
+			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Reconnect this till in Settings → Till registration.", Status: http.StatusForbidden}, true
 		}
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	case "device_mismatch":
