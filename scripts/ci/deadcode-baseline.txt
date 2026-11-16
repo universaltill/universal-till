@@ -65,6 +65,12 @@ internal/data/tills_repo.go: unreachable func: TillsRepo.InsertTill
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Delete
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.GetAll
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Set
+internal/devicepay/cloudcall.go: unreachable func: Call
+internal/devicepay/cloudcall.go: unreachable func: Caller.Call
+internal/devicepay/cloudcall.go: unreachable func: Caller.client
+internal/devicepay/cloudcall.go: unreachable func: Caller.do
+internal/devicepay/cloudcall.go: unreachable func: Caller.prepare
+internal/devicepay/cloudcall.go: unreachable func: Error.Error
 internal/diagnostics/device_model.go: unreachable func: SetDeviceModel
 internal/diagnostics/events.go: unreachable func: EnumValues
 internal/directivekey/directivekey.go: unreachable func: Store.Path
