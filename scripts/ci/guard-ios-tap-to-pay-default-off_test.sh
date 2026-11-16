@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Fixtures write literal $(VAR) / ${{ }} text on purpose.
+# shellcheck disable=SC2016
 #
 # Regression test for guard-ios-tap-to-pay-default-off.sh (ut-docs#3049):
 # proves the guard rejects each way Tap to Pay could reach a CI or
