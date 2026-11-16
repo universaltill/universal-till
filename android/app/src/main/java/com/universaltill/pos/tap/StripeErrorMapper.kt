@@ -25,12 +25,19 @@ object StripeErrorMapper {
 }
 
 object CloudErrors {
-    private val known = setOf("offline", "connect_incomplete", "cloud_error", "bad_request")
+    private val known = setOf("offline", "connect_incomplete", "cloud_error", "bad_request", "not_enrolled")
 
-    /** Go's TapToPayCloud error text starts with a closed code ("offline: cloud not reached"). */
+    /**
+     * Go's TapToPayCloud error text is a stable code. The cloud's own
+     * not_onboarded is our connect_incomplete; anything unrecognised is cloud_error.
+     */
     fun code(message: String?): String {
         val head = message?.substringBefore(':')?.trim()
-        return if (head != null && head in known) head else "cloud_error"
+        return when {
+            head == "not_onboarded" -> "connect_incomplete"
+            head != null && head in known -> head
+            else -> "cloud_error"
+        }
     }
 
     fun toStartError(code: String): String =
@@ -59,7 +66,7 @@ class ReaderConnector(private val cloud: CloudApi, private val connectFn: (Strin
     fun connect(cb: (String?) -> Unit) {
         val loc =
             locationId ?: try {
-                parseLocationId(cloud.location()).also { locationId = it }
+                parseLocationId(cloud.onboardingStatus()).also { locationId = it }
             } catch (e: CloudException) {
                 cb(CloudErrors.toStartError(CloudErrors.code(e.code))); return
             }
@@ -75,17 +82,15 @@ class ReaderConnector(private val cloud: CloudApi, private val connectFn: (Strin
 }
 
 /**
- * The cloud's location reply field names are still open (design Q2): accept
- * {"location_id":..} or {"id":..}, or a bare id. Only GoCloudApi's JSON reaches this.
+ * onboarding_status reply (same rule as the iOS shell): onboarded AND
+ * charges_enabled AND a location_id, else the shop has not finished Connect
+ * onboarding (connect_incomplete).
  */
 fun parseLocationId(body: String): String {
-    val t = body.trim()
-    if (t.startsWith("{")) {
-        val j = try { org.json.JSONObject(t) } catch (_: Exception) { throw CloudException("cloud_error") }
-        val id = j.optString("location_id").ifEmpty { j.optString("id") }
-        if (id.isEmpty()) throw CloudException("cloud_error")
-        return id
+    val j = try { org.json.JSONObject(body.trim()) } catch (_: Exception) { throw CloudException("cloud_error") }
+    val loc = j.optString("location_id")
+    if (!j.optBoolean("onboarded", false) || !j.optBoolean("charges_enabled", false) || loc.isEmpty()) {
+        throw CloudException("connect_incomplete")
     }
-    if (t.isEmpty()) throw CloudException("cloud_error")
-    return t
+    return loc
 }

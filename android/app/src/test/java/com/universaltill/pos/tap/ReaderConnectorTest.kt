@@ -9,13 +9,12 @@ class ReaderConnectorTest {
         var locationCalls = 0
         var locationError: String? = null
         override fun connectionToken(): String = "tok"
-        override fun location(): String {
+        override fun onboardingStatus(): String {
             locationCalls++
             locationError?.let { throw CloudException(it) }
-            return "tml_1"
+            return """{"onboarded":true,"charges_enabled":true,"location_id":"tml_1"}"""
         }
-        override fun status(): String = "{}"
-        override fun onboardingLink(): String = "{}"
+        override fun sessionCreate(amountMinor: Long, currency: String, key: String): String = "{}"
     }
 
     @Test fun locationIsFetchedOnceThenKeptInMemory() {
@@ -66,7 +65,10 @@ class ReaderConnectorTest {
 class CloudParsingTest {
     @Test fun connectionTokenFields() {
         assertEquals("s1", parseConnectionToken("""{"secret":"s1"}"""))
-        assertEquals("s2", parseConnectionToken("""{"token":"s2"}"""))
+    }
+
+    @Test(expected = CloudException::class) fun oldTokenFieldIsNotAccepted() {
+        parseConnectionToken("""{"token":"s2"}""")
     }
 
     @Test(expected = CloudException::class) fun emptyTokenIsAnError() {
@@ -77,13 +79,31 @@ class CloudParsingTest {
         parseConnectionToken("garbage")
     }
 
-    @Test fun locationFields() {
-        assertEquals("tml_1", parseLocationId("""{"location_id":"tml_1"}"""))
-        assertEquals("tml_2", parseLocationId("""{"id":"tml_2"}"""))
-        assertEquals("tml_3", parseLocationId(" tml_3 "))
+    @Test fun locationNeedsOnboardedChargesEnabledAndLocation() {
+        assertEquals("tml_1", parseLocationId("""{"onboarded":true,"charges_enabled":true,"location_id":"tml_1"}"""))
+        for (bad in listOf(
+            """{"onboarded":true,"charges_enabled":true}""",
+            """{"onboarded":true,"charges_enabled":true,"location_id":""}""",
+            """{"onboarded":false,"charges_enabled":true,"location_id":"tml_1"}""",
+            """{"onboarded":true,"charges_enabled":false,"location_id":"tml_1"}""",
+            """{"location_id":"tml_1"}""",
+        )) {
+            val e = try { parseLocationId(bad); null } catch (e: CloudException) { e }
+            assertEquals(bad, "connect_incomplete", e?.code)
+        }
     }
 
-    @Test(expected = CloudException::class) fun emptyLocationIsAnError() {
-        parseLocationId("""{}""")
+    @Test(expected = CloudException::class) fun nonJsonLocationIsAnError() {
+        parseLocationId("tml_3")
+    }
+
+    @Test fun sessionReply() {
+        val s = parseSession("""{"client_secret":"pi_1_secret_x","amount_minor":250,"currency":"gbp","status":"requires_payment_method"}""")
+        assertEquals(CloudSession("pi_1_secret_x", 250L, "gbp"), s)
+        assertEquals(CloudSession("pi_2_secret_y", null, null), parseSession("""{"client_secret":"pi_2_secret_y"}"""))
+    }
+
+    @Test(expected = CloudException::class) fun sessionWithoutSecretIsAnError() {
+        parseSession("""{"amount_minor":250}""")
     }
 }

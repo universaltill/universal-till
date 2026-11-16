@@ -13,11 +13,21 @@ struct UniversalTillApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(till: till)
-                .onAppear { till.boot() }
+                .onAppear {
+                    till.boot()
+                    TapToPayRegistration.activate()
+                }
         }
         .onChange(of: scenePhase) { phase in
+            // Tap to Pay (ut-docs#3049, ADR-0125 §3e): registered while
+            // active, cleared in the background, and deliberately left alone
+            // on .inactive — Apple's own sheets cause it mid-payment. Both
+            // calls are no-ops unless the build's UT_TAP_TO_PAY flag is on.
             if phase == .active {
                 till.resume()
+                TapToPayRegistration.activate()
+            } else if phase == .background {
+                TapToPayRegistration.deactivate()
             }
         }
     }

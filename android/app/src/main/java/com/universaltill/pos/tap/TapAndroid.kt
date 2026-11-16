@@ -112,33 +112,54 @@ class PrefsDoneStore(private val prefs: TapPrefs) : DoneStore {
 }
 
 /**
- * The cloud calls go through Go (Mobile.tapToPayCloud): the till's device
- * credential never reaches Kotlin or the page (design section 6). Blocking:
- * call from a worker thread only.
+ * The cloud calls go through Go (Mobile.tapToPayCloud -> internal/paybroker.Call):
+ * the till's device credential and the op allow-list stay in Go, never in
+ * Kotlin or the page. Blocking: call from a worker thread only. Go's error
+ * text is a stable code (not_onboarded, offline, not_enrolled, http_<n>, ...).
  */
 class GoCloudApi : CloudApi {
     private fun call(op: String, body: String): String =
         try {
-            Mobile.tapToPayCloud(op, body)
+            Mobile.tapToPayCloud(PROVIDER, op, body)
         } catch (e: Exception) {
             throw CloudException(CloudErrors.code(e.message))
         }
 
     override fun connectionToken(): String = call("connection_token", "{}")
 
-    override fun location(): String = call("location", "{}")
+    override fun onboardingStatus(): String = call("onboarding_status", "{}")
 
-    override fun status(): String = call("connect_status", "{}")
+    override fun sessionCreate(amountMinor: Long, currency: String, key: String): String =
+        call(
+            "session_create",
+            JSONObject().put("amount_minor", amountMinor).put("currency", currency).put("idempotency_key", key).toString(),
+        )
 
-    override fun onboardingLink(): String = call("onboarding_link", "{}")
+    private companion object {
+        const val PROVIDER = "stripe"
+    }
 }
 
-/** The cloud's token reply field name is still open (design Q2): accept "secret" or "token". */
+/** connection_token reply: {"secret": "..."} (the iOS shell reads the same field). */
 fun parseConnectionToken(body: String): String {
     val j = try { JSONObject(body.trim()) } catch (_: Exception) { throw CloudException("cloud_error") }
-    val t = j.optString("secret").ifEmpty { j.optString("token") }
+    val t = j.optString("secret")
     if (t.isEmpty()) throw CloudException("cloud_error")
     return t
+}
+
+/** session_create reply: the cloud-created PaymentIntent's client secret plus the amount/currency it holds. */
+data class CloudSession(val clientSecret: String, val amountMinor: Long?, val currency: String?)
+
+fun parseSession(body: String): CloudSession {
+    val j = try { JSONObject(body.trim()) } catch (_: Exception) { throw CloudException("cloud_error") }
+    val secret = j.optString("client_secret")
+    if (secret.isEmpty()) throw CloudException("cloud_error")
+    return CloudSession(
+        secret,
+        if (j.has("amount_minor")) j.optLong("amount_minor") else null,
+        j.optString("currency").ifEmpty { null },
+    )
 }
 
 /** Where a flavor/property says the feature stands, for the shell. */

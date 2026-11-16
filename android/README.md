@@ -797,8 +797,12 @@ deadline 24 s, never `declined` on a timer once confirm began, late results kept
 Interfaces `Reader`, `CloudApi`, `PendingStore`, `Scheduler` have fakes in `src/test`.
 `src/ttpStub` (no-op) and `src/ttpReal` (`StripeTerminalReader`, `TillApplication`,
 manifest overlay) are chosen by the flag. Cloud calls go through Go
-(`Mobile.tapToPayCloud`, `internal/devicepay`): the device credential never reaches Kotlin
-or the page.
+(`Mobile.tapToPayCloud("stripe", op, body)` -> `internal/paybroker.Call`, the one forwarder
+shared with iOS): the device credential and the op allow-list stay in Go. Ops used:
+`connection_token` (`{secret}`), `onboarding_status` (`{onboarded, charges_enabled,
+location_id}`), `session_create` (`{client_secret, amount_minor, currency}`). The cloud
+creates the PaymentIntent; `StripeTerminalReader` retrieves it by client secret and
+collects only on a fresh `requires_payment_method` intent of exactly this amount.
 
 **Bridge v1** (`window.AndroidTapToPay`, `WebViewCompat.addWebMessageListener`, exact origin
 `http://<till host>`, main frame only; absent when the flag is off): the page sends
@@ -813,9 +817,8 @@ never charges again; the same key with another amount/currency is `key_mismatch`
 engine, reader and the persisted pending/paid records are process-scoped, so recreating
 or finishing the Activity never forgets a payment. Results are `succeeded|declined|cancelled|unknown`; `unknown`
 is never shown as declined (retry on the same basket with the same key; a later
-`late:true` result can correct it). The page-supplied amount and currency are trusted only because the result is advisory; when
-payment creation moves to ut-cloud (#6454, replacing `StripeTerminalReader.createIntent`) they must
-come from a server-side basket. The result is **advisory**: a sale is recorded only
+`late:true` result can correct it). The page-supplied amount and currency are trusted only because the result is advisory
+(a server-side basket is the plugin path's job, not this JS bridge's). The result is **advisory**: a sale is recorded only
 when the `stripe_tap` plugin verifies the PaymentIntent server-side. No card data is in
 any message. Amounts are minor units, 1..9,999,999.
 

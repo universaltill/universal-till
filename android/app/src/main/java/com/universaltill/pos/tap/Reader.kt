@@ -59,15 +59,20 @@ interface Reader {
 
 class CloudException(val code: String) : Exception(code)
 
-/** The four cloud calls (design section 6). Blocking; implementations run off the main thread. */
+/**
+ * The cloud calls, as ut-cloud's payment broker allows them (paybroker ops
+ * connection_token, onboarding_status, session_create; same ones the iOS
+ * shell uses). Blocking; implementations run off the main thread.
+ */
 interface CloudApi {
+    /** connection_token reply JSON: {"secret": "..."}. */
     fun connectionToken(): String
 
-    fun location(): String
+    /** onboarding_status reply JSON: {"onboarded", "charges_enabled", "location_id"}. */
+    fun onboardingStatus(): String
 
-    fun status(): String
-
-    fun onboardingLink(): String
+    /** session_create reply JSON: {"client_secret", "amount_minor", "currency", ...}; the cloud creates the PaymentIntent. */
+    fun sessionCreate(amountMinor: Long, currency: String, key: String): String
 }
 
 /** Lifecycle of a [PendingRecord]. Only after confirm began can the customer have been charged. */

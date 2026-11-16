@@ -13,18 +13,13 @@ import com.stripe.stripeterminal.external.callable.ReaderCallback
 import com.stripe.stripeterminal.external.callable.TapToPayReaderListener
 import com.stripe.stripeterminal.external.callable.TerminalListener
 import com.stripe.stripeterminal.external.callable.OfflineListener
-import com.stripe.stripeterminal.external.models.CaptureMethod
 import com.stripe.stripeterminal.external.models.ConnectionConfiguration
 import com.stripe.stripeterminal.external.models.ConnectionTokenException
-import com.stripe.stripeterminal.external.models.CreateConfiguration
 import com.stripe.stripeterminal.external.models.DiscoveryConfiguration
 import com.stripe.stripeterminal.external.models.LocaleConfig
-import com.stripe.stripeterminal.external.models.OfflineBehavior
 import com.stripe.stripeterminal.external.models.OfflineStatus
 import com.stripe.stripeterminal.external.models.PaymentIntent
-import com.stripe.stripeterminal.external.models.PaymentIntentParameters
 import com.stripe.stripeterminal.external.models.PaymentIntentStatus
-import com.stripe.stripeterminal.external.models.PaymentMethodType
 import com.stripe.stripeterminal.external.models.TapUseCase
 import com.stripe.stripeterminal.external.models.TerminalException
 import com.stripe.stripeterminal.log.LogLevel
@@ -134,21 +129,40 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
         }
     }
 
+    /**
+     * The cloud creates the PaymentIntent (session_create: direct charge, metadata, no fee are
+     * the cloud's); the shell only retrieves it by client secret to collect on it. Same flow as iOS.
+     */
     override fun createIntent(amountMinor: Long, currency: String, key: String, cb: (IntentResult) -> Unit) {
-        onMain { createIntentOnMain(amountMinor, currency, key, cb) }
+        io.execute {
+            val session =
+                try {
+                    parseSession(cloud.sessionCreate(amountMinor, currency, key))
+                } catch (e: Throwable) {
+                    val code = if (e is CloudException) e.code else "cloud_error"
+                    return@execute onMain { cb(IntentResult.Failed(CloudErrors.toStartError(code))) }
+                }
+            onMain { retrieveOnMain(session, amountMinor, currency, cb) }
+        }
     }
 
-    private fun createIntentOnMain(amountMinor: Long, currency: String, key: String, cb: (IntentResult) -> Unit) {
-        val params =
-            PaymentIntentParameters.Builder(amountMinor, currency, CaptureMethod.Automatic, listOf(PaymentMethodType.CARD_PRESENT))
-                .setMetadata(mapOf("ut_key" to key)) // no PII, no application fee
-                .build()
-        terminal().createPaymentIntent(
-            params,
+    private fun retrieveOnMain(session: CloudSession, amountMinor: Long, currency: String, cb: (IntentResult) -> Unit) {
+        val t = try { terminal() } catch (e: Throwable) { return cb(IntentResult.Failed("not_ready")) }
+        t.retrievePaymentIntent(
+            session.clientSecret,
             object : PaymentIntentCallback {
                 override fun onSuccess(paymentIntent: PaymentIntent) = onMain {
                     val id = paymentIntent.id
-                    if (id == null) {
+                    // Only a fresh, untouched intent for exactly this amount may be collected on. A retry of the
+                    // same key can return an intent that already moved (succeeded/processing): never collect it
+                    // again; the plugin settles it server-side through session_status.
+                    val fresh = paymentIntent.status == PaymentIntentStatus.REQUIRES_PAYMENT_METHOD
+                    val same =
+                        paymentIntent.amount == amountMinor &&
+                            paymentIntent.currency.equals(currency, ignoreCase = true) &&
+                            (session.amountMinor == null || session.amountMinor == amountMinor) &&
+                            (session.currency == null || session.currency.equals(currency, ignoreCase = true))
+                    if (id == null || !fresh || !same) {
                         cb(IntentResult.Failed("not_ready"))
                     } else {
                         intents[id] = paymentIntent
@@ -158,7 +172,6 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
 
                 override fun onFailure(e: TerminalException) = onMain { cb(IntentResult.Failed("not_ready")) }
             },
-            CreateConfiguration(OfflineBehavior.REQUIRE_ONLINE),
         )
     }
 
