@@ -267,6 +267,26 @@ func TestReconnectRefusalsLeaveTheTillExactlyAsItWas(t *testing.T) {
 	}
 }
 
+// Fable review M1 (2026-11-16): a Reconnect whose 2xx names a DIFFERENT shop
+// (a cloud that ignored expect_store_id: an older build, or a failed device
+// lookup) must not move the till into it. Nothing is persisted.
+func TestReconnectRefusesAnAnswerForAnotherShop(t *testing.T) {
+	resetState()
+	cloud := newScriptedCloud(t, func(_ int, _ regReq, w http.ResponseWriter) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"store_id": "store-OTHER", "merchant_id": "store-OTHER", "token": "tok-other"}})
+	})
+	kv := newFakeKV()
+	cfg := registeredTill(t, cloud.srv.URL, kv)
+	_, err := Reconnect(context.Background(), cfg, kv)
+	if err == nil || !IsStoreNotReusable(err) {
+		t.Fatalf("err = %v, want store_not_reusable", err)
+	}
+	if kv.get(keyToken) != "tok-old" || kv.get(keyStoreID) != "store-abc" || CurrentStatus().StoreID == "store-OTHER" {
+		t.Fatalf("till moved: token=%q store=%q status=%q", kv.get(keyToken), kv.get(keyStoreID), CurrentStatus().StoreID)
+	}
+}
+
 func TestReconnectNeedsARegisteredMainTill(t *testing.T) {
 	resetState()
 	cloud := newScriptedCloud(t, func(_ int, _ regReq, w http.ResponseWriter) { writeOK(w, "x") })

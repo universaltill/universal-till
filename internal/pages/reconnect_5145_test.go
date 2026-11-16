@@ -456,3 +456,35 @@ func TestNewShop_RefusalBeforeTheWipeIsNotReportedOrAudited(t *testing.T) {
 	d.Cfg.Marketplace.EndpointURL = ""
 	newShopRefusedAndNothingChanged(t, mux, d, c, 1)
 }
+
+// Fable review M2 (2026-11-16): Reconnect is hidden AND server-refused outside
+// the anonymous lock-out, like new-shop: a manager's POST on a healthy till or
+// on a till of a claimed shop never reaches the cloud.
+func reconnectRefusedAndNothingChanged(t *testing.T, mux *http.ServeMux, d *common.Deps, c *lockoutCloud) {
+	t.Helper()
+	before := enroll.CurrentStatus()
+	tok, _, _ := d.Settings.Get(t.Context(), "marketplace.token")
+	rec := postForm(mux, "/api/enrol/reconnect", reconnectForm(), &mgrUser)
+	tok2, _, _ := d.Settings.Get(t.Context(), "marketplace.token")
+	if after := enroll.CurrentStatus(); after.StoreID != before.StoreID || after.DeviceID != before.DeviceID || tok2 != tok {
+		t.Fatalf("identity changed: %+v -> %+v", before, after)
+	}
+	if c.calls.Load() != 1 { // only the seed registration
+		t.Fatalf("cloud called %d times, want 1; body %s", c.calls.Load(), rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Reconnected.") {
+		t.Fatalf("claims a reconnect: %s", rec.Body.String())
+	}
+}
+
+func TestReconnect_RefusedOnAHealthyTill(t *testing.T) {
+	mux, d, c := newLockedOutTill(t, okRegister("tok-new"))
+	cloudAuthChipStatus = func() cloudsync.AuthChip { return cloudsync.AuthChip{} }
+	reconnectRefusedAndNothingChanged(t, mux, d, c)
+}
+
+func TestReconnect_RefusedOnAClaimedShop(t *testing.T) {
+	mux, d, c := newLockedOutTill(t, okRegister("tok-new"))
+	claimStore(t, d)
+	reconnectRefusedAndNothingChanged(t, mux, d, c)
+}

@@ -1324,7 +1324,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
-		if !enroll.CanReconnect(r.Context(), d.Settings) || !enroll.CurrentStatus().Registered {
+		// Hidden AND server-refused outside the anonymous lock-out, the same
+		// gate as new-shop (Fable review M2): a healthy till or one of a
+		// claimed shop never reaches the cloud from here.
+		if !tillLockedOutAnonymous(r.Context(), d) {
 			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
 			return
 		}

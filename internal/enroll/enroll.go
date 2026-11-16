@@ -1180,6 +1180,13 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	if d.MerchantID == "" {
 		d.MerchantID = d.StoreID
 	}
+	// Fable review M1 (ut-docs#5145): a Reconnect is "same shop or nothing".
+	// A cloud that ignored expect_store_id (older build, failed device lookup)
+	// may answer with a different store; never adopt it.
+	if expectStoreID != "" && d.StoreID != expectStoreID {
+		return &RegisterHTTPError{Status: http.StatusConflict, Code: StoreNotReusableCode,
+			Body: "the cloud answered for a different shop than the one this till asked to rejoin"}
+	}
 
 	log := logging.L()
 	if termsSent != "" {
