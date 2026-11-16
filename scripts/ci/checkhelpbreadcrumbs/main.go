@@ -177,16 +177,15 @@ func readFlatJSON(path string) (map[string]string, error) {
 	return m, nil
 }
 
-// localeJSON locates a locale's strings: web/locales, else a language-pack
-// checkout (same convention as scripts/ci/audit-locale-render.sh).
+// localeJSON locates a locale's strings: web/locales, else the flat overlay
+// dir in $UT_TEST_I18N_OVERLAY_DIR (scripts/ci/build-locale-overlay.sh).
 func localeJSON(root, loc string) (string, bool) {
 	cands := []string{
 		filepath.Join(root, "web", "locales", loc+".json"),
 	}
-	if d := os.Getenv("UT_" + strings.ToUpper(loc) + "_PACK_DIR"); d != "" {
-		cands = append(cands, filepath.Join(d, "locales", loc+".json"))
+	if d := os.Getenv("UT_TEST_I18N_OVERLAY_DIR"); d != "" {
+		cands = append(cands, filepath.Join(d, loc+".json"))
 	}
-	cands = append(cands, filepath.Join(root, "..", "ut-plugin-language-"+loc, "locales", loc+".json"))
 	for _, c := range cands {
 		if st, err := os.Stat(c); err == nil && !st.IsDir() {
 			return c, true
@@ -305,8 +304,8 @@ func run(root string, stdout, stderr io.Writer) int {
 		}
 		jp, ok := localeJSON(root, loc)
 		if !ok {
-			fmt.Fprintf(stdout, "notice: guard-help-breadcrumbs: no %s.json (web/locales, UT_%s_PACK_DIR or sibling ut-plugin-language-%s) -- skipping locale %s\n",
-				loc, strings.ToUpper(loc), loc, loc)
+			fmt.Fprintf(stdout, "notice: guard-help-breadcrumbs: no %s.json (web/locales or $UT_TEST_I18N_OVERLAY_DIR) -- skipping locale %s\n",
+				loc, loc)
 			skippedLoc[loc] = true
 			continue
 		}

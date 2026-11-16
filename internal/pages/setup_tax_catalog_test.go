@@ -136,8 +136,8 @@ func TestSetupInstallableTaxPlugin_PicksHighestSemverVersion(t *testing.T) {
 func TestSetupInstallableTaxPlugin_IgnoresNonTaxListings(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	plugin, _ := setupInstallableTaxPlugin(t.Context(), dp, "DE")
