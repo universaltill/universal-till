@@ -2,7 +2,6 @@ package common
 
 import (
 	"context"
-	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -12,13 +11,14 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // openMigratedDB gives the test a real, fully migrated schema — same
 // pattern as internal/data and internal/cloudsync's own test helpers.
 func openMigratedDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}
