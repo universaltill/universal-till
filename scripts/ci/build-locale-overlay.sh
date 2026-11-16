@@ -61,7 +61,7 @@ done < <(jq -r 'keys[]' "${AREAS_FILE}")
 conflicts="$(jq -n -r '
   [inputs | to_entries[] | select((.value | type) == "string" and .value != "")]
   | group_by(.key) | map(select((map(.value) | unique | length) > 1) | .[0].key) | .[]' "${files[@]}")"
-[[ -z "${conflicts}" ]] || fail "key(s) with conflicting values across areas: $(echo "${conflicts}" | head -5 | tr '\n' ' ')"
+[[ -z "${conflicts}" ]] || fail "key(s) with conflicting values across areas: $(sed -n 1,5p <<<"${conflicts}" | tr '\n' ' ')"
 
 merged="$(jq -S -s 'add | with_entries(select((.value | type) == "string" and .value != ""))' "${files[@]}")"
 count="$(jq 'length' <<<"${merged}")"
