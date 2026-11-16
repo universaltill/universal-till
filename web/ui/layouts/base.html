@@ -1037,6 +1037,15 @@
            otherwise. Same hx-preserve + default innerHTML swap as
            #sb-main-till-mount above. -->
       <span id="sb-cloud-auth-mount" hx-preserve hx-get="/ui/cloud-auth-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#5287: a move of this till into another shop waits for a
+           manager — "Till move waiting for a manager"
+           (web/ui/partials/move_pending_chip.html). Read-only and anonymous,
+           shown to every role (cashiers too) on every page, the sale screen
+           included; a link to the move page only with the settings grant.
+           Filled by GET /ui/move-pending-chip on load and every 60 s (moves
+           last about a day); empty body otherwise. Same hx-preserve +
+           default innerHTML swap as #sb-cloud-auth-mount above. -->
+      <span id="sb-move-pending-mount" hx-preserve hx-get="/ui/move-pending-chip" hx-trigger="load, every 60s"></span>
       <!-- ut-docs#574 (ADR-0147): the cloud refused the archived-report
            upload (subscription not active) — "Report upload refused"
            (web/ui/partials/report_archive_chip.html). Main till, retention

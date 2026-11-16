@@ -89,8 +89,8 @@ Use this when the shop already exists in the Universal Till cloud and this till 
 Where the Universal Till cloud offers it, pairing a till that already belongs to a shop with a code from another shop you own **moves** the till into that shop instead of adding it as a second till. The till keeps its identity, and its sales history, products and settings go with it: the two shops become one. Nothing moves until a manager or admin approves it on the till itself.
 
 1. Enter the code under Pair with a shop and press Pair. The till asks you to confirm the move, then shows the move page. The till stays in its shop and keeps selling while the move waits.
-2. On the move page, check the shop it moves into and the time the request expires (about a day). To approve, type that shop's name and press **Approve move**, then enter a manager's or admin's PIN. **Decline** also asks for a PIN. A cashier never sees the request.
-3. Until someone decides, managers and admins see a banner on every page except the sale screen: "*shop* asked to move this till into their shop". **Review** opens the move page.
+2. On the move page, check the shop it moves into and the time the request expires (about a day). To approve, type that shop's name and press **Approve move**, then enter a manager's or admin's PIN. **Decline** also asks for a PIN. A cashier can't open the request or act on it.
+3. Until someone decides, managers and admins see a banner on every page except the sale screen: "*shop* asked to move this till into their shop". **Review** opens the move page. On every page, the sale screen included, everyone (cashiers too) sees a **Till move waiting for a manager** chip in the status bar. It names no shop and changes nothing; for a manager or admin, tapping it opens the move page. It goes away once the move is decided, cancelled or expired.
 4. After approval the till says "Moved into *shop*"; the cloud account shows the merged history within a few minutes. Selling never stops.
 
 Good to know:
