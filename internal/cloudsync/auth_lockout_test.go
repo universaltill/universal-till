@@ -480,3 +480,19 @@ func TestPairingDuringLockOutEndsTheHourlyWaitAndClearsTheChip(t *testing.T) {
 	cancel()
 	waitJoined(t, wg)
 }
+
+// ut-docs#5145: a manager's successful "Reconnect this till" ends the 401
+// lock-out at once, without waiting for the next hourly tick.
+func TestClearAuthLockoutEndsTheStreak(t *testing.T) {
+	t.Cleanup(func() { tillAuth.observe(nil) })
+	for i := 0; i < authLockoutAfter; i++ {
+		tillAuth.observe(&statusError{StatusCode: http.StatusUnauthorized})
+	}
+	if !AuthChipStatus().Show || !tillAuth.lockedOut() {
+		t.Fatal("not locked out before the clear")
+	}
+	ClearAuthLockout()
+	if AuthChipStatus().Show || tillAuth.lockedOut() {
+		t.Fatalf("still locked out after ClearAuthLockout: %+v", AuthChipStatus())
+	}
+}
