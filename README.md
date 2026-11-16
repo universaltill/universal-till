@@ -679,7 +679,7 @@ We'll even link to notable forks in this README! 🎉
 - **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
 - **Android** (tablets, POS terminals) ✅ — including 32-bit armv7 devices on Android 8-10 / Fire OS 7, whose app seccomp filter kills unknown syscalls; CI runs the armv7 boot under qemu against the Android 9 allow-list and in a qemu-system-arm VM with the AOSP seccomp filter that must kill the pristine-libc build (`scripts/ci/sim-armv7-seccomp.sh`, ADR-0188). Fire OS 7 hardware check pending (ut-docs#6300)
-- **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
+- **iOS** (iPhone, iPad; iOS/iPadOS 16 or later) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 
 ### Tested Hardware
