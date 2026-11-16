@@ -134,7 +134,23 @@ func Call(ctx context.Context, provider, op string, body []byte) ([]byte, error)
 	if !ok || t.BaseURL == "" || t.Bearer == "" {
 		return nil, ErrNotEnrolled
 	}
-	if !secureEndpoint(t.BaseURL) {
+	// https only, or plain http to this machine's loopback (local tests,
+	// an on-prem cloud on the same host): the request carries the device
+	// Bearer and the reply provider secrets. Inline, not a helper: Call is
+	// reached only through gomobile today, which deadcode does not root
+	// (scripts/ci/deadcode-baseline.txt, ut-docs#3406).
+	secure := false
+	if u, err := url.Parse(t.BaseURL); err == nil && u.Host != "" {
+		switch u.Scheme {
+		case "https":
+			secure = true
+		case "http":
+			host := u.Hostname()
+			ip := net.ParseIP(host)
+			secure = host == "localhost" || (ip != nil && ip.IsLoopback())
+		}
+	}
+	if !secure {
 		logging.L().Warnf("paybroker: %s/%s refused: the cloud endpoint is not https", provider, op)
 		return nil, ErrInsecureEndpoint
 	}
@@ -180,27 +196,6 @@ func Call(ctx context.Context, provider, op string, body []byte) ([]byte, error)
 	}
 	logging.L().Infof("paybroker: %s/%s status=%d in %s", provider, op, resp.StatusCode, took)
 	return out, nil
-}
-
-// secureEndpoint reports whether base is https, or plain http to this
-// machine itself (loopback: tests and a developer's local cloud).
-func secureEndpoint(base string) bool {
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	switch u.Scheme {
-	case "https":
-		return true
-	case "http":
-		host := u.Hostname()
-		if host == "localhost" {
-			return true
-		}
-		ip := net.ParseIP(host)
-		return ip != nil && ip.IsLoopback()
-	}
-	return false
 }
 
 // errorCode reads the cloud's {"error":{"code":…}}, or "" — the only field
