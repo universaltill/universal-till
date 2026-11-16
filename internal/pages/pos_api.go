@@ -39,6 +39,9 @@ import (
 // can map it to its own HTTP status instead of a generic 400.
 type paymentDeclinedError struct {
 	Method string
+	// OutcomeUnknown: the plugin reported decline_code "outcome_unknown" —
+	// the reader may or may not have charged (ut-docs#6439).
+	OutcomeUnknown bool
 }
 
 func (e *paymentDeclinedError) Error() string {
@@ -439,7 +442,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			// a till that refuses every sale undiagnosable. Log it here,
 			// the one place this error is still available.
 			log.Printf("tender declined for method %q (attempt %s): %v", p.MethodID, requestID, err)
-			return "", &paymentDeclinedError{Method: p.MethodID}
+			var de *plugins.PaymentDeclineError
+			unknown := errors.As(err, &de) && de.Code == plugins.DeclineOutcomeUnknown
+			return "", &paymentDeclinedError{Method: p.MethodID, OutcomeUnknown: unknown}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
 		// doc comment claims "fail-closed by construction, no override
@@ -2602,7 +2607,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// localized, method-agnostic message, mirroring the
 				// self-order kiosk's own "selforder.checkout.declined" copy.
 				log.Printf("tender rejected: %v", err)
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
+				msgKey := "pos.toast.payment_declined"
+				if declined.OutcomeUnknown {
+					// ut-docs#6439: not a plain decline — retrying with a
+					// changed basket would mint a new idempotency key.
+					msgKey = "pos.toast.payment_outcome_unknown"
+				}
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), msgKey), http.StatusPaymentRequired)
 				return
 			}
 			// ut-docs#1779: distinct from a plain decline above — the device

@@ -811,6 +811,9 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	// Host functions ("ut" module) resolve the caller through this state.
 	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient, hop: ev.Hop, publishRate: w.publishRate}
+	if isPaymentGateClassEvent(ev.Type) {
+		hs.gateDeadline = time.Now().Add(timeout)
+	}
 	if isJob {
 		hs.jobProgress = job.Progress
 	}
@@ -876,6 +879,14 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		return nil, fmt.Errorf("wasm handler: %s answer to %s exceeds %d bytes", pluginID, ev.Type, stdout.max)
 	}
 	if runErr != nil {
+		// A payment plugin that declines exits non-zero but still names why
+		// on stdout ({"decline_code": …}); keep the code so the cashier can
+		// be told apart "declined" from "outcome unknown" (ut-docs#6439).
+		if isPaymentGateClassEvent(ev.Type) {
+			if code := declineCodeFrom(stdout.buf.String()); code != "" {
+				return nil, fmt.Errorf("wasm handler: %w", &PaymentDeclineError{Code: code, Err: runErr})
+			}
+		}
 		return nil, fmt.Errorf("wasm handler: %w", runErr)
 	}
 	out := strings.TrimSpace(stdout.buf.String())
@@ -1168,4 +1179,38 @@ func truncateForLog(s string) string {
 		cut--
 	}
 	return fmt.Sprintf("%s...(truncated, %d bytes total)", s[:cut], len(s))
+}
+
+// PaymentDeclineError is a payment gate plugin's non-zero exit together with
+// the decline_code it printed (e.g. "outcome_unknown": the reader may or may
+// not have charged). It unwraps to the exit error, so callers that only ask
+// "did it fail" are unchanged (ut-docs#6439).
+type PaymentDeclineError struct {
+	Code string
+	Err  error
+}
+
+func (e *PaymentDeclineError) Error() string { return e.Err.Error() + " (decline_code " + e.Code + ")" }
+func (e *PaymentDeclineError) Unwrap() error { return e.Err }
+
+// DeclineOutcomeUnknown is the decline_code a payment plugin sets when it
+// cannot tell whether the card was charged.
+const DeclineOutcomeUnknown = "outcome_unknown"
+
+// declineCodeFrom reads decline_code from a plugin's stdout answer; "" when
+// absent or not JSON. Codes are short identifiers, anything else is dropped.
+func declineCodeFrom(out string) string {
+	var a struct {
+		Code string `json:"decline_code"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &a) != nil || len(a.Code) > 64 {
+		return ""
+	}
+	// The code lands in logs via Error(): identifier characters only.
+	for _, r := range a.Code {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return ""
+		}
+	}
+	return a.Code
 }

@@ -1898,6 +1898,7 @@
   "pos.toast.insufficient_stock": "Not enough stock to complete this sale",
   "pos.toast.item_not_found": "Item not found",
   "pos.toast.payment_declined": "Payment declined — try again or choose another method",
+  "pos.toast.payment_outcome_unknown": "Card payment not confirmed — it may have gone through. Tap Pay again on the same basket and do not change it.",
   "pos.toast.payment_insufficient": "Amount received does not cover the sale total",
   "pos.toast.promo_applied": "Promotion %s applied",
   "pos.toast.receipt_not_completed": "This sale is not completed",
