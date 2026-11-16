@@ -63,7 +63,7 @@ class TapPrefs(context: Context) {
     fun pendingWrite(list: List<PendingRecord>) {
         val a = JSONArray()
         // Unresolved records are never evicted by the bound; the oldest resolved-state ones go first.
-        val keep = list.takeLast(MAX_PENDING)
+        val keep = PendingBound.keep(list, MAX_PENDING)
         for (r in keep) a.put(JSONObject().put("r", r.requestId).put("k", r.key).put("i", r.intentId).put("s", r.state).put("a", r.amountMinor).put("c", r.currency))
         writeArray("pending", a)
     }

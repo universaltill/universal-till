@@ -106,7 +106,9 @@ class TapToPayFlow(
 
     private fun intentReady(id: String) {
         intentId = id
-        store.put(record(id, PendingState.CREATED))
+        // A retry of an `unknown` intent keeps its unresolved record: `created` locks nothing, and the first tap may be charged.
+        val prior = store.load(req.key)
+        if (prior == null || prior.intentId != id || !PendingState.unresolved(prior.state)) store.put(record(id, PendingState.CREATED))
         answer(null)
         s = S.COLLECTING
         sink.progress(req.requestId, "waiting_for_tap")

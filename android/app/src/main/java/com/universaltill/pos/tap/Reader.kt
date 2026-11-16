@@ -79,6 +79,25 @@ object PendingState {
     fun unresolved(state: String) = state == CONFIRMING || state == UNKNOWN
 }
 
+/** Bound for the persisted pending list: resolved-state records go first; an unresolved one only when nothing else is left. */
+object PendingBound {
+    fun keep(list: List<PendingRecord>, max: Int): List<PendingRecord> {
+        var drop = list.size - max
+        if (drop <= 0) return list
+        val dropKeys = HashSet<Int>()
+        // oldest first: records that cannot mean a charge
+        for ((i, r) in list.withIndex()) {
+            if (drop == 0) break
+            if (!PendingState.unresolved(r.state)) { dropKeys += i; drop-- }
+        }
+        for (i in list.indices) {
+            if (drop == 0) break
+            if (i !in dropKeys) { dropKeys += i; drop-- }
+        }
+        return list.filterIndexed { i, _ -> i !in dropKeys }
+    }
+}
+
 /** One record per idempotency key. [amountMinor]/[currency] pin what the intent was created for. */
 data class PendingRecord(
     val requestId: String,

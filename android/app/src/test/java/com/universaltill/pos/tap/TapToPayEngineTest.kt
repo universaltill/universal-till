@@ -149,6 +149,19 @@ class TapToPayEngineTest {
         assertEquals(listOf("pi_1", "pi_1"), reader.collectIds)
     }
 
+    @Test fun retryOfAnUnknownKeyKeepsTheUnresolvedRecordWhileItCollects() {
+        // Review #3048 R5: the retry used to overwrite the `unknown` record with `created`, which does not lock
+        // anything, so a process death during the retry freed every other basket while the first tap may be charged.
+        reader.autoConfirm = null
+        start("r1", "k1")
+        sched.advance(24_001)
+        assertEquals("unknown", store.load("k1")!!.state)
+        reader.autoCollect = null
+        assertTrue(start("r2", "k1").getBoolean("ok"))
+        assertEquals("unknown", store.load("k1")!!.state)
+        assertEquals("pi_1", store.load("k1")!!.intentId)
+    }
+
     @Test fun unknownAfterProcessDeathRefusesSameKeyAsUnknownPending() {
         store.put(PendingRecord("old", "k1", "pi_77", "confirming", 500L, "gbp"))
         val r = start("r2", "k1")
