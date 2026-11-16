@@ -1331,10 +1331,11 @@
          says so, rather than "installing… if you're offline".
          ut-docs#3194: a language spec with no listing is dropped silently, so
          its chip says "looking for", never "installing". -->
-    <span class="chip chip-note">{{ if and (eq .CanonicalType "tax") .NotPublished }}{{ printf (T "setup.base_plugins.not_published_tax") .LocaleUpper }}{{ else if eq .CanonicalType "tax" }}{{ printf (T "setup.base_plugins.pending_tax") .LocaleUpper }}{{ else }}{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}{{ end }}</span>
+    {{ if .Chip }}{{ template "tax_autoinstall_chip.html" .Chip }}{{ else }}<span class="chip chip-note">{{ if and (eq .CanonicalType "tax") .NotPublished }}{{ printf (T "setup.base_plugins.not_published_tax") .LocaleUpper }}{{ else if eq .CanonicalType "tax" }}{{ printf (T "setup.base_plugins.pending_tax") .LocaleUpper }}{{ else }}{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}{{ end }}</span>{{ end }}
     <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
             hx-post="/api/settings/dismiss-pending-base-plugin"
-            hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'
+            hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale "market" .Market }}'
+            {{ if .ConfirmText }}hx-confirm="{{ .ConfirmText }}" data-confirm-ok="{{ T "setup.base_plugins.dismiss_btn" }}"{{ end }}
             hx-target="closest .chip-row" hx-swap="outerHTML"
             hx-disabled-elt="this">{{ T "setup.base_plugins.dismiss_btn" }}</button>
     <!-- ut-docs#865 review finding F1: a separate message span, outside the

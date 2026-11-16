@@ -798,6 +798,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			notPublished = loadBasePluginsNotPublished(r.Context(), d)
 		}
 		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins, notPublished)
+		// ADR-0172 §5: an automatically queued tax spec shows the status chip.
+		for i := range pendingBasePluginRows {
+			if pendingBasePluginRows[i].AutoTax {
+				loc := httpx.RequestLocale(r)
+				pendingBasePluginRows[i].Chip = taxAutoInstallChipView(r.Context(), d, loc)
+				name := httpx.T(loc, "setup.tax_autoinstall.plugin_fallback_name")
+				if st := loadTaxAutoInstallStatus(r.Context(), d); st != nil && st.PluginName != "" {
+					name = st.PluginName
+				}
+				pendingBasePluginRows[i].ConfirmText = sprintfKey(loc, "settings.plugins.uninstall_tax_confirm", name)
+			}
+		}
 		// ut-docs#1913: the same four conditions that gate whether
 		// settings-issuereport/settings-menulayout/settings-payments/
 		// settings-data/settings-all actually RENDER their `.card` this
@@ -2979,15 +2991,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		canonicalType := strings.TrimSpace(r.Form.Get("canonical_type"))
 		localeVal := strings.TrimSpace(r.Form.Get("locale"))
+		marketVal := strings.TrimSpace(r.Form.Get("market"))
 		pending, err := loadPendingBasePlugins(r.Context(), d)
 		if err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
 		matched := false
+		var matchedSpec basePluginSpec
 		for _, spec := range pending {
-			if spec.CanonicalType == canonicalType && spec.Locale == localeVal {
-				matched = true
+			if spec.CanonicalType == canonicalType && spec.Locale == localeVal && spec.Market == marketVal {
+				matched, matchedSpec = true, spec
 				break
 			}
 		}
@@ -3000,14 +3014,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/settings/dismiss-pending-base-plugin",
 				fmt.Sprintf(`[id="pending-plugin-msg-%s"]`, canonicalType),
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.dismiss_pending_base_plugin"), canonicalType),
-				[]elevationHiddenField{{Name: "canonical_type", Value: canonicalType}, {Name: "locale", Value: localeVal}}, elev)
+				[]elevationHiddenField{{Name: "canonical_type", Value: canonicalType}, {Name: "locale", Value: localeVal}, {Name: "market", Value: marketVal}}, elev)
 			return
 		}
-		if err := dismissPendingBasePlugin(r.Context(), d, canonicalType, localeVal); err != nil {
+		if err := dismissPendingBasePluginSpec(r.Context(), d, matchedSpec); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		settingsAudit(r, posRepo, elev, "settings", canonicalType, "pending_base_plugin_dismissed", map[string]any{"canonical_type": canonicalType, "locale": localeVal})
+		// ADR-0172 §5: dismissing the automatic tax install is declining it,
+		// so nothing queues it again.
+		if isAutoTaxSpec(matchedSpec) {
+			declineTaxAutoInstall(r.Context(), d, "")
+		}
+		settingsAudit(r, posRepo, elev, "settings", canonicalType, "pending_base_plugin_dismissed", map[string]any{"canonical_type": canonicalType, "locale": localeVal, "market": marketVal})
 		if elev.Outcome == elevated {
 			w.Header().Set("X-UT-Response", "ok")
 		}

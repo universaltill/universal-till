@@ -25,12 +25,21 @@ import (
 
 // basePluginSpec identifies a free base plugin to auto-install once a
 // merchant confirms their country in the setup wizard. ONLY canonical
-// type "language" belongs in basePluginsForCountry — a fiscal/tax entry would
-// contradict ADR-0025 decision 4 (fiscal plugins are prompted, never
-// silently auto-installed) and needs a superseding ADR first.
+// type "language" belongs in basePluginsForCountry; the one tax entry is
+// added by taxPluginForCountry under ADR-0172 (which narrowly amends
+// ADR-0025 decision 4: a free, first-party, non-fiscal tax plugin that names
+// the shop's country in its markets). Every other fiscal plugin stays
+// prompted.
 type basePluginSpec struct {
 	CanonicalType string // ADR-0002 canonical plugin type
-	Locale        string // catalog locale filter, e.g. "de"
+	Locale        string // catalog locale filter, e.g. "de" (language specs; legacy tax specs)
+	// Market is the shop's country (ISO 3166-1 alpha-2) a tax spec is for;
+	// the listing is found by its `markets`, never by locale (ADR-0172 §3).
+	Market string `json:",omitempty"`
+	// Prompted marks a tax spec the operator chose from the wizard's prompted
+	// tile (ADR-0129 §4): consent was given, so the auto-install eligibility
+	// rules of ADR-0172 §2 do not apply to it. Never set by the auto path.
+	Prompted bool `json:",omitempty"`
 }
 
 // basePluginsForCountry is a country's free base plugins (ut-docs#591):
@@ -137,7 +146,14 @@ func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country str
 	// queued an unrelated spec — e.g. a catalog-only language picked at step
 	// 1, still offline — before this country step ever runs. A plain
 	// savePendingBasePlugins here silently dropped that spec.
-	if specs := basePluginsForCountry(ctx, d, country); len(specs) > 0 {
+	specs := basePluginsForCountry(ctx, d, country)
+	// ADR-0172 §1: the shop's country's tax plugin, for BOTH a till joined to
+	// a my. shop (country = the pair response's, applied server-side) and a
+	// till set up with the wizard alone (the operator-confirmed country).
+	// Only here, at setup completion: not on a later country change
+	// (queueBasePluginsForCountryChange), an upgrade or from the cloud.
+	specs = append(specs, taxPluginForCountry(ctx, d, country)...)
+	if len(specs) > 0 {
 		if err := addPendingBasePlugins(ctx, d, specs); err != nil {
 			logging.L().Errorf("setup wizard: persist pending base plugins: %v", err)
 		}
@@ -175,7 +191,7 @@ func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country str
 		// active): drop just THIS spec from whatever else is pending — same
 		// reasoning as above, a wholesale replace here would erase an
 		// unrelated spec another step queued.
-		if err := dismissPendingBasePlugin(ctx, d, spec.CanonicalType, spec.Locale); err != nil {
+		if err := dismissPendingBasePluginSpec(ctx, d, spec); err != nil {
 			logging.L().Errorf("setup wizard: clear installed pending base plugin %s/%s: %v",
 				spec.CanonicalType, spec.Locale, err)
 		}
@@ -226,40 +242,38 @@ var errBasePluginNotPublished = errors.New("no matching listing published in the
 // every other failure.
 var errBasePluginCatalogUnreachable = errors.New("catalog unreachable")
 
+// errBasePluginRefused wraps every refusal of the tax auto-install's own
+// gates (ADR-0172 §2.4 eligibility on the verified manifest, §3 first-load
+// check): the install did not happen, nothing was persisted or activated.
+// The Settings chip reads it as the "refused" error class.
+var errBasePluginRefused = errors.New("refused")
+
 // taxSpecSatisfiedLocally reports whether a tax spec is already met by an
-// active local plugin with a `tax` entry meant for any country whose
-// countryTaxLocale value is spec.Locale (its markets list that country, or it
-// has none = every market). ut-docs#3211 stopped the wizard queuing such a
-// spec; one queued BEFORE a sideload or DB restore stays on the #591 pending
-// list, and without this the retry would keep trying to install a second
-// fiscal plugin (ADR-0129 exclusivity) and the Settings chip would never
-// clear (ut-docs#3511). Neutral: reuses countryTaxLocale, no plugin ids or
-// country list of its own (#2848). A spec carries only a locale, so if a
-// second country ever maps to the same locale, a plugin for either satisfies
-// it — revisit this if countryTaxLocale grows such a pair.
+// active local plugin with a `tax` entry meant for the spec's Market (its
+// markets list that country, or it has none = every market). ut-docs#3211
+// stopped the wizard queuing such a spec; one queued BEFORE a sideload or DB
+// restore stays on the #591 pending list, and without this the retry would
+// keep trying to install a second fiscal plugin (ADR-0129 exclusivity) and
+// the Settings chip would never clear (ut-docs#3511). Neutral: a type and
+// the spec's own market, no plugin ids or country list (#2848). A legacy tax
+// spec that names only a locale (queued by a tile before ADR-0172) cannot
+// name a market, so it is never "satisfied" here; the idempotency check on
+// its listing (resolveAndInstallBasePlugin) still stops a second install of
+// the same listing.
 //
 // A DB error is returned, not swallowed: unlike setupInstallableTaxPlugin,
 // whose fail-open only shows the operator a prompt, failing open here would
-// be an unattended second fiscal install — the very bug. The caller keeps the
+// be an unattended second fiscal install, the very bug. The caller keeps the
 // spec pending and the next tick asks again.
 func taxSpecSatisfiedLocally(ctx context.Context, d *common.Deps, spec basePluginSpec) (bool, error) {
-	if spec.CanonicalType != "tax" {
+	if spec.CanonicalType != "tax" || spec.Market == "" {
 		return false, nil
 	}
-	repo := data.NewPluginRepo(d.Db)
-	for country, locale := range countryTaxLocale {
-		if !strings.EqualFold(locale, spec.Locale) {
-			continue
-		}
-		installed, err := repo.HasActiveEntryTypeForMarket(ctx, "tax", country)
-		if err != nil {
-			return false, fmt.Errorf("check local tax plugin for %s: %w", country, err)
-		}
-		if installed {
-			return true, nil
-		}
+	installed, err := data.NewPluginRepo(d.Db).HasActiveEntryTypeForMarket(ctx, "tax", spec.Market)
+	if err != nil {
+		return false, fmt.Errorf("check local tax plugin for %s: %w", spec.Market, err)
 	}
-	return false, nil
+	return installed, nil
 }
 
 // resolveAndInstallBasePlugin resolves spec against the marketplace catalog
@@ -308,7 +322,18 @@ func resolveAndInstallBasePluginWith(ctx context.Context, d *common.Deps, spec b
 	if satisfied, err := taxSpecSatisfiedLocally(ctx, d, spec); err != nil {
 		return err
 	} else if satisfied {
+		if isAutoTaxSpec(spec) {
+			// Already there (sideloaded, or restored): no chip to show.
+			if st := loadTaxAutoInstallStatus(ctx, d); st != nil && st.State != taxStateInstalled {
+				saveTaxAutoInstallStatus(ctx, d, nil)
+			}
+		}
 		return nil
+	}
+	// ADR-0172 §3: a tax spec that names a market is found by `markets`, not
+	// by locale, and installs through its own rules.
+	if spec.CanonicalType == "tax" && spec.Market != "" {
+		return resolveAndInstallTaxForMarket(ctx, d, spec)
 	}
 	// enroll.Effective, NOT EnsureRegistered (ut-docs#2964 review): looking
 	// the pack up is a browse, and ADR-0015 lets only a real download/install
@@ -778,7 +803,7 @@ func setBasePluginNotPublished(ctx context.Context, d *common.Deps, spec basePlu
 		specs = append(specs, s)
 	}
 	slices.SortFunc(specs, func(a, b basePluginSpec) int {
-		return cmp.Or(cmp.Compare(a.CanonicalType, b.CanonicalType), cmp.Compare(a.Locale, b.Locale))
+		return cmp.Or(cmp.Compare(a.CanonicalType, b.CanonicalType), cmp.Compare(a.Locale, b.Locale), cmp.Compare(a.Market, b.Market))
 	})
 	raw := ""
 	if len(specs) > 0 {
@@ -902,6 +927,17 @@ type pendingBasePluginView struct {
 	// listing for this spec yet (ut-docs#3243) — the chip says so instead of
 	// suggesting the till is offline.
 	NotPublished bool
+	// Market is a tax spec's country (round-trips to the dismiss endpoint);
+	// AutoTax marks the spec ADR-0172's automatic path queued, whose row
+	// shows the status chip instead of the generic pending text and whose
+	// dismiss declines the install (§5).
+	Market  string
+	AutoTax bool
+	// Chip is the status chip for an AutoTax row (nil otherwise).
+	Chip *taxChipView
+	// ConfirmText is the confirm dialog text before dismissing an AutoTax
+	// row: dismissing declines the install (ADR-0172 §5).
+	ConfirmText string
 }
 
 // pendingBasePluginViews maps the persisted specs to their Settings-page
@@ -914,11 +950,17 @@ type pendingBasePluginView struct {
 func pendingBasePluginViews(specs []basePluginSpec, notPublished map[basePluginSpec]bool) []pendingBasePluginView {
 	views := make([]pendingBasePluginView, 0, len(specs))
 	for _, s := range specs {
+		upper := strings.ToUpper(s.Locale)
+		if upper == "" {
+			upper = strings.ToUpper(s.Market) // a tax spec names a market, not a locale
+		}
 		views = append(views, pendingBasePluginView{
 			CanonicalType: s.CanonicalType,
 			Locale:        s.Locale,
-			LocaleUpper:   strings.ToUpper(s.Locale),
+			LocaleUpper:   upper,
 			NotPublished:  notPublished[s],
+			Market:        s.Market,
+			AutoTax:       isAutoTaxSpec(s),
 		})
 	}
 	return views
@@ -929,13 +971,24 @@ func pendingBasePluginViews(specs []basePluginSpec, notPublished map[basePluginS
 // button. A spec already gone (raced with a successful install, or a
 // double-click) is a clean no-op, not an error.
 func dismissPendingBasePlugin(ctx context.Context, d *common.Deps, canonicalType, locale string) error {
+	return dismissPendingBasePluginSpec(ctx, d, basePluginSpec{CanonicalType: canonicalType, Locale: locale})
+}
+
+// dismissPendingBasePluginSpec is dismissPendingBasePlugin for the exact spec
+// (type, locale and market): a tax spec names a market, not a locale, so
+// type+locale alone would not tell two tax specs apart (ADR-0172). Prompted
+// does not take part in the match: the operator dismisses "the tax plugin for
+// this market", whichever door queued it.
+func dismissPendingBasePluginSpec(ctx context.Context, d *common.Deps, spec basePluginSpec) error {
 	pending, err := loadPendingBasePlugins(ctx, d)
 	if err != nil {
 		return err
 	}
 	remaining := make([]basePluginSpec, 0, len(pending))
+	var dropped []basePluginSpec
 	for _, s := range pending {
-		if s.CanonicalType == canonicalType && s.Locale == locale {
+		if s.CanonicalType == spec.CanonicalType && s.Locale == spec.Locale && s.Market == spec.Market {
+			dropped = append(dropped, s)
 			continue
 		}
 		remaining = append(remaining, s)
@@ -947,7 +1000,10 @@ func dismissPendingBasePlugin(ctx context.Context, d *common.Deps, canonicalType
 	// pending-list write, so an attempt finishing concurrently either saw
 	// the spec still pending (and is cleared here) or sees it gone and
 	// records nothing (setBasePluginNotPublished).
-	setBasePluginNotPublished(ctx, d, basePluginSpec{CanonicalType: canonicalType, Locale: locale}, false)
+	setBasePluginNotPublished(ctx, d, spec, false)
+	for _, s := range dropped {
+		setBasePluginNotPublished(ctx, d, s, false)
+	}
 	return nil
 }
 

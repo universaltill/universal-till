@@ -139,6 +139,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
+			// ADR-0172 §5: the setup landing shows the automatic tax install.
+			"taxAutoInstall": taxAutoInstallWelcomeChip(r, d, welcome),
 			// ut-docs#5070: a replacement till restores its backup instead
 			// (Settings → Backups → Restore from a file, manager only).
 			"canRestoreBackup": canPerform(d, r, "data_management"),
@@ -2527,4 +2529,13 @@ func retireSeededGiftVoucherItem(ctx context.Context, d *common.Deps) (id, name 
 		return "", ""
 	}
 	return res.ID, res.Name
+}
+
+// taxAutoInstallWelcomeChip is the chip on the welcome page the setup wizard
+// lands on: only there, and only for a viewer who may open Settings.
+func taxAutoInstallWelcomeChip(r *http.Request, d *common.Deps, welcome bool) *taxChipView {
+	if !welcome || !canPerform(d, r, "settings") {
+		return nil
+	}
+	return taxAutoInstallChipView(r.Context(), d, httpx.RequestLocale(r))
 }

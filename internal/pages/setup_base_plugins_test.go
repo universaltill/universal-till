@@ -46,6 +46,19 @@ func deLanguageCatalogEntry(listingID, pluginID, version string) marketplace.Plu
 	}
 }
 
+// withoutAutoTax drops the automatic tax spec (ADR-0172) setup now queues for
+// every country, so a test about language packs can keep asserting exactly
+// its own specs. The tax spec has its own tests (setup_tax_autoinstall_test.go).
+func withoutAutoTax(specs []basePluginSpec) []basePluginSpec {
+	var out []basePluginSpec
+	for _, s := range specs {
+		if !isAutoTaxSpec(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // --- resolveAndInstallBasePlugin ---
 
 func TestResolveAndInstallBasePlugin_DEHappyPath(t *testing.T) {
@@ -745,7 +758,7 @@ func TestBackfillLocaleConfirmed_PendingNonLanguageSpecOnly_NoOp(t *testing.T) {
 	// A pending spec of some other canonical type can never reach
 	// applyDerivedLocaleIfLanguagePackNowAvailable (resolveAndInstallBasePlugin
 	// only calls it for CanonicalType == "language"), so it poses no risk.
-	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Market: "DE", Prompted: true}}); err != nil {
 		t.Fatalf("seed pending base plugins: %v", err)
 	}
 
@@ -918,7 +931,7 @@ func TestInstallBasePluginsForSetup_PTQueuesPortugueseLanguagePack(t *testing.T)
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "language", Locale: "pt"}) {
+	if got := withoutAutoTax(pending); len(got) != 1 || got[0] != (basePluginSpec{CanonicalType: "language", Locale: "pt"}) {
 		t.Fatalf("expected the pt language spec pending, got %+v", pending)
 	}
 }
@@ -956,8 +969,9 @@ func TestInstallBasePluginsForSetup_NoMappingIsNoOp(t *testing.T) {
 	// even try for a country with no base plugin (en ships bundled).
 	installBasePluginsForSetup(t.Context(), dp, "US")
 
-	if _, ok, _ := dp.Settings.Get(t.Context(), common.KeyPendingBasePlugins); ok {
-		t.Fatal("expected no pending base plugins for an unmapped country")
+	pending, _ := loadPendingBasePlugins(t.Context(), dp)
+	if got := withoutAutoTax(pending); len(got) != 0 {
+		t.Fatalf("expected no pending base plugins for an unmapped country, got %+v", got)
 	}
 }
 
@@ -990,7 +1004,7 @@ func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testin
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "language", Locale: "de"}) {
+	if got := withoutAutoTax(pending); len(got) != 1 || got[0] != (basePluginSpec{CanonicalType: "language", Locale: "de"}) {
 		t.Fatalf("expected the DE language spec still pending, got %+v", pending)
 	}
 	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); active {
@@ -1120,7 +1134,7 @@ func TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0].CanonicalType != "language" || pending[0].Locale != "de" {
+	if got := withoutAutoTax(pending); len(got) != 1 || got[0].CanonicalType != "language" || got[0].Locale != "de" {
 		t.Fatalf("expected the DE language spec left pending, got %+v", pending)
 	}
 }
