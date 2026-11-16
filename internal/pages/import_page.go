@@ -59,6 +59,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	settingsRepo := data.NewSettingsRepo(d.Db)
 	registerImportFromSystem(mux, d)
 	registerImportFromFile(mux, d)
+	registerImportPhotos(mux, d)
 
 	registerJoinSyncPoll(mux, d)
 
@@ -152,6 +153,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// The wizard's pairing did not complete: a visible note, never
 			// a claim that the shop is syncing.
 			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",
+			// ut-docs#6527: bulk photo import card (catalog managers, main till).
+			"showPhotosCard":  canPerform(d, r, "catalog_management"),
+			"photosOnReplica": d.SyncPrimaryURL(r.Context()) != "",
 			"showSampleCard":  sampleErr == nil,
 			"sampleItemCount": sampleCount,
 			"sampleLoaded":    sampleLoaded,
