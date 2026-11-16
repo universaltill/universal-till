@@ -3105,6 +3105,8 @@
   "status.cloud_auth.replaced_hint": "This till was replaced on %[1]s. Its sales no longer reach the cloud or the main till. Use %[2]s instead.",
   "status.cloud_auth.restored": "Restored on a new device — connect again",
   "status.cloud_auth.restored_hint": "This till's data was restored onto a new device, so its cloud connection was reset. The old device keeps its own connection. In Settings, pair this till with your shop again using a pairing code, or register it as a new store. Selling carries on and no sales were changed.",
+  "status.move_pending": "Till move waiting for a manager",
+  "status.move_pending_hint": "This till has been asked to move into another shop. A manager or admin can review it in Settings. Selling is not affected.",
   "status.replaced_banner": "Replaced by %[1]s: sales here are not reported. Use %[1]s.",
   "status.replaced.unnamed": "the new main till",
   "status.offline": "Offline",
