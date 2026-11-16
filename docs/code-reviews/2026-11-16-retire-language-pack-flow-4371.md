@@ -49,6 +49,41 @@ cloud, infra, plugins) are separate PRs.
 - Order: R1/R2 (Weblate catch-up, salvage) before pack repos are archived (R3);
   R3 after this PR merges.
 
+## Tester
+
+Combined Tester for the batch, on `564a2e616`, with an `origin/main` worktree as baseline.
+**Verdict: FAIL, two small defects. Fix them, then go to Review.**
+
+1. **CI `build` is red.** At `scripts/ci/build-locale-overlay.sh:64`,
+   `echo "${conflicts}" | head -5` pipes into `head` under pipefail, and
+   `guard-pipefail-grep-q.sh` rejects it. Fix: `sed -n 1,5p <<<"${conflicts}"`.
+2. **The docs-shots surface hash is stale.** The `pos_alert.html` comment edit and the
+   `internal/pages` fixture renames change the surface. On the branch,
+   `guard-docs-shots.sh` exits 1 and `guard-docs-shots_test.sh` and
+   `update-docs-shots-surface-hash_test.sh` fail; all three pass on main. CI has not
+   reached them yet (ci.yml:346, :354). Nothing renders differently, so run
+   `scripts/ci/update-docs-shots-surface-hash.sh` and commit.
+
+Passed:
+- `go build`, `go vet` and the full `go test ./...` (exit 0).
+- 92 of the 102 `scripts/ci` shell tests. The other 8 fail the same way on main
+  because of BSD sed/awk on macOS. That includes the known `guard-help-breadcrumbs`.
+- `build-locale-overlay_test.sh`, plus `new-keys_test.js` (12 pass).
+- An overlay built from a fresh public ut-translations clone: 3552 de keys.
+- e2e `default` project with `UT_E2E_I18N_OVERLAY_DIR`: 1675 pass, 5 fail.
+  - `settings-tablet-portrait-4628` de/fa fails the same way on main: the long
+    macOS temp path overflows the log-folder `code`.
+  - The other 3 failures were load flakes. They passed on a rerun, along with every
+    German spec (143 pass).
+- Control run: with the overlay, 18 of 18 `de-pack` checks saw real German. Without
+  it, 18 of 18 saw English.
+- `audit-locale-render.sh` in PR mode: 2 passed, and the 11 keys the overlay lags on
+  were deferred. Strict mode with no clone exits 1.
+- No-leftovers grep over 33 ecosystem checkouts: 0 hits outside historical records.
+
+Not looked at visually: no rendered surface changed. Full notes are in the batch
+Tester file.
+
 ## Reviewer
 
 _To be filled in by the Reviewer._
