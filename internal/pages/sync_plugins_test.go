@@ -567,7 +567,7 @@ func signedFakeMktArtifactWithBinary(t *testing.T, privateKey ed25519.PrivateKey
 // signedFakeMktArtifactWithLocale is signedFakeMktArtifactWithBinary's
 // counterpart for an asset-only (runtime "none") language-pack manifest: it
 // packs manifest.json plus a single locales/<locale>.json overlay — no
-// executable at all, matching a real ut-plugin-language-* pack — into a
+// executable at all, matching a real com.universaltill.language-* bundle — into a
 // signed .tar.gz. localeJSON must be valid JSON in config.I18n's overlay
 // shape (a flat map[string]string).
 func signedFakeMktArtifactWithLocale(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, locale string, localeJSON []byte) []byte {

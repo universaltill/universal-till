@@ -63,8 +63,8 @@ func withoutAutoTax(specs []basePluginSpec) []basePluginSpec {
 
 func TestResolveAndInstallBasePlugin_DEHappyPath(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
@@ -72,12 +72,12 @@ func TestResolveAndInstallBasePlugin_DEHappyPath(t *testing.T) {
 		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
 	}
 
-	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de")
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de")
 	if err != nil {
 		t.Fatalf("PluginActive: %v", err)
 	}
 	if !active {
-		t.Fatal("expected ut-plugin-language-de to be installed and active")
+		t.Fatal("expected com.universaltill.language-de to be installed and active")
 	}
 	if hits := mkt.downloadTokenHits(); hits != 1 {
 		t.Fatalf("expected exactly one download-token request, got %d", hits)
@@ -97,13 +97,13 @@ func TestResolveAndInstallBasePlugin_DEHappyPath(t *testing.T) {
 // 2 to find it at all.
 func TestResolveAndInstallBasePlugin_FindsListingBeyondFirstCatalogPage(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
 	mkt.setCatalog(
 		marketplace.PluginSummary{
-			ID: "ut-plugin-language-es", ListingID: "listing-lang-es", Name: "Spanish language pack",
+			ID: "com.universaltill.language-es", ListingID: "listing-lang-es", Name: "Spanish language pack",
 			Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"es"},
 		},
-		deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"),
+		deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"),
 	)
 	mkt.setCatalogPageSize(1)
 	dp.Cfg.Marketplace = mkt.config()
@@ -113,12 +113,12 @@ func TestResolveAndInstallBasePlugin_FindsListingBeyondFirstCatalogPage(t *testi
 		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
 	}
 
-	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de")
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de")
 	if err != nil {
 		t.Fatalf("PluginActive: %v", err)
 	}
 	if !active {
-		t.Fatal("expected ut-plugin-language-de (catalog page 2 at page size 1) to be installed and active — an unpaginated fetch would silently miss it and report no error")
+		t.Fatal("expected com.universaltill.language-de (catalog page 2 at page size 1) to be installed and active — an unpaginated fetch would silently miss it and report no error")
 	}
 	// 2 listings at page size 1 = 2 requests to exhaust the catalog.
 	if hits := mkt.catalogHitsFor(""); hits != 2 {
@@ -193,8 +193,8 @@ func TestResolveAndInstallBasePlugin_LanguagePackLocaleRendersAfterInstall(t *te
 	}
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-de", "ut-plugin-language-de", "1.0.0", "de", []byte(`{"nav.home":"`+wantGerman+`"}`))
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt.publishLanguageVersion(t, "listing-lang-de", "com.universaltill.language-de", "1.0.0", "de", []byte(`{"nav.home":"`+wantGerman+`"}`))
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
@@ -202,12 +202,12 @@ func TestResolveAndInstallBasePlugin_LanguagePackLocaleRendersAfterInstall(t *te
 		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
 	}
 
-	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de")
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de")
 	if err != nil {
 		t.Fatalf("PluginActive: %v", err)
 	}
 	if !active {
-		t.Fatal("expected ut-plugin-language-de to be installed and active")
+		t.Fatal("expected com.universaltill.language-de to be installed and active")
 	}
 	if hits := mkt.downloadTokenHits(); hits != 1 {
 		t.Fatalf("expected exactly one download-token request, got %d", hits)
@@ -229,14 +229,14 @@ func TestResolveAndInstallBasePlugin_LanguagePackLocaleRendersAfterInstall(t *te
 func TestResolveAndInstallBasePlugin_PicksHighestSemverVersion(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 	mkt := newFakeMarketplace(t, map[string]string{
-		"listing-lang-de-old": "ut-plugin-language-de-old",
-		"listing-lang-de-new": "ut-plugin-language-de-new",
+		"listing-lang-de-old": "com.universaltill.language-de-old",
+		"listing-lang-de-new": "com.universaltill.language-de-new",
 	})
-	mkt.publishVersion(t, "listing-lang-de-old", "ut-plugin-language-de-old", "1.0.0")
-	mkt.publishVersion(t, "listing-lang-de-new", "ut-plugin-language-de-new", "1.2.0")
+	mkt.publishVersion(t, "listing-lang-de-old", "com.universaltill.language-de-old", "1.0.0")
+	mkt.publishVersion(t, "listing-lang-de-new", "com.universaltill.language-de-new", "1.2.0")
 	mkt.setCatalog(
-		deLanguageCatalogEntry("listing-lang-de-old", "ut-plugin-language-de-old", "1.0.0"),
-		deLanguageCatalogEntry("listing-lang-de-new", "ut-plugin-language-de-new", "1.2.0"),
+		deLanguageCatalogEntry("listing-lang-de-old", "com.universaltill.language-de-old", "1.0.0"),
+		deLanguageCatalogEntry("listing-lang-de-new", "com.universaltill.language-de-new", "1.2.0"),
 	)
 	dp.Cfg.Marketplace = mkt.config()
 
@@ -245,10 +245,10 @@ func TestResolveAndInstallBasePlugin_PicksHighestSemverVersion(t *testing.T) {
 		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
 	}
 
-	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de-new"); !active {
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de-new"); !active {
 		t.Fatal("expected the higher-semver listing (1.2.0) to be installed")
 	}
-	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de-old"); active {
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de-old"); active {
 		t.Fatal("the lower-semver listing (1.0.0) must not have been installed")
 	}
 }
@@ -259,14 +259,14 @@ func TestResolveAndInstallBasePlugin_PicksHighestSemverVersion(t *testing.T) {
 func TestResolveAndInstallBasePlugin_FiltersNonMatchingEntriesClientSide(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 	mkt := newFakeMarketplace(t, map[string]string{
-		"listing-lang-fr": "ut-plugin-language-fr",
+		"listing-lang-fr": "com.universaltill.language-fr",
 		"listing-theme":   "ut-plugin-theme-de",
-		"listing-lang-de": "ut-plugin-language-de",
+		"listing-lang-de": "com.universaltill.language-de",
 	})
 	mkt.setCatalog(
-		marketplace.PluginSummary{ID: "ut-plugin-language-fr", ListingID: "listing-lang-fr", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fr"}},
+		marketplace.PluginSummary{ID: "com.universaltill.language-fr", ListingID: "listing-lang-fr", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fr"}},
 		marketplace.PluginSummary{ID: "ut-plugin-theme-de", ListingID: "listing-theme", Version: "1.0.0", CanonicalType: "theme", AvailableLocales: []string{"de"}},
-		deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"),
+		deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"),
 	)
 	dp.Cfg.Marketplace = mkt.config()
 
@@ -276,10 +276,10 @@ func TestResolveAndInstallBasePlugin_FiltersNonMatchingEntriesClientSide(t *test
 	}
 
 	repo := data.NewPluginRepo(dp.Db)
-	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+	if active, _ := repo.PluginActive(t.Context(), "com.universaltill.language-de"); !active {
 		t.Fatal("expected the matching language/de listing to be installed")
 	}
-	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-language-fr"); active {
+	if active, _ := repo.PluginActive(t.Context(), "com.universaltill.language-fr"); active {
 		t.Fatal("a language/fr listing must not be installed for a de spec")
 	}
 	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-theme-de"); active {
@@ -296,9 +296,9 @@ func TestResolveAndInstallBasePlugin_FiltersNonMatchingEntriesClientSide(t *test
 // again, one subtag further down.
 func TestResolveAndInstallBasePlugin_MatchesRegionSuffixedCatalogLocale(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-de", ListingID: "listing-lang-de", Name: "German language pack",
+		ID: "com.universaltill.language-de", ListingID: "listing-lang-de", Name: "German language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"de-DE"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
@@ -307,7 +307,7 @@ func TestResolveAndInstallBasePlugin_MatchesRegionSuffixedCatalogLocale(t *testi
 	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
 		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
 	}
-	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de"); !active {
 		t.Fatal(`expected a listing published as "de-DE" to satisfy the bare "de" spec`)
 	}
 }
@@ -320,14 +320,14 @@ func TestResolveAndInstallBasePlugin_MatchesRegionSuffixedCatalogLocale(t *testi
 func TestResolveAndInstallBasePlugin_UnrestrictedOrForeignListingNeverMatches(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 	mkt := newFakeMarketplace(t, map[string]string{
-		"listing-lang-global": "ut-plugin-language-global",
-		"listing-lang-en":     "ut-plugin-language-en",
+		"listing-lang-global": "com.universaltill.language-global",
+		"listing-lang-en":     "com.universaltill.language-en",
 	})
 	mkt.setCatalog(
 		// No availableLocales at all — "global" by ut-cloud's browse rule.
-		marketplace.PluginSummary{ID: "ut-plugin-language-global", ListingID: "listing-lang-global", Version: "1.0.0", CanonicalType: "language"},
+		marketplace.PluginSummary{ID: "com.universaltill.language-global", ListingID: "listing-lang-global", Version: "1.0.0", CanonicalType: "language"},
 		// English pack: ut-cloud's browse rule says "en" is readable by all.
-		marketplace.PluginSummary{ID: "ut-plugin-language-en", ListingID: "listing-lang-en", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"en-US"}},
+		marketplace.PluginSummary{ID: "com.universaltill.language-en", ListingID: "listing-lang-en", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"en-US"}},
 	)
 	dp.Cfg.Marketplace = mkt.config()
 
@@ -336,10 +336,10 @@ func TestResolveAndInstallBasePlugin_UnrestrictedOrForeignListingNeverMatches(t 
 		t.Fatalf("expected a clean no-op, got %v", err)
 	}
 	repo := data.NewPluginRepo(dp.Db)
-	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-language-global"); active {
+	if active, _ := repo.PluginActive(t.Context(), "com.universaltill.language-global"); active {
 		t.Fatal("a listing declaring no locale must not be auto-installed for a de spec")
 	}
-	if active, _ := repo.PluginActive(t.Context(), "ut-plugin-language-en"); active {
+	if active, _ := repo.PluginActive(t.Context(), "com.universaltill.language-en"); active {
 		t.Fatal("an en-US language pack must not be auto-installed for a de spec")
 	}
 	if hits := mkt.downloadTokenHits(); hits != 0 {
@@ -379,7 +379,7 @@ func TestResolveAndInstallBasePlugin_NoMatchingListingIsNoOp(t *testing.T) {
 // would previously have re-installed instead of no-op'ing).
 func TestResolveAndInstallBasePlugin_IdempotentWhenAlreadyActive(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
 	mkt.setCatalog(marketplace.PluginSummary{
 		ID: "listing-lang-de", ListingID: "listing-lang-de", Name: "German language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"de"},
@@ -398,7 +398,7 @@ func TestResolveAndInstallBasePlugin_IdempotentWhenAlreadyActive(t *testing.T) {
 		t.Fatalf("expected exactly one download-token request across both attempts, got %d", hits)
 	}
 	var count int
-	if err := dp.Db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM plugins WHERE id = 'ut-plugin-language-de'`).Scan(&count); err != nil {
+	if err := dp.Db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM plugins WHERE id = 'com.universaltill.language-de'`).Scan(&count); err != nil {
 		t.Fatalf("count plugins: %v", err)
 	}
 	if count != 1 {
@@ -483,9 +483,9 @@ func TestResolveAndInstallBasePlugin_AppliesCountryLocaleOnceRTLPackInstalled(t 
 	}
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
@@ -515,9 +515,9 @@ func TestResolveAndInstallBasePlugin_DoesNotOverrideExplicitlyConfirmedLocale(t 
 	}
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
@@ -548,8 +548,8 @@ func TestResolveAndInstallBasePlugin_IgnoresLanguagePackNotMatchingCountryDefaul
 	// Doesn't need the hermetic i18n wiring above: baseLang("ur-PK") !=
 	// baseLang("de") short-circuits before localeSafeToPreset is ever
 	// consulted, so this holds regardless of what's globally available.
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
@@ -576,9 +576,9 @@ func TestResolveAndInstallBasePlugin_LocaleAppliesOnlyViaIdempotentAlreadyActive
 	dp := newBasePluginTestDeps(t)
 	newHermeticEnOnlyI18n(t, dp)
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
@@ -595,9 +595,9 @@ func TestResolveAndInstallBasePlugin_LocaleAppliesOnlyViaIdempotentAlreadyActive
 	if got := dp.CurrentState().Locale; got == "ur-PK" {
 		t.Fatalf("store.locale = %q after the first call with no country set — the locale must not have been applied yet", got)
 	}
-	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-ur")
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-ur")
 	if err != nil || !active {
-		t.Fatalf("expected ut-plugin-language-ur active after first call: active=%v err=%v", active, err)
+		t.Fatalf("expected com.universaltill.language-ur active after first call: active=%v err=%v", active, err)
 	}
 
 	// Second call: same listing (still active, so this takes the
@@ -620,9 +620,9 @@ func TestResolveAndInstallBasePlugin_IdempotentPathDoesNotOverrideExplicitlyConf
 	dp := newBasePluginTestDeps(t)
 	newHermeticEnOnlyI18n(t, dp)
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
@@ -1007,13 +1007,13 @@ func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testin
 	if got := withoutAutoTax(pending); len(got) != 1 || got[0] != (basePluginSpec{CanonicalType: "language", Locale: "de"}) {
 		t.Fatalf("expected the DE language spec still pending, got %+v", pending)
 	}
-	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); active {
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de"); active {
 		t.Fatal("nothing should be installed while offline")
 	}
 
 	// Network returns: a real marketplace now serves the DE listing.
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	basePluginRetryTick(t.Context(), dp)
@@ -1025,7 +1025,7 @@ func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testin
 	if len(pending) != 0 {
 		t.Fatalf("expected the pending list cleared after a successful retry, got %+v", pending)
 	}
-	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de"); !active {
 		t.Fatal("expected the DE language plugin installed after the retry tick")
 	}
 }
@@ -1042,8 +1042,8 @@ func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testin
 // inside the window the old wholesale-replace got wrong.
 func TestBasePluginRetryTick_DoesNotClobberConcurrentlyQueuedSpec(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	// Seed exactly what the tick will read: one installable spec.
@@ -1074,7 +1074,7 @@ func TestBasePluginRetryTick_DoesNotClobberConcurrentlyQueuedSpec(t *testing.T) 
 	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "language", Locale: "es"}) {
 		t.Fatalf("expected the concurrently-queued es spec to survive the tick's write untouched, got %+v", pending)
 	}
-	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de"); !active {
 		t.Fatal("expected the de spec to have installed despite the concurrent write")
 	}
 }
@@ -1084,8 +1084,8 @@ func TestBasePluginRetryTick_DoesNotClobberConcurrentlyQueuedSpec(t *testing.T) 
 func TestSetupWizardDE_HappyPathInstallsBasePluginSynchronously(t *testing.T) {
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	rec := postForm(mux, "/api/setup", url.Values{
@@ -1100,7 +1100,7 @@ func TestSetupWizardDE_HappyPathInstallsBasePluginSynchronously(t *testing.T) {
 		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); err != nil || !active {
+	if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de"); err != nil || !active {
 		t.Fatalf("expected the German language pack installed synchronously: active=%v err=%v", active, err)
 	}
 	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
@@ -1310,9 +1310,9 @@ func TestHandleInstallFromMarketplace_AppliesLocaleCatchUpForLanguagePack(t *tes
 	}
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
@@ -1355,14 +1355,14 @@ func TestHandleInstallFromMarketplace_LocaleCatchUpFindsListingBeyondFirstCatalo
 	newHermeticEnOnlyI18n(t, dp)
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(
 		marketplace.PluginSummary{
-			ID: "ut-plugin-language-es", ListingID: "listing-lang-es", Name: "Spanish language pack",
+			ID: "com.universaltill.language-es", ListingID: "listing-lang-es", Name: "Spanish language pack",
 			Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"es"},
 		},
 		marketplace.PluginSummary{
-			ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+			ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 			Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 		},
 	)

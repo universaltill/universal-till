@@ -723,7 +723,6 @@ Further languages are translated by the community in
 reach tills as signed language bundles, offered right on the setup wizard's
 language step and installed on selection (German first; Spanish, Portuguese,
 French, Chinese, Malay and more follow as their translations are approved).
-The old per-language plugin repos (`ut-plugin-language-*`) are being retired.
 
 Want to add or improve a language? Translate it in your browser at [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/); see [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.
 

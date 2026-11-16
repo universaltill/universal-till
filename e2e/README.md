@@ -9,12 +9,13 @@ specs across projects, each against its own server(s):
   `9091 + parallelIndex` (`tests/worker-till.ts`, driven by the
   `workerServerURL` fixture in `tests/fixtures.ts`; the binary is built
   once per run by `global-setup.ts` into the gitignored `e2e/.bin/`).
-  ut-docs#4629: CI checks out `ut-plugin-language-de` and passes its
-  `locales` dir as `UT_E2E_I18N_OVERLAY_DIR` (mapped to the till's
+  ut-docs#4629: CI clones `ut-translations`, builds a flat German overlay with
+  `scripts/ci/build-locale-overlay.sh` and passes that dir as `UT_E2E_I18N_OVERLAY_DIR` (mapped to the till's
   `UT_TEST_I18N_OVERLAY_DIR`, default-project worker tills ONLY), so
   `?lang=de` is real German and `portrait-no-clip-sweep-3060` /
   `settings-tablet-portrait-4628` assert it. Locally:
-  `UT_E2E_I18N_OVERLAY_DIR=../../ut-plugin-language-de/locales npx playwright test --project=default`;
+  `bash scripts/ci/build-locale-overlay.sh --locale de --out /tmp/ov && UT_E2E_I18N_OVERLAY_DIR=/tmp/ov npx playwright test --project=default`
+  (from the repo root; needs `../ut-translations` or `--translations <dir>`);
   without it they only annotate. Locally an already-healthy till on a worker
   port is reused (started without the overlay it would fail the assertion):
   stop stray tills or set `UT_E2E_WORKER_PORT_BASE`. CI never reuses one.

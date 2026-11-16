@@ -13,7 +13,7 @@ name: docs-shots-determinism
 # would roughly double the cost of any PR that also triggers
 # guard-docs-shots.sh's own regeneration requirement.
 #
-# Instead, same shape as lang-pack-drift.yml's PR/push split:
+# Instead, a PR/push split:
 #   - pull_request, paths-scoped to the harness itself (the files that could
 #     actually reintroduce rendering nondeterminism) — an ordinary UI PR
 #     that only changes web/ui/**, web/public/** or internal/pages/** never
@@ -28,9 +28,8 @@ name: docs-shots-determinism
 #     changing what --disable-gpu et al. actually determinize, or an
 #     upstream regression. A quiet plugin repo's schedule can go 60 days
 #     idle and get auto-disabled by GitHub; this repo's own push volume
-#     doesn't save a `schedule:`-only trigger the way it saves push-based
-#     lang-pack-drift, so this stays on an explicit weekly cron instead of
-#     relying on repo activity.
+#     only keeps a push-based trigger alive, so this stays on an explicit
+#     weekly cron instead of relying on repo activity.
 #   - workflow_dispatch, for an on-demand re-check.
 on:
   pull_request:
@@ -58,8 +57,7 @@ on:
 # WARNING: never add this job as a required status check in branch
 # protection. `paths:` above means most PRs get NO check run at all for
 # this job — a required-status-check gate reads that as "waiting forever"
-# and makes those PRs permanently unmergeable. Same warning as
-# lang-pack-drift.yml's.
+# and makes those PRs permanently unmergeable.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

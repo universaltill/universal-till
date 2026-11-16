@@ -781,7 +781,7 @@ func argPairs(pairs []any) map[string]any {
 // `?err=` text. Reuses the existing shared `common.error.server` key rather
 // than minting a new one — same reasoning as ut-docs#1663/#1620's own
 // error-message migrations: it avoids new-key churn across all four locales
-// plus the external ut-plugin-language-{de,es} packs, and no touched page's
+// plus the language bundles (com.universaltill.language-<code>, ADR-0160), and no touched page's
 // own namespace has a better-fitting existing "something went wrong" key.
 const genericErrKey = "common.error.server"
 

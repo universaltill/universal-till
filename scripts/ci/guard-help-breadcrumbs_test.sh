@@ -14,8 +14,8 @@ trap remove_guard_test_sandbox EXIT
 
 GUARD="scripts/ci/guard-help-breadcrumbs.sh"
 BASELINE="scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt"
-# A language pack outside the sandbox must not change the outcome.
-unset UT_DE_PACK_DIR
+# A locale overlay outside the sandbox must not change the outcome.
+unset UT_TEST_I18N_OVERLAY_DIR
 
 fails=0
 pass() { echo "ok   - $1"; }
