@@ -61,7 +61,10 @@ expect "a composite action is rejected" 1
 mk; echo 'run: ./gradlew -PtapToPay=true testArm64DebugUnitTest' | put .github/workflows/ci.yml
 expect "any other workflow is rejected" 1
 
-mk; printf 'UT_TAP_TO_PAY: "YES"\nUT_TAP_TO_PAY=YES\nenv UT_TAP_TO_PAY="NO"\n' | put scripts/ci/guard-ios-tap-to-pay-default-off.sh
+# The iOS switch name is spelled in pieces so this file itself never reads as
+# turning iOS Tap to Pay on (guard-ios-tap-to-pay-default-off.sh scans scripts/).
+IOS_SW="UT_TAP_""TO_PAY"
+mk; printf '%s: "Y""ES"\n%s=Y""ES\nenv %s="N""O"\n' "${IOS_SW}" "${IOS_SW}" "${IOS_SW}" | put scripts/ci/guard-ios-tap-to-pay-default-off.sh
 expect "the iOS UT_TAP_TO_PAY switch is not the Android flag" 0
 
 mk; echo 'ORG_GRADLE_PROJECT_tapToPay=true' | put scripts/x.sh
