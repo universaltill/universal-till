@@ -21,6 +21,12 @@ class TapToPayFlow(
         const val COLLECT_WINDOW_MS = 18_000L
         const val HARD_DEADLINE_MS = 24_000L
         const val MIN_CONFIRM_BUDGET_MS = 4_000L
+
+        /** After cancelling collect, wait this long for it before cancelling the intent anyway. */
+        const val CANCEL_STEP_WAIT_MS = 3_000L
+
+        /** A cancel that never completes ends as `unknown` after this, never as a stuck flow. */
+        const val CANCEL_DEADLINE_MS = 8_000L
     }
 
     private enum class S { STARTING, COLLECTING, CANCELLING, CONFIRMING, ENDED }
@@ -78,6 +84,9 @@ class TapToPayFlow(
 
     val requestId: String get() = req.requestId
 
+    private fun record(intent: String, state: String) =
+        PendingRecord(req.requestId, req.key, intent, state, req.amountMinor, req.currency)
+
     private fun refuse(code: String) {
         s = S.ENDED
         cancelTimers()
@@ -97,7 +106,7 @@ class TapToPayFlow(
 
     private fun intentReady(id: String) {
         intentId = id
-        store.put(PendingRecord(req.requestId, req.key, id, "created"))
+        store.put(record(id, PendingState.CREATED))
         answer(null)
         s = S.COLLECTING
         sink.progress(req.requestId, "waiting_for_tap")
@@ -122,10 +131,24 @@ class TapToPayFlow(
         if (s != S.COLLECTING) return
         s = S.CANCELLING
         cancelTimers()
-        collectHandle?.cancel()
         val id = intentId!!
-        reader.cancelIntent(id) { ok ->
-            if (ok) finish(TapStatus.CANCELLED, reason) else finish(TapStatus.UNKNOWN, reason)
+        var intentCancelStarted = false
+        fun cancelIntentNow() {
+            if (intentCancelStarted || s != S.CANCELLING) return
+            intentCancelStarted = true
+            reader.cancelIntent(id) { ok ->
+                if (s == S.CANCELLING) finish(if (ok) TapStatus.CANCELLED else TapStatus.UNKNOWN, reason)
+            }
+        }
+        // A cancel that never calls back must not leave the flow live (and every later start `busy`).
+        timers += scheduler.postDelayed(CANCEL_DEADLINE_MS) { if (s == S.CANCELLING) finish(TapStatus.UNKNOWN, reason) }
+        val h = collectHandle
+        if (h == null) {
+            cancelIntentNow()
+        } else {
+            // Sequence the two cancels: the intent only after collect's cancel completed (or a bounded wait).
+            timers += scheduler.postDelayed(CANCEL_STEP_WAIT_MS) { cancelIntentNow() }
+            h.cancel { cancelIntentNow() }
         }
     }
 
@@ -133,7 +156,7 @@ class TapToPayFlow(
         s = S.CONFIRMING
         // the collect window no longer applies; the hard deadline timer stays
         collectTimer?.cancel()
-        store.put(PendingRecord(req.requestId, req.key, intentId!!, "confirming"))
+        store.put(record(intentId!!, PendingState.CONFIRMING))
         sink.progress(req.requestId, "processing")
         reader.confirm(intentId!!) { onConfirm(it) }
     }
@@ -170,8 +193,15 @@ class TapToPayFlow(
         s = S.ENDED
         cancelTimers()
         unknownDelivered = status == TapStatus.UNKNOWN
-        // unknown keeps the record: the PaymentIntent id is what reconciliation needs
-        if (status != TapStatus.UNKNOWN) store.clear()
-        sink.result(TapResult(req.requestId, status, reason, intentId, chargeId, declineCode, brand, last4, late))
+        val result = TapResult(req.requestId, status, reason, intentId, chargeId, declineCode, brand, last4, late)
+        if (status == TapStatus.UNKNOWN) {
+            // unknown keeps (and marks) the record: the PaymentIntent id is what reconciliation needs
+            store.put(record(intentId!!, PendingState.UNKNOWN))
+            sink.result(result)
+        } else {
+            // the sink persists a success BEFORE this payment's own record goes; only THIS key's record is removed
+            sink.result(result)
+            store.remove(req.key)
+        }
     }
 }

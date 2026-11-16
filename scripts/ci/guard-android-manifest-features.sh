@@ -27,7 +27,8 @@ cd "${ROOT_DIR}"
 # #3048: second argument "shipped" additionally checks a MERGED manifest of a
 # build that must not carry Tap to Pay (armv7, universal, arm64 without
 # -PtapToPay): no NFC, no TillApplication, no location permission without
-# maxSdkVersion, no Bluetooth/phone-state permission the SDK would add.
+# maxSdkVersion, no READ_PHONE_STATE. (BLUETOOTH_CONNECT is NOT checked: the main
+# manifest declares it legitimately for the printers.)
 PROFILE="${2:-}"
 
 MANIFEST="${1:-android/app/src/main/AndroidManifest.xml}"

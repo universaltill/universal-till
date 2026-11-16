@@ -11,7 +11,6 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.universaltill.pos.BuildConfig
 import com.universaltill.pos.R
 
 /** Education + location rationale + settings hand-off (all English strings in strings.xml). */
@@ -69,33 +68,26 @@ class AndroidUi(private val activity: AppCompatActivity, private val prefs: TapP
 }
 
 /**
- * Glue between MainActivity and the engine (design section 5). Created only
- * when BuildConfig.TAP_TO_PAY_ENABLED and an engine exists; otherwise
- * MainActivity holds null and nothing here ever runs.
+ * Per-Activity glue (design section 5): registers the listener and points the
+ * process-scoped engine at this Activity's UI. Created only when the flag is on
+ * and an engine exists; otherwise MainActivity holds null and nothing here runs.
  */
-class TapToPayShell private constructor(private val engine: TapToPayEngine, private val holder: Holder) {
-    class Holder {
-        var proxy: JavaScriptReplyProxy? = null
-
-        fun emit(json: String) {
-            // A reloaded page invalidates the proxy; results stay pollable via op "result".
-            try { proxy?.postMessage(json) } catch (_: Exception) {}
-        }
-    }
-
+class TapToPayShell private constructor(
+    private val engine: TapToPayEngine,
+    private val ui: AndroidUi,
+) {
     private var attachedHost: String? = null
 
     /** Registers window.AndroidTapToPay for exactly this origin, main frame only. Never addJavascriptInterface. */
     fun attach(webView: WebView, host: String) {
         if (attachedHost == host) return
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        // Never a second listener under the same name (it throws, and a stale one would stay live).
+        if (attachedHost != null) WebViewCompat.removeWebMessageListener(webView, "AndroidTapToPay")
         attachedHost = host
-        WebViewCompat.addWebMessageListener(webView, "AndroidTapToPay", setOf("http://$host")) { _, message: WebMessageCompat, origin: Uri, isMainFrame: Boolean, reply: JavaScriptReplyProxy ->
-            // The rule set above already restricts origins; re-check per message (defence in depth).
-            if (!OriginPolicy.allows(origin.toString(), isMainFrame, host)) return@addWebMessageListener
-            val raw = message.data ?: return@addWebMessageListener
-            holder.proxy = reply
-            engine.handle(raw) { json -> reply.postMessage(json) }
+        val core = BridgeCore(engine, TapToPayProcess.out, host)
+        WebViewCompat.addWebMessageListener(webView, "AndroidTapToPay", BridgeCore.originRules(host)) { _, message: WebMessageCompat, origin: Uri, isMainFrame: Boolean, reply: JavaScriptReplyProxy ->
+            core.onMessage(message.data, origin.toString(), isMainFrame) { json -> reply.postMessage(json) }
         }
     }
 
@@ -104,15 +96,20 @@ class TapToPayShell private constructor(private val engine: TapToPayEngine, priv
     /** Not onPause: the Stripe screen pauses our Activity mid-payment. */
     fun onStop() = engine.onBackground()
 
-    fun onDestroy(isFinishing: Boolean) = engine.onDestroy(isFinishing)
+    fun onDestroy(isFinishing: Boolean) {
+        // Do not keep a destroyed Activity reachable from the process-scoped engine.
+        if (TapToPayProcess.ui.target === ui) TapToPayProcess.ui.target = null
+        TapToPayProcess.out.proxy = null
+        engine.onDestroy(isFinishing)
+    }
 
     companion object {
         fun create(activity: AppCompatActivity): TapToPayShell? {
-            if (!BuildConfig.TAP_TO_PAY_ENABLED) return null
-            val prefs = TapPrefs(activity)
-            val holder = Holder()
-            val engine = TapToPayPlatform.create(activity, AndroidDeviceProbe(activity, prefs), holder::emit) ?: return null
-            return TapToPayShell(engine, holder)
+            val engine = TapToPayProcess.engineFor(activity) ?: return null
+            // Registers an activity-result launcher, so it must run in onCreate.
+            val ui = AndroidUi(activity, TapPrefs(activity))
+            TapToPayProcess.ui.target = ui
+            return TapToPayShell(engine, ui)
         }
     }
 }

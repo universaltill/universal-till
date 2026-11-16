@@ -61,7 +61,7 @@ class ReaderConnector(private val cloud: CloudApi, private val connectFn: (Strin
             locationId ?: try {
                 parseLocationId(cloud.location()).also { locationId = it }
             } catch (e: CloudException) {
-                cb(CloudErrors.code(e.code)); return
+                cb(CloudErrors.toStartError(CloudErrors.code(e.code))); return
             }
         connectFn(loc) { err ->
             when {

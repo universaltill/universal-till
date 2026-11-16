@@ -15,8 +15,9 @@ class FakeScheduler : Scheduler {
         val t = Task(now + delayMs, seq++, task)
         tasks += t
         return object : Cancelable {
-            override fun cancel() {
+            override fun cancel(done: () -> Unit) {
                 t.cancelled = true
+                done()
             }
         }
     }
@@ -34,20 +35,37 @@ class FakeScheduler : Scheduler {
 }
 
 class MemoryPendingStore : PendingStore {
-    var record: PendingRecord? = null
+    val map = LinkedHashMap<String, PendingRecord>()
     val history = mutableListOf<String>()
 
+    /** The single record, for tests that run one payment. */
+    val only: PendingRecord? get() = map.values.singleOrNull()
+
     override fun put(record: PendingRecord) {
-        this.record = record
+        map[record.key] = record
         history += "put:${record.state}"
     }
 
-    override fun clear() {
-        record = null
-        history += "clear"
+    override fun remove(key: String) {
+        map.remove(key)
+        history += "remove"
     }
 
-    override fun load(): PendingRecord? = record
+    override fun load(key: String): PendingRecord? = map[key]
+
+    override fun all(): List<PendingRecord> = map.values.toList()
+}
+
+class MemoryDoneStore : DoneStore {
+    val map = LinkedHashMap<String, DoneRecord>()
+
+    override fun put(r: DoneRecord) {
+        map[r.key] = r
+    }
+
+    override fun load(key: String): DoneRecord? = map[key]
+
+    override fun byRequest(requestId: String): DoneRecord? = map.values.firstOrNull { it.requestId == requestId }
 }
 
 class RecordingSink : Sink {
@@ -74,6 +92,9 @@ class FakeReader(private val sched: FakeScheduler) : Reader {
     var autoCollect: CollectOutcome? = CollectOutcome.Collected
     var autoConfirm: ConfirmOutcome? = ConfirmOutcome.Succeeded(null, null, null)
     var cancelIntentOk = true
+    var cancelIntentHang = false
+    var collectCancelNever = false
+    val order = mutableListOf<String>()
 
     val createCalls = mutableListOf<List<Any>>()
     val cancelledIntents = mutableListOf<String>()
@@ -98,8 +119,10 @@ class FakeReader(private val sched: FakeScheduler) : Reader {
         collectCb = cb
         autoCollect?.let { cb(it) }
         return object : Cancelable {
-            override fun cancel() {
+            override fun cancel(done: () -> Unit) {
                 collectCancels++
+                order += "collect-cancel"
+                if (!collectCancelNever) done()
             }
         }
     }
@@ -108,13 +131,14 @@ class FakeReader(private val sched: FakeScheduler) : Reader {
         confirmCb = cb
         autoConfirm?.let { cb(it) }
         return object : Cancelable {
-            override fun cancel() {}
+            override fun cancel(done: () -> Unit) = done()
         }
     }
 
     override fun cancelIntent(intentId: String, cb: (Boolean) -> Unit) {
         cancelledIntents += intentId
-        cb(cancelIntentOk)
+        order += "intent-cancel"
+        if (!cancelIntentHang) cb(cancelIntentOk)
     }
 
     override fun disconnect() {}

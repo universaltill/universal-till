@@ -107,4 +107,12 @@ class TapToPayMessagesTest {
         assertEquals("reply", e.getString("type")); assertFalse(e.getBoolean("ok")); assertEquals("busy", e.getString("error"))
         assertTrue(JSONObject(TapToPayMessages.replyOk("r1")).getBoolean("ok"))
     }
+
+    @Test fun resolveUnknownNeedsRequestIdAndTheNotChargedOutcome() {
+        val r = ok("""{"v":1,"id":"r1","op":"resolve_unknown","request_id":"rq-9","outcome":"not_charged"}""").req
+        assertEquals("resolve_unknown", r.op); assertEquals("rq-9", r.requestId)
+        assertEquals("bad_request", bad("""{"v":1,"id":"r1","op":"resolve_unknown","request_id":"rq-9"}""").error)
+        assertEquals("bad_request", bad("""{"v":1,"id":"r1","op":"resolve_unknown","request_id":"rq-9","outcome":"charged"}""").error)
+        assertEquals("bad_request", bad("""{"v":1,"id":"r1","op":"resolve_unknown","outcome":"not_charged"}""").error)
+    }
 }

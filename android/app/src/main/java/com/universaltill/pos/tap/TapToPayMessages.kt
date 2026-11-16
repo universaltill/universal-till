@@ -43,7 +43,7 @@ sealed class ParsedRequest {
 object TapToPayMessages {
     const val MAX_BYTES = 2048
     const val MAX_AMOUNT_MINOR = 9_999_999L
-    private val ops = setOf("capabilities", "education", "prepare", "start", "cancel", "result", "open_settings")
+    private val ops = setOf("capabilities", "education", "prepare", "start", "cancel", "result", "open_settings", "resolve_unknown")
     private val currencies = setOf("gbp", "eur")
     private val targets = setOf("location", "nfc", "app")
     private val keyRe = Regex("^[A-Za-z0-9:_.-]{1,128}$")
@@ -76,6 +76,13 @@ object TapToPayMessages {
             "cancel", "result" -> {
                 val rid = j.opt("request_id") as? String ?: return bad(id)
                 if (!idRe.matches(rid)) return bad(id)
+                return ParsedRequest.Ok(TapRequest(id, op, requestId = rid))
+            }
+            "resolve_unknown" -> {
+                // The operator's explicit statement that the earlier payment was NOT charged (checked in the Stripe dashboard).
+                val rid = j.opt("request_id") as? String ?: return bad(id)
+                if (!idRe.matches(rid)) return bad(id)
+                if (j.opt("outcome") != "not_charged") return bad(id)
                 return ParsedRequest.Ok(TapRequest(id, op, requestId = rid))
             }
             "open_settings" -> {

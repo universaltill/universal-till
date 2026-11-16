@@ -805,9 +805,17 @@ or the page.
 `postMessage(JSON.stringify({v:1,id,op,...}))` and reads replies/events from `onmessage`.
 Ops: `capabilities`, `education`, `prepare`, `start {amount_minor, currency (gbp|eur),
 idempotency_key}`, `cancel {request_id}`, `result {request_id}`, `open_settings
-{target: location|nfc|app}`. Results are `succeeded|declined|cancelled|unknown`; `unknown`
+{target: location|nfc|app}`, `resolve_unknown {request_id, outcome:"not_charged"}` (the
+operator's statement, after checking the Stripe dashboard, that an `unknown` payment was
+not charged; until then every other basket gets `unknown_pending`; the page must offer it
+to a manager/admin only). Repeating the key of a paid basket returns the stored result and
+never charges again; the same key with another amount/currency is `key_mismatch`. The
+engine, reader and the persisted pending/paid records are process-scoped, so recreating
+or finishing the Activity never forgets a payment. Results are `succeeded|declined|cancelled|unknown`; `unknown`
 is never shown as declined (retry on the same basket with the same key; a later
-`late:true` result can correct it). The result is **advisory**: a sale is recorded only
+`late:true` result can correct it). The page-supplied amount and currency are trusted only because the result is advisory; when
+payment creation moves to ut-cloud (#6454, replacing `StripeTerminalReader.createIntent`) they must
+come from a server-side basket. The result is **advisory**: a sale is recorded only
 when the `stripe_tap` plugin verifies the PaymentIntent server-side. No card data is in
 any message. Amounts are minor units, 1..9,999,999.
 

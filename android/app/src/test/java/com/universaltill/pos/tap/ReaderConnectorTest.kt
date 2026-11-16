@@ -34,6 +34,16 @@ class ReaderConnectorTest {
         assertEquals("connect_incomplete", r)
     }
 
+    @Test fun unknownCloudFailureBecomesTheDocumentedNotReady() {
+        val cloud = FakeCloud().also { it.locationError = "cloud_error" }
+        var r: String? = null
+        ReaderConnector(cloud) { _, cb -> cb(null) }.connect { r = it }
+        assertEquals("not_ready", r)
+        val off = FakeCloud().also { it.locationError = "offline: cloud not reached" }
+        ReaderConnector(off) { _, cb -> cb(null) }.connect { r = it }
+        assertEquals("offline", r)
+    }
+
     @Test fun sessionExpiredReconnectsExactlyOnce() {
         var attempts = 0
         val c = ReaderConnector(FakeCloud()) { _, cb -> attempts++; cb("SESSION_EXPIRED") }

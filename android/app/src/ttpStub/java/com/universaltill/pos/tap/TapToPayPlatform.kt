@@ -1,6 +1,6 @@
 package com.universaltill.pos.tap
 
-import androidx.appcompat.app.AppCompatActivity
+import android.content.Context
 
 /**
  * The no-op side (#3048): compiled into armv7, universal and arm64 without
@@ -10,5 +10,5 @@ import androidx.appcompat.app.AppCompatActivity
 object TapToPayPlatform {
     const val sdkCompiledIn = false
 
-    fun create(activity: AppCompatActivity, probe: DeviceProbe, emit: (String) -> Unit): TapToPayEngine? = null
+    fun create(appContext: Context, probe: DeviceProbe, ui: UiActions, emit: (String) -> Unit): TapToPayEngine? = null
 }

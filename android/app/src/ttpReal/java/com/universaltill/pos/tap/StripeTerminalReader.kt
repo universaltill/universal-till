@@ -44,9 +44,12 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
     private val simulated = DiscoveryPolicy.simulated(BuildConfig.DEBUG)
     private val connector = ReaderConnector(cloud) { loc, cb -> sdkConnect(loc, cb) }
 
-    private fun <T> onMain(block: () -> T) {
-        main.post { block() }
+    /** All state below is touched on the main thread only: SDK callbacks hop here first. */
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post { block() }
     }
+
+    private val gate = FlightGate()
 
     private fun terminal(): Terminal {
         if (!Terminal.isInitialized()) {
@@ -55,12 +58,13 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
                 if (BuildConfig.DEBUG) LogLevel.WARNING else LogLevel.ERROR,
                 object : ConnectionTokenProvider {
                     override fun fetchConnectionToken(callback: ConnectionTokenCallback) {
-                        // Fresh per request, never cached, never logged; runs off the SDK thread.
+                        // Fresh per request, never cached, never logged; off the SDK thread. The SDK callback is
+                        // ALWAYS answered, whatever goes wrong (an unanswered one hangs the SDK).
                         io.execute {
                             try {
                                 callback.onSuccess(parseConnectionToken(cloud.connectionToken()))
-                            } catch (e: CloudException) {
-                                callback.onFailure(ConnectionTokenException(e.code))
+                            } catch (e: Throwable) {
+                                callback.onFailure(ConnectionTokenException(if (e is CloudException) e.code else "cloud_error"))
                             }
                         }
                     }
@@ -80,23 +84,30 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
     }
 
     override fun ensureConnected(cb: (String?) -> Unit) {
-        val t = try { terminal() } catch (e: Exception) { return cb("reader_error") }
-        if (t.connectedReader != null) return cb(null)
-        io.execute { connector.connect { err -> onMain { cb(err) } } }
+        onMain {
+            val t = try { terminal() } catch (e: Throwable) { return@onMain cb("reader_error") }
+            if (t.connectedReader != null) return@onMain cb(null)
+            // prepare and start may both ask: ONE connect runs, every caller gets its answer.
+            if (gate.join(cb)) io.execute { connector.connect { err -> onMain { gate.finish(err) } } }
+        }
     }
-
-    private var connecting = false
 
     private fun sdkConnect(locationId: String, done: (String?) -> Unit) {
         onMain {
-            val t = terminal()
-            connecting = false
+            var finished = false
+            var connecting = false
+            fun end(err: String?) {
+                if (finished) return
+                finished = true
+                done(err)
+            }
+            val t = try { terminal() } catch (e: Throwable) { return@onMain end("reader_error") }
             t.discoverReaders(
                 DiscoveryConfiguration.TapToPayDiscoveryConfiguration(isSimulated = simulated),
                 object : DiscoveryListener {
                     override fun onUpdateDiscoveredReaders(readers: List<com.stripe.stripeterminal.external.models.Reader>) {
-                    val r = readers.firstOrNull()
-                    if (r != null && !connecting) {
+                        val r = readers.firstOrNull()
+                        if (r == null || connecting || finished) return
                         connecting = true
                         t.connectReader(
                             r,
@@ -106,26 +117,28 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
                                 object : TapToPayReaderListener {},
                             ),
                             object : ReaderCallback {
-                                override fun onSuccess(reader: com.stripe.stripeterminal.external.models.Reader) = done(null)
+                                override fun onSuccess(reader: com.stripe.stripeterminal.external.models.Reader) = onMain { end(null) }
 
-                                override fun onFailure(e: TerminalException) = done(e.errorCode.name)
+                                override fun onFailure(e: TerminalException) = onMain { end(e.errorCode.name) }
                             },
                         )
                     }
-                    }
                 },
                 object : Callback {
-                    override fun onSuccess() {}
+                    // Discovery ended. With no reader found and no connect started there is nothing left to wait for.
+                    override fun onSuccess() = onMain { if (!connecting) end("reader_error") }
 
-                    override fun onFailure(e: TerminalException) {
-                        if (!connecting) done(e.errorCode.name)
-                    }
+                    override fun onFailure(e: TerminalException) = onMain { if (!connecting) end(e.errorCode.name) }
                 },
             )
         }
     }
 
     override fun createIntent(amountMinor: Long, currency: String, key: String, cb: (IntentResult) -> Unit) {
+        onMain { createIntentOnMain(amountMinor, currency, key, cb) }
+    }
+
+    private fun createIntentOnMain(amountMinor: Long, currency: String, key: String, cb: (IntentResult) -> Unit) {
         val params =
             PaymentIntentParameters.Builder(amountMinor, currency, CaptureMethod.Automatic, listOf(PaymentMethodType.CARD_PRESENT))
                 .setMetadata(mapOf("ut_key" to key)) // no PII, no application fee
@@ -133,14 +146,14 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
         terminal().createPaymentIntent(
             params,
             object : PaymentIntentCallback {
-                override fun onSuccess(paymentIntent: PaymentIntent) {
+                override fun onSuccess(paymentIntent: PaymentIntent) = onMain {
                     val id = paymentIntent.id
                     if (id == null) {
-                        onMain { cb(IntentResult.Failed("not_ready")) }
-                        return
+                        cb(IntentResult.Failed("not_ready"))
+                    } else {
+                        intents[id] = paymentIntent
+                        cb(IntentResult.Created(id))
                     }
-                    intents[id] = paymentIntent
-                    onMain { cb(IntentResult.Created(id)) }
                 }
 
                 override fun onFailure(e: TerminalException) = onMain { cb(IntentResult.Failed("not_ready")) }
@@ -151,37 +164,36 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
 
     private fun wrap(c: com.stripe.stripeterminal.external.callable.Cancelable) =
         object : Cancelable {
-            override fun cancel() {
-                if (!c.isCompleted) {
-                    c.cancel(
-                        object : Callback {
-                            override fun onSuccess() {}
+            override fun cancel(done: () -> Unit) {
+                if (c.isCompleted) return done()
+                c.cancel(
+                    object : Callback {
+                        override fun onSuccess() = onMain { done() }
 
-                            override fun onFailure(e: TerminalException) {}
-                        },
-                    )
-                }
+                        override fun onFailure(e: TerminalException) = onMain { done() }
+                    },
+                )
             }
         }
 
     override fun collect(intentId: String, cb: (CollectOutcome) -> Unit): Cancelable {
         val pi = intents[intentId] ?: run {
             onMain { cb(CollectOutcome.Failed("reader_error")) }
-            return object : Cancelable { override fun cancel() {} }
+            return object : Cancelable { override fun cancel(done: () -> Unit) = done() }
         }
         return wrap(
             terminal().collectPaymentMethod(
                 pi,
                 object : PaymentIntentCallback {
-                    override fun onSuccess(paymentIntent: PaymentIntent) {
+                    override fun onSuccess(paymentIntent: PaymentIntent) = onMain {
                         intents[intentId] = paymentIntent
-                        onMain { cb(CollectOutcome.Collected) }
+                        cb(CollectOutcome.Collected)
                     }
 
                     override fun onFailure(e: TerminalException) {
-                        e.paymentIntent?.let { intents[intentId] = it }
                         val name = e.errorCode.name
                         onMain {
+                            e.paymentIntent?.let { intents[intentId] = it }
                             cb(
                                 when (StripeErrorMapper.cancelKind(name)) {
                                     CancelKind.CUSTOMER -> CollectOutcome.Cancelled(true)
@@ -199,15 +211,15 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
     override fun confirm(intentId: String, cb: (ConfirmOutcome) -> Unit): Cancelable {
         val pi = intents[intentId] ?: run {
             onMain { cb(ConfirmOutcome.Failed("reader_error")) }
-            return object : Cancelable { override fun cancel() {} }
+            return object : Cancelable { override fun cancel(done: () -> Unit) = done() }
         }
         return wrap(
             terminal().confirmPaymentIntent(
                 pi,
                 object : PaymentIntentCallback {
                     override fun onSuccess(paymentIntent: PaymentIntent) {
-                        intents[intentId] = paymentIntent
                         onMain {
+                            intents[intentId] = paymentIntent
                             cb(
                                 if (paymentIntent.status == PaymentIntentStatus.SUCCEEDED) {
                                     // Only the charge id; no brand/last4 are read (no card data in this layer).
@@ -220,10 +232,10 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
                     }
 
                     override fun onFailure(e: TerminalException) {
-                        e.paymentIntent?.let { intents[intentId] = it }
                         val decline = e.apiError?.declineCode
                         val status = e.paymentIntent?.status?.name
                         onMain {
+                            e.paymentIntent?.let { intents[intentId] = it }
                             cb(
                                 if (StripeErrorMapper.isDecline(status, decline)) {
                                     ConfirmOutcome.Declined(decline)
@@ -239,13 +251,17 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
     }
 
     override fun cancelIntent(intentId: String, cb: (Boolean) -> Unit) {
-        val pi = intents[intentId] ?: return onMain { cb(false) }
+        onMain { cancelIntentOnMain(intentId, cb) }
+    }
+
+    private fun cancelIntentOnMain(intentId: String, cb: (Boolean) -> Unit) {
+        val pi = intents[intentId] ?: return cb(false)
         terminal().cancelPaymentIntent(
             pi,
             object : PaymentIntentCallback {
-                override fun onSuccess(paymentIntent: PaymentIntent) {
+                override fun onSuccess(paymentIntent: PaymentIntent) = onMain {
                     intents.remove(intentId)
-                    onMain { cb(true) }
+                    cb(true)
                 }
 
                 override fun onFailure(e: TerminalException) = onMain { cb(false) }

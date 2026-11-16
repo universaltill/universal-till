@@ -6,6 +6,7 @@ import android.os.Looper
 import android.os.SystemClock
 import com.universaltill.pos.BuildConfig
 import mobile.Mobile
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Main-thread timers (design section 7). */
@@ -18,7 +19,10 @@ class MainScheduler : Scheduler {
         val r = Runnable { task() }
         handler.postDelayed(r, delayMs)
         return object : Cancelable {
-            override fun cancel() = handler.removeCallbacks(r)
+            override fun cancel(done: () -> Unit) {
+                handler.removeCallbacks(r)
+                done()
+            }
         }
     }
 }
@@ -37,29 +41,74 @@ class TapPrefs(context: Context) {
             p.edit().putBoolean("education_accepted", v).apply()
         }
 
-    fun putPending(r: PendingRecord) {
-        // commit(): the record must be on disk before the customer taps.
-        p.edit().putString("p_request", r.requestId).putString("p_key", r.key).putString("p_intent", r.intentId).putString("p_state", r.state).commit()
+    // Keyed JSON arrays (bounded). commit(): a pending record must be on disk before the customer taps.
+    private fun readArray(name: String): JSONArray =
+        try { JSONArray(p.getString(name, "[]")) } catch (_: Exception) { JSONArray() }
+
+    private fun writeArray(name: String, a: JSONArray) {
+        p.edit().putString(name, a.toString()).commit()
     }
 
-    fun clearPending() {
-        p.edit().remove("p_request").remove("p_key").remove("p_intent").remove("p_state").commit()
+    fun pendingAll(): List<PendingRecord> {
+        val a = readArray("pending")
+        return (0 until a.length()).mapNotNull {
+            val o = a.optJSONObject(it) ?: return@mapNotNull null
+            PendingRecord(
+                o.optString("r"), o.optString("k"), o.optString("i"), o.optString("s"),
+                o.optLong("a"), o.optString("c"),
+            ).takeIf { r -> r.key.isNotEmpty() && r.intentId.isNotEmpty() }
+        }
     }
 
-    fun loadPending(): PendingRecord? {
-        val r = p.getString("p_request", null) ?: return null
-        val k = p.getString("p_key", null) ?: return null
-        val i = p.getString("p_intent", null) ?: return null
-        return PendingRecord(r, k, i, p.getString("p_state", "created") ?: "created")
+    fun pendingWrite(list: List<PendingRecord>) {
+        val a = JSONArray()
+        // Unresolved records are never evicted by the bound; the oldest resolved-state ones go first.
+        val keep = list.takeLast(MAX_PENDING)
+        for (r in keep) a.put(JSONObject().put("r", r.requestId).put("k", r.key).put("i", r.intentId).put("s", r.state).put("a", r.amountMinor).put("c", r.currency))
+        writeArray("pending", a)
+    }
+
+    fun doneAll(): List<DoneRecord> {
+        val a = readArray("done")
+        return (0 until a.length()).mapNotNull {
+            val o = a.optJSONObject(it) ?: return@mapNotNull null
+            DoneRecord(o.optString("k"), o.optString("r"), o.optString("i"), o.optLong("a"), o.optString("c"), o.optString("h").ifEmpty { null })
+                .takeIf { d -> d.key.isNotEmpty() && d.intentId.isNotEmpty() }
+        }
+    }
+
+    fun doneWrite(list: List<DoneRecord>) {
+        val a = JSONArray()
+        for (d in list.takeLast(MAX_DONE)) {
+            val o = JSONObject().put("k", d.key).put("r", d.requestId).put("i", d.intentId).put("a", d.amountMinor).put("c", d.currency)
+            d.chargeId?.let { o.put("h", it) }
+            a.put(o)
+        }
+        writeArray("done", a)
+    }
+
+    private companion object {
+        const val MAX_PENDING = 16
+        const val MAX_DONE = 32
     }
 }
 
 class PrefsPendingStore(private val prefs: TapPrefs) : PendingStore {
-    override fun put(record: PendingRecord) = prefs.putPending(record)
+    override fun put(record: PendingRecord) = prefs.pendingWrite(prefs.pendingAll().filter { it.key != record.key } + record)
 
-    override fun clear() = prefs.clearPending()
+    override fun remove(key: String) = prefs.pendingWrite(prefs.pendingAll().filter { it.key != key })
 
-    override fun load(): PendingRecord? = prefs.loadPending()
+    override fun load(key: String): PendingRecord? = prefs.pendingAll().firstOrNull { it.key == key }
+
+    override fun all(): List<PendingRecord> = prefs.pendingAll()
+}
+
+class PrefsDoneStore(private val prefs: TapPrefs) : DoneStore {
+    override fun put(r: DoneRecord) = prefs.doneWrite(prefs.doneAll().filter { it.key != r.key } + r)
+
+    override fun load(key: String): DoneRecord? = prefs.doneAll().firstOrNull { it.key == key }
+
+    override fun byRequest(requestId: String): DoneRecord? = prefs.doneAll().firstOrNull { it.requestId == requestId }
 }
 
 /**

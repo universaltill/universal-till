@@ -12,6 +12,7 @@ class TapToPayEngineTest {
     private lateinit var sched: FakeScheduler
     private lateinit var reader: FakeReader
     private lateinit var store: MemoryPendingStore
+    private lateinit var done: MemoryDoneStore
     private lateinit var probe: FakeProbe
     private lateinit var ui: FakeUi
     private val events = mutableListOf<JSONObject>()
@@ -19,9 +20,9 @@ class TapToPayEngineTest {
     private lateinit var engine: TapToPayEngine
 
     @Before fun setUp() {
-        sched = FakeScheduler(); reader = FakeReader(sched); store = MemoryPendingStore()
+        sched = FakeScheduler(); reader = FakeReader(sched); store = MemoryPendingStore(); done = MemoryDoneStore()
         probe = FakeProbe(readyFacts()); ui = FakeUi()
-        engine = TapToPayEngine(probe, reader, sched, store, ui) { events += JSONObject(it) }
+        engine = TapToPayEngine(probe, reader, sched, store, done, ui) { events += JSONObject(it) }
         engine.onForeground()
     }
 
@@ -106,11 +107,19 @@ class TapToPayEngineTest {
         assertEquals("none", none.getJSONObject("result").getString("status"))
     }
 
-    @Test fun resultStoreIsBoundedToEight() {
+    @Test fun inMemoryResultStoreIsBoundedToEight() {
+        reader.autoConfirm = ConfirmOutcome.Declined("card_declined") // declines are not persisted, so only memory answers
         for (i in 1..9) start("r$i", "k$i")
-        assertEquals("none", send("""{"v":1,"id":"p","op":"result","request_id":"r1"}""").getJSONObject("result").getString("status"))
-        assertEquals("succeeded", send("""{"v":1,"id":"p","op":"result","request_id":"r2"}""").getJSONObject("result").getString("status"))
-        assertEquals("succeeded", send("""{"v":1,"id":"p","op":"result","request_id":"r9"}""").getJSONObject("result").getString("status"))
+        fun status(id: String) = send("""{"v":1,"id":"p","op":"result","request_id":"$id"}""").getJSONObject("result").getString("status")
+        assertEquals("none", status("r1"))
+        assertEquals("declined", status("r2"))
+        assertEquals("declined", status("r9"))
+    }
+
+    @Test fun aPaidResultOutlivesTheMemoryBoundViaThePersistedStore() {
+        for (i in 1..9) start("r$i", "k$i")
+        val r = send("""{"v":1,"id":"p","op":"result","request_id":"r1"}""").getJSONObject("result")
+        assertEquals("succeeded", r.getString("status"))
     }
 
     @Test fun cancelOpCancelsCollectOnly() {
@@ -141,16 +150,16 @@ class TapToPayEngineTest {
     }
 
     @Test fun unknownAfterProcessDeathRefusesSameKeyAsUnknownPending() {
-        store.record = PendingRecord("old", "k1", "pi_77", "confirming")
+        store.put(PendingRecord("old", "k1", "pi_77", "confirming", 500L, "gbp"))
         val r = start("r2", "k1")
         assertFalse(r.getBoolean("ok")); assertEquals("unknown_pending", r.getString("error"))
         assertTrue(reader.createCalls.isEmpty())
-        // a different basket is not blocked by it
-        assertTrue(start("r3", "k2").getBoolean("ok"))
+        // and, by design, so is every other basket until the operator resolves it
+        assertEquals("unknown_pending", start("r3", "k2").getString("error"))
     }
 
     @Test fun pendingRecordSurfacesAsUnknownOnResultPoll() {
-        store.record = PendingRecord("old", "k1", "pi_77", "confirming")
+        store.put(PendingRecord("old", "k1", "pi_77", "confirming", 500L, "gbp"))
         val j = send("""{"v":1,"id":"p","op":"result","request_id":"old"}""").getJSONObject("result")
         assertEquals("unknown", j.getString("status")); assertEquals("pi_77", j.getString("payment_intent_id"))
         assertEquals("app_closed", j.getString("reason"))
@@ -164,10 +173,106 @@ class TapToPayEngineTest {
         assertEquals(1, reader.createCalls.size)
     }
 
-    @Test fun succeededKeyStartsAFreshIntentNextTime() {
+    @Test fun repeatingASucceededKeyAnswersWithTheStoredResultAndChargesNothing() {
         start("r1", "k1")
-        start("r2", "k1")
+        events.clear()
+        val r = start("r2", "k1")
+        assertTrue(r.getBoolean("ok"))
+        assertEquals(1, reader.createCalls.size)
+        assertEquals(1, reader.collectIds.size)
+        val ev = results().single()
+        assertEquals("succeeded", ev.getString("status")); assertEquals("r2", ev.getString("request_id"))
+        assertEquals("pi_1", ev.getString("payment_intent_id"))
+    }
+
+    @Test fun succeededKeyWithADifferentAmountIsRefused() {
+        start("r1", "k1", amount = 500)
+        val r = start("r2", "k1", amount = 900)
+        assertFalse(r.getBoolean("ok")); assertEquals("key_mismatch", r.getString("error"))
+        assertEquals(1, reader.createCalls.size)
+    }
+
+    @Test fun aSucceededPaymentSurvivesTheEngineBeingRebuilt() {
+        start("r1", "k1")
+        // a new Activity / a new engine over the same persisted stores
+        val again = TapToPayEngine(probe, reader, sched, store, done, ui) { events += JSONObject(it) }
+        again.onForeground()
+        var poll: JSONObject? = null
+        again.handle("""{"v":1,"id":"p","op":"result","request_id":"r1"}""") { poll = JSONObject(it) }
+        assertEquals("succeeded", poll!!.getJSONObject("result").getString("status"))
+        var rep: JSONObject? = null
+        again.handle("""{"v":1,"id":"r9","op":"start","amount_minor":500,"currency":"gbp","idempotency_key":"k1"}""") { rep = JSONObject(it) }
+        assertTrue(rep!!.getBoolean("ok"))
+        assertEquals(1, reader.createCalls.size)
+    }
+
+    @Test fun sameKeyRetryWithADifferentAmountNeverCollectsTheStaleIntent() {
+        reader.autoConfirm = ConfirmOutcome.Declined("card_declined")
+        start("r1", "k1", amount = 500)
+        val r = start("r2", "k1", amount = 900)
+        assertFalse(r.getBoolean("ok")); assertEquals("key_mismatch", r.getString("error"))
+        assertEquals(1, reader.collectIds.size)
+        assertEquals(1, reader.createCalls.size)
+    }
+
+    @Test fun aDifferentKeyAfterUnknownIsRefusedUntilResolved() {
+        reader.autoConfirm = null
+        start("r1", "k1")
+        sched.advance(24_001)
+        reader.autoConfirm = ConfirmOutcome.Succeeded(null, null, null)
+        val r = start("r2", "k2")
+        assertFalse(r.getBoolean("ok")); assertEquals("unknown_pending", r.getString("error"))
+        assertEquals(1, reader.createCalls.size)
+        val res = send("""{"v":1,"id":"x","op":"resolve_unknown","request_id":"r1","outcome":"not_charged"}""")
+        assertTrue(res.getBoolean("ok"))
+        assertTrue(start("r3", "k2").getBoolean("ok"))
         assertEquals(2, reader.createCalls.size)
+    }
+
+    @Test fun resolveUnknownNeedsTheExplicitOutcomeAndAKnownPayment() {
+        reader.autoConfirm = null
+        start("r1", "k1")
+        sched.advance(24_001)
+        assertFalse(send("""{"v":1,"id":"x","op":"resolve_unknown","request_id":"r1","outcome":"whatever"}""").getBoolean("ok"))
+        val none = send("""{"v":1,"id":"y","op":"resolve_unknown","request_id":"nope","outcome":"not_charged"}""")
+        assertFalse(none.getBoolean("ok")); assertEquals("no_such_payment", none.getString("error"))
+        assertEquals("unknown", store.load("k1")?.state)
+    }
+
+    @Test fun unknownRecordFromAnEarlierProcessBlocksOtherKeysToo() {
+        store.put(PendingRecord("old", "k1", "pi_77", "unknown", 500L, "gbp"))
+        assertEquals("unknown_pending", start("r2", "k2").getString("error"))
+    }
+
+    @Test fun processDeathBeforeConfirmDoesNotLockTheKey() {
+        store.put(PendingRecord("old", "k1", "pi_77", "created", 500L, "gbp"))
+        val r = start("r2", "k1")
+        assertTrue(r.getBoolean("ok"))
+        assertEquals(1, reader.createCalls.size)
+        assertEquals("succeeded", results().single().getString("status"))
+    }
+
+    @Test fun finishingActivityThenLateSuccessIsNotLost() {
+        reader.autoConfirm = null
+        start("r1", "k1")
+        engine.onDestroy(isFinishing = true)
+        assertEquals("unknown", results().single().getString("status"))
+        reader.confirmCb!!(ConfirmOutcome.Succeeded("ch_1", null, null))
+        val polled = send("""{"v":1,"id":"p","op":"result","request_id":"r1"}""").getJSONObject("result")
+        assertEquals("succeeded", polled.getString("status"))
+        assertEquals("ch_1", done.load("k1")?.chargeId)
+        assertNull(store.load("k1"))
+    }
+
+    @Test fun startErrorsUseOnlyDocumentedTokens() {
+        reader.connectError = "network"
+        assertEquals("offline", start().getString("error"))
+        reader.connectError = "SOMETHING_ELSE"
+        assertEquals("not_ready", start().getString("error"))
+        reader.connectError = "insecure_environment"
+        assertEquals("insecure_environment", start().getString("error"))
+        reader.connectError = "connect_incomplete"
+        assertEquals("connect_incomplete", start().getString("error"))
     }
 
     @Test fun lateResultOverwritesStoredResultAndEmitsLateEvent() {
@@ -237,6 +342,5 @@ class TapToPayEngineTest {
         probe.facts = readyFacts().copy(flagOn = false)
         val c = send("""{"v":1,"id":"c","op":"capabilities"}""").getJSONObject("capability")
         assertFalse(c.getBoolean("supported")); assertEquals("flag_off", c.getString("reason"))
-        assertNull(null)
     }
 }

@@ -1,7 +1,8 @@
 package com.universaltill.pos.tap
 
 interface Cancelable {
-    fun cancel()
+    /** [done] runs once the cancel has completed (or at once when there was nothing to cancel). */
+    fun cancel(done: () -> Unit = {})
 }
 
 /** Time source + timers. Real: main-thread Handler. Tests: FakeScheduler. */
@@ -69,15 +70,52 @@ interface CloudApi {
     fun onboardingLink(): String
 }
 
-data class PendingRecord(val requestId: String, val key: String, val intentId: String, val state: String)
+/** Lifecycle of a [PendingRecord]. Only after confirm began can the customer have been charged. */
+object PendingState {
+    const val CREATED = "created"
+    const val CONFIRMING = "confirming"
+    const val UNKNOWN = "unknown"
 
-/** The write-before-tap record: ids only, never secrets. */
+    fun unresolved(state: String) = state == CONFIRMING || state == UNKNOWN
+}
+
+/** One record per idempotency key. [amountMinor]/[currency] pin what the intent was created for. */
+data class PendingRecord(
+    val requestId: String,
+    val key: String,
+    val intentId: String,
+    val state: String,
+    val amountMinor: Long,
+    val currency: String,
+)
+
+/** The write-before-tap records: ids only, never secrets. Keyed, so one payment never touches another's. */
 interface PendingStore {
     fun put(record: PendingRecord)
 
-    fun clear()
+    fun remove(key: String)
 
-    fun load(): PendingRecord?
+    fun load(key: String): PendingRecord?
+
+    fun all(): List<PendingRecord>
+}
+
+/** A payment that succeeded, kept (bounded) so a repeat of its key is answered, never charged again. */
+data class DoneRecord(
+    val key: String,
+    val requestId: String,
+    val intentId: String,
+    val amountMinor: Long,
+    val currency: String,
+    val chargeId: String?,
+)
+
+interface DoneStore {
+    fun put(r: DoneRecord)
+
+    fun load(key: String): DoneRecord?
+
+    fun byRequest(requestId: String): DoneRecord?
 }
 
 interface DeviceProbe {
