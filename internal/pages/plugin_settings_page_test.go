@@ -1311,6 +1311,54 @@ func TestPluginSettingsPage_GET_RendersPermissionsWithGrantStatus(t *testing.T) 
 	}
 }
 
+// ut-docs#3553: the settings Permissions table shows the same plain-language
+// description as the store page, as visible text under the raw name; a
+// permission with no description renders the raw name only.
+func TestPluginSettingsPage_GET_PermissionsShowPlainLanguageDescriptions(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginPermissions(t, dp.Db, "p-desc", []string{"http:lan", "view:sales", "sales:read"}, "http:lan")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p-desc/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugins/p-desc/settings: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, tc := range []struct{ perm, key string }{
+		{"http:lan", "plugins.permissions.desc.http_lan"},
+		{"view:sales", "plugins.permissions.desc.view"},
+	} {
+		want := html.EscapeString(httpx.T("en", tc.key))
+		if want == tc.key || want == "" {
+			t.Fatalf("test setup: no English text for %s", tc.key)
+		}
+		nameAt := strings.Index(body, `<code dir="ltr">`+tc.perm+`</code>`)
+		if nameAt < 0 {
+			t.Fatalf("expected %s as <code dir=\"ltr\"> name, got:\n%s", tc.perm, body)
+		}
+		rowEnd := strings.Index(body[nameAt:], "</td>")
+		cell := body[nameAt : nameAt+rowEnd]
+		if !strings.Contains(cell, `<span class="perm-desc muted">`+want+`</span>`) {
+			t.Fatalf("expected %s description %q in its name cell, got cell:\n%s", tc.perm, want, cell)
+		}
+	}
+
+	// sales:read has no description: its own name cell renders the raw
+	// name only, no perm-desc line.
+	const plainCell = `<td style="font-family:monospace">sales:read</td>`
+	at := strings.Index(body, plainCell)
+	if at < 0 {
+		t.Fatalf("expected sales:read as a plain name cell %q, got:\n%s", plainCell, body)
+	}
+	cellEnd := strings.Index(body[at:], "</td>")
+	if strings.Contains(body[at:at+cellEnd], "perm-desc") {
+		t.Fatalf("sales:read has no description but rendered a perm-desc line:\n%s", body[at:at+cellEnd])
+	}
+}
+
 func TestPluginSettingsPage_GET_NoPermissionsShowsEmptyState(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newPluginSettingsTestDeps(t)

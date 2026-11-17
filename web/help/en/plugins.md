@@ -92,6 +92,8 @@ A plugin with many settings can group them into tabs. The settings it did not pu
 
 Below the settings form, a **Permissions** section lists every permission the plugin declared (for example `sales:read`) with its current status, **Granted** or **Not granted**, and a button to grant or revoke it. A plugin that declares no permissions shows "This plugin declares no permissions." there, with nothing to manage.
 
+A permission that the plugin's store page explains in plain words (connecting to devices on your shop network, keeping private data, running on a schedule, AI data access and so on) shows the same explanation under its name here, so you can see what you grant or revoke.
+
 - Revoking takes effect immediately and stays in place when the plugin updates from the marketplace. An update grants only a permission the new version requests for the first time.
 - A permission shown as **Connects only to the address saved in:** followed by setting names lets the plugin reach exactly the address you enter in those settings (a device or server on your shop network included) and nothing else. Change the setting and the permission follows it. Under it, **Currently:** shows the address the permission reaches right now (a default the plugin came with included), or *not set* when it reaches nothing. Check it before you grant.
 
