@@ -38,6 +38,14 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Import and Tax codes dialogs scroll on touch screens (ut-docs#6553).**
+  On the tablet and the phone the Import catalog and Tax codes dialogs could
+  not be scrolled, so the lower part (the import steps, the New tax code
+  form) was out of reach, and their content sat against the screen edge. The
+  dialogs now scroll, have normal margins, keep the Catalog back button in
+  view while you scroll, and the last field stays above the on-screen
+  keyboard.
+
 - **Promoting a till counts its own late sales once (ut-docs#5777, #5807).**
   When an additional till is promoted to main till, its own sales that the
   old main till recorded only after its last day close are now counted in
