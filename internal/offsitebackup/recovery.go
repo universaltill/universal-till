@@ -14,8 +14,6 @@ import (
 // separated by "-". The checksum catches a mistyped or damaged copy before
 // anything is decrypted.
 
-const recoveryPrefix = "UTK1-"
-
 var crockford = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
 // ErrBadRecoveryKey: the text is not a complete, undamaged saved key.
