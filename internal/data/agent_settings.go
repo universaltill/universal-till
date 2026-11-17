@@ -72,9 +72,6 @@ var AgentSettings = []AgentSetting{
 
 	// Explain-only from here on: the assistant describes them and links to
 	// the card, the shopkeeper changes them on the screen.
-	{Key: "marketplace.auto_register_opt_in", Region: "registration",
-		LabelKey: "settings.enrol.auto_register.label", HintKey: "settings.enrol.auto_register.help",
-		Kind: AgentSettingBool, ReadValue: true, On: "true", Off: "false"},
 	{Key: "update.auto_enabled", Region: "settings-update",
 		LabelKey: "settings.update.auto_enable", Kind: AgentSettingBool, On: "true", Off: "false"}, // no value: unset means ON on a main till, which only the screen's own reader knows
 	{Key: "payments.default_method", Region: "settings-payments",

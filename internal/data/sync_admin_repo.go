@@ -409,7 +409,8 @@ var nonAdminTables = map[string]string{
 	// not a numbered migration file itself) — which migrations have applied
 	// to THIS till's database. Syncing it would be circular in the same way
 	// as sync_journal_quarantine/schema_lineage below.
-	"schema_migrations": "this till's own applied-migrations record — migration-runner-internal, not app data",
+	"till_change_events": "this till's own outbox of change events to the cloud, never synced (ADR-0200)",
+	"schema_migrations":  "this till's own applied-migrations record — migration-runner-internal, not app data",
 	// ut-docs#1368: the one-row generation counter migration 022's triggers
 	// bump on every write to an adminTables entry, read by DumpAdmin to
 	// decide whether its cached bundle is still current. Sync-internal by
@@ -786,7 +787,7 @@ const BackupRetentionDaysSettingsKey = "backup.retention_days"
 // main till's device, carrying the main till's store token. Both ends
 // enforce it: DumpAdmin never sends these rows and ApplyAdmin never applies
 // them (a pre-fix main till still sends them). The store-level marketplace
-// keys — store_id, merchant_id, telemetry_opt_in, auto_register_opt_in — are
+// keys — store_id, merchant_id, telemetry_opt_in — are
 // the same for every till of the shop and keep syncing; the main till
 // registers each replica's own device (internal/enroll, POST
 // /api/sync/cloud-device) without any credential crossing the LAN.
@@ -795,6 +796,9 @@ var PerTillSettingPrefixes = []string{
 	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
 	// this till's own (each device pulls and tracks read state for itself).
 	"notices.",
+	// ADR-0200 (ut-docs#6559): this till's own registration state (notice
+	// shown, stop switch, last compared version, last cloud answer).
+	"registration.",
 	// ut-docs#5068: the number floors and marker a backup restore leaves on
 	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
 	// "restore.marker"): they guard this till's own receipt/Z sequences.
@@ -2318,7 +2322,7 @@ var ShopWideSettingPrefixes = []string{
 	// comment). Listed key by key: a new marketplace.* key must be
 	// classified on purpose, since most of that family is per-till.
 	"marketplace.store_id", "marketplace.merchant_id",
-	"marketplace.telemetry_opt_in", "marketplace.auto_register_opt_in",
+	"marketplace.telemetry_opt_in",
 	// Reviewed in ut-docs#2950 and kept shop-wide (diagnostics.*,
 	// cloudsync.* and install.* moved to PerTillSettingPrefixes then):
 	// - till.name is the main till's name; a replica's own is sync.till_name.

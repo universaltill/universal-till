@@ -538,7 +538,11 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// Amendment 2026-10-14 (ut-docs#4285): a lapsed or recently paid till
 	// also checks in once an hour (renewalWatchDue), so a renewal done in
 	// the cloud admin reaches it by itself.
-	if unpaid && !takeStartupCheckin(ctx, settings, now) && !operatorWindowOpen(now) && !renewalWatchDue(ctx, settings, now) {
+	// ADR-0200: a shop that switched "Send usage facts" off gets no start-up
+	// check-in (its operator window and renewal watch are cloud features it
+	// asked for, and stay).
+	startupDue := startupCheckinAllowed(ctx, cfg, settings) && takeStartupCheckin(ctx, settings, now)
+	if unpaid && !startupDue && !operatorWindowOpen(now) && !renewalWatchDue(ctx, settings, now) {
 		return false, nil
 	}
 
@@ -549,6 +553,8 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
 	nc := newNoticeClient(db, settings, hooks)
 	nc.attach(ctx, &req)
+	// ADR-0200: waiting change events ride this POST (never in the state hash).
+	events := attachChangeEvents(ctx, cfg, db, settings, &req)
 	sum, hashErr := stateHash(req.devices)
 	var plan checkinPlan
 	if unpaid {
@@ -565,9 +571,20 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return false, err
 	}
 	var dirs []directive
+	if events.pending() {
+		plan.post = true // a waiting event is never lost behind a 304
+	}
+	if !plan.post {
+		recordLastCheckin(ctx, settings, now) // a 304: the cloud answered
+	}
 	if plan.post {
 		dirs, err = pushSync(ctx, cfg, settings, req)
 		_, refused := planRequired(err)
+		if err == nil || refused {
+			// Only a 2xx or a 402 means the cloud has the events (ADR-0200).
+			events.ack(ctx)
+			recordLastCheckin(ctx, settings, now)
+		}
 		if unpaid && (err == nil || refused) {
 			// Only a 2xx or a 402 records the unpaid check-in: the cloud saw
 			// this till (amendment §2). Any other answer, or none, records
@@ -1536,6 +1553,14 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 				device[k] = v
 			}
 		}
+	}
+	// ADR-0200 (owner decision): a till whose cloud identity was made by the
+	// automatic register, and that is still unpaid, tells the cloud neither
+	// the shop name nor the till name. A paid till, or one the operator
+	// claimed or paired (which clears the mark), keeps today's behaviour.
+	if enroll.AutoRegistered(ctx, settings) && !syncAllowedFn(ctx, settings) {
+		delete(device, "name")
+		delete(device, "store_name")
 	}
 	// ut-docs#2774: only a main till (no sync.primary_url — ADR-0011's single
 	// source of truth, same rule as discovery.RoleCheckFromSettings) tells

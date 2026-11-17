@@ -98,7 +98,8 @@
         "registers",
         "countrysettings",
         "translations",
-        "subscription"
+        "subscription",
+        "registration"
       ]
     },
     "tills": {

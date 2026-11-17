@@ -26,6 +26,13 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8095
 # ut-docs#5237: never poll the real GitHub releases from a throwaway till —
 # a new release would show "Update now" mid-run and move the status bar. Overridable.
 : "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
+: "${UT_NEVER_REGISTER:=1}"; export UT_NEVER_REGISTER # ADR-0200: a throwaway till never registers itself in the cloud
+# ADR-0200 (ut-docs#6559): the ONE launcher whose till really registers itself,
+# against the fake cloud below. UT_NEVER_REGISTER stays 1 (guard-never-register);
+# the seam waives it only for a source build whose marketplace endpoint is
+# loopback, and never demo/stopped/notice/country. The specs name the shop and
+# open Settings (which shows the notice) via ensureRegisteredAutomatically.
+export UT_E2E_AUTO_REGISTER=1
 export UT_MARKETPLACE_ENDPOINT_URL=http://127.0.0.1:8096
 
 cd "$ROOT"

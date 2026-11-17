@@ -53,6 +53,10 @@ func testDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`CREATE TABLE directive_results (directive_id TEXT PRIMARY KEY, directive_type TEXT NOT NULL, status TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', posted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`); err != nil {
 		t.Fatalf("create directive_results: %v", err)
 	}
+	// ADR-0200: the change-event outbox (migration 105).
+	if _, err := db.Exec(`CREATE TABLE till_change_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, plugin_id TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', from_version TEXT NOT NULL DEFAULT '', to_version TEXT NOT NULL DEFAULT '', at TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create till_change_events: %v", err)
+	}
 	return db
 }
 

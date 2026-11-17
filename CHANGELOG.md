@@ -7,6 +7,21 @@ Release notes for the till. Versions come from the release tag
 
 ### Added
 
+- **Every till registers itself and reports its changes (ut-docs#6559,
+  ADR-0200).** Once setup is finished, the till registers itself with the
+  Universal Till cloud in the background (never during a sale, retried with
+  capped backoff while offline) and refreshes its record on every start. It
+  also reports which software version or plugin changed and when (a small
+  local queue, 200 events at most, sent with the next check-in; there is no
+  shutdown signal). The setup wizard's last screen and Settings → Till
+  registration → Cloud record tell the owner exactly what is sent, show
+  whether the till is registered and when the cloud last answered, and have
+  a **Stop sending** switch. The "Register this till" opt-in, the Register
+  now button and the terms box in the wizard are gone. A source build, a
+  demo, a test till (`UT_NEVER_REGISTER=1`, set by every CI and e2e
+  launcher) and a shop in a refused country never register. The notice
+  wording is a draft awaiting owner approval.
+
 - **Camera barcode scan on iPhone and iPad (ut-docs#696).** The sale
   screen's camera-scan button now shows on every device. Where the browser
   has no native barcode reader (WebKit, so every iPhone/iPad, and some

@@ -107,6 +107,11 @@ var baseFuncs = template.FuncMap{
 	// base.html, and base.html gates the chip on `allowed "settings"` so a
 	// cashier never sees it — a manager on a self-order till does.
 	"releasenoticeversion": releasenotes.NoticeVersion,
+	// registrationnoticepending: a set-up till has not shown the "what this
+	// till tells us" notice yet (ADR-0200, ut-docs#6559): the status bar
+	// offers a link to Settings, Cloud record, where it is shown. Cleared the
+	// moment the notice is shown.
+	"registrationnoticepending": enroll.NoticePending,
 	// updatedownloadlink: whether the status-bar chip's fallback (when
 	// canselfupdate is false) may show an actionable website link — false on
 	// a unix kiosk, where that link is a dead end (ut-docs#147/#159). Mirrors
@@ -1507,8 +1512,8 @@ var renderFiles = []string{
 	// TSE block) by file name.
 	"ui/partials/subscription_block.html",
 	"ui/partials/subscription_paused_banner.html",
-	// ut-docs#4720: the cloud-terms accept step under Register now and the
-	// auto-register toggle (the setup wizard, rendered standalone, inlines it).
+	// ut-docs#4720: the cloud-terms accept step (the registered card's
+	// Accept terms, and the plugin store's Download).
 	"ui/partials/enrol_terms.html",
 	// ADR-0172 §5 (ut-docs#6287): the automatic tax plugin install's status
 	// chip is included by import.html (the setup landing) and settings.html

@@ -29,7 +29,8 @@ import (
 //
 // Deliberately left editable (per-till keys, or not a settings write):
 // theme (theme), the Display card (display.*, incl. display.effects_*,
-// window mode, launch on startup, exit to OS), the printer card
+// window mode, launch on startup, exit to OS), the Cloud record card
+// (registration.*, ADR-0200: per-till, a replica never reports itself), the printer card
 // (printer.*), this till's name and register (sync.till_name /
 // sync.till_register_id on an additional till), the Android update form and
 // "check for updates" (no settings key), enrolment (marketplace.device_*),
@@ -38,7 +39,6 @@ import (
 // the pending base-plugin dismiss (setup.pending_base_plugins, per-till).
 // The raw key editor (#settings-all) is out of scope.
 var shopWideLockRegions = map[string]string{
-	"settings-auto-register":                  common.KeyAutoRegisterOptIn,                // POST /api/settings/auto-register
 	"settings-update-schedule":                keyAutoUpdateEnabled,                       // POST /api/settings/update-schedule (update.auto_enabled + update.auto_time)
 	"settings-payments":                       "payments.default_method",                  // payments-default; payments-fee writes payments.fee.<method>
 	"settings-order-no":                       data.SaleDisplayNoSchemeKey,                // POST /api/settings/order-no-scheme

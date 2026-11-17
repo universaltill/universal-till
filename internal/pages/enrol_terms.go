@@ -13,7 +13,7 @@ import (
 
 // Cloud-terms acceptance on operator-initiated registration
 // (ut-docs#4717, ut-docs#4720). Every UI path that registers this till with
-// the cloud (Settings -> Register now, the auto-register opt-in toggle, the
+// the cloud (Settings -> claim code, pairing, the
 // setup wizard's opt-in) needs the operator to tick "accept_terms" once per
 // terms version; enroll.RecordTermsAcceptance then stores it per till and
 // enroll's register() sends it. The plugin store's first Download and the

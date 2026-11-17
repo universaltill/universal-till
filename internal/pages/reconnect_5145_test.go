@@ -3,7 +3,6 @@ package pages
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -350,7 +349,7 @@ func TestNewShop_RegisteredButSigningKeyFetchFailedTellsTheTruth(t *testing.T) {
 func TestNewShop_FailureIsTheOrdinaryNotRegisteredState(t *testing.T) {
 	mux, d, _ := newLockedOutTill(t, func(_ int, _ map[string]any, w http.ResponseWriter) { http.Error(w, "boom", 500) })
 	rec := postForm(mux, "/api/enrol/new-shop", url.Values{"confirm_new_shop": {"1"}}, &mgrUser)
-	if !strings.Contains(rec.Body.String(), "This till is no longer in the old shop and is not registered yet. Press Register now to try again.") {
+	if !strings.Contains(rec.Body.String(), "This till is no longer in the old shop and is not registered yet. It will try again by itself.") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	if enroll.CurrentStatus().Registered {
@@ -358,36 +357,6 @@ func TestNewShop_FailureIsTheOrdinaryNotRegisteredState(t *testing.T) {
 	}
 	if v, _, _ := d.Settings.Get(t.Context(), "marketplace.token"); v != "" {
 		t.Fatalf("token = %q", v)
-	}
-}
-
-// Register now on a not-registered till: new refusal texts.
-func TestEnrolNow_KeyRefusedUpdateNeededAndRateLimited(t *testing.T) {
-	for name, tc := range map[string]struct {
-		answer func(w http.ResponseWriter)
-		want   string
-	}{
-		"key refused":   {func(w http.ResponseWriter) { pageCode(w, 409, "key_required", map[string]any{"challenge": "c"}) }, "The cloud knows a different key for this till"},
-		"update needed": {func(w http.ResponseWriter) { pageCode(w, 409, "key_required", nil) }, "software is too old to prove its identity"},
-		"rate limited":  {func(w http.ResponseWriter) { pageCode(w, 429, "rate_limited", nil) }, "Too many tries"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			mux, _, d := newFullAuthDeps(t)
-			m := http.NewServeMux()
-			m.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) { tc.answer(w) })
-			srv := httptest.NewServer(m)
-			t.Cleanup(srv.Close)
-			enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-			t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-			d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-			d.Cfg.Marketplace.PublicKey = strings.Repeat("ab", 32)
-			nameShop(t, d)
-			body := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser).Body.String()
-			if !strings.Contains(body, tc.want) || strings.Contains(body, "RAWBODY") {
-				t.Fatalf("body = %s", body)
-			}
-			_ = fmt.Sprint()
-		})
 	}
 }
 

@@ -1,16 +1,13 @@
 // Package enroll implements anonymous store enrolment (ADR-0013, layer 1).
-// Registration is LAZY: multi-store and paid cloud services are the paid
-// tier, so a till that never uses the marketplace never registers a store.
-// A fresh till only mints a stable device_id at boot; the store identity is
-// created on the first real marketplace interaction — a plugin download/
-// install (EnsureRegistered) or the operator's Settings → "Register now"
-// (RegisterNow) — via POST /v1/stores/register, and the returned store/
-// merchant identity + device token persist in settings. Explicit
-// configuration (UT_MARKETPLACE_CLIENT_ID / _STORE_ID / _DEVICE_ID) always
-// wins; enrolment only fills the gaps. A main/standalone till whose shop has
-// no real name yet never registers (ErrStoreUnnamed, ut-docs#4272): it waits
-// until the wizard or Settings names the shop. Nothing here ever blocks
-// startup or checkout (offline-first).
+// A fresh till mints a stable device_id at boot and, once set up, registers
+// itself in the background (ADR-0200, auto.go) via POST /v1/stores/register;
+// the returned store/merchant identity + device token persist in settings. A
+// plugin download/install (EnsureRegistered) registers as a fallback.
+// Explicit configuration (UT_MARKETPLACE_CLIENT_ID / _STORE_ID / _DEVICE_ID)
+// always wins; enrolment only fills the gaps. A main/standalone till whose
+// shop has no real name yet never registers (ErrStoreUnnamed, ut-docs#4272):
+// it waits until the wizard or Settings names the shop. Nothing here ever
+// blocks startup or checkout (offline-first).
 //
 // The marketplace's Ed25519 signing key (needed to verify plugin bundles) is
 // fetched alongside enrolment, or lazily by EnsureSigningKey at the first
@@ -18,25 +15,16 @@
 // UT_MARKETPLACE_PUBLIC_KEY is not set, and persisted on first sight — a
 // later key change never silently replaces it.
 //
-// This LAZY behavior is ADR-0015's deliberate decision (2026-07-17), and it
-// is still the default. ADR-0026 (2026-07-28) separately proposed moving
-// registration to eager-but-best-effort right after the setup wizard, for
-// every shop, unconditionally — that version was never accepted. ADR-0071
-// (2026-08-29) resolved the tension with an opt-in-gated middle ground: the
-// setup wizard's last screen asks once, not pre-ticked, and only an
-// explicit yes (persisted as marketplace.auto_register_opt_in, toggleable
-// later from Settings) adds one best-effort, time-boxed EnsureRegistered
-// trigger at wizard completion / toggle-on (internal/pages/setup_page.go's
-// autoRegisterForSetup and POST /api/settings/auto-register). A shop that
-// doesn't opt in registers exactly as lazily as documented above; nothing
-// about this package's own retry/error semantics changed. The other thing
-// that can look like eager registration in practice: setup's automatic
-// base-plugin install for a country whose language core doesn't bundle
-// (basePluginsForCountry in
+// Registration is AUTOMATIC since ADR-0200 (ut-docs#6559, 2026-11-17), which
+// supersedes ADR-0071's wizard opt-in and ADR-0015's lazy-only rule: a set-up
+// till registers itself from one background loop (auto.go: capped backoff,
+// honesty guards, notice shown first, a stop switch in Settings) and
+// refreshes its cloud record on every start. EnsureRegistered stays as the
+// fallback a plugin download or install uses; the signing key is still
+// fetched lazily. Setup's automatic base-plugin install for a country whose
+// language core doesn't bundle (basePluginsForCountry in
 // internal/pages/setup_base_plugins.go) calls EnsureRegistered as part of
-// installing that plugin — that's this package's ordinary "first plugin
-// download/install" trigger firing earlier than a human browsing the
-// marketplace would, not a deliberate eager-enrolment step.
+// installing that plugin, as before.
 package enroll
 
 import (
@@ -178,7 +166,7 @@ var (
 	vouchedDevice string
 
 	// attemptSem serializes registration attempts (background loop + the
-	// Settings "Register now" button, EnsureSigningKey) so the marketplace
+	// the (removed) registration button, EnsureSigningKey) so the marketplace
 	// never sees two concurrent registers from one till — a 1-buffered
 	// channel rather than
 	// a plain sync.Mutex so an acquire can also observe a caller's context
@@ -543,7 +531,7 @@ func noteRegisterOutcome(ctx context.Context, kv Settings, err error) {
 }
 
 // RegisterNow performs one immediate, synchronous registration (and signing
-// key fetch) attempt — the Settings "Register now" button. The background
+// key fetch) attempt — the (removed) registration button. The background
 // retry loop keeps running regardless; attempts are serialized. Bounded by
 // ctx end to end (ut-docs#1298): if the attempt slot is held by the
 // background loop's own longer-bounded work when ctx expires, RegisterNow
@@ -580,6 +568,10 @@ func registerLocked(ctx context.Context, cfg *config.Config, kv Settings, expect
 		var registerFn func() error
 		if isReplica(ctx, kv) {
 			registerFn = func() error { return registerOnReplica(ctx, m, kv) }
+		} else if isAnonymousRegister(ctx) {
+			// ADR-0200 / #6559: the automatic register carries no shop name
+			// (owner-approved, legal R4); the cloud stores a blank name.
+			registerFn = func() error { return register(ctx, m, "", kv, expectStoreID) }
 		} else if name := shopName(ctx, cfg, kv); name != "" {
 			registerFn = func() error { return register(ctx, m, name, kv, expectStoreID) }
 		} else {
@@ -661,7 +653,7 @@ func Reconnect(ctx context.Context, cfg *config.Config, kv Settings) (Status, er
 // StartAsNewStore is "Register as a new shop" (ADR-0116 D6, ut-docs#5145): the
 // identity wipe of pairing (new device id, token and store cleared), then a
 // first-time register. The wipe comes first and is not undone when the register
-// fails: the till is then in the ordinary not-registered state (Register now
+// fails: the till is then in the ordinary not-registered state (an explicit operator registration
 // works), which is what the operator was told. Local sales data is untouched.
 func StartAsNewStore(ctx context.Context, cfg *config.Config, kv Settings) (Status, error) {
 	if Effective(cfg).Marketplace.EndpointURL == "" {
@@ -781,18 +773,23 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	if m.EndpointURL == "" {
 		return
 	}
-	// Store registration is deliberately NOT started here: it is lazy
-	// (EnsureRegistered / RegisterNow) — a till that never uses the
-	// marketplace never creates a store. The signing-key fetch is lazy too
+	// ADR-0200 (ut-docs#6559): a set-up till registers ITSELF, from one
+	// background loop (startAutoRegister) that re-asks the honesty guards
+	// before every attempt: a real release, not a demo or test till, not
+	// stopped, the notice shown, a served country. It never runs on the sale,
+	// setup or start path. EnsureRegistered stays the fallback a plugin
+	// download or install uses. The signing-key fetch is still lazy
 	// (EnsureSigningKey, ADR-0148 audit item 3, ut-docs#3625): a till that
 	// never installs, updates or imports a plugin never calls out for it.
-	// The background loop only registers this device under the shop's
-	// store, for a main till that already has a store identity (one store,
-	// many devices).
+	// The device loop below registers this device under the shop's store, for
+	// a main till that already has a store identity (one store, many devices).
 	//
 	// A replica's device registration goes through its main till
 	// (replicaLoop, ut-docs#2730); only a main/standalone till registers its
 	// own device under the store here.
+	if !replica && !clientIDExplicit {
+		startAutoRegister(ctx, cfg, kv, wg)
+	}
 	needDevice := !replica && !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
 	deviceName := DeviceName(ctx, kv)
 	if replica && !clientIDExplicit {
@@ -892,13 +889,27 @@ func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) conf
 		return Effective(cfg)
 	}
 	if s := CurrentStatus(); !s.Registered {
+		// ADR-0200 (ut-docs#6559): "Send usage facts" off means this till
+		// registers nothing AUTOMATICALLY, and this lazy fallback is automatic.
+		// Explicit operator actions (claim code, pair, new shop, move) never
+		// pass through here and stay allowed.
+		if registrationStopped(ctx, kv) {
+			return Effective(cfg)
+		}
 		// ut-docs#5145: the cloud said this device was in use recently; the
-		// lazy path stays quiet until usable_from (a deliberate Register now
-		// still tries). Local read, so the till never waits on it.
+		// lazy path stays quiet until usable_from (a deliberate operator
+		// action still tries). Local read, so the till never waits on it.
 		if !RegisterBlockedUntil(ctx, kv).IsZero() || !KeyRefusedAt(ctx, kv).IsZero() {
 			return Effective(cfg)
 		}
-		if _, err := RegisterNow(ctx, cfg, kv); err != nil {
+		// Still waits for a real shop name (ut-docs#4272, unchanged for this
+		// fallback), but then sends none: an automatic register carries no
+		// shop name and no till name (owner decision, ADR-0200).
+		if shopName(ctx, cfg, kv) == "" {
+			logging.L().Infof("enrolment: registration waits until the shop is named (marketplace call will surface it)")
+			return Effective(cfg)
+		}
+		if _, err := RegisterNow(withAnonymousRegister(ctx), cfg, kv); err != nil {
 			if errors.Is(err, ErrStoreUnnamed) {
 				logging.L().Infof("enrolment: registration waits until the shop is named (marketplace call will surface it)")
 			} else {
@@ -965,6 +976,15 @@ func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv 
 		}
 		// Register this device under the shop's store. The store token —
 		// shared by every till in the shop — authenticates the call.
+		if registrationStopped(ctx, kv) {
+			// ADR-0200: stopped = nothing automatic. Keep polling so
+			// switching it back on resumes without a restart.
+			releaseAttempt()
+			if !autoWait(ctx, autoPollEvery) {
+				return
+			}
+			continue
+		}
 		m.StoreID, m.MerchantToken = currentStoreAuth(m)
 		err := registerDevice(ctx, m, deviceName, kv)
 		releaseAttempt()
@@ -1058,10 +1078,14 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	}
 
 	fields := map[string]any{
-		"store_name":  storeName,
-		"device_id":   deviceID,
-		"device_name": DeviceName(ctx, kv),
-		"version":     buildinfo.Version,
+		"device_id": deviceID,
+		"version":   buildinfo.Version,
+	}
+	if !isAnonymousRegister(ctx) {
+		// The automatic register sends neither the shop name nor the till
+		// name (ADR-0200, legal R4); every operator-initiated one does.
+		fields["store_name"] = storeName
+		fields["device_name"] = DeviceName(ctx, kv)
 	}
 	if region != "" {
 		fields["region"] = region
@@ -1206,6 +1230,9 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 			log.Warnf("enrolment: persist %s: %v", key, err)
 		}
 	}
+	// ADR-0200: remember whether this identity came from the automatic
+	// (anonymous) register; an operator-initiated one clears the mark.
+	setAutoRegistered(ctx, kv, isAnonymousRegister(ctx))
 	mu.Lock()
 	cur.StoreID = d.StoreID
 	cur.MerchantID = d.MerchantID
