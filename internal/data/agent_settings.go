@@ -89,6 +89,10 @@ var AgentSettings = []AgentSetting{
 		LabelKey: "settings.sell_screen.browsing_mode_label", Kind: AgentSettingText, ReadValue: true},
 	{Key: ReportRetentionModeKey, Region: "settings-retention",
 		LabelKey: "settings.retention.title", HintKey: "settings.retention.help", Kind: AgentSettingText, ReadValue: true},
+	// ut-docs#2557: explain-only (not Writable) — turning on staff monitoring
+	// stays a human click (ADR-0153 Decision 3).
+	{Key: CloudStaffBreakdownKey, Region: "settings-cloud-staff",
+		LabelKey: "settings.cloud_staff.enable", HintKey: "settings.cloud_staff.help", Kind: AgentSettingBool, On: "true", Off: "false"},
 	{Key: "invoice.seller_name", Region: "settings-invoice",
 		LabelKey: "settings.invoice.title", HintKey: "settings.invoice.help", Kind: AgentSettingText},
 	{Key: "auth.idle_lock_minutes", Region: "settings-idle-lock",
