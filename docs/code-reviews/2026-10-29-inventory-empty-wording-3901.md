@@ -65,3 +65,30 @@ blockers and listed these:
 
 Verdict: safe to merge. Packs land first, because this is an existing key
 (reviewer rule 4).
+
+## Addendum 2026-11-17 — PR sweep (routine `:41`, lane:cloud-41)
+
+The PR sat conflicted for 19 days. One merge of `main` (no rebase):
+
+- `web/i18n-meta/en.meta.json`: kept both sides' keys; the file parses.
+- `web/help/img/manifest.json`: took `main`'s, then refreshed only
+  `surface_sha256` with `scripts/ci/update-docs-shots-surface-hash.sh`
+  (`Docs-Shots-Unchanged: true` — the inventory shots show stock rows, not
+  the empty row).
+- **Dropped the tr/fa/ar edits.** Since ADR-0160 §2 code PRs add English
+  only; other languages come from Weblate, which flags the three strings
+  for re-translation because the English source changed. The pack PRs the
+  original record lists (de#496, es#494, pt#143) are no longer the delivery
+  path and do not gate this merge.
+- Merge-damage check: `git diff origin/main` touches only the 7 files of
+  this card (en.json value, meta + baseline line, comment in
+  `inventory.html`, manifest hash, test, this record).
+- Re-verified: both `TestInventoryEmptyState_*` tests and
+  `go test ./internal/pages/ ./web/...` pass; `go build ./...`; all 68
+  `ci.yml` guards pass except four that need tools absent here
+  (`armv7-seccomp` qemu, `catimport-version` tags — no `catimport/` change,
+  `deadcode-baseline` go1.27, `shellcheck-version`); CI runs them.
+
+Pre-flight: help topic n/a (no help text quotes the empty row); reference
+n/a; README n/a; en.meta.json updated; other locales n/a (Weblate,
+ADR-0160); review record updated.
