@@ -24,7 +24,7 @@ You use this page when you want to add a feature, check what an installed plugin
 ## Trust and safety
 
 - **Every plugin is signed.** The marketplace signs each plugin, and the till checks that signature on the till itself, before the plugin runs. The check does not need the internet. If even one file of a plugin has been changed, the till refuses it.
-- **Trust badges.** In the store, a gold badge means official Universal Till, a green badge means a verified developer. A plugin from an unverified publisher shows an **Unverified** badge, and the till asks for your confirmation before it goes ahead. On an installed plugin's card, a small tag shows the same trust level (for example **untrusted** for a plugin the marketplace has not vouched for).
+- **Trust badges.** In the store, a gold badge means official Universal Till, a green badge means a verified developer. A plugin from an unverified publisher shows an **Unverified** badge, and the till asks for your confirmation before it goes ahead. On an installed plugin's card, a small tag shows how the till recorded the plugin's trust: **trusted** or **untrusted**. A plugin imported from a file always shows **untrusted**.
 - **A plugin can do only what its permissions allow.** The plugin's page lists them before you install, and you can see them again, and revoke any of them, on its settings page (see [Plugin settings and permissions](#plugin-settings-and-permissions)).
 - **Withdrawn versions switch off by themselves.** If the marketplace withdraws a plugin version, for example because of a security problem, the till turns that plugin off by itself the next time it checks, about every 30 minutes while it is online. The plugin then shows as **Disabled** on the Plugins page. Selling carries on as normal: the check never blocks a sale. The till then refuses to turn that version back on, reinstall it, or roll back to it, and shows a message saying the marketplace has withdrawn it. Update the plugin to another version instead. The till never removes the plugin or its settings on its own; to remove it, use **Uninstall**. If the marketplace later lifts the withdrawal, you can turn the plugin on again yourself.
 
@@ -36,7 +36,7 @@ You use this page when you want to add a feature, check what an installed plugin
    ![The Plugin Store, showing sample listings](img/plugins-store.png)
 
    The picture shows sample listings. Your store shows the real catalogue. If the till is offline, the store keeps showing the last catalogue it downloaded. A till that has never loaded the catalogue shows "Can't reach the plugin store right now" instead (see [What can go wrong](#what-can-go-wrong)).
-3. Tap a tile to open the plugin's own page, with the full description, what it may access (the permission list) and the **Download** and **Install** buttons. On the page, permissions newer plugins can ask for, such as connecting to devices on your shop network, keeping their own private data, or running on a schedule, are explained in plain words in a list under the permission badges, so you can see what you are agreeing to before you install.
+3. Tap a tile to open the plugin's own page, with the full description, what it may access (the permission list) and a **Download** button (once downloaded, **Install** and **Delete download** take its place). On the page, permissions newer plugins can ask for, such as connecting to devices on your shop network, keeping their own private data, or running on a schedule, are explained in plain words in a list under the permission badges, so you can see what you are agreeing to before you install.
 
    ![A plugin's page with its permissions, the cloud terms box and the Download button](img/plugins-listing.png)
 
@@ -50,7 +50,7 @@ What the store shows for a plugin you have already started with:
 
 - **Downloaded**: you downloaded it but have not installed it yet. A plugin you download but don't install right away stays staged for 48 hours. If that window passes, its **Downloaded** badge quietly reverts to a plain **Download** button and it needs downloading again before it can be installed. This is routine disk housekeeping, not an error: nothing is lost. **Delete download** on the plugin's page removes a staged download yourself.
 - **Installed**: it is on this till.
-- **Install failed — you can retry**: a red tag shows that the last install did not finish, with the reason when the till knows it. "You can retry" means the cause is usually temporary, so try **Download** or **Install** again.
+- A red tag with a reason (or just **Install failed**): an install the till started by itself (for example on a till following the main till) did not finish. When the cause is usually temporary the tag ends with **· you can retry**; try **Download** or **Install** again. When you press **Download** or **Install** yourself and it fails, the reason shows in red under the plugin's description instead.
 
 In a shop with several tills, install on the main till only (see [Several tills](#several-tills)).
 
@@ -58,7 +58,7 @@ In a shop with several tills, install on the main till only (see [Several tills]
 
 The **Plugins** page lists every plugin installed on this till as a card. Use the search box (**Search installed plugins**) to find one by name.
 
-Each card shows tags: **Enabled** or **Disabled**, the trust level, **Broken ⚠** when its files are missing (see [What can go wrong](#what-can-go-wrong)), an **Update** tag when a newer version exists, and **Update status unknown** when the till can't tell.
+Each card shows tags: **Enabled** or **Disabled**, the trust level, **Broken ⚠** when its files are missing (see [What can go wrong](#what-can-go-wrong)), an **Update:** tag with the new version number when a newer version exists, and **Update status unknown** when the till can't tell.
 
 The buttons on a card:
 
@@ -190,6 +190,7 @@ When you finish first-time setup, the till installs your country's free tax plug
 | "This till cannot connect to the plugin store yet. Settings → Till registration says when it can reconnect." | The till's connection to the store is paused. | Wait until it can reconnect. |
 | "Plugin downloads are not available for this shop." | Downloads are not available for this shop. | Contact support. |
 | "Install failed. You can retry." | The install did not finish, often a passing network problem. | Try the install again. |
+| "✗ download failed: …" or "✗ install failed: …" on a plugin's page, followed by technical detail | The till could not reach the marketplace, or the download or install did not finish. | Check the connection and press the button again. Selling is not affected. |
 | **Broken ⚠** badge on a card | The plugin's files are missing or unreadable on this till (this can happen right after a till joins the shop). | A plugin installed from the store is reinstalled automatically within about half a minute, so no action is needed. A plugin imported from a file is **not** repaired automatically: import the plugin file again on that till. Until it recovers, items whose tax rate it decides can't be sold on that till. When only one item in the basket is affected, the sale screen names it and removing it lets the rest of the sale complete. When every item is affected (for example when the broken plugin is the till's only tax plugin), checkout on that till is unavailable until the plugin recovers: wait a moment and try again. |
 | "This plugin bundle is unsigned and can't be installed. Install it from the Plugin Store instead, or use Export on another till to create a bundle this till can import." | The file is not signed by the marketplace (for example a GitHub release download). | Use a bundle from the store or from **Export**. |
 | "Import failed. Check that the file is a valid plugin bundle and try again." | The file is not a plugin bundle, or a file in it was changed. | Get a fresh bundle. |
