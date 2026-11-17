@@ -233,6 +233,13 @@ var (
 	argCatalogLimit = CoreViewArg{Name: "limit", Min: 1, Max: 500, Default: 500}
 )
 
+// catalog.gaps.v1 (ut-docs#4128): which gaps to look for (a bitmask, see
+// GapBarcode…) and a capped page of the result.
+var (
+	argGapMissing = CoreViewArg{Name: "missing", Min: 1, Max: GapAll, Default: GapAll}
+	argGapLimit   = CoreViewArg{Name: "limit", Min: 1, Max: 100, Default: 50}
+)
+
 // sales.receipts.v1 reads one business date — today or up to a month back
 // — a page at a time: a receipt with its lines and payments is ~1–3 KiB, so
 // 100 stay under CoreViewMaxResult unless a receipt has many long lines;
@@ -340,6 +347,16 @@ var coreViews = map[string]CoreView{
 			return NewCatalogRepo(db).ListCatalogPhotoViewRows(ctx, args["offset"], args["limit"])
 		},
 	},
+	// ut-docs#4128: active items missing a barcode, own photo, price or
+	// category (missing = bitmask 1 barcode, 2 image, 4 price, 8 category),
+	// so the AI assistant answers "which items have no barcode?" without
+	// paging the whole catalog.
+	"catalog.gaps.v1": {
+		Name: "catalog.gaps.v1", Permission: "view:inventory", DataClass: DataClassCatalog, Args: []CoreViewArg{argGapMissing, argOffset, argGapLimit},
+		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
+			return NewCatalogRepo(db).ListCatalogGapRows(ctx, args["missing"], args["offset"], args["limit"])
+		},
+	},
 	// ADR-0149 §6 (ut-docs#3976): the staff list — id, display name,
 	// active; never a username, PIN or role.
 	"users.list.v1": {
@@ -367,6 +384,13 @@ var coreViews = map[string]CoreView{
 	// readable (JPY has 0 decimals, not 2), so it shares their class.
 	"shop.context.v1": {
 		Name: "shop.context.v1", Permission: "view:sales", DataClass: DataClassShop, Run: runShopContext("shop.context.v1"),
+	},
+	// ut-docs#4129: every Settings region as the assistant explains it
+	// (label, help, deep link, whether it may change it, the current value
+	// when readable). Shop facts, no secrets: the catalogue has no entry
+	// for one (agent_settings.go).
+	"settings.describe.v1": {
+		Name: "settings.describe.v1", Permission: "view:shop", DataClass: DataClassShop, Run: runSettingsDescribe,
 	},
 	// ut-docs#4045 (ADR-0121 §5 amendment): the same row under view:shop, a
 	// non-★ class, so a plugin that only shows prices (catalog.items.v1's

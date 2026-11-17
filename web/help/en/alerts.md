@@ -3,6 +3,7 @@ id: alerts
 title: Alerts & notifications
 section: Setting up your shop
 order: 130
+public: true
 summary: "The till watches your business and warns you early: items about to run out, days of stock left, order suggestions, and unusually high or low sales days."
 routes: [/backoffice]
 keywords: [low stock, notifications, digest, warnings]

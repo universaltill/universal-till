@@ -175,7 +175,7 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 	// plain balance lookup (fetchVoucherFromPrimary). The redemption path
 	// does NOT go through here: it reserves via /redeem below.
 	mux.HandleFunc("GET /api/sync/vouchers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}
@@ -206,7 +206,7 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 	// local mirror from it and then applies its own forced local debit, so
 	// handing it the post-debit number would double-count the reduction.
 	mux.HandleFunc("POST /api/sync/vouchers/{id}/redeem", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}
@@ -275,7 +275,7 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 	// 400 voucher_adjustment_invalid. Answers the POST-correction row: the
 	// replica sets its mirror to it (idempotent on the id there too).
 	mux.HandleFunc("POST /api/sync/vouchers/{id}/adjust", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}
@@ -337,7 +337,7 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 	// bearer-authed till can already journal an arbitrary sale via
 	// /api/sync/sales), not a new gap this endpoint introduces.
 	mux.HandleFunc("POST /api/sync/vouchers/{id}/release", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}

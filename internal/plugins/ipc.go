@@ -319,6 +319,7 @@ func NewEventBus(db *sql.DB) *EventBus {
 	eb.eventModes["sale.completed"] = NonBlocking
 	eb.eventModes["stock.adjusted"] = NonBlocking
 	eb.eventModes["customer.erased"] = NonBlocking
+	eb.eventModes[TillDrawerNoSaleEvent] = NonBlocking
 	eb.eventModes["sale.viewed"] = NonBlocking
 	eb.eventModes["inventory.adjusted"] = NonBlocking
 	eb.eventModes["report.generated"] = NonBlocking
@@ -993,6 +994,25 @@ func redactCardPresentFields(ev SaleCompletedEvent) SaleCompletedEvent {
 // PublishStockAdjusted is a helper to publish stock.adjusted events
 func (eb *EventBus) PublishStockAdjusted(ctx context.Context, stockEvent StockAdjustedEvent) (string, error) {
 	return eb.Publish(ctx, "stock.adjusted", stockEvent)
+}
+
+// TillDrawerNoSaleEvent: contract ut-docs reference/contracts/till-drawer-no-sale.md (ut-docs#5758).
+const TillDrawerNoSaleEvent = "till.drawer.no_sale"
+
+// TillDrawerNoSalePayload is the till.drawer.no_sale payload. Every key is
+// always present; "" = none. Never the free-text reason.
+type TillDrawerNoSalePayload struct {
+	NoSaleID   string `json:"no_sale_id"`
+	RegisterID string `json:"register_id"`
+	TillID     string `json:"till_id"` // "" = this till (v1 always "")
+	ActorID    string `json:"actor_id"`
+	ApproverID string `json:"approver_id"`
+	CreatedAt  string `json:"created_at"` // the row's exact RFC 3339 UTC string
+}
+
+// PublishTillDrawerNoSale publishes till.drawer.no_sale (NonBlocking).
+func (eb *EventBus) PublishTillDrawerNoSale(ctx context.Context, ev TillDrawerNoSalePayload) (string, error) {
+	return eb.Publish(ctx, TillDrawerNoSaleEvent, ev)
 }
 
 // PublishCustomerErased is a helper to publish customer.erased events.

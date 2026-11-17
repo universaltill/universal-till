@@ -11,6 +11,10 @@
 #     so Linux/Windows/Android publish without waiting for Apple;
 #   - macos-dmg-attach attaches the .dmg AFTER publish-release, only when
 #     macos-app succeeded, and still folds + verifies its checksums.txt entry.
+#   - no job in publish-release's transitive needs: closure (nor
+#     publish-release itself) runs on a macOS runner (ut-docs#5200): GitHub's
+#     hosted macOS pool starved verify-versions in release run 40882053145,
+#     publish-release was skipped and the tag was cleaned up.
 # And that the bounded notarytool wait is in packaging/macos/notary-args.sh.
 set -euo pipefail
 
@@ -113,6 +117,63 @@ if grep -qE 'gh release upload[^#]*macOS-arm64\.dmg' <<<"$mac_job"; then
 else
   pass "macos-app does not upload the .dmg to the release"
 fi
+
+# ut-docs#5200: nothing that gates publish-release may run on a macOS runner.
+# A starved hosted macOS pool must not stop publishing (release run
+# 40882053145: verify-versions never got a runner, publish-release was
+# skipped, cleanup-orphaned-tag deleted the tag). Walk the transitive needs:
+# closure of publish-release with needs_of, then check each runs-on:.
+closure=" publish-release "
+queue="publish-release"
+while [ -n "$queue" ]; do
+  next=""
+  for j in $queue; do
+    for n in $(needs_of "$j"); do
+      case "$closure" in
+        *" ${n} "*) ;;
+        *) closure="${closure}${n} "; next="${next} ${n}" ;;
+      esac
+    done
+  done
+  queue="$next"
+done
+for want in verify-versions checksums goreleaser prepare; do
+  case "$closure" in
+    *" ${want} "*) pass "publish-release's needs closure contains ${want}" ;;
+    *) fail "publish-release's needs closure lacks ${want} (parser broken?): ${closure}" ;;
+  esac
+done
+for j in $closure; do
+  block="$(job_block "$j")"
+  # Trailing `# …` comments are stripped: only the runner value counts.
+  runs_on="$(grep -E '^    runs-on:' <<<"$block" | sed 's/[[:space:]]#.*$//' || true)"
+  if [ -z "$runs_on" ]; then
+    fail "${j} (publish-release closure) has no runs-on: line"
+    continue
+  fi
+  # A runner given only on the lines below (`runs-on:` + a list or
+  # `labels:`) can't be read reliably here: fail rather than pass blind.
+  if [ -z "$(sed 's/^ *runs-on://; s/[[:space:]]//g' <<<"$runs_on")" ]; then
+    fail "${j} (publish-release closure) has a multi-line runs-on: — keep it on one line so this check can read it"
+    continue
+  fi
+  targets="$runs_on"
+  # `${{ matrix.<key> }}`: also check that key's values in the job's matrix.
+  key="$(sed -nE 's/.*matrix\.([A-Za-z0-9_-]+).*/\1/p' <<<"$runs_on")"
+  if [ -n "$key" ]; then
+    values="$(grep -E "^[[:space:]]+(- )?${key}:" <<<"$block" || true)"
+    if [ -z "$values" ]; then
+      fail "${j} (publish-release closure) runs on matrix.${key} but no ${key}: values were found"
+      continue
+    fi
+    targets="${targets}"$'\n'"${values}"
+  fi
+  if grep -qi 'macos' <<<"$targets"; then
+    fail "${j} gates publish-release but runs on macOS (ut-docs#5200): ${runs_on}"
+  else
+    pass "${j} (publish-release closure) is not on a macOS runner"
+  fi
+done
 
 if grep -qE 'notarytool wait .*--timeout' packaging/macos/notary-args.sh; then
   pass "notarytool wait is bounded by --timeout"

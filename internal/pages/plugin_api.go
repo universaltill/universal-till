@@ -213,6 +213,19 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		// that needs a store identity, so enrol here if the till hasn't yet.
 		// The effective config fills any fields the operator didn't set.
 		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+		// ut-docs#5145: the cloud refused to re-register this till (it was in
+		// use recently). Say so, in the install result, instead of failing on
+		// the missing credential further down; Settings has the date.
+		if _, blocked := registerBlocked(ctx, d); blocked && !enroll.CredentialsComplete(effCfg.Marketplace) {
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID:  req.ListingID,
+				State:      plugins.InstallStateFailed,
+				MessageKey: "plugins.install.error.device_live",
+				Retryable:  true,
+			})
+			writeInstallResponse(w, http.StatusConflict, false, "", "plugins.install.error.device_live")
+			return
+		}
 		checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's install
 		// The signing key is fetched lazily (ADR-0148 audit item 3).
 		effCfg = enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
@@ -242,7 +255,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			},
 		})
 		if err != nil {
-			failure := plugins.ClassifyInstallError(err)
+			failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 				ListingID:  req.ListingID,
 				State:      plugins.InstallStateFailed,
@@ -399,6 +412,31 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// skip the check and activate a possibly-second answerer.
 		if active {
 			pluginRepo := data.NewPluginRepo(d.Db)
+			// ut-docs#5658: a release the marketplace revoked stays off. Local
+			// read, no network; fail closed on a DB error.
+			if cur, found, getErr := pluginRepo.GetPlugin(ctx, pluginID, ""); getErr != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data":  nil,
+					"error": fmt.Sprintf("cannot enable %s: revoked-release lookup failed: %v", pluginID, getErr),
+				})
+				return
+			} else if found {
+				if revErr := plugins.CheckNotRevoked(ctx, pluginRepo, nil, pluginID, cur.Version); revErr != nil {
+					if errors.Is(revErr, plugins.ErrRevokedRelease) {
+						writeReplicaGuard(w, "plugins.manage.error.revoked")
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: %v", pluginID, revErr),
+					})
+					return
+				}
+			}
 			declared := ""
 			for _, ev := range plugins.FiscalSignExclusiveEvents {
 				declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
@@ -601,6 +639,12 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			log.Printf("warning: failed to clear install status for %s: %v", pluginID, err)
 		}
 
+		// ADR-0172 §5: uninstalling the automatically installed tax plugin
+		// declines it: the pending spec goes and the retry never reinstalls it.
+		if _, auto := taxAutoInstalledPlugin(ctx, d, pluginID); auto {
+			declineTaxAutoInstall(ctx, d, pluginID)
+		}
+
 		// Reload so the nav/menu no longer shows the plugin's entries.
 		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("warning: failed to reload plugin manager after uninstall %s: %v", pluginID, err)
@@ -712,7 +756,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 		},
 	})
 	if err != nil {
-		failure := plugins.ClassifyInstallError(err)
+		failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 			ListingID:  listingID,
 			PluginID:   pluginID,
@@ -872,6 +916,10 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 		// TODO: Extract actual user from session
 		if err := rollbackMgr.Rollback(ctx, pluginID, req.Version, "system"); err != nil {
+			if errors.Is(err, plugins.ErrRevokedRelease) {
+				writeReplicaGuard(w, "plugins.manage.error.revoked")
+				return
+			}
 			http.Error(w, fmt.Sprintf("Rollback failed: %v", err), http.StatusInternalServerError)
 			return
 		}

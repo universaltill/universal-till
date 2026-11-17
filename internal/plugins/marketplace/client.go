@@ -280,7 +280,13 @@ type ListPluginsRequest struct {
 	// filter. That's a distinct concept, see PluginSummary.Capabilities
 	// below (sourced from the manifest's required_capabilities).
 	Capability []string `json:"capability,omitempty"`
-	PageToken  string   `json:"page_token,omitempty"`
+	// Market asks the catalogue for the listings meant for one market
+	// (ISO 3166-1 alpha-2, wire key `markets`, ADR-0129 §4). The catalogue
+	// treats a listing with no markets as meant for every market, so a
+	// caller that must tell the two apart (ADR-0172 §2) also checks
+	// PluginSummary.Markets itself.
+	Market    string `json:"markets,omitempty"`
+	PageToken string `json:"page_token,omitempty"`
 }
 
 // PluginSummary represents a plugin in the catalog (matches OpenAPI schema).
@@ -312,9 +318,14 @@ type PluginSummary struct {
 	// availableLocales in the live protojson schema) — a listing can serve
 	// multiple locales, so this is an array, never a single value.
 	AvailableLocales []string `json:"available_locales,omitempty"`
-	ApprovedAt       string   `json:"approved_at,omitempty"`
-	CreatedAt        string   `json:"created_at,omitempty"`
-	UpdatedAt        string   `json:"updated_at,omitempty"`
+	// Markets is where the listing is meant to be used (ISO 3166-1 alpha-2,
+	// upper case; wire key `markets`, ADR-0129 §3). Empty = every market.
+	// ADR-0172 §2: an auto-install needs the shop's country named here
+	// explicitly, never the empty "every market".
+	Markets    []string `json:"markets,omitempty"`
+	ApprovedAt string   `json:"approved_at,omitempty"`
+	CreatedAt  string   `json:"created_at,omitempty"`
+	UpdatedAt  string   `json:"updated_at,omitempty"`
 }
 
 // UnmarshalJSON maps the live catalog wire format onto PluginSummary. The
@@ -354,6 +365,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		ArtifactHash          string   `json:"artifact_hash"`
 		AvailableLocalesCamel []string `json:"availableLocales"`
 		AvailableLocales      []string `json:"available_locales"`
+		Markets               []string `json:"markets"`
 		ApprovedAt            string   `json:"approved_at"`
 		CreatedAt             string   `json:"created_at"`
 		UpdatedAt             string   `json:"updated_at"`
@@ -390,6 +402,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	if len(p.AvailableLocales) == 0 {
 		p.AvailableLocales = w.AvailableLocales
 	}
+	p.Markets = w.Markets
 	p.ApprovedAt = w.ApprovedAt
 	p.CreatedAt = w.CreatedAt
 	p.UpdatedAt = w.UpdatedAt
@@ -614,6 +627,9 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		// Map to 'capability' parameter as per OpenAPI
 		params.Add("capability", cap)
 	}
+	if m := strings.TrimSpace(req.Market); m != "" {
+		params.Set("markets", m)
+	}
 	// Note: Real API uses page/page_size instead of page_token
 	if req.PageToken != "" {
 		params.Set("page_token", req.PageToken)
@@ -684,6 +700,29 @@ type issueDownloadTokenEnvelope struct {
 	} `json:"error"`
 }
 
+// maxErrorReasonLen caps an APIError.Reason; the known reasons are short words.
+const maxErrorReasonLen = 32
+
+// errorDataReason reads data.reason from an error envelope's data object,
+// trimmed and capped. Anything that is not an object with a string reason
+// yields "" (a plain removal sends no data).
+func errorDataReason(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var d struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(raw, &d) != nil {
+		return ""
+	}
+	r := strings.TrimSpace(d.Reason)
+	if len(r) > maxErrorReasonLen {
+		r = r[:maxErrorReasonLen]
+	}
+	return r
+}
+
 // APIError is a structured error decoded from a marketplace JSON envelope's
 // `error` field (`{code, message}`, matching ut-cloud's `apiError` shape).
 // Callers can `errors.As` it to react to a specific code (e.g. "not_entitled"
@@ -691,6 +730,10 @@ type issueDownloadTokenEnvelope struct {
 type APIError struct {
 	Code    string
 	Message string
+	// Reason is the optional data.reason the cloud adds to a device_revoked
+	// answer ("replaced" or "moved"); empty for a plain removal and for every
+	// other code (ut-docs#5187). It does not appear in Error().
+	Reason string
 }
 
 func (e *APIError) Error() string {
@@ -740,10 +783,19 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 	// status AND a structured {code, message} error body, not just a status
 	// code (ut-docs#673). Bailing on status before decoding, as this used to,
 	// silently threw that reason away.
+	rawBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxDownloadTokenBody))
 	var envelope issueDownloadTokenEnvelope
-	decodeErr := json.NewDecoder(resp.Body).Decode(&envelope)
+	decodeErr := json.Unmarshal(rawBody, &envelope)
+	if readErr != nil {
+		decodeErr = readErr
+	}
 	if envelope.Error != nil {
-		return nil, &APIError{Code: envelope.Error.Code, Message: envelope.Error.Message}
+		// ut-docs#5187: a device_revoked answer carries data.reason.
+		var errData struct {
+			Data json.RawMessage `json:"data"`
+		}
+		_ = json.Unmarshal(rawBody, &errData)
+		return nil, &APIError{Code: envelope.Error.Code, Message: envelope.Error.Message, Reason: errorDataReason(errData.Data)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download token request failed: status %d", resp.StatusCode)
@@ -756,6 +808,9 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 	}
 	return envelope.Data, nil
 }
+
+// maxDownloadTokenBody caps the download-token answer read into memory.
+const maxDownloadTokenBody = 1 << 20
 
 // AckDownloadRequest reports download outcome.
 type AckDownloadRequest struct {
@@ -807,10 +862,11 @@ type GetRevocationsRequest struct {
 // snake_case API convention — same correction ut-docs#2380 made to
 // plugins.RevocationEntry, the live equivalent of this struct.
 type Revocation struct {
-	PluginID string `json:"pluginId"`
-	Version  string `json:"version,omitempty"` // Empty means all versions
-	Action   string `json:"action"`            // disable | delete
-	Reason   string `json:"reason"`
+	PluginID   string `json:"pluginId"` // marketplace listing UUID (ut-docs#5653)
+	ManifestID string `json:"manifestId,omitempty"`
+	Version    string `json:"version,omitempty"` // Empty means all versions
+	Action     string `json:"action"`            // disable | delete
+	Reason     string `json:"reason"`
 }
 
 // GetRevocationsResponse contains revocation feed.

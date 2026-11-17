@@ -17,6 +17,10 @@
 # Usage: ios-sim-smoke.sh <path/to/UniversalTill.app> <screenshot-dir>
 set -euo pipefail
 
+here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/ci/ios-sim-wait-drawn.sh
+source "$here/ios-sim-wait-drawn.sh"
+
 app="${1:?usage: ios-sim-smoke.sh <app> <screenshot-dir>}"
 shots="${2:?usage: ios-sim-smoke.sh <app> <screenshot-dir>}"
 bundle_id="com.universaltill.pos"
@@ -57,6 +61,14 @@ wait_for_till() {
   return 1
 }
 
+# wait_for_drawn's shoot and check steps; $udid is the device in the loop.
+shoot_sim() {
+  xcrun simctl io "$udid" screenshot "$1" >/dev/null 2>&1
+}
+check_png() {
+  swift "$here/ios-screenshot-check.swift" "$1"
+}
+
 # First available simulator whose name starts with $1 ("iPhone", "iPad").
 device_for() {
   xcrun simctl list devices available -j |
@@ -83,9 +95,9 @@ for kind in iPhone iPad; do
     xcrun simctl spawn "$udid" log show --last 5m --predicate "process == \"UniversalTill\"" | tail -100 || true
     exit 1
   fi
-  sleep 8 # let the WebView render the first page before the screenshot
-  xcrun simctl io "$udid" screenshot "$shots/${kind}-launch.png"
-  swift "$(dirname "$0")/ios-screenshot-check.swift" "$shots/${kind}-launch.png"
+  # A slow first boot draws the WebView well after the server answers
+  # (ut-docs#5201): poll for a drawn page, fail only at the deadline.
+  wait_for_drawn shoot_sim check_png "$shots/${kind}-launch.png" 60 3
 
   # Background (Settings to the front), wait, come back: the till must
   # still answer — as it was, or restarted by the shell's resume probe.

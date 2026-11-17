@@ -24,13 +24,21 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
+import android.os.CancellationSignal
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.print.PageRange
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintManager
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -61,6 +69,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import mobile.Mobile
 // Aliased: this Activity already has an unrelated inner class named
@@ -105,6 +114,10 @@ class MainActivity : AppCompatActivity() {
     private val updateHandler = Handler(Looper.getMainLooper())
     private var updatePollRunnable: Runnable? = null
     private var updateCheckingReuse = false
+
+    // ut-docs#5436: set while [verifyThenInstall] reads the APK's signer off
+    // the UI thread (v2 verification reads the whole file).
+    private var updateVerifyingApk = false
     private var updateLoggedPercent = -1
     private var lastUpdateState: String? = null
 
@@ -236,6 +249,123 @@ class MainActivity : AppCompatActivity() {
                 }
             callback.onReceiveValue(uris)
         }
+
+    // ut-docs#5619: Settings -> Backups -> Save to Downloads. The till process
+    // cannot write the shared Downloads folder (scoped storage; the device's
+    // storage may be a USB-C drive), so the page asks this bridge to open the
+    // system "save as" picker, which reaches Downloads, a USB drive or any
+    // storage provider, and streams the backup into the place chosen.
+    private var pendingBackupName: String? = null
+    private val backupSaveLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val name = pendingBackupName
+            pendingBackupName = null
+            if (name == null) return@registerForActivityResult
+            if (uri == null) {
+                reportBackupSave(name, "cancelled")
+            } else {
+                writeBackupTo(name, uri)
+            }
+        }
+
+    private fun writeBackupTo(name: String, uri: Uri) {
+        val host = allowedHost
+        val cookie = host?.let { CookieManager.getInstance().getCookie("http://$it/") }
+        Thread {
+            var code = "saved"
+            try {
+                if (host == null) throw java.io.IOException("till address unknown")
+                val conn = java.net.URL(BackupSaveLogic.downloadUrl(host, name)).openConnection() as java.net.HttpURLConnection
+                try {
+                    conn.connectTimeout = 10_000
+                    conn.readTimeout = 60_000
+                    if (!cookie.isNullOrEmpty()) conn.setRequestProperty("Cookie", cookie)
+                    if (conn.responseCode != 200) throw java.io.IOException("backup download HTTP ${conn.responseCode}")
+                    val out = contentResolver.openOutputStream(uri, "w") ?: throw java.io.IOException("no output stream")
+                    out.use { o -> conn.inputStream.use { it.copyTo(o) } }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "backup save to picked location failed", e)
+                // Do not leave an empty/partial file in the place the operator chose.
+                runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) }
+                code = BackupSaveLogic.reasonFor(e)
+            }
+            reportBackupSave(name, code)
+        }.start()
+    }
+
+    /** Tells the Settings page how the save went; the page owns the translated wording. */
+    private fun reportBackupSave(name: String, code: String) {
+        if (code !in BackupSaveLogic.RESULT_CODES) return
+        runOnUiThread {
+            webView.evaluateJavascript("window.utBackupSaveResult&&window.utBackupSaveResult('$code','$name')", null)
+        }
+    }
+
+    // ut-docs#5190: a file input with capture (the item photo's "Take a
+    // photo") opens the SYSTEM camera — focus, flash, full resolution, retake —
+    // as on iPhone/iPad, not the document picker (WebView's createIntent()
+    // ignores capture) and not the in-page getUserMedia viewfinder. The photo
+    // is written to a private cache file the camera app reaches through the
+    // narrow "captures" FileProvider (res/xml/file_paths_captures.xml), and
+    // the page receives that content:// Uri like any picked file. Camera
+    // permission is asked only now, on first use; refused -> the document
+    // picker, so the field is never dead.
+    private var pendingCaptureUri: Uri? = null
+    private var pendingCaptureFile: File? = null
+    private var pendingCaptureParams: WebChromeClient.FileChooserParams? = null
+    private val takePictureLauncher =
+        registerForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+            val callback = fileChooserCallback ?: return@registerForActivityResult
+            fileChooserCallback = null
+            val uri = pendingCaptureUri
+            val file = pendingCaptureFile
+            pendingCaptureUri = null
+            pendingCaptureFile = null
+            // some camera apps answer OK without writing the file: hand over
+            // nothing rather than a Uri the page cannot read
+            val usable = taken && uri != null && file != null && file.isFile && file.length() > 0
+            callback.onReceiveValue(if (usable) arrayOf(uri!!) else emptyArray())
+        }
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val params = pendingCaptureParams
+            pendingCaptureParams = null
+            if (fileChooserCallback == null) return@registerForActivityResult
+            if (granted) launchSystemCamera() else launchDocumentPicker(params)
+        }
+
+    private fun launchSystemCamera() {
+        val dir = File(cacheDir, "captures").apply { mkdirs() }
+        val now = System.currentTimeMillis()
+        CaptureLogic.staleCaptures(dir.list()?.toList().orEmpty(), now, 60 * 60 * 1000L)
+            .forEach { File(dir, it).delete() }
+        val file = File(dir, CaptureLogic.captureFileName(now))
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.captures", file)
+            pendingCaptureUri = uri
+            pendingCaptureFile = file
+            takePictureLauncher.launch(uri)
+        } catch (e: Exception) {
+            // no camera app, or the provider refused: never leave the callback
+            // unresolved (the WebView contract), fall back to the picker
+            pendingCaptureUri = null
+            pendingCaptureFile = null
+            launchDocumentPicker(null)
+        }
+    }
+
+    private fun launchDocumentPicker(params: WebChromeClient.FileChooserParams?) {
+        val intent = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+        try {
+            fileChooserLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            fileChooserCallback?.onReceiveValue(null)
+            fileChooserCallback = null
+        }
+    }
 
     // ut-docs#1435: the WebView-side half of camera/microphone access. A
     // page's getUserMedia() call surfaces as WebChromeClient.onPermissionRequest
@@ -382,7 +512,72 @@ class MainActivity : AppCompatActivity() {
     // pinned. onPageFinished deliberately leaves the pin alone on the
     // manager-facing pages for exactly that reason; onResume has to agree
     // with it.
+    // @Volatile: the print bridge reads it on the JavaBridge thread (ut-docs#6153).
+    @Volatile
     private var kioskPinned = false
+
+    /** ut-docs#6153: elapsedRealtime when the open print dialog started; 0 = none. */
+    private val printInFlightSince = AtomicLong(0L)
+
+    /**
+     * ut-docs#6153: opens the system print dialog for the WebView's current
+     * page (UI thread). Never unpins the kiosk: [KioskBridge.print] refuses
+     * while pinned. Always clears the in-flight slot on a failure path; on
+     * success the wrapping adapter's onFinish clears it.
+     */
+    private fun startPrint(claimed: Long) {
+        // Release only our own claim: a late onFinish after the in-flight window
+        // expired must not clear a newer dialog's slot (ut-docs#6153 review F2).
+        val release = { printInFlightSince.compareAndSet(claimed, 0L); Unit }
+        try {
+            if (isDestroyed || isFinishing) {
+                release()
+                return
+            }
+            val jobName = PrintLogic.jobName(getString(R.string.app_name), webView.title)
+            val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
+            if (printManager == null) {
+                release()
+                return
+            }
+            val inner = webView.createPrintDocumentAdapter(jobName)
+            printManager.print(jobName, ReleasingPrintAdapter(inner, release), null)
+        } catch (e: Exception) {
+            release()
+            Log.w(TAG, "startPrint failed", e)
+        }
+    }
+
+    /** Forwards to the WebView's adapter and runs [onDone] after onFinish (dialog closed or job spooled). */
+    private class ReleasingPrintAdapter(
+        private val inner: PrintDocumentAdapter,
+        private val onDone: () -> Unit,
+    ) : PrintDocumentAdapter() {
+        override fun onStart() = inner.onStart()
+
+        override fun onLayout(
+            oldAttributes: PrintAttributes?,
+            newAttributes: PrintAttributes,
+            cancellationSignal: CancellationSignal?,
+            callback: LayoutResultCallback?,
+            extras: Bundle?,
+        ) = inner.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras)
+
+        override fun onWrite(
+            pages: Array<out PageRange>?,
+            destination: ParcelFileDescriptor?,
+            cancellationSignal: CancellationSignal?,
+            callback: WriteResultCallback?,
+        ) = inner.onWrite(pages, destination, cancellationSignal, callback)
+
+        override fun onFinish() {
+            try {
+                inner.onFinish()
+            } finally {
+                onDone()
+            }
+        }
+    }
 
     /**
      * ut-docs#3466 (ADR-0142 D3): the remote-unlock release window. 0 when
@@ -500,8 +695,50 @@ class MainActivity : AppCompatActivity() {
      * shouldOverrideUrlLoading confining navigation to the till's own
      * loopback host is what actually closes that gap; without it, this
      * class would be a real bypass of the very lock it exists to release.
+     *
+     * `print` (ut-docs#6153) is covered by the same reasoning: it takes no
+     * argument and prints only the page this WebView already shows.
      */
     private inner class KioskBridge {
+        /**
+         * ut-docs#6153: Android System WebView ignores window.print(). Opens the
+         * system print dialog for THIS WebView's current page. Takes no argument,
+         * deliberately: nothing the page passes reaches a URL, a file or the job
+         * name. Returns true when a dialog was requested, false when printing is
+         * unavailable here (kiosk pinned, activity gone, a dialog already open).
+         * Never throws.
+         */
+        @JavascriptInterface
+        fun print(): Boolean {
+            return try {
+                val now = SystemClock.elapsedRealtime()
+                val prev = printInFlightSince.get()
+                val pinned = kioskPinned || lockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE
+                if (!PrintLogic.canPrint(pinned, isFinishing || isDestroyed, prev, now)) return false
+                // Claim the slot here, on the binder thread, so a double tap's
+                // second call is refused before the UI thread has run.
+                if (!printInFlightSince.compareAndSet(prev, now)) return false
+                runOnUiThread { startPrint(now) }
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "print bridge failed", e)
+                false
+            }
+        }
+
+        /** ut-docs#5620: minutes of idle before the till lets the screen sleep (0 = never). */
+        @JavascriptInterface
+        fun getScreenAwakeMinutes(): Int = screenAwakeMinutes()
+
+        /** ut-docs#5620: only the offered choices are accepted; anything else resets to the default. */
+        @JavascriptInterface
+        fun setScreenAwakeMinutes(minutes: Int): Int {
+            val m = ScreenAwakeLogic.normalize(minutes)
+            getSharedPreferences(SCREEN_PREFS, Context.MODE_PRIVATE).edit().putInt(SCREEN_PREF_MINUTES, m).apply()
+            runOnUiThread { startKeepAwake() }
+            return m
+        }
+
         @JavascriptInterface
         fun exitLockdown() {
             runOnUiThread {
@@ -750,6 +987,26 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        /**
+         * ut-docs#5619: saves backup [name] through the system file picker.
+         * The name is validated here (a plain unitill-pos-*.db file name) and
+         * the bytes come from this till's own loopback download, so the page
+         * cannot make the app write anything else.
+         */
+        @JavascriptInterface
+        fun saveBackupCopy(name: String) {
+            runOnUiThread {
+                if (!BackupSaveLogic.isValidName(name)) return@runOnUiThread
+                pendingBackupName = name
+                try {
+                    backupSaveLauncher.launch(name)
+                } catch (e: ActivityNotFoundException) {
+                    pendingBackupName = null
+                    reportBackupSave(name, "failed")
+                }
+            }
+        }
+
         /** Raises the runtime permission prompt the scan actually needs. */
         @JavascriptInterface
         fun requestBluetoothPermissions() {
@@ -796,12 +1053,14 @@ class MainActivity : AppCompatActivity() {
      *   (web/public/android-update.js), so the chip shows a % and a failure.
      *
      * Downloads into the app's own external files dir: no storage permission,
-     * it is what [FileProvider] exposes (res/xml/file_paths.xml), and a
-     * half-written APK never appears in the operator's Files app. Never
+     * and a half-written APK never appears in the operator's Files app. That
+     * dir is readable by other apps on API 29 and below, so the installer is
+     * never given this file: [verifyThenInstall] copies it into app-private
+     * storage first and installs the verified copy (ut-docs#5436). Never
      * crashes the till — a failure leaves the operator able to retry.
      */
     private fun downloadAndInstallUpdate() {
-        if (updatePollRunnable != null || updateCheckingReuse) {
+        if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
             Log.i(TAG, "update: already in progress, re-reporting state")
             lastUpdateState?.let { pushUpdateState(it) }
             return
@@ -827,13 +1086,14 @@ class MainActivity : AppCompatActivity() {
                 val (savedSuccessful, savedTotal) = savedDownloadOutcome(manager, savedId)
                 val expected = UpdateLogic.expectedApkLength(headContentLength(url), savedSuccessful, savedTotal)
                 val fileLength = if (dest.isFile) dest.length() else 0L
-                val archiveVersion = if (fileLength > 0) archiveVersionCode(dest) else null
+                val archiveVersion =
+                    if (fileLength > 0) inspectArchive(dest, false)?.takeIf { it.packageName == packageName }?.versionCode else null
                 runOnUiThread {
                     updateCheckingReuse = false
                     if (isDestroyed) return@runOnUiThread
                     if (UpdateLogic.canReuseDownloadedApk(fileLength, expected, archiveVersion, installedVersionCode())) {
                         Log.i(TAG, "update: reusing the complete APK already downloaded ($fileLength bytes, versionCode $archiveVersion)")
-                        launchPackageInstaller(dest)
+                        verifyThenInstall(dest, savedId)
                     } else {
                         enqueueUpdateDownload(manager, dest, url, savedId)
                     }
@@ -992,7 +1252,7 @@ class MainActivity : AppCompatActivity() {
                         // (UpdateLogic.expectedApkLength). The next enqueue
                         // removes it.
                         reportUpdate("ready", 100, null)
-                        launchPackageInstaller(file)
+                        verifyThenInstall(file, id)
                         return false
                     }
                     DownloadManager.STATUS_FAILED -> {
@@ -1040,7 +1300,7 @@ class MainActivity : AppCompatActivity() {
      * unasked.
      */
     private fun resumeUpdateWatch() {
-        if (updatePollRunnable != null || updateCheckingReuse) return
+        if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) return
         val id = updatePrefs().getLong(UPDATE_PREF_ID, -1L)
         if (id < 0) return
         runCatching {
@@ -1055,6 +1315,69 @@ class MainActivity : AppCompatActivity() {
     private fun stopUpdatePoll() {
         updatePollRunnable?.let { updateHandler.removeCallbacks(it) }
         updatePollRunnable = null
+    }
+
+    // ut-docs#5620: nothing ever set FLAG_KEEP_SCREEN_ON, so the till screen
+    // slept on the OS display timeout (a few seconds on the test tablet) in
+    // every mode, kiosk included. While this Activity is in front the window
+    // now keeps the display on until the operator has been idle for the
+    // chosen minutes (ScreenAwakeLogic; 0 = never), then the flag drops and
+    // the OS timeout takes over. A touch or key press re-arms it. The choice
+    // is per device (SharedPreferences), set from Settings -> Display.
+    private val awakeHandler = Handler(Looper.getMainLooper())
+    private var lastInteractionMs = 0L
+    private val awakeExpiry = Runnable { evaluateKeepAwake() }
+
+    private fun screenAwakeMinutes(): Int =
+        ScreenAwakeLogic.normalize(
+            getSharedPreferences(SCREEN_PREFS, Context.MODE_PRIVATE)
+                .getInt(SCREEN_PREF_MINUTES, ScreenAwakeLogic.DEFAULT_MINUTES),
+        )
+
+    private fun startKeepAwake() {
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        evaluateKeepAwake()
+    }
+
+    private fun stopKeepAwake() {
+        awakeHandler.removeCallbacks(awakeExpiry)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun evaluateKeepAwake() {
+        awakeHandler.removeCallbacks(awakeExpiry)
+        if (!activityResumed) return
+        val minutes = screenAwakeMinutes()
+        val now = SystemClock.elapsedRealtime()
+        if (ScreenAwakeLogic.keepAwake(minutes, lastInteractionMs, now)) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            ScreenAwakeLogic.remainingMs(minutes, lastInteractionMs, now)?.let {
+                awakeHandler.postDelayed(awakeExpiry, it + 1000L)
+            }
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    /** Touch anywhere in the window counts as use and re-arms a lapsed flag at once. */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            lastInteractionMs = SystemClock.elapsedRealtime()
+            // Only re-evaluate when the flag had lapsed; a live timer is re-armed lazily on expiry.
+            if (activityResumed && (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+                evaluateKeepAwake()
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        // a key press (HID scanner, keyboard) also wakes a lapsed flag
+        if (activityResumed && (window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+            evaluateKeepAwake()
+        }
     }
 
     private fun updatePrefs() = getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
@@ -1104,14 +1427,152 @@ class MainActivity : AppCompatActivity() {
             }
         }.onFailure { Log.w(TAG, "update: size check failed: ${it.message}") }.getOrNull()
 
-    /** The versionCode of the APK at [apk] if it parses as THIS app's package. */
-    private fun archiveVersionCode(apk: File): Long? =
+    /** What [inspectArchive] read from an APK file (ut-docs#5436). */
+    private data class ArchiveFacts(
+        val packageName: String,
+        val versionCode: Long,
+        val signerDigests: List<String>?,
+        /** API 28+: digests in signingInfo.signingCertificateHistory (rotation lineage). */
+        val signerHistory: List<String>? = null,
+    )
+
+    /**
+     * Parses the APK at [apk]: package, versionCode and, when [withSigners],
+     * the SHA-256 of each signing certificate (null when none could be read;
+     * [UpdateLogic.checkUpdateApk] then fails closed). Null when the file does
+     * not parse. [withSigners] reads and verifies the whole file, so call it
+     * off the UI thread; the reuse size check wants only the versionCode.
+     */
+    @Suppress("DEPRECATION")
+    private fun inspectArchive(
+        apk: File,
+        withSigners: Boolean,
+    ): ArchiveFacts? =
         runCatching {
-            @Suppress("DEPRECATION")
-            packageManager.getPackageArchiveInfo(apk.path, 0)
-                ?.takeIf { it.packageName == packageName }
-                ?.let { PackageInfoCompat.getLongVersionCode(it) }
+            val pm = packageManager
+            val flags =
+                when {
+                    !withSigners -> 0
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ->
+                        PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+                    else -> PackageManager.GET_SIGNATURES
+                }
+            val info = pm.getPackageArchiveInfo(apk.path, flags) ?: return@runCatching null
+            val digests =
+                if (!withSigners) {
+                    null
+                } else {
+                    // API 28+: the CURRENT signer (apkContentsSigners), which is
+                    // what the pin must contain under a v3 rotation. API 24-27,
+                    // or an API 28 archive without signingInfo: legacy signatures.
+                    val sigs =
+                        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.signingInfo?.apkContentsSigners else null)
+                            ?: info.signatures
+                    sigs?.takeIf { it.isNotEmpty() }?.map { UpdateLogic.sha256Hex(it.toByteArray()) }
+                }
+            val history =
+                if (withSigners && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.signingInfo?.hasMultipleSigners() == false) {
+                    info.signingInfo?.signingCertificateHistory?.map { UpdateLogic.sha256Hex(it.toByteArray()) }
+                } else {
+                    null
+                }
+            ArchiveFacts(info.packageName, PackageInfoCompat.getLongVersionCode(info), digests, history)
         }.getOrNull()
+
+    /**
+     * ut-docs#5436 / ADR-0179: the only way to the installer. Checks off the
+     * UI thread that the downloaded [apk] is this app's package, newer, and
+     * signed by a pinned certificate ([UpdateLogic.checkUpdateApk]). On a
+     * refusal the file and the download record are removed and the update
+     * fails as `failed`; the kiosk lock, immersive mode and installer are
+     * never touched ([launchPackageInstaller] is what releases them).
+     */
+    private fun verifyThenInstall(
+        downloaded: File,
+        downloadId: Long,
+    ) {
+        updateVerifyingApk = true
+        Thread {
+            var facts: ArchiveFacts? = null
+            // TOCTOU (M1): other apps can write the external Download/ dir on
+            // API 29 and below, so verify and install a private COPY.
+            val apk = File(File(filesDir, UPDATE_COPY_DIR).apply { mkdirs() }, UPDATE_APK_NAME)
+            val pins = UpdateLogic.parsePinSet(BuildConfig.APK_SIGNER_SHA256S)
+            val verdict =
+                try {
+                    apk.delete()
+                    downloaded.copyTo(apk, overwrite = true)
+                    facts = inspectArchive(apk, true)
+                    UpdateLogic.checkUpdateApk(
+                        facts?.packageName,
+                        packageName,
+                        facts?.versionCode,
+                        installedVersionCode(),
+                        facts?.signerDigests,
+                        pins,
+                        facts?.signerHistory,
+                    )
+                } catch (e: Exception) {
+                    ApkCheck.Refuse(RefuseClass.CHECK_ERROR, "signer check failed: ${e.message}")
+                }
+            runOnUiThread {
+                updateVerifyingApk = false
+                if (verdict is ApkCheck.Refuse) {
+                    // Cleanup runs even if the Activity is gone (L2).
+                    Log.w(
+                        TAG,
+                        "update: refused: ${verdict.reason}; signers ${facts?.signerDigests}, history ${facts?.signerHistory}, pinned $pins, package ${facts?.packageName}",
+                    )
+                    runCatching {
+                        if (downloadId >= 0) (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(downloadId)
+                    }
+                    apk.delete()
+                    downloaded.delete()
+                    clearUpdateId()
+                    // ut-docs#5446: tell the fleet roster, class only (never
+                    // verdict.reason: digests and foreign package names). Runs
+                    // even if the Activity is gone, and a missing Go library
+                    // must never break the refusal.
+                    runCatching { Mobile.reportAndroidUpdateRefused(verdict.cls.wire) }
+                        .onFailure { Log.w(TAG, "update: could not report refusal", it) }
+                    if (!isDestroyed) failUpdate("refused: ${verdict.reason}")
+                    return@runOnUiThread
+                }
+                // The check passed (pinned or dormant): resolve an earlier
+                // refusal on the fleet roster, whether or not the Activity lives.
+                runCatching { Mobile.reportAndroidUpdateAccepted() }
+                    .onFailure { Log.w(TAG, "update: could not report acceptance", it) }
+                if (isDestroyed) return@runOnUiThread
+                when (verdict) {
+                    is ApkCheck.Accept -> {
+                        Log.i(TAG, "update: APK signer verified (${verdict.digest.take(12)}...)")
+                        launchPackageInstaller(apk)
+                    }
+                    ApkCheck.AcceptUnpinned -> {
+                        Log.i(TAG, "update: APK signer not pinned (no certificate digest compiled in)")
+                        launchPackageInstaller(apk)
+                    }
+                    is ApkCheck.Refuse -> Unit // handled above
+                }
+            }
+        }.apply {
+            name = "update-signer-check"
+            isDaemon = true
+        }.start()
+    }
+
+    /**
+     * ut-docs#5436: the verified copy is only needed while the system
+     * installer reads it. A copy older than a day (an abandoned or finished
+     * install) is removed at start; a fresh one is kept because an Activity
+     * recreated mid-install must not pull the file from under the installer.
+     */
+    private fun pruneStaleUpdateCopy() {
+        runCatching {
+            val f = File(File(filesDir, UPDATE_COPY_DIR), UPDATE_APK_NAME)
+            if (f.exists() && System.currentTimeMillis() - f.lastModified() > 24L * 3600 * 1000) f.delete()
+        }
+    }
 
     private fun installedVersionCode(): Long =
         runCatching {
@@ -1123,6 +1584,8 @@ class MainActivity : AppCompatActivity() {
      * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
      * is rejected from API 24 (FileUriExposedException) — this app's own
      * minSdk — so the content:// grant is the only route.
+     *
+     * Only called after [verifyThenInstall] accepted the file (ut-docs#5436).
      */
     private fun launchPackageInstaller(apk: File) {
         try {
@@ -1693,6 +2156,7 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "reload: activity recreated (savedInstanceState present)")
         }
         setContentView(R.layout.activity_main)
+        pruneStaleUpdateCopy()
 
         webView = findViewById(R.id.webview)
         statusView = findViewById(R.id.status)
@@ -2013,6 +2477,20 @@ class MainActivity : AppCompatActivity() {
                     // must not be leaked.
                     fileChooserCallback?.onReceiveValue(null)
                     fileChooserCallback = filePathCallback
+                    if (fileChooserParams != null &&
+                        CaptureLogic.wantsCamera(fileChooserParams.isCaptureEnabled, fileChooserParams.acceptTypes.toList())
+                    ) {
+                        // ut-docs#5190: the system camera, not the picker
+                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            launchSystemCamera()
+                        } else {
+                            pendingCaptureParams = fileChooserParams
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                        return true
+                    }
                     val intent =
                         fileChooserParams?.createIntent()
                             ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
@@ -2145,6 +2623,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         activityResumed = false
+        stopKeepAwake()
         cancelPendingPinCheck()
         // ut-docs#3466 (ADR-0142 D3): a backgrounded Activity cannot answer
         // a remote unlock; Go reports no_shell until onResume registers the
@@ -2158,6 +2637,8 @@ class MainActivity : AppCompatActivity() {
         // are what re-arms the pin poll, and [schedulePinCheck] refuses
         // while this is false.
         activityResumed = true
+        // ut-docs#5620: the till window keeps the display on while in front.
+        startKeepAwake()
         // ut-docs#3466 (ADR-0142 D3): only the foreground Activity answers
         // a remote kiosk_unlock; cleared again in onPause.
         Mobile.setKioskBridge(remoteUnlockBridge)
@@ -2340,6 +2821,9 @@ class MainActivity : AppCompatActivity() {
         // on purpose: installUpdate() takes no argument, so page content can
         // never redirect an install.
         private const val UPDATE_APK_NAME = "unitill-pos-update.apk"
+
+        /** App-private (filesDir) dir holding the verified copy handed to the installer (res/xml/file_paths.xml). */
+        private const val UPDATE_COPY_DIR = "updates"
         private const val APK_MIME = "application/vnd.android.package-archive"
 
         // ut-docs#4312: the old fixed limit (~5 minutes at 750ms) failed a
@@ -2352,6 +2836,8 @@ class MainActivity : AppCompatActivity() {
 
         // ut-docs#4312: where the in-flight DownloadManager id lives, so a
         // recreated Activity or a later tap finds the same download.
+        private const val SCREEN_PREFS = "screen_awake"
+        private const val SCREEN_PREF_MINUTES = "idle_minutes"
         private const val UPDATE_PREFS = "in_app_update"
         private const val UPDATE_PREF_ID = "download_id"
         private const val UPDATE_PREF_ENQUEUED_AT = "download_enqueued_at_wall_ms"

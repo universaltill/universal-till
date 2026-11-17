@@ -69,7 +69,8 @@ func (r *TillsRepo) EnrolTill(ctx context.Context, name, bearerHash, role, reque
 	}()
 	id = uuid.NewString()
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO tills (id, name, bearer_hash, role) VALUES (?, ?, ?, ?)`, id, name, bearerHash, role); err != nil {
+		`INSERT INTO tills (id, name, bearer_hash, role, bearer_issued_at) VALUES (?, ?, ?, ?, ?)`,
+		id, name, bearerHash, role, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return "", 0, fmt.Errorf("enrol till: insert: %w", err)
 	}
 	used, err := receiptPrefixesInUse(ctx, tx)
@@ -121,7 +122,8 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 // be taken: granted to an enrolled till, carried by a sale it holds or one
 // moved out by "Clear transaction history" (a till enrolled before migration
 // 092, or one since removed), or this till's own (a till promoted to main
-// till keeps its sync.receipt_prefix). ut-docs#5058, ut-docs#5074.
+// till keeps its sync.receipt_prefix), or seen in its read-only copy of the
+// other tills' sales (mirror_sales). ut-docs#5058, ut-docs#5074.
 func receiptPrefixesInUse(ctx context.Context, q dbExecutor) (map[string]bool, error) {
 	rows, err := q.QueryContext(ctx, `
 SELECT receipt_prefix FROM tills WHERE receipt_prefix != ''
@@ -145,5 +147,65 @@ SELECT value FROM settings WHERE key = 'sync.receipt_prefix' AND value != ''`)
 		}
 		out[strings.TrimSpace(p)] = true
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// ut-docs#5074 §3.6: and every prefix in this till's read-only sales copy.
+	copied, err := mirrorReceiptPrefixesInUse(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range copied {
+		out[strings.TrimSpace(p)] = true
+	}
+	return out, nil
+}
+
+// ReplacementMainTillPrefix is the receipt prefix (and so the invoice series)
+// of a main till that replaced another one (ut-docs#5058 T4). The original
+// main till has no prefix, so a replacement on prefix "" would repeat every
+// receipt and invoice number of the till it replaced. The prefix is derived
+// from the new till's device id: always M<8 hex>-, never equal to the
+// replaced till's own derived prefix (the next 8 hex characters are taken
+// if it would be). The leading M cannot match T<n>- (tillPrefixRe) nor the
+// provisional R<4 hex>- of a restored copy, and is never empty.
+func ReplacementMainTillPrefix(newDeviceID, oldDeviceID string) string {
+	hexOf := func(id string) string {
+		h := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(id, "till-"), "-", ""))
+		var b strings.Builder
+		for _, r := range h {
+			if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+				b.WriteRune(r)
+			}
+		}
+		return (b.String() + strings.Repeat("0", 32))[:32]
+	}
+	n, o := hexOf(newDeviceID), hexOf(oldDeviceID)
+	if oldDeviceID == "" {
+		return "M" + n[:8] + "-"
+	}
+	for i := 0; i+8 <= len(n); i += 8 {
+		if n[i:i+8] != o[:8] {
+			return "M" + n[i:i+8] + "-"
+		}
+	}
+	return "M" + n[:8] + "-"
+}
+
+var replacementMainTillPrefixRe = regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+
+// IsReplacementMainTillPrefix reports whether p is exactly a prefix
+// ReplacementMainTillPrefix can return. internal/db mirrors it
+// (isReplacementMainTillPrefix; a test pins the two together).
+func IsReplacementMainTillPrefix(p string) bool { return replacementMainTillPrefixRe.MatchString(p) }
+
+// customerFacingPrefix is the part of sync.receipt_prefix that belongs in
+// numbers customers hear and read (order display numbers, counter orders).
+// A replacement main till numbers those as the original main did, with no
+// prefix (ut-docs#5058 review F3).
+func customerFacingPrefix(p string) string {
+	if IsReplacementMainTillPrefix(strings.TrimSpace(p)) {
+		return ""
+	}
+	return p
 }

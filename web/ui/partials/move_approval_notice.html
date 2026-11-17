@@ -1,0 +1,29 @@
+{{/* ut-docs#5127 UT-1b: a move of this till into another shop waits for a
+     manager's or admin's approval on this till (or one just ended without
+     it). GET /ui/move-approval-notice (move_approval.go) renders nothing for
+     a cashier, on a joined till, on the sale screen, or when there is
+     nothing to say. Same shape as shop_name_notice.html: a status banner,
+     never a modal, never over the sell grid. Dismissal is per browser
+     session and per move/outcome (data-fingerprint), so a NEW move or a new
+     outcome shows again. Text arrives pre-translated with the names in
+     bidi isolates. */}}
+<div id="move-approval-notice" class="pairing-notice move-approval-notice" role="status" data-fingerprint="{{ .Fingerprint }}">
+  <span class="pairing-notice-text">⇄ {{ .Text }}</span>
+  {{ if .Href }}<a href="{{ .Href }}">{{ T "settings.move.notice_review" }}</a>{{ end }}
+  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}" data-action="dismiss-move-approval-notice">✕</button>
+</div>
+<script>
+(function () {
+  var KEY = 'ut-move-approval-notice-dismissed';
+  var el = document.getElementById('move-approval-notice');
+  if (!el) return;
+  var fp = el.getAttribute('data-fingerprint');
+  var dismissed;
+  try { dismissed = sessionStorage.getItem(KEY); } catch (e) { dismissed = null; }
+  if (dismissed !== null && dismissed === fp) { el.hidden = true; }
+  window.utMoveApprovalNoticeDismiss = function () {
+    try { sessionStorage.setItem(KEY, fp); } catch (e) {}
+    el.hidden = true;
+  };
+})();
+</script>

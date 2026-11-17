@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -137,10 +138,14 @@ func TestPlainSyncClosure_ClosedRefusesPlainHandshakesWithoutBurningTheToken(t *
 	// Plain enroll: refused before the one-time token is spent.
 	if rec := m.serve(enrollReq(tok, "Till 3", "additional", false)); rec.Code != http.StatusForbidden {
 		t.Fatalf("plain enroll once closed = %d %s, want 403", rec.Code, rec.Body)
+	} else {
+		wantPlainRefused(t, rec, plainRefusedTLSOnly)
 	}
 	// Plain pair-request: refused, and nothing is queued.
 	if rec := m.serve(pairReq("Bar till", commitOf("s-plain"), "10.0.0.40:1", false)); rec.Code != http.StatusForbidden {
 		t.Fatalf("plain pair-request once closed = %d %s, want 403", rec.Code, rec.Body)
+	} else {
+		wantPlainRefused(t, rec, plainRefusedTLSOnly)
 	}
 	if rows, _ := data.NewPairingRepo(m.d.Db).ListPending(t.Context()); len(rows) != 0 {
 		t.Fatalf("a refused plain pair-request queued %+v", rows)
@@ -148,6 +153,8 @@ func TestPlainSyncClosure_ClosedRefusesPlainHandshakesWithoutBurningTheToken(t *
 	// Plain primary-proof: refused.
 	if rec := m.serve(proofReq(tillID, false)); rec.Code != http.StatusForbidden {
 		t.Fatalf("plain primary-proof once closed = %d %s, want 403", rec.Code, rec.Body)
+	} else {
+		wantPlainRefused(t, rec, plainRefusedTLSOnly)
 	}
 
 	// The same handshakes over TLS still work.
@@ -164,6 +171,8 @@ func TestPlainSyncClosure_ClosedRefusesPlainHandshakesWithoutBurningTheToken(t *
 	poll.RemoteAddr = "10.0.0.42:1"
 	if rec := m.serve(poll); rec.Code != http.StatusForbidden {
 		t.Fatalf("plain pair-request poll once closed = %d %s, want 403", rec.Code, rec.Body)
+	} else {
+		wantPlainRefused(t, rec, plainRefusedTLSOnly)
 	}
 	poll = httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests/"+id+"?request_secret="+secret, nil)
 	poll.RemoteAddr = "10.0.0.42:1"
@@ -245,10 +254,13 @@ func TestPlainSyncClosure_StaysOpenUntilEveryTillPinned(t *testing.T) {
 // has closed plain HTTP; one over TLS is pinned at once.
 func TestEnroll_SatelliteIsTLSOnlyFromEnrolment(t *testing.T) {
 	m := newClosureMain(t)
+	serveLANTLS(t)
 	tok := m.tokens.issue()
 
 	if rec := m.serve(enrollReq(tok, "Kiosk", "satellite", false)); rec.Code != http.StatusForbidden {
 		t.Fatalf("plain satellite enroll = %d %s, want 403", rec.Code, rec.Body)
+	} else {
+		wantPlainRefused(t, rec, plainRefusedSatelliteTLSOnly)
 	}
 	rec := m.serve(enrollReq(tok, "Kiosk", "satellite", true))
 	if rec.Code != http.StatusOK {
@@ -262,7 +274,7 @@ func TestEnroll_SatelliteIsTLSOnlyFromEnrolment(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Data.Bearer == "" {
 		t.Fatalf("enroll body %s: %v", rec.Body, err)
 	}
-	row, ok, err := m.tills.TillByBearerHash(t.Context(), hashBearer(out.Data.Bearer))
+	row, ok, err := m.tills.TillByBearerHashAt(t.Context(), hashBearer(out.Data.Bearer), time.Now())
 	if err != nil || !ok || !row.TLSPinned {
 		t.Fatalf("satellite after TLS enrolment: pinned=%v ok=%v err=%v, want pinned", row.TLSPinned, ok, err)
 	}
@@ -277,7 +289,7 @@ func TestEnroll_SatelliteIsTLSOnlyFromEnrolment(t *testing.T) {
 		t.Fatalf("TLS additional enroll = %d %s", rec.Code, rec.Body)
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if row, _, _ := m.tills.TillByBearerHash(t.Context(), hashBearer(out.Data.Bearer)); row.TLSPinned {
+	if row, _, _ := m.tills.TillByBearerHashAt(t.Context(), hashBearer(out.Data.Bearer), time.Now()); row.TLSPinned {
 		t.Fatal("an additional till enrolled over TLS must not be pre-pinned")
 	}
 }
@@ -286,6 +298,7 @@ func TestEnroll_SatelliteIsTLSOnlyFromEnrolment(t *testing.T) {
 // TLS-only too, even if the joining till itself asked for "additional".
 func TestEnroll_ApprovedSatelliteRefusedOnPlain(t *testing.T) {
 	m := newClosureMain(t)
+	serveLANTLS(t)
 	secret := "s-sat"
 	id := pairRequestID(t, m.serve(pairReq("Order station", commitOf(secret), "10.0.0.60:1", true)))
 	if rec := doPostForm(t, m.mux, "/api/sync/pair-requests/"+id+"/approve", url.Values{"role": {"satellite"}}); rec.Code != http.StatusOK {
@@ -297,6 +310,8 @@ func TestEnroll_ApprovedSatelliteRefusedOnPlain(t *testing.T) {
 	}
 	if rec := m.serve(enrollReq(row.Token, "Order station", "additional", false)); rec.Code != http.StatusForbidden {
 		t.Fatalf("plain enroll of an approved satellite = %d %s, want 403", rec.Code, rec.Body)
+	} else {
+		wantPlainRefused(t, rec, plainRefusedSatelliteTLSOnly)
 	}
 	if rec := m.serve(enrollReq(row.Token, "Order station", "additional", true)); rec.Code != http.StatusOK ||
 		!strings.Contains(rec.Body.String(), `"role":"satellite"`) {
@@ -344,7 +359,7 @@ func TestSyncJoin_CodeJoinTriesTLSFirstAndStagesThePin(t *testing.T) {
 		t.Fatalf("staged primary_url %q, want the plain LAN address %q", id.PrimaryURL, base)
 	}
 	// The snapshot download over TLS pinned the new till on the main till.
-	row, ok, err := m.tills.TillByBearerHash(t.Context(), hashBearer(id.Bearer))
+	row, ok, err := m.tills.TillByBearerHashAt(t.Context(), hashBearer(id.Bearer), time.Now())
 	if err != nil || !ok || !row.TLSPinned {
 		t.Fatalf("joined till on the main till: pinned=%v ok=%v err=%v, want pinned", row.TLSPinned, ok, err)
 	}
@@ -374,4 +389,40 @@ func TestSyncJoin_CodeJoinFallsBackToPlainWithoutAPin(t *testing.T) {
 	if id.PrimaryCertPin != "" || id.PrimaryURL != srv.URL {
 		t.Fatalf("plain fallback staged pin %q url %q, want no pin and %q", id.PrimaryCertPin, id.PrimaryURL, srv.URL)
 	}
+}
+
+// wantPlainRefused asserts the stable machine-readable reason the joining
+// till reads to tell the person what to do (ut-docs#4451).
+func wantPlainRefused(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if got := rec.Header().Get(plainRefusedHeader); got != want {
+		t.Errorf("%s = %q, want %q", plainRefusedHeader, got, want)
+	}
+}
+
+// A main till that cannot serve TLS at all (key unreadable) refuses a plain
+// satellite with its own reason: the fix is on the main till, not the joiner.
+func TestEnroll_SatelliteOnPlainMainWithoutTLSSaysSoInTheHeader(t *testing.T) {
+	m := newClosureMain(t)
+	t.Cleanup(lantls.SetServing(nil))
+	rec := m.serve(enrollReq(m.tokens.issue(), "Kiosk", "satellite", false))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("plain satellite enroll = %d %s, want 403", rec.Code, rec.Body)
+	}
+	wantPlainRefused(t, rec, plainRefusedSatelliteNoTLS)
+
+	secret := "s-sat2"
+	id := pairRequestID(t, m.serve(pairReq("Order station", commitOf(secret), "10.0.0.61:1", false)))
+	if arec := doPostForm(t, m.mux, "/api/sync/pair-requests/"+id+"/approve", url.Values{"role": {"satellite"}}); arec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", arec.Code, arec.Body)
+	}
+	row, _, err := data.NewPairingRepo(m.d.Db).GetByID(t.Context(), id)
+	if err != nil || row.Token == "" {
+		t.Fatalf("approved row %+v err %v", row, err)
+	}
+	rec = m.serve(enrollReq(row.Token, "Order station", "additional", false))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("plain enroll of an approved satellite = %d %s, want 403", rec.Code, rec.Body)
+	}
+	wantPlainRefused(t, rec, plainRefusedSatelliteNoTLS)
 }

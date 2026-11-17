@@ -79,6 +79,17 @@ func openRaw(path string) (*DB, error) {
 				return nil, fmt.Errorf("create data dir %q: %w", dir, err)
 			}
 		}
+		// ut-docs#5049: create the file ourselves and open with mode=rw below,
+		// so the pool can never create a database. Without mode=rw, every NEW
+		// pooled connection opened after the data folder was deleted from
+		// outside (uninstaller, a tester) silently created an empty, table-
+		// less database — a flood of "no such table". SQLite treats a 0-byte
+		// file as a new empty database, so the first connection still works.
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+		if err != nil {
+			return nil, fmt.Errorf("create database file %q: %w", path, err)
+		}
+		_ = f.Close()
 	}
 	// _pragma= is how modernc.org/sqlite applies a pragma to EVERY pooled
 	// connection — an Exec'd PRAGMA reaches only the one connection that
@@ -115,6 +126,9 @@ func openRaw(path string) (*DB, error) {
 	// migration 036, the first migration to use a temp table. In-memory
 	// temp storage removes the dependency on a temp dir for every platform.
 	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=temp_store(2)&_txlock=immediate", escapeSQLiteURIPath(path))
+	if !strings.Contains(path, ":memory:") {
+		dsn += "&mode=rw" // never create a file from the pool (ut-docs#5049)
+	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

@@ -38,7 +38,7 @@ func TestCheckin401KeepsTheReplacedSignal(t *testing.T) {
 		_, _ = w.Write([]byte(replacedBody))
 	}))
 	defer srv.Close()
-	_, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0)
+	_, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0, nil)
 	var se *statusError
 	if !errors.As(err, &se) || se.Code != "device_revoked" || se.Replaced == nil || se.Replaced.By != "Counter 2" {
 		t.Fatalf("err = %#v, want device_revoked with the replaced signal", err)
