@@ -49,3 +49,8 @@ worktree (ran the targeted test, the full file and a mutation).
 
 ## Verdict
 Safe to merge.
+
+## Sweep refresh (2026-11-17, lane:cloud-41)
+The PR's CI run of 2026-11-02 timed out both new tests (120 s, at 390 and 440 px, every retry); the report artifact had expired, so no trace. Merged `main` (clean, no conflict; the diff against `main` is still only this spec and this record) and ran the **whole** default project in CI mode here (`CI=1`, 4 workers, `--retries=0`, shared worker tills): both new tests passed. 1702 passed, 2 failed, both in specs this PR doesn't touch (`money-comma-2925` "3,50" converts to 350; `self-order-popup-zoom-2972` Full Checkout zoom). So the hang came from `main`'s state at the time, not from this test. Fresh CI on the refreshed head decides.
+
+Pre-flight: help n/a (test-only, no surface change); docs-shots n/a; reference/ n/a; README n/a; en.json/meta n/a (no keys); ADR n/a; mirrors n/a; review record this file; follow-up ut-docs#5249 (same blind spot in the main sweep).
