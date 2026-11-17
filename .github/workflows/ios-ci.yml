@@ -68,6 +68,28 @@ jobs:
           go install golang.org/x/mobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           brew install xcodegen
+      - name: Generate the Xcode project (XcodeGen)
+        if: steps.filter.outputs.match == 'true'
+        run: cd ios && xcodegen generate
+      - name: Tap to Pay unit tests (ut-docs#3049)
+        # Host-less test bundle over ios/UniversalTill/TapToPay/Core: needs
+        # neither Mobile.xcframework nor StripeTerminal, so it runs before
+        # the bind. Package versions come only from the committed
+        # Package.resolved.
+        if: steps.filter.outputs.match == 'true'
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys
+          for rt, devs in json.load(sys.stdin)["devices"].items():
+              if "iOS" not in rt: continue
+              for d in devs:
+                  if d["name"].startswith("iPhone"):
+                      print(d["udid"]); sys.exit(0)
+          sys.exit(1)')"
+          cd ios
+          xcodebuild test -project UniversalTill.xcodeproj -scheme UniversalTillTapToPayTests \
+            -destination "id=$UDID" -derivedDataPath build/dd-tests \
+            -onlyUsePackageVersionsFromResolvedFile
       - name: Bind the Go till server (gomobile bind -target=ios,iossimulator)
         if: steps.filter.outputs.match == 'true'
         run: |
@@ -91,7 +113,8 @@ jobs:
           xcodebuild -project UniversalTill.xcodeproj -scheme UniversalTill \
             -configuration Debug -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build
+            -derivedDataPath build/dd -onlyUsePackageVersionsFromResolvedFile \
+            CODE_SIGNING_ALLOWED=NO build
       - name: Launch smoke's drawn-WebView poll, against the real screenshot check (ut-docs#5201)
         if: steps.filter.outputs.match == 'true'
         env:

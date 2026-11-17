@@ -31,6 +31,12 @@ enum class RefuseClass(val wire: String) {
     CHECK_ERROR("check_error"),
 }
 
+/** ut-docs#6551: what to do before handing an APK to the system installer. */
+enum class InstallPreflight { PROCEED, NEEDS_PERMISSION }
+
+/** ut-docs#6551: what coming back from Android's "install unknown apps" screen means. */
+enum class PermissionResume { GRANTED, STILL_DENIED }
+
 /**
  * The pure decisions behind the in-app Android update (ut-docs#1541,
  * ut-docs#4312). No Android types on purpose: [MainActivity] supplies the
@@ -39,6 +45,40 @@ enum class RefuseClass(val wire: String) {
 object UpdateLogic {
     const val ABI_ARM64 = "arm64-v8a"
     const val ABI_ARMV7 = "armeabi-v7a"
+
+    /** ut-docs#6551: bridge states the page (web/public/android-update.js) listens for. */
+    const val STATE_NEEDS_PERMISSION = "needs_permission"
+    const val STATE_PERMISSION_GRANTED = "permission_granted"
+    const val ERROR_STILL_DENIED = "still_denied"
+
+    /**
+     * ut-docs#6551: [canRequestPackageInstalls] false means Android would
+     * bounce the installer hand-off (or swallow it on some ROMs), so the
+     * operator is told and sent to the settings screen instead of seeing a
+     * silent no-op.
+     */
+    fun installPreflight(
+        sdkInt: Int,
+        canRequestPackageInstalls: () -> Boolean,
+    ): InstallPreflight =
+        // canRequestPackageInstalls() exists from API 26 (minSdk is 24): before
+        // that the global "Unknown sources" switch applies and the installer
+        // intent handles it, so proceed without calling the API.
+        if (sdkInt < API_O || canRequestPackageInstalls()) InstallPreflight.PROCEED else InstallPreflight.NEEDS_PERMISSION
+
+    /** Null when no permission screen was opened ([awaiting] false) or API < 26: nothing to report. */
+    fun permissionResume(
+        awaiting: Boolean,
+        sdkInt: Int,
+        canRequestPackageInstalls: () -> Boolean,
+    ): PermissionResume? =
+        when {
+            !awaiting || sdkInt < API_O -> null
+            canRequestPackageInstalls() -> PermissionResume.GRANTED
+            else -> PermissionResume.STILL_DENIED
+        }
+
+    private const val API_O = 26
 
     /**
      * Which release APK this till downloads (ut-docs#1541).

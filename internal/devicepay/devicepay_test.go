@@ -1,0 +1,327 @@
+package devicepay
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+)
+
+// fakeBridge is a scripted native side. collect blocks until release is
+// closed (when set) so a test can expire the context first.
+type fakeBridge struct {
+	mu          sync.Mutex
+	caps        string
+	reply       string
+	release     chan struct{}
+	collects    []string
+	cancels     []string
+	setupReply  string
+	setupCalls  []string
+	eduReply    string
+	cancelCalls chan string
+}
+
+func (f *fakeBridge) Capabilities() string { return f.caps }
+
+func (f *fakeBridge) Collect(req string) string {
+	f.mu.Lock()
+	f.collects = append(f.collects, req)
+	f.mu.Unlock()
+	if f.release != nil {
+		<-f.release
+	}
+	return f.reply
+}
+
+func (f *fakeBridge) Cancel(key string) {
+	f.mu.Lock()
+	f.cancels = append(f.cancels, key)
+	f.mu.Unlock()
+	if f.cancelCalls != nil {
+		f.cancelCalls <- key
+	}
+}
+
+func (f *fakeBridge) Setup(provider string) string {
+	f.mu.Lock()
+	f.setupCalls = append(f.setupCalls, provider)
+	f.mu.Unlock()
+	return f.setupReply
+}
+
+func (f *fakeBridge) ShowEducation(string) string { return f.eduReply }
+
+func (f *fakeBridge) collectCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.collects)
+}
+
+func register(t *testing.T, b Bridge) {
+	t.Helper()
+	SetBridge(b)
+	t.Cleanup(func() { SetBridge(nil) })
+}
+
+func validRequest() Request {
+	return Request{Provider: "stripe", AmountMinor: 1000, Currency: "gbp", IdempotencyKey: "k-1", Description: "Sale 42"}
+}
+
+func deadlineCtx(t *testing.T, d time.Duration) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func TestBridgeRegistration(t *testing.T) {
+	if RegisteredBridge() != nil {
+		t.Fatal("no bridge is registered by default")
+	}
+	fb := &fakeBridge{}
+	register(t, fb)
+	if RegisteredBridge() != Bridge(fb) {
+		t.Fatal("RegisteredBridge is not the registered bridge")
+	}
+	SetBridge(nil)
+	if RegisteredBridge() != nil {
+		t.Fatal("SetBridge(nil) must un-register")
+	}
+}
+
+// ADR-0125 §3e: no foreground native shell → declined/not_foreground.
+func TestCollect_NoBridge(t *testing.T) {
+	got := Collect(deadlineCtx(t, time.Second), validRequest())
+	if got.Status != StatusDeclined || got.Reason != "not_foreground" {
+		t.Fatalf("Collect with no bridge = %+v, want declined/not_foreground", got)
+	}
+}
+
+// Validation runs before the bridge is ever reached: nothing is charged
+// for a malformed request.
+func TestCollect_ValidationNeverCallsBridge(t *testing.T) {
+	fb := &fakeBridge{reply: `{"status":"approved","provider_txn_id":"pi_1"}`}
+	register(t, fb)
+	cases := map[string]func(*Request){
+		"zero amount":      func(r *Request) { r.AmountMinor = 0 },
+		"negative amount":  func(r *Request) { r.AmountMinor = -5 },
+		"currency length":  func(r *Request) { r.Currency = "gb" },
+		"currency digits":  func(r *Request) { r.Currency = "g1p" },
+		"empty key":        func(r *Request) { r.IdempotencyKey = "" },
+		"unknown provider": func(r *Request) { r.Provider = "sumup" },
+		"empty provider":   func(r *Request) { r.Provider = "" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := validRequest()
+			mutate(&req)
+			got := Collect(deadlineCtx(t, time.Second), req)
+			if got.Status != StatusDeclined || got.Reason != "bad_request" {
+				t.Fatalf("Collect = %+v, want declined/bad_request", got)
+			}
+		})
+	}
+	t.Run("no deadline", func(t *testing.T) {
+		got := Collect(context.Background(), validRequest())
+		if got.Status != StatusDeclined || got.Reason != "bad_request" {
+			t.Fatalf("Collect without a deadline = %+v, want declined/bad_request", got)
+		}
+	})
+	if n := fb.collectCount(); n != 0 {
+		t.Fatalf("bridge.Collect called %d times for invalid requests, want 0", n)
+	}
+}
+
+// The native side gets the request as JSON with the context's deadline.
+func TestCollect_PassesRequestAndDeadline(t *testing.T) {
+	fb := &fakeBridge{reply: `{"status":"approved","provider_txn_id":"pi_1","charge_id":"ch_1","card_brand":"visa","last4":"4242"}`}
+	register(t, fb)
+	ctx := deadlineCtx(t, 30*time.Second)
+	dl, _ := ctx.Deadline()
+	got := Collect(ctx, validRequest())
+	want := Result{Status: StatusApproved, ProviderTxnID: "pi_1", ChargeID: "ch_1", CardBrand: "visa", Last4: "4242"}
+	if got != want {
+		t.Fatalf("Collect = %+v, want %+v", got, want)
+	}
+	var sent Request
+	if err := json.Unmarshal([]byte(fb.collects[0]), &sent); err != nil {
+		t.Fatalf("bridge got non-JSON request %q: %v", fb.collects[0], err)
+	}
+	if sent.DeadlineUnixMs != dl.UnixMilli() || sent.IdempotencyKey != "k-1" || sent.AmountMinor != 1000 {
+		t.Fatalf("bridge got %+v, want deadline %d and the request fields", sent, dl.UnixMilli())
+	}
+}
+
+// ADR-0125 §3d: the context ends first → Cancel(key) on the native side,
+// and the outcome is pending (the tap may still have gone through).
+func TestCollect_TimeoutCancelsAndIsPending(t *testing.T) {
+	release := make(chan struct{})
+	fb := &fakeBridge{reply: `{"status":"cancelled","reason":"timeout"}`, release: release, cancelCalls: make(chan string, 1)}
+	register(t, fb)
+	t.Cleanup(func() { close(release) })
+	got := Collect(deadlineCtx(t, 50*time.Millisecond), validRequest())
+	if got.Status != StatusPending || got.Reason != "timeout" {
+		t.Fatalf("Collect after the deadline = %+v, want pending/timeout", got)
+	}
+	select {
+	case key := <-fb.cancelCalls:
+		if key != "k-1" {
+			t.Fatalf("Cancel(%q), want the request's idempotency key", key)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bridge.Cancel was never called on timeout")
+	}
+}
+
+// #6439: an unreadable native result is never a decline.
+func TestCollect_BadNativeResultIsPending(t *testing.T) {
+	cases := map[string]string{
+		"not json":        `approved`,
+		"empty":           ``,
+		"unknown status":  `{"status":"maybe"}`,
+		"unknown field":   `{"status":"declined","pan":"4242424242424242"}`,
+		"trailing data":   `{"status":"declined"} {"status":"approved"}`,
+		"approved no txn": `{"status":"approved"}`,
+	}
+	for name, reply := range cases {
+		t.Run(name, func(t *testing.T) {
+			register(t, &fakeBridge{reply: reply})
+			got := Collect(deadlineCtx(t, time.Second), validRequest())
+			if got.Status != StatusPending || got.Reason != "bad_native_result" {
+				t.Fatalf("Collect with native reply %q = %+v, want pending/bad_native_result", reply, got)
+			}
+		})
+	}
+}
+
+// The four ADR §3f statuses pass through as the native side reported them.
+func TestCollect_PassesThroughKnownStatuses(t *testing.T) {
+	for _, reply := range []string{
+		`{"status":"declined","decline_code":"offline_pin_required"}`,
+		`{"status":"cancelled","reason":"customer"}`,
+		`{"status":"pending","reason":"outcome_unknown"}`,
+	} {
+		register(t, &fakeBridge{reply: reply})
+		got := Collect(deadlineCtx(t, time.Second), validRequest())
+		var want Result
+		_ = json.Unmarshal([]byte(reply), &want)
+		if got != want {
+			t.Fatalf("Collect(%s) = %+v, want %+v", reply, got, want)
+		}
+	}
+}
+
+// The Go and Swift sides share one golden JSON shape (§4.2): a field renamed
+// on either side fails here or in the Swift golden test.
+func TestResultGoldenJSON(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "result_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r Result
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		t.Fatalf("golden result does not decode strictly: %v", err)
+	}
+	want := Result{Status: "approved", ProviderTxnID: "pi_123", ChargeID: "ch_123", CardBrand: "visa", Last4: "4242", DeclineCode: "", Reason: ""}
+	if r != want {
+		t.Fatalf("golden decoded to %+v, want %+v", r, want)
+	}
+	rawReq, err := os.ReadFile(filepath.Join("testdata", "request_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req Request
+	dec = json.NewDecoder(bytes.NewReader(rawReq))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		t.Fatalf("golden request does not decode strictly: %v", err)
+	}
+	wantReq := Request{Provider: "stripe", AmountMinor: 1000, Currency: "gbp", IdempotencyKey: "sale-42-try-1", Description: "Sale 42", DeadlineUnixMs: 1763300000000}
+	if req != wantReq {
+		t.Fatalf("golden request decoded to %+v, want %+v", req, wantReq)
+	}
+}
+
+func TestCapabilities(t *testing.T) {
+	if got := Capabilities(); len(got) != 0 {
+		t.Fatalf("Capabilities with no bridge = %v, want empty", got)
+	}
+	register(t, &fakeBridge{caps: `{"tap_to_pay":{"stripe":{"ready":false,"state":"needs_setup","reason":"terms_not_accepted","progress":0}}}`})
+	got := Capabilities()
+	want := ProviderCap{Ready: false, State: "needs_setup", Reason: "terms_not_accepted"}
+	if len(got) != 1 || got["stripe"] != want {
+		t.Fatalf("Capabilities = %+v, want stripe=%+v", got, want)
+	}
+	register(t, &fakeBridge{caps: `garbage`})
+	if got := Capabilities(); len(got) != 0 {
+		t.Fatalf("Capabilities with an unreadable report = %v, want empty", got)
+	}
+}
+
+func TestSetupAndEducation(t *testing.T) {
+	ctx := deadlineCtx(t, time.Second)
+	if got := Setup(ctx, "stripe"); got.OK || got.Reason != "not_foreground" {
+		t.Fatalf("Setup with no bridge = %+v", got)
+	}
+	fb := &fakeBridge{setupReply: `{"ok":true}`, eduReply: `{"ok":false,"reason":"ios_too_old"}`}
+	register(t, fb)
+	if got := Setup(ctx, "sumup"); got.OK || got.Reason != "bad_request" {
+		t.Fatalf("Setup(sumup) = %+v, want bad_request", got)
+	}
+	if len(fb.setupCalls) != 0 {
+		t.Fatal("Setup reached the bridge for an unknown provider")
+	}
+	if got := Setup(ctx, "stripe"); !got.OK {
+		t.Fatalf("Setup = %+v, want ok", got)
+	}
+	if got := ShowEducation(ctx, "stripe"); got.OK || got.Reason != "ios_too_old" {
+		t.Fatalf("ShowEducation = %+v, want ios_too_old", got)
+	}
+	fb.setupReply = `{"ok":true,"secret":"x"}`
+	if got := Setup(ctx, "stripe"); got.OK || got.Reason != "bad_native_result" {
+		t.Fatalf("Setup with an unknown field = %+v, want bad_native_result", got)
+	}
+}
+
+func TestSetup_ContextEnds(t *testing.T) {
+	release := make(chan struct{})
+	register(t, &blockingSetup{release: release})
+	t.Cleanup(func() { close(release) })
+	got := Setup(deadlineCtx(t, 30*time.Millisecond), "stripe")
+	if got.OK || got.Reason != "timeout" {
+		t.Fatalf("Setup after the deadline = %+v, want timeout", got)
+	}
+}
+
+type blockingSetup struct {
+	fakeBridge
+	release chan struct{}
+}
+
+func (b *blockingSetup) Setup(string) string { <-b.release; return `{"ok":true}` }
+
+// Review (ut-docs#3049): a context that has already ended never starts a
+// native collect. Otherwise Cancel(key) can reach the native side before
+// the collect it is meant to stop, and the tap sheet opens for a payment
+// the till has already given up on.
+func TestCollect_EndedContextNeverReachesTheBridge(t *testing.T) {
+	fb := &fakeBridge{reply: `{"status":"approved","provider_txn_id":"pi_1"}`}
+	register(t, fb)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	cancel()
+	got := Collect(ctx, validRequest())
+	if got.Status != StatusPending || got.Reason != ReasonContextCanceled {
+		t.Fatalf("Collect on an ended context = %+v, want pending/context_cancelled", got)
+	}
+	time.Sleep(20 * time.Millisecond) // a goroutine started in error would have run by now
+	if n := fb.collectCount(); n != 0 {
+		t.Fatalf("the bridge was asked to collect %d times on an ended context", n)
+	}
+}

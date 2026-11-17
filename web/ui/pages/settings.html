@@ -1,6 +1,20 @@
 {{ define "content" }}
 <h1>{{ T "settings.title" }}</h1>
 <p id="settings-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+{{/* ut-docs#6551: Android till, update available: say so at the TOP of
+     Settings (above the two-pane shell) so a manager does not have to hunt for
+     the status-bar chip. State, not event: not dismissible, gone once current.
+     Server-rendered per request, so a removed Settings permission simply drops
+     it. The action only scrolls to the existing #android-update form. */}}
+{{ if and updateinstallbridge updateavailable }}
+<div class="sync-banner android-update-banner" data-testid="android-update-banner" role="region" aria-label="{{ T "settings.update.android.banner_title" }}">
+  <div class="android-update-banner-text">
+    <strong><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ printf (T "settings.update.android.banner_version") latestversion }}</strong>
+    <p>{{ printf (T "settings.update.android.banner_body") appversion }}</p>
+  </div>
+  <a class="btn" href="#android-update" data-android-update-goto>{{ T "settings.update.android.banner_action" }}</a>
+</div>
+{{ end }}
 <!-- ut-docs#1960: two-pane master-detail — the section list (+ a search box
      that finds individual settings) on the inline-start side, the selected
      section's card on the other. Same visual shell as the manual (help.html
@@ -353,7 +367,7 @@
        real tablet as "it just brings me to the software update section and
        does not install". The install path itself was fine; nobody could
        reach it. The PIN gate is unchanged by the move. -->
-  <form id="android-update-form" class="set-row"
+  <form id="android-update-form" class="set-row" tabindex="-1"
         data-downloading="{{ T "settings.update.android.downloading" }}"
         data-progress="{{ T "settings.update.android.progress" }}"
         data-installing="{{ T "settings.update.android.installing" }}"
@@ -362,6 +376,8 @@
         data-failed="{{ T "settings.update.android.failed" }}"
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
+        data-allowgranted="{{ T "settings.update.android.allow_granted" }}"
+        data-allowdenied="{{ T "settings.update.android.allow_still_denied" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
         data-uptodate="{{ T "settings.update.up_to_date" }}"
         data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
@@ -378,6 +394,19 @@
     </label>
     <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
     <div id="android-update-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+    {{/* ut-docs#6551: shown (un-hidden) by the script below when the shell
+         reports needs_permission: Android has not allowed this app to install
+         apps. Inline guidance, never a modal; the settings screen opens only on
+         the manager's own tap, so the text is read first. */}}
+    <div class="notice-block-warn android-allow-panel" data-testid="android-allow-panel" role="status" hidden>
+      <strong>{{ T "settings.update.android.allow_title" }}</strong>
+      <p>{{ T "settings.update.android.allow_body" }}</p>
+      <p class="android-allow-note" data-android-allow-note hidden></p>
+      <div class="android-allow-actions">
+        <button type="button" class="btn" data-android-allow-open>{{ T "settings.update.android.allow_open" }}</button>
+        <button type="button" class="btn secondary" data-android-allow-later>{{ T "settings.update.android.allow_later" }}</button>
+      </div>
+    </div>
   </form>
   <script>
   (function () {
@@ -452,11 +481,59 @@
     // The shell's own report: % while downloading, the installer opening, a
     // failure the operator can retry with the same button, or (ut-docs#4495)
     // 'closed' — the installer went away or never came up — which says so.
+    // ut-docs#6551: the "allow installs" guidance. Shown when the shell says
+    // Android has not allowed this app to install apps (live, or remembered
+    // across the chip's navigation to this page); the system screen opens only
+    // on the manager's tap of "Open Android settings".
+    // ut-docs#6551: the banner's "Go to update" lands here, focus included, so a
+    // keyboard or screen-reader user arrives at the controls. No autoscroll on
+    // load: only after that tap. The hash change (settings script) opens the card first.
+    var goBtn = document.querySelector('[data-android-update-goto]');
+    if (goBtn) {
+      goBtn.addEventListener('click', function () {
+        setTimeout(function () {
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          form.focus({ preventScroll: true });
+        }, 60);
+      });
+    }
+    var allow = form.querySelector('[data-testid="android-allow-panel"]');
+    var allowNote = form.querySelector('[data-android-allow-note]');
+    var showAllow = function (denied) {
+      if (!allow) { return; }
+      allow.hidden = false;
+      if (allowNote) { allowNote.hidden = !denied; allowNote.textContent = denied ? T('allowdenied') : ''; }
+    };
+    var hideAllow = function () { if (allow) { allow.hidden = true; } };
+    var openBtn = form.querySelector('[data-android-allow-open]');
+    var laterBtn = form.querySelector('[data-android-allow-later]');
+    if (openBtn) {
+      openBtn.addEventListener('click', function () {
+        if (!window.utAndroidUpdater || !window.utAndroidUpdater.openPermissionSettings()) { msg.textContent = T('nobridge'); }
+      });
+    }
+    if (laterBtn) {
+      laterBtn.addEventListener('click', function () {
+        hideAllow();
+        if (window.utAndroidUpdater) { window.utAndroidUpdater.clearPermission(); }
+      });
+    }
+    var pending = window.utAndroidUpdater && window.utAndroidUpdater.pendingPermission();
+    if (pending) { showAllow(pending === 'denied'); }
     document.addEventListener('ut:android-update', function (e) {
       var s = e.detail || {};
+      if (s.state === 'needs_permission') {
+        showAllow(s.error === 'still_denied');
+        msg.textContent = '';
+        btn.disabled = false;
+        return;
+      }
+      hideAllow();
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
     });
+    // The submit handler maps a rejected start; the shell answers a refused
+    // permission with needs_permission AFTER 'started', so nothing more here.
   })();
   </script>
   {{ end }}
@@ -471,6 +548,10 @@
   {{ if .autoUpdateFollowsMain }}
   {{/* ut-docs#4031, #4053: followLine says why it doesn't follow, when it doesn't. */}}
   <p class="muted" data-testid="update-follows-main" data-follow-line="{{ .autoUpdateFollowLine }}">{{ if eq .autoUpdateFollowLine "main_off" }}{{ T "settings.update.follows_main_off" }}{{ else if eq .autoUpdateFollowLine "checks_off" }}{{ T "settings.update.follows_main_checks_off" }}{{ else if eq .autoUpdateFollowLine "manual" }}{{ printf (T "settings.update.follows_main_manual") .autoUpdateMainVersion }}{{ else if eq .autoUpdateFollowLine "failed" }}{{ printf (T "settings.update.follows_main_failed") .autoUpdateMainVersion }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
+  {{/* ut-docs#2739: read-only here; the main till sets update.fleet_follow. */}}
+  {{ if and (eq .autoUpdateFleetFollow "nightly") (eq .autoUpdateFollowLine "follows") }}
+  <p class="muted" data-testid="update-follow-policy">{{ printf (T "settings.update.follows_main_nightly") .autoUpdateTime }}</p>
+  {{ end }}
   {{ else }}
   <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-update-schedule" }}{{ template "set-lock-note" }}{{ end }}
@@ -479,6 +560,13 @@
       <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
     </label>
     <input type="time" name="time" value="{{ .autoUpdateTime }}">
+    {{/* ut-docs#2739 (ADR-0114 §5): when additional tills install this till's version. */}}
+    <label class="set-row" for="update-fleet-follow">{{ T "settings.update.fleet_follow_label" }}</label>
+    <select name="fleet_follow" id="update-fleet-follow">
+      <option value="next_idle"{{ if ne .autoUpdateFleetFollow "nightly" }} selected{{ end }}>{{ T "settings.update.fleet_follow_next_idle" }}</option>
+      <option value="nightly"{{ if eq .autoUpdateFleetFollow "nightly" }} selected{{ end }}>{{ T "settings.update.fleet_follow_nightly" }}</option>
+    </select>
+    <p class="muted">{{ T "settings.update.fleet_follow_hint" }}</p>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
   </fieldset>
@@ -1378,10 +1466,11 @@
          says so, rather than "installing… if you're offline".
          ut-docs#3194: a language spec with no listing is dropped silently, so
          its chip says "looking for", never "installing". -->
-    <span class="chip chip-note">{{ if and (eq .CanonicalType "tax") .NotPublished }}{{ printf (T "setup.base_plugins.not_published_tax") .LocaleUpper }}{{ else if eq .CanonicalType "tax" }}{{ printf (T "setup.base_plugins.pending_tax") .LocaleUpper }}{{ else }}{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}{{ end }}</span>
+    {{ if .Chip }}{{ template "tax_autoinstall_chip.html" .Chip }}{{ else }}<span class="chip chip-note">{{ if and (eq .CanonicalType "tax") .NotPublished }}{{ printf (T "setup.base_plugins.not_published_tax") .LocaleUpper }}{{ else if eq .CanonicalType "tax" }}{{ printf (T "setup.base_plugins.pending_tax") .LocaleUpper }}{{ else }}{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}{{ end }}</span>{{ end }}
     <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
             hx-post="/api/settings/dismiss-pending-base-plugin"
-            hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'
+            hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale "market" .Market }}'
+            {{ if .ConfirmText }}hx-confirm="{{ .ConfirmText }}" data-confirm-ok="{{ T "setup.base_plugins.dismiss_btn" }}"{{ end }}
             hx-target="closest .chip-row" hx-swap="outerHTML"
             hx-disabled-elt="this">{{ T "setup.base_plugins.dismiss_btn" }}</button>
     <!-- ut-docs#865 review finding F1: a separate message span, outside the

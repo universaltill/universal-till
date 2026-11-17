@@ -225,6 +225,34 @@ func (m *fakeMarketplace) publishWasmTaxVersion(t *testing.T, listingID, pluginI
 	l.latest = version
 }
 
+// publishCustomTaxManifest publishes a signed release of an arbitrary tax
+// manifest with a real wasm module (ADR-0172 tests: a manifest that
+// subscribes fiscal.sign.ask, asks for net:, and so on).
+func (m *fakeMarketplace) publishCustomTaxManifest(t *testing.T, listingID string, manifest *plugins.Manifest, wasmBin []byte) {
+	t.Helper()
+	if manifest.Entrypoint == "" {
+		manifest.Entrypoint = "./plugin.wasm"
+		manifest.Executable = "plugin.wasm"
+		manifest.Runtime = "wasm"
+	}
+	if manifest.CanonicalType == "" {
+		manifest.CanonicalType = "tax"
+	}
+	if manifest.DeviceArch == "" {
+		manifest.DeviceArch = "any"
+	}
+	artifact := signedFakeMktArtifactWithBinary(t, m.privateKey, manifest, "plugin.wasm", wasmBin)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.listings[listingID]
+	if l == nil {
+		l = &fakeMktListing{releases: map[string]fakeMktRelease{}}
+		m.listings[listingID] = l
+	}
+	l.releases[manifest.Version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
+	l.latest = manifest.Version
+}
+
 // publishLanguageVersion publishes a signed, asset-only (runtime "none")
 // CanonicalType:"language" release shipping a real locales/<locale>.json
 // overlay — the marketplace-install-flow counterpart to Manager's own
@@ -368,14 +396,32 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			// wrong (snake_case) key.
 			wire := make([]map[string]any, 0, len(page))
 			for _, e := range page {
-				wire = append(wire, map[string]any{
+				entry := map[string]any{
 					"id":               e.ID,
 					"listing_id":       e.ListingID,
 					"name":             e.Name,
 					"version":          e.Version,
 					"type":             e.CanonicalType,
 					"availableLocales": e.AvailableLocales,
-				})
+				}
+				// ADR-0172: the catalogue's own wire keys, sent only when a test set
+				// them (every pre-existing test leaves them unset).
+				if len(e.Markets) > 0 {
+					entry["markets"] = e.Markets
+				}
+				if e.TrustTier != "" {
+					entry["trustLevel"] = e.TrustTier
+				}
+				if e.PaidListing {
+					entry["paidListing"] = true
+				}
+				if len(e.Permissions) > 0 {
+					entry["permissions"] = e.Permissions
+				}
+				if len(e.Architectures) > 0 {
+					entry["architectures"] = e.Architectures
+				}
+				wire = append(wire, entry)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"plugins": wire, "nextPageToken": nextToken})

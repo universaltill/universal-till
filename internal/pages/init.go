@@ -576,6 +576,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	dp.MainTillUnreachable = func(ctx context.Context) bool {
 		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).mainTillGone()
 	}
+	wireThemeAvailable(dp)       // personal theme validity for ResolvedTheme (ut-docs#3440)
 	registerSyncCatalog(mux, dp) // additional-till catalogue write-through, main-till side (ut-docs#2817); dispatches into the catalogue handlers on this same mux
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
@@ -593,6 +594,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncBearerRotate(mux, dp)   // a replica swaps its LAN sync bearer, main-till side (ut-docs#5198)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
+	registerTaxAutoInstallChip(mux, dp) // automatic tax plugin install status (ADR-0172 §5, ut-docs#6287)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
 	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)
 	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
@@ -633,6 +635,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
 	dp.CloudLink = newCloudLinkClient(dp)
+	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
+	// host fn #6455) reaches the cloud with the live enrolment.
+	wirePayBroker(dp.Cfg)
 	// Network services start through netaccess.StartService, which skips them
 	// on the public demo till (ADR-0113 §1.6, ut-docs#2795); the local loops
 	// (EOD, sweeps, reconciles) and the main till's inbound link hub always run.
@@ -692,6 +697,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerAuditPage(mux, dp)           // manager-only audit-trail browse/filter page
 	registerChannelOrdersPage(mux, dp)   // manager-only read-only Online orders list (ADR-0169 §9, ut-docs#4768)
 	registerNoticesPages(mux, dp)        // notices from Universal Till/partners: bell, inbox, toast, critical strip (ADR-0176, ut-docs#5366)
+	registerMyDisplayPage(mux, dp)       // per-operator theme + browsing mode (ut-docs#3440)
 	registerIssueReportPage(mux, dp)     // manager-only "report an issue" capture (ADR-0022)
 	registerMyReportsPage(mux, dp)       // manager-only sent-report tracking list (ut-docs#348)
 	registerDiagnosticsSettings(mux, dp) // diagnostic mode: nav chip, code redemption, local stop (ADR-0092, ut-docs#2169)

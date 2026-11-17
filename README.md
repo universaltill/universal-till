@@ -158,12 +158,25 @@ problem surface in Settings, and the wizard states plainly that Universal
 Till holds the device's admin credential (PUK) on the merchant's behalf,
 requestable at any time (ADR-0045/ADR-0053).
 
-Unlike the free language packs above, a country's *fiscal* plugin (e.g.
+One narrow exception installs a *tax* plugin by itself
+([ADR-0172](https://github.com/universaltill/ut-docs/blob/main/adr/0172-a-new-till-auto-installs-its-countrys-tax-rate-plugin.md),
+which amends ADR-0025 decision 4): when setup finishes (a till that joined a
+my. shop or one set up with the wizard alone), the till installs the shop
+country's tax plugin if there is exactly one that is free, first-party
+(`official`), names the country in its `markets`, signs nothing (no
+`fiscal.*` hook or capability) and asks for no network and no permission
+beyond `events:receive`, `sales:read` and `storage` (checked again on the
+Ed25519-verified manifest). It goes through the normal marketplace install,
+is first loaded in an unregistered sandbox with one dry `tax.rate.ask`
+before it is persisted, never blocks setup or checkout, shows a status chip
+(setup landing page, Settings), and is not reinstalled once uninstalled.
+
+Unlike the free language packs above, any other country *fiscal* plugin (e.g.
 [ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) —
 §12 UStG dine-in/takeaway VAT-rate switching plus TSE signing/DSFinV-K
 export) is never auto-installed: the same business-identity step only
 *prompts* to install it when the marketplace actually has a matching
-listing, and only installs on an explicit tap
+listing (by its `markets`), and only installs on an explicit tap
 ([ADR-0025](https://github.com/universaltill/ut-docs/blob/main/adr/0025-country-tax-and-fiscal-compliance.md)
 decision 4) — offline-first means a required fiscal plugin can never be a
 silent hard dependency. Declining costs nothing: the till still runs
@@ -245,6 +258,10 @@ All downloads: https://github.com/universaltill/universal-till/releases —
 then open http://localhost:8080; the first-boot wizard sets language,
 currency and the admin PIN, then opens the Import page, where you import
 your products from a file, load sample data to try the till, or skip.
+
+Already have products? The Import page's **Import item photos by SKU** card adds photos in bulk
+(CSV of `sku` + image path/`https` URL, and/or a ZIP of `<SKU>.jpg` files; preview first, existing
+items only, main till only; see `internal/photoimport`).
 
 ### Option 2: Build from Source
 
@@ -679,7 +696,7 @@ We'll even link to notable forks in this README! 🎉
 - **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
 - **Android** (tablets, POS terminals) ✅ — including 32-bit armv7 devices on Android 8-10 / Fire OS 7, whose app seccomp filter kills unknown syscalls; CI runs the armv7 boot under qemu against the Android 9 allow-list and in a qemu-system-arm VM with the AOSP seccomp filter that must kill the pristine-libc build (`scripts/ci/sim-armv7-seccomp.sh`, ADR-0188). Fire OS 7 hardware check pending (ut-docs#6300)
-- **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
+- **iOS** (iPhone, iPad; iOS/iPadOS 16 or later) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 
 ### Tested Hardware
