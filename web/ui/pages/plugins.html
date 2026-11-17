@@ -20,7 +20,15 @@
   </template>
 
   <div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem">
-    <template x-for="p in items" :key="p.id">
+    <template x-for="(p, i) in items" :key="p.id">
+      <div style="display:contents">
+      {{/* ADR-0194: the plugins that ship inside the app (server flag p.bundled)
+           sit first under their own heading; the list is sorted so one heading
+           covers the group. */}}
+      <div x-show="p.bundled && (i === 0 || !items[i - 1].bundled)" style="grid-column:1 / -1" data-testid="plugins-built-in-heading">
+        <h2 style="margin:.2rem 0">{{ T "plugins.manage.group.built_in" }}</h2>
+        <p class="muted" style="margin:.2rem 0">{{ T "plugins.manage.built_in_hint" }}</p>
+      </div>
       <div class="card" x-data="{ vOpen: false, versions: null, vLoading: false, vError: null }">
         <div style="display:flex; justify-content:space-between; align-items:baseline">
           <h3 style="margin:.2rem 0" x-text="p.name"></h3>
@@ -61,7 +69,7 @@
           <span class="tag" x-show="p.versionUnknown" title="{{ T "plugins.manage.update_unknown_hint" }}">{{ T "plugins.manage.update_unknown" }}</span>
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
-          <a class="btn secondary" x-show="p.enabled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
+          <a class="btn secondary" x-show="p.enabled || p.bundled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
           <a class="btn secondary" x-show="p.docsRoute" :href="p.docsRoute">{{ T "plugins.manage.action.docs" }}</a>
           <button class="btn secondary" x-show="p.enabled"
                   @click="act('/api/plugins/' + p.id + '/disable', 'POST')">{{ T "plugins.manage.action.disable" }}</button>
@@ -72,7 +80,7 @@
           <a class="btn secondary" hx-boost="false"
              :href="'/api/plugins/' + encodeURIComponent(p.id) + '/export?version=' + encodeURIComponent(p.version)"
              :download="p.id + '-' + p.version + '.tar.gz'">{{ T "plugins.manage.action.export" }}</a>
-          <button class="btn secondary"
+          <button class="btn secondary" x-show="!p.bundled"
                   @click="vOpen = !vOpen; if (vOpen && versions === null && !vLoading) {
                     vLoading = true; vError = null;
                     fetch('/api/plugins/' + encodeURIComponent(p.id) + '/versions').then(function (res) {
@@ -83,7 +91,7 @@
                       return res.json().then(function (j) { vLoading = false; versions = (j.data && j.data.versions) || []; });
                     }).catch(function (e) { vLoading = false; versions = null; vError = String(e); });
                   }">{{ T "plugins.manage.action.versions" }}</button>
-          <button class="btn danger"
+          <button class="btn danger" x-show="!p.bundled"
                   @click="actAfterConfirm(p.uninstallConfirm || ('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?'), $event.currentTarget, '/api/plugins/' + p.id + '/uninstall', 'POST', undefined, '{{ T "plugins.manage.action.uninstall" }}')">{{ T "plugins.manage.action.uninstall" }}</button>
         </div>
         {{/* ut-docs#2239: version history is fetched lazily on first open per
@@ -124,6 +132,7 @@
           </template>
         </div>
       </div>
+      </div>
     </template>
   </div>
 </div>
@@ -148,7 +157,9 @@
     'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
     'plugins.uninstall.error.replica_use_primary': '{{ T "plugins.uninstall.error.replica_use_primary" }}',
     'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}',
-    'plugins.manage.error.revoked': '{{ T "plugins.manage.error.revoked" }}'
+    'plugins.manage.error.revoked': '{{ T "plugins.manage.error.revoked" }}',
+    'plugins.manage.error.bundled_no_uninstall': '{{ T "plugins.manage.error.bundled_no_uninstall" }}',
+    'plugins.install.error.code_refused_appstore': '{{ T "plugins.install.error.code_refused_appstore" }}'
   };
   // Uninstall / roll back ask first, in the till's own dialog (ut-docs#6116).
   // act() runs only on an explicit Confirm.

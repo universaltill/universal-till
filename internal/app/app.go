@@ -38,6 +38,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/bundled"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
@@ -464,6 +465,15 @@ func Run(ctx context.Context) error {
 	// generates; a replica fetches the primary's key once and persists it.
 	// paths.Data("secrets", ...) — never cwd-relative (ADR-0003).
 	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, lantls.NewPeerClient(15*time.Second))))
+
+	// ADR-0194: the App Store build ships the Stripe and SumUp plugins inside
+	// the app. Register the lock verifier the wasm loader consults, then put
+	// the verified bundle on disk (first install disabled) BEFORE plugins.Init
+	// loads the rows. Best-effort: a refused bundle is logged, never fatal.
+	bundled.Register()
+	if _, err := bundled.Sync(ctx, database.DB); err != nil {
+		log.Warnf("boot: bundled plugins: %v", err)
+	}
 
 	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {

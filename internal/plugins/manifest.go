@@ -1332,6 +1332,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	if err := m.RefuseOnTill(); err != nil {
 		return err
 	}
+	// App Store channel (ADR-0194): a code plugin persists only when the
+	// bundled loader vouched for its bytes — the backstop for restore,
+	// replica and directive paths that never went through an installer.
+	if !opts.BundledLockVerified {
+		if err := RefuseCodeRuntime(m.Runtime); err != nil {
+			return err
+		}
+	}
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1600,6 +1608,15 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return fmt.Errorf("prune plugin permission: %w", err)
 	}
 
+	// The upsert above always writes is_active = 1. A caller that installs a
+	// plugin switched off (the bundled first-party set, ADR-0194) gets that in
+	// THIS transaction, so no committed state ever has it enabled.
+	if opts.InstallInactive {
+		if err := repo.SetPluginActive(ctx, tx, m.ID, false); err != nil {
+			return fmt.Errorf("install inactive: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
@@ -1626,6 +1643,16 @@ type InstallOptions struct {
 	SHA256           string
 	TrustLevel       string // untrusted|trusted|system
 	Uploader         string // user/source identifier
+	// BundledLockVerified is set ONLY by internal/plugins/bundled after it has
+	// re-verified the embedded bytes against the compiled-in lock. It is the
+	// one way a code plugin is persisted on the App Store channel (guard:
+	// scripts/ci/guard-appstore-no-code-fetch.sh).
+	BundledLockVerified bool
+	// InstallInactive lands the plugin disabled, inside the persist
+	// transaction (the default persist activates it). Used by the bundled set:
+	// a first install is off until the shop turns it on, and an app update
+	// keeps a plugin the shop had switched off, off.
+	InstallInactive bool
 }
 
 // The sales-channel manifest block (ADR-0169, ut-docs#4759; validation in

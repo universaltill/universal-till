@@ -128,6 +128,12 @@ jobs:
         run: bash scripts/ci/guard-store-private.sh
       - name: Store-private guard regression test (ut-docs#3052)
         run: bash scripts/ci/guard-store-private_test.sh
+      - name: App Store build never downloads or imports code — every install path gated, bundled set has no network, lock well-formed (ADR-0194, ut-docs#6565)
+        run: bash scripts/ci/guard-appstore-no-code-fetch.sh
+      - name: App Store no-code-fetch guard regression test (ADR-0194, ut-docs#6565)
+        run: bash scripts/ci/guard-appstore-no-code-fetch_test.sh
+      - name: Bundled first-party plugin fetch fails closed on any hash mismatch — offline behaviour test (ADR-0194, ut-docs#6565)
+        run: bash scripts/ci/fetch-bundled-plugins_test.sh
       - name: Every Version stamp also stamps BuildDate (ADR-0160 §6, ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)
@@ -1025,6 +1031,28 @@ jobs:
         with:
           name: playwright-report
           path: tests/e2e/playwright-report/
+
+  # ADR-0194 / Apple 2.5.2 (ut-docs#6565): the App Store build embeds the
+  # first-party Stripe and SumUp plugins. This job fetches the PINNED release
+  # bundles (hash-verified against bundled.lock.json, fail closed) on a
+  # GitHub-hosted runner, builds with the `bundledplugins` tag, and runs the
+  # real wasm through install, lock re-verification, load and the demo paths
+  # on the App Store channel. Public repos only: no token, no secret.
+  bundled-plugins:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
+      - name: Fetch the pinned first-party plugin bundles (lock-verified)
+        run: bash scripts/ci/fetch-bundled-plugins.sh
+      - name: Build with the bundled plugins embedded
+        run: go build -tags bundledplugins ./...
+      - name: Real Stripe and SumUp wasm install, load and run their demo paths on the App Store channel
+        run: go vet -tags bundledplugins ./internal/plugins/bundled && go test -tags bundledplugins -count=1 ./internal/plugins/bundled
 
   contract:
     runs-on: ubuntu-latest

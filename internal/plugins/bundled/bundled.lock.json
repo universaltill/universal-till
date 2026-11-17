@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "_comment": "Pinned first-party plugin releases embedded in the App Store build (ADR-0194, Apple 2.5.2). Edits need owner review. Refresh: publish the plugin release, then update version, release_tag, bundle_sha256 and the file hashes from that release's bundle.",
+  "plugins": [
+    {
+      "id": "com.universaltill.payment-stripe",
+      "version": "1.5.0",
+      "repo": "universaltill/ut-plugin-payment-stripe",
+      "release_tag": "v1.5.0",
+      "bundle_name": "com.universaltill.payment-stripe_1.5.0_universal.tar.gz",
+      "bundle_sha256": "3cd79495295311a79da19e8dbdcf0d6bc60c65cacc11689e3e31eedfad326a03",
+      "manifest_sha256": "cda855808fcc2390f69ce5a59d9732584d879572f9a6e163a223234fef942b5b",
+      "wasm_path": "bin/plugin.wasm",
+      "wasm_sha256": "397f771226ff0d8b63cb8036c835f36501fe7044eb9f87951d4215505df4fb7a",
+      "files": {}
+    },
+    {
+      "id": "com.universaltill.payment-sumup",
+      "version": "1.5.1",
+      "repo": "universaltill/ut-plugin-payment-sumup",
+      "release_tag": "v1.5.1",
+      "bundle_name": "com.universaltill.payment-sumup_1.5.1_universal.tar.gz",
+      "bundle_sha256": "ec637443ff39b1fd71a5835e43d1dfdc798721eb0f55fd8d15934d4fc14c378b",
+      "manifest_sha256": "3675d08ed3cd3f8a587ddea2174a911e2c04369bf4892957d9a43b0536a941f9",
+      "wasm_path": "bin/plugin.wasm",
+      "wasm_sha256": "2617c46bf42929be0765a381cca2906070ba52270ba387e92aa4da49135e2298",
+      "files": {
+        "locales/de.json": "9fdfa5e24fb04f1fe8f8fd4554d7939a9c39a1e0b271e79d36a1ceee0ded8fb7",
+        "locales/en.json": "bd884bb25d90bdb20db49c11ebfcb5f3c30c3e5d8f51c5cd074bcd79da03ee19",
+        "locales/tr.json": "88a8cad53ec53495c49e47b7e254b8ee0f72450832762c0a3301ee2d9f0c9c6b"
+      }
+    }
+  ]
+}

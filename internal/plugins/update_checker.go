@@ -141,6 +141,12 @@ func (uc *UpdateChecker) getInstalledPlugins(ctx context.Context) ([]installedPl
 	}
 	var plugins []installedPlugin
 	for _, r := range rows {
+		// ADR-0194: on the App Store channel an installed code plugin (the
+		// bundled Stripe/SumUp set) moves only with an app release, never
+		// through the marketplace.
+		if RefuseCodeRuntime(r.Runtime) != nil {
+			continue
+		}
 		plugins = append(plugins, installedPlugin{
 			ID:      r.ID,
 			Name:    r.Name,
@@ -150,6 +156,10 @@ func (uc *UpdateChecker) getInstalledPlugins(ctx context.Context) ([]installedPl
 	}
 	return plugins, nil
 }
+
+// CompareVersions is compareVersions for packages outside plugins (the
+// bundled first-party loader decides whether an embedded release is newer).
+func CompareVersions(v1, v2 string) int { return compareVersions(v1, v2) }
 
 // compareVersions compares two semantic version strings
 // Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal

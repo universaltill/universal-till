@@ -89,6 +89,10 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 	if i == nil || i.client == nil {
 		return nil, fmt.Errorf("marketplace installer not configured")
 	}
+	// Before any network use or staging (ADR-0194, App Store channel).
+	if err := RefuseCodeCanonicalType(req.CanonicalType); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.ListingID) == "" {
 		return nil, fmt.Errorf("listing_id is required")
 	}

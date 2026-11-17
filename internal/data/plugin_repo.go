@@ -491,6 +491,20 @@ func (r *PluginRepo) SetPluginActive(ctx context.Context, tx *sql.Tx, pluginID s
 	return nil
 }
 
+// PluginTrustLevel returns the installed plugin's trust level ("system" for
+// the first-party plugins that ship inside the app, ADR-0194). found is false
+// when the plugin is not installed.
+func (r *PluginRepo) PluginTrustLevel(ctx context.Context, pluginID string) (trust string, found bool, err error) {
+	err = r.db.QueryRowContext(ctx, `SELECT COALESCE(trust_level, '') FROM plugins WHERE id = ? LIMIT 1`, pluginID).Scan(&trust)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, pluginObs.wrap("plugin_trust_level", err)
+	}
+	return trust, true, nil
+}
+
 // GetPlugin returns plugin metadata optionally filtered by version.
 func (r *PluginRepo) GetPlugin(ctx context.Context, pluginID, version string) (PluginInfoRow, bool, error) {
 	row := PluginInfoRow{}

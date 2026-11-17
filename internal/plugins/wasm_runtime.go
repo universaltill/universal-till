@@ -678,6 +678,15 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 	if err != nil {
 		return fmt.Errorf("read module: %w", err)
 	}
+	// ADR-0194 (App Store channel): only a bundled plugin whose bytes match
+	// the compiled-in lock is ever compiled. The check is on raw, the very
+	// bytes compiled below, so there is no gap between verify and load. A
+	// wasm row that landed any other way (join snapshot, restored DB) fails
+	// here like any load failure: Sync marks it 'broken', which is what the
+	// tax and fiscal fail-closed checks read (ut-docs#368).
+	if !codeLoadAllowed(pluginID, version, path, raw) {
+		return fmt.Errorf("%w: %s is not a bundled plugin", ErrCodePluginRefused, pluginID)
+	}
 	start := time.Now()
 	compiled, rt, outcome, err := w.compile(pluginID, version, raw)
 	if outcome == wasmLoadCacheHit && warmed {
