@@ -763,6 +763,37 @@ it, and the first call wins.
   calls `setInstallChannel` is treated as `appstore`.
 - Signing is untouched by this setting.
 
+## Google Play flavor (ut-docs#6409, ADR-0194)
+
+A fourth product flavor, `play`, in the same `abi` dimension, produces the
+Google Play **App Bundle**: `./gradlew bundlePlayRelease -PinstallChannel=play`
+-> `app/build/outputs/bundle/playRelease/app-play-release.aab`.
+
+| | sideload (`arm64`/`armv7`/`universal`) | `play` |
+|---|---|---|
+| versionCode | base*10 + 2 / 1 / 0 | base*10 + **5** |
+| `INSTALL_CHANNEL` | `-PinstallChannel` (default `sideload`) | hard-wired `play` |
+| `REQUEST_INSTALL_PACKAGES`, update FileProvider | yes (`src/sideload/AndroidManifest.xml`) | **absent** |
+| self-update code (`UpdateLogic`, `SelfUpdateActivity`, signer pins) | `src/sideload` | none; `src/play` has an inert stub |
+| signing | release key (`ANDROID_KEYSTORE_*`) | **upload** key (`ANDROID_UPLOAD_KEYSTORE_PATH/_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`), a different key; Play App Signing re-signs with the app key (#6395) |
+| ABIs | one each / both | arm64-v8a + armeabi-v7a (64-bit always present) |
+
+Without the upload env vars the bundle is built unsigned (offline/CI check).
+Language splits are off: the app switches language in-app, so every language
+must ship in the base module. `targetSdk` is 36.
+
+Consumption-only UI (no plan purchase, no link-out, claim code as plain text)
+is decided in Go from the channel (`internal/buildinfo.Channel`); the shell only
+hands `play` over once (TillService). Nothing in the play bundle can install
+packages.
+
+Verify any bundle with `scripts/check-aab.sh <file.aab> [--allow-unsigned]
+[--expect-version-code N] [--expect-cert-sha256 HEX]` (needs aapt2 from the
+SDK build-tools, plus the JDK's jarsigner/keytool; uses `BUNDLETOOL_JAR` for
+the manifest when set). The `PlayBuildHasNoSelfUpdateTest` unit test
+(`./gradlew testPlayReleaseUnitTest`) keeps the update code out of the flavor.
+The sideload-only tests live in `src/testSideload`.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)
