@@ -1733,6 +1733,7 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
 		ListingID:  listingID,
 		Version:    version,
+		TrustTier:  listingCatalogTier(d, listingID),
 		MerchantID: effCfg.Marketplace.ClientID,
 		StoreID:    effCfg.Marketplace.StoreID,
 		DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
