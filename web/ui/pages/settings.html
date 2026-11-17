@@ -1,6 +1,20 @@
 {{ define "content" }}
 <h1>{{ T "settings.title" }}</h1>
 <p id="settings-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+{{/* ut-docs#6551: Android till, update available: say so at the TOP of
+     Settings (above the two-pane shell) so a manager does not have to hunt for
+     the status-bar chip. State, not event: not dismissible, gone once current.
+     Server-rendered per request, so a removed Settings permission simply drops
+     it. The action only scrolls to the existing #android-update form. */}}
+{{ if and updateinstallbridge updateavailable }}
+<div class="sync-banner android-update-banner" data-testid="android-update-banner" role="region" aria-label="{{ T "settings.update.android.banner_title" }}">
+  <div class="android-update-banner-text">
+    <strong><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ printf (T "settings.update.android.banner_version") latestversion }}</strong>
+    <p>{{ printf (T "settings.update.android.banner_body") appversion }}</p>
+  </div>
+  <a class="btn" href="#android-update" data-android-update-goto>{{ T "settings.update.android.banner_action" }}</a>
+</div>
+{{ end }}
 <!-- ut-docs#1960: two-pane master-detail — the section list (+ a search box
      that finds individual settings) on the inline-start side, the selected
      section's card on the other. Same visual shell as the manual (help.html
@@ -353,7 +367,7 @@
        real tablet as "it just brings me to the software update section and
        does not install". The install path itself was fine; nobody could
        reach it. The PIN gate is unchanged by the move. -->
-  <form id="android-update-form" class="set-row"
+  <form id="android-update-form" class="set-row" tabindex="-1"
         data-downloading="{{ T "settings.update.android.downloading" }}"
         data-progress="{{ T "settings.update.android.progress" }}"
         data-installing="{{ T "settings.update.android.installing" }}"
@@ -362,6 +376,8 @@
         data-failed="{{ T "settings.update.android.failed" }}"
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
+        data-allowgranted="{{ T "settings.update.android.allow_granted" }}"
+        data-allowdenied="{{ T "settings.update.android.allow_still_denied" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
         data-uptodate="{{ T "settings.update.up_to_date" }}"
         data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
@@ -378,6 +394,19 @@
     </label>
     <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
     <div id="android-update-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+    {{/* ut-docs#6551: shown (un-hidden) by the script below when the shell
+         reports needs_permission: Android has not allowed this app to install
+         apps. Inline guidance, never a modal; the settings screen opens only on
+         the manager's own tap, so the text is read first. */}}
+    <div class="notice-block-warn android-allow-panel" data-testid="android-allow-panel" role="status" hidden>
+      <strong>{{ T "settings.update.android.allow_title" }}</strong>
+      <p>{{ T "settings.update.android.allow_body" }}</p>
+      <p class="android-allow-note" data-android-allow-note hidden></p>
+      <div class="android-allow-actions">
+        <button type="button" class="btn" data-android-allow-open>{{ T "settings.update.android.allow_open" }}</button>
+        <button type="button" class="btn secondary" data-android-allow-later>{{ T "settings.update.android.allow_later" }}</button>
+      </div>
+    </div>
   </form>
   <script>
   (function () {
@@ -452,11 +481,59 @@
     // The shell's own report: % while downloading, the installer opening, a
     // failure the operator can retry with the same button, or (ut-docs#4495)
     // 'closed' — the installer went away or never came up — which says so.
+    // ut-docs#6551: the "allow installs" guidance. Shown when the shell says
+    // Android has not allowed this app to install apps (live, or remembered
+    // across the chip's navigation to this page); the system screen opens only
+    // on the manager's tap of "Open Android settings".
+    // ut-docs#6551: the banner's "Go to update" lands here, focus included, so a
+    // keyboard or screen-reader user arrives at the controls. No autoscroll on
+    // load: only after that tap. The hash change (settings script) opens the card first.
+    var goBtn = document.querySelector('[data-android-update-goto]');
+    if (goBtn) {
+      goBtn.addEventListener('click', function () {
+        setTimeout(function () {
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          form.focus({ preventScroll: true });
+        }, 60);
+      });
+    }
+    var allow = form.querySelector('[data-testid="android-allow-panel"]');
+    var allowNote = form.querySelector('[data-android-allow-note]');
+    var showAllow = function (denied) {
+      if (!allow) { return; }
+      allow.hidden = false;
+      if (allowNote) { allowNote.hidden = !denied; allowNote.textContent = denied ? T('allowdenied') : ''; }
+    };
+    var hideAllow = function () { if (allow) { allow.hidden = true; } };
+    var openBtn = form.querySelector('[data-android-allow-open]');
+    var laterBtn = form.querySelector('[data-android-allow-later]');
+    if (openBtn) {
+      openBtn.addEventListener('click', function () {
+        if (!window.utAndroidUpdater || !window.utAndroidUpdater.openPermissionSettings()) { msg.textContent = T('nobridge'); }
+      });
+    }
+    if (laterBtn) {
+      laterBtn.addEventListener('click', function () {
+        hideAllow();
+        if (window.utAndroidUpdater) { window.utAndroidUpdater.clearPermission(); }
+      });
+    }
+    var pending = window.utAndroidUpdater && window.utAndroidUpdater.pendingPermission();
+    if (pending) { showAllow(pending === 'denied'); }
     document.addEventListener('ut:android-update', function (e) {
       var s = e.detail || {};
+      if (s.state === 'needs_permission') {
+        showAllow(s.error === 'still_denied');
+        msg.textContent = '';
+        btn.disabled = false;
+        return;
+      }
+      hideAllow();
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
     });
+    // The submit handler maps a rejected start; the shell answers a refused
+    // permission with needs_permission AFTER 'started', so nothing more here.
   })();
   </script>
   {{ end }}

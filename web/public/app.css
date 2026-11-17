@@ -4903,6 +4903,18 @@ body.login-screen {
 .sync-banner { background: var(--warning-tint); color: var(--warning-text); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* ut-docs#6551: Android "update available" banner at the top of Settings and
+   the neutral "ask a manager" status pill. Tokens only; logical properties. */
+.android-update-banner { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem;
+  border: 1px solid var(--warning-tint-border); text-align: start; }
+.android-update-banner .android-update-banner-text { flex: 1 1 16rem; }
+.android-update-banner p { margin: .25rem 0 0; }
+.android-update-banner .btn { flex: 0 0 auto; min-inline-size: 8rem; text-align: center; text-decoration: none; }
+.android-allow-panel { margin-block: .75rem; padding: .6rem .9rem; border-radius: var(--radius); }
+.android-allow-panel p { margin: .35rem 0; }
+.android-allow-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-block-start: .5rem; }
+.statusbar .sb-update.is-info { background: var(--warning, #d97706); color: #451a03;
+  white-space: normal; min-width: 0; max-inline-size: 100%; }
 
 /* ut-docs#1551: nav-level dismissible notice for a pending pairing
    request -- mounted in base.html as a sibling of <nav>/<main> (not
