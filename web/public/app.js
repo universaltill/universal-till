@@ -1324,14 +1324,20 @@ document.addEventListener('ut-basket-resync', function(){
   // must not get a stale hint back.
   var old = document.getElementById('shrinkage-hint');
   var kept = old ? Array.prototype.slice.call(old.childNodes) : [];
-  var p = window.utBasketResync();
-  if (!kept.length || !p || typeof p.then !== 'function') return;
-  p.then(function(){
-    var slot = document.getElementById('shrinkage-hint');
-    var dlg = document.getElementById('elevation-modal');
-    if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
-    kept.forEach(function(n){ slot.appendChild(n); });
-  });
+  // ut-docs#5458: deferred, as after a timeout. This event fires while the
+  // triggering request still holds #basket's htmx request lock; a resync
+  // queued behind it resolves its promise before the swap, so the carry-over
+  // would run too early and the swap would then wipe the hint.
+  setTimeout(function(){
+    var p = window.utBasketResync();
+    if (!kept.length || !p || typeof p.then !== 'function') return;
+    p.then(function(){
+      var slot = document.getElementById('shrinkage-hint');
+      var dlg = document.getElementById('elevation-modal');
+      if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
+      kept.forEach(function(n){ slot.appendChild(n); });
+    });
+  }, 0);
 });
 
 // ut-docs#5458: re-render the live basket from the till's own state. source is
