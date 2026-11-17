@@ -585,12 +585,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// that can't replace itself, a failed attempt) the line says that
 		// instead of claiming it follows (followLine).
 		autoUpdateFollowLine := ""
+		autoUpdateFollowFrom, autoUpdateFollowTo := "", ""
 		// ut-docs#2739: when additional tills update (update.fleet_follow).
 		fleetFollowStored, _, _ := d.Settings.Get(r.Context(), keyFleetFollow)
 		autoUpdateFleetFollow := followPolicyOf(fleetFollowStored)
 		if autoUpdateFollowsMain {
 			in := followInputsOf(r.Context(), d)
 			autoUpdateFollowLine = followLine(in)
+			// ut-docs#6552: the window THIS till installs in, not the raw
+			// replicated time; empty when auto_time is invalid.
+			autoUpdateFollowFrom, autoUpdateFollowTo, _ = followNightlyWindow(autoUpdateTime, autoUpdateJitter(r.Context(), d))
 			if releaseVersion(in.Target) {
 				autoUpdateMainVersion = "v" + normVersion(in.Target)
 			}
@@ -913,6 +917,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"exportEntries":         exportEntries,
 			"autoUpdateFollowsMain": autoUpdateFollowsMain,
 			"autoUpdateFollowLine":  autoUpdateFollowLine,
+			"autoUpdateFollowFrom":  autoUpdateFollowFrom,
+			"autoUpdateFollowTo":    autoUpdateFollowTo,
 			"autoUpdateMainVersion": autoUpdateMainVersion,
 			"autoUpdateEnabled":     autoUpdateEnabled,
 			"autoUpdateTime":        autoUpdateTime,
