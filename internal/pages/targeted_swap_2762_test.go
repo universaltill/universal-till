@@ -113,6 +113,7 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 		{"/api/settings/invoice", "settings-invoice-region"},
 		{"/api/settings/telemetry", "settings-telemetry-region"},
 		{"/api/settings/store-name", "settings-store-name-region"},
+		{"/api/settings/cloud-staff-breakdown", "settings-cloud-staff-region"}, // ut-docs#2557
 	}
 	for _, c := range swapped {
 		anchor := `id="` + c.region + `" data-ut-refresh="#` + c.region + `" data-ut-saved-msg="#`

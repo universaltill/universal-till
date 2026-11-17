@@ -445,6 +445,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
+		"settings-cloud-staff": !isManager,      // ut-docs#2557: manager-only, like the card
 		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
@@ -2230,6 +2231,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 
 	// ADR-0200: the Cloud record card's Stop sending switch.
 	registerRegistrationStop(mux, d, posRepo)
+	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 
 	// ADR-0119: this till's visual effects level, beside the interface scale.
 	registerEffectsLevel(mux, d.Settings)
