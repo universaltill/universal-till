@@ -1,0 +1,147 @@
+# Microsoft Store submission (ut-docs#6407, epic ut-docs#6380, ADR-0194).
+#
+# The Store binary is the `direct` build: the same signed NSIS installer
+# (unitill-pos-setup-<version>.exe, TASK RUNNER TECHNOLOGY LTD) as the website
+# download, submitted by its VERSIONED release-asset URL, silent install /S,
+# x64, UK only, free. No MSIX.
+#
+#   verify  no secrets, no environment: proves the published release is what
+#           the Store will fetch (digest, signed checksums, Authenticode,
+#           silent flag, a soak over a window) and uploads the verdict.
+#   submit  only with dry_run=false, in the `msstore-submit` environment (owner
+#           required reviewer; ut-infra), through a federated Entra credential
+#           (no client secret), via scripts/ci/msstore-submit.sh. That script
+#           is held shut until the owner's opening card (ut-docs#6408) adds
+#           store-release/microsoft.opened: this workflow deliberately carries
+#           NO `store-release:allow` marker yet, and the store guard fails if
+#           that file ever appears without one.
+name: msstore-submit
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to submit, vX.Y.Z (must be published)"
+        required: true
+        type: string
+      dry_run:
+        description: "Verify only; never touch Partner Center"
+        required: true
+        type: boolean
+        default: true
+      commit:
+        description: "Commit the submission after setting the package (otherwise it stays a draft)"
+        required: true
+        type: boolean
+        default: false
+      soak_minutes:
+        description: "Soak window in minutes over which the URL is fetched 3 times"
+        required: true
+        type: string
+        default: "2"
+
+permissions: {}
+
+concurrency:
+  group: msstore-submit
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # git show <tag>:installer.nsi; gh release view on a public repo
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+      SOAK_MINUTES: ${{ inputs.soak_minutes }}
+    outputs:
+      ready: ${{ steps.verify.outputs.ready }}
+      tag: ${{ steps.verify.outputs.tag }}
+    steps:
+      - name: Check the inputs
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must be vX.Y.Z"; exit 1; }
+          [[ "$SOAK_MINUTES" =~ ^[0-9]{1,3}$ ]] || { echo "::error::soak_minutes must be a whole number"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags: the installer.nsi of the release is read with git show
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
+      - name: Build osslsigncode (pinned commit)
+        timeout-minutes: 10
+        run: |
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          bash packaging/windows/install-osslsigncode.sh
+      - name: Prepare Authenticode verification (no login, no token)
+        run: packaging/windows/setup-verify.sh
+      - name: Verify the release the Store will fetch
+        id: verify
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/msstore-verify"
+          # Three checks across the window.
+          export SOAK_CHECKS=3 SOAK_INTERVAL=$(( SOAK_MINUTES * 60 / 2 ))
+          rc=0
+          bash scripts/ci/msstore-verify.sh "$TAG" "$OUT" || rc=$?
+          if [ "$rc" = 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+          v="${TAG#v}"
+          echo "tag=v${v}" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/msstore-report"
+          cp "$OUT/result.json" "$OUT/summary.md" "$RUNNER_TEMP/msstore-report/"
+          exit "$rc"
+      - name: Upload the verdict
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msstore-verify-${{ inputs.tag }}
+          path: ${{ runner.temp }}/msstore-report/
+          if-no-files-found: warn
+
+  submit:
+    needs: verify
+    if: ${{ inputs.dry_run == false && needs.verify.outputs.ready == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: msstore-submit
+    permissions:
+      id-token: write # OIDC for azure/login; job-scoped
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.verify.outputs.tag }}
+      COMMIT: ${{ inputs.commit }}
+      MSSTORE_APP_ID: ${{ vars.MSSTORE_APP_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Azure login (OIDC, federated credential, no secret)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_MSSTORE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Get a Store API token
+        run: |
+          set -euo pipefail
+          resource="$(sed -n 's/^TOKEN_RESOURCE=//p' scripts/ci/msstore-submit.endpoints | sed -n 1p)"
+          token="$(az account get-access-token --resource "$resource" --query accessToken -o tsv)"
+          [ -n "$token" ] || { echo "::error::no Store API token from az"; exit 1; }
+          echo "::add-mask::${token}"
+          ( umask 077; printf '%s' "$token" > "$RUNNER_TEMP/msstore-token" )
+          echo "MSSTORE_TOKEN_FILE=$RUNNER_TEMP/msstore-token" >> "$GITHUB_ENV"
+      - name: Set the package on the Store submission
+        run: bash scripts/ci/msstore-submit.sh "$TAG"
+      - name: Drop the token
+        if: always()
+        run: rm -f "$RUNNER_TEMP/msstore-token"
