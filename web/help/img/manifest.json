@@ -142,7 +142,7 @@
       "tr": "69c18ab2ea8b58b4bbebdd271210191dc26bdd7f7baeb130a9c802023678080d"
     },
     "plugins": {
-      "en": "39d8c57595c592a43cd92c597b662efb0a797c719fa69997a177daca8af04d6a",
+      "en": "762254f3739572123a779d0361c44238d4d0b8ea5048f7285500d0f81620f2e6",
       "fa": "c4bc272c7fd3b59427fe680da5e51abfb94b2f1af0447674b7ff924d09c3bf88",
       "ar": "f18d5cc4e463edf3004efc95e3029a266b9c6b501add06a32f74f355731079e4",
       "tr": "878581bcf7ebc3cfbab6dd8fd7f03f9e901f87cddf397325a925f69f80d05e1d"
@@ -209,6 +209,10 @@
     }
   },
   "shots": {
+    "plugins": [
+      "plugins-listing",
+      "plugins-store"
+    ],
     "self-order": [
       "self-order-checkout",
       "self-order-counter",
