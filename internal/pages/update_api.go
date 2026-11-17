@@ -171,6 +171,20 @@ func autoUpdateSlot(now time.Time, hhmm string, offset time.Duration) (inWindow 
 	return true, now.Add(-time.Duration(elapsed) * time.Minute).Format("2006-01-02")
 }
 
+// followNightlyWindow is the window autoUpdateSlot opens for hhmm+offset, as
+// HH:MM start and end (modulo 24h), for the Settings page. ok is false when
+// hhmm is not a valid time. It shares autoUpdateWindow with autoUpdateSlot.
+func followNightlyWindow(hhmm string, offset time.Duration) (from, to string, ok bool) {
+	sched, err := time.Parse("15:04", hhmm)
+	if err != nil {
+		return "", "", false
+	}
+	const day = 24 * 60
+	start := (sched.Hour()*60 + sched.Minute() + int(offset/time.Minute)) % day
+	end := (start + int(autoUpdateWindow/time.Minute)) % day
+	return fmt.Sprintf("%02d:%02d", start/60, start%60), fmt.Sprintf("%02d:%02d", end/60, end%60), true
+}
+
 // autoUpdateDue is the pure schedule decision: enabled, a valid HH:MM whose
 // window [hhmm+offset, hhmm+offset+autoUpdateWindow) now falls in, and that
 // slot not already attempted (success or failure — at most once per day,

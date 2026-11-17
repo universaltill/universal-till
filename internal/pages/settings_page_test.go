@@ -2499,6 +2499,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gateElevation},
 		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gateElevation},
 		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
+		{"cloud-staff-breakdown", http.MethodPost, "/api/settings/cloud-staff-breakdown", url.Values{"enabled": {"on"}}, gate403}, // ut-docs#2557
 		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gateElevation},
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
 		{"store-name", http.MethodPost, "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}, gateElevation},
@@ -3771,8 +3772,12 @@ func TestSettingsPage_MainTillShowsFleetFollowSelect(t *testing.T) {
 }
 
 // The replica sees the policy read-only: a second line only for nightly,
-// naming the main till's update time.
+// naming the window THIS till installs in (the main till's update time plus
+// this till's own offset), ut-docs#6552.
 func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
 	mux, _, d := newFullAuthDeps(t)
 	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
 	line := `data-testid="update-follow-policy"`
@@ -3792,18 +3797,54 @@ func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
 	if !strings.Contains(body, line) {
 		t.Fatal("nightly replica: no policy line")
 	}
-	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly"), "02:15")); !strings.Contains(body, want) {
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "02:22", "02:52")); !strings.Contains(body, want) {
 		t.Fatalf("nightly replica: expected %q", want)
 	}
 	if strings.Contains(body, `name="fleet_follow"`) {
 		t.Fatal("a replica must not render the select")
 	}
 
-	// update.auto_time unset: the default time.
+	// update.auto_time unset: the default time plus the offset.
 	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, ""); err != nil {
 		t.Fatal(err)
 	}
-	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly"), autoUpdateDefaultTime)); !strings.Contains(getSettingsAsManager(t, mux), want) {
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "03:07", "03:37")); !strings.Contains(getSettingsAsManager(t, mux), want) {
 		t.Fatalf("nightly replica, time unset: expected %q", want)
+	}
+
+	// An invalid time prints nothing rather than a bad time.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "25:99"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(getSettingsAsManager(t, mux), line) {
+		t.Fatal("invalid auto_time: the window line must be omitted")
+	}
+}
+
+// ut-docs#6552: a nightly replica whose attempt failed says it will try again
+// at the next nightly update, with the window.
+func TestSettingsPage_NightlyReplicaFailedSaysItRetries(t *testing.T) {
+	origVer, origSupported, origJitter := autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter
+	t.Cleanup(func() {
+		autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter = origVer, origSupported, origJitter
+	})
+	autoUpdateBuildVersion = func() string { return "1.4.0" }
+	autoUpdateSupported = func() bool { return true }
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	for k, v := range map[string]string{keyMainVersion: "1.4.2", keyFleetFollow: "nightly", keyAutoUpdateTime: "03:00",
+		keyFollowAttempted: "1.4.2", keyFollowError: "failed:download"} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getSettingsAsManager(t, mux)
+	if !strings.Contains(body, `data-follow-line="failed_nightly"`) {
+		t.Fatal("expected follow line state failed_nightly")
+	}
+	want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_failed_nightly"), "v1.4.2", "03:07", "03:37"))
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected %q", want)
 	}
 }

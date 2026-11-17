@@ -42,6 +42,12 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Lock, status and exit-to-OS stay reachable from the full-screen
+  Inventory and catalogue dialogs (ut-docs#6125).** The item editor, Import,
+  Tax codes and the stock dialog now sit beside the nav rail and above the
+  status bar, and carry a compact Lock and exit-to-OS in their title line at
+  every width. Import and Tax codes scroll as one box with their head pinned.
+
 - **Card refunds no longer stop working after about 1,000 card sales
   (ut-docs#6438).** A card plugin's approved answer may now carry
   `transaction_ref` (the provider's charge id). The till stores it on the

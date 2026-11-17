@@ -38,7 +38,7 @@ func registerAbout(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		text, err := web.FS.ReadFile("public/licenses.txt")
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "about_licences", err)
+			httpx.RenderError(w, r, http.StatusInternalServerError, "sync.error.server", err)
 			return
 		}
 		data := map[string]any{

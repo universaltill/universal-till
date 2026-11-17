@@ -549,10 +549,10 @@
        says so instead of the schedule box (whose value is the main till's). */}}
   {{ if .autoUpdateFollowsMain }}
   {{/* ut-docs#4031, #4053: followLine says why it doesn't follow, when it doesn't. */}}
-  <p class="muted" data-testid="update-follows-main" data-follow-line="{{ .autoUpdateFollowLine }}">{{ if eq .autoUpdateFollowLine "main_off" }}{{ T "settings.update.follows_main_off" }}{{ else if eq .autoUpdateFollowLine "checks_off" }}{{ T "settings.update.follows_main_checks_off" }}{{ else if eq .autoUpdateFollowLine "manual" }}{{ printf (T "settings.update.follows_main_manual") .autoUpdateMainVersion }}{{ else if eq .autoUpdateFollowLine "failed" }}{{ printf (T "settings.update.follows_main_failed") .autoUpdateMainVersion }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
+  <p class="muted" data-testid="update-follows-main" data-follow-line="{{ .autoUpdateFollowLine }}">{{ if eq .autoUpdateFollowLine "main_off" }}{{ T "settings.update.follows_main_off" }}{{ else if eq .autoUpdateFollowLine "checks_off" }}{{ T "settings.update.follows_main_checks_off" }}{{ else if eq .autoUpdateFollowLine "manual" }}{{ printf (T "settings.update.follows_main_manual") .autoUpdateMainVersion }}{{ else if and (eq .autoUpdateFollowLine "failed_nightly") .autoUpdateFollowFrom }}{{ printf (T "settings.update.follows_main_failed_nightly") .autoUpdateMainVersion .autoUpdateFollowFrom .autoUpdateFollowTo }}{{ else if or (eq .autoUpdateFollowLine "failed") (eq .autoUpdateFollowLine "failed_nightly") }}{{ printf (T "settings.update.follows_main_failed") .autoUpdateMainVersion }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
   {{/* ut-docs#2739: read-only here; the main till sets update.fleet_follow. */}}
-  {{ if and (eq .autoUpdateFleetFollow "nightly") (eq .autoUpdateFollowLine "follows") }}
-  <p class="muted" data-testid="update-follow-policy">{{ printf (T "settings.update.follows_main_nightly") .autoUpdateTime }}</p>
+  {{ if and (eq .autoUpdateFleetFollow "nightly") (eq .autoUpdateFollowLine "follows") .autoUpdateFollowFrom }}
+  <p class="muted" data-testid="update-follow-policy">{{ printf (T "settings.update.follows_main_nightly_window") .autoUpdateFollowFrom .autoUpdateFollowTo }}</p>
   {{ end }}
   {{ else }}
   <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
@@ -1989,6 +1989,30 @@
   });
 })();
 </script>
+{{ end }}
+<!-- ut-docs#2557 (ADR-0111 §4): per-staff sales in cloud reports. Manager-only,
+     off by default, explicit Save (a stray tap must not commit a staff-monitoring
+     switch). Plain label with the input as its direct child so the shared
+     touch-row rule (ut-docs#5738) applies. -->
+{{ if .isManager }}
+<div class="card" id="settings-cloud-staff">
+  <h2>{{ T "settings.cloud_staff.title" }} {{ helpLink "reports" }}</h2>
+  <p class="muted">{{ T "settings.cloud_staff.help" }}</p>
+  <div id="settings-cloud-staff-region" data-ut-refresh="#settings-cloud-staff-region" data-ut-saved-msg="#cloud-staff-msg">
+  <fieldset class="set-lock" data-lock-region="settings-cloud-staff"{{ if index $.lockedRegions "settings-cloud-staff" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-cloud-staff" }}{{ template "set-lock-note" }}{{ end }}
+  <form hx-post="/api/settings/cloud-staff-breakdown" hx-swap="none" data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
+    <label><input type="checkbox" name="enabled" data-testid="cloud-staff-enabled" {{ if eq (index .settingsMap "reports.cloud_staff_breakdown") "true" }}checked{{ end }}> {{ T "settings.cloud_staff.enable" }}</label>
+    <p class="muted">{{ T "settings.cloud_staff.window_note" }}</p>
+    <p class="muted">{{ T "settings.cloud_staff.works_council" }}</p>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "common.save" }}</button>
+      <span id="cloud-staff-msg" aria-live="polite"></span>
+    </div>
+  </form>
+  </fieldset>
+  </div>
+</div>
 {{ end }}
 <!-- ut-docs#866: printer settings are elevation-wired — the card renders for
      every session (server-side checkOrElevate is the real gate). -->

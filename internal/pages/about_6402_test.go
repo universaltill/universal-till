@@ -26,16 +26,21 @@ func TestAboutPage_LinksOnEveryChannelAndRole(t *testing.T) {
 				if code != http.StatusOK {
 					t.Fatalf("GET /about = %d", code)
 				}
+				// The licences link and version show everywhere. The three external
+				// addresses show as links where the platform can follow them and as
+				// plain text on a unix kiosk (crossdevicelinkactionable), so the
+				// test holds on macOS, Windows and Linux CI alike.
 				for _, want := range []string{
-					`data-testid="about-privacy-link"`, `href="` + aboutPrivacyURL + `"`,
-					`data-testid="about-terms-link"`, `href="` + aboutTermsURL + `"`,
 					`data-testid="about-licences-link"`, `href="/about/licences"`,
-					`data-testid="about-delete-account-link"`, `href="` + aboutDeleteAccountURL + `"`,
 					`data-testid="about-version"`,
+					aboutPrivacyURL, aboutTermsURL, aboutDeleteAccountURL,
 				} {
 					if !strings.Contains(body, want) {
 						t.Errorf("%s About missing %s", c, want)
 					}
+				}
+				if !strings.Contains(body, `data-testid="about-privacy-link"`) && !strings.Contains(body, `data-testid="about-addresses"`) {
+					t.Errorf("%s About shows the privacy address neither as a link nor as text", c)
 				}
 				low := strings.ToLower(body)
 				for _, bad := range []string{"/plans", "checkout", "pricing"} {
