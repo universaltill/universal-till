@@ -108,6 +108,12 @@ func TestChip_LockedOutVariantWords(t *testing.T) {
 	}
 }
 
+// reconnectButton is the Reconnect button's markup. "No Reconnect offered"
+// checks look for it, not the "Reconnect this till" label: /settings also
+// renders the current version's What's new notes, and those may name the
+// button in prose (v0.36.1 does), which is not an offer.
+const reconnectButton = `hx-post="/api/enrol/reconnect"`
+
 // Test 23: panel + both buttons only in the anonymous lock-out; ID and
 // fingerprint always for a manager; replica / claimed / env-pinned: no panel.
 func TestSettings_LockoutPanelAndFacts(t *testing.T) {
@@ -128,7 +134,7 @@ func TestSettings_LockoutPanelAndFacts(t *testing.T) {
 	}
 	// Claimed store: pairing is the path, no panel.
 	claimStore(t, d)
-	if b := getAs(mux, "/settings", &mgrUser).Body.String(); strings.Contains(b, `data-testid="reconnect-panel"`) || strings.Contains(b, "Reconnect this till") {
+	if b := getAs(mux, "/settings", &mgrUser).Body.String(); strings.Contains(b, `data-testid="reconnect-panel"`) || strings.Contains(b, reconnectButton) {
 		t.Fatal("panel shown for a claimed store")
 	}
 }
@@ -137,7 +143,7 @@ func TestSettings_NoPanelWithoutLockoutAndFactsStillShown(t *testing.T) {
 	mux, d, _ := newLockedOutTill(t, okRegister("x"))
 	cloudAuthChipStatus = func() cloudsync.AuthChip { return cloudsync.AuthChip{} }
 	body := getAs(mux, "/settings", &mgrUser).Body.String()
-	if strings.Contains(body, `data-testid="reconnect-panel"`) || strings.Contains(body, "Reconnect this till") {
+	if strings.Contains(body, `data-testid="reconnect-panel"`) || strings.Contains(body, reconnectButton) {
 		t.Fatal("panel shown without a lock-out")
 	}
 	if !strings.Contains(body, `data-testid="register-facts"`) || !strings.Contains(body, enroll.CurrentStatus().DeviceID) {
@@ -151,12 +157,12 @@ func TestSettings_NoPanelOnAReplicaOrWithAnEnvPinnedToken(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Marketplace.MerchantToken = "pinned-by-env"
 	enroll.Init(t.Context(), cfg, d.Settings, &sync.WaitGroup{})
-	if b := getAs(mux, "/settings", &mgrUser).Body.String(); strings.Contains(b, "Reconnect this till") {
+	if b := getAs(mux, "/settings", &mgrUser).Body.String(); strings.Contains(b, reconnectButton) {
 		t.Fatal("env-pinned token: Reconnect offered")
 	}
 	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
 	_ = d.Settings.Set(t.Context(), "sync.primary_url", "http://main.local")
-	if b := getAs(mux, "/settings", &mgrUser).Body.String(); strings.Contains(b, "Reconnect this till") {
+	if b := getAs(mux, "/settings", &mgrUser).Body.String(); strings.Contains(b, reconnectButton) {
 		t.Fatal("replica: Reconnect offered")
 	}
 }
