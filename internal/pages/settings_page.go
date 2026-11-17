@@ -1221,6 +1221,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ADR-0148 §2: check in for the code's lifetime, so a claim (and a
 		// paid plan behind it) reaches this till without a background poll.
 		requestOperatorCheckin(d, claimCheckinWindow)
+		// ADR-0194 §2.3 (ut-docs#6401): on Google Play and App Store builds the
+		// claim URL leads to an account area with checkout, so it is never
+		// rendered: the code shows as plain text with instructions for
+		// another device. No link, no QR. info.ClaimURL is dropped here.
+		if !accountLinkOutAllowed() {
+			fmt.Fprintf(w,
+				`<div class="claim-code-box" data-testid="claim-code-text-only"><p>%s <strong class="claim-code">%s</strong></p>`+
+					`<p>%s</p><div class="muted">%s</div></div>`,
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_store_code")),
+				html.EscapeString(info.Code),
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_store_how")),
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_expires")))
+			return
+		}
 		// QR of the claim URL: the owner scans it and claims FROM THEIR
 		// PHONE — the only escape hatch on shells that can't open an
 		// external browser (Pi kiosk, windows/linux webview).

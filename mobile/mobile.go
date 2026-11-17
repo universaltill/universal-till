@@ -72,6 +72,7 @@ import (
 	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -378,6 +379,10 @@ func waitForRestartLocked() {
 // re-exec, and Supported() is true only because of this registration.
 func init() {
 	procrestart.SetRestarter(restartInProcess)
+	// ADR-0194 §2.3: the AAR is one build for every flavor and carries no
+	// linker stamp, so the install channel comes only from SetInstallChannel.
+	// A shell that never calls it fails closed to "appstore".
+	buildinfo.RequireExplicitChannel()
 }
 
 // restartInProcess stops the running server and starts it again on the
@@ -543,6 +548,16 @@ type DiscoveryBridge interface {
 // Passing nil un-registers, restoring the hashicorp/mdns default.
 func SetDiscoveryBridge(b DiscoveryBridge) {
 	discovery.SetNativeBridge(b) // a nil DiscoveryBridge converts to a nil NativeBridge
+}
+
+// SetInstallChannel hands the build's install channel (ADR-0194 §2.3:
+// sideload | play | appstore | direct) to the till. The Kotlin shell passes
+// BuildConfig.INSTALL_CHANNEL exactly once, from TillService.kt, BEFORE
+// Mobile.start(). The first call wins and later calls change nothing; an
+// unknown value is stored as "appstore" (fail closed). Nothing else (settings,
+// env, a synced directive, request input) can set or change the channel.
+func SetInstallChannel(channel string) {
+	buildinfo.SetChannelOnce(channel)
 }
 
 // SetDeviceModel registers the on-device hardware model string (Android's

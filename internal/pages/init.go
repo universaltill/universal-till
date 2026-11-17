@@ -703,6 +703,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerDiagnosticsSettings(mux, dp) // diagnostic mode: nav chip, code redemption, local stop (ADR-0092, ut-docs#2169)
 	emitDiagnosticsInventory(ctx, dp)    // no-op unless a session was restored above
 	registerHelp(mux, dp)
+	registerAbout(mux, dp) // About screen: privacy, terms, licences, delete-account links on every channel (ut-docs#6402)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
 	registerMenuLayoutSettings(mux, dp) // ADR-0088 Decision D: the hidden-tiles findability surface

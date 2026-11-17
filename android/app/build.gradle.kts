@@ -17,6 +17,13 @@ val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 val releaseSigningConfigured =
     !releaseKeystorePath.isNullOrBlank() && !releaseKeystorePassword.isNullOrBlank() && !releaseKeyAlias.isNullOrBlank()
 
+// ut-docs#6395: the Play upload key (separate from the release key above).
+val uploadKeystorePath = System.getenv("ANDROID_UPLOAD_KEYSTORE_PATH")
+val uploadKeystorePassword = System.getenv("ANDROID_UPLOAD_KEYSTORE_PASSWORD")
+val uploadKeyAlias = System.getenv("ANDROID_UPLOAD_KEY_ALIAS")
+val uploadSigningConfigured =
+    !uploadKeystorePath.isNullOrBlank() && !uploadKeystorePassword.isNullOrBlank() && !uploadKeyAlias.isNullOrBlank()
+
 // ut-docs#1541: one APK per device ABI. The universal APK (both ABIs) was
 // 150 MB because every device downloaded the other ABI's 73 MB libgojni.so
 // it can never load. Each flavor bakes its OWN update URL into BuildConfig
@@ -95,6 +102,23 @@ require(apkSignerPinsOverride != null || apkSignerPins.isNotEmpty()) {
     "apk-signer-sha256.txt must list at least one digest (an empty pin set needs an explicit -PutApkSignerPins=)"
 }
 
+// ADR-0194 §2.3 (ut-docs#6388): the install channel (see defaultConfig). Any
+// value outside the four names becomes "appstore" (fail closed).
+val installChannelProp = (project.findProperty("installChannel") as String?) ?: "sideload"
+val installChannel = if (installChannelProp in listOf("sideload", "play", "appstore", "direct")) installChannelProp else "appstore"
+
+// Review S7: a Play build (any assemble/bundle/publish task naming "Play", e.g.
+// bundlePlayRelease) must carry -PinstallChannel=play, otherwise it would ship
+// with plan purchase and self-update switched ON. Refuse at graph time.
+gradle.taskGraph.whenReady {
+    val playTask = allTasks.firstOrNull {
+        it.project == project && Regex("^(assemble|bundle|publish|package).*Play", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
+    }
+    if (playTask != null && installChannel != "play") {
+        throw GradleException("Task ${playTask.name} builds for Google Play but installChannel is '$installChannel' (from -PinstallChannel). Pass -PinstallChannel=play (ADR-0194 §2.3).")
+    }
+}
+
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
@@ -117,19 +141,58 @@ android {
         // on a device or emulator — not part of android-ci.yml's compile-only
         // assemble gate).
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // ut-docs#1541: the fixed ABI -> package table a universal build
-        // picks from by Build.SUPPORTED_ABIS[0]. Compile-time, never page input.
-        buildConfigField("String", "UPDATE_APK_URL_ARM64", "\"$updateApkUrlArm64\"")
-        buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
-        // ut-docs#5436 / ADR-0179: pinned APK signer certificate digests ("" = dormant).
-        buildConfigField("String", "APK_SIGNER_SHA256S", "\"${apkSignerPins.joinToString(",")}\"")
+        // The self-update fields (UPDATE_APK_URL*, APK_SIGNER_SHA256S) are NOT
+        // here: only the sideload flavors define them (sideloadUpdateFields
+        // below), so the play flavor's BuildConfig carries no update URL or
+        // signer pin at all (ut-docs#6409).
+        // ADR-0194 §2.3 (ut-docs#6388): the install channel, passed to Go once
+        // before Mobile.start (TillService.kt). Build-time only. Today's three
+        // abi flavors are the GitHub-release (sideload) APK, so that is the
+        // default. A store flavor (e.g. a future "play" dimension) MUST set its
+        // own value in its flavor block; -PinstallChannel= overrides for a CI
+        // build. Any value outside the four names becomes "appstore" (fail
+        // closed: no purchase, no link-out, no self-update). Signing untouched.
+        buildConfigField("String", "INSTALL_CHANNEL", "\"$installChannel\"")
     }
+
+    signingConfigs {
+        // ut-docs#6395: the Play UPLOAD key, a different key from the release
+        // key above (Play App Signing holds the app key). Env var NAMES only.
+        if (uploadSigningConfigured) {
+            create("upload") {
+                storeFile = file(uploadKeystorePath!!)
+                storePassword = uploadKeystorePassword
+                keyAlias = uploadKeyAlias
+                keyPassword = uploadKeystorePassword
+            }
+        }
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeystorePassword
+            }
+        }
+    }
+
 
     // ut-docs#1541: tasks are assemble{Arm64,Armv7,Universal}{Debug,Release}.
     flavorDimensions += "abi"
+    // ut-docs#1541/#5436: the self-update BuildConfig fields, sideload flavors only.
+    fun com.android.build.api.dsl.ApplicationProductFlavor.sideloadUpdateFields() {
+        // the fixed ABI -> package table a universal build picks from by
+        // Build.SUPPORTED_ABIS[0]. Compile-time, never page input.
+        buildConfigField("String", "UPDATE_APK_URL_ARM64", "\"$updateApkUrlArm64\"")
+        buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
+        // ADR-0179: pinned APK signer certificate digests ("" = dormant).
+        buildConfigField("String", "APK_SIGNER_SHA256S", "\"${apkSignerPins.joinToString(",")}\"")
+        signingConfigs.findByName("release")?.let { signingConfig = it }
+    }
     productFlavors {
         create("arm64") {
             dimension = "abi"
+            sideloadUpdateFields()
             ndk { abiFilters += "arm64-v8a" }
             versionCode = baseVersionCode * 10 + 2
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArm64\"")
@@ -137,6 +200,7 @@ android {
         }
         create("armv7") {
             dimension = "abi"
+            sideloadUpdateFields()
             ndk { abiFilters += "armeabi-v7a" }
             versionCode = baseVersionCode * 10 + 1
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArmv7\"")
@@ -144,11 +208,53 @@ android {
         }
         create("universal") {
             dimension = "abi"
+            sideloadUpdateFields()
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             versionCode = baseVersionCode * 10
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlUniversal\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "true")
         }
+        // ADR-0194 / ut-docs#6409: the Google Play bundle (bundlePlayRelease).
+        // versionCode base*10+5 (universal 0, armv7 1, arm64 2, play 5) keeps
+        // it monotonic with every sideload release. 64-bit is included: both
+        // ABIs ship in the one bundle and Play serves each device its own.
+        // The channel is hard-wired here, never taken from -PinstallChannel,
+        // so a Play bundle cannot be stamped as anything else. No update URL,
+        // no signer pin, no install permission (src/play has no update code,
+        // see AndroidManifest in src/sideload). Signed with the UPLOAD key
+        // only; Play App Signing re-signs with the app key (#6395).
+        create("play") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            versionCode = baseVersionCode * 10 + 5
+            buildConfigField("String", "INSTALL_CHANNEL", "\"play\"")
+            buildConfigField("String", "UPDATE_APK_URL", "\"\"")
+            buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            signingConfigs.findByName("upload")?.let { signingConfig = it }
+        }
+    }
+
+    // ut-docs#6409: the in-app updater (code, manifest permission, FileProvider,
+    // its unit tests) is a sideload-only source set. The play flavor compiles
+    // src/play instead, an inert stand-in.
+    sourceSets {
+        for (f in listOf("arm64", "armv7", "universal")) {
+            getByName(f) {
+                java.srcDir("src/sideload/java")
+                res.srcDir("src/sideload/res")
+                manifest.srcFile("src/sideload/AndroidManifest.xml")
+            }
+            getByName("test${f.replaceFirstChar { it.uppercase() }}") {
+                java.srcDir("src/testSideload/java")
+            }
+        }
+    }
+
+    // The app switches language in-app (AppCompatDelegate per-app locales), so
+    // the bundle must NOT split by language or a device would only get its OS
+    // language.
+    bundle {
+        language { enableSplit = false }
     }
 
     // ut-docs#1541: compress libgojni.so inside the APK (74.5 MB -> ~35 MB per
@@ -162,17 +268,6 @@ android {
         }
     }
 
-    signingConfigs {
-        if (releaseSigningConfigured) {
-            create("release") {
-                storeFile = file(releaseKeystorePath!!)
-                storePassword = releaseKeystorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeystorePassword
-            }
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -182,9 +277,8 @@ android {
             // machine can't produce something that LOOKS like a real signed
             // release build but isn't (an unsigned APK simply refuses to
             // install, a clear/loud failure instead of a quiet trust gap).
-            if (releaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            // Signing is per flavor (sideload: release key; play: upload key),
+            // set where each flavor is declared.
         }
     }
     compileOptions {

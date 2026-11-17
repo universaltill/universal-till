@@ -479,6 +479,9 @@ func respondUpdateApplyInstalled(w http.ResponseWriter, version string) {
 
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
@@ -521,6 +524,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// "Update now" and reloads only once the new version answers — /healthz
 	// is answered by the old process too. Same gate as apply.
 	mux.HandleFunc("GET /api/update/status", func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
@@ -550,6 +556,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// the bridge takes no URL. A caller who forges a success response gains
 	// no ability to install anything of their choosing.
 	mux.HandleFunc("POST /api/update/android-install", func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		// ut-docs#1545: re-check freshness BEFORE authorising the actual
 		// install. The desktop endpoint above has done this since
 		// 2026-07-28, when the status bar was caught offering "Update now
@@ -648,6 +657,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// empty 200 (nothing to show). A failed download renders "Release notes
 	// unavailable" — never an error status, and never in the way of Install.
 	mux.HandleFunc("GET /api/update/notes", func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
@@ -677,6 +689,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
@@ -727,6 +742,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// Auto-update schedule settings (manager): enable + local time. Mirrors
 	// POST /api/settings/eod's shape exactly (eod_api.go).
 	mux.HandleFunc("POST /api/settings/update-schedule", func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
@@ -774,4 +792,15 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// refuseInAppUpdate answers 404 and reports true on a channel that may not
+// self-update (Google Play, App Store; ADR-0194 §2.3, ut-docs#6388). Called
+// first by every update route, before any permission check or network call.
+func refuseInAppUpdate(w http.ResponseWriter, r *http.Request) bool {
+	if buildinfo.CurrentChannel().InAppUpdateAllowed() {
+		return false
+	}
+	http.NotFound(w, r)
+	return true
 }

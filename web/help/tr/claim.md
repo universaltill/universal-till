@@ -17,8 +17,13 @@ Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı S
 
 1. Ayarlar → Kasa kaydı mağaza kimliğini gösterir; gerekirse Şimdi kaydet ile bağlayın. Katılmış bir kasada kaydı ana kasa sizin için yapar: bu kart o zaman kasanın ana kasa üzerinden kayıtlı olduğunu söyler ve sahiplenme ana kasada yapılır.
 2. Kaydolmadan önce "Universal Till bulut hizmeti şartlarını kabul ediyorum (sürüm v0.1-draft)" kutusunu işaretleyin; "Şartları oku" şartları yeni bir sekmede açar. İşaret yoksa Şimdi kaydet hiçbir şey yapmaz ve bunu size söyler. Şartları her sürüm için bir kez kabul edersiniz: sonrasında kart kutu yerine tarihle birlikte "Şartlar kabul edildi: sürüm v0.1-draft" gösterir ve kasa kabulünüzü (sürümü ve dilinizi) kayıtla birlikte gönderir. Bu adımdan önce (ya da bir eklenti kurulumuyla) kaydedilmiş bir kasa, Kasa kaydı altında aynı kutuyu **Şartları kabul et** düğmesiyle gösterir: kutuyu işaretleyip düğmeye basın. Kasa çevrimdışıysa kabulünüz kasada saklanır ve kart henüz buluta ulaşmadığını söyler; tekrar çevrimiçi olunca **Buluta gönder**'e basın. Satış hiçbir zaman etkilenmez.
+
+<!-- plan-purchase -->
+
 3. Bu mağazayı sahiplen'e tıklayıp kısa kodu (15 dakika geçerli) ve QR'ı alın — telefonunuzla tarayıp oradan sahiplenin.
 4. Universal Till kimliğinizle marketplace'e giriş yapın, sahiplenme sayfasını açın ve kodu girin.
+
+<!-- /plan-purchase -->
 
 ## Otomatik kayıt — kurulumda sizin seçiminiz
 

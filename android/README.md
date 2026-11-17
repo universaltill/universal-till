@@ -742,6 +742,58 @@ only print entry point; every other shell keeps `window.print()`.
 - Verified by the Gradle build and `PrintLogicTest` in CI only; the real
   dialog and the lock-task behaviour need a device or emulator check.
 
+## Install channel (ut-docs#6388, ADR-0194)
+
+The till core behaves differently per install channel: `sideload | play |
+appstore | direct`. On `play` and `appstore` it offers no plan purchase, no
+claim link or QR, and no self-update. The channel is a build constant:
+`BuildConfig.INSTALL_CHANNEL` (app/build.gradle.kts) is handed to Go once by
+`TillService.kt` with `Mobile.setInstallChannel(...)` BEFORE `Mobile.start`.
+Nothing at runtime (settings, env, a synced directive, a request) can change
+it, and the first call wins.
+
+- Today's three `abi` flavors are the GitHub-release APK, so the default is
+  `sideload`.
+- A store flavor (the planned `play` one, #6409) MUST set its own
+  `INSTALL_CHANNEL` in its flavor block; `-PinstallChannel=<name>` overrides
+  it for a CI build.
+- A value outside the four names becomes `appstore` in Gradle, and the Go
+  side stores any unknown or missing value as `appstore` too: the build
+  fails closed. The shared `.aar` has no linker stamp, so a shell that never
+  calls `setInstallChannel` is treated as `appstore`.
+- Signing is untouched by this setting.
+
+## Google Play flavor (ut-docs#6409, ADR-0194)
+
+A fourth product flavor, `play`, in the same `abi` dimension, produces the
+Google Play **App Bundle**: `./gradlew bundlePlayRelease -PinstallChannel=play`
+-> `app/build/outputs/bundle/playRelease/app-play-release.aab`.
+
+| | sideload (`arm64`/`armv7`/`universal`) | `play` |
+|---|---|---|
+| versionCode | base*10 + 2 / 1 / 0 | base*10 + **5** |
+| `INSTALL_CHANNEL` | `-PinstallChannel` (default `sideload`) | hard-wired `play` |
+| `REQUEST_INSTALL_PACKAGES`, update FileProvider | yes (`src/sideload/AndroidManifest.xml`) | **absent** |
+| self-update code (`UpdateLogic`, `SelfUpdateActivity`, signer pins) | `src/sideload` | none; `src/play` has an inert stub |
+| signing | release key (`ANDROID_KEYSTORE_*`) | **upload** key (`ANDROID_UPLOAD_KEYSTORE_PATH/_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`), a different key; Play App Signing re-signs with the app key (#6395) |
+| ABIs | one each / both | arm64-v8a + armeabi-v7a (64-bit always present) |
+
+Without the upload env vars the bundle is built unsigned (offline/CI check).
+Language splits are off: the app switches language in-app, so every language
+must ship in the base module. `targetSdk` is 36.
+
+Consumption-only UI (no plan purchase, no link-out, claim code as plain text)
+is decided in Go from the channel (`internal/buildinfo.Channel`); the shell only
+hands `play` over once (TillService). Nothing in the play bundle can install
+packages.
+
+Verify any bundle with `scripts/check-aab.sh <file.aab> [--allow-unsigned]
+[--expect-version-code N] [--expect-cert-sha256 HEX]` (needs aapt2 from the
+SDK build-tools, plus the JDK's jarsigner/keytool; uses `BUNDLETOOL_JAR` for
+the manifest when set). The `PlayBuildHasNoSelfUpdateTest` unit test
+(`./gradlew testPlayReleaseUnitTest`) keeps the update code out of the flavor.
+The sideload-only tests live in `src/testSideload`.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)

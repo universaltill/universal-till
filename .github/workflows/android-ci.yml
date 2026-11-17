@@ -176,3 +176,9 @@ jobs:
           UT_EXPECT_UPDATE_APK_URL_BASE=https://updates.example.test/apk/ \
             ./gradlew testUniversalDebugUnitTest -PupdateApkUrlBase=https://updates.example.test/apk/ --no-daemon
           bash ../scripts/ci/check-android-update-base.sh ./gradlew
+          # ADR-0194 / ut-docs#6409: the Google Play bundle builds (unsigned, no
+          # keys) and passes the store policy check: no REQUEST_INSTALL_PACKAGES,
+          # targetSdk 36, 64-bit, versionCode base*10+5. The play unit test
+          # proves the update code is absent from the flavor.
+          ./gradlew testPlayReleaseUnitTest bundlePlayRelease -PinstallChannel=play --no-daemon
+          bash scripts/check-aab.sh app/build/outputs/bundle/playRelease/app-play-release.aab --allow-unsigned
