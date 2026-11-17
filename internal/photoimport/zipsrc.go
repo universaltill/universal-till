@@ -29,6 +29,9 @@ type Zip struct {
 
 // OpenZip indexes the archive in ra.
 func OpenZip(ra io.ReaderAt, size int64) (*Zip, error) {
+	if !centralDirOK(ra, size) {
+		return nil, ErrBadZip
+	}
 	zr, err := zip.NewReader(ra, size)
 	if err != nil || len(zr.File) > MaxZipEntries {
 		return nil, ErrBadZip
@@ -105,3 +108,39 @@ func Read(f *zip.File, max int64) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// centralDirOK reads the end-of-central-directory record and refuses an
+// archive that declares more entries (or a bigger directory) than we accept,
+// BEFORE archive/zip builds one object per record (a directory made of
+// millions of empty records would otherwise exhaust memory).
+func centralDirOK(ra io.ReaderAt, size int64) bool {
+	const eocdLen = 22
+	if size < eocdLen {
+		return false
+	}
+	n := int64(eocdLen + 65535)
+	if n > size {
+		n = size
+	}
+	buf := make([]byte, n)
+	if _, err := ra.ReadAt(buf, size-n); err != nil && err != io.EOF {
+		return false
+	}
+	for i := len(buf) - eocdLen; i >= 0; i-- {
+		if buf[i] == 'P' && buf[i+1] == 'K' && buf[i+2] == 5 && buf[i+3] == 6 {
+			entries := int(buf[i+10]) | int(buf[i+11])<<8
+			cdSize := uint32(buf[i+12]) | uint32(buf[i+13])<<8 | uint32(buf[i+14])<<16 | uint32(buf[i+15])<<24
+			// 0xFFFF / 0xFFFFFFFF = Zip64 markers: far over the caps anyway.
+			cdOff := int64(buf[i+16]) | int64(buf[i+17])<<8 | int64(buf[i+18])<<16 | int64(buf[i+19])<<24
+			eocdPos := size - n + int64(i)
+			// archive/zip keeps reading records until one is invalid, and
+			// compares the count only modulo 65536: pin the directory to
+			// exactly [offset, offset+size) ending at this record.
+			return entries <= MaxZipEntries && cdSize <= maxZipDirBytes && cdOff+int64(cdSize) == eocdPos
+		}
+	}
+	return false
+}
+
+// maxZipDirBytes bounds the central directory (names + extra fields).
+const maxZipDirBytes = 4 << 20

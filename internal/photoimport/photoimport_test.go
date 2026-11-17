@@ -109,18 +109,26 @@ func TestResolveInFolder(t *testing.T) {
 	}
 }
 
-func TestReadRegular(t *testing.T) {
+func TestReadInFolder(t *testing.T) {
 	d := t.TempDir()
-	big := filepath.Join(d, "big.png")
-	os.WriteFile(big, make([]byte, 100), 0o644)
-	if _, err := ReadRegular(big, 50); err != ErrTooBig {
+	os.WriteFile(filepath.Join(d, "big.png"), make([]byte, 100), 0o644)
+	os.Mkdir(filepath.Join(d, "sub"), 0o755)
+	if _, err := ReadInFolder(d, "big.png", 50); err != ErrTooBig {
 		t.Fatalf("big: %v", err)
 	}
-	if _, err := ReadRegular(d, 50); err != ErrNotRegular {
+	if _, err := ReadInFolder(d, "sub", 50); err != ErrNotRegular {
 		t.Fatalf("dir: %v", err)
 	}
-	if _, err := ReadRegular("/dev/zero", 50); err != ErrNotRegular {
-		t.Fatalf("dev: %v", err)
+	if b, err := ReadInFolder(d, "big.png", 500); err != nil || len(b) != 100 {
+		t.Fatalf("ok read: %v", err)
+	}
+	// a symlink out of the folder is refused
+	out := t.TempDir()
+	os.WriteFile(filepath.Join(out, "s.png"), []byte("x"), 0o644)
+	if err := os.Symlink(filepath.Join(out, "s.png"), filepath.Join(d, "l.png")); err == nil {
+		if _, err := ReadInFolder(d, "l.png", 50); err != ErrOutside {
+			t.Fatalf("symlink escape: %v", err)
+		}
 	}
 }
 
@@ -471,5 +479,56 @@ func TestRun_ZipRefMissingIsNotFound(t *testing.T) {
 	rep, _ := Run(context.Background(), []Row{{2, "C", "a.png"}}, Options{Zip: z, Catalog: cat, Store: st.store})
 	if rep.Rows[0].Status != StatusNotFound {
 		t.Fatalf("%+v", rep.Rows)
+	}
+}
+
+func TestValidateFolder(t *testing.T) {
+	for _, bad := range []string{`\\host\share`, "//host/share", "/", "relative/dir", "/dev", "/proc", "/etc"} {
+		if err := ValidateFolder(bad); err == nil {
+			t.Errorf("ValidateFolder(%q) accepted", bad)
+		} else if err != ErrOutside && err != ErrNotFound {
+			t.Errorf("ValidateFolder(%q) = %v", bad, err)
+		}
+	}
+	if err := ValidateFolder(t.TempDir()); err != nil {
+		t.Errorf("temp dir refused: %v", err)
+	}
+}
+
+func TestOpenZip_DeclaredEntryCountRefusedBeforeParsing(t *testing.T) {
+	var b bytes.Buffer
+	b.Write([]byte{'P', 'K', 5, 6, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	if _, err := OpenZip(bytes.NewReader(b.Bytes()), int64(b.Len())); err != ErrBadZip {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestBlockedIP_CompatAndSiteLocal(t *testing.T) {
+	for _, s := range []string{"::127.0.0.1", "::10.0.0.1", "fec0::1", "::ffff:127.0.0.1", "::1", "::"} {
+		if !BlockedIP(netip.MustParseAddr(s)) {
+			t.Errorf("%s not blocked", s)
+		}
+	}
+	if BlockedIP(netip.MustParseAddr("::8.8.8.8")) {
+		t.Error("compat of a public v4 should pass")
+	}
+}
+
+func TestOpenZip_DirectoryMustEndAtTheEndRecord(t *testing.T) {
+	// Declares 1 entry / 46 directory bytes at offset 0, but 138 bytes of
+	// "records" precede the end record: archive/zip would keep parsing them.
+	var b bytes.Buffer
+	b.Write(make([]byte, 138))
+	b.Write([]byte{'P', 'K', 5, 6, 0, 0, 0, 0, 1, 0, 1, 0, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	if _, err := OpenZip(bytes.NewReader(b.Bytes()), int64(b.Len())); err != ErrBadZip {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestReservedDeviceName(t *testing.T) {
+	for ref, want := range map[string]bool{"NUL.png": true, "sub/com1.jpg": true, `a\LPT9`: true, "CONSOLE.png": false, "ABC-123.jpg": false, "COM10.png": false} {
+		if got := reservedDeviceName(ref); got != want {
+			t.Errorf("%q = %v, want %v", ref, got, want)
+		}
 	}
 }

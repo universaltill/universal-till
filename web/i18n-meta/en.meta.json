@@ -751,6 +751,7 @@
   "settings.plugins.auto_installed_for": {"description": "Small note on a plugin card in Settings > Plugins: the till installed this plugin by itself for the shop's country.", "review": "standard", "placeholders": ["country name"]},
   "settings.plugins.uninstall_tax_confirm": {"description": "Confirm dialog text when uninstalling the automatically installed tax plugin: says what changes (each item's own tax rate applies to eat-in sales) and that it is not reinstalled automatically.", "review": "standard", "placeholders": ["plugin name"]},
   "settings.plugins.dismiss_tax_pending_confirm": {"description": "Confirm dialog text when removing the automatically queued tax plugin before it has installed: says the install stops, each item's own tax rate applies to eat-in sales, and it is not queued again automatically.", "review": "standard", "placeholders": ["plugin name"]},
+  "photoimport.open": {"description": "Link on the Import page that opens the bulk photo import (adds photos to existing items from a CSV or ZIP).", "review": "standard"},
   "photoimport.title": {"description": "Heading of the Import page card that adds photos to existing items from a CSV or ZIP.", "review": "standard"},
   "photoimport.help": {"description": "Explanation at the top of the photo import card: existing items only, matched by SKU, preview saves nothing.", "review": "standard"},
   "photoimport.csv": {"description": "Label of the file field for the CSV that lists SKU and image path or address.", "review": "standard"},

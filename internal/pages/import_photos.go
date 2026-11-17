@@ -10,8 +10,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,9 +32,10 @@ import (
 // the same photoimport.Run; apply adds Commit. One run at a time.
 
 const (
-	photoUploadMax   = 600 << 20 // whole multipart body: CSV + ZIP
-	photoMemMax      = 8 << 20   // multipart memory before spooling to disk
-	photoReportMax   = 8         // failed-rows reports kept in memory
+	photoUploadMax   = 600 << 20        // whole multipart body: CSV + ZIP
+	photoMemMax      = 8 << 20          // multipart memory before spooling to disk
+	photoRunMax      = 30 * time.Minute // whole-run deadline
+	photoReportMax   = 8                // failed-rows reports kept in memory
 	photoReportTTL   = time.Hour
 	photoRowsShown   = 200
 	photoFailedRoute = "/api/import/photos/failed.csv"
@@ -85,11 +84,22 @@ func registerImportPhotos(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
+		if !sameOriginRequest(r) {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			notice(w, http.StatusConflict, locale, "photoimport.error.main_till_only")
 			return
 		}
+		// One run at a time, taken BEFORE the upload is parsed and spooled so
+		// parallel requests cannot pile up temp files.
+		if !runMu.TryLock() {
+			notice(w, http.StatusConflict, locale, "photoimport.error.busy")
+			return
+		}
+		defer runMu.Unlock()
 		r.Body = http.MaxBytesReader(w, r.Body, photoUploadMax)
 		if err := r.ParseMultipartForm(photoMemMax); err != nil {
 			notice(w, http.StatusRequestEntityTooLarge, locale, "photoimport.error.too_large")
@@ -147,17 +157,11 @@ func registerImportPhotos(mux *http.ServeMux, d *common.Deps) {
 		if folder != "" {
 			// Absolute only: a relative folder would resolve against the
 			// process's working directory, not the shop's folder.
-			if st, err := os.Stat(folder); !filepath.IsAbs(folder) || err != nil || !st.IsDir() {
+			if err := photoimport.ValidateFolder(folder); err != nil {
 				notice(w, http.StatusBadRequest, locale, "photoimport.error.folder")
 				return
 			}
 		}
-		if !runMu.TryLock() {
-			notice(w, http.StatusConflict, locale, "photoimport.error.busy")
-			return
-		}
-		defer runMu.Unlock()
-
 		commit := r.FormValue("commit") == "1"
 		stored := 0
 		opts := photoimport.Options{
@@ -179,14 +183,22 @@ func registerImportPhotos(mux *http.ServeMux, d *common.Deps) {
 				return nil
 			},
 		}
-		rep, err := photoimport.Run(r.Context(), rows, opts)
+		// Whole-run deadline: a long list of slow URLs cannot hold the run slot forever.
+		runCtx, cancelRun := context.WithTimeout(r.Context(), photoRunMax)
+		defer cancelRun()
+		rep, err := photoimport.Run(runCtx, rows, opts)
 		if commit && stored > 0 {
 			// Photos are files on /api/sync/assets: tell linked tills to pull.
 			d.NudgeLink(fleetlink.ScopeAdmin)
 		}
-		if commit {
-			payload := map[string]any{"photos_saved": stored, "replace": opts.Replace, "rows": len(rows), "counts": rep.Counts}
-			if aerr := posRepo.InsertAudit(context.WithoutCancel(r.Context()), nil, getSessionUserID(r), "catalog", "-", "photo_import",
+		{
+			// Previews read files and fetch URLs too, so they are audited as well.
+			action := "photo_import_preview"
+			if commit {
+				action = "photo_import"
+			}
+			payload := map[string]any{"photos_saved": stored, "replace": opts.Replace, "rows": len(rows), "counts": rep.Counts, "folder": folder, "zip": zr != nil}
+			if aerr := posRepo.InsertAudit(context.WithoutCancel(r.Context()), nil, getSessionUserID(r), "catalog", "-", action,
 				payload, time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
 				log.Printf("[photoimport] audit: %v", aerr)
 			}

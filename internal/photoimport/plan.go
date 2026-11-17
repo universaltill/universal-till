@@ -210,11 +210,7 @@ func load(ctx context.Context, r Row, o Options) ([]byte, string) {
 		}
 		return nil, StatusNoSource
 	}
-	p, err := ResolveInFolder(o.Folder, ref)
-	if err != nil {
-		return nil, mapErr(err)
-	}
-	b, err := ReadRegular(p, MaxImageBytes)
+	b, err := ReadInFolder(o.Folder, ref, MaxImageBytes)
 	return b, mapErr(err)
 }
 

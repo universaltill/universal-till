@@ -41,8 +41,11 @@ func BlockedIP(ip netip.Addr) bool {
 			return BlockedIP(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
 		case sixToFour.Contains(ip):
 			return BlockedIP(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}))
-		case teredo.Contains(ip), nat64Local.Contains(ip):
+		case teredo.Contains(ip), nat64Local.Contains(ip), siteLocal.Contains(ip):
 			return true
+		case v4Compat.Contains(ip):
+			// ::a.b.c.d (deprecated IPv4-compatible): judge the embedded address.
+			return BlockedIP(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
 		}
 	}
 	if !ip.IsValid() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
@@ -66,6 +69,8 @@ var (
 	nat64Local = netip.MustParsePrefix("64:ff9b:1::/48")
 	sixToFour  = netip.MustParsePrefix("2002::/16")
 	teredo     = netip.MustParsePrefix("2001::/32")
+	siteLocal  = netip.MustParsePrefix("fec0::/10")
+	v4Compat   = netip.MustParsePrefix("::/96")
 )
 
 // Fetcher downloads https images. The address check runs in the dialer's
@@ -102,7 +107,7 @@ func newFetcher(blocked func(netip.Addr) bool, tlsCfg *tls.Config) *Fetcher {
 	}
 	client := netaccess.NewClientWithTransport(fetchTimeout, tr)
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) > maxRedirects {
+		if len(via) >= maxRedirects {
 			return ErrFetch
 		}
 		return checkURL(req.URL)

@@ -228,6 +228,10 @@ document.getElementById('import-result').addEventListener('change', function (e)
 </div>
 {{ end }}
 
+{{ if .showPhotosLink }}
+<p style="margin-block-start:1rem"><a href="/import?mode=photos" data-testid="photo-import-link">{{ T "photoimport.open" }}</a></p>
+{{ end }}
+
 {{ if .showPhotosCard }}
 <!-- ut-docs#6527: bulk-import item photos by SKU. A CSV (sku + image column)
      and/or a ZIP of <SKU>.<ext> files; Preview saves nothing, Import saves.

@@ -4096,6 +4096,7 @@
   "settings.till_registration.new_shop_pending": "This till is no longer in the old shop and is not registered yet. Press Register now to try again.",
   "settings.enrol.rate_limited": "Too many tries. Wait a few minutes and try again.",
   "settings.enrol.update_needed": "This till's software is too old to prove its identity to the cloud. Update this till, then try again. Selling is not affected.",
+  "photoimport.open": "Add photos to existing items from a CSV or ZIP",
   "photoimport.title": "Import item photos by SKU",
   "photoimport.help": "Updates the photos of items you already have, matched by SKU. Nothing else about an item changes. Preview first: nothing is saved until you press Import.",
   "photoimport.csv": "CSV with sku and image columns",

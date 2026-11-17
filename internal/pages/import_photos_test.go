@@ -189,3 +189,34 @@ func TestPhotoImport_RelativeFolderRefused(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6527: the default Import page keeps exactly ONE file input (a
+// dozen e2e specs address `input[type=file]` unscoped); the photos form
+// lives in its own view, reached by a link.
+func TestImportPage_PhotosCardOnlyInPhotosMode(t *testing.T) {
+	dp := newImportTestDeps(t)
+	dp.AuthSvc = auth.NewService(dp.Db)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+	mgr := auth.User{ID: "u-admin", Role: "admin"}
+	get := func(url string) string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, url, nil), mgr)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d", url, rec.Code)
+		}
+		return rec.Body.String()
+	}
+	def := get("/import")
+	if n := strings.Count(def, `type="file"`); n != 1 {
+		t.Fatalf("default import page has %d file inputs, want 1", n)
+	}
+	if !strings.Contains(def, `data-testid="photo-import-link"`) || strings.Contains(def, `id="photo-import-card"`) {
+		t.Fatal("default page must link to photos mode, not embed the card")
+	}
+	ph := get("/import?mode=photos")
+	if !strings.Contains(ph, `id="photo-import-card"`) || strings.Contains(ph, `data-testid="photo-import-link"`) {
+		t.Fatal("photos mode must show the card")
+	}
+}

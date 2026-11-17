@@ -113,3 +113,33 @@ file it as a follow-up.
   import): one shared size/type/pixel rule set.
 - R6: folder mode admin-only or Settings-pinned folder; single status for
   unreadable folder rows.
+
+## Fable security pass (2026-11-17, same card) and playwright root cause
+
+Playwright root cause: the photos card put two more `input[type=file]`
+elements on the default Import page; ~20 existing e2e specs address
+`input[type=file]` unscoped (strict-mode violation, 70 failures incl. their
+retries). Fix: the card now renders only in `/import?mode=photos`; the default
+page shows a link and keeps exactly one file input
+(`TestImportPage_PhotosCardOnlyInPhotosMode`).
+
+Fable (read-only) found, all fixed with tests:
+
+1. Medium-High: the folder was any caller-supplied path (`/`, UNC share =
+   SMB auth leak, existence oracle). `ValidateFolder` refuses UNC/device
+   roots, filesystem/drive roots and system trees.
+2. Medium: opening a FIFO blocked forever holding the run lock. `Lstat`
+   before open, `O_NONBLOCK`, Windows device names refused
+   (`fifo_unix_test.go`).
+3. Medium: ZIP entry cap ran after the whole central directory was parsed.
+   `centralDirOK` checks the EOCD record first.
+4. Low-Medium: no same-origin check on the POST. `sameOriginRequest` added.
+5. Low: run slot taken before the upload is spooled; 30-minute whole-run
+   deadline.
+6. Low: resolve/open symlink TOCTOU. Reads go through `os.OpenRoot`
+   (`ReadInFolder`); `ReadRegular` removed.
+7. Low: previews are audited too (`photo_import_preview`), with folder.
+8. Low: `::a.b.c.d` and `fec0::/10` blocked; redirect limit is now 3.
+
+Not changed: a per-run URL-row cap (5000 rows and the 30-minute deadline
+bound it).
