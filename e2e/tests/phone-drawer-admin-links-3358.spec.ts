@@ -10,14 +10,14 @@ test.describe('phone drawer', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
   for (const path of ['/', '/menu']) {
-    test(`${path}: drawer lists Users, Promotions and Translations`, async ({ page }) => {
+    test(`${path}: drawer lists Users, Promotions, Translations and My display`, async ({ page }) => {
       await ensureOperator(page);
       await page.goto(path);
       await openPhoneDrawer(page);
       const links = page.locator('#nav-drawer .session-admin-link');
-      await expect(links).toHaveCount(3);
-      for (let i = 0; i < 3; i++) await expect(links.nth(i)).toBeVisible();
-      for (const name of ['Users', 'Promotions', 'Translations']) {
+      await expect(links).toHaveCount(4);
+      for (let i = 0; i < 4; i++) await expect(links.nth(i)).toBeVisible();
+      for (const name of ['Users', 'Promotions', 'Translations', 'My display']) {
         await expect(page.locator('#nav-drawer .session-admin-link', { hasText: name })).toBeVisible();
       }
     });

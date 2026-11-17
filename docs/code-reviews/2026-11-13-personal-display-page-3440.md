@@ -80,3 +80,12 @@ No `settingsAudit` row is written for a personal cosmetic preference. This is a 
 The last three items are one card: ut-docs#6193.
 
 **Verdict:** approve once the fixes above are in. They are applied in this branch.
+
+## Sweep 2026-11-17 (lane:cloud-41): merge, renumber, e2e fixes
+
+Pre-flight: help topic `my-display` unchanged; manifest regenerated (`guard-docs-shots.sh` passes); README unaffected.
+
+- Merged `origin/main`. Main shipped its own 102 and 103, so the grants migration becomes `104_personal_display_grants.sql` (same content and checksum, pinned at 104); it only ever existed on this branch, so no till has applied it as 102.
+- Dev (Sonnet): session-chip link count 3→4 in the 1346/1423/3358 specs; rail icon count 12→13 (new `contrast` icon); `contrast` added to `internal/uislot` `knownIconNames` (`TestKnownIconNamesMirrorsHttpxIconNames` failed without it).
+- Independent review (Opus), verdict APPROVE. Findings: (medium) the uislot fix must ship with the merge — committed together; (low) manifest regenerated without re-rendering PNGs, because sandbox Chromium differs from the pinned one — accepted, since an earlier full run changed only `my-display.png`; (nit) stale "11-icon" comment in the 1423 spec — fixed. Renumber is safe; no changes from main were lost; the deadcode baseline removals are justified.
+- Verified: `go test ./internal/db ./internal/uislot ./internal/pages/...`; the docs-shots, migration-collision, i18n, i18n-meta, help-topics and deadcode guards; the three Playwright specs (14/14), with the 1024x600 Lock hit-test real. CI covers what the sandbox couldn't run: shellcheck, the catimport tag, and the `internal/plugins` tests, which hang in this sandbox.
