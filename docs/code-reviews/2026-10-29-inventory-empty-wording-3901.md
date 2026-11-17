@@ -1,5 +1,8 @@
 # Review — Inventory empty-state wording (ut-docs#3901)
 
+> **Superseded in part (2026-11-17):** the tr/fa/ar edits and de/es/pt pack PRs described below were dropped in the sweep — English only, per ADR-0160 §2. See the addendum at the end.
+
+
 Date: 2026-10-29 · Lane: `lane:cloud-41` · Complexity: easy
 
 ## What shipped
@@ -88,6 +91,14 @@ The PR sat conflicted for 19 days. One merge of `main` (no rebase):
   `ci.yml` guards pass except four that need tools absent here
   (`armv7-seccomp` qemu, `catimport-version` tags — no `catimport/` change,
   `deadcode-baseline` go1.27, `shellcheck-version`); CI runs them.
+
+- `e2e/tests-i18n-audit/allowlist.json`: added `"English"`. The German
+  render audit failed on `/self-order -> "English"`, the language picker's
+  endonym (ut-docs#4200); `main`'s push-mode report shows the same finding,
+  so every audit-triggering PR failed. Independent Sonnet review: correct
+  and minimal — the spec matches allowlist text globally with no per-route
+  option; low risk: it would also hide a German fallback of
+  `translations.mode.english` (translate panel, not on an audited route).
 
 Pre-flight: help topic n/a (no help text quotes the empty row); reference
 n/a; README n/a; en.meta.json updated; other locales n/a (Weblate,
