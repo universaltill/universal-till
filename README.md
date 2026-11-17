@@ -121,7 +121,14 @@ Owners manage the shop from any browser at
 
 ### Optional Cloud Services
 *(paid plans — see [Pricing](#-pricing) for which plan each starts from; the core till never needs them. Tills in one shop sync over the shop's own network on every plan.)*
-- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up)
+- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up). The main
+  till copies its newest daily backup to the cloud in the background, encrypted on the
+  till with a per-shop key the till generates and keeps outside the database; a
+  Key-Vault-wrapped copy in the cloud is the owner's choice (on or off, switchable;
+  released only through the owner's approval on my.), and the owner can print or
+  save the key as a `UTK1-` recovery string (`internal/offsitebackup`, ADR-0199). Restoring onto a
+  replacement till needs the shop owner's approval on my. (Settings → Backups → Cloud
+  backups; manager PIN on the till)
 - Manage from a browser (my.) and a cloud-held catalogue every till follows (basic on Local Plus, full from Shop)
 - Mobile tills syncing over the internet (Pro and up)
 - Managed fiscal device where a market requires one (e.g. German TSE; Shop and up)
