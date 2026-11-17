@@ -3,6 +3,7 @@ id: voucher-import
 title: Kupon bakiyelerini içe aktar
 section: Dükkanı kurma
 order: 148
+public: true
 summary: Başka bir kasadan mı geçiyorsunuz? Müşterilerinizin zaten elinde bulunan fiziksel kupon (hediye kartı) kartlarındaki kalan bakiyeleri, yeni bir satış olarak değil, açılış bakiyesi olarak içeri aktarın.
 keywords: [kupon, hediye kuponu, hediye kartı, içe aktarma, geçiş, bakiye, açılış bakiyesi, csv]
 ---

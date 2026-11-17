@@ -48,22 +48,8 @@ func main() {
 	}
 
 	fail := false
-	for _, locale := range locales {
-		// MissingTranslations reports every topic id as missing for a
-		// locale it has never even seen a file for (a nil map lookup),
-		// which is exactly what we want here: a locale whose whole
-		// web/help/<locale>/ directory got deleted must fail this check,
-		// not just one that's merely incomplete. The locale set itself
-		// therefore has to come from the product's real shipped-locale
-		// registry (web/locales/*.json — the same one guard-i18n.sh
-		// enforces web/locales parity against), NOT from lib.Locales(),
-		// which only lists locales that already have at least one topic
-		// file loaded and so is blind to a locale with zero.
-		missing := lib.MissingTranslations(locale)
-		if len(missing) > 0 {
-			fail = true
-			fmt.Fprintf(os.Stderr, "guard-help-topics: locale %q is missing manual topics: %v\n", locale, missing)
-		}
+	for _, w := range translationWarnings(lib, locales) {
+		fmt.Fprintln(os.Stderr, w)
 	}
 
 	// Page-route coverage: every user-facing page must have a claiming topic
@@ -93,19 +79,26 @@ func main() {
 		}
 	}
 
+	// Inline screenshots (ut-docs#2615): Load drops a reference no image backs
+	// (so `make docs-shots` can bootstrap), which only this check surfaces.
+	if lines := missingImageLines(lib); len(lines) > 0 {
+		fail = true
+		for _, line := range lines {
+			fmt.Fprintln(os.Stderr, line)
+		}
+	}
+
 	if fail {
 		os.Exit(1)
 	}
-	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete, every page route has a claiming topic, every helpLink id is a real topic")
+	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, English is the required locale, every page route has a claiming topic, every helpLink id is a real topic")
 }
 
 // manualOnlyLocales are locales whose USER MANUAL (web/help/<locale>) is
 // owned and shipped by this repo even though their day-to-day UI strings are
-// NOT — a manual-only locale ships its web/locales/<code>.json from an
-// external ut-plugin-language-<code> pack instead (see universal-till/
-// CLAUDE.md's i18n section, and scripts/ci/check-lang-pack-drift.sh's own
-// PACKS list for the same de/es split). shippedLocales() below derives its
-// set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
+// NOT — a manual-only locale's UI strings come from its Weblate bundle
+// (com.universaltill.language-<code>, ADR-0160) instead.
+// shippedLocales() below derives its set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
 // as core JSON, so a missing locale directory there IS a fully-deleted
 // locale worth failing loudly on) but blind to de/es, which never have a
 // core web/locales/<code>.json to glob — so without this list, adding
@@ -137,4 +130,30 @@ func shippedLocales() ([]string, error) {
 	}
 	sort.Strings(locales)
 	return locales, nil
+}
+
+// translationWarnings reports, per locale, the topics English has that the
+// locale lacks. Warning only, never a failure (ADR-0160 section 2: code merges
+// with English only; other locales arrive via Weblate/signed bundles).
+// MissingTranslations reports every topic as missing for a locale with no
+// files at all, so the locale set comes from shippedLocales(), not the library.
+func translationWarnings(lib *manual.Library, locales []string) []string {
+	var out []string
+	for _, locale := range locales {
+		if missing := lib.MissingTranslations(locale); len(missing) > 0 {
+			out = append(out, fmt.Sprintf("guard-help-topics: warning (non-blocking): locale %q is missing manual topics: %v", locale, missing))
+		}
+	}
+	return out
+}
+
+// missingImageLines reports every inline screenshot reference
+// (img/<id>-<name>.png in a topic) that no committed image backs, in any
+// locale or the en fallback. Run `make docs-shots` and commit the PNGs.
+func missingImageLines(lib *manual.Library) []string {
+	var out []string
+	for _, m := range lib.MissingImages() {
+		out = append(out, "guard-help-topics: topic screenshot not committed ("+m+") - run `make docs-shots` and commit web/help/img")
+	}
+	return out
 }

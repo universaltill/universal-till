@@ -3,6 +3,7 @@ id: translate-mode
 title: وضع الترجمة
 section: إعداد متجرك
 order: 151
+public: false
 summary: يمكن للمديرين معرفة مفتاح النص الذي يأتي منه كل عنوان، وفتحه في Weblate، وتغيير صياغته لهذا المتجر.
 keywords: [وضع الترجمة, ترجمة, weblate, لغة, صياغة]
 ---

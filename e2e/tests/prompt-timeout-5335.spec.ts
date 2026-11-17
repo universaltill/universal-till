@@ -12,6 +12,7 @@ import { REPO_ROOT } from './worker-till';
 // prompt-timeout-pin-5335.spec.ts (auth project).
 
 const OUTCOME = 'The connection dropped before the till replied, so this may or may not have been done. Check before you try again.';
+const TIMEOUT_TEXT = 'The till did not reply in time, so this may or may not have been done. Check before you try again.';
 const OVERRIDE_MS = 1000;
 
 function setting(op: 'set' | 'delete', key: string, value?: string) {
@@ -86,7 +87,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
     await h.inFlight;
     await expect(dlg).toHaveJSProperty('open', false, { timeout: 5000 });
     const text = page.locator('#pos-alert .notice-text');
-    await expect(text).toHaveText(OUTCOME);
+    await expect(text).toHaveText(TIMEOUT_TEXT);
     await expect(page.locator('#pos-alert')).toBeInViewport();
     expect(h.posts()).toBe(2);
     h.release();
@@ -99,7 +100,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
       const dlg = await openConfirm(page);
       await dlg.locator('button[type=submit]').click();
       await h.inFlight;
-      await expect(page.locator('#pos-alert .notice-text')).toHaveText(OUTCOME);
+      await expect(page.locator('#pos-alert .notice-text')).toHaveText(TIMEOUT_TEXT);
       await expect(dlg).toHaveJSProperty('open', false);
       h.release(kind === 'success'
         ? { status: 200, contentType: 'text/html', body: '<span id="late-5335">late</span>' }
@@ -108,7 +109,7 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
       await page.waitForTimeout(500);
       await expect(dlg).toHaveJSProperty('open', false);
       await expect(page.locator('#late-5335')).toHaveCount(0);
-      await expect(page.locator('#pos-alert .notice-text')).toHaveText(OUTCOME);
+      await expect(page.locator('#pos-alert .notice-text')).toHaveText(TIMEOUT_TEXT);
       expect(h.posts()).toBe(2);
     });
   }
@@ -144,14 +145,14 @@ test.describe('confirm prompt timeout (ut-docs#5335)', () => {
 });
 
 test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
-  test('T3 held first send: outcome text in the card, button enabled, no replay', async ({ page }) => {
+  test('T3 held first send: timeout text in the card, button enabled, no replay', async ({ page }) => {
     await shortTimeout(page);
     const h = await holdSecondPost(page, '**/api/data/reset-transactions', false);
     await page.goto('/settings#settings-data');
     await page.locator('[data-testid=data-reset]').click();
     await h.inFlight;
     const text = page.locator('#data-reset-msg .pos-notice.error .notice-text');
-    await expect(text).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(text).toHaveText(TIMEOUT_TEXT, { timeout: 5000 });
     const body = await page.locator('body').innerText();
     for (const bad of ['TypeError', 'AbortError', 'Failed to fetch', 'signal is aborted']) expect(body).not.toContain(bad);
     await expect(page.locator('#data-reset-btn')).toBeEnabled();
@@ -159,8 +160,20 @@ test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
     expect(h.posts()).toBe(1);
     h.release({ status: 200, contentType: 'text/plain', body: 'late-ok' });
     await page.waitForTimeout(500);
-    await expect(text).toHaveText(OUTCOME);
+    await expect(text).toHaveText(TIMEOUT_TEXT);
     expect(h.posts()).toBe(1);
+  });
+
+  // ut-docs#5484: a genuine network failure (fetch rejects, timer never
+  // fires) keeps the outcome-unknown text, not the timeout text.
+  test('T3b immediate network failure keeps the outcome-unknown text', async ({ page }) => {
+    await shortTimeout(page);
+    await page.route('**/api/data/reset-transactions', (route: Route) => route.request().method() === 'POST' ? route.abort('connectionreset') : route.continue());
+    await page.goto('/settings#settings-data');
+    await page.locator('[data-testid=data-reset]').click();
+    const text = page.locator('#data-reset-msg .pos-notice.error .notice-text');
+    await expect(text).toHaveText(OUTCOME, { timeout: 5000 });
+    await expect(page.locator('#data-reset-btn')).toBeEnabled();
   });
 
   test('T4 held send rejects tagged; neither callback runs', async ({ page }) => {
@@ -169,14 +182,14 @@ test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
     await page.goto('/');
     await page.evaluate(() => {
       const w = window as any;
-      w.__r = { done: 0, cancelled: 0, net: null, rejected: false };
+      w.__r = { done: 0, cancelled: 0, net: null, to: null, rejected: false };
       w.utPostWithElevation('/__ut5335/x', {}, () => { w.__r.done++; }, () => { w.__r.cancelled++; })
-        .catch((e: any) => { w.__r.rejected = true; w.__r.net = !!e.utNetworkError; });
+        .catch((e: any) => { w.__r.rejected = true; w.__r.net = !!e.utNetworkError; w.__r.to = e.utTimeout === true; });
     });
     await h.inFlight;
     await expect.poll(() => page.evaluate(() => (window as any).__r.rejected), { timeout: 5000 }).toBe(true);
     const r = await page.evaluate(() => (window as any).__r);
-    expect(r).toMatchObject({ done: 0, cancelled: 0, net: true });
+    expect(r).toMatchObject({ done: 0, cancelled: 0, net: true, to: true });
     h.release({ status: 200, contentType: 'text/plain', body: 'late' });
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => (window as any).__r.done)).toBe(0);
@@ -272,6 +285,7 @@ test.describe('utPostWithElevation timeout (ut-docs#5335)', () => {
     await page.waitForTimeout(OVERRIDE_MS * 2.5);
     expect(await page.evaluate(() => (window as any).__timeouts)).toBe(0);
     await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(OUTCOME);
+    await expect(page.locator('#pos-alert .notice-text')).not.toHaveText(TIMEOUT_TEXT);
     h.release({ status: 200, contentType: 'text/html', body: 'x' });
   });
 

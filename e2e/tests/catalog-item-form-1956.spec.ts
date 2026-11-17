@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#1956: product-owner feedback on the catalog item form — "the
 // forms are so confusing". Five changes, all pinned here:
@@ -235,12 +235,12 @@ test.describe('catalog item form (ut-docs#1956)', () => {
     expect(dBox.width).toBeGreaterThanOrEqual(dBox.height - 1);
 
     // Deactivate, not erase: the confirm names the item and says the history is kept.
-    let confirmText = '';
-    page.once('dialog', (d) => { confirmText = d.message(); d.accept(); });
+    const noNative = noNativeDialogs(page);
     await del.click();
-    await expect.poll(() => confirmText).toContain(name);
+    const confirmText = await answerTillConfirm(page, 'confirm', name);
     expect(confirmText.toLowerCase()).not.toContain('deactivate');
     expect(confirmText).toMatch(/history is kept/i);
+    noNative();
 
     await expect(page.locator('#item-form-modal')).toBeHidden();
     await expect(page.locator('#catalog-table .catalog-row', { hasText: name })).toHaveCount(0);
@@ -253,11 +253,13 @@ test.describe('catalog item form (ut-docs#1956)', () => {
     const name = 'Keep Probe ' + Date.now();
     await createItem(page, name);
     await openRow(page, name);
-    page.once('dialog', (d) => d.dismiss());
+    const noNative = noNativeDialogs(page);
     await page.locator('#item-form-delete').click();
+    await answerTillConfirm(page, 'cancel');
     await expect(page.locator('#item-form-modal')).toBeVisible();
     await closeItemForm(page);
     await expect(page.locator('#catalog-table .catalog-row', { hasText: name })).toHaveCount(1);
+    noNative();
     assertClean();
   });
 

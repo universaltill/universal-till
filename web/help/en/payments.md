@@ -3,6 +3,7 @@ id: payments
 title: Payments
 section: Everyday selling
 order: 20
+public: true
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
 keywords: [cash, card, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---
@@ -16,7 +17,8 @@ Cash is built in; card and other payment methods come as plugins from the store 
 1. Install a payment plugin from the store (Plugins → Store) and enter your account keys in its settings — Stripe with a card reader (terminal), SumUp, a QR-code payment provider, and others all install and configure the same way. A demo payment plugin is also available from the store for trying the payment panel out before a real provider is connected.
 2. If you use a card reader, set its id in the plugin settings on that till.
 3. At checkout, tap **Pay** (it shows the total) to open the payment panel (the basket stays visible while it's open) — the preferred method leads and each button can show an estimated fee (set the preferred method and its fees in **Configuring payment methods** below) — pick the cheaper one; a declined card leaves the basket untouched. The preferred method is the panel's first button and spans its whole width, so **Pay** then that button charges the exact amount owed in two taps.
-4. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
+4. On a card reader the customer has about 18 seconds to tap or insert. After that the till tells the reader to stop and shows **Payment declined**, so a card offered too late is refused. If the card was already being read when time ran out, the payment still goes through and the sale shows as paid. After a card decline that came after a wait, tap **Pay** again on the **same basket** first: the till checks the earlier attempt and, if it went through, completes the sale with it instead of charging again. If it is declined again straight away, the earlier attempt is still being checked — wait a minute and tap **Pay** again. If you change the basket or pick another method instead, check the reader's screen or your provider's dashboard before charging again.
+5. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
 
 ## Configuring payment methods
 

@@ -159,9 +159,10 @@ func TestParseTimeImportWarnings(t *testing.T) {
 		TakeawayTaxIssue: catimport.TaxIssueUnparseable, TakeawayTaxIssueRaw: "ta",
 		SKUIssue: catimport.SKUIssueDuplicateInFile, SKUIssueRaw: "sku", SKU: "sku-2",
 		NetQuantityIssue: catimport.NetQuantityIssueInvalid, NetQuantityIssueRaw: "nq",
+		ReorderLevelIssue: catimport.ReorderLevelIssueInvalid, ReorderLevelIssueRaw: "rl",
 	}
 	got := parseTimeImportWarnings(T, it)
-	wantSubs := []string{"img", "bc", "tax", "ta", "sku", "nq"}
+	wantSubs := []string{"img", "bc", "tax", "ta", "sku", "nq", "rl"}
 	if len(got) != len(wantSubs) {
 		t.Fatalf("want %d warnings, got %d: %q", len(wantSubs), len(got), got)
 	}

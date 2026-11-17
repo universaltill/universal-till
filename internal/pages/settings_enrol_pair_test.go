@@ -941,3 +941,22 @@ func TestPairConfirmDisplayHelpers(t *testing.T) {
 		t.Fatalf("unbreakableCode changed a code without hyphens: %q", got)
 	}
 }
+
+// ut-docs#5489: the Pair with a shop explanation names the buttons the
+// shop's cloud account really shows ("Pair a till", or "Pair again" for a
+// till that is already listed), never the retired "Add or re-pair a till".
+func TestSettingsPage_PairHelpNamesCloudButtons(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{"Pair a till", "Pair again"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings page lacks %q in the pair help", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(body), "add or re-pair a till") {
+		t.Error("settings page still names the retired \"Add or re-pair a till\" button")
+	}
+}

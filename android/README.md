@@ -202,6 +202,13 @@ GitHub Releases API mechanism the other platforms already use).
   compile-time table by `Build.SUPPORTED_ABIS[0]` (`UpdateLogic.updateApkUrl`).
   `installUpdate()` still takes no argument. `scripts/ci/guard-android-abi-packages.sh`
   keeps the flavors, the compression and release.yml's published names in step.
+  The base of those names is the Gradle property `updateApkUrlBase` (default
+  our GitHub `releases/latest/download/`; `-PupdateApkUrlBase=https://…/`
+  overrides it; an empty or malformed value fails the build, never a fallback
+  to ours). `release.yml` passes
+  `https://github.com/$GITHUB_REPOSITORY/releases/latest/download/`, or the
+  repository variable `UT_ANDROID_UPDATE_APK_URL_BASE` for a non-GitHub
+  mirror, and fails if an APK's dex does not carry it (ut-docs#5271).
 - **Reliable update flow.** One shared page flow (`web/public/android-update.js`)
   for the status chip, the Settings form and the check-for-updates button. In
   `MainActivity`: the DownloadManager id is kept (SharedPreferences
@@ -697,6 +704,43 @@ Capture: `adb logcat -s MainActivity GoLog` while reproducing, plus the
 till log. A `reload: activity recreated` with no `config change handled`
 line before it points at a configuration change the manifest still
 doesn't declare.
+
+## Screen stays on (ut-docs#5620)
+
+Nothing used to set `FLAG_KEEP_SCREEN_ON`, so the till followed the tablet's
+OS display timeout (seconds) in every mode. `MainActivity` now holds the flag
+from `onResume` to `onPause`, and drops it after an idle window
+(`ScreenAwakeLogic`: 0/15/30/60/120/240/480 minutes, default 120, touch
+re-arms it) so the OS can sleep an abandoned till. The choice is per device
+(SharedPreferences `screen_awake`), set from Settings -> Display via the
+`AndroidKiosk.get/setScreenAwakeMinutes` bridge (`web/public/screen-awake.js`).
+Kiosk lock-task mode does not change it. Not covered: a screen turned off with
+the power button, or Doze while the app is backgrounded.
+
+## Printing (ut-docs#6153)
+
+Android System WebView ignores `window.print()`, so the app exposes
+`window.AndroidKiosk.print()`. It takes no argument and opens Android's
+system print dialog for the page the WebView is showing (the receipt and the
+print-only voucher slip are laid out by their `@media print` CSS). The web
+side calls it through `UT.print` (`web/public/inline-actions.js`), the till's
+only print entry point; every other shell keeps `window.print()`.
+
+- Printers come from Android's print services (Mopria/IPP, vendor plugins);
+  "Save as PDF" is always there. ESC/POS receipt printers keep using the
+  hardware path (ADR-0023), not this dialog.
+- One dialog at a time: a second tap while one is open returns `false`
+  (cleared when the framework calls `onFinish`, or after two minutes).
+- Refused (returns `false`, nothing printed, never unpins) while the kiosk
+  lock is engaged (`kioskPinned` or lock-task mode). Only `/self-order*`
+  pages engage the lock and none of them prints. Under device-owner lock-task
+  the print spooler is not allowlisted and would be refused silently; under
+  screen pinning its "Add printer" path leads to Settings and the Play Store.
+  Do not add the spooler to `setLockTaskPackages`.
+- A refusal (including a 451 from the print POST) prints nothing; the web
+  never falls through to the no-op `window.print()` once the bridge exists.
+- Verified by the Gradle build and `PrintLogicTest` in CI only; the real
+  dialog and the lock-task behaviour need a device or emulator check.
 
 ## Not yet done
 

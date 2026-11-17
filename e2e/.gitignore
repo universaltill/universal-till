@@ -4,3 +4,5 @@ playwright-report/
 # ut-docs#2345: the till binary global-setup.ts builds once per run for
 # the per-worker `default`-project servers.
 .bin/
+test-results-webkit/
+playwright-report-webkit/

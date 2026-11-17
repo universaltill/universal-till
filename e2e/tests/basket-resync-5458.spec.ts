@@ -10,7 +10,7 @@ import type { Page, Route } from '@playwright/test';
 // after 300 ms) while its request is pending. 30 s is overridden to 1 s
 // through window.__utPromptTimeoutMs, as in action-timeout-5404.spec.ts.
 
-const OUTCOME = 'The connection dropped before the till replied, so this may or may not have been done. Check before you try again.';
+const OUTCOME = 'The till did not reply in time, so this may or may not have been done. Check before you try again.'; // common.error.outcome_timeout (ut-docs#5463)
 const OVERRIDE_MS = 1000;
 
 async function shortTimeout(page: Page) {

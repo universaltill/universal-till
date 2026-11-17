@@ -26,7 +26,40 @@ val releaseSigningConfigured =
 //
 // release.yml publishes these stable names on every release; the universal
 // one keeps the legacy name every v0.34.x till already has baked in.
-val updateApkUrlBase = "https://github.com/universaltill/universal-till/releases/latest/download/"
+//
+// ut-docs#5271: the base of those names is the Gradle property
+// updateApkUrlBase. An independent operator's build passes
+// -PupdateApkUrlBase=https://…/ (release.yml derives it from the repository it
+// releases to); unset = ours. Build-time only: nothing at runtime can move it
+// (ADR via ut-docs#1246). An empty or malformed value fails the build — never
+// a fallback to our releases.
+val defaultUpdateApkUrlBase = "https://github.com/universaltill/universal-till/releases/latest/download/"
+
+// ut-docs#5271: mirrors internal/releasesource's base rules (ut-docs#4080).
+// A strict allow-list also keeps the value safe inside BuildConfig's Java
+// string literal (no '"', '\\', '$', whitespace).
+fun isValidUpdateApkUrlBase(v: String): Boolean {
+    if (v.length > 512) return false
+    val m = Regex(
+        "^https://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)" +
+            "(?::([0-9]{1,5}))?(/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*/)*)$",
+    ).matchEntire(v) ?: return false
+    val (host, port, path) = m.destructured
+    if (port.isNotEmpty() && port.toInt() !in 1..65535) return false
+    if (host == "github.com") {
+        return Regex("^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/latest/download/$").matches(path) &&
+            port.isEmpty()
+    }
+    // Other GitHub hosts are not release-download bases (cf. #4080 Parse).
+    return !(host.endsWith(".github.com") || host.endsWith(".githubusercontent.com"))
+}
+
+val updateApkUrlBase = (project.findProperty("updateApkUrlBase") as String?) ?: defaultUpdateApkUrlBase
+require(isValidUpdateApkUrlBase(updateApkUrlBase)) {
+    "updateApkUrlBase must be an https URL ending in '/' (lower-case host, no userinfo, " +
+        "query, fragment, port 0 or dot segments; on github.com exactly " +
+        "/<owner>/<repo>/releases/latest/download/), got '$updateApkUrlBase' (ut-docs#5271)"
+}
 val updateApkUrlArm64 = updateApkUrlBase + "unitill-pos-android-arm64-latest.apk"
 val updateApkUrlArmv7 = updateApkUrlBase + "unitill-pos-android-armv7-latest.apk"
 val updateApkUrlUniversal = updateApkUrlBase + "unitill-pos-android-latest.apk"
@@ -337,7 +370,7 @@ dependencies {
     // ut-docs#3466 (ADR-0142, #1508 AC3): the instrumented remote-unlock
     // regression test. Device/emulator only (connectedArm64DebugAndroidTest).
     // ut-docs#1541/#4312: JVM unit tests for the pure update decisions
-    // (UpdateLogic) — `./gradlew testArm64DebugUnitTest`, no device needed.
+    // (UpdateLogic, UpdateSourceBuildConfigTest) — `./gradlew testArm64DebugUnitTest`, no device needed.
     testImplementation("junit:junit:4.13.2")
 
     androidTestImplementation("androidx.test:core:1.6.1")

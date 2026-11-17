@@ -3,6 +3,7 @@ id: updates
 title: Yazılım güncellemeleri
 section: Bağlantı ve eklentiler
 order: 350
+public: true
 summary: Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda tek tıkla kendini günceller.
 ---
 

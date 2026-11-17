@@ -40,10 +40,13 @@ const (
 	mvToken  = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
 	mvNew    = "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"
 	mvNonce  = "bm9uY2Utbm9uY2Utbm9uY2U"
-	mvExp    = "2026-11-03T09:30:00Z"
 	mvPIN    = "135790"
 	mvName   = "Corner Café"
 )
+
+// mvExp is the move offer's expiry, always in the future: a fixed date here
+// broke main once it passed (ut-docs#5471).
+var mvExp = time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type moveStubCloud struct {
 	srv     *httptest.Server
