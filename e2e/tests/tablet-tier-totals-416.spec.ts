@@ -228,3 +228,89 @@ test.describe('short stacked tablet: the grand Total line is inside the basket (
     });
   }
 });
+
+// ut-docs#5220: the stacked tier taller than 700px at UI scale > 1. The
+// basket's min-content is in rem and grows with --ui-scale; its cap was in
+// dvh and its grid row could squeeze it further, so from scale 1.25 the grand
+// Total line sat below the basket's bottom edge (600x760, 900x720: basket
+// bottom 330/317px, totals bottom 373/374px), and at 768x760 scale 1.5 the
+// tender row shrank to 38px with Pay out of sight. With the original CSS
+// every case below except 800x1280 fails (verified); 800x1280 guards the
+// upright tablet's 38dvh cap, which already fit. `whole`: the Total line and
+// Pay show unscrolled. `scroll`: ~22rem of height cannot hold the basket and
+// the tender at once; the Total line stays inside the basket and is one
+// scroll away and uncovered once scrolled to (at rest the pinned tender may
+// cover it, by design), with Pay whole throughout. Every case: a tile is
+// reachable by scrolling and Pay stays whole after that.
+const SCALED = [
+  ...[1.25, 1.5, 2].flatMap((scale) => [
+    { width: 600, height: 760, scale, kind: 'whole' },
+    { width: 768, height: 800, scale, kind: 'whole' },
+    { width: 800, height: 1280, scale, kind: 'whole' },
+  ]),
+  { width: 900, height: 720, scale: 1.25, kind: 'whole' },
+  { width: 900, height: 720, scale: 1.5, kind: 'whole' },
+  { width: 900, height: 720, scale: 2, kind: 'scroll' },
+  { width: 880, height: 960, scale: 2, kind: 'whole' },
+  { width: 768, height: 760, scale: 1.5, kind: 'whole', lines: 8 },
+  { width: 900, height: 701, scale: 2, kind: 'scroll', lines: 8 },
+] as const;
+
+test.describe('stacked tablet at UI scale > 1: the grand Total line is inside the basket (ut-docs#5220)', () => {
+  test.afterEach(async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+  });
+
+  for (const vp of SCALED) {
+    const lines = 'lines' in vp ? vp.lines : 2;
+    test(`${vp.width}x${vp.height} ui_scale ${vp.scale} (${vp.kind}, ${lines} lines): Total inside the basket, whole Pay`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      // --ui-scale grows rem, not the viewport (as portrait-tablet-sale-3050).
+      await page.evaluate((s) => document.documentElement.style.setProperty('--ui-scale', String(s)), vp.scale);
+      await addItems(page);
+      for (const code of MORE_CODES.slice(0, lines - 2)) {
+        await page.locator('.scan-row input[name="code"]').fill(code);
+        await Promise.all([
+          page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+          page.locator('.scan-row button[type=submit]').click(),
+        ]);
+      }
+      await expect(page.locator('#basket tbody tr')).toHaveCount(lines);
+
+      const sideways = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+      expect(sideways, 'the sale screen must not scroll sideways').toBeLessThanOrEqual(1);
+      const geom = await page.evaluate(() => {
+        const r = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+        return { basket: r('.pos-container > .basket').bottom, totals: r('.basket .totals').bottom };
+      });
+      expect(geom.totals, 'the totals row must end inside the basket').toBeLessThanOrEqual(geom.basket + 0.5);
+
+      const pay = page.locator('.pos-container > .tender button', { hasText: /Pay/ }).first();
+      const p = await wholeAndHit(pay);
+      expect(p.inView && p.hit, 'Pay must be whole and hit-testable').toBe(true);
+
+      const totalLine = page.locator('.basket .totals .total');
+      if (vp.kind === 'scroll') {
+        await totalLine.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+      }
+      const total = await wholeAndHit(totalLine);
+      expect(total.inView && total.hit, 'the grand Total line must be whole and uncovered').toBe(true);
+      if (vp.kind === 'scroll') {
+        const p2 = await wholeAndHit(pay);
+        expect(p2.inView && p2.hit, 'Pay stays whole after scrolling to the Total line').toBe(true);
+      }
+      // The products stay reachable under the pinned tender, and Pay stays
+      // whole once they are in view.
+      const tile = page.locator('.pos-container > .products :is(.category-tile, .tile, .btn-tile)').first();
+      await tile.scrollIntoViewIfNeeded();
+      const t = await wholeAndHit(tile);
+      expect(t.inView && t.hit, 'a tile must be whole and hit-testable').toBe(true);
+      const p3 = await wholeAndHit(pay);
+      expect(p3.inView && p3.hit, 'Pay stays whole after scrolling to the tiles').toBe(true);
+      assertClean();
+    });
+  }
+});

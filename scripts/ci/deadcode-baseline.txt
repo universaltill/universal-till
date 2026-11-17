@@ -62,6 +62,12 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
 internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebuilt
 internal/data/tills_repo.go: unreachable func: TillsRepo.InsertTill
+internal/devicepay/cloudcall.go: unreachable func: Call
+internal/devicepay/cloudcall.go: unreachable func: Caller.Call
+internal/devicepay/cloudcall.go: unreachable func: Caller.client
+internal/devicepay/cloudcall.go: unreachable func: Caller.do
+internal/devicepay/cloudcall.go: unreachable func: Caller.prepare
+internal/devicepay/cloudcall.go: unreachable func: Error.Error
 internal/diagnostics/device_model.go: unreachable func: SetDeviceModel
 internal/diagnostics/events.go: unreachable func: EnumValues
 internal/directivekey/directivekey.go: unreachable func: Store.Path
@@ -95,6 +101,10 @@ internal/pages/eod_tax_bands.go: unreachable func: computeEODTaxBands
 internal/pages/kitchen_print.go: unreachable func: buildKitchenTicket
 internal/pages/setup_language_catalog.go: unreachable func: resetSetupLanguageCatalog
 internal/pages/setup_tax_catalog.go: unreachable func: resetSetupTaxCatalog
+internal/paybroker/paybroker.go: unreachable func: Allowed
+internal/paybroker/paybroker.go: unreachable func: Call
+internal/paybroker/paybroker.go: unreachable func: HTTPError.Error
+internal/paybroker/paybroker.go: unreachable func: errorCode
 internal/pihealth/pihealth.go: unreachable func: CheckNow
 internal/plugins/ipc.go: unreachable func: EventBus.GetEventMode
 internal/plugins/ipc.go: unreachable func: EventBus.Subscribe

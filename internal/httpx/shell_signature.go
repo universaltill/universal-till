@@ -15,6 +15,7 @@ import (
 // guard in internal/pages keeps this list equal to base.html's real tags.
 var HeadAssets = []string{
 	"public/app.css",
+	"public/ut-motion.js", // ut-docs#2972: the shared motion code, loaded first
 	"public/vendor/htmx.min.js",
 	"public/vendor/alpine.min.js",
 	"public/app.js",

@@ -17,10 +17,12 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
@@ -975,5 +977,85 @@ func TestReportAndroidUpdateRefused_ForwardsToPackage(t *testing.T) {
 	ReportAndroidUpdateAccepted()
 	if logging.HasOpenProblem(androidupdate.ProblemKeyRefused) {
 		t.Fatal("problem still open after ReportAndroidUpdateAccepted")
+	}
+}
+
+// TapToPayBridge and devicepay.Bridge must stay method-for-method identical
+// (ut-docs#3049): SetTapToPayBridge relies on structural conversion, and the
+// Swift shell implements the gobind protocol of the former. Both
+// directions, so a method added to either side alone fails here.
+var (
+	_ devicepay.Bridge = TapToPayBridge(nil)
+	_ TapToPayBridge   = devicepay.Bridge(nil)
+)
+
+type stubTapToPayBridge struct{ collects int }
+
+func (s *stubTapToPayBridge) Capabilities() string {
+	return `{"tap_to_pay":{"stripe":{"ready":true,"state":"ready","progress":100}}}`
+}
+func (s *stubTapToPayBridge) Collect(string) string {
+	s.collects++
+	return `{"status":"approved","provider_txn_id":"pi_1"}`
+}
+func (s *stubTapToPayBridge) Cancel(string)               {}
+func (s *stubTapToPayBridge) Setup(string) string         { return `{"ok":true}` }
+func (s *stubTapToPayBridge) ShowEducation(string) string { return `{"ok":true}` }
+
+// The Swift shell registers on .active and clears (nil) on .background; the
+// registered object is what devicepay.Collect reaches — not a wrapper.
+func TestSetTapToPayBridge_RegistersWithDevicepay(t *testing.T) {
+	t.Cleanup(func() { SetTapToPayBridge(nil) })
+	stub := &stubTapToPayBridge{}
+	SetTapToPayBridge(stub)
+	if got := devicepay.RegisteredBridge(); got != devicepay.Bridge(stub) {
+		t.Fatalf("devicepay.RegisteredBridge() = %#v, want the stub", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	res := devicepay.Collect(ctx, devicepay.Request{Provider: "stripe", AmountMinor: 100, Currency: "gbp", IdempotencyKey: "k"})
+	if res.Status != devicepay.StatusApproved || stub.collects != 1 {
+		t.Fatalf("Collect via the registered bridge = %+v (collects %d)", res, stub.collects)
+	}
+	SetTapToPayBridge(nil)
+	if got := devicepay.RegisteredBridge(); got != nil {
+		t.Fatalf("after SetTapToPayBridge(nil): %#v, want nil", got)
+	}
+}
+
+// TapToPayCloud is paybroker.Call for Swift: the body passes through, and
+// failures come back as a stable code string Swift maps to a reason.
+func TestTapToPayCloud(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/payments/stripe/connection_token":
+			_, _ = io.WriteString(w, `{"secret":"pst_1"}`)
+		default:
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":{"code":"not_onboarded"}}`)
+		}
+	}))
+	defer srv.Close()
+	paybroker.SetTargetResolver(func(context.Context) (paybroker.Target, bool) {
+		return paybroker.Target{BaseURL: srv.URL, Bearer: "cred"}, true
+	})
+	t.Cleanup(func() { paybroker.SetTargetResolver(nil) })
+
+	out, err := TapToPayCloud("stripe", "connection_token", "{}")
+	if err != nil || out != `{"secret":"pst_1"}` {
+		t.Fatalf("TapToPayCloud = %q, %v", out, err)
+	}
+	cases := map[[2]string]string{
+		{"stripe", "session_create"}: "not_onboarded",
+		{"stripe", "payouts"}:        "op_not_allowed",
+	}
+	for c, want := range cases {
+		if _, err := TapToPayCloud(c[0], c[1], "{}"); err == nil || err.Error() != want {
+			t.Fatalf("TapToPayCloud(%s/%s) err = %v, want %q", c[0], c[1], err, want)
+		}
+	}
+	paybroker.SetTargetResolver(nil)
+	if _, err := TapToPayCloud("stripe", "connection_token", "{}"); err == nil || err.Error() != "not_enrolled" {
+		t.Fatalf("unenrolled err = %v, want not_enrolled", err)
 	}
 }

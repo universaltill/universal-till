@@ -351,7 +351,7 @@ test('a non-numeric field is left alone on a locale osk.js has no layout for; a 
   assertClean();
 });
 
-// ut-docs#1047: de/es ship as language plugins (ut-plugin-language-{de,es})
+// ut-docs#1047: de/es ship as language bundles (com.universaltill.language-{de,es})
 // with no OSK layout of their own until this fix — LAYOUTS fell back to 'en'
 // (baseLayout()) and localeSupported() (ut-docs#1022) treated them as
 // unsupported, leaving Germany's pilot shops with no way to type ä/ö/ü/ß via

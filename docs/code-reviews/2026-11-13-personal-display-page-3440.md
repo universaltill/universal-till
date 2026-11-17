@@ -2,7 +2,7 @@
 
 **What shipped:** operators whose role holds `personal_display` can now pick their own theme and sell-screen browsing layout on `/my-display`. The choice follows them to every till in the shop and falls back to the till/shop value when unset.
 
-- **Migration `102_personal_display_grants.sql`:** grants the action to admin, manager and super_admin (INSERT OR IGNORE, same shape as 096). The cashier gets no row, so access fails closed. Its checksum is pinned. The migration-033 row total moves from 66 to 69.
+- **Migration `104_personal_display_grants.sql`:** grants the action to admin, manager and super_admin (INSERT OR IGNORE, same shape as 096). The cashier gets no row, so access fails closed. Its checksum is pinned. The migration-033 row total moves from 66 to 69.
 - **`internal/pages/my_display_page.go`:** `GET /my-display`, `POST /api/my-display/theme` and `POST /api/my-display/browsing-mode`. Each POST checks in this order:
   - 403 without the grant or a signed-in operator;
   - 409 on an additional till (`user_display_settings` is admin-synced down from the main till, so a local write would be pruned);

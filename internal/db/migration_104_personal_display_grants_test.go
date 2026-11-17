@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// personalDisplayGrantsVersion is 102_personal_display_grants.sql
-// (ut-docs#3440, ADR-0100). TestMigration102_IsOnDisk pins the filename.
-const personalDisplayGrantsVersion = 102
+// personalDisplayGrantsVersion is 104_personal_display_grants.sql
+// (ut-docs#3440, ADR-0100). TestMigration104_IsOnDisk pins the filename.
+const personalDisplayGrantsVersion = 104
 
 func personalDisplayRoles(t *testing.T, d *DB, granted int) []string {
 	t.Helper()
@@ -31,17 +31,17 @@ func personalDisplayRoles(t *testing.T, d *DB, granted int) []string {
 	return roles
 }
 
-func TestMigration102_IsOnDisk(t *testing.T) {
+func TestMigration104_IsOnDisk(t *testing.T) {
 	m := loadMigrationVersion(t, personalDisplayGrantsVersion)
-	if m.Name != "102_personal_display_grants.sql" {
-		t.Fatalf("migration %d on disk is %q, want 102_personal_display_grants.sql", personalDisplayGrantsVersion, m.Name)
+	if m.Name != "104_personal_display_grants.sql" {
+		t.Fatalf("migration %d on disk is %q, want 104_personal_display_grants.sql", personalDisplayGrantsVersion, m.Name)
 	}
 }
 
 // A fresh Open grants personal_display to admin/manager/super_admin only;
 // cashier stays sale-only (#3079) and gets no row at all.
-func TestMigration102_FreshOpenGrantsAdminManagerSuperAdminNotCashier(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "m102.db"))
+func TestMigration104_FreshOpenGrantsAdminManagerSuperAdminNotCashier(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "m104.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +60,10 @@ func TestMigration102_FreshOpenGrantsAdminManagerSuperAdminNotCashier(t *testing
 	}
 }
 
-// Replaying 102 is idempotent, and INSERT OR IGNORE never re-grants a role
+// Replaying 104 is idempotent, and INSERT OR IGNORE never re-grants a role
 // whose shop already revoked it on /users/permissions.
-func TestMigration102_ReplayIdempotentAndKeepsRevocation(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "m102-idem.db"))
+func TestMigration104_ReplayIdempotentAndKeepsRevocation(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "m104-idem.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

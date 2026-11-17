@@ -3238,7 +3238,11 @@ utSellCamera(function(){
 //    the fetch error tagged e.utNetworkError = true. The action may or may
 //    not have run, so it is never reported as a cancel; callers show
 //    window.utElevationErrorText(e) from their existing .catch. Nothing is
-//    retried or replayed.
+//    retried or replayed. When the leg's own timer fired, the error is also
+//    tagged e.utTimeout = true (ut-docs#5484) and utElevationErrorText
+//    returns the "did not reply in time" text (common.error.outcome_timeout,
+//    as the htmx path does, #5463); other network failures keep the
+//    outcome-unknown text.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -3345,9 +3349,10 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     function stopTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
     function tagNet(e) {
       stopTimer();
-      if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
+      if (e && typeof e === 'object') { e.utNetworkError = true; if (timedOut) e.utTimeout = true; throw e; }
       var n = new Error(String(e));
       n.utNetworkError = true;
+      if (timedOut) n.utTimeout = true;
       throw n;
     }
     if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
@@ -3361,7 +3366,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // (an abort from the #5335 timer included).
       tagNet(e);
     }).then(function (r) {
-      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; throw t; }
+      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; t.utTimeout = true; throw t; }
       // Clear the busy state before every outcome (close, re-prompt,
       // redirect) — on the re-prompt branch only once its body is read, so
       // a second tap can't start a parallel retry in the gap (#5291 review).
@@ -3424,9 +3429,17 @@ window.utOutcomeUnknownText = function () {
   var b = document.getElementById('pos-alert');
   return (b && b.dataset.msgOutcomeUnknown) || '';
 };
-// For a utPostWithElevation .catch: the outcome-unknown text for a network
+// ut-docs#5484: the translated "did not reply in time" text; falls back to
+// the outcome-unknown text, as the htmx path does (#5463).
+window.utOutcomeTimeoutText = function () {
+  var b = document.getElementById('pos-alert');
+  return (b && b.dataset.msgOutcomeTimeout) || window.utOutcomeUnknownText();
+};
+// For a utPostWithElevation .catch: the timeout text when the leg's timer
+// fired (e.utTimeout), the outcome-unknown text for any other network
 // failure, else e unchanged.
 window.utElevationErrorText = function (e) {
+  if (e && e.utTimeout) return window.utOutcomeTimeoutText() || e;
   return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 
@@ -3492,7 +3505,7 @@ window.utTabBarFade = function (el) {
 // id, e.g. basket.html's `id="basket"`).
 (function () {
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
-  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // ADR-0119: UT.motionOff() (ut-motion.js) is reduced motion OR
   // the Light effects level; the bare media query is only the fallback for
   // a page outside base.html that loads this file without it.
   var PANES = ['items-panel', 'admin-panel', 'manual-panel'];
@@ -3586,7 +3599,7 @@ window.utTabBarFade = function (el) {
   // the same in WebView2, Android WebView and WebKitGTK. Uniform scale plus
   // translation (so RTL needs nothing), transform and opacity only, from
   // opacity 0.4, never blank. The transform is TRANSIENT (fill 'none') and
-  // registered with UT.trackZoom, so a tap, a popup opening (base.html's
+  // registered with UT.trackZoom, so a tap, a popup opening (ut-motion.js's
   // dialog wrapper) or the next pane swap finish() it: a position:fixed
   // dialog inside the pane is never shown inside a transformed ancestor
   // (the #2338 hazard). A pane that settles with a dialog already open
@@ -3776,7 +3789,7 @@ window.utTabBarFade = function (el) {
   }
 
   // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or Escape --
-  // base.html's shared data-ut-escape-close handler since ut-docs#2097)
+  // ut-motion.js's shared data-ut-escape-close handler since ut-docs#2097)
   // behaves like Cancel for the rest of THIS sale -- suppress the
   // sale-start nag, without touching the per-item/per-Pay gates. `close`
   // does not bubble, so this has to be a capturing document-level
