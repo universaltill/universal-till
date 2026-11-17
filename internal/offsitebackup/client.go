@@ -161,6 +161,8 @@ type APIError struct {
 	Code       string
 	Message    string
 	RetryAfter time.Duration
+	// Reason is data.reason of a 401 device_revoked (replaced, moved, removed).
+	Reason string
 	// CurrentGeneration and KeyInCloud come with a 409 key_exists: the key
 	// generation the cloud holds and whether it has a wrapped copy.
 	CurrentGeneration int
@@ -241,13 +243,15 @@ func decodeAPIError(resp *http.Response) *APIError {
 		} `json:"error"`
 		// The cloud puts the details of a 409 key_exists in data.
 		Data struct {
-			CurrentGeneration int   `json:"current_generation"`
-			KeyInCloud        *bool `json:"key_in_cloud"`
+			CurrentGeneration int    `json:"current_generation"`
+			KeyInCloud        *bool  `json:"key_in_cloud"`
+			Reason            string `json:"reason"`
 		} `json:"data"`
 	}
 	if b, err := io.ReadAll(io.LimitReader(resp.Body, 4096)); err == nil && json.Unmarshal(b, &env) == nil {
 		e.Code, e.Message = env.Error.Code, env.Error.Message
 		e.CurrentGeneration, e.KeyInCloud = env.Error.CurrentGeneration, env.Error.KeyInCloud
+		e.Reason = env.Data.Reason
 		if env.Data.CurrentGeneration != 0 || env.Data.KeyInCloud != nil {
 			e.CurrentGeneration, e.KeyInCloud = env.Data.CurrentGeneration, env.Data.KeyInCloud
 		}

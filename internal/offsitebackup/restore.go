@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -89,9 +90,12 @@ type Restorer struct {
 	MaxBytes int64
 	// Keys is the till's shop-key file and StoreID the live store id; OnLinked
 	// runs after a key link saved the key (backups resume).
-	Keys      KeyStore
-	StoreID   func() string
-	OnLinked  func()
+	Keys     KeyStore
+	StoreID  func() string
+	OnLinked func()
+	// Choice returns the owner's key-in-cloud choice (data.OffsiteKeyInCloud*);
+	// with Off, a cloud-released key is never saved (ut-docs#6608).
+	Choice    func() string
 	PollEvery time.Duration // default 3 s
 	// GiveUpAfter stops a restore whose polls keep failing (default 10 min).
 	GiveUpAfter time.Duration
@@ -367,8 +371,37 @@ func (r *Restorer) wait(ctx context.Context, req RestoreRequestResponse) (Restor
 	}
 }
 
+// choiceOff reports the owner's "no copy in the cloud" choice.
+func (r *Restorer) choiceOff() bool {
+	return r.Choice != nil && strings.TrimSpace(r.Choice()) == data.OffsiteKeyInCloudOff
+}
+
+// mayKeepReleasedKey is the guard before a cloud-released key becomes this
+// till's key (ut-docs#6608): never with the choice Off, and never when the
+// till already holds a key of another fingerprint. The refusal is audited.
+func (r *Restorer) mayKeepReleasedKey(sid string, dek []byte, gen int) bool {
+	if r.choiceOff() {
+		r.audit("cloud_key_link_refused", map[string]any{"why": "choice_off", "generation": gen})
+		return false
+	}
+	if held, _, err := r.Keys.Load(sid); err == nil {
+		same := Fingerprint(held) == Fingerprint(dek)
+		zero(held)
+		if !same {
+			r.audit("cloud_key_link_refused", map[string]any{"why": "different_key_held", "generation": gen})
+			return false
+		}
+	}
+	return true
+}
+
 // runLink is the key-link flow (K5): approval, then save the released key.
 func (r *Restorer) runLink(ctx context.Context) {
+	if r.choiceOff() {
+		// "No copy in the cloud": only the owner's saved key can link.
+		r.linkFromSavedKey(ctx)
+		return
+	}
 	req, err := r.Cloud.RequestKeyLink(ctx)
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == 409 && ae.Code == "no_key_in_cloud" {
@@ -391,7 +424,7 @@ func (r *Restorer) runLink(ctx context.Context) {
 		r.fail(ErrCodeCorrupt)
 		return
 	}
-	if !r.releasedKeyIsShops(ctx, dek, poll) {
+	if !r.releasedKeyIsShops(ctx, dek, poll) || !r.mayKeepReleasedKey(sid, dek, poll.DEKGeneration) {
 		r.fail(ErrCodeCorrupt)
 		return
 	}
@@ -621,7 +654,7 @@ func (r *Restorer) keepReleasedKey(ctx context.Context, sid string, poll Restore
 	if err != nil || len(dek) != KeySize || poll.DEKGeneration < 1 {
 		return
 	}
-	if !r.releasedKeyIsShops(ctx, dek, poll) {
+	if !r.releasedKeyIsShops(ctx, dek, poll) || !r.mayKeepReleasedKey(sid, dek, poll.DEKGeneration) {
 		return
 	}
 	if err := r.Keys.Save(sid, poll.DEKGeneration, dek); err != nil {

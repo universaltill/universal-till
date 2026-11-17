@@ -386,6 +386,10 @@ func (u *Uploader) noteLinkCopy(ctx context.Context, inCloud bool) {
 // Errors the key actions return for the page to word.
 var (
 	ErrNotStuck = errors.New("offsitebackup: this till does not need a new backup key")
+	// ErrNeedsOwnerApproval: the cloud registers a new key generation only
+	// after the owner approved it on my. (ADR-0199 D12); a device token alone
+	// never does (ut-docs#6607).
+	ErrNeedsOwnerApproval = errors.New("offsitebackup: the owner must approve a new backup key on my.universaltill.com")
 )
 
 // resume ends the "needs linking" wait: the next round runs at once.
@@ -427,11 +431,22 @@ func (u *Uploader) StartNewKey(ctx context.Context) error {
 		return err
 	}
 	if err := u.register(ctx, dek, gen); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Code == CodeOwnerApprovalRequired {
+			// This till held no key before (checked above): drop the one just
+			// made rather than keep a generation the cloud never accepted.
+			u.Keys.Delete()
+			return ErrNeedsOwnerApproval
+		}
 		return err // keys stay: a 409 never deletes a generation (H2)
 	}
 	u.resume(ctx)
 	return nil
 }
+
+// CodeOwnerApprovalRequired is the cloud's refusal of a new key generation
+// that the owner has not approved on my.
+const CodeOwnerApprovalRequired = "new_key_not_approved"
 
 // EnterSavedKey links this till with the owner's saved key (UTK1-...) after
 // checking its checksum and that it is this shop's key.
@@ -689,6 +704,10 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 		return ctx.Err()
 	}
 	var ae *APIError
+	if errors.As(err, &ae) && ae.Code == "device_revoked" && (ae.Reason == "" || finalRevokeReasons[ae.Reason]) {
+		// ADR-0199 D2: this till left the shop for good; its key file goes.
+		u.Keys.DeleteForStore(u.storeID())
+	}
 	if errors.As(err, &ae) && (ae.Status == 402 || ae.Status == 409) {
 		reason := ae.Code
 		switch reason {
@@ -707,6 +726,10 @@ func (u *Uploader) record(ctx context.Context, now time.Time, err error) error {
 	u.fail(ctx, now, err)
 	return nil
 }
+
+// finalRevokeReasons are the device_revoked reasons that cannot be undone:
+// the till was replaced, moved to another shop, or removed.
+var finalRevokeReasons = map[string]bool{"replaced": true, "moved": true, "removed": true}
 
 func (u *Uploader) fail(ctx context.Context, now time.Time, err error) {
 	st := u.Settings

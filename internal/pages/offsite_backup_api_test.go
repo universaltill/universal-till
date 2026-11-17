@@ -28,6 +28,7 @@ type fakeOffsiteCloud struct {
 	started  int
 	keyState offsitebackup.KeyState
 	puts     []offsitebackup.KeyPut
+	putErr   error
 }
 
 func (f *fakeOffsiteCloud) List(context.Context) (offsitebackup.ListResponse, error) {
@@ -42,7 +43,7 @@ func (f *fakeOffsiteCloud) GetKey(context.Context) (offsitebackup.KeyState, erro
 }
 func (f *fakeOffsiteCloud) PutKey(_ context.Context, k offsitebackup.KeyPut) error {
 	f.puts = append(f.puts, k)
-	return nil
+	return f.putErr
 }
 func (f *fakeOffsiteCloud) RequestKeyLink(context.Context) (offsitebackup.RestoreRequestResponse, error) {
 	f.started++
@@ -524,5 +525,23 @@ func TestOffsite_NeedKeyPhaseShowsTheEntryFormAndDoesNotPoll(t *testing.T) {
 	}
 	if strings.Contains(b, "every 3s") {
 		t.Error("the entry form must not be replaced by a poll")
+	}
+}
+
+// ut-docs#6607: the cloud refuses a new generation without the owner's approval
+// on my.; the till says whom to ask and keeps no key.
+func TestOffsite_StartNewKeyWithoutOwnerApprovalSaysAskTheOwner(t *testing.T) {
+	mux, d, fc := offsiteMux(t, true)
+	withManagerPIN(t, d)
+	one := 1
+	fp := "00112233445566778899aabbccddeeff"
+	fc.keyState = offsitebackup.KeyState{Generation: &one, Fingerprint: &fp}
+	fc.putErr = &offsitebackup.APIError{Status: 403, Code: "new_key_not_approved"}
+	rec := postAs(mux, "/api/offsite/key/new", url.Values{"override_pin": {offsitePIN}}, &mgrUser)
+	if !strings.Contains(rec.Body.String(), "approve a new key on my.universaltill.com") {
+		t.Fatalf("no owner-approval wording: %s", rec.Body.String())
+	}
+	if _, _, err := offsitebackup.Shared(d.Cfg, d.Db).Uploader.Keys.Load("st_1"); err == nil {
+		t.Fatal("the till kept a key the cloud refused")
 	}
 }

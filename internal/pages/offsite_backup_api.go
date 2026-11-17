@@ -174,6 +174,8 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 			s.Scheduler.Trigger()
 		case errors.Is(err, offsitebackup.ErrNotStuck):
 			msg = httpx.T(locale, "backup.cloud.key.err.not_stuck")
+		case errors.Is(err, offsitebackup.ErrNeedsOwnerApproval):
+			msg = httpx.T(locale, "backup.cloud.key.err.owner_approval")
 		default:
 			msg = offsiteErrText(locale, offsiteErrCode(err))
 		}

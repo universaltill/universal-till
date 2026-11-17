@@ -4261,6 +4261,7 @@
   "backup.cloud.key.err.bad": "That is not a complete saved key. Check each character and try again.",
   "backup.cloud.key.err.wrong": "That key does not belong to this shop's backups.",
   "backup.cloud.key.err.not_stuck": "This till does not need a new key.",
+  "backup.cloud.key.err.owner_approval": "The cloud will not start a new backup key until the owner approves it. Ask the owner to approve a new key on my.universaltill.com.",
   "backup.cloud.restore.needkey_title": "Enter the backup key you saved",
   "backup.cloud.restore.needkey_hint": "The cloud has no copy of your key. Type the key that starts with UTK1-, or open the key file you downloaded.",
   "backup.cloud.restore.needkey_file": "Key file",

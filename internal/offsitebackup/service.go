@@ -65,6 +65,7 @@ func NewService(cfg *config.Config, sqlDB *sql.DB) *Service {
 	s.Scheduler = &Scheduler{U: s.Uploader}
 	s.Restorer = &Restorer{
 		DBPath: cfg.DBPath, Cloud: cloud, StoreID: liveStore, LiveStoreID: liveStore,
+		Choice: func() string { v, _, _ := set.Get(context.Background(), data.OffsiteKeyInCloudKey); return v },
 		OnLinked: func() {
 			// Linked: the "needs linking" wait is over, back up now.
 			s.Uploader.resume(context.Background())

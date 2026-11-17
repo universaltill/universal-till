@@ -32,15 +32,18 @@ type fakeCloud struct {
 
 	// the escrowed shop key (K2): the real cloud keeps it wrapped; the fake
 	// keeps the bytes so it can answer a release.
-	keyGen        int
-	keyFP         string
-	keyDEK        []byte
-	putKeys       int
-	escrowBlocked bool
-	deletes       int
-	generations   int
-	keyReleases   int // polls that released the DEK
-	lastHave      *HaveKey
+	keyGen          int
+	keyFP           string
+	keyDEK          []byte
+	putKeys         int
+	escrowBlocked   bool
+	ownerApproved   bool   // the owner approved a new key on my. (ADR-0199 D12)
+	revokedNoReason bool   // 401 device_revoked with no reason, as the real cloud answers a plain removal
+	revokedReason   string // when set, every till call answers 401 device_revoked with it
+	deletes         int
+	generations     int
+	keyReleases     int // polls that released the DEK
+	lastHave        *HaveKey
 
 	backups  map[string]*fakeBackup
 	requests map[string]*fakeRestoreReq
@@ -109,6 +112,15 @@ func apiErr(w http.ResponseWriter, status int, code string) {
 }
 
 func (f *fakeCloud) auth(w http.ResponseWriter, r *http.Request, bodyStore string) bool {
+	if f.revokedNoReason {
+		writeJSON(w, 401, map[string]any{"error": map[string]string{"code": "device_revoked", "message": "revoked"}})
+		return false
+	}
+	if rev := f.revokedReason; rev != "" { // set by a test between rounds; no lock (callers may hold f.mu)
+		writeJSON(w, 401, map[string]any{"error": map[string]string{"code": "device_revoked", "message": "revoked"},
+			"data": map[string]string{"reason": rev}})
+		return false
+	}
 	if r.Header.Get("Authorization") != "Bearer "+f.token {
 		apiErr(w, 401, "unauthorized")
 		return false
@@ -213,6 +225,8 @@ func (f *fakeCloud) putKey(w http.ResponseWriter, r *http.Request) {
 			f.keyDEK = dek // escrow turned on
 		}
 		w.WriteHeader(200)
+	case in.Generation == f.keyGen+1 && !f.ownerApproved:
+		apiErr(w, 403, "new_key_not_approved")
 	case in.Generation == f.keyGen+1:
 		f.keyGen, f.keyFP, f.keyDEK = in.Generation, in.Fingerprint, dek
 		f.generations++

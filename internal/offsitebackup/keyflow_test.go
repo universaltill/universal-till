@@ -519,6 +519,7 @@ func stuckShop(t *testing.T) (*tillEnv, []byte) {
 
 func TestStuckShopNeedsLinkWithNoCloudCopyThenStartsANewKey(t *testing.T) {
 	e, oldDEK := stuckShop(t)
+	e.cloud.ownerApproved = true // the owner approved a new key on my.
 	ctx := context.Background()
 	e.now = e.now.Add(25 * time.Hour)
 	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
@@ -551,6 +552,7 @@ func TestStuckShopNeedsLinkWithNoCloudCopyThenStartsANewKey(t *testing.T) {
 
 func TestStartNewKeyChoiceOffSendsNoCopyAndRefusesWhenNotStuck(t *testing.T) {
 	e, _ := stuckShop(t) // choice "" (not on)
+	e.cloud.ownerApproved = true
 	if err := e.up.StartNewKey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -654,4 +656,130 @@ func TestKeyExists409KeepsEveryKeyGeneration(t *testing.T) {
 	if o := e.up.Keys.Older("st_1"); len(o) != 1 || o[0].Generation != 1 || !bytes.Equal(o[0].DEK, old) {
 		t.Fatalf("older generations after a 409 = %+v, want generation 1", o)
 	}
+}
+
+// ---- fix-bak-till: ut-docs#6607, #6608, #6612 ----
+
+// #6607: a new key generation is the owner's action on my. (ADR-0199 D12): a
+// device token alone never gets one registered, and the till says whom to ask.
+func TestStartNewKeyWithoutOwnerApprovalIsRefusedAndLeavesNoKey(t *testing.T) {
+	e, _ := stuckShop(t)
+	e.cloud.ownerApproved = false
+	err := e.up.StartNewKey(context.Background())
+	if !errors.Is(err, ErrNeedsOwnerApproval) {
+		t.Fatalf("err = %v, want ErrNeedsOwnerApproval", err)
+	}
+	if e.cloud.keyGen != 1 {
+		t.Fatalf("the cloud moved to generation %d on a device token alone", e.cloud.keyGen)
+	}
+	if _, _, err := e.up.Keys.Load("st_1"); err == nil {
+		t.Fatal("the till kept a key the cloud never accepted")
+	}
+}
+
+// #6608: a till that holds a key never adopts a released key of another fingerprint.
+func TestLinkRefusesAReleasedKeyOfAnotherFingerprintWhenTheTillHoldsAKey(t *testing.T) {
+	e := newTillChoice(t, data.OffsiteKeyInCloudOn)
+	e.snapshot()
+	e.round(false)
+	own, _, err := e.up.Keys.Load("st_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := bytes.Repeat([]byte{0xEE}, KeySize)
+	e.cloud.mu.Lock()
+	e.cloud.keyGen, e.cloud.keyFP, e.cloud.keyDEK = 2, Fingerprint(x), x
+	e.cloud.mu.Unlock()
+	rs := e.linkRestorer()
+	_ = rs.StartLink(nil)
+	rs.Wait()
+	if rs.State().Phase == PhaseLinked {
+		t.Fatal("the till adopted a different key")
+	}
+	cur, gen, err := e.up.Keys.Load("st_1")
+	if err != nil || gen != 1 || !bytes.Equal(cur, own) {
+		t.Fatalf("the till's key changed: gen=%d err=%v", gen, err)
+	}
+}
+
+// #6608: with the choice Off a cloud-released key is never saved, even by a
+// till that holds no key.
+func TestChoiceOffNeverSavesACloudReleasedKey(t *testing.T) {
+	e := newTillChoice(t, data.OffsiteKeyInCloudOff)
+	e.snapshot()
+	e.round(false)
+	own, _, _ := e.up.Keys.Load("st_1")
+	e.up.Keys.Delete() // lost its file; the cloud still names generation 1 with a copy
+	e.cloud.mu.Lock()
+	e.cloud.keyDEK = own
+	e.cloud.mu.Unlock()
+	rs := e.linkRestorer()
+	_ = rs.StartLink(nil)
+	deadline := time.Now().Add(3 * time.Second)
+	for rs.State().Phase != PhaseAskSaved && rs.State().Phase != PhaseLinked && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rs.State().Phase != PhaseAskSaved {
+		t.Fatalf("phase %s: want the till to ask for the saved key", rs.State().Phase)
+	}
+	rs.Cancel()
+	rs.Wait()
+	if _, _, err := e.up.Keys.Load("st_1"); err == nil {
+		t.Fatal("the key file exists")
+	}
+}
+
+// #6612: a final device_revoked answer deletes the key file.
+func TestFinalDeviceRevokedReasonDeletesTheKeyFile(t *testing.T) {
+	for _, reason := range []string{"replaced", "moved", "removed"} {
+		t.Run(reason, func(t *testing.T) {
+			e := newTill(t)
+			e.snapshot()
+			e.round(false)
+			if _, _, err := e.up.Keys.Load("st_1"); err != nil {
+				t.Fatal(err)
+			}
+			e.cloud.revokedReason = reason
+			e.now = e.now.Add(25 * time.Hour)
+			e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+			e.round(true)
+			if _, _, err := e.up.Keys.Load("st_1"); err == nil {
+				t.Fatal("the key file survived a final device_revoked")
+			}
+		})
+	}
+}
+
+// The real cloud answers a plain removal with no reason (ut-docs#6612).
+func TestReasonlessDeviceRevokedDeletesTheKeyFile(t *testing.T) {
+	e := newTill(t)
+	e.snapshot()
+	e.round(false)
+	e.cloud.revokedNoReason = true
+	e.now = e.now.Add(25 * time.Hour)
+	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.round(true)
+	if _, _, err := e.up.Keys.Load("st_1"); err == nil {
+		t.Fatal("the key file survived a reason-less device_revoked")
+	}
+}
+
+func TestNonFinalOrOtherAuthErrorsKeepTheKeyFile(t *testing.T) {
+	e := newTill(t)
+	e.snapshot()
+	e.round(false)
+	e.cloud.revokedReason = "something_temporary"
+	e.now = e.now.Add(25 * time.Hour)
+	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.round(true)
+	if _, _, err := e.up.Keys.Load("st_1"); err != nil {
+		t.Fatalf("the key was deleted on a non-final reason: %v", err)
+	}
+}
+
+func (e *tillEnv) linkRestorer() *Restorer {
+	return &Restorer{DBPath: e.dbPath, Cloud: e.cloud.cloud(), PollEvery: time.Millisecond,
+		Sleep: func(context.Context, time.Duration) {}, Keys: e.up.Keys, StoreID: func() string { return "st_1" },
+		Choice:   func() string { return e.get(data.OffsiteKeyInCloudKey) },
+		OnLinked: func() { e.up.resume(context.Background()) }}
 }
