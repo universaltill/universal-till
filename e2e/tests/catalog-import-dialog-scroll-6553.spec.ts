@@ -33,7 +33,7 @@ test.describe('#import-modal / #tax-codes-modal scroll and pad (ut-docs#6553)', 
         await page.locator(d.button).click();
         const dialog = page.locator(d.dialog);
         await expect(dialog).toBeVisible();
-        await expect(dialog.locator('.page-head a.btn')).toBeVisible();
+        await expect(dialog.locator('.page-head a.btn[data-action="close-closest"]')).toBeVisible();
         // The fetched page may still be growing (lazy sections); measure once settled.
         await page.waitForLoadState('networkidle');
 
@@ -92,7 +92,7 @@ test.describe('#import-modal / #tax-codes-modal scroll and pad (ut-docs#6553)', 
         expect(inset).toBeGreaterThanOrEqual(12);
 
         // Back link stays reachable (sticky head) and closes the dialog.
-        const back = dialog.locator('.page-head a.btn');
+        const back = dialog.locator('.page-head a.btn[data-action="close-closest"]');
         await expect(back).toBeInViewport();
         await back.click();
         await expect(dialog).toBeHidden();
@@ -109,7 +109,7 @@ test.describe('#import-modal / #tax-codes-modal scroll and pad (ut-docs#6553)', 
     // Still hidden after being opened and closed again.
     await page.locator('#catalog-import-btn').click();
     await expect(page.locator('#import-modal')).toBeVisible();
-    await page.locator('#import-modal .page-head a.btn').click();
+    await page.locator('#import-modal .page-head a.btn[data-action="close-closest"]').click();
     await expect(page.locator('#import-modal')).toBeHidden();
 
     const item = page.locator('#item-form-modal');
