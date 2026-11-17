@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -514,5 +515,30 @@ func TestImportRowsSubmit(t *testing.T) {
 	big := make([]map[string]any, ImportRowsMaxPerCall+1)
 	if _, err := ImportRowsSubmit("items", big); !errors.Is(err, ErrQuota) {
 		t.Fatalf("over the per-call cap: %v, want ErrQuota", err)
+	}
+}
+
+// ut-docs#6438: the real host refuses the 1,025th NEW key (-4) but lets an
+// existing key be overwritten at the cap; the fake must behave the same so a
+// plugin's per-sale-key bug shows up in its own tests.
+func TestFakeHostStorageKeyCap(t *testing.T) {
+	h := NewFakeHost()
+	UseFakeHost(t, h)
+	for i := 0; i < 1024; i++ {
+		if err := StorageSet(fmt.Sprintf("k%d", i), []byte("v")); err != nil {
+			t.Fatalf("key %d refused below the cap: %v", i, err)
+		}
+	}
+	if err := StorageSet("one-too-many", []byte("v")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("1,025th new key: err=%v, want ErrInvalid (-4)", err)
+	}
+	if err := StorageSet("k7", []byte("new")); err != nil {
+		t.Fatalf("overwriting an existing key at the cap must work: %v", err)
+	}
+	if err := StorageSet(strings.Repeat("k", 129), []byte("v")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("129 B key: err=%v, want ErrInvalid", err)
+	}
+	if err := StorageSet("k8", make([]byte, 64<<10+1)); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("64 KiB+1 value: err=%v, want ErrInvalid", err)
 	}
 }

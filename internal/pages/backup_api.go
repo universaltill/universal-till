@@ -99,7 +99,7 @@ var errUseNativePicker = errors.New("backups: on Android save through the file p
 func backupSaveFailureKey(err error) string {
 	switch {
 	case errors.Is(err, errUseNativePicker):
-		return "settings.backup.save_failed_use_picker"
+		return "settings.backup.save_failed_picker_unavailable"
 	case errors.Is(err, syscall.ENOSPC):
 		return "settings.backup.save_failed_space"
 	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EROFS):

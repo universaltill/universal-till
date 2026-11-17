@@ -1,6 +1,20 @@
 {{ define "content" }}
 <h1>{{ T "settings.title" }}</h1>
 <p id="settings-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
+{{/* ut-docs#6551: Android till, update available: say so at the TOP of
+     Settings (above the two-pane shell) so a manager does not have to hunt for
+     the status-bar chip. State, not event: not dismissible, gone once current.
+     Server-rendered per request, so a removed Settings permission simply drops
+     it. The action only scrolls to the existing #android-update form. */}}
+{{ if and updateinstallbridge updateavailable }}
+<div class="sync-banner android-update-banner" data-testid="android-update-banner" role="region" aria-label="{{ T "settings.update.android.banner_title" }}">
+  <div class="android-update-banner-text">
+    <strong><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ printf (T "settings.update.android.banner_version") latestversion }}</strong>
+    <p>{{ printf (T "settings.update.android.banner_body") appversion }}</p>
+  </div>
+  <a class="btn" href="#android-update" data-android-update-goto>{{ T "settings.update.android.banner_action" }}</a>
+</div>
+{{ end }}
 <!-- ut-docs#1960: two-pane master-detail — the section list (+ a search box
      that finds individual settings) on the inline-start side, the selected
      section's card on the other. Same visual shell as the manual (help.html
@@ -353,7 +367,7 @@
        real tablet as "it just brings me to the software update section and
        does not install". The install path itself was fine; nobody could
        reach it. The PIN gate is unchanged by the move. -->
-  <form id="android-update-form" class="set-row"
+  <form id="android-update-form" class="set-row" tabindex="-1"
         data-downloading="{{ T "settings.update.android.downloading" }}"
         data-progress="{{ T "settings.update.android.progress" }}"
         data-installing="{{ T "settings.update.android.installing" }}"
@@ -362,6 +376,8 @@
         data-failed="{{ T "settings.update.android.failed" }}"
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
+        data-allowgranted="{{ T "settings.update.android.allow_granted" }}"
+        data-allowdenied="{{ T "settings.update.android.allow_still_denied" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
         data-uptodate="{{ T "settings.update.up_to_date" }}"
         data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
@@ -378,6 +394,19 @@
     </label>
     <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
     <div id="android-update-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+    {{/* ut-docs#6551: shown (un-hidden) by the script below when the shell
+         reports needs_permission: Android has not allowed this app to install
+         apps. Inline guidance, never a modal; the settings screen opens only on
+         the manager's own tap, so the text is read first. */}}
+    <div class="notice-block-warn android-allow-panel" data-testid="android-allow-panel" role="status" hidden>
+      <strong>{{ T "settings.update.android.allow_title" }}</strong>
+      <p>{{ T "settings.update.android.allow_body" }}</p>
+      <p class="android-allow-note" data-android-allow-note hidden></p>
+      <div class="android-allow-actions">
+        <button type="button" class="btn" data-android-allow-open>{{ T "settings.update.android.allow_open" }}</button>
+        <button type="button" class="btn secondary" data-android-allow-later>{{ T "settings.update.android.allow_later" }}</button>
+      </div>
+    </div>
   </form>
   <script>
   (function () {
@@ -452,11 +481,59 @@
     // The shell's own report: % while downloading, the installer opening, a
     // failure the operator can retry with the same button, or (ut-docs#4495)
     // 'closed' — the installer went away or never came up — which says so.
+    // ut-docs#6551: the "allow installs" guidance. Shown when the shell says
+    // Android has not allowed this app to install apps (live, or remembered
+    // across the chip's navigation to this page); the system screen opens only
+    // on the manager's tap of "Open Android settings".
+    // ut-docs#6551: the banner's "Go to update" lands here, focus included, so a
+    // keyboard or screen-reader user arrives at the controls. No autoscroll on
+    // load: only after that tap. The hash change (settings script) opens the card first.
+    var goBtn = document.querySelector('[data-android-update-goto]');
+    if (goBtn) {
+      goBtn.addEventListener('click', function () {
+        setTimeout(function () {
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          form.focus({ preventScroll: true });
+        }, 60);
+      });
+    }
+    var allow = form.querySelector('[data-testid="android-allow-panel"]');
+    var allowNote = form.querySelector('[data-android-allow-note]');
+    var showAllow = function (denied) {
+      if (!allow) { return; }
+      allow.hidden = false;
+      if (allowNote) { allowNote.hidden = !denied; allowNote.textContent = denied ? T('allowdenied') : ''; }
+    };
+    var hideAllow = function () { if (allow) { allow.hidden = true; } };
+    var openBtn = form.querySelector('[data-android-allow-open]');
+    var laterBtn = form.querySelector('[data-android-allow-later]');
+    if (openBtn) {
+      openBtn.addEventListener('click', function () {
+        if (!window.utAndroidUpdater || !window.utAndroidUpdater.openPermissionSettings()) { msg.textContent = T('nobridge'); }
+      });
+    }
+    if (laterBtn) {
+      laterBtn.addEventListener('click', function () {
+        hideAllow();
+        if (window.utAndroidUpdater) { window.utAndroidUpdater.clearPermission(); }
+      });
+    }
+    var pending = window.utAndroidUpdater && window.utAndroidUpdater.pendingPermission();
+    if (pending) { showAllow(pending === 'denied'); }
     document.addEventListener('ut:android-update', function (e) {
       var s = e.detail || {};
+      if (s.state === 'needs_permission') {
+        showAllow(s.error === 'still_denied');
+        msg.textContent = '';
+        btn.disabled = false;
+        return;
+      }
+      hideAllow();
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
     });
+    // The submit handler maps a rejected start; the shell answers a refused
+    // permission with needs_permission AFTER 'started', so nothing more here.
   })();
   </script>
   {{ end }}
@@ -471,6 +548,10 @@
   {{ if .autoUpdateFollowsMain }}
   {{/* ut-docs#4031, #4053: followLine says why it doesn't follow, when it doesn't. */}}
   <p class="muted" data-testid="update-follows-main" data-follow-line="{{ .autoUpdateFollowLine }}">{{ if eq .autoUpdateFollowLine "main_off" }}{{ T "settings.update.follows_main_off" }}{{ else if eq .autoUpdateFollowLine "checks_off" }}{{ T "settings.update.follows_main_checks_off" }}{{ else if eq .autoUpdateFollowLine "manual" }}{{ printf (T "settings.update.follows_main_manual") .autoUpdateMainVersion }}{{ else if eq .autoUpdateFollowLine "failed" }}{{ printf (T "settings.update.follows_main_failed") .autoUpdateMainVersion }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
+  {{/* ut-docs#2739: read-only here; the main till sets update.fleet_follow. */}}
+  {{ if and (eq .autoUpdateFleetFollow "nightly") (eq .autoUpdateFollowLine "follows") }}
+  <p class="muted" data-testid="update-follow-policy">{{ printf (T "settings.update.follows_main_nightly") .autoUpdateTime }}</p>
+  {{ end }}
   {{ else }}
   <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-update-schedule" }}{{ template "set-lock-note" }}{{ end }}
@@ -479,6 +560,13 @@
       <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
     </label>
     <input type="time" name="time" value="{{ .autoUpdateTime }}">
+    {{/* ut-docs#2739 (ADR-0114 §5): when additional tills install this till's version. */}}
+    <label class="set-row" for="update-fleet-follow">{{ T "settings.update.fleet_follow_label" }}</label>
+    <select name="fleet_follow" id="update-fleet-follow">
+      <option value="next_idle"{{ if ne .autoUpdateFleetFollow "nightly" }} selected{{ end }}>{{ T "settings.update.fleet_follow_next_idle" }}</option>
+      <option value="nightly"{{ if eq .autoUpdateFleetFollow "nightly" }} selected{{ end }}>{{ T "settings.update.fleet_follow_nightly" }}</option>
+    </select>
+    <p class="muted">{{ T "settings.update.fleet_follow_hint" }}</p>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
   </fieldset>
@@ -1161,7 +1249,7 @@
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
         <td style="display:flex; gap:.3rem; flex-wrap:wrap">
-          <button class="btn secondary" data-backup-save="{{ .Name }}" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+          <button class="btn secondary" data-backup-save="{{ .Name }}"{{ if $.backupNativePicker }} data-backup-native="1"{{ end }} hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
                the old typed RESTORE word — the elevation dialog's own OOB
                swap (elevation_prompt.html) handles the rest via this same
@@ -1184,7 +1272,7 @@
       {{ end }}
     </tbody>
   </table>
-  <div id="backup-dl-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+  <div id="backup-dl-msg" class="muted" aria-live="polite" data-picker-saved="{{ T "settings.backup.picker_saved" }}" data-picker-cancelled="{{ T "settings.backup.picker_cancelled" }}" data-picker-failed="{{ T "settings.backup.picker_failed" }}" data-picker-no-space="{{ T "settings.backup.picker_no_space" }}" data-picker-unavailable="{{ T "settings.backup.save_failed_picker_unavailable" }}" style="min-height:1.2rem"></div>
   <p class="muted">{{ T "settings.backup.restore_note" }}</p>
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
@@ -1199,40 +1287,6 @@
   <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
   {{ end }}
   </div>
-  <script>
-  // ut-docs#5619: in the Android app the till process cannot write Downloads
-  // (scoped storage; the storage may be a USB drive), so Save to Downloads
-  // opens the system save picker through the app's bridge instead of the
-  // server-side copy. It sits outside the refreshable backup region (a region
-  // refresh does not run scripts). Anywhere else the htmx button above does the copy.
-  (function () {
-    var K = window.AndroidKiosk;
-    if (!K || typeof K.saveBackupCopy !== 'function' || window.utBackupSaveResult) return;
-    var T = {
-      saved: "{{ T "settings.backup.picker_saved" }}",
-      cancelled: "{{ T "settings.backup.picker_cancelled" }}",
-      failed: "{{ T "settings.backup.picker_failed" }}",
-      no_space: "{{ T "settings.backup.picker_no_space" }}"
-    };
-    function say(text, ok) {
-      var el = document.getElementById('backup-dl-msg');
-      if (el) el.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
-    }
-    document.addEventListener('click', function (e) {
-      var b = e.target.closest && e.target.closest('[data-backup-save]');
-      if (!b) return;
-      e.preventDefault();
-      e.stopPropagation();
-      K.saveBackupCopy(b.getAttribute('data-backup-save'));
-    }, true);
-    window.utBackupSaveResult = function (code, name) {
-      say(T[code] || T.failed, code === 'saved');
-      if (code === 'saved' && window.htmx) {
-        window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
-      }
-    };
-  })();
-  </script>
   {{ if .isManager }}
   {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
        stick, another computer or the Downloads folder (a new or
@@ -1930,6 +1984,30 @@
   });
 })();
 </script>
+{{ end }}
+<!-- ut-docs#2557 (ADR-0111 §4): per-staff sales in cloud reports. Manager-only,
+     off by default, explicit Save (a stray tap must not commit a staff-monitoring
+     switch). Plain label with the input as its direct child so the shared
+     touch-row rule (ut-docs#5738) applies. -->
+{{ if .isManager }}
+<div class="card" id="settings-cloud-staff">
+  <h2>{{ T "settings.cloud_staff.title" }} {{ helpLink "reports" }}</h2>
+  <p class="muted">{{ T "settings.cloud_staff.help" }}</p>
+  <div id="settings-cloud-staff-region" data-ut-refresh="#settings-cloud-staff-region" data-ut-saved-msg="#cloud-staff-msg">
+  <fieldset class="set-lock" data-lock-region="settings-cloud-staff"{{ if index $.lockedRegions "settings-cloud-staff" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-cloud-staff" }}{{ template "set-lock-note" }}{{ end }}
+  <form hx-post="/api/settings/cloud-staff-breakdown" hx-swap="none" data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
+    <label><input type="checkbox" name="enabled" data-testid="cloud-staff-enabled" {{ if eq (index .settingsMap "reports.cloud_staff_breakdown") "true" }}checked{{ end }}> {{ T "settings.cloud_staff.enable" }}</label>
+    <p class="muted">{{ T "settings.cloud_staff.window_note" }}</p>
+    <p class="muted">{{ T "settings.cloud_staff.works_council" }}</p>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "common.save" }}</button>
+      <span id="cloud-staff-msg" aria-live="polite"></span>
+    </div>
+  </form>
+  </fieldset>
+  </div>
+</div>
 {{ end }}
 <!-- ut-docs#866: printer settings are elevation-wired — the card renders for
      every session (server-side checkOrElevate is the real gate). -->

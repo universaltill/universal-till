@@ -1317,7 +1317,6 @@ document.addEventListener('htmx:afterSettle', function (evt) {
 // sends HX-Trigger-After-Settle: ut-basket-resync with the prompt (ut-docs#5417); re-render the live basket
 // so the box shows the real quantity until the approver confirms.
 document.addEventListener('ut-basket-resync', function(){
-  if (!window.htmx) return;
   // ut-docs#5417: the resync replaces #basket, and the prompt's hint lives in
   // it (#shrinkage-hint). Carry the same hint nodes across (not a copy, so the
   // dialog's own reference to them stays valid for Cancel/Escape), but only
@@ -1325,15 +1324,73 @@ document.addEventListener('ut-basket-resync', function(){
   // must not get a stale hint back.
   var old = document.getElementById('shrinkage-hint');
   var kept = old ? Array.prototype.slice.call(old.childNodes) : [];
-  var p = window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
-  if (!kept.length || !p || typeof p.then !== 'function') return;
-  p.then(function(){
-    var slot = document.getElementById('shrinkage-hint');
-    var dlg = document.getElementById('elevation-modal');
-    if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
-    kept.forEach(function(n){ slot.appendChild(n); });
-  });
+  // ut-docs#5458: deferred, as after a timeout. This event fires while the
+  // triggering request still holds #basket's htmx request lock; a resync
+  // queued behind it resolves its promise before the swap, so the carry-over
+  // would run too early and the swap would then wipe the hint.
+  setTimeout(function(){
+    var p = window.utBasketResync();
+    if (!kept.length || !p || typeof p.then !== 'function') return;
+    p.then(function(){
+      var slot = document.getElementById('shrinkage-hint');
+      var dlg = document.getElementById('elevation-modal');
+      if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
+      kept.forEach(function(n){ slot.appendChild(n); });
+    });
+  }, 0);
 });
+
+// ut-docs#5458: re-render the live basket from the till's own state. source is
+// #basket so the xhr sits in the slot hx-sync="#basket:replace" aborts: a newer
+// tap always wins over this refresh. utBasketGen / utResyncGen are the belt for
+// a mutation that is not hx-synced (htmx:beforeRequest bumps the generation,
+// htmx:beforeSwap drops a resync that started before it).
+var utBasketGen = 0, utResyncGen = -1;
+function utIsResync(d) {
+  return !!(d && d.requestConfig && d.requestConfig.headers && d.requestConfig.headers['X-UT-Resync']);
+}
+// Returns htmx.ajax's promise (null when there is no #basket), so a caller can
+// act once the fresh basket has settled (ut-docs#5417's hint carry-over).
+window.utBasketResync = function () {
+  var b = document.getElementById('basket');
+  if (!b || !window.htmx) return null;
+  utResyncGen = utBasketGen;
+  return window.htmx.ajax('GET', '/ui/basket', { source: b, target: b, swap: 'outerHTML', headers: { 'X-UT-Resync': '1' } });
+};
+document.addEventListener('htmx:beforeRequest', function (ev) {
+  var d = ev.detail;
+  if (!d || utIsResync(d)) return;
+  if (d.target && d.target.id === 'basket') utBasketGen++;
+});
+document.addEventListener('htmx:beforeSwap', function (ev) {
+  var d = ev.detail;
+  if (utIsResync(d) && utResyncGen !== utBasketGen) d.shouldSwap = false;
+});
+
+// ut-docs#5458: a tapped tile whose request is still pending shows a busy
+// outline (CSS keys on aria-busy) after 300 ms, so a fast tap never flashes.
+// The delay lives here, not in CSS: fx-light / reduced motion zero transition
+// delays. The tile stays enabled: a second tap aborts the first (hx-sync).
+(function () {
+  function idle(ev) {
+    var el = ev.detail && ev.detail.elt;
+    if (!el || !el.removeAttribute || !el.matches || !el.matches('.btn-tile')) return;
+    if (el.__utBusyT) { clearTimeout(el.__utBusyT); el.__utBusyT = 0; }
+    el.removeAttribute('aria-busy');
+  }
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    var el = ev.detail && ev.detail.elt;
+    if (!el || !el.matches || !el.matches('.btn-tile')) return;
+    if (el.__utBusyT) clearTimeout(el.__utBusyT);
+    el.__utBusyT = setTimeout(function () {
+      el.__utBusyT = 0;
+      if (el.isConnected && el.classList.contains('htmx-request')) el.setAttribute('aria-busy', 'true');
+    }, 300);
+  });
+  ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:timeout', 'htmx:sendError'].forEach(function (n) {
+    document.body.addEventListener(n, idle);
+  });
+})();
 
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
@@ -1545,6 +1602,7 @@ document.addEventListener('click', function(e){
   document.body.addEventListener('htmx:beforeSwap', function(ev){
     var d = ev.detail;
     if (!d || !d.xhr || d.xhr.status < 400) return;
+    if (utIsResync(d)) return; // #5458: never swap an error body over the basket
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
     if (path.indexOf('/api/pos/') === 0) {
       // Sale-screen carve-out (ut-docs#213): only a 400 or 409 whose body is a
@@ -1576,7 +1634,10 @@ document.addEventListener('click', function(e){
     d.shouldSwap = true;
     d.isError = false;
   });
-  document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
+  document.body.addEventListener('htmx:responseError', function(ev){
+    if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
+    showAlert('server');
+  });
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
   // data-after-request="elevation-done") failing at network level means the
   // confirmed action may or may not have run (ut-docs#5298).
@@ -1647,6 +1708,7 @@ document.addEventListener('click', function(e){
     if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
   });
   document.body.addEventListener('htmx:sendError', function(ev){
+    if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
     showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
   });
   // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
@@ -1658,6 +1720,11 @@ document.addEventListener('click', function(e){
     var rc = d.requestConfig || {};
     var verb = String(rc.verb || '').toLowerCase();
     showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'timeout' : 'network');
+    // ut-docs#5458: the action may have applied; show the till's real basket.
+    // Deferred so htmx's own request lock on #basket is released first.
+    var rpath = utPathOf(rc.path || (d.pathInfo && d.pathInfo.requestPath));
+    if (!utIsPromptElt(d.elt) && verb !== 'get' && rpath.indexOf('/api/pos/') === 0 &&
+        document.getElementById('basket')) setTimeout(window.utBasketResync, 0);
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
@@ -3238,7 +3305,11 @@ utSellCamera(function(){
 //    the fetch error tagged e.utNetworkError = true. The action may or may
 //    not have run, so it is never reported as a cancel; callers show
 //    window.utElevationErrorText(e) from their existing .catch. Nothing is
-//    retried or replayed.
+//    retried or replayed. When the leg's own timer fired, the error is also
+//    tagged e.utTimeout = true (ut-docs#5484) and utElevationErrorText
+//    returns the "did not reply in time" text (common.error.outcome_timeout,
+//    as the htmx path does, #5463); other network failures keep the
+//    outcome-unknown text.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -3345,9 +3416,10 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     function stopTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
     function tagNet(e) {
       stopTimer();
-      if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
+      if (e && typeof e === 'object') { e.utNetworkError = true; if (timedOut) e.utTimeout = true; throw e; }
       var n = new Error(String(e));
       n.utNetworkError = true;
+      if (timedOut) n.utTimeout = true;
       throw n;
     }
     if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
@@ -3361,7 +3433,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // (an abort from the #5335 timer included).
       tagNet(e);
     }).then(function (r) {
-      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; throw t; }
+      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; t.utTimeout = true; throw t; }
       // Clear the busy state before every outcome (close, re-prompt,
       // redirect) — on the re-prompt branch only once its body is read, so
       // a second tap can't start a parallel retry in the gap (#5291 review).
@@ -3424,9 +3496,17 @@ window.utOutcomeUnknownText = function () {
   var b = document.getElementById('pos-alert');
   return (b && b.dataset.msgOutcomeUnknown) || '';
 };
-// For a utPostWithElevation .catch: the outcome-unknown text for a network
+// ut-docs#5484: the translated "did not reply in time" text; falls back to
+// the outcome-unknown text, as the htmx path does (#5463).
+window.utOutcomeTimeoutText = function () {
+  var b = document.getElementById('pos-alert');
+  return (b && b.dataset.msgOutcomeTimeout) || window.utOutcomeUnknownText();
+};
+// For a utPostWithElevation .catch: the timeout text when the leg's timer
+// fired (e.utTimeout), the outcome-unknown text for any other network
 // failure, else e unchanged.
 window.utElevationErrorText = function (e) {
+  if (e && e.utTimeout) return window.utOutcomeTimeoutText() || e;
   return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 

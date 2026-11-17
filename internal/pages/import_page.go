@@ -59,6 +59,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	settingsRepo := data.NewSettingsRepo(d.Db)
 	registerImportFromSystem(mux, d)
 	registerImportFromFile(mux, d)
+	registerImportPhotos(mux, d)
 
 	registerJoinSyncPoll(mux, d)
 
@@ -131,6 +132,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if systemErr != nil {
 			logging.L().Errorf("import page: list API importers: %v", systemErr)
 		}
+		photosMode := r.URL.Query().Get("mode") == "photos"
 		importData := map[string]any{
 			"showSystemCard":   systemErr == nil,
 			"systemImporters":  systemImporters,
@@ -152,6 +154,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// The wizard's pairing did not complete: a visible note, never
 			// a claim that the shop is syncing.
 			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",
+			// ut-docs#6527: bulk photo import card (catalog managers, main till).
+			// The card lives in its own view (?mode=photos) so the default
+			// page keeps exactly one file input (ut-docs#6527).
+			"showPhotosCard":  photosMode && canPerform(d, r, "catalog_management"),
+			"showPhotosLink":  !photosMode && canPerform(d, r, "catalog_management"),
+			"photosOnReplica": d.SyncPrimaryURL(r.Context()) != "",
 			"showSampleCard":  sampleErr == nil,
 			"sampleItemCount": sampleCount,
 			"sampleLoaded":    sampleLoaded,

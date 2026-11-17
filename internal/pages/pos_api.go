@@ -390,6 +390,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// reached a plugin and approved, with that leg's own idempotency key —
 	// what a refused cannot-sign tender must reverse (ADR-0136 Decision 2).
 	var capturedLegs []capturedPaymentLeg
+	// legRequestIDs[i] is leg i's authorize event id when that authorize was
+	// dispatched to a plugin, "" otherwise; the settle event carries it so a
+	// plugin can match its own approval exactly (ut-docs#6438).
+	legRequestIDs := make([]string, len(payments))
 	for i, p := range payments {
 		amount := p.Amount
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -493,8 +497,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				log.Printf("tender: ignoring reader-reported tip %d for method %q (attempt %s): a voucher leg or an amount overflow", tip, p.MethodID, requestID)
 			}
 		}
+		// ut-docs#6438: the provider reference a later refund needs lives on
+		// the payment row (trace_id), not in plugin storage. Never auth_code:
+		// that is printed on the customer receipt.
+		if ref, ok := pluginReportedTransactionRef(resp); ok {
+			if old := payments[i].TraceID; old != "" && old != ref {
+				log.Printf("tender: plugin transaction_ref replaces trace_id for method %q (attempt %s)", p.MethodID, requestID)
+			}
+			payments[i].TraceID = ref
+		} else if len(resp) > 0 && strings.Contains(string(resp), `"transaction_ref"`) {
+			log.Printf("tender: ignoring malformed transaction_ref from method %q (attempt %s)", p.MethodID, requestID)
+		}
 		if dispatched {
-			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured})
+			legRequestIDs[i] = requestID
+			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured, transactionRef: payments[i].TraceID, tipAmount: payments[i].TipAmount})
 		}
 	}
 
@@ -716,15 +732,24 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			byMethod[e.EntryKey] = e
 		}
 		bus := plugins.SharedBus(d.Db)
-		for _, p := range payments {
+		for i, p := range payments {
 			if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
-				_, _ = bus.Publish(ctx, e.TriggerEvent, map[string]any{
+				settle := map[string]any{
 					"sale_id":   saleID,
 					"method":    p.MethodID,
 					"amount":    p.Amount.Minor(),
 					"reference": p.Reference,
 					"plugin_id": e.PluginID,
-				})
+				}
+				// ut-docs#6438: the leg's authorize id, and the reference core
+				// now holds. A plugin seeing transaction_ref writes nothing.
+				if i < len(legRequestIDs) && legRequestIDs[i] != "" {
+					settle["authorize_request_id"] = legRequestIDs[i]
+				}
+				if p.TraceID != "" {
+					settle["transaction_ref"] = p.TraceID
+				}
+				_, _ = bus.Publish(ctx, e.TriggerEvent, settle)
 			}
 		}
 	}
@@ -920,6 +945,34 @@ func pluginReportedTipAmount(resp json.RawMessage) (amount int64, ok bool) {
 		return 0, false
 	}
 	return *parsed.TipAmount, true
+}
+
+// pluginReportedTransactionRef extracts an optional `transaction_ref` from a
+// payment.<key>.authorize answer: the provider reference (Stripe PaymentIntent
+// id, SumUp transaction id) a later refund needs. Core keeps it in the payment
+// row's trace_id (ut-docs#6438, ADR-0196) and returns it on .refund as
+// original_payments. Accepted only if, trimmed, 1..128 bytes of printable
+// ASCII (0x21..0x7E); anything else is ignored and the sale is unaffected.
+func pluginReportedTransactionRef(resp json.RawMessage) (string, bool) {
+	if len(resp) == 0 {
+		return "", false
+	}
+	var parsed struct {
+		Ref *string `json:"transaction_ref"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil || parsed.Ref == nil {
+		return "", false
+	}
+	ref := strings.TrimSpace(*parsed.Ref)
+	if ref == "" || len(ref) > 128 {
+		return "", false
+	}
+	for i := 0; i < len(ref); i++ {
+		if ref[i] < 0x21 || ref[i] > 0x7E {
+			return "", false
+		}
+	}
+	return ref, true
 }
 
 // resolveReceiptScanDestination is the ut-docs#1818 scan-routing decision:
@@ -3577,6 +3630,11 @@ type capturedPaymentLeg struct {
 	index     int
 	requestID string
 	amount    money.Money
+	// transactionRef / tipAmount: the provider reference core holds for this
+	// leg and the tip the reader added (ut-docs#6438), so a reversal can hand
+	// the plugin the charge it must undo.
+	transactionRef string
+	tipAmount      money.Money
 }
 
 // reverseCapturedPaymentLegs sends back every captured leg of a tender that
@@ -3610,6 +3668,13 @@ func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency st
 			"currency":             legCurrency,
 			"reversal":             true,
 			"authorize_request_id": leg.requestID,
+		}
+		if leg.transactionRef != "" {
+			payload["original_payments"] = []map[string]any{{
+				"transaction_ref": leg.transactionRef,
+				"amount":          amount.Minor(),
+				"tip_amount":      leg.tipAmount.Minor(),
+			}}
 		}
 		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "refund", "", payload); err != nil {
 			logging.L().Warnf("fiscal signing: tender refused as cannot-sign, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309)", p.MethodID, amount.Minor(), legCurrency, leg.requestID, err)
