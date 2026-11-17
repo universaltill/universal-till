@@ -17,14 +17,14 @@ Add features without changing the core app: payments, themes, language packs, in
 
 The till itself stays small. Anything that is specific to a country, a payment provider, a look or another service comes as a **plugin**: tax and fiscal rules for your country, card payments, themes, language packs, connections to other services and AI tools are all plugins. You add only what your shop needs, from the **Plugin Store**, the marketplace's catalogue of plugins.
 
-Plugins never get in the way of selling. A sale always completes offline, and the store only needs the internet while you browse, download or update.
+Using the store never gets in the way of selling. A sale always completes offline, and the store only needs the internet to load its catalogue the first time, to download and to update.
 
 You use this page when you want to add a feature, check what an installed plugin may do, change its settings, update it, or take it away again. Installing, removing and changing plugins is for managers; every step below is on the **Plugins** page.
 
 ## Trust and safety
 
 - **Every plugin is signed.** The marketplace signs each plugin, and the till checks that signature on the till itself, before the plugin runs. The check does not need the internet. If even one file of a plugin has been changed, the till refuses it.
-- **Trust badges.** In the store, a gold badge means official Universal Till, a green badge means a verified developer. A plugin from an unverified publisher shows an **Unverified** badge, and the till asks for your confirmation before it goes ahead. On an installed plugin's card, a small tag shows how the till recorded the plugin's trust: **trusted** or **untrusted**. A plugin imported from a file always shows **untrusted**.
+- **Trust badges.** In the store, a gold badge means official Universal Till, a green badge means a verified developer. A plugin from an unverified publisher shows an **Unverified** badge, and the till asks for your confirmation before it goes ahead. On an installed plugin's card, a small tag shows how the till recorded the plugin's trust: **trusted** or **untrusted** (a layout built into the till for your type of shop shows **system**). A plugin imported from a file always shows **untrusted**.
 - **A plugin can do only what its permissions allow.** The plugin's page lists them before you install, and you can see them again, and revoke any of them, on its settings page (see [Plugin settings and permissions](#plugin-settings-and-permissions)).
 - **Withdrawn versions switch off by themselves.** If the marketplace withdraws a plugin version, for example because of a security problem, the till turns that plugin off by itself the next time it checks, about every 30 minutes while it is online. The plugin then shows as **Disabled** on the Plugins page. Selling carries on as normal: the check never blocks a sale. The till then refuses to turn that version back on, reinstall it, or roll back to it, and shows a message saying the marketplace has withdrawn it. Update the plugin to another version instead. The till never removes the plugin or its settings on its own; to remove it, use **Uninstall**. If the marketplace later lifts the withdrawal, you can turn the plugin on again yourself.
 
@@ -44,7 +44,7 @@ You use this page when you want to add a feature, check what an installed plugin
 4. On a till that is not registered yet, the first **Download** registers it with the cloud, so the plugin's page first shows the cloud terms box: tick it to accept the terms (once per terms version). Without the tick nothing is downloaded and the page tells you to accept the terms first.
 5. A plugin marked **Paid** needs an entitlement your merchant manager approves in the marketplace portal before it can be installed. Trying to download one without approval shows a message explaining that, instead of downloading.
 6. Press **Download**, then **Install**. A plugin from an unverified publisher asks you to confirm first.
-7. To get back to your installed plugins, press **Manage installed plugins** on a plugin's page.
+7. To get back to your installed plugins, press **Manage installed plugins** at the top of the store. On a plugin's page, it takes the place of **Download** once the plugin is installed.
 
 What the store shows for a plugin you have already started with:
 
