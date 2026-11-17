@@ -614,7 +614,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /orders", func(w http.ResponseWriter, r *http.Request) {
 		httpx.Render("ui/pages/orders.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.order_status"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 		})(w, r)
 	})
@@ -654,7 +654,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/order_view.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.order"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"Sale":      detail,
 			"Status":    status,

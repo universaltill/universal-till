@@ -3,6 +3,7 @@ id: users
 title: Benutzer, PINs & Schichten
 section: Verbinden & erweitern
 order: 340
+public: true
 summary: Getrennte Kassierer- und Managerkonten mit PIN-Anmeldung sowie Schichtverfolgung, damit Sie wissen, wer was verkauft hat und wann die Schublade gezählt wurde.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 keywords: [pin, personal, rollen, anmelden, sperren, berechtigungen]
@@ -26,14 +27,14 @@ Getrennte Kassierer- und Managerkonten mit PIN-Anmeldung sowie Schichtverfolgung
 10. Der letzte Bildschirm des Assistenten fragt außerdem — einmalig und standardmäßig nicht angehakt —, ob diese Kasse sofort bei der Universal-Till-Cloud registriert werden soll. Haken Sie es an, sendet die Kasse, sobald die Einrichtung abgeschlossen ist, ihre Geräte-ID, Ihren Geschäftsnamen, das Land, die Region und die Softwareversion an den Universal-Till-Cloud-Marktplatz, verwendet für Support, Updates und Lizenzierung — Ihre Adresse wird nicht gesendet. Lassen Sie es unangehakt, wird nichts gesendet — die Kasse registriert sich erst, wenn Sie zum ersten Mal den Plugin-Store nutzen oder „Jetzt registrieren“ drücken. So oder so wartet die Einrichtung nie auf das Internet: Sind Sie offline, wenn Sie es anhaken, wird die Einrichtung trotzdem abgeschlossen, und die Kasse bleibt unregistriert, bis Sie den Plugin-Store öffnen, „Jetzt registrieren“ drücken oder wieder online kommen und Einstellungen → Kassenregistrierung prüfen. Sie können Ihre Antwort jederzeit von dort aus ändern; siehe [Geschäftsregistrierung & Beanspruchung](/help/claim).
 11. Der Einrichtungsassistent meldet Sie als ersten Admin dieser Kasse an — er verbindet die Kasse nicht mit IHREM eigenen Online-Konto. Für das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen siehe [Geschäftsregistrierung & Beanspruchung](/help/claim).
 12. Das Anlegen eines Benutzers, das Festlegen von jemandes PIN oder das Aktivieren/Deaktivieren eines Kontos erfordert die Rolle Manager oder Admin. Als Kassierer angemeldet und versuchen Sie es trotzdem? Der Bildschirm lehnt nicht einfach ab — er öffnet direkt vor Ort eine PIN-Abfrage, die ein Manager oder Admin genehmigen kann, genauso wie bei [anderen Manager-Freigabe-Abfragen](/help/elevation) anderswo in der Kasse.
-13. Ihr eigener Name im linken Menü (👤) öffnet „PIN ändern“; die Schaltfläche „Sperren“ daneben meldet Sie direkt zum PIN-Feld ab.
+13. Ihr eigener Name im linken Menü (Personen-Symbol) öffnet „PIN ändern“; die Schaltfläche „Sperren“ daneben meldet Sie direkt zum PIN-Feld ab.
 14. Am Anmeldebildschirm einer Vollbild- oder Kiosk-Kasse festgesteckt? Der Anmeldebildschirm hat einen eingeklappten Link „Ausgesperrt? Zurück zum Desktop“: Öffnen Sie ihn und geben Sie eine Manager-PIN ein, um die Kasse zu verlassen und zum Desktop des Betriebssystems zurückzukehren — dafür ist keine vorherige Anmeldung nötig. Es ist dieselbe Manager-PIN-geschützte Aktion „Zum Betriebssystem wechseln“ wie unter Einstellungen → Anzeige; siehe [Sprachen & Anzeige](/help/display) für ihre Wirkung auf jeder Kassenart.
 
 ## Ihre eigene PIN ändern
 
 Jeder kann seine eigene PIN ändern, ohne dass ein Manager benötigt wird — ein Manager ist nur nötig, um *jemand anderes* PIN von Benutzer aus festzulegen oder zurückzusetzen.
 
-1. Tippen Sie im linken Menü auf Ihren Namen (👤), um „PIN ändern“ zu öffnen.
+1. Tippen Sie im linken Menü auf Ihren Namen (Personen-Symbol), um „PIN ändern“ zu öffnen.
 2. Geben Sie Ihre aktuelle PIN ein, dann zweimal Ihre neue PIN.
 3. Absenden: Sie werden abgemeldet und landen wieder auf dem PIN-Feld — melden Sie sich mit der neuen PIN erneut an.
 

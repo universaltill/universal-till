@@ -28,8 +28,13 @@ const importFormOverhead = 1 << 20 // 1MB
 // registerImportDispatch wires POST /api/data/import (ut-docs#599): the
 // host-side trigger that hands an uploaded file to a SPECIFIC installed
 // import-type plugin entry. Structurally the mirror of /api/data/export
-// (data_api.go) — same manager gate, same entry_key resolution, same
-// AskPlugin-never-broadcast rule — but the payload carries a staged-file
+// (data_api.go) — same entry_key resolution, same AskPlugin-never-broadcast
+// rule — but the gate is NOT shared: this is `import_export`, like every
+// other import (/api/import, /api/import/sample-data, and
+// /api/import/from-file and /api/import/from-system, the /import page's
+// routes into the same plugin import runs), while /api/data/export (a
+// sales-range download from Settings → Data) is `data_management`.
+// Intentionally different (ut-docs#720). The payload carries a staged-file
 // HANDLE instead of inline data: the upload is streamed to a temp file
 // (never buffered whole in memory, size-capped on bytes actually written,
 // mirroring catimport.ParseBkp's shape) and registered in the plugins

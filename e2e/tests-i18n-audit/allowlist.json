@@ -46,5 +46,9 @@
   {
     "text": "Status",
     "reason": "identical word in German (de.json's own value for users.col.status, vouchers.col.status and others, all in the pack's same-as-en allowlist) — not a fallback"
+  },
+  {
+    "text": "English",
+    "reason": "self-order start screen's language picker names every installed language in that language (ut-docs#4200, httpx.NativeLanguageName) — an endonym, correct on a German page; also translations.mode.english's en value"
   }
 ]

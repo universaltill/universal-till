@@ -6,12 +6,15 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
@@ -88,19 +91,41 @@ func ListBackups(dbPath string) ([]BackupInfo, error) {
 		}
 		out = append(out, BackupInfo{Name: e.Name(), Size: info.Size(), ModTime: info.ModTime()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) })
+	// Name breaks a tie: the name carries the UTC timestamp, and "newest"
+	// must not change between two calls when mtimes are equal.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ModTime.Equal(out[j].ModTime) {
+			return out[i].ModTime.After(out[j].ModTime)
+		}
+		return out[i].Name > out[j].Name
+	})
 	return out, nil
 }
+
+// NewestOwnBackup is the till's newest snapshot of its OWN data: the first
+// entry of list (newest-first) that is not a file a manager uploaded
+// (IsUploadedBackupName). An upload is renamed into place with mtime = now,
+// so it sorts first and must not take the "never delete the newest" rule
+// over from the real snapshot (ut-docs#3092). Returns "" for none.
+func NewestOwnBackup(list []BackupInfo) string {
+	for _, b := range list {
+		if !IsUploadedBackupName(b.Name) {
+			return b.Name
+		}
+	}
+	return ""
+}
+
+// backupMu serialises the list-then-remove steps of DeleteBackup and the age
+// prune, so two concurrent deletes cannot each see the other file as the
+// protected newest one.
+var backupMu sync.Mutex
 
 // ValidBackupName guards path traversal on user-supplied backup names.
 func ValidBackupName(name string) bool {
 	return name == filepath.Base(name) &&
 		strings.HasPrefix(name, backupPrefix) && strings.HasSuffix(name, ".db")
 }
-
-// DefaultBackupKeep is how many unitill-pos-* snapshots the daily backup,
-// the manual "Back up now" and device housekeeping keep (ut-docs#3092).
-const DefaultBackupKeep = 14
 
 // PruneBackups keeps the newest keep snapshots, removing the rest.
 func PruneBackups(dbPath string, keep int) error {
@@ -114,6 +139,89 @@ func PruneBackups(dbPath string, keep int) error {
 	dir, _ := BackupDir(dbPath)
 	for _, b := range list[min(keep, len(list)):] {
 		_ = os.Remove(filepath.Join(dir, b.Name))
+	}
+	return nil
+}
+
+// Errors DeleteBackup returns so the handler can answer precisely.
+var (
+	ErrInvalidBackupName = errors.New("invalid backup name")
+	ErrBackupNotFound    = errors.New("backup not found")
+	// ErrNewestBackup: the newest snapshot is the shop's last line of
+	// defence and is never deleted.
+	ErrNewestBackup = errors.New("the newest backup is never deleted")
+)
+
+// PruneBackupsOlderThan removes the unitill-pos-* snapshots older than days
+// days (at least one), always keeping the newest one whatever its age. A
+// file a manager uploaded (IsUploadedBackupName) is not this till's rolling
+// snapshot and is left for its owner to delete; pre-restore-* copies are
+// not snapshots and belong to PrunePreRestore (ADR-0040, ut-docs#3365).
+// keepNames are also kept (the restore source just staged). Returns how many
+// files were removed.
+func PruneBackupsOlderThan(dbPath string, days int, now time.Time, keepNames ...string) (int, error) {
+	if days < 1 {
+		days = 1
+	}
+	backupMu.Lock()
+	defer backupMu.Unlock()
+	list, err := ListBackups(dbPath)
+	if err != nil {
+		return 0, err
+	}
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return 0, err
+	}
+	limit := time.Duration(days) * 24 * time.Hour
+	protect := map[string]bool{NewestOwnBackup(list): true}
+	for _, n := range keepNames {
+		protect[n] = true
+	}
+	removed := 0
+	for _, b := range list {
+		if protect[b.Name] || IsUploadedBackupName(b.Name) || now.Sub(b.ModTime) <= limit {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, b.Name)) == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// DeleteBackup removes one snapshot by name (the Delete button on
+// Settings → Backups). It refuses a name that is not a snapshot, a missing
+// file and the newest snapshot.
+func DeleteBackup(dbPath, name string) error {
+	if !ValidBackupName(name) {
+		return ErrInvalidBackupName
+	}
+	backupMu.Lock()
+	defer backupMu.Unlock()
+	list, err := ListBackups(dbPath)
+	if err != nil {
+		return err
+	}
+	if name == NewestOwnBackup(list) {
+		return ErrNewestBackup
+	}
+	found := false
+	for _, b := range list {
+		found = found || b.Name == name
+	}
+	if !found {
+		return ErrBackupNotFound
+	}
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if os.IsNotExist(err) {
+			return ErrBackupNotFound
+		}
+		return err
 	}
 	return nil
 }
@@ -256,16 +364,27 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 			return false, nil
 		}
 	}
+	// A backup restore (not a LAN join) lacks the receipts and Zs the lost
+	// till issued after the backup. Owe the number jump BEFORE the swap, so
+	// a crash between the swap and the jump still jumps on the next boot
+	// (ut-docs#5068).
+	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil {
+		if err := writeNumberJumpPending(dbPath); err != nil {
+			return false, fmt.Errorf("record the owed number jump: %w", err)
+		}
+	}
 	if _, err := os.Stat(dbPath); err == nil {
 		aside := filepath.Join(dir, preRestorePrefix+time.Now().UTC().Format(backupTimeLayout)+".db")
 		// Journal the swap before the first rename: a crash between the two
 		// renames leaves no db file, and RecoverInterruptedRestore finishes
 		// (or undoes) it at the next boot instead of opening an empty DB.
 		if err := writeRestoreSwap(dbPath, filepath.Base(aside)); err != nil {
+			ClearNumberJumpPending(dbPath) // nothing moved yet: no jump owed
 			return false, fmt.Errorf("journal restore swap: %w", err)
 		}
 		if err := os.Rename(dbPath, aside); err != nil {
 			clearRestoreSwap(dbPath)
+			ClearNumberJumpPending(dbPath) // nothing was swapped: no jump owed
 			return false, fmt.Errorf("set aside current db: %w", err)
 		}
 		// SQLite sidecar files from the old DB must not pollute the restored one.
@@ -273,6 +392,9 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		_ = os.Remove(dbPath + "-shm")
 	}
 	if err := os.Rename(pending, dbPath); err != nil {
+		// The marker stays: with the live DB set aside, the journal makes
+		// RecoverInterruptedRestore finish this restore on the next attempt,
+		// and that restore owes its jump (or undoes it and drops the marker).
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
 	clearRestoreSwap(dbPath)
@@ -341,6 +463,14 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 		// The old DB's sidecars must not be replayed into the restored file.
 		_ = os.Remove(dbPath + "-wal")
 		_ = os.Remove(dbPath + "-shm")
+		// A backup restore (not a LAN join) owes its number jump. The marker
+		// is normally there already; re-owe it before the move in case power
+		// loss lost it (ut-docs#5068).
+		if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil && !NumberJumpPending(dbPath) {
+			if err := writeNumberJumpPending(dbPath); err != nil {
+				return false, fmt.Errorf("record the owed number jump: %w", err)
+			}
+		}
 		if err := os.Rename(pending, dbPath); err != nil {
 			return false, fmt.Errorf("finish interrupted restore: %w", err)
 		}
@@ -360,8 +490,75 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 		return false, fmt.Errorf("undo interrupted restore (journal %s, previous data expected at %s): %w", restoreSwapName, filepath.Join(bdir, aside), err)
 	}
 	clearRestoreSwap(dbPath)
+	// The restore never happened: the marker written before the swap owes a
+	// number jump for nothing (ut-docs#5068).
+	ClearNumberJumpPending(dbPath)
 	logging.L().Warnf("restore: undid a restore interrupted between its two file moves; the previous data is back")
 	return false, nil
+}
+
+// numberJumpPendingName is the marker file ApplyPendingRestore leaves next to
+// the DB when a backup restore was applied: receipt and Z numbers still owe
+// their jump (data.POSRepo.JumpNumbersAfterRestore). The file, not the
+// in-memory restoreApplied flag, is what survives a crash after the swap.
+const numberJumpPendingName = "restore-numbers-pending"
+
+func numberJumpPendingPath(dbPath string) string {
+	return filepath.Join(filepath.Dir(dbPath), numberJumpPendingName)
+}
+
+// NumberJumpPending reports whether a restored backup still owes its
+// receipt/Z number jump.
+func NumberJumpPending(dbPath string) bool {
+	_, err := os.Stat(numberJumpPendingPath(dbPath))
+	return err == nil
+}
+
+// NumberJumpToken is the marker file's content: a unique id of this restore
+// (written as a timestamp). data.POSRepo.JumpNumbersAfterRestore stores it
+// with the jump so one restore never jumps twice.
+//
+// A marker left empty (power loss after the create, before the data hit the
+// disk) still names one restore: its modification time, stable across boots.
+func NumberJumpToken(dbPath string) string {
+	path := numberJumpPendingPath(dbPath)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if tok := strings.TrimSpace(string(raw)); tok != "" {
+		return tok
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return "mtime-" + fi.ModTime().UTC().Format(time.RFC3339Nano)
+}
+
+// writeNumberJumpPending records the owed jump with a fresh token, synced to
+// disk like the swap journal so the renames that follow cannot outlive it.
+func writeNumberJumpPending(dbPath string) error {
+	f, err := os.OpenFile(numberJumpPendingPath(dbPath), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(time.Now().UTC().Format(time.RFC3339Nano) + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// ClearNumberJumpPending drops the marker once the jump is recorded.
+func ClearNumberJumpPending(dbPath string) {
+	if err := os.Remove(numberJumpPendingPath(dbPath)); err != nil && !os.IsNotExist(err) {
+		logging.L().Warnf("restore: clear the number-jump marker: %v", err)
+	}
 }
 
 // restoreRefusedName is the marker ApplyPendingRestore leaves next to the DB
@@ -416,8 +613,13 @@ var RestoreKeepsLivePrefixes = append(append([]string(nil), TillCloudIdentityPre
 // data.BackupCopySinceSettingsKey) is dropped too: an old backup's dates
 // would show "no backup copied" right after a restore; the reminder starts
 // again from the first check after it.
+//
+// The sales copy's epoch (ut-docs#5074) is dropped too: the restored change
+// log's seqs may go backwards from what the additional tills already hold,
+// so the main till mints a new epoch on its next feed request or
+// maintenance tick and every additional till re-syncs by state.
 var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
-	"backup.last_copied_at", "backup.copy_reminder_since"}
+	"backup.last_copied_at", "backup.copy_reminder_since", "sales_mirror.epoch"}
 
 // keepLiveCloudIdentity rewrites the staged restore so its
 // RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are
@@ -454,6 +656,13 @@ func keepLiveCloudIdentity(dbPath, pending string) error {
 		if readable {
 			if err := deleteSettingsPrefixes(tx, RestoreKeepsLivePrefixes); err != nil {
 				return err
+			}
+			for _, kv := range keep {
+				if kv[0] == receiptPrefixKey {
+					if _, err := tx.Exec(`DELETE FROM settings WHERE key = ?`, receiptPrefixKey); err != nil {
+						return fmt.Errorf("clear %s: %w", receiptPrefixKey, err)
+					}
+				}
 			}
 			for _, kv := range keep {
 				if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, kv[0], kv[1]); err != nil {
@@ -516,9 +725,24 @@ func liveIdentityRows(dbPath string) (rows [][2]string, readable bool, err error
 				break
 			}
 		}
+		if k == receiptPrefixKey && isReplacementMainTillPrefix(v) {
+			rows = append(rows, [2]string{k, v})
+		}
 	}
 	if err := q.Err(); err != nil {
 		return nil, false, err
 	}
 	return rows, true, nil
 }
+
+// receiptPrefixKey is the till's receipt/invoice series prefix. A
+// replacement main till's own prefix (ut-docs#5058 T4) is kept across a
+// restore: the old till's backup carries none, and restoring it must not put
+// the replacement back on the numbers the dead till already issued.
+const receiptPrefixKey = "sync.receipt_prefix"
+
+var replacementMainTillPrefixRe = regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+
+// isReplacementMainTillPrefix mirrors data.IsReplacementMainTillPrefix (db
+// cannot import data); TestReplacementPrefixMatcherMirrorsData pins them.
+func isReplacementMainTillPrefix(p string) bool { return replacementMainTillPrefixRe.MatchString(p) }
