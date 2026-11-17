@@ -38,7 +38,7 @@ Use this on a new till, or on one that replaces a broken till, with a backup fil
 
 1. Settings → Backups → **Restore from a file**: choose the file (it is named `unitill-pos-….db`) and press **Check the file**.
 2. The till checks that the file is a Universal Till backup of this shop, made by this version or an older one, and shows the shop name, how many sales it holds and the newest sale. Sales made after that are not in the backup.
-- **Step 3.** Press **Restore this backup** and confirm with your manager PIN. The till backs up its current data first; then restart it as described above.
+3. Press **Restore this backup** and confirm with your manager PIN. The till backs up its current data first; then restart it as described above.
 
 Use a file from the old till's `backups` folder or one saved with **Save to Downloads**. If you copy the live database file `unitill-pos.db` from a broken till's disk instead, copy the `unitill-pos.db-wal` and `unitill-pos.db-shm` files next to it too, or the last sales are missing.
 
