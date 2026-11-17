@@ -75,8 +75,15 @@ class TapToPayFlow(
         }
     }
 
-    /** Operator cancel: only while collecting. */
+    /**
+     * Operator/Go cancel: while collecting, or while still starting (nothing is authorised then; an intent that
+     * arrives afterwards is cancelled by [start]'s own guard).
+     */
     fun cancel(): Boolean {
+        if (s == S.STARTING) {
+            refuse("intent_canceled")
+            return true
+        }
         if (s != S.COLLECTING) return false
         abortCollect("operator_cancelled")
         return true
@@ -95,6 +102,9 @@ class TapToPayFlow(
     val isLive: Boolean get() = s != S.ENDED
 
     val requestId: String get() = req.requestId
+
+    /** The till's own idempotency key for this payment (what Go's Cancel names). */
+    val key: String get() = req.key
 
     private fun record(intent: String, state: String) =
         PendingRecord(req.requestId, req.key, intent, state, req.amountMinor, req.currency)

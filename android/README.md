@@ -752,7 +752,7 @@ Tap to Pay on the phone's own NFC, with the Stripe Terminal Android SDK. It is a
 ./gradlew assembleArm64Debug                     # normal build: stub, no SDK
 ```
 
-| Build | SDK on classpath | Manifest additions | `AndroidTapToPay` bridge | Kotlin |
+| Build | SDK on classpath | Manifest additions | devicepay bridge (Go) | Kotlin |
 |---|---|---|---|---|
 | `armv7`, `universal` (any property) | no | none | never registered | 2.0.21 |
 | `arm64` without the flag (every `release.yml` build) | no | none | never registered | 2.0.21 |
@@ -791,10 +791,14 @@ the iMin Falcon 1 (Android 11) and Fire tablets cannot take a live tap: the page
 Stripe's attestation is **unverified** (no Google approval step is documented; checklist D12).
 
 **Code layout** (`com.universaltill.pos.tap`): `TapToPayCapability` (pure device rules),
-`TapToPayMessages` (strict JSON), `TapToPayFlow` (one payment: collect window 18 s, hard
-deadline 24 s, never `declined` on a timer once confirm began, late results kept),
-`TapToPayEngine` (single-flight, bounded result store), `TapToPayShell` (WebMessage glue).
-Interfaces `Reader`, `CloudApi`, `PendingStore`, `Scheduler` have fakes in `src/test`.
+`DevicepayCodec` (the JSON that crosses the gomobile boundary, strict in and out),
+`DevicepayBridgeCore` (the Kotlin `internal/devicepay` Bridge: `Capabilities`/`Collect`/
+`Cancel`/`Setup`/`ShowEducation`, plus the `Resolver`), `GoDevicepayBridge` (the thin
+`mobile.TapToPayBridge`/`TapToPayResolver` adapter), `TapToPayFlow` (one payment: collect
+window 18 s, hard deadline 24 s, never `declined` on a timer once confirm began, late results
+kept), `TapToPayEngine` (single-flight, persisted pending/paid records), `TapToPayShell`
+(registers the bridge while the Activity is started). Interfaces `Reader`, `CloudApi`,
+`PendingStore`, `Scheduler` have fakes in `src/test`.
 `src/ttpStub` (no-op) and `src/ttpReal` (`StripeTerminalReader`, `TillApplication`,
 manifest overlay) are chosen by the flag. Cloud calls go through Go
 (`Mobile.tapToPayCloud("stripe", op, body)` -> `internal/paybroker.Call`, the one forwarder
@@ -804,34 +808,32 @@ location_id}`), `session_create` (`{client_secret, amount_minor, currency}`). Th
 creates the PaymentIntent; `StripeTerminalReader` retrieves it by client secret and
 collects only on a fresh `requires_payment_method` intent of exactly this amount. Same
 decision table as iOS for an intent the cloud returns for a retried key: `succeeded` (matching
-amount) is reported `succeeded` without collecting; `processing`/`requires_capture`/
+amount) is reported approved without collecting; `processing`/`requires_capture`/
 `requires_confirmation`/unrecognised status, a mismatch on a moved intent, or a failed read-back
-is `unknown` with an unresolved record (never declined, never collected, never recreated);
-a `canceled` intent is the start error `intent_canceled`: the page must mint a NEW idempotency
-key for a new attempt (same key = same cancelled intent forever). #6454 should issue a fresh
-intent for a cancelled keyed one.
+is `pending` with an unresolved record (never declined, never collected, never recreated);
+a `canceled` intent is declined `intent_canceled`: a new attempt needs a NEW idempotency
+key. A reader connect that never finishes (discovery that ends with nothing, a connect that
+never calls back) is aborted after 45 s (`ConnectAttempt`).
 
-**Bridge v1** (`window.AndroidTapToPay`, `WebViewCompat.addWebMessageListener`, exact origin
-`http://<till host>`, main frame only; absent when the flag is off): the page sends
-`postMessage(JSON.stringify({v:1,id,op,...}))` and reads replies/events from `onmessage`.
-Ops: `capabilities`, `education`, `prepare`, `start {amount_minor, currency (gbp|eur),
-idempotency_key}`, `cancel {request_id}`, `result {request_id}`, `open_settings
-{target: location|nfc|app}`, `resolve_unknown {request_id, outcome:"not_charged"}` (the
-operator's statement, after checking the Stripe dashboard, that an `unknown` payment was
-not charged; until then every other basket gets `unknown_pending`; the page must offer it
-to a manager/admin only). Repeating the key of a paid basket returns the stored result and
-never charges again; the same key with another amount/currency is `key_mismatch`. The
-engine, reader and the persisted pending/paid records are process-scoped, so recreating
-or finishing the Activity never forgets a payment. Results are `succeeded|declined|cancelled|unknown`; `unknown`
-is never shown as declined (retry on the same basket with the same key; a later
-`late:true` result can correct it). The page-supplied amount and currency are trusted only because the result is advisory
-(**OWNER/ARCHITECT SIGN-OFF REQUIRED BEFORE THE FLAG IS EVER TURNED ON**: amount, currency and
-key are page-supplied and now mint cloud PaymentIntents with the till's device credential; they
-must come from a server-side basket / the plugin path. This conflicts with the
-`mobile/mobile.go` statement that "the web page never starts a payment", which the iOS design
-guarantees by having no JS bridge). The result is **advisory**: a sale is recorded only
-when the `stripe_tap` plugin verifies the PaymentIntent server-side. No card data is in
-any message. Amounts are minor units, 1..9,999,999.
+**No page API (ut-docs#6533).** The path is plugin -> `internal/devicepay` (Go) -> this
+bridge -> Stripe Terminal, exactly as on iOS: the amount, currency and idempotency key are
+the till's own sale as Go sends them (`devicepay.Request`), never anything the web page
+supplies. The old `window.AndroidTapToPay` WebMessage bridge, its origin lock and its
+message protocol are gone: no `addWebMessageListener`, no `addJavascriptInterface`, so there
+is no origin to lock. The shell registers the bridge with Go (`Mobile.setTapToPayBridge`,
+`setTapToPayResolver`) in `onStart` and clears it in `onStop` (not `onPause`: Stripe's tap
+screen pauses the Activity mid-payment). Results use the main branch vocabulary:
+`approved` (always with a provider transaction id), `declined`, `cancelled`, and `pending`
+for anything unsure (an unknown outcome is never declined, #6439). The verdict is advisory:
+a sale is recorded only when the payment plugin verifies the PaymentIntent server-side.
+`Setup` (manager-gated by its Go caller) asks for the location permission, shows the
+education text, opens the NFC or location settings screen when one is off, and connects the
+reader. `resolve_unknown` is `devicepay.ResolveUnknown`: Go refuses anyone who is not a
+manager (`ReasonForbidden`) before the app is reached; the app then drops that key's
+unresolved record, which unblocks other baskets (until then they are declined
+`unknown_pending`; the same key is `pending/outcome_unknown`). Repeating a paid key returns
+the stored approval and never charges again; the same key with another amount is
+`key_mismatch`. No card data is in any message; amounts are 1..9,999,999 minor units.
 
 ## Not yet done
 

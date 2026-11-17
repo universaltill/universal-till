@@ -87,9 +87,3 @@ object EpochDay {
         return era * 146097 + doe - 719468
     }
 }
-
-/** Where a bridge message may come from: the till's own main frame, nothing else (design section 9). */
-object OriginPolicy {
-    fun allows(sourceOrigin: String, isMainFrame: Boolean, allowedHost: String?): Boolean =
-        isMainFrame && allowedHost != null && sourceOrigin == "http://$allowedHost"
-}

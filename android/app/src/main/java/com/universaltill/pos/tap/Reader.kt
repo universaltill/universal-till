@@ -169,7 +169,7 @@ interface UiActions {
     /** Shows OUR rationale first, then the system prompt. */
     fun requestLocationPermission(cb: (Boolean) -> Unit)
 
-    /** Fixed allowlist: location, nfc, app. */
+    /** Fixed allowlist: location, nfc. */
     fun openSettings(target: String): Boolean
 }
 

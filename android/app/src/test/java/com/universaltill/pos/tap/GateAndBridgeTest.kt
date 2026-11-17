@@ -10,7 +10,7 @@ class GateAndBridgeTest {
     private fun engine(): Pair<TapToPayEngine, FakeReader> {
         val sched = FakeScheduler()
         val reader = FakeReader(sched)
-        val e = TapToPayEngine(FakeProbe(readyFacts()), reader, sched, MemoryPendingStore(), MemoryDoneStore(), FakeUi()) { }
+        val e = TapToPayEngine(FakeProbe(readyFacts()), reader, sched, MemoryPendingStore(), MemoryDoneStore(), FakeUi())
         e.onForeground()
         return e to reader
     }
@@ -30,44 +30,6 @@ class GateAndBridgeTest {
 
     @Test fun flagOnWithTheSdkBuildsTheEngine() {
         assertTrue(TapToPayGate.engineOrNull(flagOn = true, sdkCompiledIn = true) { engine().first } != null)
-    }
-
-    @Test fun listenerRuleSetIsTheExactOriginOnly() {
-        assertEquals(setOf("http://127.0.0.1:8080"), BridgeCore.originRules("127.0.0.1:8080"))
-    }
-
-    @Test fun messageFromAnotherOriginOrFrameIsDroppedSilently() {
-        val (e, reader) = engine()
-        val out = SwitchableOut()
-        val core = BridgeCore(e, out, "127.0.0.1:8080")
-        val replies = mutableListOf<String>()
-        val start = """{"v":1,"id":"r1","op":"start","amount_minor":500,"currency":"gbp","idempotency_key":"k"}"""
-        core.onMessage(start, "http://evil.example", true) { replies += it }
-        core.onMessage(start, "http://127.0.0.1:8080", false) { replies += it }
-        core.onMessage(start, "http://127.0.0.1:9999", true) { replies += it }
-        core.onMessage(null, "http://127.0.0.1:8080", true) { replies += it }
-        assertTrue(replies.isEmpty())
-        assertTrue(reader.createCalls.isEmpty())
-        assertNull(out.proxy)
-    }
-
-    @Test fun messageFromTheTillMainFrameReachesTheEngineAndRemembersTheReplyChannel() {
-        val (e, reader) = engine()
-        val out = SwitchableOut()
-        val core = BridgeCore(e, out, "127.0.0.1:8080")
-        val replies = mutableListOf<String>()
-        core.onMessage("""{"v":1,"id":"r1","op":"start","amount_minor":500,"currency":"gbp","idempotency_key":"k"}""", "http://127.0.0.1:8080", true) { replies += it }
-        assertEquals(1, replies.size)
-        assertEquals(1, reader.createCalls.size)
-        assertTrue(out.proxy != null)
-    }
-
-    @Test fun switchableOutSwallowsAStaleChannel() {
-        val out = SwitchableOut()
-        out.proxy = { throw IllegalStateException("page reloaded") }
-        out.emit("{}") // must not throw
-        out.proxy = null
-        out.emit("{}")
     }
 
     @Test fun switchableUiWithoutAnActivityRefusesEverything() {

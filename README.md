@@ -259,6 +259,10 @@ then open http://localhost:8080; the first-boot wizard sets language,
 currency and the admin PIN, then opens the Import page, where you import
 your products from a file, load sample data to try the till, or skip.
 
+Already have products? The Import page's **Import item photos by SKU** card adds photos in bulk
+(CSV of `sku` + image path/`https` URL, and/or a ZIP of `<SKU>.jpg` files; preview first, existing
+items only, main till only; see `internal/photoimport`).
+
 ### Option 2: Build from Source
 
 ```bash

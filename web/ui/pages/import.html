@@ -228,6 +228,38 @@ document.getElementById('import-result').addEventListener('change', function (e)
 </div>
 {{ end }}
 
+{{ if .showPhotosLink }}
+<p style="margin-block-start:1rem"><a href="/import?mode=photos" data-testid="photo-import-link">{{ T "photoimport.open" }}</a></p>
+{{ end }}
+
+{{ if .showPhotosCard }}
+<!-- ut-docs#6527: bulk-import item photos by SKU. A CSV (sku + image column)
+     and/or a ZIP of <SKU>.<ext> files; Preview saves nothing, Import saves.
+     Folder paths are read on this computer inside the chosen folder only.
+     Main till only: a joined till is told to use the main till. -->
+<div class="card" id="photo-import-card" data-testid="photo-import-card" style="margin-block-start:1rem">
+  <h3>{{ T "photoimport.title" }} {{ helpLink "catalog" }}</h3>
+  <p class="muted">{{ T "photoimport.help" }}</p>
+  {{ if .photosOnReplica }}
+  <p data-photo-import-replica="1">{{ T "photoimport.error.main_till_only" }}</p>
+  {{ else }}
+  <form id="photo-import-form" hx-post="/api/import/photos" hx-encoding="multipart/form-data"
+        hx-target="#photo-import-result" hx-swap="innerHTML" hx-disabled-elt="find button">
+    <label>{{ T "photoimport.csv" }} <input type="file" name="file" accept=".csv,text/csv"></label>
+    <label>{{ T "photoimport.zip" }} <input type="file" name="zip" accept=".zip,application/zip"></label>
+    <label>{{ T "photoimport.folder" }} <input type="text" name="folder" autocomplete="off" spellcheck="false"></label>
+    <p class="muted">{{ T "photoimport.folder_hint" }}</p>
+    <label><input type="checkbox" name="replace" value="1"> {{ T "photoimport.replace" }}</label>
+    <div class="import-system-actions">
+      <button type="submit" class="btn" name="commit" value="0">{{ T "photoimport.preview" }}</button>
+      <button type="submit" class="btn primary" name="commit" value="1">{{ T "photoimport.import" }}</button>
+    </div>
+  </form>
+  <div id="photo-import-result" aria-live="polite"></div>
+  {{ end }}
+</div>
+{{ end }}
+
 {{ if .showSampleCard }}
 <!-- ut-docs#3709: sample data moved here from the setup wizard. None
      loaded → explanation + Load button (POST /api/import/sample-data swaps

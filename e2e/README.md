@@ -37,6 +37,9 @@ specs across projects, each against its own server(s):
 - **cutout** (`run-till-cutout.sh`, port 8101) — a till whose background
   removal points at `fake-rembg-server.mjs` (port 8102), a stand-in for the
   shop's `rembg s`, for `photo-cutout-3127.spec.ts` (ut-docs#3127).
+- **plugins** (`run-till-plugins.sh`, port 8107, docs-shots only) — a till with
+  a seeded offline catalogue snapshot for the plugins topic's store shots
+  (ut-docs#335).
 
 **docs-shots font prerequisite (ut-docs#4407).** The app ships no webfont
 (`web/public/app.css` uses a system-font stack), so screenshots depend on the

@@ -57,6 +57,39 @@ object DiscoveryPolicy {
 }
 
 /**
+ * One reader connect (discovery, then connect) that can never hang (follow-up of #3048): discovery that finds
+ * nothing and never ends, or a connect that never calls back, would leave the single-flight gate waiting
+ * forever and every later payment `not_ready`. After [timeoutMs] [abort] stops discovery and the attempt
+ * ends as `reader_error`. [done] runs once; a late SDK answer after that is ignored.
+ */
+class ConnectAttempt(scheduler: Scheduler, timeoutMs: Long, private val abort: () -> Unit, private val done: (String?) -> Unit) {
+    companion object {
+        const val TIMEOUT_MS = 45_000L
+    }
+
+    var finished = false
+        private set
+
+    /** A reader was chosen and connectReader is under way: an empty discovery end no longer means "nothing found". */
+    var connecting = false
+
+    private val timer =
+        scheduler.postDelayed(timeoutMs) {
+            if (!finished) {
+                abort()
+                end("reader_error")
+            }
+        }
+
+    fun end(err: String?) {
+        if (finished) return
+        finished = true
+        timer.cancel()
+        done(err)
+    }
+}
+
+/**
  * Cloud location lookup (kept in memory only) plus ONE reconnect on SESSION_EXPIRED.
  * [connectFn] is the SDK's connectReader; its error is an SDK code name or null.
  */

@@ -27,6 +27,33 @@ class MainScheduler : Scheduler {
     }
 }
 
+/** The main looper, as the engine's thread. */
+object MainLooperExecutor : MainExecutor {
+    private val handler = Handler(Looper.getMainLooper())
+
+    override fun post(task: () -> Unit) {
+        handler.post { task() }
+    }
+}
+
+/**
+ * mobile.TapToPayBridge and TapToPayResolver for Go (internal/devicepay): strings in, strings out, every
+ * decision in [DevicepayBridgeCore]. Registered by the shell only while the Activity is started.
+ */
+class GoDevicepayBridge(private val core: DevicepayBridgeCore) : mobile.TapToPayBridge, mobile.TapToPayResolver {
+    override fun capabilities(): String = core.capabilities()
+
+    override fun collect(requestJSON: String?): String = core.collect(requestJSON)
+
+    override fun cancel(idempotencyKey: String?) = core.cancel(idempotencyKey)
+
+    override fun setup(provider: String?): String = core.setup(provider)
+
+    override fun showEducation(provider: String?): String = core.showEducation(provider)
+
+    override fun resolveUnknown(idempotencyKey: String?): String = core.resolveUnknown(idempotencyKey)
+}
+
 /**
  * The only persisted state of the whole feature: whether the operator saw the
  * education text, and the write-before-tap record (ids only: no client

@@ -34,6 +34,7 @@ import java.util.concurrent.Executors
  */
 class StripeTerminalReader(private val appContext: Context, private val cloud: CloudApi) : Reader {
     private val main = Handler(Looper.getMainLooper())
+    private val scheduler = MainScheduler()
     private val io = Executors.newSingleThreadExecutor()
     private val intents = HashMap<String, PaymentIntent>()
     private val simulated = DiscoveryPolicy.simulated(BuildConfig.DEBUG)
@@ -89,21 +90,26 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
 
     private fun sdkConnect(locationId: String, done: (String?) -> Unit) {
         onMain {
-            var finished = false
-            var connecting = false
-            fun end(err: String?) {
-                if (finished) return
-                finished = true
-                done(err)
-            }
-            val t = try { terminal() } catch (e: Throwable) { return@onMain end("reader_error") }
-            t.discoverReaders(
+            var discovery: com.stripe.stripeterminal.external.callable.Cancelable? = null
+            val attempt =
+                ConnectAttempt(
+                    scheduler,
+                    ConnectAttempt.TIMEOUT_MS,
+                    abort = { discovery?.takeIf { !it.isCompleted }?.cancel(object : Callback {
+                        override fun onSuccess() {}
+
+                        override fun onFailure(e: TerminalException) {}
+                    }) },
+                    done,
+                )
+            val t = try { terminal() } catch (e: Throwable) { return@onMain attempt.end("reader_error") }
+            discovery = t.discoverReaders(
                 DiscoveryConfiguration.TapToPayDiscoveryConfiguration(isSimulated = simulated),
                 object : DiscoveryListener {
                     override fun onUpdateDiscoveredReaders(readers: List<com.stripe.stripeterminal.external.models.Reader>) {
                         val r = readers.firstOrNull()
-                        if (r == null || connecting || finished) return
-                        connecting = true
+                        if (r == null || attempt.connecting || attempt.finished) return
+                        attempt.connecting = true
                         t.connectReader(
                             r,
                             ConnectionConfiguration.TapToPayConnectionConfiguration(
@@ -112,18 +118,18 @@ class StripeTerminalReader(private val appContext: Context, private val cloud: C
                                 object : TapToPayReaderListener {},
                             ),
                             object : ReaderCallback {
-                                override fun onSuccess(reader: com.stripe.stripeterminal.external.models.Reader) = onMain { end(null) }
+                                override fun onSuccess(reader: com.stripe.stripeterminal.external.models.Reader) = onMain { attempt.end(null) }
 
-                                override fun onFailure(e: TerminalException) = onMain { end(e.errorCode.name) }
+                                override fun onFailure(e: TerminalException) = onMain { attempt.end(e.errorCode.name) }
                             },
                         )
                     }
                 },
                 object : Callback {
                     // Discovery ended. With no reader found and no connect started there is nothing left to wait for.
-                    override fun onSuccess() = onMain { if (!connecting) end("reader_error") }
+                    override fun onSuccess() = onMain { if (!attempt.connecting) attempt.end("reader_error") }
 
-                    override fun onFailure(e: TerminalException) = onMain { if (!connecting) end(e.errorCode.name) }
+                    override fun onFailure(e: TerminalException) = onMain { if (!attempt.connecting) attempt.end(e.errorCode.name) }
                 },
             )
         }

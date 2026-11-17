@@ -2,6 +2,7 @@ package com.universaltill.pos.tap
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderConnectorTest {
@@ -105,5 +106,39 @@ class CloudParsingTest {
 
     @Test(expected = CloudException::class) fun sessionWithoutSecretIsAnError() {
         parseSession("""{"amount_minor":250}""")
+    }
+}
+
+class ConnectAttemptTest {
+    private fun attempt(sched: FakeScheduler, log: MutableList<String?>, aborts: IntArray) =
+        ConnectAttempt(sched, ConnectAttempt.TIMEOUT_MS, { aborts[0]++ }) { log += it ?: "ok" }
+
+    @Test fun aDiscoveryThatNeverEndsIsAbortedAndFailsAsReaderError() {
+        val sched = FakeScheduler(); val log = mutableListOf<String?>(); val aborts = intArrayOf(0)
+        val a = attempt(sched, log, aborts)
+        sched.advance(ConnectAttempt.TIMEOUT_MS - 1)
+        assertTrue(log.isEmpty())
+        sched.advance(1)
+        assertEquals(listOf<String?>("reader_error"), log)
+        assertEquals(1, aborts[0])
+        assertTrue(a.finished)
+    }
+
+    @Test fun aLateSdkAnswerAfterTheTimeoutIsIgnored() {
+        val sched = FakeScheduler(); val log = mutableListOf<String?>(); val aborts = intArrayOf(0)
+        val a = attempt(sched, log, aborts)
+        sched.advance(ConnectAttempt.TIMEOUT_MS)
+        a.end(null)
+        assertEquals(listOf<String?>("reader_error"), log)
+    }
+
+    @Test fun anAnswerInTimeCancelsTheTimerAndNeverAborts() {
+        val sched = FakeScheduler(); val log = mutableListOf<String?>(); val aborts = intArrayOf(0)
+        val a = attempt(sched, log, aborts)
+        a.end(null)
+        a.end("later")
+        sched.advance(ConnectAttempt.TIMEOUT_MS * 2)
+        assertEquals(listOf<String?>("ok"), log)
+        assertEquals(0, aborts[0])
     }
 }

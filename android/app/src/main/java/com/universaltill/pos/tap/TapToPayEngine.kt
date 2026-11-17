@@ -1,13 +1,25 @@
 package com.universaltill.pos.tap
 
+/** How one [TapToPayEngine.collect] ended. The callback runs exactly once. */
+sealed class CollectEnd {
+    /** Nothing was charged and nothing is in flight: [token] says why (start-error vocabulary). */
+    data class Refused(val token: String) : CollectEnd()
+
+    /** The payment's verdict (it may be `unknown`: a late answer is persisted, never reported twice). */
+    data class Verdict(val result: TapResult) : CollectEnd()
+}
+
 /**
- * Front-door-agnostic engine (design section 1): the origin-locked WebMessage
- * bridge feeds it raw JSON, a later mobile.TapToPayBridge adapter can call the
- * same entry points. Pure Kotlin, no Android types. Everything runs on the
- * main thread. PROCESS-scoped (see TapToPayProcess): it outlives any Activity,
- * and everything that must survive the process lives in [store]/[done].
- * The result it emits is ADVISORY: the sale is recorded only when the
- * stripe_tap plugin's server-side verification approves.
+ * The payment engine behind the devicepay bridge (design section 1). Pure
+ * Kotlin, no Android types. Everything runs on the main thread (the bridge
+ * hops onto it). PROCESS-scoped (see TapToPayProcess): it outlives any
+ * Activity, and everything that must survive the process lives in
+ * [store]/[done].
+ *
+ * Amount, currency and idempotency key come from the till's own sale
+ * (plugin -> internal/devicepay -> bridge); there is no page-facing entry.
+ * The result it reports is ADVISORY: the sale is recorded only when the
+ * payment plugin's server-side verification approves.
  */
 class TapToPayEngine(
     private val probe: DeviceProbe,
@@ -16,51 +28,69 @@ class TapToPayEngine(
     private val store: PendingStore,
     private val done: DoneStore,
     private val ui: UiActions,
-    private val emit: (String) -> Unit,
 ) {
-    private companion object {
-        const val RESULT_KEEP = 8
+    companion object {
         val START_ERRORS = setOf("offline", "connect_incomplete", "not_ready", "insecure_environment", "intent_canceled")
-    }
 
-    private class Info(val key: String, val amountMinor: Long, val currency: String)
+        /** Go cancels at the request's deadline; the verdict is due this long before it. */
+        const val DEADLINE_MARGIN_MS = 3_000L
+    }
 
     private class Live(val intentId: String, val amountMinor: Long, val currency: String)
 
     private var foreground = false
     private var flow: TapToPayFlow? = null
+
+    /** Read from Go's threads (capabilities); written on main. */
+    @Volatile
     private var preparing = false
-    private val results = LinkedHashMap<String, TapResult>()
 
     /** key -> a PaymentIntent still usable in this process (declined, or unknown). */
     private val liveIntents = HashMap<String, Live>()
-    private val infoOf = HashMap<String, Info>()
 
-    private val sink =
-        object : Sink {
-            override fun progress(requestId: String, state: String) = emit(TapToPayMessages.progressJson(requestId, state))
+    /**
+     * One sink per payment: it knows ITS key, amount and currency, so a late success is persisted no matter
+     * how many payments ran since (a shared requestId -> info map had to be bounded, and dropping an entry
+     * lost a paid write).
+     */
+    private inner class PaymentSink(
+        private val key: String,
+        private val amountMinor: Long,
+        private val currency: String,
+        private val end: (CollectEnd) -> Unit,
+    ) : Sink {
+        var deadlineTimer: Cancelable? = null
+        private var delivered = false
 
-            override fun result(r: TapResult) {
-                results.remove(r.requestId)
-                results[r.requestId] = r
-                while (results.size > RESULT_KEEP) results.remove(results.keys.first())
-                val info = infoOf[r.requestId]
-                val pi = r.paymentIntentId
-                if (info != null && pi != null) {
-                    when (r.status) {
-                        // a success is persisted FIRST: repeating its key must never create a second charge
-                        TapStatus.SUCCEEDED -> {
-                            done.put(DoneRecord(info.key, r.requestId, pi, info.amountMinor, info.currency, r.chargeId))
-                            liveIntents.remove(info.key)
-                        }
-                        TapStatus.DECLINED, TapStatus.UNKNOWN -> liveIntents[info.key] = Live(pi, info.amountMinor, info.currency)
-                        TapStatus.CANCELLED -> liveIntents.remove(info.key)
-                    }
-                }
-                if (!r.late && flow?.requestId == r.requestId) flow = null
-                emit(TapToPayMessages.resultJson(r))
-            }
+        fun deliver(e: CollectEnd) {
+            if (delivered) return
+            delivered = true
+            deadlineTimer?.cancel()
+            end(e)
         }
+
+        override fun progress(requestId: String, state: String) {
+            // Nothing is listening: the verdict is the only thing Go reads. A native status chip is #6457.
+        }
+
+        override fun result(r: TapResult) {
+            val pi = r.paymentIntentId
+            if (pi != null) {
+                when (r.status) {
+                    // a success is persisted FIRST: repeating its key must never create a second charge
+                    TapStatus.SUCCEEDED -> {
+                        done.put(DoneRecord(key, r.requestId, pi, amountMinor, currency, r.chargeId))
+                        liveIntents.remove(key)
+                    }
+                    TapStatus.DECLINED, TapStatus.UNKNOWN -> liveIntents[key] = Live(pi, amountMinor, currency)
+                    TapStatus.CANCELLED -> liveIntents.remove(key)
+                }
+            }
+            if (!r.late && flow?.requestId == r.requestId) flow = null
+            deadlineTimer?.cancel()
+            deliver(CollectEnd.Verdict(r))
+        }
+    }
 
     fun onForeground() {
         foreground = true
@@ -75,88 +105,81 @@ class TapToPayEngine(
         if (isFinishing) flow?.destroy()
     }
 
-    fun handle(raw: String, reply: (String) -> Unit) {
-        when (val p = TapToPayMessages.parse(raw)) {
-            is ParsedRequest.Bad -> reply(TapToPayMessages.replyError(p.id, p.error))
-            is ParsedRequest.Ok -> dispatch(p.req, reply)
-        }
-    }
+    /** Safe from any thread: it only reads the OS. */
+    fun capability(): Capability = TapToPayCapability.evaluate(probe.facts())
 
-    private fun capability() = TapToPayCapability.evaluate(probe.facts())
+    val isPreparing: Boolean get() = preparing
 
     private fun unresolved() = store.all().filter { PendingState.unresolved(it.state) }
 
-    private fun dispatch(r: TapRequest, reply: (String) -> Unit) {
-        when (r.op) {
-            "capabilities" -> {
-                val f = probe.facts()
-                reply(TapToPayMessages.replyCapability(r.id, TapToPayCapability.evaluate(f), f.educationAccepted, unresolved().firstOrNull()))
-            }
-            "education" -> {
-                reply(TapToPayMessages.replyOk(r.id))
-                ui.showEducation { accepted -> emit(TapToPayMessages.educationEvent(accepted)) }
-            }
-            "prepare" -> prepare(r, reply)
-            "start" -> start(r, reply)
-            "cancel" -> {
-                val f = flow
-                when {
-                    f == null || f.requestId != r.requestId -> reply(TapToPayMessages.replyError(r.id, "no_such_payment"))
-                    f.cancel() -> reply(TapToPayMessages.replyOk(r.id))
-                    else -> reply(TapToPayMessages.replyError(r.id, "too_late"))
-                }
-            }
-            "result" -> reply(TapToPayMessages.replyResult(r.id, lookup(r.requestId!!)))
-            "resolve_unknown" -> resolveUnknown(r, reply)
-            "open_settings" ->
-                reply(if (ui.openSettings(r.target!!)) TapToPayMessages.replyOk(r.id) else TapToPayMessages.replyError(r.id, "not_available"))
-            else -> reply(TapToPayMessages.replyError(r.id, "bad_request"))
-        }
+    /** Stops the in-flight payment with this idempotency key, only while it is still collecting. */
+    fun cancel(key: String): Boolean {
+        val f = flow ?: return false
+        return f.key == key && f.cancel()
     }
 
-    /** In-memory result, else what survived the process: a success, or an unresolved payment (unknown). */
-    private fun lookup(requestId: String): TapResult? {
-        results[requestId]?.let { return it }
-        done.byRequest(requestId)?.let {
-            return TapResult(it.requestId, TapStatus.SUCCEEDED, "ok", it.intentId, it.chargeId, null, null, null, false)
-        }
-        val p = store.all().firstOrNull { it.requestId == requestId && PendingState.unresolved(it.state) } ?: return null
-        return TapResult(p.requestId, TapStatus.UNKNOWN, "app_closed", p.intentId, null, null, null, null, false)
-    }
-
-    /** The operator states the earlier payment was NOT charged; only then may another sale start. */
-    private fun resolveUnknown(r: TapRequest, reply: (String) -> Unit) {
-        val p = unresolved().firstOrNull { it.requestId == r.requestId }
-        if (p == null) return reply(TapToPayMessages.replyError(r.id, "no_such_payment"))
+    /**
+     * The operator states the earlier payment for [key] was NOT charged; only then may another sale start.
+     * null = resolved, else a token (no_such_payment, busy). WHO may say it is decided in Go
+     * (devicepay.ResolveUnknown), before this is reached.
+     */
+    fun resolveUnknown(key: String): String? {
+        val p = unresolved().firstOrNull { it.key == key } ?: return "no_such_payment"
+        if (flow?.isLive == true && flow?.key == key) return "busy"
         store.remove(p.key)
         liveIntents.remove(p.key)
-        reply(TapToPayMessages.replyOk(r.id))
+        return null
     }
 
-    private fun prepare(r: TapRequest, reply: (String) -> Unit) {
+    fun showEducation(cb: (Boolean) -> Unit) = ui.showEducation(cb)
+
+    /**
+     * The manager's one-off preparation: location permission, the education text, then connect the reader.
+     * [cb] gets null when the device is ready, else a reason token. Settings screens are opened by the app
+     * itself from a fixed allowlist, never at a caller's request.
+     */
+    fun setup(cb: (String?) -> Unit) {
         val cap = capability()
-        if (!cap.supported) return reply(TapToPayMessages.replyError(r.id, "not_ready"))
-        reply(TapToPayMessages.replyOk(r.id))
-        if (preparing) return
+        if (!cap.supported) return cb(cap.reason ?: "not_ready")
+        if (preparing || flow?.isLive == true) return cb("busy")
         preparing = true
-        fun fail(reason: String) {
+
+        fun finish(reason: String?) {
             preparing = false
-            emit(TapToPayMessages.prepareEvent("failed", reason))
+            cb(reason)
         }
-        fun connect() {
-            val c = capability()
-            if (c.needs.isNotEmpty()) return fail(c.needs.first())
-            emit(TapToPayMessages.prepareEvent("connecting", null))
-            reader.ensureConnected { err ->
-                preparing = false
-                emit(if (err == null) TapToPayMessages.prepareEvent("ready", null) else TapToPayMessages.prepareEvent("failed", startError(err)))
+
+        // A step the operator just completed is trusted without waiting for the OS to catch up.
+        fun connect(trusted: Set<String>) {
+            val needs = capability().needs.filter { it !in trusted }
+            when {
+                "location_permission" in needs -> finish("location_denied")
+                "nfc_off" in needs -> {
+                    ui.openSettings("nfc")
+                    finish("nfc_off")
+                }
+                "location_off" in needs -> {
+                    ui.openSettings("location")
+                    finish("location_off")
+                }
+                "offline" in needs -> finish("offline")
+                else -> reader.ensureConnected { err -> finish(err?.let { startError(it) }) }
             }
         }
+
+        fun education(trusted: Set<String>) {
+            if ("education_required" !in cap.needs) return connect(trusted)
+            ui.showEducation { accepted ->
+                if (accepted) connect(trusted + "education_required") else finish("education_declined")
+            }
+        }
+
         if ("location_permission" in cap.needs) {
-            emit(TapToPayMessages.prepareEvent("permission", null))
-            ui.requestLocationPermission { connect() }
+            ui.requestLocationPermission { granted ->
+                if (granted) education(setOf("location_permission")) else finish("location_denied")
+            }
         } else {
-            connect()
+            education(emptySet())
         }
     }
 
@@ -168,13 +191,35 @@ class TapToPayEngine(
             else -> "not_ready"
         }
 
-    private fun start(r: TapRequest, reply: (String) -> Unit) {
-        fun refuse(e: String) = reply(TapToPayMessages.replyError(r.id, e))
-        if (flow?.isLive == true) return refuse("busy")
-        if (!foreground) return refuse("not_foreground")
+    /**
+     * Takes one payment. [remainingMs] is how long the caller will wait (null = no deadline known): the
+     * collect is cancelled [DEADLINE_MARGIN_MS] before it, so a verdict reaches Go before Go gives up.
+     * [end] runs exactly once.
+     */
+    fun collect(r: StartRequest, remainingMs: Long?, end: (CollectEnd) -> Unit) {
+        val sink = PaymentSink(r.key, r.amountMinor, r.currency, end)
+        fun refuse(e: String) = sink.deliver(CollectEnd.Refused(e))
+        val key = r.key
+        val amount = r.amountMinor
+        val currency = r.currency
+
+        // 1. Idempotency after success FIRST (before busy/foreground/capability): a repeat of a paid key is
+        // answered with the stored approval, never charged again and never declined for an environment reason.
+        val paid = done.load(key)
+        if (paid != null) {
+            if (paid.amountMinor != amount || paid.currency != currency) return refuse("key_mismatch")
+            return sink.deliver(CollectEnd.Verdict(TapResult(r.requestId, TapStatus.SUCCEEDED, "ok", paid.intentId, paid.chargeId, null, null, null, false)))
+        }
+        // 1b. The same key is still in flight: its first tap may be charged any moment, so this is pending (#6439).
+        if (flow?.isLive == true && flow?.key == key) return refuse("outcome_unknown")
+        // From here a refusal for THIS key must not read as "not charged" when an earlier attempt may have been.
+        val maybeCharged = store.load(key)?.let { PendingState.unresolved(it.state) } == true
+        fun gate(token: String) = refuse(if (maybeCharged) "outcome_unknown" else token)
+        if (flow?.isLive == true) return gate("busy")
+        if (!foreground) return gate("not_foreground")
         val cap = capability()
         if (!cap.ready) {
-            return refuse(
+            return gate(
                 when {
                     !cap.supported -> "not_ready"
                     "education_required" in cap.needs -> "needs_education"
@@ -183,21 +228,6 @@ class TapToPayEngine(
                 },
             )
         }
-        val key = r.idempotencyKey!!
-        val amount = r.amountMinor!!
-        val currency = r.currency!!
-
-        // 1. Idempotency after success: a repeat of a paid key is answered with the stored result, never charged again.
-        val paid = done.load(key)
-        if (paid != null) {
-            if (paid.amountMinor != amount || paid.currency != currency) return refuse("key_mismatch")
-            val res = TapResult(r.id, TapStatus.SUCCEEDED, "ok", paid.intentId, paid.chargeId, null, null, null, false)
-            results.remove(r.id)
-            results[r.id] = res
-            reply(TapToPayMessages.replyOk(r.id))
-            emit(TapToPayMessages.resultJson(res))
-            return
-        }
         // 2. An earlier outcome nobody resolved blocks every other basket (a possible double charge).
         if (unresolved().any { it.key != key }) return refuse("unknown_pending")
         // 3. Same key again: reuse the live intent only for the SAME amount and currency.
@@ -205,18 +235,20 @@ class TapToPayEngine(
         if (live != null && (live.amountMinor != amount || live.currency != currency)) return refuse("key_mismatch")
         if (live == null) {
             val mine = store.load(key)
-            if (mine != null && PendingState.unresolved(mine.state)) return refuse("unknown_pending")
+            // This very payment may have been charged: pending (the plugin settles it), never a plain refusal.
+            if (mine != null && PendingState.unresolved(mine.state)) return refuse("outcome_unknown")
             // Process died before confirm: collect never authorises, so nothing can have been charged; start afresh.
             if (mine != null) store.remove(key)
         }
-        val f = TapToPayFlow(StartRequest(r.id, amount, currency, key), reader, scheduler, sink, store, live?.intentId)
-        if (infoOf.size > 64) infoOf.clear()
-        infoOf[r.id] = Info(key, amount, currency)
+        val f = TapToPayFlow(r, reader, scheduler, sink, store, live?.intentId)
         flow = f
+        // Go's deadline binds from the first moment: a slow connect must not open the tap sheet for a payment
+        // Go already gave up on (cancel(key) aborts a STARTING flow too).
+        if (remainingMs != null) {
+            sink.deadlineTimer = scheduler.postDelayed(maxOf(0L, remainingMs - DEADLINE_MARGIN_MS)) { cancel(key) }
+        }
         f.start { err ->
-            if (err == null) {
-                reply(TapToPayMessages.replyOk(r.id))
-            } else {
+            if (err != null) {
                 if (flow === f) flow = null
                 refuse(startError(err))
             }
