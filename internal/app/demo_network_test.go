@@ -37,6 +37,7 @@ var networkServices = []string{
 	// pages.Init
 	"LAN sync push",
 	"LAN sync pull",
+	"sales mirror pull", // ut-docs#5074: the additional till's sales copy
 	"main-till link client",
 	"held-order table-claim re-affirm",
 	"cloud sync",

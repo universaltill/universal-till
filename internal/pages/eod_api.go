@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -142,19 +141,20 @@ func validateEODAnnotation(s string) error {
 func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) string, hdr rateTableHeader) []string {
 	n := len(rates)
 	rate, netS, taxS, grossS := make([]string, n), make([]string, n), make([]string, n), make([]string, n)
-	// tight: header floors, in runes like the cells below (a translated
-	// header, ut-docs#4330, can be longer than the en one and non-ASCII).
-	tw := [4]int{0, utf8.RuneCountInString(hdr.Net), utf8.RuneCountInString(hdr.Tax), utf8.RuneCountInString(hdr.Gross)}
+	// tight: header floors, in display columns like the cells below (a
+	// translated header, ut-docs#4330, can be longer than the en one and
+	// non-ASCII, with ZWNJ/combining marks that take no column, #4689).
+	tw := [4]int{0, print.DisplayWidth(hdr.Net), print.DisplayWidth(hdr.Tax), print.DisplayWidth(hdr.Gross)}
 	for i := range rates {
 		rate[i], netS[i], taxS[i], grossS[i] = fmtRateBP(rates[i]), money(net[i]), money(tax[i]), money(gross[i])
 		for j, s := range []string{rate[i], netS[i], taxS[i], grossS[i]} {
-			// Rune count, not len(): fmt's %*s pads to RUNES and the
-			// ESC/POS renderer clips footer lines at Width RUNES, so a byte
-			// count charges every £ (2 bytes, 1 column) a phantom column —
-			// enough to push a tight-collapsed £1M row to 44 visible
-			// columns and clip the gross's pence after all (ut-docs#1004
-			// review finding).
-			if r := utf8.RuneCountInString(s); r > tw[j] {
+			// Display columns, not len(): the ESC/POS renderer clips footer
+			// lines at Width display columns, so a byte count charges every
+			// £ (2 bytes, 1 column) a phantom column — enough to push a
+			// tight-collapsed £1M row to 44 visible columns and clip the
+			// gross's pence after all (ut-docs#1004 review finding). Zero-
+			// width ZWNJ/combining marks take none (ut-docs#4689).
+			if r := print.DisplayWidth(s); r > tw[j] {
 				tw[j] = r
 			}
 		}
@@ -169,12 +169,29 @@ func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) strin
 		w = tw
 	}
 	lines := make([]string, 0, n+1)
-	lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], hdr.Net, w[2], hdr.Tax, w[3], hdr.Gross))
+	lines = append(lines, padEnd("", w[0])+" "+padStart(hdr.Net, w[1])+" "+padStart(hdr.Tax, w[2])+" "+padStart(hdr.Gross, w[3]))
 	for i := range rates {
-		lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s",
-			w[0], rate[i], w[1], netS[i], w[2], taxS[i], w[3], grossS[i]))
+		lines = append(lines, padEnd(rate[i], w[0])+" "+padStart(netS[i], w[1])+" "+padStart(taxS[i], w[2])+" "+padStart(grossS[i], w[3]))
 	}
 	return lines
+}
+
+// padStart left-pads s with spaces to width display columns (print.DisplayWidth,
+// not runes: fmt's %*s counts a ZWNJ or combining mark as a column, ut-docs#4689);
+// an s already that wide is returned as is, like fmt.
+func padStart(s string, width int) string {
+	if n := width - print.DisplayWidth(s); n > 0 {
+		return strings.Repeat(" ", n) + s
+	}
+	return s
+}
+
+// padEnd right-pads s with spaces to width display columns; see padStart.
+func padEnd(s string, width int) string {
+	if n := width - print.DisplayWidth(s); n > 0 {
+		return s + strings.Repeat(" ", n)
+	}
+	return s
 }
 
 // rateTableHeader is the Net/Tax/Gross column header rateTableRows prints,
@@ -255,19 +272,18 @@ func eodPeriodMeta(rep data.EODReport, locale string) string {
 // format, this guarantees the amount is never pushed
 // past the printer's own line-clip by an overlong label (ut-docs#1010
 // review finding 1 — sale_lines.name_snapshot is free-text and can easily
-// exceed a fixed pad width). Rune-based throughout, matching kvRow/clip's
-// own reasoning: Width tracks visible columns, and a byte-based cut can
-// split a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text) mid-rune.
+// exceed a fixed pad width). Measured in display columns like internal/print
+// (print.DisplayWidth / print.Clip), not runes: Width tracks visible columns,
+// a ZWNJ or combining mark takes none (fa/ar labels, ut-docs#4689), and a
+// byte-based cut can split a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text).
 func footerRow(label, amount string) string {
-	space := print.Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
+	space := print.Width - print.DisplayWidth(label) - print.DisplayWidth(amount)
 	if space < 1 {
-		max := print.Width - utf8.RuneCountInString(amount) - 1
+		max := print.Width - print.DisplayWidth(amount) - 1
 		if max < 0 {
 			max = 0
 		}
-		if r := []rune(label); len(r) > max {
-			label = string(r[:max])
-		}
+		label = print.Clip(label, max)
 		space = 1
 	}
 	return label + strings.Repeat(" ", space) + amount
@@ -276,10 +292,12 @@ func footerRow(label, amount string) string {
 // eodRow prints a Z-report row the way "%-20s %s" always has, so an en
 // row stays byte-for-byte the same, but a translated label long enough to
 // push the amount past print.Width goes through footerRow instead, which
-// clips the label and keeps the amount (ut-docs#4397).
+// clips the label and keeps the amount (ut-docs#4397). The 20-column pad is
+// by display columns, not fmt's runes (ut-docs#4689).
 func eodRow(label, amount string) string {
-	if utf8.RuneCountInString(fmt.Sprintf("%-20s", label))+1+utf8.RuneCountInString(amount) <= print.Width {
-		return fmt.Sprintf("%-20s %s", label, amount)
+	padded := padEnd(label, 20)
+	if print.DisplayWidth(padded)+1+print.DisplayWidth(amount) <= print.Width {
+		return padded + " " + amount
 	}
 	return footerRow(label, amount)
 }
@@ -303,7 +321,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// STORNOS, Erstellt von, Anmerkung and the ÖKC slip names.
 	printLocale := httpx.DefaultLocale()
 	T := func(key string) string { return httpx.T(printLocale, key) }
-	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	money := func(minor int64) string { return httpx.FormatMoneyPrint(minor, printLocale, charset) }
 	method := func(id string) string { return receiptMethodLabel(printLocale, id) }
 	hdr := eodRateTableHeader(printLocale)
 	generatedAt := rep.GeneratedAt
@@ -341,10 +359,10 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		var tipTotal int64
 		for _, tp := range rep.Tips {
 			label := method(tp.Method)
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
+			doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
 			tipTotal += tp.Amount
 		}
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", T("receipt.paper.total"), money(tipTotal)))
+		doc.Footer = append(doc.Footer, eodRow(T("receipt.paper.total"), money(tipTotal)))
 	}
 	// Per-VAT-rate breakdown (ut-docs#1003) + department breakdown (E1b) +
 	// per-register breakdown, as footer lines so they print on the Z-report
@@ -607,6 +625,20 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		doc.Footer = append(doc.Footer, "", T("reports.zpaper.cleared_title"))
 		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.cleared_baskets"), rep.ClearedBasketCount), money(rep.ClearedBasketTotal)))
 	}
+	// No-sale drawer opens (ut-docs#5753): no money moved — informational,
+	// never in doc.Totals. Omitted on a day with none (STORNOS/CLEARED
+	// convention). footerRow per cashier: names are free text (BY OPERATOR).
+	if rep.NoSaleCount > 0 {
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.no_sale_title"))
+		doc.Footer = append(doc.Footer, footerRow(T("reports.zpaper.no_sale_total"), strconv.Itoa(rep.NoSaleCount)))
+		for _, o := range rep.NoSaleOperators {
+			name := o.DisplayName
+			if name == "" {
+				name = T("reports.eod.unattributed")
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, strconv.Itoa(o.Count)))
+		}
+	}
 	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
 	// least one shift was closed that day; a day-close without one still
 	// renders a complete report. Amounts stored negative (skim, pay-outs)
@@ -648,6 +680,17 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			line("reports.zpaper.cash.new_float", signed(rc.NewFloat)),
 		)
 	}
+	// First Z after a backup restore (ut-docs#5068): say why the numbers
+	// jump, so the gap in the paper trail is explained on paper.
+	if rb := rep.RestoredFromBackup; rb != nil {
+		lastReceipt := rb.LastReceipt
+		if lastReceipt == "" {
+			lastReceipt = "-"
+		}
+		doc.Footer = append(doc.Footer, "",
+			fmt.Sprintf(T("reports.zpaper.restored_receipts"), rb.NextReceipt, lastReceipt),
+			fmt.Sprintf(T("reports.zpaper.restored_z"), rb.NextZ, rb.LastZ))
+	}
 	if rep.FirstReceipt != "" {
 		doc.Footer = append(doc.Footer, "", fmt.Sprintf(T("reports.zpaper.receipts_range"), rep.FirstReceipt, rep.LastReceipt))
 	}
@@ -667,6 +710,87 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		doc.Footer = append(doc.Footer, "Anmerkung: "+rep.Annotation)
 	}
 	return doc
+}
+
+// eodHoldDeadline bounds generateEOD's held write-lock section (M1).
+const eodHoldDeadline = 4 * time.Second
+
+// eodWindowFrom is the start of the next Z's window: the last archived
+// close instant, raised to a promoted till's floor. Zero on a till's
+// first-ever close. Shared by generateEOD and the day-so-far X (ut-docs#5800).
+func eodWindowFrom(ctx context.Context, d *common.Deps, repo *data.POSRepo) (time.Time, error) {
+	latest, err := repo.LatestArchivedAt(ctx, "eod")
+	if err != nil {
+		return time.Time{}, err
+	}
+	var from time.Time
+	if latest != nil {
+		from = *latest
+	}
+	// ut-docs#5074 M6: a promoted till starts its next Z no earlier than
+	// the previous main till's last copied close — everything before it was
+	// in that till's Z. Unset on every till that was never promoted with a
+	// copy, so the window is unchanged there.
+	if floor := eodWindowFloor(ctx, d); floor.After(from) {
+		from = floor
+	}
+	return from, nil
+}
+
+// readEODWindow reads the Z figures for [from, to): the instant report, the
+// per-VAT-rate and method x rate breakdowns from ONE snapshot read of the
+// sales, and the display-only local From/To stamps. It does not attach a
+// fiscal device and writes nothing.
+func readEODWindow(ctx context.Context, repo *data.POSRepo, from, to time.Time) (data.EODReport, error) {
+	rep, err := repo.EndOfDayInstant(ctx, from, to)
+	if err != nil {
+		return rep, err
+	}
+	// Per-VAT-rate breakdown (ut-docs#1003) + method x VAT-rate cross-tab
+	// (ut-docs#1004): SalesForTaxBandsInstant DIRECTLY, never the existing
+	// attachEODBands/rep.Day=="" fallback into the calendar-date
+	// SalesForTaxBands (ADR-0066 Decision 6) — SQLite's date() parses an
+	// RFC3339 bound without error, so that fallback would silently degrade
+	// this report to calendar-day banding with no error and no test
+	// failure, breaking sum(band.Tax) == TaxNet in the one artifact an
+	// accountant reconciles against. One snapshot read (same ut-docs#1004
+	// review finding attachEODBands' own doc comment cites: two independent
+	// reads a moment apart could let a sale completing in between appear in
+	// one breakdown and not the other), computed here, not inside
+	// EndOfDayInstant, because the banding math needs internal/pos (see
+	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
+	// archive is write-once per period, so a report archived without these
+	// tables could never be repaired.
+	salesForBands, err := repo.SalesForTaxBandsInstant(ctx, from, to)
+	if err != nil {
+		return rep, err
+	}
+	rep.TaxBands = computeEODTaxBandsFromSales(salesForBands)
+	rep.MethodTaxBands = computeEODMethodTaxBandsFromSales(salesForBands)
+	// Display-only period (ADR-0066 Decision 6): the shop's LOCAL offset,
+	// never UTC — a UTC-stamped close on a till at a large positive offset
+	// would display a calendar date shifted from the shop's own, the exact
+	// confusion ADR-0057 removed. from stays "" (omitempty) on the till's
+	// first-ever close — there is no previous close instant to show.
+	// rep.Day is left empty (its zero value) — this is the "eod" kind's new
+	// path, not EndOfDay's calendar-day one.
+	if !from.IsZero() {
+		rep.From = from.Local().Format(time.RFC3339)
+	}
+	rep.To = to.Local().Format(time.RFC3339)
+	return rep, nil
+}
+
+// eodActorName resolves a user id to its display name for the printed
+// "generated by" line; the raw id when unresolvable.
+func eodActorName(ctx context.Context, d *common.Deps, actor string) string {
+	name := actor
+	if actor != "" {
+		if u, ok, lerr := data.NewAuthRepo(d.Db).GetUser(ctx, actor); lerr == nil && ok && u.DisplayName != "" {
+			name = u.DisplayName
+		}
+	}
+	return name
 }
 
 // generateEOD produces, archives and (best-effort) prints the close-to-close
@@ -699,56 +823,51 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 // actor="system" above), or whatever the manual run's form supplied.
 func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, annotation string) (data.EODReport, bool, error) {
 	repo := data.NewPOSRepo(d.Db)
-	latest, err := repo.LatestArchivedAt(ctx, "eod")
+	from, err := eodWindowFrom(ctx, d, repo)
 	if err != nil {
 		return data.EODReport{}, false, err
 	}
-	var from time.Time
-	if latest != nil {
-		from = *latest
+	// ut-docs#5769 (ADR-0066 amendment): take the write lock BEFORE `to` and
+	// hold it until every window read is done, so a concurrent apply (sale
+	// replay, journaled no-sale/cleared basket) either committed before
+	// (stamp < to, visible here) or runs after (stamp >= to, the next Z).
+	// Released before the archive write below, which takes the lock itself.
+	//
+	// M1: the held section carries its own deadline, below the 5 s
+	// busy_timeout other writers wait on: a slow Z fails ITSELF (nothing is
+	// archived; the scheduler retries next tick) rather than stalling a
+	// checkout past busy_timeout. Every read below uses hctx.
+	hctx, hcancel := context.WithTimeout(ctx, eodHoldDeadline)
+	heldAt := time.Now()
+	release, lerr := repo.HoldWriteLock(hctx)
+	if lerr != nil {
+		hcancel()
+		return data.EODReport{}, false, lerr
 	}
+	var relOnce sync.Once
+	releaseHeld := func() {
+		relOnce.Do(func() {
+			release()
+			hcancel()
+			if held := time.Since(heldAt); held > time.Second {
+				logging.L().Warnf("eod: write lock held %s (checkouts queue behind it)", held.Round(time.Millisecond))
+			} else {
+				logging.L().Debugf("eod: write lock held %s", held.Round(time.Millisecond))
+			}
+		})
+	}
+	defer releaseHeld()
 	to := time.Now()
-	rep, err := repo.EndOfDayInstant(ctx, from, to)
+	rep, err := readEODWindow(hctx, repo, from, to)
 	if err != nil {
 		return rep, false, err
 	}
-	// Per-VAT-rate breakdown (ut-docs#1003) + method x VAT-rate cross-tab
-	// (ut-docs#1004): SalesForTaxBandsInstant DIRECTLY, never the existing
-	// attachEODBands/rep.Day=="" fallback into the calendar-date
-	// SalesForTaxBands (ADR-0066 Decision 6) — SQLite's date() parses an
-	// RFC3339 bound without error, so that fallback would silently degrade
-	// this report to calendar-day banding with no error and no test
-	// failure, breaking sum(band.Tax) == TaxNet in the one artifact an
-	// accountant reconciles against. One snapshot read (same ut-docs#1004
-	// review finding attachEODBands' own doc comment cites: two independent
-	// reads a moment apart could let a sale completing in between appear in
-	// one breakdown and not the other), computed here, not inside
-	// EndOfDayInstant, because the banding math needs internal/pos (see
-	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
-	// archive is write-once per period, so a report archived without these
-	// tables could never be repaired.
-	salesForBands, err := repo.SalesForTaxBandsInstant(ctx, from, to)
-	if err != nil {
-		return rep, false, err
-	}
-	rep.TaxBands = computeEODTaxBandsFromSales(salesForBands)
-	rep.MethodTaxBands = computeEODMethodTaxBandsFromSales(salesForBands)
 	// Turkish YN ÖKC device Z-status/reconciliation (ut-docs#2410) — same
 	// [from, to) window, best-effort (see attachEODFiscalDevice's own doc
 	// comment): a non-TR shop, or TR without the plugin active, leaves
 	// rep.FiscalDevice nil.
-	attachEODFiscalDevice(ctx, d, repo, &rep, from, to)
-	// Display-only period (ADR-0066 Decision 6): the shop's LOCAL offset,
-	// never UTC — a UTC-stamped close on a till at a large positive offset
-	// would display a calendar date shifted from the shop's own, the exact
-	// confusion ADR-0057 removed. from stays "" (omitempty) on the till's
-	// first-ever close — there is no previous close instant to show.
-	// rep.Day is left empty (its zero value) — this is the "eod" kind's new
-	// path, not EndOfDay's calendar-day one.
-	if !from.IsZero() {
-		rep.From = from.Local().Format(time.RFC3339)
-	}
-	rep.To = to.Local().Format(time.RFC3339)
+	attachEODFiscalDevice(hctx, d, repo, &rep, from, to)
+	releaseHeld() // every window read is done (idempotent)
 	// Who generated it, plus the annotation (ut-docs#1012). GeneratedBy
 	// resolves actor (a user id) to its display name via the same
 	// users-table join precedent internal/data's audit/order-status
@@ -759,12 +878,7 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// the raw actor string only for a genuinely unresolvable id (a stale/
 	// deleted user) or a lookup error — never blocks report generation on
 	// a resolution failure.
-	rep.GeneratedBy = actor
-	if actor != "" {
-		if u, ok, lerr := data.NewAuthRepo(d.Db).GetUser(ctx, actor); lerr == nil && ok && u.DisplayName != "" {
-			rep.GeneratedBy = u.DisplayName
-		}
-	}
+	rep.GeneratedBy = eodActorName(ctx, d, actor)
 	rep.Annotation = strings.TrimSpace(annotation)
 	// period = the close instant itself, same local-offset RFC3339 form as
 	// rep.To (ADR-0066 Decisions 4 and 6 — period's text form matches what
@@ -773,6 +887,14 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// prefix). This is now report_archive's own unique key for this row,
 	// replacing the old "day" string as the audit entry's entity_id too.
 	period := rep.To
+	// A restore jump not yet reported rides on this Z (ut-docs#5068). A read
+	// failure is logged and the Z still closes: the jump itself is already
+	// in force, only its explanatory note is lost.
+	if m, merr := repo.PendingRestoreMarker(ctx); merr != nil {
+		logging.L().Errorf("eod: read restore marker: %v", merr)
+	} else {
+		rep.RestoredFromBackup = m
+	}
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		return rep, false, err
@@ -788,6 +910,11 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	created, err := repo.ArchiveReport(ctx, "eod", period, raw, rep.FirstReceipt, rep.LastReceipt, to)
 	if err != nil || !created {
 		return rep, created, err
+	}
+	if rep.RestoredFromBackup != nil {
+		if cerr := repo.ClearRestoreMarker(ctx); cerr != nil {
+			logging.L().Errorf("eod: clear restore marker: %v", cerr)
+		}
 	}
 	payload := map[string]any{"net": rep.Net, "sales": rep.SalesCount}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1008,6 +1135,7 @@ func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) 
 
 func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
+	registerEODDayX(mux, d) // ut-docs#5800: day-so-far X report
 
 	mux.HandleFunc("POST /api/reports/eod/run", func(w http.ResponseWriter, r *http.Request) {
 		// Mutating + audit-writing (ut-docs#557/#794): a denied session gets

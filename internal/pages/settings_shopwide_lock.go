@@ -56,6 +56,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-telemetry":                      "marketplace.telemetry_opt_in",             // POST /api/settings/telemetry
 	"settings-store-name":                     common.KeyStoreName,                        // POST /api/settings/store-name
 	"settings-currency":                       common.KeyCurrency,                         // POST /api/settings/save (currency form)
+	"settings-currency-display":               common.KeyCurrencyDisplay,                  // POST /api/settings/save (currency_display form)
 	"settings-language":                       common.KeyLocale,                           // POST /api/settings/save (locale form)
 	"settings-staff-languages":                common.KeyStaffLocales,                     // POST /api/settings/staff-languages
 	"settings-shop-type":                      common.KeyShopType,                         // POST /api/settings/shop-type

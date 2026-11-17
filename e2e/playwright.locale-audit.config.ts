@@ -17,13 +17,13 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // Deliberately a SEPARATE config, not a third project in
 // playwright.docs.config.ts or playwright.config.ts: `de` is not a
 // core-shipped locale (only en/ar/fa/tr ship in web/locales/) — German
-// lives in the external ut-plugin-language-de repo, and exercising it here
+// comes from ut-translations (Weblate), and exercising it here
 // needs BOTH webServers below booted with UT_TEST_I18N_OVERLAY_DIR pointed
-// at that pack's locales/ directory (loadTestI18nOverlays,
+// at the overlay built by scripts/ci/build-locale-overlay.sh (loadTestI18nOverlays,
 // internal/pages/init.go), so the till's I18n has a de.json overlay to
 // render at all. That env var must never leak into playwright.docs.config.ts's
 // servers — a documentation screenshot must never be captured in a
-// plugin-overlaid locale nothing asked for. testDir is also its own
+// overlaid locale nothing asked for. testDir is also its own
 // directory (./tests-i18n-audit, not ./tests-docs) for the same isolation
 // reason: playwright.docs.config.ts's testDir: './tests-docs' must never
 // accidentally pick up this spec and break `make docs-shots`.

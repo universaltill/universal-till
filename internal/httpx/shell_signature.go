@@ -15,25 +15,30 @@ import (
 // guard in internal/pages keeps this list equal to base.html's real tags.
 var HeadAssets = []string{
 	"public/app.css",
+	"public/ut-motion.js", // ut-docs#2972: the shared motion code, loaded first
 	"public/vendor/htmx.min.js",
 	"public/vendor/alpine.min.js",
 	"public/app.js",
+	"public/till-confirm.js", // ut-docs#5524: the in-page hx-confirm dialog
 	"public/osk.js",
 	"public/cursor.js",
 	"public/autofill.js",
 	"public/input-heartbeat.js",
+	"public/window-toggle.js",
 	"public/record-dialog.js",
 	"public/list-reorder.js", // ut-docs#2699: long-press drag reorder for admin lists
 	"public/table-cards.js",  // ut-docs#3359: tables become card lists at the phone tier
 	"public/category-filter.js",
 	"public/icon-picker-filter.js", // ut-docs#2506: built-in icon picker search
 	"public/photo-cutout.js",       // ut-docs#3127: "Remove background" in the photo pickers
+	"public/radiogroup.js",         // ut-docs#5553: radiogroup arrow keys
 	"public/bugreport-draft.js",    // ut-docs#2342: the bug-report draft store
 	"public/sell-screen-watch.js",  // ut-docs#2765: open sale screen live catalog refresh
 	"public/tour.js",               // ut-docs#3710: sale-screen guided tour
 	"public/android-update.js",     // ut-docs#4312: the shared Android in-app update flow
 	"public/inline-actions.js",     // ut-docs#3325: delegated data-action/data-* hooks (no inline handlers, CSP)
 	"public/translate-mode.js",     // ut-docs#4370: translate mode only (the shell signature also marks the mode)
+	"public/pairing-stream.js",     // ut-docs#2743: pairing-queue push (one EventSource, opened by a server-rendered marker)
 }
 
 // headAssetVersion is assetVersion, indirected so a test can prove the

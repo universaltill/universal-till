@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ADR-0116 D6 (ut-docs#3524): a 401 carries a machine code; after 3
@@ -89,7 +89,7 @@ func TestCheckin401DecodesMachineCode(t *testing.T) {
 		_, _ = w.Write([]byte(unauthorizedBody("token_retired")))
 	}))
 	defer srv.Close()
-	status, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0)
+	status, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0, nil)
 	var se *statusError
 	if status != http.StatusUnauthorized || !errors.As(err, &se) || se.Code != "token_retired" {
 		t.Fatalf("status=%d err=%#v, want 401 with Code token_retired", status, err)
@@ -102,7 +102,7 @@ func TestCheckin503LeavesCodeEmpty(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"auth_unavailable","message":"x"}}`))
 	}))
 	defer srv.Close()
-	_, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0)
+	_, _, err := getCheckin(context.Background(), srv.URL, "store-1", "tok-1", false, 0, nil)
 	var se *statusError
 	if !errors.As(err, &se) || se.StatusCode != http.StatusServiceUnavailable || se.Code != "" {
 		t.Fatalf("err = %#v, want a 503 statusError with Code empty", err)
@@ -325,7 +325,7 @@ func TestRevokedTillLocksOutHourlyAndStillSellsOffline(t *testing.T) {
 	http.DefaultTransport, httpClient.Transport = dead, dead
 	t.Cleanup(func() { http.DefaultTransport, httpClient.Transport = prevDefault, prevClient })
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "revoked.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "revoked.db"))
 	if err != nil {
 		t.Fatalf("open migrated db: %v", err)
 	}
@@ -479,4 +479,20 @@ func TestPairingDuringLockOutEndsTheHourlyWaitAndClearsTheChip(t *testing.T) {
 	}
 	cancel()
 	waitJoined(t, wg)
+}
+
+// ut-docs#5145: a manager's successful "Reconnect this till" ends the 401
+// lock-out at once, without waiting for the next hourly tick.
+func TestClearAuthLockoutEndsTheStreak(t *testing.T) {
+	t.Cleanup(func() { tillAuth.observe(nil) })
+	for i := 0; i < authLockoutAfter; i++ {
+		tillAuth.observe(&statusError{StatusCode: http.StatusUnauthorized})
+	}
+	if !AuthChipStatus().Show || !tillAuth.lockedOut() {
+		t.Fatal("not locked out before the clear")
+	}
+	ClearAuthLockout()
+	if AuthChipStatus().Show || tillAuth.lockedOut() {
+		t.Fatalf("still locked out after ClearAuthLockout: %+v", AuthChipStatus())
+	}
 }

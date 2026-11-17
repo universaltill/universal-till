@@ -3,8 +3,10 @@ id: claim
 title: Store registration & claiming
 section: Connecting & extending
 order: 320
+public: false
 summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
 keywords: [register, claim, cloud, marketplace, store, subscription, plan, pair, pairing code, re-pair]
+routes: [/settings/cloud/move/{id}]
 ---
 
 # Store registration & claiming
@@ -32,11 +34,15 @@ Settings → Subscription (managers only) shows your plan as this till last hear
 - Local (free): nothing to do, the card just says you are on the free plan.
 - Active: your plan, the date it is paid until and the last confirmation.
 - Subscription not confirmed: the till couldn't confirm your plan with the cloud for more than 7 days, so paid features (such as cloud sync, managing products from a browser and managed TSE set-up) are paused. Check the till's internet connection; this clears by itself once it connects.
-- Subscription ended: your subscription is no longer active, so paid features are paused until you renew it in your Universal Till account. For 90 days after the plan was last paid, a till whose subscription has ended checks with the cloud by itself once an hour, so it usually picks up a renewal within the hour. To see it straight away, press Check now on this card or on the paused-features notice in Settings → Till registration (managers and admins only): the till asks the cloud and shows the answer in place, either the date the plan is now paid until or that it is still not renewed. On a till registered through the main till, press it on the main till: this till gets the renewal from there.
+- Subscription ended: your subscription is no longer active, so paid features are paused until it is active again. For 90 days after the plan was last paid, a till whose subscription has ended checks with the cloud by itself once an hour, so it usually picks up a renewal within the hour. To see it straight away, press Check now on this card or on the paused-features notice in Settings → Till registration (managers and admins only): the till asks the cloud and shows the answer in place, either the date the plan is now paid until or that it is still not active. On a till registered through the main till, press it on the main till: this till gets the renewal from there.
 
-In the last two cases a chip in the status bar opens the panel described below, and Till registration and Receipt signing (TSE) say in place which of their features are paused. Nothing is hidden, and a TSE that is already set up keeps signing receipts.
+In the last two cases a chip appears in the status bar, and Till registration and Receipt signing (TSE) say in place which of their features are paused. Nothing is hidden, and a TSE that is already set up keeps signing receipts.
+
+<!-- plan-purchase -->
 
 **Renew or change plan** (managers and admins only) is on this card, on the paused-features notice in Till registration and on the status-bar chip. It opens a panel over the screen you are on. The till first asks the cloud for your current plan: if it was already renewed (for example in your Universal Till account), the panel shows the date it is paid until straight away, with Change plan if you want a different one. Otherwise choose Renew current plan or Choose a plan and scan the QR code with your phone: you pay on your phone, never on the till. While the code is shown the till checks every 20 seconds, for up to 10 minutes, and switches to your new plan as soon as it arrives. Close (or Escape) takes you back to exactly where you were. A till registered through the main till renews from the main till.
+
+<!-- /plan-purchase -->
 
 ## Cloud sync is part of the paid plans
 
@@ -51,7 +57,7 @@ If the cloud refuses this till's credential three times in a row, or this till's
 
 - **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
 - **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
-- **Register as a new store**: the store has no owner account, so the till can't be paired. Register it again as a new store; only the old fleet history is lost.
+- **Cloud sign-in lost**: the store has no owner account, so the till can't be paired. Tap the chip, then **Reconnect this till** in Settings → Till registration (same shop); only if that is refused, **Register as a new shop** (only the old fleet history is lost).
 - **Restored on a new device — connect again**: this till's data was restored from a phone or iCloud backup (or copied) onto a new device, so its cloud connection was reset; the sales on the till are not touched. Pair it with the shop again, or register it as a new store, in Settings → Till registration. The old device keeps its own connection.
 
 A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud. The restored chip goes away once the till is paired or registered again.
@@ -73,10 +79,39 @@ The card says what went wrong in one line; selling is never affected:
 
 Use this when the shop already exists in the Universal Till cloud and this till should join it, or when a till was removed from the shop's cloud account or says it needs pairing again.
 
-1. In the shop's cloud account, choose "Add or re-pair a till" to get a pairing code (8 characters, valid 15 minutes, single use).
-2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. A manager or admin approves it.
+1. In the shop's cloud account, choose "Pair a till" (or "Pair again" for a till that is already listed) to get a pairing code (8 characters, valid 15 minutes, single use).
+2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. If this till is already connected to a shop, it first asks you to confirm that you want to replace that connection and shows the code you typed, so you can check it; Cancel changes nothing. A manager or admin approves it afterwards.
 3. The till replaces only its own cloud connection: it takes a new device ID and a credential of its own. Sales, products and settings stay on the till, and selling keeps working offline the whole time.
-4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code.
+4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code. On a till that is connected to a shop, a code that is wrong for the shop also leaves it disconnected until you pair it with a fresh code (this is why the till asks first); a joined till is registered again through its main till.
+
+## Moving this till into another shop
+
+Where the Universal Till cloud offers it, pairing a till that already belongs to a shop with a code from another shop you own **moves** the till into that shop instead of adding it as a second till. The till keeps its identity, and its sales history, products and settings go with it: the two shops become one. Nothing moves until a manager or admin approves it on the till itself.
+
+1. Enter the code under Pair with a shop and press Pair. The till asks you to confirm the move, then shows the move page. The till stays in its shop and keeps selling while the move waits.
+2. On the move page, check the shop it moves into and the time the request expires (about a day). To approve, type that shop's name and press **Approve move**, then enter a manager's or admin's PIN. **Decline** also asks for a PIN. A cashier can't open the request or act on it.
+3. Until someone decides, managers and admins see a banner on every page except the sale screen: "*shop* asked to move this till into their shop". **Review** opens the move page. On every page, the sale screen included, everyone (cashiers too) sees a **Till move waiting for a manager** chip in the status bar. It names no shop and changes nothing; for a manager or admin, tapping it opens the move page. It goes away once the move is decided, cancelled or expired.
+4. After approval the till says "Moved into *shop*"; the cloud account shows the merged history within a few minutes. Selling never stops.
+
+Good to know:
+
+- Approving sends all of this shop's sales history to the other account. Support never asks you to do this; decline a move you did not ask for.
+- The till must be online to approve or decline. Offline, the buttons are off and nothing is sent later.
+- Three wrong PINs decline the move. If the owner cancels it in the cloud account, or nobody decides in time, the banner says so and nothing changes.
+- A move is refused, with nothing changed, when this till's shop has other tills, a fiscal device, a paid plan or another owner, when the two shops use different currencies, or when the code was not made by the other shop's owner. The message says which.
+- "This till's approval key changed" means the till cannot sign moves: contact support. A till whose old shop no longer recognises it and that has sales is not paired as a new till (its sales would be left behind); contact support to merge it.
+
+## When the cloud knows this till but will not sign it in
+
+A shop with no owner account has no pairing code, so the cloud decides by the till's **approval key** (a key the till keeps in its own data folder, never in a backup). Selling is never affected. What you see depends on the state:
+
+- **Cloud sign-in lost** (status bar): the till's cloud sign-in was refused three times. A manager opens Settings → Till registration. The device ID and the **key fingerprint** (32 characters in groups of four) are shown there, always, to managers only. Tap **Reconnect this till**: the till proves its key and gets a new sign-in in the same shop. If that is refused, the card says why (never the cloud's raw text).
+- **The cloud knows a different key for this till**: the key on this till is not the one the cloud holds (for example after restoring the data onto new hardware, or a damaged key file). Ask support to allow it. Read them the device ID and the key fingerprint from Settings; support matches both against the shop's fleet row (shop name, till name, version) and lets in one reconnect for 24 hours, once, only for a till holding that key. If they cannot match it, or you would rather not wait, use **Register as a new shop**.
+- **This till was in use recently** (**Cloud reconnect paused**): for a till on an older version that never reported a key, the cloud refuses a re-registration while the till was in use in the last 72 hours. This is a weaker check: an unpaid till often contacts the cloud rarely, so it can be past 72 hours while still selling. The till tries again by itself after the date shown (Register now tries at once). Support can allow one reconnect sooner, the same way.
+- **This till's software is too old to prove its identity**: update this till, then try again.
+- **Too many tries**: wait a few minutes.
+
+**Register as a new shop** (below Reconnect, with a confirmation) leaves the old shop behind in the cloud with this till's earlier cloud history, gives the till a new device ID and registers it as a new shop. Sales on the till stay on the till. It cannot be undone. If the new registration fails, the till is simply not registered yet and **Register now** tries again. A till whose database was wiped already has a new device ID and registers as a new shop by itself. A shop that has an owner re-pairs the till instead (Pair with a shop).
 
 ## The shop's currency
 

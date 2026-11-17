@@ -87,10 +87,10 @@ func TestMoneyPrefill_PromotionAmount_LocaleDecimal(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	if body := get("de"); !strings.Contains(body, `value="5,00"`) {
+	if body := get("de"); !strings.Contains(body, `data-field-value_amount="5,00"`) {
 		t.Fatalf("expected the amount prefill 5,00 on a German till, got:\n%s", body)
 	}
-	if body := get("en"); !strings.Contains(body, `value="5.00"`) {
+	if body := get("en"); !strings.Contains(body, `data-field-value_amount="5.00"`) {
 		t.Fatalf("expected the amount prefill 5.00 on an English till, got:\n%s", body)
 	}
 }

@@ -481,7 +481,9 @@ func invalidFields(f data.CustomerFields, ext string, force []string) []string {
 		}
 	}
 	long := func(s string, n int) bool { return utf8.RuneCountInString(s) > n }
-	add("name", f.Name == "" || long(f.Name, maxName) || hasControl(f.Name))
+	// A name is one line: the till's admin rule (ut-docs#5858, #5861).
+	_, nameErr := data.CheckSingleLineName(f.Name)
+	add("name", f.Name == "" || long(f.Name, maxName) || nameErr != nil)
 	at := strings.Index(f.Email, "@")
 	add("email", f.Email != "" && (at < 1 || at == len(f.Email)-1 || strings.ContainsAny(f.Email, " \t\r\n") || long(f.Email, maxEmail) || hasControl(f.Email)))
 	add("phone", f.Phone != "" && (long(f.Phone, maxPhone) || hasControl(f.Phone) || !hasDigit(f.Phone)))

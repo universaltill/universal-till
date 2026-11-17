@@ -1,0 +1,20 @@
+{
+  "e2eviews.chat.title": "گفتگوی نمونه",
+  "e2eviews.chat.placeholder": "از افزونهٔ نمونه بپرسید…",
+  "e2eviews.chat.tool": "جست‌وجوی نمونه",
+  "e2eviews.wizard.title": "راه‌اندازی نمونه",
+  "e2eviews.wizard.step1": "اتصال",
+  "e2eviews.wizard.step2": "پیکربندی",
+  "e2eviews.wizard.step3": "پایان",
+  "e2eviews.wizard.body1": "برای اتصال کد را اسکن کنید.",
+  "e2eviews.wizard.body2": "گزینه‌ها را انتخاب کنید.",
+  "e2eviews.wizard.body3": "تمام شد.",
+  "e2eviews.wizard.qr_label": "کد جفت‌سازی",
+  "e2eviews.wizard.next": "بعدی",
+  "e2eviews.wizard.back": "قبلی",
+  "e2eviews.job.title": "کار نمونه",
+  "e2eviews.job.intro": "اجرای یک کار طولانی نمونه.",
+  "e2eviews.job.run": "اجرای کار",
+  "e2eviews.job.progress": "کار نمونه در نیمه راه",
+  "e2eviews.job.done": "کار نمونه تمام شد"
+}

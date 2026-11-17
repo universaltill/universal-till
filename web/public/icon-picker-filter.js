@@ -3,56 +3,97 @@
 // in categories.html) carry a search box:
 //
 //   <input type="search" data-icon-filter="<grid id>">
-//   <div id="<grid id>"> .builtin-icon-group-label … .builtin-icon-tile … </div>
+//   <div id="<grid id>" role="listbox" data-roving-listbox>
+//     .builtin-icon-tile[data-icon=none]
+//     .builtin-icon-group > .builtin-icon-group-label + .builtin-icon-tile …
+//   </div>
 //   <div data-icon-filter-empty="<grid id>" hidden>{{ T "…no_match" }}</div>
 //
-// A tile matches when every typed word appears in its visible (translated)
-// label or its English data-keywords. The "No image" tile (data-icon=
-// "none") always stays visible; a group heading hides when none of its
-// tiles match. Delegated on document because the category editor arrives
-// in an htmx-swapped dialog. No strings live here — the no-match message
-// is the server-rendered element above (guard-i18n.sh check 5).
+// A tile matches when every typed word appears in its folded text: the
+// visible (translated) label plus data-keywords, which the server emits
+// already folded — English terms and the tile's name in each of the shop's
+// languages (ut-docs#6042). Query, label and keywords all go through `fold`,
+// a port of internal/catimport placeholder_norm.go normalizeWord
+// (testdata/search_fold_parity.json pins both). The "No image" tile
+// (data-icon="none") always stays visible; a whole .builtin-icon-group
+// (heading and tiles) hides when none of its tiles match (ut-docs#5601).
+// Delegated on document because the category editor arrives in an
+// htmx-swapped dialog. No strings live here — the no-match message is the
+// server-rendered element above (guard-i18n.sh check 5).
 (function () {
   'use strict';
 
-  function norm(s) {
-    return (s || '').toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Same table as placeholder_norm.go normReplacer — keep in sync.
+  var MAP = {
+    '\u0130': 'i', // I with dot above
+    'I': 'i',
+    '\u0131': 'i', // dotless i
+    '\u00DF': 'ss', // sharp s
+    '\u0649': '\u064A', // alef maksura -> yeh
+    '\u06CC': '\u064A', // Farsi yeh -> yeh
+    '\u06A9': '\u0643', // keheh -> kaf
+    '\u0629': '\u0647', // teh marbuta -> heh
+    '\u06C0': '\u0647', // heh with yeh above -> heh
+    '\u0623': '\u0627', // alef with hamza above -> alef
+    '\u0625': '\u0627', // alef with hamza below -> alef
+    '\u0622': '\u0627', // alef with madda -> alef
+    '\u0671': '\u0627' // alef wasla -> alef
+  };
+  function rep(s) {
+    var o = '';
+    for (var c of s) o += (MAP[c] !== undefined ? MAP[c] : c);
+    return o;
   }
+  // Lower-casing is per code point (Go's simple ToLower: no final-sigma
+  // context) and never locale-sensitive.
+  function fold(s) {
+    var lo = '';
+    for (var c of rep(s || '')) lo += c.toLowerCase();
+    lo = lo.normalize('NFD').replace(/[\p{Mn}\u0640\u200C\u200D]/gu, ''); // all Mn + tatweel + ZWNJ/ZWJ (ut-docs#6052)
+    return rep(lo.normalize('NFC'));
+  }
+
+  // A word matches as a substring of hay; an Arabic-article word of 4+ code
+  // points ("ال…") also matches with the article stripped (stripArticle).
+  function wordMatches(hay, w) {
+    if (hay.indexOf(w) !== -1) return true;
+    return Array.from(w).length >= 4 && w.slice(0, 2) === '\u0627\u0644' && hay.indexOf(w.slice(2)) !== -1;
+  }
+
+  var hayCache = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function hayOf(el) {
+    var h = hayCache && hayCache.get(el);
+    if (h === undefined || h === null) {
+      h = fold(el.textContent) + ' ' + fold(el.getAttribute('data-keywords'));
+      if (hayCache) hayCache.set(el, h);
+    }
+    return h;
+  }
+
+  if (typeof window !== 'undefined') window.utIconFold = fold;
+  if (typeof module === 'object' && module.exports) module.exports = { fold: fold, wordMatches: wordMatches };
+  if (typeof document === 'undefined') return;
 
   function applyFilter(input) {
     var grid = document.getElementById(input.getAttribute('data-icon-filter'));
     if (!grid) return;
-    var words = norm(input.value).split(/\s+/).filter(Boolean);
+    var words = fold(input.value).split(/\s+/).filter(Boolean);
     var shown = 0;
-    var label = null;
-    var labelHasMatch = false;
-    function closeGroup() {
-      if (label) label.hidden = !labelHasMatch;
-    }
-    Array.prototype.forEach.call(grid.children, function (el) {
-      if (el.classList.contains('builtin-icon-group-label')) {
-        closeGroup();
-        label = el;
-        labelHasMatch = false;
-        return;
-      }
-      if (!el.classList.contains('builtin-icon-tile')) return;
+    Array.prototype.forEach.call(grid.querySelectorAll('.builtin-icon-tile'), function (el) {
       if (el.getAttribute('data-icon') === 'none') { el.hidden = false; return; }
-      var hay = norm(el.textContent + ' ' + (el.getAttribute('data-keywords') || ''));
-      var match = words.every(function (w) { return hay.indexOf(w) !== -1; });
+      var hay = hayOf(el);
+      var match = words.every(function (w) { return wordMatches(hay, w); });
       el.hidden = !match;
-      if (match) { shown++; labelHasMatch = true; }
+      if (match) shown++;
     });
-    closeGroup();
-    // Roving tabindex (categories.html): if the one tabbable tile is now
-    // hidden, hand the tab stop to the first visible tile so Tab from the
-    // search box still reaches the grid.
-    var tabbable = grid.querySelector('.builtin-icon-tile[tabindex="0"]');
-    if (tabbable && tabbable.hidden) {
-      tabbable.setAttribute('tabindex', '-1');
-      var first = grid.querySelector('.builtin-icon-tile:not([hidden])');
-      if (first) first.setAttribute('tabindex', '0');
-    }
+    // ut-docs#5601: a section (label + its tiles) hides when none match; the
+    // label is never hidden on its own, so a visible section keeps its name.
+    Array.prototype.forEach.call(grid.querySelectorAll('.builtin-icon-group'), function (g) {
+      g.hidden = !g.querySelector('.builtin-icon-tile:not([hidden])');
+    });
+    // One Tab stop on the selected visible option (else the first visible):
+    // the filter may just have hidden the one that held it.
+    if (window.utRovingListbox) window.utRovingListbox.sync(grid);
     var empty = document.querySelector('[data-icon-filter-empty="' + grid.id + '"]');
     if (empty) empty.hidden = shown > 0;
   }

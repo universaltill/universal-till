@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/issuereport"
@@ -1354,5 +1355,69 @@ func TestUploadIssueReportRedactsLogs(t *testing.T) {
 		if strings.Contains(gotLogs[0], s) {
 			t.Errorf("secret %q uploaded: %q", s, gotLogs[0])
 		}
+	}
+}
+
+// ut-docs#2605: the capture-time build rides the upload as exactly one
+// app_version part, even if the till has since been updated.
+func TestUploadIssueReportSendsAppVersion(t *testing.T) {
+	withTempPendingDir(t)
+	orig := buildinfo.Version
+	buildinfo.Version = "0.31.2"
+	t.Cleanup(func() { buildinfo.Version = orig })
+	if _, err := issuereport.Save("versioned", "", []byte("fake-audio"), nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	buildinfo.Version = "9.9.9" // self-update while the report waited
+
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		got = append([]string(nil), r.MultipartForm.Value["app_version"]...)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), bundles[0]); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if len(got) != 1 || got[0] != "0.31.2" {
+		t.Fatalf("app_version values = %q, want exactly [0.31.2]", got)
+	}
+}
+
+// A bundle saved before ut-docs#2605 has no version: no app_version part is
+// sent, and it is never back-filled with the current build.
+func TestUploadIssueReportOmitsAppVersionForOldBundle(t *testing.T) {
+	withTempPendingDir(t)
+	orig := buildinfo.Version
+	buildinfo.Version = ""
+	t.Cleanup(func() { buildinfo.Version = orig })
+	if _, err := issuereport.Save("old bundle", "", []byte("fake-audio"), nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	bundles, err := issuereport.Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending: %v (%d)", err, len(bundles))
+	}
+	buildinfo.Version = "9.9.9"
+
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(10 << 20)
+		_, present = r.MultipartForm.Value["app_version"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), bundles[0]); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if present {
+		t.Fatal("app_version part sent for a bundle with no recorded version")
 	}
 }
