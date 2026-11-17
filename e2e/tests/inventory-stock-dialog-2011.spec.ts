@@ -126,6 +126,17 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
   // separately and directly, in Go, by
   // TestGetLowStock_RowsCarryDialogAttributes — so the two halves together
   // cover the path end to end without either one assuming the other.
+  // ut-docs#6137: the page's own `hx-trigger="load"` fetch of
+  // /api/inventory/low-stock replaces #low-stock-list's innerHTML; if it
+  // lands after injectLowStockRow it wipes the injected row. Arm the response
+  // wait before navigating, then wait for htmx to finish swapping/settling.
+  async function gotoInventorySettled(page: import('@playwright/test').Page) {
+    const lowStock = page.waitForResponse((r) => r.url().includes('/api/inventory/low-stock'));
+    await page.goto('/inventory');
+    await lowStock;
+    await expect(page.locator('#low-stock-list')).not.toHaveClass(/htmx-(request|swapping|settling)/);
+  }
+
   async function injectLowStockRow(page: import('@playwright/test').Page) {
     return page.evaluate(() => {
       const src = document.querySelector('#stock-table .stock-row') as HTMLElement;
@@ -142,7 +153,7 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
 
   test('(f) a low-stock row, in a fragment swapped in after load, opens the same dialog prefilled', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/inventory');
+    await gotoInventorySettled(page);
     const { name, locationName } = await injectLowStockRow(page);
 
     // Delegation is on `document`, so it must survive the container's
@@ -160,7 +171,7 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
 
   test('(g) the stock search filter never hides low-stock rows', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/inventory');
+    await gotoInventorySettled(page);
     await injectLowStockRow(page);
 
     await page.locator('#stock-search').fill('zzz-matches-nothing');

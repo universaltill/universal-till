@@ -711,28 +711,28 @@ export async function clickThenReload(page: Page, click: () => Promise<void>) {
   await Promise.all([page.waitForEvent('load'), click()]);
 }
 
-// ut-docs#4629: true when the run was given the German language pack
+// ut-docs#4629: true when the run was given the German locale overlay
 // (UT_E2E_I18N_OVERLAY_DIR, always set in CI; or a developer's own
 // UT_TEST_I18N_OVERLAY_DIR). Keyed on the env, never on CI: the pipeline
-// sandbox sets CI=1 without the pack and must still pass.
-export function germanPackExpected(): boolean {
+// sandbox sets CI=1 without the overlay and must still pass.
+export function germanOverlayExpected(): boolean {
   return !!(process.env.UT_E2E_I18N_OVERLAY_DIR || process.env.UT_TEST_I18N_OVERLAY_DIR);
 }
 
 // On a `?lang=de` page: record whether real German rendered (annotation
 // `de-pack`, once per test) and, when the pack is configured, ASSERT it.
-export async function expectGermanIfPackLoaded(page: Page): Promise<void> {
+export async function expectGermanIfOverlayLoaded(page: Page): Promise<void> {
   const info = test.info();
-  if (info.annotations.some((a) => a.type === 'de-pack')) return;
+  if (info.annotations.some((a) => a.type === 'de-overlay')) return;
   // Case-insensitive: innerText honours text-transform, and the sale page's
   // cart heading renders as WARENKORB, and the phone sale page shows only
   // 'Vor Ort / Zum Mitnehmen / Artikel zum Bezahlen hinzufügen'.
   const german = await page.evaluate(() => /Einstellungen|Zahlung|Warenkorb|Berichte|Katalog|Bezahlen|Vor Ort|Zum Mitnehmen/i.test(document.body.innerText));
-  info.annotations.push({ type: 'de-pack', description: german
-    ? 'German pack loaded: real German strings'
-    : 'German pack not loaded (UT_E2E_I18N_OVERLAY_DIR unset): ?lang=de rendered English' });
-  if (germanPackExpected()) {
-    expect(german, 'German pack configured (UT_E2E_I18N_OVERLAY_DIR) but ?lang=de rendered English').toBe(true);
+  info.annotations.push({ type: 'de-overlay', description: german
+    ? 'German overlay loaded: real German strings'
+    : 'German overlay not loaded (UT_E2E_I18N_OVERLAY_DIR unset): ?lang=de rendered English' });
+  if (germanOverlayExpected()) {
+    expect(german, 'German overlay configured (UT_E2E_I18N_OVERLAY_DIR) but ?lang=de rendered English').toBe(true);
   }
 }
 

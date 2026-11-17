@@ -1,7 +1,6 @@
 #!/bin/sh
-# Universal Till .deb postinstall: system user, writable data dirs, legacy
-# item photos kept safe until the data-dir migration has copied them (see
-# the ITEMS block), service enabled.
+# Universal Till .deb postinstall: system user, writable data dirs, service
+# enabled.
 set -e
 
 # System user for the service.
@@ -9,32 +8,15 @@ if ! id -u pos >/dev/null 2>&1; then
     useradd --system --home /opt/unitill --shell /usr/sbin/nologin pos
 fi
 
-mkdir -p /opt/unitill/data /var/lib/unitill/items
+mkdir -p /opt/unitill/data /var/lib/unitill
 
-# web/ is package-owned and refreshed on every upgrade. New item photo
-# uploads no longer land here — they go to the stable data dir
-# (paths.Data("public","assets","items",...), i.e. $UT_DATA_DIR/public/...)
-# — but this symlink is NOT vestigial yet (ut-docs#256): a box installed
-# before 2026-07-29 holds the shop's old uploaded photos in this tree.
-# paths.migrateLegacyUploadedAssets reads web/public/assets/items on every
-# start (copy-if-absent, no first-run marker) to copy them into the data
-# dir, and the /public/ handler still serves from this tree as its second
-# source when a copy failed. Keeping the tree on /var/lib behind a symlink
-# means a .deb upgrade can never delete those photos. (The in-app
-# self-update swaps in a real web/items dir without the symlink; the photos
-# stay safe in /var/lib/unitill/items until the next .deb postinstall puts
-# the link back.) The shipped demo thumbs are copied into /var/lib only
-# when it is empty. Retire this block together with the migration, not
-# before.
-ITEMS=/opt/unitill/web/public/assets/items
-if [ -d "$ITEMS" ] && [ ! -L "$ITEMS" ]; then
-    if [ -z "$(ls -A /var/lib/unitill/items 2>/dev/null)" ]; then
-        cp -R "$ITEMS/." /var/lib/unitill/items/ 2>/dev/null || true
-    fi
-    rm -rf "$ITEMS"
-fi
-ln -sfn /var/lib/unitill/items "$ITEMS"
-
+# /var/lib/unitill holds the kiosk first-boot marker (kiosk-setup-done) and
+# stays pos-owned. Nothing is provisioned under it any more (ut-docs#4401),
+# but a box first installed from an older .deb still has
+# web/public/assets/items as a symlink onto /var/lib/unitill/items: dpkg
+# keeps that symlink on upgrade and unpacks the shipped demo thumbs through
+# it as root, and the chown of /opt/unitill below does not follow it — so
+# this recursive chown is what keeps that tree pos-owned on those boxes.
 chown -R pos:pos /var/lib/unitill
 
 # Own the WHOLE install tree as the pos service user, not just data/assets.
@@ -62,7 +44,7 @@ chown -R pos:pos /opt/unitill
 # historically root:staff 2775 on stock Debian/Ubuntu (this container's
 # 0755 is not representative), which would put the symlink itself in a
 # group-writable directory. ln -sfn = idempotent, safe on upgrades too
-# (same pattern as the items symlink above); the symlink itself isn't
+# (same idempotent-symlink pattern); the symlink itself isn't
 # package-owned (unlike the target), so it's removed again by
 # postremove.sh on remove/purge.
 ln -sfn /usr/lib/unitill/unitill-uninstall /usr/bin/unitill-uninstall

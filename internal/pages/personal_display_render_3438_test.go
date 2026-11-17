@@ -18,9 +18,9 @@ import (
 
 // ut-docs#3438 (personal display, part 2/3): every page render and the
 // theme-sync poll read the theme through Deps.ResolvedTheme(r), and the sell
-// screen reads its browsing mode through Deps.ResolvedBrowsingMode(r). The
-// personal_display grant is not seeded to any role (part 3, #3440), so these
-// tests insert it by hand.
+// screen reads its browsing mode through Deps.ResolvedBrowsingMode(r). Migration
+// 102 (part 3, #3440) now seeds the manager grant; grant() stays as an
+// idempotent explicit statement of the precondition.
 
 const (
 	pd3438Till     = "slate"
@@ -64,7 +64,7 @@ func newPD3438Rig(t *testing.T) pd3438Rig {
 
 func (r pd3438Rig) grant(t *testing.T) {
 	t.Helper()
-	if _, err := r.d.Db.Exec(`INSERT INTO role_permissions(role,action,granted) VALUES('manager','personal_display',1)`); err != nil {
+	if _, err := r.d.Db.Exec(`INSERT OR REPLACE INTO role_permissions(role,action,granted) VALUES('manager','personal_display',1)`); err != nil {
 		t.Fatalf("grant personal_display: %v", err)
 	}
 }

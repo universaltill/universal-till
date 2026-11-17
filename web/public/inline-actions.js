@@ -154,7 +154,7 @@
   }
   // Receipt reprint (receipt.html): the same POST as before; a 451 is the
   // customer-document gate's refusal (ADR-0124), never a printer fault, so
-  // it never falls back to window.print().
+  // it never falls back to printing (printPage).
   // ut-docs#4714: a self-order customer's language pick (the Print button's
   // data-customer-locale) rides along so a manual print matches the
   // auto-print; the journal's reprint sends none (the shop's copy).
@@ -166,6 +166,44 @@
     }
     return fetch('/api/print/receipt/' + encodeURIComponent(no), opts);
   }
+  // ut-docs#6153: the till's only print entry point. Android System WebView
+  // ignores window.print(), so the Android app's bridge opens the system
+  // dialog there; every other shell (desktop, Pi kiosk, iOS) keeps window.print().
+  // A false return (kiosk pinned, dialog already open) prints nothing: never
+  // fall through to the no-op window.print().
+  function printPage() {
+    var k = window.AndroidKiosk;
+    if (k && typeof k.print === 'function') { try { k.print(); } catch (e) {} return; }
+    // ut-docs#6154: on the Pi kiosk's own screen with no OS printer the
+    // browser dialog can only "Save as PDF" to a home nobody can reach —
+    // show the server-rendered inline notice instead. Never window.print(),
+    // even if the notice is missing. Non-modal; focus stays on the button.
+    if (document.documentElement.getAttribute('data-browser-print') === 'off') {
+      var n = byId('ut-print-unavailable');
+      if (n) {
+        // Re-announce a second press: hide, then show on the next frame.
+        var show = function () {
+          n.classList.remove('hide'); n.hidden = false;
+          try { n.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+        };
+        if (!n.hidden) {
+          n.hidden = true;
+          if (window.requestAnimationFrame) window.requestAnimationFrame(show); else show();
+        } else show();
+      }
+      return;
+    }
+    window.print();
+  }
+  // The notice must not linger over another page after a navigation swap.
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || !(t.tagName === 'MAIN' || t.id === 'ut-page' || t.tagName === 'BODY')) return;
+    var n = byId('ut-print-unavailable');
+    if (n) n.hidden = true;
+  });
+  var UTns = window.UT = window.UT || {};
+  UTns.print = printPage;
   // Where the save-error step's line goes: right after the posting form;
   // a form-less carrier (a lone checkbox) uses its card.
   function saveErrorAnchor(el) {
@@ -208,6 +246,8 @@
     'ok-2xx': function (ctx) { var x = xhrOf(ctx); return !!(x && x.status >= 200 && x.status < 300); },
     // users.html / elevation: X-UT-Response tells success from a refusal.
     'ut-ok': function (ctx) { return header(ctx, 'X-UT-Response') === 'ok'; },
+    // ut-docs#6152: X-UT-Response equals the argument (e.g. print-slip).
+    'ut-response': function (ctx, arg) { return header(ctx, 'X-UT-Response') === arg; },
     // A settings save that answered with HTML (an elevation prompt) must
     // not reload over it.
     'not-html': function (ctx) { return header(ctx, 'Content-Type').indexOf('text/html') === -1; },
@@ -230,7 +270,7 @@
     },
     // Open without leaving focus inside the dialog (menu.html's deposit
     // refund: show() would focus its first field and pop the OSK). A
-    // dialog in base.html's focus trap (ut-docs#3212) would pull focus
+    // dialog in ut-motion.js's focus trap (ut-docs#3212) would pull focus
     // restored to the page behind straight back to that first field (the
     // native keyboard on #1248's hardware), so there focus is left on the
     // body: the next Tab enters the dialog.
@@ -246,13 +286,14 @@
       }
     },
     'close': function (ctx, id) { closeDialog(byId(id)); },
-    // Close and drop its content (self-order kiosk: the next open swaps
-    // fresh markup in; stale markup must never flash).
+    // Close (self-order kiosk). Dropping the markup is the dialog's own
+    // data-ut-clear-on-close, done by ut-motion.js AFTER the closing shrink
+    // (ut-docs#2972): emptying it here handed the shrink a blank element.
+    // The next open swaps fresh markup in, so stale markup never flashes.
     'close-clear': function (ctx, id) {
       var d = byId(id);
       if (!d) return;
       closeDialog(d);
-      d.innerHTML = '';
     },
     // Close the dialog this control sits in. On a link (the in-shell
     // "← Catalog" back link) it also stops the navigation.
@@ -384,7 +425,7 @@
       if (f.utConfirmed) { f.utConfirmed = false; return; }
       var q = f.getAttribute('data-confirm-text') || '';
       if (!(window.UT && window.UT.confirm && byId('ut-confirm'))) {
-        if (!window.confirm(q)) { preventDefault(ctx); return false; }
+        if (!window.confirm(q)) { preventDefault(ctx); return false; } // native-confirm:allow no #ut-confirm shell (login/setup/self-order pages): native fallback
         return;
       }
       preventDefault(ctx);
@@ -467,7 +508,7 @@
     // ---- navigation / window ----
     'go': function (ctx, path) { var p = safePath(path); if (p) window.location.href = p; },
     'reload-page': function () { location.reload(); },
-    'print': function () { window.print(); },
+    'print': function () { printPage(); },
     // Ends the bubbling walk: ancestors' data-action does not run.
     'stop': function () {},
 
@@ -482,15 +523,15 @@
     'dismiss-shop-name-notice': function () { if (window.utShopNameNoticeDismiss) window.utShopNameNoticeDismiss(); }, // ut-docs#3114
     'dismiss-move-approval-notice': function () { if (window.utMoveApprovalNoticeDismiss) window.utMoveApprovalNoticeDismiss(); }, // ut-docs#5127
     // receipt.html's "ask" prompt: Print hides the prompt BEFORE any
-    // window.print() fallback, so the question never lands on paper.
+    // print fallback, so the question never lands on paper.
     'receipt-ask-print': function (ctx, no) {
       var el = byId('receipt-ask');
       reprint(no, ctx.el.getAttribute('data-customer-locale')).then(function (r) {
         if (el) el.hidden = true;
-        if (!r.ok && r.status !== 451) window.print();
+        if (!r.ok && r.status !== 451) printPage();
       }).catch(function () {
         if (el) el.hidden = true;
-        window.print();
+        printPage();
       });
     },
     // receipt.html's Print: ✓ on success (data-done-text), disabled on the
@@ -500,8 +541,8 @@
       reprint(no, b.getAttribute('data-customer-locale')).then(function (r) {
         if (r.ok) b.textContent = b.getAttribute('data-done-text') || b.textContent;
         else if (r.status === 451) b.disabled = true;
-        else window.print();
-      }).catch(function () { window.print(); });
+        else printPage();
+      }).catch(function () { printPage(); });
     }
   };
 
@@ -552,6 +593,56 @@
   document.addEventListener('click', function (ev) {
     dispatch(ev.target, 'data-action', ev, null);
   }, true);
+
+  // ut-docs#5619 / #6550: Settings > Backups "Save to Downloads" in the Android
+  // app. The till process cannot write the shared Downloads folder (scoped
+  // storage; it may be a USB drive), so the button opens the system save picker
+  // through the app's bridge (window.AndroidKiosk.saveBackupCopy) instead of the
+  // server-side copy. This lives HERE, not in a settings.html script: this file
+  // is loaded once per document outside #ut-page, so the shell's
+  // dropPageListeners() (which removes every document listener a page script
+  // adds on each boosted swap) can never remove it. The old inline script
+  // guarded on window.utBackupSaveResult, which outlived its listener, so from
+  // the second visit to Settings the button was a plain htmx POST. No
+  // window-flag guard here: this registers exactly once per document load.
+  // Messages are read at call time from data-picker-* on #backup-dl-msg (the
+  // current page locale; this file carries no user-facing literals).
+  function backupSay(key, ok) {
+    var el = byId('backup-dl-msg');
+    if (!el) return;
+    el.textContent = (ok ? '\u2713 ' : '\u2717 ') + (el.getAttribute('data-picker-' + key.replace('_', '-')) || el.getAttribute('data-picker-failed') || '');
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    var b = t && t.closest ? t.closest('[data-backup-save]') : null;
+    if (!b) return;
+    // Resolved at click time, never cached at load; truthiness, not
+    // typeof === 'function' (some WebViews report bridge methods as 'object').
+    var K = window.AndroidKiosk;
+    if (K && K.saveBackupCopy) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      try { K.saveBackupCopy(b.getAttribute('data-backup-save')); } catch (e) { backupSay('failed', false); }
+      return;
+    }
+    // Rendered for the Android app but the bridge is missing (old app, bridge
+    // not injected): the server could only answer "use the picker", a dead end.
+    if (b.hasAttribute('data-backup-native')) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      backupSay('unavailable', false);
+    }
+    // Anywhere else the button's own hx-post does the server-side copy.
+  }, true);
+  // Called by the Android app (MainActivity.kt reportBackupSave) by this exact name.
+  window.utBackupSaveResult = function (code, name) {
+    var known = { saved: 1, cancelled: 1, failed: 1, no_space: 1 };
+    backupSay(known[code] ? code : 'failed', code === 'saved');
+    // The copy happened even if the operator has left Settings meanwhile.
+    if (code === 'saved' && window.htmx) {
+      window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
+    }
+  };
 
   // ---- DOM form/dialog events ----------------------------------------------
   [['input', 'data-input'], ['change', 'data-change'],

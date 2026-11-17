@@ -156,3 +156,41 @@ func TestSeed_WritesChannelOrders(t *testing.T) {
 		t.Fatalf("channel orders = %d err=%v, want 3", n, err)
 	}
 }
+
+// ut-docs#6157: the vouchers topic's screenshot is the detail page of one
+// seeded gift voucher, so it must exist exactly once, with fixed stamps.
+func TestSeed_WritesOneFixedGiftVoucher(t *testing.T) {
+	conn := newSeededDB(t)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ { // second call must add nothing
+		if err := seed(ctx, conn.DB); err != nil {
+			t.Fatalf("seed #%d: %v", i+1, err)
+		}
+	}
+	var n int
+	if err := conn.DB.QueryRow(`SELECT COUNT(*) FROM vouchers`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("got %d vouchers, want 1", n)
+	}
+	var id, status, created string
+	var orig, bal int64
+	if err := conn.DB.QueryRow(`SELECT id, status, original_amount, balance, created_at FROM vouchers`).Scan(&id, &status, &orig, &bal, &created); err != nil {
+		t.Fatal(err)
+	}
+	if id != docsVoucherID || status != "active" || orig <= 0 || bal != orig {
+		t.Errorf("voucher = %q %q orig=%d bal=%d", id, status, orig, bal)
+	}
+	if len(created) < 7 || created[:7] != "2025-12" {
+		t.Errorf("created_at = %q, want a fixed 2025-12 stamp", created)
+	}
+	var tx int
+	var amt int64
+	if err := conn.DB.QueryRow(`SELECT COUNT(*), COALESCE(SUM(amount),0) FROM voucher_transactions WHERE voucher_id = ? AND type = 'issue' AND created_at = ?`, id, created).Scan(&tx, &amt); err != nil {
+		t.Fatal(err)
+	}
+	if tx != 1 || amt != orig {
+		t.Errorf("issue rows = %d amount=%d, want 1 and %d", tx, amt, orig)
+	}
+}

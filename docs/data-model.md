@@ -73,7 +73,7 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `sales_aggregate_uploads` — which daily per-till sales rollups the cloud
   has accepted (content-hash ledger for the ADR-0111 upload,
   ut-docs#2535; migration 038), plus the source fingerprint each was built
-  from, so a past day whose sales, voids and no-sale opens did not change is
+  from, so a past day whose sales, voids, no-sale opens and cleared baskets did not change is
   not rebuilt (ut-docs#2559; migration 085)
 - `no_sale_events` — "No sale" cash-drawer opens (`POST /api/pos/no-sale`,
   gated by the `cash_adjustment` permission or a manager PIN; recorded only
@@ -93,7 +93,9 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   (`POST /api/sync/cleared-baskets`, cursor
   `sync.cleared_basket_push_cursor`), where they are stored with `till_id` =
   the reporting till's `tills.id`, so the main till's report counts every
-  till's clears once (ut-docs#4711)
+  till's clears once (ut-docs#4711). The ADR-0111 rollup reports them as
+  `cleared_basket_count` / `cleared_basket_total_minor` per business date and
+  till, never as part of net sales (ut-docs#4721)
 
 ### 5. Shifts & audit
 
@@ -804,7 +806,9 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   retries. Best-effort, after the last commit; a removal counts as a change.
   Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
   `option_set` (applier version 2, ut-docs#4491), `item_variant`,
-  `item_barcode` (applier version 3, ut-docs#4521). Every other kind is
+  `item_barcode` (applier version 3, ut-docs#4521); version 5 re-pulls so
+  every item base holds `is_weighed`, `age_restricted` and the net-quantity
+  pair (ut-docs#6082/#6202). Every other kind is
   skipped, cursor advancing: `layout`, `staff`, `setting` (ut-docs#4492),
   and any unknown kind. Each applied
   row writes an `audit_log` row (`actor system`, action
@@ -826,8 +830,16 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   a pull, an upload answer, a conflict answer, a resync or an applier re-pull
   — they are not applied, so the till's values survive. A create applies them
   as served. When the cloud gains a write path for one, it leaves that set
-  and `ApplierVersion` is bumped. `icon` is still applied as served
-  (ut-docs#6071).
+  and the till release **promotes** it: a migration sets every linked row's
+  base for the field to the cloud's default and marks each row whose local
+  value differs, so the first upload seeds the cloud and the pull keeps the
+  till value meanwhile (no `ApplierVersion` bump: a re-pull without those
+  marks would reset till values). A replica never marks, so
+  `POST /api/sync/promote` re-runs that mark-and-seed step for each promoted
+  field (`data.promotedUploadFields`, ut-docs#6240). `icon` (item and category) is mastered
+  since contract 1.2.0 (ut-docs#6071, migration 103): its value is the raw
+  stored icon id, applied as served on a create, a mastered change or clear,
+  and kept on a linked row while its upload is pending.
   `modifier_group`: name, required, min_select, max_select, sort_order (the
   group row's own legacy column; not negative), active, options — the full
   ordered option set `[{id, name, price_delta_minor, active}]` (an option left
@@ -964,13 +976,17 @@ channels. `internal/stockupload` uploads the rows whose quantity changed;
 
 The main till of a cloud-master store uploads its own catalogue edits
 (`internal/catalogpull` `Push`, contract ut-docs
-`reference/contracts/cloud-catalog-changes.md` 1.0.0), every tick **before**
+`reference/contracts/cloud-catalog-changes.md` 1.2.0), every tick **before**
 it pulls (`internal/cloudsync` `pullCloudCatalog`).
 
-- **What uploads (1.0.0):** items (`name`, `description`, `sku`,
-  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`, and the
-  whole item-level `barcodes` set), categories (`name`, `parent_cloud_id`,
-  `sort_order`, `active`), tax codes (`name`, `rate_basis_points`,
+- **What uploads (1.2.0):** items (`name`, `description`, `sku`,
+  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`,
+  `is_weighed`, `age_restricted`, `net_quantity_value`, `net_quantity_unit`,
+  `icon` (the raw stored icon id, `""` = none; a malformed stored id is never
+  uploaded, ut-docs#6071), and the whole item-level `barcodes` set; the net-quantity pair always
+  uploads together — a change to either half sends both, ut-docs#6082/#6202),
+  categories (`name`, `parent_cloud_id`,
+  `sort_order`, `active`, `icon`), tax codes (`name`, `rate_basis_points`,
   `takeaway_rate_basis_points`, `active`). Other kinds and fields are not
   uploaded yet (the cloud's write path does not take them); a pull still
   overwrites them.
@@ -980,7 +996,14 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   `seal_seq` order; `cloud_outbox_suppress(one)` — a flag row that exists
   only inside the pull's own write transaction. `cloud_links` gains `base`
   (JSON of the uploadable fields the till last adopted from the cloud) and
-  `echo_version`.
+  `echo_version`. Migration 102 widens the item update trigger to the four
+  1.1.0 item columns and fills them into existing item bases from the local
+  row (a base that is not valid JSON is left alone). Migration 103
+  (ut-docs#6071) widens the item and category update triggers to `icon`, sets
+  every linked base's `icon` to `""` (what the cloud holds: it never wrote
+  the column) and marks each linked row whose local icon is set, where the
+  trigger would mark; applier-3 links without a base get the same from
+  `seedBases`.
 - **Marks are written by triggers** on `items`, `item_barcodes`,
   `categories` and `tax_codes` (insert, delete, update of an uploadable
   column), in the same transaction as the write, whatever path wrote it.

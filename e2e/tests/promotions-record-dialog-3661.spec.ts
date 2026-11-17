@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { execFileSync } from 'child_process';
-import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 import { REPO_ROOT } from './worker-till';
 
 // ut-docs#3661: /promotions adopts the ut-docs#2010 list + record dialog
@@ -343,6 +343,7 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
 
   // ut-docs#5574: typed text with nothing picked is refused, never a silent clear.
   test('typed but unpicked customer text is refused and nothing changes', async ({ page }) => {
+    noNativeDialogs(page);
     const assertClean = watchConsole(page);
     const code = 'UP5574';
     const cust = customerId();
@@ -356,8 +357,8 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(page.locator('#promo-cust-q')).toHaveAttribute('aria-invalid', 'true');
     // A re-open does not carry the stale refusal (Escape on a dirty form asks
     // to discard first).
-    page.once('dialog', (d) => d.accept());
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'confirm');
     await expect(page.locator(DIALOG)).toBeHidden();
     await row(page, code).locator('[data-record-edit]').click();
     await expect(page.locator('#promotion-dialog-msg')).not.toContainText('Choose a customer');

@@ -2,6 +2,10 @@ name: ci
 on:
   push: { branches: [ main ] }
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -90,6 +94,8 @@ jobs:
         run: bash scripts/ci/latest-stable-tag_test.sh
       - name: Release checksums completeness check regression test (ut-docs#2863)
         run: bash scripts/ci/check-release-checksums_test.sh
+      - name: Locale overlay builder self-test (ut-docs#4371)
+        run: bash scripts/ci/build-locale-overlay_test.sh
       - name: Marketplace signing key resolution + release wiring self-test (ADR-0158, ut-docs#4292)
         run: bash scripts/ci/resolve-marketplace-key_test.sh
       - name: Release key check applies to the server, not the desktop shells — wiring + behaviour test (ut-docs#4356)
@@ -166,6 +172,10 @@ jobs:
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
         run: bash scripts/ci/guard-data-access_test.sh
+      - name: PR-concurrency guard (ut-docs#6145)
+        run: bash scripts/ci/guard-pr-concurrency.sh
+      - name: PR-concurrency guard regression test
+        run: bash scripts/ci/guard-pr-concurrency_test.sh
       # ADR-0113 §1.6 (ut-docs#2795): every outbound HTTP client and raw dial
       # is built by internal/netaccess, so the demo till can deny them all.
       - name: Outbound-network (netaccess) guard
@@ -203,6 +213,12 @@ jobs:
         run: bash scripts/ci/guard-no-showmodal.sh
       - name: No-showModal guard regression test
         run: bash scripts/ci/guard-no-showmodal_test.sh
+      # ut-docs#6116: no till surface asks with the browser's window.confirm --
+      # it makes the status bar and Lock inert; UT.confirm (till-confirm.js).
+      - name: No-native-confirm guard
+        run: bash scripts/ci/guard-no-native-confirm.sh
+      - name: No-native-confirm guard regression test
+        run: bash scripts/ci/guard-no-native-confirm_test.sh
       # ut-docs#4375 (ADR-0160 §8): no physical left/right CSS -- the till lays
       # out right-to-left for ar/fa/he/ur; shrink-only baseline for old lines.
       - name: RTL logical-CSS guard
@@ -390,6 +406,10 @@ jobs:
         run: bash scripts/ci/guard-ios-usage-descriptions.sh
       - name: iOS usage-description guard regression test
         run: bash scripts/ci/guard-ios-usage-descriptions_test.sh
+      - name: iOS Tap to Pay default-off guard (ut-docs#3049)
+        run: bash scripts/ci/guard-ios-tap-to-pay-default-off.sh
+      - name: iOS Tap to Pay default-off guard regression test
+        run: bash scripts/ci/guard-ios-tap-to-pay-default-off_test.sh
       - name: Android WebView network-state guard (ut-docs#3088)
         run: bash scripts/ci/guard-android-network-state.sh
       - name: Android WebView network-state guard regression test
@@ -398,6 +418,12 @@ jobs:
         run: bash scripts/ci/guard-android-abi-packages.sh
       - name: Android per-ABI packages guard regression test
         run: bash scripts/ci/guard-android-abi-packages_test.sh
+      - name: libc fork pin guard (ut-docs#6300, ADR-0188)
+        run: bash scripts/ci/guard-libc-fork.sh
+      - name: libc fork pin guard regression test
+        run: bash scripts/ci/guard-libc-fork_test.sh
+      - name: armv7 seccomp log checker regression test (ut-docs#6300)
+        run: bash scripts/ci/guard-armv7-seccomp_test.sh
       - name: Android MainActivity configChanges guard (ut-docs#2788)
         run: bash scripts/ci/guard-android-config-changes.sh
       - name: Android MainActivity configChanges guard regression test
@@ -1060,9 +1086,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Self-test runs first and unconditionally (no ut-docs checkout
-      # needed), mirroring lang-pack-drift.yml's own "self-tests run first,
-      # even if a later step would fail" convention and this file's other
-      # guards' `_test.sh`-then-guard ordering — so a red run always tells
+      # needed): self-tests run first, even if a later step would fail,
+      # matching this file's other guards' `_test.sh`-then-guard ordering — so a red run always tells
       # you whether the guard mechanism itself is sound, not just whether
       # the taxonomy agrees.
       - name: ADR-0002 plugin taxonomy drift guard regression test
@@ -1103,3 +1128,67 @@ jobs:
       - name: Warn that the taxonomy guards will skip
         if: env.DOCS_READ_TOKEN == ''
         run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, the ADR-0002, cross-ADR taxonomy and SDK reference guards will be skipped"
+
+  # ut-docs#6300, ADR-0188: the armv7 Android app must boot on an Android 8-10
+  # app seccomp filter (Fire OS 7), which kills a process with SIGSYS on a
+  # syscall number it does not know. Runs the real mobile.Start boot path
+  # cross-built for linux/arm under qemu-arm -strace and checks every syscall
+  # against the Android 9 allow-list. Always on (no path filter): path-filtered
+  # PR triggers proved unreliable (see android-ci.yml's header).
+  # The last step SIMULATES the kill: a pinned Linux 4.9 armhf kernel under
+  # qemu-system-arm with the byte-exact AOSP android-9.0.0_r61 app filter; the
+  # pristine build must be killed (SIGSYS, statx), the fork must boot.
+  armv7-seccomp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Least privilege: checkout only; no secrets, no writes.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
+      - name: Install qemu-user and qemu-system-arm
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends qemu-user qemu-system-arm
+      - name: libc fork pin
+        run: bash scripts/ci/guard-libc-fork.sh
+      - name: Fork == upstream + reviewed patch (only when the pin, patch or guard changed)
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "${base}" ] || ! git diff --quiet "${base}" HEAD -- go.mod go.sum scripts/ci/libc-ut.patch scripts/ci/guard-libc-fork.sh 2>/dev/null; then
+            bash scripts/ci/guard-libc-fork.sh --verify-upstream
+          else
+            echo "pin, patch and guard unchanged, skipping the network proof"
+          fi
+      - name: armv7 boot stays inside the Android 9 seccomp allow-list
+        run: bash scripts/ci/guard-armv7-seccomp.sh "" "${RUNNER_TEMP}/smoke-fork"
+      # NEGATIVE proof: with the replace removed (pristine libc) the same guard
+      # must FAIL and name statx, otherwise it cannot see the bug.
+      - name: armv7 guard must fail on pristine libc
+        run: |
+          T="$(mktemp -d)"
+          cp go.mod go.sum "${T}/"
+          go mod edit -modfile="${T}/go.mod" -dropreplace modernc.org/libc
+          go mod tidy -modfile="${T}/go.mod"
+          if bash scripts/ci/guard-armv7-seccomp.sh "${T}/go.mod" "${RUNNER_TEMP}/smoke-pristine" > "${T}/out" 2>&1; then
+            echo "::error::guard passed on pristine libc; it can no longer see the bug"; cat "${T}/out"; exit 1
+          fi
+          grep -q statx "${T}/out" || { echo "::error::guard failed on pristine libc but did not name statx"; cat "${T}/out"; exit 1; }
+          echo "negative proof ok: pristine libc is rejected"
+      # ut-docs#6300 simulator: pinned kernel (sha256, https) cached between runs.
+      - name: Cache the simulator kernel
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ut-armv7sim
+          key: armv7sim-kernel-500d153687354a9085d1b50e5c03659ccf56c5d4330f2929f04134486c470894
+      - name: armv7 seccomp SIMULATOR (pristine libc is killed, fork boots)
+        run: bash scripts/ci/sim-armv7-seccomp.sh --fork "${RUNNER_TEMP}/smoke-fork" --pristine "${RUNNER_TEMP}/smoke-pristine" --log "${RUNNER_TEMP}/sim.log"
+      - name: Upload the simulator console log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: armv7-sim-console
+          path: ${{ runner.temp }}/sim.log
+          retention-days: 7
+          if-no-files-found: ignore

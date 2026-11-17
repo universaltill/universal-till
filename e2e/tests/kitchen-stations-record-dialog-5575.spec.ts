@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload, answerTillConfirm } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#5575: /kitchen-stations adopts the ut-docs#2010 list + record dialog
 // standard (modelled on promotions-record-dialog-3661.spec.ts). The old page
@@ -91,6 +91,7 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
 
   // AC2: +, name button and row tap all open the dialog; scrim, status, Escape, focus return.
   test('+, name button and row tap open the dialog; Escape discards with a guard; focus returns', async ({ page }) => {
+    noNativeDialogs(page);
     const assertClean = watchConsole(page);
     const name = 'Open5575';
     await seed(page, name);
@@ -119,11 +120,11 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
     await expect(page.locator(`${FORM} input[name="printer_address"]`)).toHaveValue('192.0.2.10:9100');
     // Dirty edit: Escape asks first; declining keeps the dialog open.
     await page.locator(`${FORM} input[name="name"]`).fill('Changed');
-    page.once('dialog', (d) => d.dismiss());
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'cancel');
     await expect(page.locator(DIALOG)).toBeVisible();
-    page.once('dialog', (d) => d.accept());
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'confirm');
     await expect(page.locator(DIALOG)).toBeHidden();
     await expect(nameBtn).toBeFocused();
 
@@ -197,6 +198,7 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
 
   // AC7: discovery inside the dialog (stubbed), in create and edit mode.
   test('Find printers fills the address without submitting, and clears on reopen', async ({ page }) => {
+    noNativeDialogs(page);
     const assertClean = watchConsole(page);
     const name = 'Disc5575';
     await seed(page, name);
@@ -217,8 +219,8 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
       await expect(page.locator('#discover-printers-msg')).toContainText(/tap save/i);
       expect(posts, 'Use this address must not submit').toBe(0);
       // The address change counts as dirty: Escape asks before discarding.
-      page.once('dialog', (d) => d.accept());
       await page.keyboard.press('Escape');
+      await answerTillConfirm(page, 'confirm');
       await expect(page.locator(DIALOG)).toBeHidden();
     }
     await page.locator('#kitchen-stations-new').click();

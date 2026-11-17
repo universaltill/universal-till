@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -386,6 +387,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// reached a plugin and approved, with that leg's own idempotency key —
 	// what a refused cannot-sign tender must reverse (ADR-0136 Decision 2).
 	var capturedLegs []capturedPaymentLeg
+	// legRequestIDs[i] is leg i's authorize event id when that authorize was
+	// dispatched to a plugin, "" otherwise; the settle event carries it so a
+	// plugin can match its own approval exactly (ut-docs#6438).
+	legRequestIDs := make([]string, len(payments))
 	for i, p := range payments {
 		amount := p.Amount
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -487,8 +492,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				log.Printf("tender: ignoring reader-reported tip %d for method %q (attempt %s): a voucher leg or an amount overflow", tip, p.MethodID, requestID)
 			}
 		}
+		// ut-docs#6438: the provider reference a later refund needs lives on
+		// the payment row (trace_id), not in plugin storage. Never auth_code:
+		// that is printed on the customer receipt.
+		if ref, ok := pluginReportedTransactionRef(resp); ok {
+			if old := payments[i].TraceID; old != "" && old != ref {
+				log.Printf("tender: plugin transaction_ref replaces trace_id for method %q (attempt %s)", p.MethodID, requestID)
+			}
+			payments[i].TraceID = ref
+		} else if len(resp) > 0 && strings.Contains(string(resp), `"transaction_ref"`) {
+			log.Printf("tender: ignoring malformed transaction_ref from method %q (attempt %s)", p.MethodID, requestID)
+		}
 		if dispatched {
-			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured})
+			legRequestIDs[i] = requestID
+			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured, transactionRef: payments[i].TraceID, tipAmount: payments[i].TipAmount})
 		}
 	}
 
@@ -710,15 +727,24 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			byMethod[e.EntryKey] = e
 		}
 		bus := plugins.SharedBus(d.Db)
-		for _, p := range payments {
+		for i, p := range payments {
 			if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
-				_, _ = bus.Publish(ctx, e.TriggerEvent, map[string]any{
+				settle := map[string]any{
 					"sale_id":   saleID,
 					"method":    p.MethodID,
 					"amount":    p.Amount.Minor(),
 					"reference": p.Reference,
 					"plugin_id": e.PluginID,
-				})
+				}
+				// ut-docs#6438: the leg's authorize id, and the reference core
+				// now holds. A plugin seeing transaction_ref writes nothing.
+				if i < len(legRequestIDs) && legRequestIDs[i] != "" {
+					settle["authorize_request_id"] = legRequestIDs[i]
+				}
+				if p.TraceID != "" {
+					settle["transaction_ref"] = p.TraceID
+				}
+				_, _ = bus.Publish(ctx, e.TriggerEvent, settle)
 			}
 		}
 	}
@@ -914,6 +940,34 @@ func pluginReportedTipAmount(resp json.RawMessage) (amount int64, ok bool) {
 		return 0, false
 	}
 	return *parsed.TipAmount, true
+}
+
+// pluginReportedTransactionRef extracts an optional `transaction_ref` from a
+// payment.<key>.authorize answer: the provider reference (Stripe PaymentIntent
+// id, SumUp transaction id) a later refund needs. Core keeps it in the payment
+// row's trace_id (ut-docs#6438, ADR-0196) and returns it on .refund as
+// original_payments. Accepted only if, trimmed, 1..128 bytes of printable
+// ASCII (0x21..0x7E); anything else is ignored and the sale is unaffected.
+func pluginReportedTransactionRef(resp json.RawMessage) (string, bool) {
+	if len(resp) == 0 {
+		return "", false
+	}
+	var parsed struct {
+		Ref *string `json:"transaction_ref"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil || parsed.Ref == nil {
+		return "", false
+	}
+	ref := strings.TrimSpace(*parsed.Ref)
+	if ref == "" || len(ref) > 128 {
+		return "", false
+	}
+	for i := 0; i < len(ref); i++ {
+		if ref[i] < 0x21 || ref[i] > 0x7E {
+			return "", false
+		}
+	}
+	return ref, true
 }
 
 // resolveReceiptScanDestination is the ut-docs#1818 scan-routing decision:
@@ -2701,7 +2755,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
+		funcs := httpx.WithBrowserPrint(httpx.FuncsFor(locale), r)
 		// writeTenderView swaps the post-tender view into #basket, plus the
 		// recent-sales journal out of band.
 		writeTenderView := func(viewHTML string) {
@@ -2829,8 +2883,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				iv.Holder = t.HolderLabel
 				iv.Balance = t.BalanceAfterMinor
 				iv.HasBalance = true
+				iv.At = t.CreatedAt
 			}
 			issuedVouchers = append(issuedVouchers, iv)
+		}
+		// ut-docs#6179: the issue date of each issued voucher is read back from
+		// the committed row, once — the paper slip reads the same rows, so the
+		// dates agree by construction. A read error leaves no date line.
+		hasIssued := false
+		for _, iv := range issuedVouchers {
+			hasIssued = hasIssued || !iv.TopUp
+		}
+		if hasIssued {
+			if rows, vErr := repo.VouchersIssuedInSale(r.Context(), saleID); vErr == nil {
+				created := make(map[string]string, len(rows))
+				for _, row := range rows {
+					created[row.ID] = row.CreatedAt
+				}
+				for i := range issuedVouchers {
+					if !issuedVouchers[i].TopUp {
+						issuedVouchers[i].At = created[issuedVouchers[i].Code]
+					}
+				}
+			}
 		}
 		design := receiptDesignFromSettings(r.Context(), d)
 		// ut-docs#908: the customer order-tracking QR on the counter
@@ -2850,7 +2925,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
 		if renderErr != nil {
 			printerUnavailable = true
-			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
+			receiptHTML = receiptPrinterWarningHTML(funcs["T"].(func(string) string), httpx.BrowserPrintOff(r), canPerform(d, r, "settings"))
+		}
+
+		// ut-docs#6152: with printer.voucher_slip on, the browser-printed
+		// receipt carries the gift slips too (print-only, each on its own
+		// page), in the printed receipt's language, as paper does. Never in
+		// a suppressed market (returned above); a render failure degrades
+		// to no slips.
+		if renderErr == nil && printerCfg.VoucherSlip && len(issuedVouchers) > 0 {
+			pl := receiptPrintLocale(customerLocale, locale)
+			set := browserSlipSet{Lang: pl, Dir: slipDir(pl),
+				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, voucherSlipLines(design.VoucherSlipText), issuedVouchers)}
+			if slips, err := renderBrowserSlips("voucher_slips_receipt", pl, set); err != nil {
+				log.Printf("tender: browser voucher slips skipped: %v", err)
+			} else {
+				receiptHTML += string(slips)
+			}
 		}
 
 		writeTenderView(receiptHTML)
@@ -2976,6 +3067,9 @@ type receiptVoucherIssue struct {
 	// SinglePurpose (ut-docs#5739): taxed into the subtotal, so NOT part of
 	// the "Vouchers issued" liability row.
 	SinglePurpose bool
+	// At is the stored created_at of the voucher row (issued) or its top_up row
+	// (top-up): the slip's date line. "" = no line (ut-docs#6179).
+	At string
 }
 
 // newReceiptVoucherIssue maps a non-top-up voucher issue of the sale being
@@ -3131,6 +3225,16 @@ func normalizeLegalLines(text string, lines []string) []string {
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
 func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string, serviceCharge int64) (string, error) {
+	// ut-docs#6154: receipt.html reads browserprintoff/allowed; a hand-built
+	// funcs map (tests, other callers) gets the "browser print on" defaults.
+	if _, ok := funcs["browserprintoff"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["browserprintoff"] = func() bool { return false }
+	}
+	if _, ok := funcs["allowed"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["allowed"] = func(string) bool { return false }
+	}
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -3515,6 +3619,11 @@ type capturedPaymentLeg struct {
 	index     int
 	requestID string
 	amount    money.Money
+	// transactionRef / tipAmount: the provider reference core holds for this
+	// leg and the tip the reader added (ut-docs#6438), so a reversal can hand
+	// the plugin the charge it must undo.
+	transactionRef string
+	tipAmount      money.Money
 }
 
 // reverseCapturedPaymentLegs sends back every captured leg of a tender that
@@ -3548,6 +3657,13 @@ func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency st
 			"currency":             legCurrency,
 			"reversal":             true,
 			"authorize_request_id": leg.requestID,
+		}
+		if leg.transactionRef != "" {
+			payload["original_payments"] = []map[string]any{{
+				"transaction_ref": leg.transactionRef,
+				"amount":          amount.Minor(),
+				"tip_amount":      leg.tipAmount.Minor(),
+			}}
 		}
 		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "refund", "", payload); err != nil {
 			logging.L().Warnf("fiscal signing: tender refused as cannot-sign, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309)", p.MethodID, amount.Minor(), legCurrency, leg.requestID, err)
