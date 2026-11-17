@@ -66,7 +66,7 @@ const NoticeVersion = "checkin-notice-v1"
 // It must equal ut-cloud's default CLOUD_REFUSED_COUNTRIES (IR): a test pins
 // the value and the cloud side is documented in the wire contract. Compiled in
 // on purpose (ADR-0145: no services for Iran, nothing crosses planes).
-var DenyCountries = map[string]bool{"IR": true}
+var DenyCountries = map[string]bool{"IR": true} // core-neutral:allow ADR-0145 sanctions refusal compiled in on purpose; must equal ut-cloud CLOUD_REFUSED_COUNTRIES (ut-docs#6559)
 
 // Why a till does not register or report, for logs and tests.
 const (
