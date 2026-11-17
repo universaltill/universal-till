@@ -165,7 +165,7 @@ func renderNameShop(w http.ResponseWriter, r *http.Request, d *common.Deps, view
 	}
 	httpx.Render("ui/pages/name_shop.html", map[string]any{
 		"title":     httpx.T(httpx.RequestLocale(r), "page.title.name_shop"),
-		"theme":     d.CurrentState().Theme,
+		"theme":     d.ResolvedTheme(r),
 		"menuItems": d.MenuSnapshot(),
 		"view":      view,
 	})(w, r)
