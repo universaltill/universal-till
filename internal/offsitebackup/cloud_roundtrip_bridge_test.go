@@ -20,7 +20,7 @@ import (
 // (ut-docs#5066). It runs only with UT_5066_BRIDGE=<dir> and needs the cloud
 // half running: in ut-cloud,
 //
-//	UT_5066_BRIDGE=<dir> go test ./internal/httpapi/handlers -run TestTillBackup_RoundTripBridge
+//	UT_5066_BRIDGE=<dir> go test -tags bridge5066 ./internal/httpapi/handlers -run TestTillBackup_RoundTripBridge
 //
 // That serves the real handlers and writes <dir>/conn.json. Here a real till
 // DB is snapshotted, identity-stripped, encrypted and uploaded over HTTP; a
