@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Self-test for guard-mail-addresses.sh (ut-docs#4229). Builds throwaway git
 # repos in a fresh mktemp -d and runs the guard against each; never touches the
-# real tree. This file is byte-identical in ut-docs, universal-till, ut-cloud
-# and ut-infra (it finds the guard next to itself) -- see the guard's header.
+# real tree. This file is byte-identical in every repo that carries the guard
+# (it finds the guard next to itself) -- the list is in the guard's header.
 # Bad addresses are assembled from $D so this file never contains one itself.
 set -euo pipefail
 

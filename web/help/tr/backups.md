@@ -3,6 +3,7 @@ id: backups
 title: Yedekler
 section: İşi yürütme
 order: 250
+public: true
 summary: Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indirip güvenli bir yerde saklayabilirsiniz.
 ---
 
@@ -26,6 +27,8 @@ gerek yok. Windows'ta kasa henüz kendini yeniden başlatamaz — bunun
 yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
 Geri yükleme, yedek başka bir kasada alınmış olsa bile bu kasanın mağazanızın bulut hesabıyla kendi bağlantısını korur. Dosya bu kasanın kullanabileceği bir yedek değilse, kasa mevcut verilerinizi korur ve Ayarlar → Yedekler geri yüklemenin uygulanmadığını söyler.
+
+Geri yüklemeden sonra fiş numaraları ve Z numaraları ileri atlar; böylece kasanın yedekten sonra verdiği bir numara ikinci kez kullanılmaz. Ardından alınan ilk gün sonu raporu, kasanın bir yedekten geri yüklendiğini ve numaraların hangi numaradan devam ettiğini belirtir.
 
 ## Bir dosyadan geri yükleme
 

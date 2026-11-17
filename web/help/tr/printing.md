@@ -3,6 +3,7 @@ id: printing
 title: Fiş ve yazdırma
 section: İşi yürütme
 order: 230
+public: true
 summary: Fişleri, faturaları ve gün sonu raporlarını termal fiş yazıcısında veya normal ofis yazıcısında basar; mutfak siparişleri ayrı yazıcıya gidebilir.
 ---
 

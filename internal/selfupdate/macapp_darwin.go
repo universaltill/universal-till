@@ -43,17 +43,19 @@ func applyMacApp(ctx context.Context, appPath, version string, idle func() bool)
 	}
 	version = strings.TrimPrefix(rel.TagName, "v")
 	dmgName := fmt.Sprintf("unitill-pos-%s-macOS-arm64.dmg", version)
-	dmgURL, checksumsURL := "", ""
+	dmgURL := ""
 	for _, a := range rel.Assets {
-		switch {
-		case a.Name == dmgName:
+		if a.Name == dmgName {
 			dmgURL = a.URL
-		case a.Name == "checksums.txt":
-			checksumsURL = a.URL
 		}
 	}
 	if dmgURL == "" {
 		return fmt.Errorf("no macOS .dmg in release v%s", version)
+	}
+	// Integrity root (ADR-0178): the signed checksums, before any download.
+	checksums, err := verifiedChecksums(ctx, rel)
+	if err != nil {
+		return err
 	}
 
 	// A work dir that OUTLIVES this process — the helper runs after we quit.
@@ -76,10 +78,7 @@ func applyMacApp(ctx context.Context, appPath, version string, idle func() bool)
 	// Apply): every real release ships checksums.txt with the dmg's line
 	// appended by the macos-app release job, so a missing entry only ever
 	// means a broken or tampered release.
-	if checksumsURL == "" {
-		return cleanupOnErr(fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version))
-	}
-	want, err := checksumFor(ctx, checksumsURL, dmgName)
+	want, err := checksums.lookup(dmgName)
 	if err != nil {
 		return cleanupOnErr(err)
 	}

@@ -25,8 +25,12 @@ BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null)
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION) -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$(BUILD_DATE)
 # ADR-0158: `UT_MARKETPLACE_KEY_HEX=<hex> make build` compiles the marketplace
 # plugin-signing key in, as release builds do; unset = a source build.
+# ADR-0178: UT_RELEASE_KEYS_HEX (comma list of release public keys) arms the
+# self-updater's signature check; empty = SHA-256 only. Stamped with the
+# marketplace key (guard-release-key-stamped.sh pairs the two).
+UT_RELEASE_KEYS_HEX ?=
 ifneq ($(UT_MARKETPLACE_KEY_HEX),)
-LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX)
+LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX) -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$(UT_RELEASE_KEYS_HEX)
 endif
 
 .PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees

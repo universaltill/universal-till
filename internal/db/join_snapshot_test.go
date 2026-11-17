@@ -505,3 +505,119 @@ func TestRedactedJoinSnapshot_NullsPrevBearerHash(t *testing.T) {
 		t.Errorf("LIVE DB bearer_prev_hash = %q (%v), want hash-old", live, err)
 	}
 }
+
+// ut-docs#5074: the join snapshot never carries this till's sales-copy
+// cursor, change log or other tills' acknowledgements; the copied rows
+// themselves (data) stay, and the live DB is untouched.
+func TestRedactedJoinSnapshot_ResetsSalesMirrorBookkeeping(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	for _, s := range []string{
+		`INSERT INTO mirror_state (key, value) VALUES ('epoch', 'e1'), ('cursor', '42')`,
+		`INSERT INTO sales_mirror_log (op, ref_id) VALUES ('sale', 's1')`,
+		`INSERT INTO sales_mirror_acks (till_id, epoch, acked_seq, acked_at) VALUES ('t2', 'e1', 1, 'x')`,
+		`INSERT INTO mirror_sale_arrivals (id, completed_at, local_date) VALUES ('a1', 'x', '2026-10-25')`,
+		`INSERT INTO mirror_sales (id, src_seq, epoch, origin_till_id, receipt_no, status, sale_type, tender_type,
+  currency, subtotal, discount_total, tax_total, total, rounding, service_charge_amount, service_charge_tax_basis_bp,
+  voucher_issue_total, offline, created_at, local_date, received_at)
+  VALUES ('m1', 1, 'e1', 't3', 'T3-1', 'completed', 'sale', 'cash', 'GBP', 1, 0, 0, 1, 0, 0, 0, 0, 0, 'x', '2026-10-25', 'x')`,
+	} {
+		if _, err := d.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cdb.Close()
+	count := func(q *sql.DB, tb string) int {
+		var n int
+		if err := q.QueryRow(`SELECT COUNT(*) FROM ` + tb).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, tb := range []string{"mirror_state", "sales_mirror_log", "sales_mirror_acks", "mirror_sale_arrivals"} {
+		if n := count(cdb, tb); n != 0 {
+			t.Errorf("join snapshot %s has %d rows, want 0", tb, n)
+		}
+		if n := count(d.DB, tb); n == 0 {
+			t.Errorf("LIVE %s was emptied", tb)
+		}
+	}
+	if n := count(cdb, "mirror_sales"); n != 1 {
+		t.Errorf("join snapshot mirror_sales = %d, want the copied row kept", n)
+	}
+}
+
+// ut-docs#5808: a till that re-joins a promoted main till inherits, through
+// the join snapshot, the recording time of the sales that main till adopted
+// late (sales.recorded_at) and its Z-window floor, so a second promote still
+// counts each such sale in exactly one Z. Neither may be redacted.
+func TestRedactedJoinSnapshot_KeepsRecordedAtAndWindowFloor_5808(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	recorded := time.Now().UTC().Add(-90 * time.Second).Format(time.RFC3339)
+	floor := time.Now().UTC().Add(-2 * time.Minute).Format("2006-01-02 15:04:05")
+	for _, s := range []string{
+		`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at, recorded_at)
+  VALUES ('s1', 'R-1', 'completed', 'sale', 'GBP', 1, 0, 0, 1, '` + recorded + `', '` + recorded + `', '` + recorded + `')`,
+		`INSERT INTO settings (key, value) VALUES ('reports.eod_window_floor', '` + floor + `')`,
+	} {
+		if _, err := d.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cdb.Close()
+	var gotRec sql.NullString
+	if err := cdb.QueryRow(`SELECT recorded_at FROM sales WHERE id = 's1'`).Scan(&gotRec); err != nil {
+		t.Fatal(err)
+	}
+	if !gotRec.Valid || gotRec.String != recorded {
+		t.Errorf("join snapshot sales.recorded_at = %v, want %q", gotRec, recorded)
+	}
+	var gotFloor string
+	if err := cdb.QueryRow(`SELECT value FROM settings WHERE key = 'reports.eod_window_floor'`).Scan(&gotFloor); err != nil || gotFloor != floor {
+		t.Errorf("join snapshot eod_window_floor = %q (%v), want %q", gotFloor, err, floor)
+	}
+}
+
+func TestRedactedJoinSnapshot_StripsRestoreState(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('restore.marker', '{}'), ('restore.receipt_floor', '9000'), ('store.name', 'Shop')`); err != nil {
+		t.Fatal(err)
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	c := openTest(t, copyPath)
+	var n int
+	if err := c.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'restore.%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("restore.* in the join snapshot: %d %v", n, err)
+	}
+	if err := c.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'store.name'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("other settings must stay: %d %v", n, err)
+	}
+	var live int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'restore.%'`).Scan(&live); err != nil || live != 2 {
+		t.Fatalf("the live DB must keep its rows: %d %v", live, err)
+	}
+}

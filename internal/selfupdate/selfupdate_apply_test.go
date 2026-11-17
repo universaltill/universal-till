@@ -526,20 +526,20 @@ func TestDownload(t *testing.T) {
 	}
 }
 
-func TestChecksumFor(t *testing.T) {
+// checksumFor was folded into verifiedChecksums (ADR-0178); this keeps its
+// parsing cases (lowercasing, malformed lines, absent names) on the shared
+// parser.
+func TestChecksumLookup(t *testing.T) {
 	body := "ABCDEF0123  unitill-pos_0.2.0_linux_amd64.tar.gz\nmalformed line\ndeadbeef  other.tar.gz\n"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(body))
-	}))
-	t.Cleanup(srv.Close)
-	got, err := checksumFor(context.Background(), srv.URL, "unitill-pos_0.2.0_linux_amd64.tar.gz")
+	s := parseSums([]byte(body))
+	got, err := s.lookup("unitill-pos_0.2.0_linux_amd64.tar.gz")
 	if err != nil {
-		t.Fatalf("checksumFor: %v", err)
+		t.Fatalf("lookup: %v", err)
 	}
 	if got != "abcdef0123" { // lowercased
 		t.Errorf("checksum = %q", got)
 	}
-	if _, err := checksumFor(context.Background(), srv.URL, "absent.tar.gz"); err == nil || !strings.Contains(err.Error(), "checksum not found") {
+	if _, err := s.lookup("absent.tar.gz"); err == nil || !strings.Contains(err.Error(), "checksum not found") {
 		t.Errorf("err = %v, want not-found", err)
 	}
 }
@@ -917,5 +917,37 @@ func TestApplyVersionWhenIdleCancelledLeavesInstallUntouched(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
 		t.Fatalf("binary swapped although the wait was cancelled: %q", got)
+	}
+}
+
+// A tags/v<version> answer for a different tag must be refused: every asset
+// name and checksum line is derived from the response's tag (ADR-0178 s1).
+func TestFetchReleaseTagMismatch(t *testing.T) {
+	cases := []struct {
+		name, want, answered string
+		wantErr              bool
+	}{
+		{"exact", "9.9.9", "v9.9.9", false},
+		{"older release replayed", "9.9.9", "v0.29.0", true},
+		{"no v prefix", "9.9.9", "9.9.9", true},
+		{"empty tag", "9.9.9", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"tag_name":%q}`, c.answered)
+			}))
+			t.Cleanup(srv.Close)
+			old := releasesLatest
+			releasesLatest = srv.URL + "/releases/latest"
+			t.Cleanup(func() { releasesLatest = old })
+			_, err := fetchRelease(context.Background(), c.want)
+			if c.wantErr != (err != nil) {
+				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
+			}
+			if err != nil && !strings.HasPrefix(err.Error(), "releases API") {
+				t.Errorf("err = %q, want a 'releases API' prefix (followErrorCode: release)", err)
+			}
+		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -224,7 +225,13 @@ func TestFollowErrorCode(t *testing.T) {
 		{errors.New("releases API: HTTP 404"), "release"},
 		{errors.New("download: HTTP 503"), "download"},
 		{errors.New("checksum mismatch: got a want b"), "checksum"},
+		// ADR-0178: the signature text contains "checksums.txt", so the
+		// typed check must win over the substring match.
+		{fmt.Errorf("%w: release v1.4.0 has no checksums.txt.sig", selfupdate.ErrSignature), "signature"},
 		{errors.New("release v1.4.0 has no checksums.txt — refusing"), "checksum"},
+		// Non-200 checksums.txt keeps today's code; a .sig outage is not a signature failure.
+		{errors.New("checksum not found for v1.4.0: checksums.txt answered HTTP 404"), "checksum"},
+		{fmt.Errorf("download release signature: %w", errors.New("HTTP 503")), "download"},
 		{errors.New("no release archive for linux/arm64 (x)"), "no_archive"},
 		{errors.New("no macOS .dmg in release v1.4.0"), "no_archive"},
 		{errors.New("back up current binary: permission denied"), "install"},
@@ -410,5 +417,23 @@ func TestFollowInputsOf_ProbesSupportedOnlyWhenBehind(t *testing.T) {
 	behind := newFollowReplicaDeps(t, "1.5.0")
 	if in := followInputsOf(t.Context(), behind); !in.Supported || probes != 1 {
 		t.Fatalf("behind replica: Supported=%v after %d probes, want true after 1", in.Supported, probes)
+	}
+}
+
+// ADR-0178 section 7: a failed:signature target is not retried in the same
+// run (the release may be mid-publish; the next run re-checks), but an
+// operator's "Update now" is one more deliberate attempt.
+func TestFollowSignatureFailureNotRetriedUnlessForced(t *testing.T) {
+	in := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true,
+		AttemptedThisRun: "1.4.0", LastAttempted: "1.4.0", LastError: "failed:signature"}
+	if act, why := followDecision(in); act || why != "attempted" {
+		t.Errorf("same-run retry = %v/%q, want refused/attempted", act, why)
+	}
+	if followCanInstall(in) {
+		t.Error("a failed:signature target must read as manual, not following")
+	}
+	in.Forced = true
+	if act, _ := followDecision(in); !act {
+		t.Error("Update now must retry a failed:signature target")
 	}
 }

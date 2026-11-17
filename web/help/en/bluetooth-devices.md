@@ -3,6 +3,7 @@ id: bluetooth-devices
 title: Bluetooth devices
 section: Connecting & extending
 order: 236
+public: true
 summary: Pair a Bluetooth barcode scanner or scale with the till from inside the POS — scan, tap Pair, done — without ever opening the operating system's settings.
 keywords: [bluetooth, scanner, barcode, scale, pair, pairing, HID, wireless, forget]
 routes: [/bluetooth-devices]

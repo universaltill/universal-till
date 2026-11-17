@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -559,6 +560,12 @@ type Basket struct {
 	// most the discount can be. Handlers set both on their own Basket copy.
 	DiscountErrorKey   string      `json:"-"`
 	DiscountErrorLimit money.Money `json:"-"`
+	// LineChangedKey (ut-docs#5417) is a PER-RESPONSE render hint like
+	// DiscountErrorKey: the LineKey whose /api/pos/line update was refused
+	// because the line changed (or went) since the handler read it.
+	// basket.html notes it under that line, or above the totals when no
+	// line carries the key any more.
+	LineChangedKey string `json:"-"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --
@@ -1769,37 +1776,7 @@ func (s *Service) clearCacheForCode(code string) {
 	}
 }
 
-// UpdateLine sets qty/discount for a given SKU (or item/variant match) and
-// recomputes totals. Matches only the FIRST line for code — same caveat as
-// Remove (see its doc comment): unsafe once multiple modifier-distinct
-// lines can share a SKU. The cashier UI uses UpdateLineByKey instead.
-//
-// A discount above the line's total at the new qty is refused with a
-// *LineDiscountTooLargeError and the line is left unchanged (ut-docs#4627).
-func (s *Service) UpdateLine(code string, qty float64, discount money.Money) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if qty < 0 {
-		qty = 0
-	}
-	for i := range s.lines {
-		if s.lines[i].SKU == code || (s.lines[i].ItemID == code || s.lines[i].VariantID == code) {
-			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
-				return err
-			}
-			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
-			if s.lines[i].Qty == 0 {
-				s.removeLocked(s.lines[i].SKU)
-				return nil
-			}
-			s.recomputeTotals()
-			return nil
-		}
-	}
-	return nil
-}
-
-// LineDiscountTooLargeError (ut-docs#4627) is UpdateLine/UpdateLineByKey
+// LineDiscountTooLargeError (ut-docs#4627) is UpdateLineByKey / UpdateLineByKeyIfQty
 // refusing a discount above the line's total at the requested qty: Limit
 // is that total, the most the discount can be. The line is left as it was.
 type LineDiscountTooLargeError struct {
@@ -1834,29 +1811,58 @@ func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (floa
 	return 1, 0
 }
 
+// ErrLineChanged (ut-docs#5417): the line is gone or its qty is no longer
+// the one the caller read; nothing was changed.
+var ErrLineChanged = errors.New("basket line changed since it was read")
+
 // UpdateLineByKey sets qty/discount for the single line matching key
-// exactly (ADR-0020) — safe even when multiple lines share a SKU. Same
-// discount refusal as UpdateLine.
+// exactly (ADR-0020) — safe even when multiple lines share a SKU. A
+// discount above the line's total is refused (LineDiscountTooLargeError).
 func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for i := range s.lines {
+		if s.lines[i].LineKey == key {
+			return s.updateLineAtLocked(i, qty, discount)
+		}
+	}
+	return nil
+}
+
+// UpdateLineByKeyIfQty is UpdateLineByKey as a compare-and-set
+// (ut-docs#5417): it applies only if the line still has the qty the caller
+// read (fromQty — the value its gate decision was made against). A line that
+// is gone, or whose qty changed meanwhile, returns ErrLineChanged and
+// nothing is modified. The comparison is exact: both sides are the same
+// stored float64.
+func (s *Service) UpdateLineByKeyIfQty(key string, fromQty, qty float64, discount money.Money) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.lines {
+		if s.lines[i].LineKey == key {
+			if s.lines[i].Qty != fromQty {
+				return ErrLineChanged
+			}
+			return s.updateLineAtLocked(i, qty, discount)
+		}
+	}
+	return ErrLineChanged
+}
+
+// updateLineAtLocked applies qty/discount to s.lines[i]; s.mu must be held.
+func (s *Service) updateLineAtLocked(i int, qty float64, discount money.Money) error {
 	if qty < 0 {
 		qty = 0
 	}
-	for i := range s.lines {
-		if s.lines[i].LineKey == key {
-			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
-				return err
-			}
-			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
-			if s.lines[i].Qty == 0 {
-				s.removeLineLocked(key)
-				return nil
-			}
-			s.recomputeTotals()
-			return nil
-		}
+	if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
+		return err
 	}
+	s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
+	if s.lines[i].Qty == 0 {
+		s.removeLineLocked(s.lines[i].LineKey)
+		return nil
+	}
+	s.recomputeTotals()
 	return nil
 }
 

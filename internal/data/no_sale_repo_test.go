@@ -208,10 +208,10 @@ func TestNewestLocalJournalEntryAt(t *testing.T) {
 	}
 
 	// Rows journaled in from another till are not this till's own.
-	if _, err := repo.ApplyJournaledNoSaleEvent(ctx, NoSaleEvent{ID: "ns-x", CreatedAt: "2026-12-01T00:00:00Z", TillID: "other"}); err != nil {
+	if _, err := repo.ApplyJournaledNoSaleEvent(ctx, NoSaleEvent{ID: "ns-x", CreatedAt: "2026-12-01T00:00:00Z", TillID: "other"}); err != nil { // fixed-date:ok other-till row, filtered by till_id
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`INSERT INTO cleared_baskets (id, created_at, till_id) VALUES ('cb-x', '2027-01-01T00:00:00Z', 'other')`); err != nil {
+	if _, err := d.DB.Exec(`INSERT INTO cleared_baskets (id, created_at, till_id) VALUES ('cb-x', '2027-01-01T00:00:00Z', 'other')`); err != nil { // fixed-date:ok other-till row, filtered by till_id
 		t.Fatal(err)
 	}
 	if got, _ = repo.NewestLocalJournalEntryAt(ctx); got != "2026-10-29T12:00:00Z" {

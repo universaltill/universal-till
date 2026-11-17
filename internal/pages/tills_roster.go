@@ -2,12 +2,14 @@ package pages
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
@@ -110,6 +112,26 @@ func safeToken(s string, n int) string {
 	return b.String()
 }
 
+// mainTillDiscoveryID is the id the LAN scan shows for the main till
+// (ut-docs#1294): this till's own discovery id on a main till (minted if
+// absent — the advertiser broadcasts the same value), the proven
+// sync.primary_till_id on a joined till (never minted, never the shop-wide
+// lan_discovery copy). "" when unknown or unreadable.
+func mainTillDiscoveryID(ctx context.Context, d *common.Deps, primaryURL string) string {
+	var id string
+	var err error
+	if primaryURL == "" {
+		id, err = discoveryTillID(ctx, data.NewSettingsRepo(d.Db))
+	} else {
+		id, _, err = d.Settings.Get(ctx, discovery.PrimaryTillIDSettingKey)
+	}
+	if err != nil {
+		log.Printf("tills: discovery id unavailable: %v", err)
+		return ""
+	}
+	return strings.TrimSpace(id)
+}
+
 // tillsRosterData is what tills_roster.html renders, for both the page and
 // the poll.
 func tillsRosterData(ctx context.Context, d *common.Deps, w http.ResponseWriter, r *http.Request) (map[string]any, error) {
@@ -147,13 +169,14 @@ func tillsRosterData(ctx context.Context, d *common.Deps, w http.ResponseWriter,
 	}
 	locale := httpx.ResolveLocale(w, r)
 	return map[string]any{
-		"Tills":              rows,
-		"PrimaryTillName":    tillNameOrDefault(ctx, d, locale),
-		"SyncPrimary":        primaryURL,
-		"ThisTillID":         thisTillID,
-		"PrimaryLastContact": primaryLastContact,
-		"LinkInfo":           linkInfo,
-		"MainVersion":        buildinfo.Version,
+		"Tills":               rows,
+		"PrimaryTillName":     tillNameOrDefault(ctx, d, locale),
+		"SyncPrimary":         primaryURL,
+		"MainTillDiscoveryID": mainTillDiscoveryID(ctx, d, primaryURL), // ut-docs#1294
+		"ThisTillID":          thisTillID,
+		"PrimaryLastContact":  primaryLastContact,
+		"LinkInfo":            linkInfo,
+		"MainVersion":         buildinfo.Version,
 		// ut-docs#2895: this till's own ADR-0117 realtime socket to the
 		// cloud — a different link than the LAN roster above, shown
 		// whether or not this till is the main till (Show is false only

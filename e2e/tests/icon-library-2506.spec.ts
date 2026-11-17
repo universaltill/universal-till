@@ -96,7 +96,7 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     await page.locator(SEARCH).fill('wine');
     const wine = page.locator(`${ICONS} [data-icon="wine"]`);
     await wine.click();
-    await expect(wine).toHaveAttribute('aria-pressed', 'true');
+    await expect(wine).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('ArrowRight');
     const focused = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.icon ?? '');
     expect(['wine-bottle', 'none', 'champagne']).toContain(focused);
@@ -112,7 +112,7 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await page.locator('#categories-table .category-row', { hasText: name }).first().click();
     await expect(page.locator(DIALOG)).toBeVisible();
-    await expect(page.locator(`${ICONS} [data-icon="beer"]`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`${ICONS} [data-icon="beer"]`)).toHaveAttribute('aria-selected', 'true');
   });
 
   test('1024x600: the grid scrolls inside its box, Save stays reachable', async ({ page }) => {

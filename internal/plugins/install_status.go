@@ -132,8 +132,10 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 // so the UI doesn't read it as the operator's own login expiring.
 //
 // hasOwner says whether the till's store has an owner (the cloud-auth chip's
-// storeHasOwner): an unclaimed till whose credential the cloud rejects is told
-// to register as a new store, not to pair (ut-docs#5187).
+// storeHasOwner, which prefers the cloud's own `claimed` signal and only
+// infers from the cached plan when the till was never told, ut-docs#3532): an
+// unclaimed till whose credential the cloud rejects is told to register as a
+// new store, not to pair (ut-docs#5187).
 func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 	var apiErr *marketplace.APIError
 	if !errors.As(err, &apiErr) || apiErr == nil {
@@ -160,7 +162,7 @@ func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 		return InstallFailure{MessageKey: "plugins.install.error.service_unavailable", Message: "Plugin downloads are not available for this shop.", Status: http.StatusForbidden}, true
 	case "unauthorized", "token_retired":
 		if !hasOwner {
-			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Register this till as a new store.", Status: http.StatusForbidden}, true
+			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Reconnect this till in Settings → Till registration.", Status: http.StatusForbidden}, true
 		}
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	case "device_mismatch":
@@ -181,6 +183,11 @@ func ClassifyInstallError(err error, hasOwner bool) InstallFailure {
 	// till, so a retry can never succeed.
 	if errors.Is(err, ErrCloudHostedPlugin) {
 		return InstallFailure{MessageKey: "plugins.install.error.incompatible", Message: "This plugin is not compatible with this till.", Retryable: false}
+	}
+
+	// ut-docs#5658: a revoked release stays refused until another version is installed.
+	if errors.Is(err, ErrRevokedRelease) {
+		return InstallFailure{MessageKey: "plugins.install.error.revoked", Message: "The marketplace has withdrawn this plugin version, so it can't be installed. Install another version.", Retryable: false}
 	}
 
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))

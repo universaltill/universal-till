@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -20,6 +19,13 @@ import (
 // use this one limit.
 const maxTillNameRunes = 60
 
+// keyTillNameTooLong is the 400 text for a till name over maxTillNameRunes
+// sent to the LAN enrol / pair-request routes (ut-docs#5875).
+const keyTillNameTooLong = "sync.error.name_too_long"
+
+// errTillNameTooLong: a till name over maxTillNameRunes (ut-docs#5875).
+var errTillNameTooLong = errors.New("till name is too long")
+
 // truncateTillName is the Settings form's rule: trimmed, cut to
 // maxTillNameRunes (the field's maxlength already stops a browser there).
 func truncateTillName(raw string) string {
@@ -30,26 +36,49 @@ func truncateTillName(raw string) string {
 	return name
 }
 
-// validateTillName is the strict rule for a name that arrives without a
-// form (the cloud's rename_till, ut-docs#3272): trimmed, then refused —
-// never truncated — when empty, longer than maxTillNameRunes, or holding
-// any control character, so the name the till stores and reports back is
-// exactly the one it was sent.
+// validateTillName is the strict rule for a till name that arrives from the
+// first-boot wizard, the cloud pairing form, the cloud's rename_till
+// (ut-docs#3272) or a joined till's reported name: trimmed, then refused —
+// never truncated or stripped — when empty, longer than maxTillNameRunes, or
+// failing data.CheckSingleLineName (control, line-break, invisible or
+// bidi-override characters; ut-docs#5862), so the name the till stores and
+// reports back is exactly the one it was sent. The characters refusal is
+// data.ErrNameInvalidCharacters itself (errors.Is), so an operator-facing
+// caller can show common.error.name_invalid_characters. Settings' rename
+// truncates instead (truncateTillName) and checks the characters itself.
 func validateTillName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
 		return "", errors.New("till name is empty")
 	}
-	if !utf8.ValidString(name) {
-		return "", errors.New("till name is not valid UTF-8")
+	name, err := data.CheckSingleLineName(name)
+	if err != nil {
+		return "", err
 	}
 	if n := utf8.RuneCountInString(name); n > maxTillNameRunes {
-		return "", fmt.Errorf("till name is %d characters; the limit is %d", n, maxTillNameRunes)
-	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return "", errors.New("till name contains a control character")
+		return "", fmt.Errorf("%w: %d characters; the limit is %d", errTillNameTooLong, n, maxTillNameRunes)
 	}
 	return name, nil
+}
+
+// tillNameRefusalKey is the 400 key for a till name a joining till sent
+// (POST /api/sync/enroll, /api/sync/pair-request; ut-docs#5862, #5875):
+// validateTillName's rule, except that a blank name is the caller's own
+// check (enroll defaults it to "till"; pair-request refuses it earlier).
+// "" means the name is acceptable.
+func tillNameRefusalKey(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	_, err := validateTillName(raw)
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errTillNameTooLong):
+		return keyTillNameTooLong
+	default: // data.ErrNameInvalidCharacters, or a refusal reason added later
+		return keyNameInvalidCharacters
+	}
 }
 
 // deviceNameOrDefault is the Settings till-name field's value: this till's

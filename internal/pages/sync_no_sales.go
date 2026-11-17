@@ -105,6 +105,7 @@ func registerSyncNoSales(mux *http.ServeMux, d *common.Deps) {
 				rejected++
 				continue
 			}
+			// never publishes till.drawer.no_sale — the replica already did (ut-docs#5758)
 			ok, err := posRepo.ApplyJournaledNoSaleEvent(r.Context(), data.NoSaleEvent{
 				ID: j.ID, CreatedAt: j.CreatedAt, RegisterID: j.RegisterID, TillID: till.ID,
 				ActorID: j.ActorID, ApproverID: j.ApproverID, Reason: j.Reason,

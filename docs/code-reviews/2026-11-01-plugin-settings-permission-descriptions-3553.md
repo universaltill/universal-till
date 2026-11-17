@@ -52,3 +52,14 @@ in `permissionDescKeys`), no `showModal`, no new keys.
 ## Verdict
 
 Safe to merge. Deferred: none.
+
+## Merge of main (2026-11-17, PR sweep, lane:cloud-41)
+
+- `main` rewrote `web/help/en/plugins.md` into sections; the PR's sentence was
+  re-applied under "Plugin settings and permissions" → **Permissions**.
+- The PR's edits to `web/help/{ar,de,fa,tr}/plugins.md` were dropped: other
+  languages come only from Weblate (ADR-0160).
+- `web/help/img/manifest.json`: main's version, with the `en/plugins` topic hash
+  and `surface_sha256` recomputed. No screenshot shows `/plugins/{id}/settings`
+  (the topic's shots are `/plugins`, `plugins-store`, `plugins-listing`), so no
+  pixel changes. `guard-docs-shots.sh` passes; `go test ./internal/pages/` green.
