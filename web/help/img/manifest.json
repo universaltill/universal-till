@@ -142,7 +142,7 @@
       "tr": "69c18ab2ea8b58b4bbebdd271210191dc26bdd7f7baeb130a9c802023678080d"
     },
     "plugins": {
-      "en": "39d8c57595c592a43cd92c597b662efb0a797c719fa69997a177daca8af04d6a",
+      "en": "937a30099d4d7a95c41e96459af5f73703ed29d9273f9a4b4ba57bbf5e76f729",
       "fa": "c4bc272c7fd3b59427fe680da5e51abfb94b2f1af0447674b7ff924d09c3bf88",
       "ar": "f18d5cc4e463edf3004efc95e3029a266b9c6b501add06a32f74f355731079e4",
       "tr": "878581bcf7ebc3cfbab6dd8fd7f03f9e901f87cddf397325a925f69f80d05e1d"
@@ -203,6 +203,10 @@
     }
   },
   "shots": {
+    "plugins": [
+      "plugins-listing",
+      "plugins-store"
+    ],
     "sell": [
       "sell-browse-filters",
       "sell-browse-strip",

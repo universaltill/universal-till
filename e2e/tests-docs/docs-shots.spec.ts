@@ -127,7 +127,7 @@ const dialogShots: Record<string, DialogShot> = {
 //   3. `make docs-shots`, commit the new PNGs and manifest.json.
 // A declared stem with no recipe, or a recipe no markdown references, throws
 // at load, before anything is captured or the manifest written. Extras run on
-// the default auth-off till (8091) only.
+// the default auth-off till (8091), except the plugins topic's (plugins till, ut-docs#335).
 type ExtraShot = {
   route: string;
   setup?: (page: Page) => Promise<void>;
@@ -188,6 +188,36 @@ const extraShots: Record<string, ExtraShot> = {
   'sell-browse-tiles': browseShot('category_tabs', assertTilesLayout),
   'sell-browse-filters': browseShot('all_filter_chips', assertFiltersLayout),
   'sell-browse-strip': browseShot('strip_overflow', assertStripLayout),
+  // ut-docs#335: plugins till (8107), read-only. The catalogue is the fixed
+  // snapshot from e2e/seed_docs_plugin_catalog (6 fictional listings).
+  'plugins-store': {
+    route: '/plugins/store',
+    ready: async (page) => {
+      await expect(page.locator('#store-grid .store-tile')).toHaveCount(6);
+      await expect(page.locator('.store-cats .cat-chip')).toHaveCount(7);
+      for (const sel of ['.trust-official', '.trust-verified', '.trust-unverified', '.paid-badge']) {
+        expect(await page.locator(`#store-grid ${sel}`).count(), `store grid has no ${sel}`).toBeGreaterThan(0);
+      }
+      await expect(page.locator('#store-no-matches')).toBeHidden();
+      await expect(page.locator('p.empty:not([hidden])')).toHaveCount(0);
+      await expect(page.locator('#store-grid .store-tile').last()).toBeInViewport();
+    },
+  },
+  'plugins-listing': {
+    route: '/plugins/store/sample-stock-sync',
+    ready: async (page) => {
+      await expect(page.locator('.store-detail[data-listing-id="sample-stock-sync"]')).toBeVisible();
+      await expect(page.locator('.store-detail .trust-unverified')).toBeVisible();
+      const perms = page.locator('.perm-desc .perm-desc-item');
+      expect(await perms.count(), 'too few permission lines').toBeGreaterThanOrEqual(3);
+      await expect(page.locator('.perm-desc .perm-desc-item', { hasText: 'net:validation:validation.example.org' })).toHaveCount(1);
+      await expect(page.locator('#store-accept-terms')).toBeVisible();
+      await expect(page.locator('#store-accept-terms')).not.toBeChecked();
+      const dl = page.locator('[data-store-action="download"]');
+      await expect(dl).toBeVisible();
+      await expect(dl).toBeInViewport({ ratio: 1 });
+    },
+  },
 };
 
 // Declaration (en markdown) and recipes must agree, both ways.
@@ -581,6 +611,14 @@ const NOTICES_BASE = 'http://127.0.0.1:8105';
 const NOTICES_OPEN_ID = '5366d000-0000-4000-8000-000000000002';
 const NOTICES_TILL_TOPICS = ['notices'];
 
+// ut-docs#335: the plugins topic's EXTRA shots (store + listing) are taken on a
+// docs-only till (8107, run-till-plugins.sh) that boots with a fixed offline
+// catalogue snapshot (e2e/seed_docs_plugin_catalog). The catalogue is read by
+// other screens too (update chips, /plugins), so no other topic may use that
+// till. The header plugins.png stays on the default till.
+const PLUGINS_BASE = 'http://127.0.0.1:8107';
+const PLUGINS_TILL_TOPICS = ['plugins'];
+
 for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id) && !NOTICES_TILL_TOPICS.includes(t.id))) {
   for (const locale of LOCALES as string[]) {
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
@@ -601,7 +639,8 @@ for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MO
 
 // Extra inline shots (ut-docs#2615), after every default-till topic so nothing
 // above ever sees a changed till setting; each recipe restores it in finally.
-for (const stems of Object.values(declaredExtraShots)) {
+for (const [tid, stems] of Object.entries(declaredExtraShots)) {
+  if (PLUGINS_TILL_TOPICS.includes(tid)) continue; // captured on the plugins till below
   for (const stem of stems) {
     for (const locale of LOCALES as string[]) {
       test(`screenshot: ${stem} (${locale})`, async ({ page }) => {
@@ -689,6 +728,29 @@ test.describe('notices (notices till)', () => {
         await capture(page, topic!.id, locale, route);
         await expect(page.getByTestId('notices-strip')).toBeVisible();
       });
+    }
+  }
+});
+
+test.describe('plugin store (plugins till)', () => {
+  test.use({ baseURL: PLUGINS_BASE });
+  for (const tid of PLUGINS_TILL_TOPICS) {
+    for (const stem of declaredExtraShots[tid] ?? []) {
+      const shot = extraShots[stem];
+      // Read-only shots only: this till is never restored between captures.
+      if (shot.setup || shot.teardown) throw new Error(`${stem}: plugins-till recipes must be read-only (no setup/teardown)`);
+      for (const locale of LOCALES as string[]) {
+        test(`screenshot: ${stem} (${locale})`, async ({ page }) => {
+          await ensureFullEffects(page);
+          try {
+            await capture(page, stem, locale, shot.route);
+            await shot.ready(page);
+          } catch (e) {
+            fs.rmSync(path.join(imgRoot, locale, `${stem}.png`), { force: true });
+            throw e;
+          }
+        });
+      }
     }
   }
 });
