@@ -2454,7 +2454,7 @@
   "settings.backup.save_failed_space": "There is not enough free space where the copy was going. Free some space or choose another place, then try again.",
   "settings.backup.save_failed_permission": "The till is not allowed to write to that folder. Choose another place, such as a USB stick, then try again.",
   "settings.backup.save_failed_unreachable": "That folder cannot be reached right now. If the storage is a USB drive, check it is plugged in, then try again.",
-  "settings.backup.save_failed_use_picker": "This device saves backups through its file picker. Press Save to Downloads again and choose Downloads or a USB drive.",
+  "settings.backup.save_failed_picker_unavailable": "This app cannot open the file picker, so the backup was not saved. Update the Universal Till app, or download the backup from another device.",
   "settings.backup.picker_saved": "Backup saved to the place you chose.",
   "settings.backup.picker_cancelled": "Nothing was saved because no place was chosen.",
   "settings.backup.picker_failed": "Could not write the backup to the place you chose. Choose another place, such as Downloads or a USB drive.",
