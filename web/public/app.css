@@ -1527,6 +1527,10 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
                            flex: 1 1 12rem; min-inline-size: 0; }
 .catalog-form-head-title h3 { margin: 0; min-inline-size: 0; overflow: hidden;
                               text-overflow: ellipsis; white-space: nowrap; }
+/* ut-docs#6125: groups the in-title Lock/exit-to-OS with the h3 so the pair
+   stays one line when the title group is flattened below (#6138/#6176).
+   Transparent to layout wherever the title group is a plain flex row. */
+.catalog-form-head-titleline { display: contents; }
 .catalog-form-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
                              margin-inline-start: auto; }
 /* Icon-only delete (catalog.delete): a .btn.secondary in the danger colour,
@@ -1564,7 +1568,10 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    line of head height). */
 @media (min-width: 701px) and (max-width: 1023px) {
   .catalog-form-head-title { display: contents; }
-  .catalog-form-head-title h3 { flex: 1 0 100%; }
+  .catalog-form-head-titleline { display: flex; align-items: center; gap: .5rem; flex: 1 0 100%; min-inline-size: 0; }
+  /* The Lock/exit pair takes ~96px of the line, so a long item name wraps
+     (never ellipsised: #6138 wants the open item readable) onto a second line. */
+  .catalog-form-head-titleline h3 { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 }
 @media (max-width: 700px) {
   .catalog-form-head { padding-inline: 1rem; }
@@ -1615,7 +1622,13 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
      visible. display: contents only flattens a semantics-free wrapper div;
      the h3 and the delete button keep their own roles and names. */
   .catalog-form-head-title { display: contents; }
-  .catalog-form-head-title h3 { flex: 1 0 100%; }
+  .catalog-form-head-titleline { display: flex; align-items: center; gap: .5rem; flex: 1 0 100%; min-inline-size: 0; }
+  /* The Lock/exit pair takes ~96px of the line, so a long item name wraps
+     (never ellipsised: #6138 wants the open item readable) onto a second line. */
+  .catalog-form-head-titleline h3 { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+  .catalog-form-head-titleline h3 { font-size: .9rem; line-height: 1.2; }
+  /* One text line + one button row: .4rem between them keeps the edit head under #2000's 30% budget. */
+  .catalog-form-head-row { row-gap: .4rem; }
   .catalog-form-head-actions .btn .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
   .catalog-form-head-actions .btn:focus-visible {
     outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px;
@@ -3155,10 +3168,15 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 }
 #import-modal:not([open]), #tax-codes-modal:not([open]) { display: none; }
 /* Back link stays reachable while the body scrolls. */
+/* ut-docs#6125: the head also carries the in-title Lock/exit-to-OS (the page's
+   own dialog_status_inline), so it stays pinned above the content (z 2) with
+   a divider, and its h1 shrinks instead of pushing the Lock off the row. */
 #import-modal .page-head, #tax-codes-modal .page-head {
-  position: sticky; inset-block-start: -1rem; z-index: 1; background: var(--surface);
+  position: sticky; inset-block-start: -1rem; z-index: 2; background: var(--surface);
   padding-block-start: 1rem; margin-block-start: -1rem;
+  border-block-end: 1px solid var(--border); margin-block-end: 1rem;
 }
+#import-modal .page-head > h1, #tax-codes-modal .page-head > h1 { flex: 1 1 auto; min-inline-size: 0; margin: 0; }
 @media (max-width: 700px) {
   #import-modal, #tax-codes-modal { padding-inline: 1rem; }
 }
@@ -6745,24 +6763,8 @@ td.list-actions > * + * { margin-inline-start: .5rem; }
 .dialog-status-inline .btn-icon { min-inline-size: 44px; padding-inline: .4rem; }
 .dialog-status-inline .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
 @media (max-width: 480px) {
-  .catalog-form-head-title > .dialog-status-inline,
+  .catalog-form-head-titleline > .dialog-status-inline,
   .record-dialog-head-title > .dialog-status-inline { margin-block: -.6rem; }
-}
-/* #import-modal / #tax-codes-modal hold a whole hx-swapped page and were
-   overflow:hidden with no scroll container, so most of it was unreachable
-   (a wheel or swipe moved the page behind). They scroll as one box with the
-   page head pinned, so the phone Lock never scrolls away. Scoped to the two
-   page dialogs: the item editor has its own head/body split. [open] keeps a
-   closed dialog display:none. */
-.item-form-modal.dialog-page-scroll[open] { display: block; overflow-y: auto; overflow-x: hidden;
-                                            box-sizing: border-box; padding: 0 1.5rem 1.5rem; }
-.dialog-page-scroll > .page-head { position: sticky; inset-block-start: 0; z-index: 2;
-                                   margin: 0 -1.5rem 1rem; padding: .6rem 1.5rem;
-                                   background: var(--surface); border-block-end: 1px solid var(--border); }
-.dialog-page-scroll > .page-head > h1 { flex: 1 1 auto; min-inline-size: 0; margin: 0; }
-@media (max-width: 480px) {
-  .item-form-modal.dialog-page-scroll[open] { padding-inline: 1rem; }
-  .dialog-page-scroll > .page-head { margin-inline: -1rem; padding-inline: 1rem; gap: .5rem; }
 }
 .record-dialog-inner { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
 .record-dialog-head { flex: none; padding: .6rem 1.5rem .5rem;

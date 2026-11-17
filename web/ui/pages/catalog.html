@@ -148,10 +148,9 @@
      — reusing the class gets that for free, no new CSS needed.
      ut-docs#6125: all three item dialogs now carry .dialog-beside-chrome
      (beside the rail, above the status bar), and these two swapped-in page
-     dialogs .dialog-page-scroll (they were overflow:hidden with no scroll
-     container, so most of their content was unreachable). -->
-<dialog id="import-modal" class="item-form-modal dialog-beside-chrome dialog-page-scroll" aria-labelledby="catalog-import-btn" data-ut-focus-trap></dialog>
-<dialog id="tax-codes-modal" class="item-form-modal dialog-beside-chrome dialog-page-scroll" aria-labelledby="catalog-taxcodes-btn" data-ut-focus-trap></dialog>
+     dialogs scroll as one box via the id rules in app.css (ut-docs#6553). -->
+<dialog id="import-modal" class="item-form-modal dialog-beside-chrome" aria-labelledby="catalog-import-btn" data-ut-focus-trap></dialog>
+<dialog id="tax-codes-modal" class="item-form-modal dialog-beside-chrome" aria-labelledby="catalog-taxcodes-btn" data-ut-focus-trap></dialog>
 
 {{ if .SyncPrimary }}
 {{/* ut-docs#3605: both texts render, the inactive one hidden, so
@@ -237,8 +236,10 @@
           {{/* ut-docs#6125: Lock + exit-to-OS at the start of the
                title line, at every width (the rail's own Lock is not reliably on
                screen under a scrim). Outside every data-main-till-lock fieldset. */}}
+          <div class="catalog-form-head-titleline">
           {{ template "dialog_status_inline" }}
           <h3 id="item-form-title" tabindex="-1" data-ut-focus-home autofocus>{{ T "catalog.new_item" }}</h3>
+          </div>
           <!-- ut-docs#1956: icon-only delete, at the OPPOSITE end of the bar
                from Save/Close so it cannot be hit by accident; hidden in
                create mode (setMode). Deactivate, not erase — same endpoint

@@ -29,16 +29,8 @@ func TestCatalogDialogs_SitBesideChrome(t *testing.T) {
 			t.Errorf("#%s lacks the dialog-beside-chrome class (ut-docs#6125)", id)
 		}
 	}
-	// UX-3: the two swapped-in page dialogs scroll with a pinned head.
-	for _, id := range []string{"import-modal", "tax-codes-modal"} {
-		if !strings.Contains(dialogOpenTag(t, body, id), "dialog-page-scroll") {
-			t.Errorf("#%s lacks dialog-page-scroll: its content could not be scrolled", id)
-		}
-	}
-	// ...but the item editor has its own head/body split.
-	if strings.Contains(dialogOpenTag(t, body, "item-form-modal"), "dialog-page-scroll") {
-		t.Errorf("#item-form-modal must not take dialog-page-scroll (own head/body split)")
-	}
+	// Scrolling of the two swapped-in page dialogs is #import-modal /
+	// #tax-codes-modal in app.css (ut-docs#6553), keyed by id; no class needed.
 }
 
 func TestItemForm_PhoneLockAndExitInTitleLine(t *testing.T) {
