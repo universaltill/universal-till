@@ -49,7 +49,7 @@ name: play-publish
 #
 # Variables (not secrets): GOOGLE_PLAY_WIF_PROVIDER, GOOGLE_PLAY_RELEASER_SA
 # (play-internal env), AZURE_PLAY_UPLOAD_CLIENT_ID, AZURE_TENANT_ID,
-# AZURE_SIGNING_VAULT_NAME (play-internal env). Terraform outputs of
+# AZURE_PLAY_UPLOAD_VAULT_NAME (play-internal env). Terraform outputs of
 # ut-infra; secret VALUES never appear in a repo, only names in the vault.
 on:
   workflow_dispatch:
@@ -215,6 +215,21 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      # Fail closed BEFORE the key is fetched or used (review N5): the upload-cert
+      # pin must exist and differ from every release cert, and the release-cert
+      # list must be present, or the "never the release cert" check is vacuous.
+      - name: Check the pins before any key is touched
+        run: |
+          set -euo pipefail
+          pin_file=android/app/play-upload-cert-sha256.txt
+          rel_file=android/app/apk-signer-sha256.txt
+          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::$rel_file is missing or empty; cannot prove the upload key differs from the release key"; exit 1; }
+          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"
+          [ -n "$pin" ] || { echo "::error::$pin_file holds no upload-cert SHA-256 pin; commit it (README, owner action) before the first upload"; exit 1; }
+          if grep -E '^[0-9a-f]{64}$' "$rel_file" | grep -qx "$pin"; then
+            echo "::error::the upload-cert pin equals a release signer in apk-signer-sha256.txt; the upload key must be a different key"
+            exit 1
+          fi
       - name: Azure login (OIDC; identity unitill-play-upload-signer, upload-key secrets only)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -223,7 +238,7 @@ jobs:
           allow-no-subscriptions: true
       - name: Sign the bundle with the upload key
         env:
-          VAULT: ${{ vars.AZURE_SIGNING_VAULT_NAME }}
+          VAULT: ${{ vars.AZURE_PLAY_UPLOAD_VAULT_NAME }}
         run: |
           set -euo pipefail
           umask 077
@@ -239,7 +254,8 @@ jobs:
           # keystore password on stdin-free env form; key password = store password (PKCS12)
           STOREPASS="$pass" jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
             -keystore "$ks" -storepass:env STOREPASS "$RUNNER_TEMP/signed.aab" "$alias_name"
-          jarsigner -verify "$RUNNER_TEMP/signed.aab" | grep -q "jar verified"
+          jarsigner -verify "$RUNNER_TEMP/signed.aab" >"$RUNNER_TEMP/verify.txt"
+          grep -q "jar verified" "$RUNNER_TEMP/verify.txt"
       # The signer must be the committed UPLOAD cert and must NOT be the release
       # cert: a release keystore loaded under the play-upload-* names would
       # otherwise be signed with and used silently (security review M3).
@@ -249,12 +265,9 @@ jobs:
         run: |
           set -euo pipefail
           pin_file=android/app/play-upload-cert-sha256.txt
+          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::apk-signer-sha256.txt missing"; exit 1; }
           pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"
-          [ -n "$pin" ] || { echo "::error::$pin_file holds no upload-cert SHA-256 pin; commit it (README, owner action) before the first upload"; exit 1; }
-          if grep -E '^[0-9a-f]{64}$' android/app/apk-signer-sha256.txt | grep -qx "$pin"; then
-            echo "::error::the upload-cert pin equals a release signer in apk-signer-sha256.txt; the upload key must be a different key"
-            exit 1
-          fi
+          [ -n "$pin" ] || { echo "::error::no upload-cert pin"; exit 1; }
           out="$(bash android/scripts/check-aab.sh "$RUNNER_TEMP/signed.aab" \
             --expect-version-code "$VERSION_CODE" --expect-cert-sha256 "$pin")"
           printf '%s\n' "$out"

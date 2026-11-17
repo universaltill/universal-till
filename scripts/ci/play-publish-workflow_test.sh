@@ -75,4 +75,12 @@ has 'apk-signer-sha256\.txt' && ok "release cert list compared" || bad "release 
 # --- low: artifact retention, gomobile pin ---------------------------------
 [ "$(code | grep -c 'retention-days: 1$')" = 2 ] && ok "artifacts kept 1 day" || bad "retention-days not 1"
 code | grep -qE '(gomobile|gobind)@latest' && bad "gomobile/gobind unpinned" || ok "gomobile/gobind pinned"
+# --- N5: the pins are checked BEFORE the key is fetched; missing list fails closed
+code | grep -q 'Check the pins before any key is touched' && ok "pin pre-check step exists" || bad "no pin pre-check step"
+pre="$(code | grep -n 'Check the pins before any key is touched' | head -1 | cut -d: -f1)"
+login="$(code | grep -n 'Azure login' | head -1 | cut -d: -f1)"
+[ -n "$pre" ] && [ -n "$login" ] && [ "$pre" -lt "$login" ] && ok "pin pre-check runs before the Azure login" || bad "pin pre-check is not before the Azure login"
+has '\[ -s android/app/apk-signer-sha256\.txt \]' && ok "missing/empty apk-signer-sha256.txt fails closed" || bad "no -s check on apk-signer-sha256.txt"
+code | grep -qE 'AZURE_SIGNING_VAULT_NAME' && bad "old shared vault variable still used" || ok "no shared-vault variable"
+has 'AZURE_PLAY_UPLOAD_VAULT_NAME' && ok "upload vault variable used" || bad "no AZURE_PLAY_UPLOAD_VAULT_NAME"
 [ "$fails" = 0 ]
