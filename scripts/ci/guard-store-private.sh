@@ -64,6 +64,9 @@
 # Explicit-args form for fixture-based testing (guard-store-private_test.sh):
 # the single arg is the repo root to scan.
 set -euo pipefail
+# awk on macOS errors on multibyte input in a UTF-8 locale and the guard then
+# still exited 0; byte semantics are all this guard needs.
+export LC_ALL=C
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCAN_ROOT="${1:-$ROOT_DIR}"

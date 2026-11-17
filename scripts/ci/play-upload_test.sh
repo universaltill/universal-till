@@ -43,7 +43,7 @@ run() { # $1 = existing sha ("" none)
   srv=$!
   for _ in $(seq 50); do [ -s "$tmp/port" ] && break; sleep 0.1; done
   set +e
-  PLAY_API_BASE="http://127.0.0.1:$(cat "$tmp/port")" PLAY_ACCESS_TOKEN=t PLAY_PACKAGE_NAME=com.example.app \
+  PLAY_API_TEST_SERVER=1 PLAY_API_BASE="http://127.0.0.1:$(cat "$tmp/port")" PLAY_ACCESS_TOKEN=t PLAY_PACKAGE_NAME=com.example.app \
     AAB="$tmp/a.aab" VERSION_CODE=7770005 VERSION_NAME=7.77.0 bash "$ROOT/scripts/ci/play-upload.sh" >"$tmp/out" 2>&1
   rc=$?
   set -e
@@ -56,5 +56,10 @@ run "$sha"
 { [ "$rc" = 0 ] && ! grep -q 'commit' "$tmp/log" && ! grep -q '/upload/' "$tmp/log"; } && ok "same bytes already on Play: green no-op" || bad "idempotent re-run"
 run "$(printf 'f%.0s' $(seq 64))"
 { [ "$rc" != 0 ] && grep -q 'DIFFERENT sha256' "$tmp/out" && ! grep -q 'commit' "$tmp/log" && ! grep -q '/upload/' "$tmp/log"; } && ok "different bytes under an existing versionCode fail" || bad "changed hash refused"
+# The Play token must never be sent to another host (not even https, not a local server without the test flag).
+for base in https://evil.example http://127.0.0.1:1; do
+  if PLAY_API_BASE="$base" PLAY_ACCESS_TOKEN=t PLAY_PACKAGE_NAME=com.example.app AAB="$tmp/a.aab" VERSION_CODE=7770005 VERSION_NAME=7.77.0 \
+    bash "$ROOT/scripts/ci/play-upload.sh" >"$tmp/out" 2>&1; then bad "PLAY_API_BASE=$base accepted"; else grep -q 'PLAY_API_BASE must be' "$tmp/out" && ok "PLAY_API_BASE=$base refused" || bad "refusal text for $base"; fi
+done
 if grep -qE 'tracks/(production|beta|alpha)' "$ROOT/scripts/ci/play-upload.sh"; then bad "script names a non-internal track"; else ok "script names no non-internal track"; fi
 [ "$fails" = 0 ]

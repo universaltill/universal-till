@@ -1441,9 +1441,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         # Internal track only (play-publish.yml has no other); a Play problem
-        # never fails or rolls back a published release.
+        # never fails or rolls back a published release. Dispatched from MAIN (the
+        # environments and the Google WIF rule admit refs/heads/main only); the
+        # workflow checks the tag out itself, after proving it is on main.
         run: |
-          gh workflow run play-publish.yml --ref "$TAG" -f version="${TAG#v}" -f dry_run=false \
+          gh workflow run play-publish.yml --ref main -f version="${TAG#v}" -f dry_run=false \
             || echo "::warning::could not dispatch play-publish.yml for $TAG; run it by hand"
 
   # Attaches the notarized .dmg to the already-published release (ut-docs#2917)

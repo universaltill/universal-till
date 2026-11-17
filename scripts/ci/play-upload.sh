@@ -20,15 +20,14 @@
 #   AAB                 path of the signed bundle
 #   VERSION_CODE        expected versionCode (base*10+5); Play's answer must match
 #   VERSION_NAME        release name shown in the console
-# Dry-run of the logic only: PLAY_API_BASE may point at a local fake server
-# (scripts/ci/play-upload_test.sh); it must be https:// or http://127.0.0.1.
+# The Play token only ever goes to the real API host. A local fake server is
+# accepted solely for the self-test, which sets PLAY_API_TEST_SERVER=1.
 set -euo pipefail
 
 API="${PLAY_API_BASE:-https://androidpublisher.googleapis.com}"
-case "$API" in
-  https://* | http://127.0.0.1:*) ;;
-  *) echo "::error::PLAY_API_BASE must be https:// (or a 127.0.0.1 test server)" >&2; exit 1 ;;
-esac
+if [ "$API" = "https://androidpublisher.googleapis.com" ]; then :
+elif [ "${PLAY_API_TEST_SERVER:-}" = "1" ] && [[ "$API" == http://127.0.0.1:* ]]; then :
+else echo "::error::PLAY_API_BASE must be the Play API host (a 127.0.0.1 server only for the self-test)" >&2; exit 1; fi
 
 : "${PLAY_ACCESS_TOKEN:?}" "${PLAY_PACKAGE_NAME:?}" "${AAB:?}" "${VERSION_CODE:?}" "${VERSION_NAME:?}"
 [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::VERSION_CODE '$VERSION_CODE' is not a positive integer" >&2; exit 1; }
