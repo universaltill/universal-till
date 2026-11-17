@@ -214,11 +214,11 @@ async function seedModifierItem(page: Page): Promise<ModItem> {
   await page.goto('/import');
   await page.setInputFiles('input[type=file]', { name: `import-pf3411-${RUN}.csv`, mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/api/import')),
-    page.getByRole('button', { name: /Import/i }).last().click(),
+    page.waitForResponse((r) => r.url().includes('/api/import'), { timeout: 15_000 }),
+    page.getByRole('button', { name: /Import/i }).last().click({ timeout: 15_000 }),
   ]);
   await page.goto('/catalog');
-  const itemId = (await page.locator(`.catalog-row[data-name="${name}"]`).first().getAttribute('data-id'))!;
+  const itemId = (await page.locator(`.catalog-row[data-name="${name}"]`).first().getAttribute('data-id', { timeout: 15_000 }))!;
   expect((await page.request.post('/api/buttons/add', { form: { itemId, label: name, code: barcode } })).ok()).toBe(true);
   const groupName = `Size ${tag}`;
   expect((await page.request.post('/api/catalog/modifier-group', { form: { itemId, name: groupName, minSelect: '0', maxSelect: '1' } })).ok()).toBe(true);
@@ -344,7 +344,7 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
     test(`server-filled popups (modifier picker, table picker) fit at ${w}px with their real content (ut-docs#3411)`, async ({ page }) => {
       test.setTimeout(120_000);
       const tableLabel = `E2E Pf3411 Table ${w}`;
-      const item = await seedModifierItem(page);
+      const item = await test.step('seed a modifier item', () => seedModifierItem(page), { timeout: 45_000 });
       try {
         const failures: string[] = [];
         const fit = async (sel: string, via: string) => {
@@ -371,45 +371,69 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
           if (p.length) failures.push(`${sel} (${via}): ${p.join(' | ')}`);
         };
 
+        // ut-docs#3411: a CI-only hang (passes locally, also in a full
+        // CI-mode run). Every phase has its own step timeout and
+        // every tap its own action timeout, so a hang fails fast, names the
+        // phase and keeps the action's call log (why the tap never landed),
+        // instead of a bare "Test timeout exceeded" from the cleanup below.
+        const STEP = { timeout: 30_000 };
+        const TAP = { timeout: 15_000 };
+
         // The modifier picker, opened by tapping the item's sell-screen tile.
-        await page.request.post('/api/pos/reset');
-        await gotoRoute(page, '/');
-        const tile = page.locator('.btn-tile:visible', { hasText: item.name });
-        await expect(tile).toBeVisible();
-        await Promise.all([
-          page.waitForResponse((r) => r.url().includes('/ui/pos/modifiers')),
-          tile.click(),
-        ]);
-        const mod = page.locator('#modifier-modal');
-        await expect(mod).toHaveJSProperty('open', true);
-        // Not vacuous: the server's option grid is inside, not the empty frame.
-        await expect(mod).toContainText(item.optionName);
-        await fit('#modifier-modal', 'item tile tap');
-        await closeAll(page);
+        await test.step('modifier picker: tap the item tile', async () => {
+          await page.request.post('/api/pos/reset');
+          await gotoRoute(page, '/');
+          const tile = page.locator('.btn-tile:visible', { hasText: item.name });
+          await expect(tile).toBeVisible();
+          await Promise.all([
+            page.waitForResponse((r) => r.url().includes('/ui/pos/modifiers'), TAP),
+            tile.click(TAP),
+          ]);
+        }, STEP);
+        await test.step('modifier picker: measure', async () => {
+          const mod = page.locator('#modifier-modal');
+          await expect(mod).toHaveJSProperty('open', true);
+          // Not vacuous: the server's option grid is inside, not the empty frame.
+          await expect(mod).toContainText(item.optionName);
+          await fit('#modifier-modal', 'item tile tap');
+          await closeAll(page);
+        }, STEP);
 
         // The table picker, opened from the phone's basket sheet with a
         // dine-in line in the basket (ADR-0073 Decision 5) and one seeded table.
-        await deactivateAllTables(page);
-        await createTable(page, tableLabel);
-        await page.request.post('/api/pos/reset');
-        await page.request.post('/api/pos/scan', { form: { code: '5000000000012', qty: '1' } });
-        await gotoRoute(page, '/');
-        await page.locator('.basket-phonebar').click();
-        await expect(page.locator('body')).toHaveClass(/pos-sheet-open/);
-        await page.waitForTimeout(400);
-        await page.getByTestId('table-picker-open').click();
-        const tbl = page.locator('#table-modal');
-        await expect(tbl).toBeVisible();
-        await expect(tbl.locator('.table-picker-option', { hasText: tableLabel })).toBeVisible();
-        await fit('#table-modal', 'basket sheet table picker');
+        await test.step('table picker: seed one table', async () => {
+          await deactivateAllTables(page);
+          await createTable(page, tableLabel);
+        }, { timeout: 45_000 }); // a login + one reload per active table
+        await test.step('table picker: open the basket sheet', async () => {
+          await page.request.post('/api/pos/reset');
+          await page.request.post('/api/pos/scan', { form: { code: '5000000000012', qty: '1' } });
+          await gotoRoute(page, '/');
+          await page.locator('.basket-phonebar').click(TAP);
+          await expect(page.locator('body')).toHaveClass(/pos-sheet-open/);
+          await page.waitForTimeout(400);
+        }, STEP);
+        await test.step('table picker: open and measure', async () => {
+          await page.getByTestId('table-picker-open').click(TAP);
+          const tbl = page.locator('#table-modal');
+          await expect(tbl).toBeVisible();
+          await expect(tbl.locator('.table-picker-option', { hasText: tableLabel })).toBeVisible();
+          await fit('#table-modal', 'basket sheet table picker');
+        }, STEP);
 
         expect(failures, failures.join('\n')).toEqual([]);
       } finally {
-        // A dead page (test timeout) must not skip the data cleanup below.
-        await closeAll(page).catch(() => {});
-        await page.request.post('/api/buttons/remove', { form: { code: item.barcode } });
-        await page.request.post('/api/catalog/item/deactivate', { form: { id: item.itemId } });
-        await deactivateAllTables(page).catch(() => {});
+        // A dead page (test timeout) must not skip the data cleanup below, and
+        // a cleanup that fails or hangs must not replace the failure above:
+        // the cleanup gets its own time and every call is bounded and logged.
+        test.setTimeout(test.info().timeout + 30_000);
+        const warn = (what: string) => (e: unknown) => console.warn(`pf3411 cleanup ${what}:`, e);
+        await test.step('cleanup', async () => {
+          await closeAll(page).catch(warn('closeAll'));
+          await page.request.post('/api/buttons/remove', { form: { code: item.barcode }, timeout: 5_000 }).catch(warn('buttons/remove'));
+          await page.request.post('/api/catalog/item/deactivate', { form: { id: item.itemId }, timeout: 5_000 }).catch(warn('item/deactivate'));
+          await deactivateAllTables(page).catch(warn('deactivateAllTables'));
+        }, { timeout: 25_000 }).catch(warn('step'));
       }
     });
   });
