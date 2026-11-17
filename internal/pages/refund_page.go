@@ -935,6 +935,22 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
 		}
+		// ut-docs#6438: hand the plugin the original sale's own provider
+		// reference(s) for this method, in payment order, so the refund never
+		// depends on per-sale plugin storage.
+		var originalPayments []map[string]any
+		for _, op := range detail.Payments {
+			if op.Method == method && op.TraceID != "" {
+				originalPayments = append(originalPayments, map[string]any{
+					"transaction_ref": op.TraceID,
+					"amount":          op.Amount,
+					"tip_amount":      op.TipAmount,
+				})
+			}
+		}
+		if len(originalPayments) > 0 {
+			refundPayload["original_payments"] = originalPayments
+		}
 		var requestID string
 		if refundAttemptID != "" {
 			// json.Marshal sorts map keys, so this hash is stable regardless

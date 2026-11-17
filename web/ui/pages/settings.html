@@ -1249,7 +1249,7 @@
         <td>{{ .Date }}</td>
         <td>{{ .Size }}</td>
         <td style="display:flex; gap:.3rem; flex-wrap:wrap">
-          <button class="btn secondary" data-backup-save="{{ .Name }}" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+          <button class="btn secondary" data-backup-save="{{ .Name }}"{{ if $.backupNativePicker }} data-backup-native="1"{{ end }} hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
           <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
                the old typed RESTORE word — the elevation dialog's own OOB
                swap (elevation_prompt.html) handles the rest via this same
@@ -1272,7 +1272,7 @@
       {{ end }}
     </tbody>
   </table>
-  <div id="backup-dl-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+  <div id="backup-dl-msg" class="muted" aria-live="polite" data-picker-saved="{{ T "settings.backup.picker_saved" }}" data-picker-cancelled="{{ T "settings.backup.picker_cancelled" }}" data-picker-failed="{{ T "settings.backup.picker_failed" }}" data-picker-no-space="{{ T "settings.backup.picker_no_space" }}" data-picker-unavailable="{{ T "settings.backup.save_failed_picker_unavailable" }}" style="min-height:1.2rem"></div>
   <p class="muted">{{ T "settings.backup.restore_note" }}</p>
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
@@ -1287,40 +1287,6 @@
   <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
   {{ end }}
   </div>
-  <script>
-  // ut-docs#5619: in the Android app the till process cannot write Downloads
-  // (scoped storage; the storage may be a USB drive), so Save to Downloads
-  // opens the system save picker through the app's bridge instead of the
-  // server-side copy. It sits outside the refreshable backup region (a region
-  // refresh does not run scripts). Anywhere else the htmx button above does the copy.
-  (function () {
-    var K = window.AndroidKiosk;
-    if (!K || typeof K.saveBackupCopy !== 'function' || window.utBackupSaveResult) return;
-    var T = {
-      saved: "{{ T "settings.backup.picker_saved" }}",
-      cancelled: "{{ T "settings.backup.picker_cancelled" }}",
-      failed: "{{ T "settings.backup.picker_failed" }}",
-      no_space: "{{ T "settings.backup.picker_no_space" }}"
-    };
-    function say(text, ok) {
-      var el = document.getElementById('backup-dl-msg');
-      if (el) el.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
-    }
-    document.addEventListener('click', function (e) {
-      var b = e.target.closest && e.target.closest('[data-backup-save]');
-      if (!b) return;
-      e.preventDefault();
-      e.stopPropagation();
-      K.saveBackupCopy(b.getAttribute('data-backup-save'));
-    }, true);
-    window.utBackupSaveResult = function (code, name) {
-      say(T[code] || T.failed, code === 'saved');
-      if (code === 'saved' && window.htmx) {
-        window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
-      }
-    };
-  })();
-  </script>
   {{ if .isManager }}
   {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
        stick, another computer or the Downloads folder (a new or
@@ -2018,6 +1984,30 @@
   });
 })();
 </script>
+{{ end }}
+<!-- ut-docs#2557 (ADR-0111 §4): per-staff sales in cloud reports. Manager-only,
+     off by default, explicit Save (a stray tap must not commit a staff-monitoring
+     switch). Plain label with the input as its direct child so the shared
+     touch-row rule (ut-docs#5738) applies. -->
+{{ if .isManager }}
+<div class="card" id="settings-cloud-staff">
+  <h2>{{ T "settings.cloud_staff.title" }} {{ helpLink "reports" }}</h2>
+  <p class="muted">{{ T "settings.cloud_staff.help" }}</p>
+  <div id="settings-cloud-staff-region" data-ut-refresh="#settings-cloud-staff-region" data-ut-saved-msg="#cloud-staff-msg">
+  <fieldset class="set-lock" data-lock-region="settings-cloud-staff"{{ if index $.lockedRegions "settings-cloud-staff" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-cloud-staff" }}{{ template "set-lock-note" }}{{ end }}
+  <form hx-post="/api/settings/cloud-staff-breakdown" hx-swap="none" data-after-request="ok not-html refresh-region; fail save-error:settings-save-error">
+    <label><input type="checkbox" name="enabled" data-testid="cloud-staff-enabled" {{ if eq (index .settingsMap "reports.cloud_staff_breakdown") "true" }}checked{{ end }}> {{ T "settings.cloud_staff.enable" }}</label>
+    <p class="muted">{{ T "settings.cloud_staff.window_note" }}</p>
+    <p class="muted">{{ T "settings.cloud_staff.works_council" }}</p>
+    <div class="set-gap-s">
+      <button class="btn" type="submit">{{ T "common.save" }}</button>
+      <span id="cloud-staff-msg" aria-live="polite"></span>
+    </div>
+  </form>
+  </fieldset>
+  </div>
+</div>
 {{ end }}
 <!-- ut-docs#866: printer settings are elevation-wired — the card renders for
      every session (server-side checkOrElevate is the real gate). -->

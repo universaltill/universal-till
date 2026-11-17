@@ -445,6 +445,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
+		"settings-cloud-staff": !isManager,      // ut-docs#2557: manager-only, like the card
 		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
@@ -851,8 +852,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":             effectsLevelViewFrom(all),
-			"isManager":          isManager,
+			"fxView":    effectsLevelViewFrom(all),
+			"isManager": isManager,
+			// ut-docs#6550: the Android app saves backups through its file picker.
+			"backupNativePicker": hostIsAndroid,
 			"canReportIssue":     canReportIssue,
 			"canManageUsers":     canManageUsers,
 			"canEditPermissions": canEditPermissions,
@@ -2389,6 +2392,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsAudit(r, posRepo, elev, "settings", "marketplace.telemetry_opt_in", "telemetry_opt_in_changed", map[string]any{"opt_in": optIn})
 		settingsRespondSaved(w, r, elev)
 	})
+
+	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 
 	// ADR-0119: this till's visual effects level, beside the interface scale.
 	registerEffectsLevel(mux, d.Settings)
