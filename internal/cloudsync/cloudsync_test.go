@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -31,7 +30,7 @@ import (
 // shape as internal/data's own (unexported there, so duplicated here).
 func openMigratedDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}

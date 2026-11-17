@@ -288,9 +288,10 @@ func writeKeptDemoItemsHTML(b *strings.Builder, locale string, items []data.Kept
 		case data.KeptReasonEdited:
 			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_edited")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-remove-anyway" `+
-				`hx-post="/api/settings/demo-item/%s/remove" hx-confirm="%s" `+
+				`hx-post="/api/settings/demo-item/%s/remove" hx-confirm="%s" data-confirm-ok="%s" `+
 				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
 				id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_confirm")),
+				html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")),
 				html.EscapeString(demoItemMsgSelector(it.ID)), html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-keep-own" `+
 				`hx-post="/api/settings/demo-item/%s/keep" `+
@@ -392,9 +393,10 @@ func writeKeptDemoPromosHTML(b *strings.Builder, locale string, promos []data.Ke
 		case data.KeptReasonEdited:
 			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_promo_edited")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-promo-remove-anyway" `+
-				`hx-post="/api/settings/demo-promo/%s/remove" hx-confirm="%s" `+
+				`hx-post="/api/settings/demo-promo/%s/remove" hx-confirm="%s" data-confirm-ok="%s" `+
 				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
 				code, html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_confirm")),
+				html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_btn")),
 				html.EscapeString(demoPromoMsgSelector(p.Code)), html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_btn")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-promo-keep-own" `+
 				`hx-post="/api/settings/demo-promo/%s/keep" `+
@@ -584,6 +586,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// that can't replace itself, a failed attempt) the line says that
 		// instead of claiming it follows (followLine).
 		autoUpdateFollowLine := ""
+		// ut-docs#2739: when additional tills update (update.fleet_follow).
+		fleetFollowStored, _, _ := d.Settings.Get(r.Context(), keyFleetFollow)
+		autoUpdateFleetFollow := followPolicyOf(fleetFollowStored)
 		if autoUpdateFollowsMain {
 			in := followInputsOf(r.Context(), d)
 			autoUpdateFollowLine = followLine(in)
@@ -797,6 +802,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			notPublished = loadBasePluginsNotPublished(r.Context(), d)
 		}
 		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins, notPublished)
+		// ADR-0172 §5: an automatically queued tax spec shows the status chip.
+		for i := range pendingBasePluginRows {
+			if pendingBasePluginRows[i].AutoTax {
+				loc := httpx.RequestLocale(r)
+				pendingBasePluginRows[i].Chip = taxAutoInstallChipView(r.Context(), d, loc)
+				name := httpx.T(loc, "setup.tax_autoinstall.plugin_fallback_name")
+				if st := loadTaxAutoInstallStatus(r.Context(), d); st != nil && st.PluginName != "" {
+					name = st.PluginName
+				}
+				pendingBasePluginRows[i].ConfirmText = sprintfKey(loc, "settings.plugins.dismiss_tax_pending_confirm", name)
+			}
+		}
 		// ut-docs#1913: the same four conditions that gate whether
 		// settings-issuereport/settings-menulayout/settings-payments/
 		// settings-data/settings-all actually RENDER their `.card` this
@@ -831,8 +848,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":             effectsLevelViewFrom(all),
-			"isManager":          isManager,
+			"fxView":    effectsLevelViewFrom(all),
+			"isManager": isManager,
+			// ut-docs#6550: the Android app saves backups through its file picker.
+			"backupNativePicker": hostIsAndroid,
 			"canReportIssue":     canReportIssue,
 			"canManageUsers":     canManageUsers,
 			"canEditPermissions": canEditPermissions,
@@ -865,6 +884,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfigForSettings(r.Context(), d),
+			// ut-docs#6182: advisory under Connection when Regular printer (system)
+			// cannot print on this device. Render-time probe read only.
+			"printerSystemUnavailable": systemPrinterMissing(d),
 			// ADR-0124: the receipt policy above is the shop's stored choice;
 			// in a forbidden market the till still prints nothing, and says so.
 			"receiptPolicyShadowNote": customerDocumentsSuppressed(r.Context(), d),
@@ -897,6 +919,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"autoUpdateMainVersion": autoUpdateMainVersion,
 			"autoUpdateEnabled":     autoUpdateEnabled,
 			"autoUpdateTime":        autoUpdateTime,
+			"autoUpdateFleetFollow": autoUpdateFleetFollow,
 			"about":                 aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
 			"TillName":              deviceNameOrDefault(r.Context(), d, locale),
 			"TillRegisterID":        tillRegisterID,
@@ -966,6 +989,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
 			// ut-docs#4720: the cloud-terms accept step / accepted line.
 			"terms": termsView(r.Context(), d, locale),
+			// ut-docs#5145: the cloud will not re-register this till yet.
+			"registerBlocked": registerBlockedView(r, d, locale),
+			"registerFacts":   registerFactsView(r, d, locale),
+			"reconnectPanel":  reconnectPanelView(r, d),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -1270,8 +1297,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 					html.EscapeString(httpx.T(locale, "settings.store_name.title")))
 				return
 			}
-			if key := enrolFailureKey(err); key != "" {
-				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, key)))
+			// ut-docs#5145: device_live is a standing state (selling is not
+			// affected), not a failure: neutral styling, no cross.
+			if usable, live := enroll.IsDeviceLive(err); live {
+				fmt.Fprintf(w, `<span class="muted">%s</span>`, deviceLiveText(locale, usable))
+				return
+			}
+			if msg := enrolFailureHTML(locale, err); msg != "" {
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, msg)
 				return
 			}
 			endpoint := html.EscapeString(enroll.Effective(d.Cfg).Marketplace.EndpointURL)
@@ -1298,6 +1331,125 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
+	})
+
+	// "Reconnect this till" (ADR-0116 D6, ut-docs#5145): a registered till of an
+	// ownerless shop whose cloud sign-in was refused proves its approval key and
+	// gets a new credential in the SAME shop. An operator action (a locked-out
+	// till never re-registers on its own); elevation-wired like Register now.
+	// Always-200 HTMX shape; the raw cloud text is logged, never rendered, and a
+	// refusal leaves the till exactly as it was.
+	mux.HandleFunc("POST /api/enrol/reconnect", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		// Hidden AND server-refused outside the anonymous lock-out, the same
+		// gate as new-shop (Fable review M2): a healthy till or one of a
+		// claimed shop never reaches the cloud from here.
+		if !tillLockedOutAnonymous(r.Context(), d) {
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/reconnect", "#reconnect-msg",
+				httpx.T(locale, "elevation.summary.enrol_reconnect"), nil, elev)
+			return
+		}
+		status, err := enroll.Reconnect(r.Context(), d.Cfg, d.Settings)
+		if err != nil {
+			logging.L().Warnf("enrol reconnect failed: %v", err)
+			if _, live := enroll.IsDeviceLive(err); live {
+				fmt.Fprintf(w, `<span class="muted" tabindex="-1">%s</span>`, reconnectResultHTML(locale, err))
+				return
+			}
+			fmt.Fprintf(w, `<span class="error" tabindex="-1">❌ %s</span>`, reconnectResultHTML(locale, err))
+			return
+		}
+		clearAuthLockout()
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "reconnected", map[string]any{"store_id": status.StoreID})
+		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
+		fmt.Fprintf(w, `<span role="status" tabindex="-1">✅ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_ok")))
+	})
+
+	// "Register as a new shop" (ADR-0116 D6, ut-docs#5145): the identity wipe of
+	// pairing (new device id, token and store cleared), then a first-time
+	// register. Not undoable, so it asks first (confirm, then elevate, as
+	// POST /api/enrol/pair). The wipe is not undone when the register fails: the
+	// till is then in the ordinary not-registered state (Register now works).
+	mux.HandleFunc("POST /api/enrol/new-shop", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		if !tillLockedOutAnonymous(r.Context(), d) {
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.reconnect_unavailable")))
+			return
+		}
+		if r.Form.Get("confirm_new_shop") != "1" {
+			renderConfirmPrompt(w, r, confirmPrompt{
+				Action:    "/api/enrol/new-shop",
+				HxTarget:  "#new-shop-msg",
+				Title:     httpx.T(locale, "settings.till_registration.new_shop_title"),
+				Body:      httpx.T(locale, "settings.till_registration.new_shop_confirm"),
+				Confirm:   httpx.T(locale, "settings.till_registration.new_shop_yes"),
+				HelpTopic: "claim",
+				Danger:    true,
+				Hidden:    []elevationHiddenField{{Name: "confirm_new_shop", Value: "1"}},
+			})
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/new-shop", "#new-shop-msg",
+				httpx.T(locale, "elevation.summary.enrol_new_shop"),
+				[]elevationHiddenField{{Name: "confirm_new_shop", Value: "1"}}, elev)
+			return
+		}
+		before := enroll.CurrentStatus()
+		oldStore := before.StoreID
+		status, err := enroll.StartAsNewStore(r.Context(), d.Cfg, d.Settings)
+		wiped := status.DeviceID != before.DeviceID // the wipe mints a new device id
+		if err != nil && status.Registered && wiped {
+			// Registered, but the follow-up signing-key fetch failed: the wipe
+			// ran and the till IS in the new shop. Same as success; the key is
+			// fetched again by the next plugin action.
+			logging.L().Warnf("enrol new shop: registered, signing key fetch failed: %v", err)
+			clearAuthLockout()
+			settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "new_shop_registered", map[string]any{"old_store_id": oldStore, "store_id": status.StoreID})
+			requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
+			fmt.Fprintf(w, `<span role="status" tabindex="-1">✅ %s %s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_ok")),
+				html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_key_later")))
+			return
+		}
+		if err != nil && !wiped {
+			// Refused before the wipe (not configured, busy): nothing changed,
+			// so nothing is reported as reset or audited as reset.
+			logging.L().Warnf("enrol new shop refused: %v", err)
+			fmt.Fprintf(w, `<span class="error" tabindex="-1">❌ %s</span>`, reconnectResultHTML(locale, err))
+			return
+		}
+		if err != nil || !status.Registered {
+			if err != nil {
+				logging.L().Warnf("enrol new shop failed: %v", err)
+			}
+			clearAuthLockout() // the old identity is gone either way
+			settingsAudit(r, posRepo, elev, "enrollment", oldStore, "new_shop_identity_reset", nil)
+			// The wipe ran (StartAsNewStore does it first): say so, then why.
+			reason := ""
+			if err != nil {
+				if msg := reconnectResultHTML(locale, err); msg != "" {
+					reason = " " + msg
+				}
+			}
+			fmt.Fprintf(w, `<span class="error" tabindex="-1">❌ %s%s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_pending")), reason)
+			return
+		}
+		clearAuthLockout()
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "new_shop_registered", map[string]any{"old_store_id": oldStore, "store_id": status.StoreID})
+		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
+		fmt.Fprintf(w, `<span role="status" tabindex="-1">✅ %s</span>`, html.EscapeString(httpx.T(locale, "settings.till_registration.new_shop_ok")))
 	})
 
 	// ut-docs#4792: a till that registered before the terms step (or through
@@ -2977,15 +3129,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		canonicalType := strings.TrimSpace(r.Form.Get("canonical_type"))
 		localeVal := strings.TrimSpace(r.Form.Get("locale"))
+		marketVal := strings.TrimSpace(r.Form.Get("market"))
 		pending, err := loadPendingBasePlugins(r.Context(), d)
 		if err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
 		matched := false
+		var matchedSpec basePluginSpec
 		for _, spec := range pending {
-			if spec.CanonicalType == canonicalType && spec.Locale == localeVal {
-				matched = true
+			if spec.CanonicalType == canonicalType && spec.Locale == localeVal && spec.Market == marketVal {
+				matched, matchedSpec = true, spec
 				break
 			}
 		}
@@ -2998,14 +3152,19 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/settings/dismiss-pending-base-plugin",
 				fmt.Sprintf(`[id="pending-plugin-msg-%s"]`, canonicalType),
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.dismiss_pending_base_plugin"), canonicalType),
-				[]elevationHiddenField{{Name: "canonical_type", Value: canonicalType}, {Name: "locale", Value: localeVal}}, elev)
+				[]elevationHiddenField{{Name: "canonical_type", Value: canonicalType}, {Name: "locale", Value: localeVal}, {Name: "market", Value: marketVal}}, elev)
 			return
 		}
-		if err := dismissPendingBasePlugin(r.Context(), d, canonicalType, localeVal); err != nil {
+		if err := dismissPendingBasePluginSpec(r.Context(), d, matchedSpec); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		settingsAudit(r, posRepo, elev, "settings", canonicalType, "pending_base_plugin_dismissed", map[string]any{"canonical_type": canonicalType, "locale": localeVal})
+		// ADR-0172 §5: dismissing the automatic tax install is declining it,
+		// so nothing queues it again.
+		if isAutoTaxSpec(matchedSpec) {
+			declineTaxAutoInstall(r.Context(), d, "")
+		}
+		settingsAudit(r, posRepo, elev, "settings", canonicalType, "pending_base_plugin_dismissed", map[string]any{"canonical_type": canonicalType, "locale": localeVal, "market": marketVal})
 		if elev.Outcome == elevated {
 			w.Header().Set("X-UT-Response", "ok")
 		}
@@ -3505,6 +3664,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if key == common.KeyReportRetentionMode {
 			common.LocalizedError(w, r, http.StatusForbidden, "settings.retention.err_use_retention_card")
 			return
+		}
+		// ut-docs#6179: the gift voucher slip text takes the designer's rule
+		// here too, and the normalised text is what is stored.
+		if key == keyReceiptVoucherSlipText {
+			norm, err := normalizeVoucherSlipText(value)
+			if err != nil {
+				httpx.RefuseText(w, voucherSlipTextTooLongMsg(httpx.ResolveLocale(w, r)), http.StatusUnprocessableEntity)
+				return
+			}
+			value = norm
 		}
 		// ut-docs#5862 (review finding): this till's name keys take the
 		// Till name card's single-line rule here too, before the elevation

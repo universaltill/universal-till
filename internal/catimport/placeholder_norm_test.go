@@ -14,6 +14,10 @@ func TestNormalizeWord(t *testing.T) {
 		{"قهـــوة", "قهوه"},
 		{"آب", "اب"},
 		{"Heiße", "heisse"},
+		// ut-docs#6052: ZWNJ / ZWJ are dropped, never a word boundary.
+		{"هات\u200cداگ", "هاتداگ"},
+		{"a\u200db", "ab"},
+		{"a\u200c\u200db", "ab"},
 	}
 	for _, c := range cases {
 		if got := normalizeWord(c.in); got != c.want {
@@ -33,6 +37,40 @@ func TestNormalizedWords_ZWNJSplits(t *testing.T) {
 	want := []string{normalizeWord("کیک"), "ها"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("normalizedWords = %q, want %q", got, want)
+	}
+}
+
+// ZWJ (U+200D) is a word-internal joiner like ZWNJ: the split form splits
+// on it too, and hasZWNJ reports it, so "کیک‍ها" still stems to cake
+// (ut-docs#6052 review L1).
+func TestNormalizedWords_ZWJSplits(t *testing.T) {
+	got := normalizedWords("کیک\u200dها")
+	want := []string{normalizeWord("کیک"), "ها"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("normalizedWords = %q, want %q", got, want)
+	}
+	if !hasZWNJ("کیک\u200dها") {
+		t.Error("hasZWNJ(ZWJ word) = false, want true")
+	}
+}
+
+func TestJoinedWords_ZWNJJoins(t *testing.T) {
+	got := joinedWords("کیک\u200cها")
+	want := []string{normalizeWord("کیکها")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("joinedWords = %q, want %q", got, want)
+	}
+	if !hasZWNJ("a\u200cb") || hasZWNJ("ab") {
+		t.Error("hasZWNJ wrong")
+	}
+}
+
+func TestFoldForSearch_ZWNJIdempotent(t *testing.T) {
+	for _, in := range []string{"تخم\u200cمرغ", "a\u200c\u200db"} {
+		once := FoldForSearch(in)
+		if FoldForSearch(once) != once {
+			t.Errorf("FoldForSearch not idempotent on %q", in)
+		}
 	}
 }
 

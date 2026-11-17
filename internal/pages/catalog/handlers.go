@@ -880,7 +880,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
 			"MissingFilterKey":      missingKey,
-			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
+			"BuiltinIconGroups":     common.ShopPickerIconGroups(r.Context(), data.NewSettingsRepo(d.Db)),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 			"AICutout":              aiCutoutOffered(r),
@@ -2159,8 +2159,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 	})
 
-	// Item image upload → web/public/assets/items/<id>/thumb.png (the same
-	// convention the product tiles and designer use).
+	// Item image upload → <data dir>/public/assets/items/<id>/thumb.png
+	// (paths.Data via StoreItemPhoto/itemThumbFile; served as ItemThumbURL,
+	// the same /public/assets/items/<id>/thumb.png the product tiles and
+	// designer use). Never the legacy web/public tree (ut-docs#4401).
 	//
 	// Deliberately NOT requirePrimary-gated (ut-docs#1689): item_images is
 	// explicitly excluded from sync_admin_repo.go's adminTables ("files

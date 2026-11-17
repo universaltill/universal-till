@@ -199,6 +199,7 @@ var demoDeniedRoutes = map[string]bool{
 	"/v1/install/intents":                             true,
 	"/v1/install/status":                              true,
 	"/v1/telemetry/plugins":                           true,
+	"GET /api/import/photos/failed.csv":               true, // ut-docs#6527: the caller's own last failed-rows report
 	"GET /api/plugins/check-updates":                  true,
 	"GET /api/plugins/{id}/export":                    true,
 	"GET /api/plugins/{id}/versions":                  true,
@@ -231,6 +232,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/import/sample-data":  true,
 	"POST /api/import/from-system":  true, // ut-docs#4431: pulls a catalogue from another system
 	"POST /api/import/from-file":    true, // ut-docs#4526: commits a file through an importer plugin
+	"POST /api/import/photos":       true, // ut-docs#6527: reads local files / downloads URLs, writes item photos
 	"POST /api/vouchers/import":     true,
 	"POST /vouchers/{id}/adjust":    true, // ut-docs#4253: manager balance correction
 	// Backups: create, save-copy, download (a flagged demo database never
@@ -305,6 +307,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/enrol/claim-code":           true,
 	"POST /api/enrol/now":                  true,
 	"POST /api/enrol/pair":                 true,
+	"POST /api/enrol/reconnect":            true, // ut-docs#5145: a demo till never contacts the cloud
+	"POST /api/enrol/new-shop":             true, // ut-docs#5145: same
 	// ut-docs#5127 UT-1b: approving a move signs with the till's key and
 	// moves its cloud identity; a demo visitor never gets near it.
 	"GET /settings/cloud/move/{id}":             true,
@@ -450,12 +454,13 @@ var demoDeniedRoutes = map[string]bool{
 	// Desktop shell / OS: window mode and state, input heartbeat, launch on
 	// startup, exit to OS (stays visible in the UI; the POST answers the demo
 	// message).
-	"GET /api/window-mode":                 true,
-	"GET /ui/settings/window-mode-status":  true,
-	"POST /api/settings/exit-to-os":        true,
-	"POST /api/settings/launch-on-startup": true,
-	"POST /api/settings/window-mode":       true,
-	"POST /api/window/input-heartbeat":     true,
+	"GET /api/window-mode":                  true,
+	"GET /ui/settings/window-mode-status":   true,
+	"POST /api/settings/exit-to-os":         true,
+	"POST /api/settings/launch-on-startup":  true,
+	"POST /api/settings/window-mode":        true,
+	"POST /api/settings/window-mode/toggle": true,
+	"POST /api/window/input-heartbeat":      true,
 	// Reload-reason diagnostics (ut-docs#2788): telemetry about the till
 	// device itself, like the heartbeat; the page's beacon ignores the
 	// answer.
@@ -531,6 +536,8 @@ var demoAllowedRoutes = map[string]bool{
 	// stamp the demo message into the nav).
 	"GET /ui/bugreport-chip":               true,
 	"GET /ui/cloud-auth-chip":              true,
+	"GET /ui/tax-autoinstall-chip":         true, // ADR-0172 §5; local settings read only
+	"GET /ui/move-pending-chip":            true, // ut-docs#5287: read-only chip, empty unless a move waits
 	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
 	"GET /ui/backup-copy-chip":             true, // ut-docs#5071; reads two settings
 	"GET /ui/settings/language-install":    true, // ut-docs#4477; reads local settings only
@@ -646,6 +653,7 @@ var demoAllowedRoutes = map[string]bool{
 	"/reports":                   true,
 	"/shifts":                    true,
 	"POST /shifts/x-report":      true,
+	"GET /ui/shifts/{id}/count":  true, // ut-docs#1043: read-only stored denomination count
 	"POST /reports/eod/x-report": true, // ut-docs#5800: day-so-far view
 	"/ui/journal":                true,
 	"/ui/reports/tab/{name}":     true,
@@ -752,6 +760,9 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/barcode-symbology":              true,
 	"POST /api/settings/basket-panel-width":             true,
 	"POST /api/settings/browsing-mode":                  true,
+	"GET /my-display":                                   true, // ut-docs#3440: per-operator cosmetic preference, same class as browsing-mode above
+	"POST /api/my-display/theme":                        true,
+	"POST /api/my-display/browsing-mode":                true,
 	"POST /api/settings/catalog-import-barcode-default": true,
 	"POST /api/settings/catalog-pre-pack-unit-price":    true,
 	"POST /api/settings/demo-item/{id}/keep":            true,

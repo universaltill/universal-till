@@ -17,6 +17,10 @@ scripts/release.sh minor    # 0.2.0 → 0.3.0
 scripts/release.sh 1.0.0    # explicit
 ```
 
+Both bumps (A and B) start from the highest plain `vX.Y.Z` tag
+(`scripts/ci/latest-stable-tag.sh`); pre-release tags such as `-beta.N` or
+`-rc1` are ignored.
+
 **C. Manual tag (the classic way still works):**
 ```sh
 git checkout main && git pull
@@ -215,6 +219,21 @@ version rather than a guessed next one so `internal/updates.Newer` keeps
 ranking it correctly once that next stable actually ships. See
 `universaltill/ut-docs#1432` for the beta channel, the till's channel
 setting, and full platform parity — all tracked as separate follow-ups.
+
+## Re-forking libc (modernc.org/libc, ADR-0188)
+
+`go.mod` replaces `modernc.org/libc` with `github.com/universaltill/modernc-libc`
+(upstream plus one patch) so the armv7 Android app survives Android 8-10 seccomp
+(ut-docs#6300). When a sqlite bump raises the libc require, `guard-libc-fork.sh`
+fails: clone upstream at the new tag, `patch -p1 < scripts/ci/libc-ut.patch`
+(rebase it if it no longer applies), commit, tag `vX-ut.1` on the fork (tags are
+never moved), update the `replace`, run `go mod tidy` and
+`scripts/ci/guard-libc-fork.sh --verify-upstream`.
+
+After a re-fork run `bash scripts/ci/sim-armv7-seccomp.sh` locally (needs `qemu-system-arm`;
+`brew install qemu` on a Mac): it must report GREEN, i.e. pristine libc killed by the Android 9
+seccomp filter and the fork booting under it (CI runs it in the `armv7-seccomp` job).
+It simulates the AOSP filter under qemu; it does not replace the Fire OS 7 hardware check.
 
 ## Notes / gaps
 

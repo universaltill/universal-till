@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -386,6 +387,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// reached a plugin and approved, with that leg's own idempotency key —
 	// what a refused cannot-sign tender must reverse (ADR-0136 Decision 2).
 	var capturedLegs []capturedPaymentLeg
+	// legRequestIDs[i] is leg i's authorize event id when that authorize was
+	// dispatched to a plugin, "" otherwise; the settle event carries it so a
+	// plugin can match its own approval exactly (ut-docs#6438).
+	legRequestIDs := make([]string, len(payments))
 	for i, p := range payments {
 		amount := p.Amount
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -487,8 +492,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				log.Printf("tender: ignoring reader-reported tip %d for method %q (attempt %s): a voucher leg or an amount overflow", tip, p.MethodID, requestID)
 			}
 		}
+		// ut-docs#6438: the provider reference a later refund needs lives on
+		// the payment row (trace_id), not in plugin storage. Never auth_code:
+		// that is printed on the customer receipt.
+		if ref, ok := pluginReportedTransactionRef(resp); ok {
+			if old := payments[i].TraceID; old != "" && old != ref {
+				log.Printf("tender: plugin transaction_ref replaces trace_id for method %q (attempt %s)", p.MethodID, requestID)
+			}
+			payments[i].TraceID = ref
+		} else if len(resp) > 0 && strings.Contains(string(resp), `"transaction_ref"`) {
+			log.Printf("tender: ignoring malformed transaction_ref from method %q (attempt %s)", p.MethodID, requestID)
+		}
 		if dispatched {
-			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured})
+			legRequestIDs[i] = requestID
+			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured, transactionRef: payments[i].TraceID, tipAmount: payments[i].TipAmount})
 		}
 	}
 
@@ -710,15 +727,24 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			byMethod[e.EntryKey] = e
 		}
 		bus := plugins.SharedBus(d.Db)
-		for _, p := range payments {
+		for i, p := range payments {
 			if e, ok := byMethod[p.MethodID]; ok && e.TriggerEvent != "" {
-				_, _ = bus.Publish(ctx, e.TriggerEvent, map[string]any{
+				settle := map[string]any{
 					"sale_id":   saleID,
 					"method":    p.MethodID,
 					"amount":    p.Amount.Minor(),
 					"reference": p.Reference,
 					"plugin_id": e.PluginID,
-				})
+				}
+				// ut-docs#6438: the leg's authorize id, and the reference core
+				// now holds. A plugin seeing transaction_ref writes nothing.
+				if i < len(legRequestIDs) && legRequestIDs[i] != "" {
+					settle["authorize_request_id"] = legRequestIDs[i]
+				}
+				if p.TraceID != "" {
+					settle["transaction_ref"] = p.TraceID
+				}
+				_, _ = bus.Publish(ctx, e.TriggerEvent, settle)
 			}
 		}
 	}
@@ -914,6 +940,34 @@ func pluginReportedTipAmount(resp json.RawMessage) (amount int64, ok bool) {
 		return 0, false
 	}
 	return *parsed.TipAmount, true
+}
+
+// pluginReportedTransactionRef extracts an optional `transaction_ref` from a
+// payment.<key>.authorize answer: the provider reference (Stripe PaymentIntent
+// id, SumUp transaction id) a later refund needs. Core keeps it in the payment
+// row's trace_id (ut-docs#6438, ADR-0196) and returns it on .refund as
+// original_payments. Accepted only if, trimmed, 1..128 bytes of printable
+// ASCII (0x21..0x7E); anything else is ignored and the sale is unaffected.
+func pluginReportedTransactionRef(resp json.RawMessage) (string, bool) {
+	if len(resp) == 0 {
+		return "", false
+	}
+	var parsed struct {
+		Ref *string `json:"transaction_ref"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil || parsed.Ref == nil {
+		return "", false
+	}
+	ref := strings.TrimSpace(*parsed.Ref)
+	if ref == "" || len(ref) > 128 {
+		return "", false
+	}
+	for i := 0; i < len(ref); i++ {
+		if ref[i] < 0x21 || ref[i] > 0x7E {
+			return "", false
+		}
+	}
+	return ref, true
 }
 
 // resolveReceiptScanDestination is the ut-docs#1818 scan-routing decision:
@@ -1593,6 +1647,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "key required: several lines share this code", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#6113: an elevation retry replays from_qty, the qty the
+		// approver saw in "Reduce X from <from_qty> to <qty>". If the line is no
+		// longer at that qty (or is gone) the approval is for a different
+		// reduction than the one now pending: refuse it as a changed line
+		// BEFORE the elevation check, so a stale approval neither validates a
+		// PIN into an action nor records shrinkage/audit. Absent on ordinary
+		// stepper/qty posts, which are unaffected.
+		staleFromQty := false
+		if v := strings.TrimSpace(r.Form.Get("from_qty")); v != "" {
+			fromQty, err := strconv.ParseFloat(v, 64)
+			if err != nil || fromQty < 0 || math.IsNaN(fromQty) || math.IsInf(fromQty, 0) {
+				http.Error(w, "invalid from_qty", http.StatusBadRequest)
+				return
+			}
+			staleFromQty = cur == nil || cur.Qty != fromQty
+		}
 		qty := 0.0
 		if cur != nil {
 			qty = cur.Qty
@@ -1623,6 +1693,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
+		if lineSnapshotTestHook != nil {
+			lineSnapshotTestHook()
+		}
 		// ut-docs#5411: lowering a priced line's quantity (the − stepper, the
 		// qty field, qty=0) takes value off the sale exactly like removing
 		// it, so it goes through the same void_comp_waste gate, reason
@@ -1636,81 +1709,95 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// loss is the line-total delta so micro-steps sum to the real loss.
 		// A discount the engine will refuse (LineDiscountTooLargeError)
 		// changes nothing, so it is neither gated nor recorded.
-		if cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
-			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount))) {
-			reducedBy := cur.Qty - qty
-			{
-				lost := pos.AmountForQuantity(cur.PriceCents, cur.Qty).Sub(pos.AmountForQuantity(cur.PriceCents, qty))
-				locale := httpx.ResolveLocale(w, r)
-				reason := r.Form.Get("reason")
-				if reason == "" {
-					reason = pos.ShrinkageReasonVoid
+		reduction := !staleFromQty && cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
+			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount)))
+		reason := r.Form.Get("reason")
+		var elev elevationCheck
+		if reduction {
+			locale := httpx.ResolveLocale(w, r)
+			if reason == "" {
+				reason = pos.ShrinkageReasonVoid
+			}
+			if !pos.ValidShrinkageReason(reason) {
+				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
+				return
+			}
+			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+			if elev.Outcome == needsElevation {
+				// Replay the ABSOLUTE target qty (not delta): the approver
+				// confirms the exact result shown in the summary.
+				hidden := []elevationHiddenField{
+					{Name: "reason", Value: reason},
+					{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
+					// ut-docs#6113: also replay the qty the summary shows as the
+					// starting point, so the retry is refused if the line moved.
+					{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
+					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
 				}
-				if !pos.ValidShrinkageReason(reason) {
-					http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
-					return
+				if key != "" {
+					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+				} else {
+					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
 				}
-				elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
-				if elev.Outcome == needsElevation {
-					// Replay the ABSOLUTE target qty (not delta): the approver
-					// confirms the exact result shown in the summary.
-					hidden := []elevationHiddenField{
-						{Name: "reason", Value: reason},
-						{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
-						{Name: "discount", Value: strconv.FormatInt(discount, 10)},
-					}
-					if key != "" {
-						hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
-					} else {
-						hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
-					}
-					// The stepper/qty field target #basket (outerHTML); the
-					// prompt's hint must land in the small hint slot instead,
-					// or it would replace the whole basket (as /api/pos/remove).
-					w.Header().Set("HX-Retarget", "#shrinkage-hint")
-					w.Header().Set("HX-Reswap", "innerHTML")
-					w.Header().Set("HX-Trigger", "ut-basket-resync")
-					renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint",
-						fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
-							strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
-							httpx.T(locale, "shrinkage.reason."+reason)),
-						hidden, elev)
-					return
-				}
-				now := time.Now().UTC().Format(time.RFC3339)
-				registerID := tillRegisterIDBestEffort(r.Context(), d)
-				if err := repo.InsertShrinkageEvent(r.Context(), nil, reason, cur.ItemID, cur.Name, cur.SKU, reducedBy,
-					cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
-					logging.L().Errorf("insert shrinkage event: %v", err)
-				}
-				detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
-				if elev.Outcome == elevated {
-					if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
-						logging.L().Errorf("insert elevated line-reduction audit: %v", err)
-					}
-				} else if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
-					logging.L().Errorf("insert line-reduction audit: %v", err)
-				}
-				// The elevation dialog's retry may have landed in the hint
-				// slot; put the result back on the basket.
-				w.Header().Set("HX-Retarget", "#basket")
-				w.Header().Set("HX-Reswap", "outerHTML")
+				// The stepper/qty field target #basket (outerHTML); the
+				// prompt's hint must land in the small hint slot instead,
+				// or it would replace the whole basket (as /api/pos/remove).
+				w.Header().Set("HX-Retarget", "#shrinkage-hint")
+				w.Header().Set("HX-Reswap", "innerHTML")
+				// After settle (ut-docs#5417): the resync replaces #basket,
+				// hint slot included; it must run once the hint is in the
+				// DOM so app.js can carry it across.
+				w.Header().Set("HX-Trigger-After-Settle", "ut-basket-resync")
+				renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint",
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
+						strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
+						httpx.T(locale, "shrinkage.reason."+reason)),
+					hidden, elev)
+				return
 			}
 		}
+		// The elevation dialog's retry may have targeted the hint slot; the
+		// result (or a conflict) always goes back on the basket.
+		w.Header().Set("HX-Retarget", "#basket")
+		w.Header().Set("HX-Reswap", "outerHTML")
+		// ut-docs#5417: compare-and-set against the qty the gate saw, so a
+		// concurrent writer between the read above and this update cannot
+		// turn the post into an ungated reduction. No lock is held across the
+		// elevation round trip; the retry is a fresh request.
 		var updateErr error
-		if key != "" {
+		if staleFromQty {
+			// ut-docs#6113: nothing applied; same 409 + note as a lost CAS.
+			updateErr = pos.ErrLineChanged
+		} else if cur != nil {
 			// qty→0 voids the line; if it was the last dine-in line the
 			// table clears (ADR-0073 D5) and its claim must go (ut-docs#1390).
 			prevTable := d.Engine.TableID()
-			updateErr = d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
+			updateErr = d.Engine.UpdateLineByKeyIfQty(cur.LineKey, cur.Qty, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
-		} else {
-			prevTable := d.Engine.TableID()
-			updateErr = d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
-			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), d, repo, prevTable)
+		} else if key != "" {
+			// ut-docs#5417 review R1: the keyed line was already gone when the
+			// basket was read; say so instead of a silent no-op 200.
+			updateErr = pos.ErrLineChanged
+		}
+		if reduction && updateErr == nil {
+			// Record only a reduction the engine actually applied.
+			reducedBy := cur.Qty - qty
+			lost := pos.AmountForQuantity(cur.PriceCents, cur.Qty).Sub(pos.AmountForQuantity(cur.PriceCents, qty))
+			now := time.Now().UTC().Format(time.RFC3339)
+			registerID := tillRegisterIDBestEffort(r.Context(), d)
+			if err := repo.InsertShrinkageEvent(r.Context(), nil, reason, cur.ItemID, cur.Name, cur.SKU, reducedBy,
+				cur.PriceCents, lost, elev.ActorID, elev.ApproverID, "", cur.OrderType, registerID, now, ""); err != nil {
+				logging.L().Errorf("insert shrinkage event: %v", err)
+			}
+			detail := map[string]any{"key": key, "code": code, "from_qty": cur.Qty, "to_qty": qty}
+			if elev.Outcome == elevated {
+				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
+					logging.L().Errorf("insert elevated line-reduction audit: %v", err)
+				}
+			} else if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
+				logging.L().Errorf("insert line-reduction audit: %v", err)
 			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -1723,6 +1810,20 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if errors.As(updateErr, &tooLarge) {
 			b.DiscountErrorKey = tooLarge.LineKey
 			b.DiscountErrorLimit = tooLarge.Limit
+		}
+		// ut-docs#5417: the line changed (or went) since it was read, so the
+		// edit was not applied: 409 with the current basket and a note.
+		if errors.Is(updateErr, pos.ErrLineChanged) {
+			b.LineChangedKey = key
+			if cur != nil {
+				b.LineChangedKey = cur.LineKey
+			} else if key == "" {
+				// ut-docs#6113 review F1: a code-addressed line that is gone
+				// has no key; any non-line value renders the basket-level note.
+				b.LineChangedKey = "code:" + code
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
 		}
 		_ = basketView.Render(w, b)
 	})
@@ -2654,7 +2755,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
+		funcs := httpx.WithBrowserPrint(httpx.FuncsFor(locale), r)
 		// writeTenderView swaps the post-tender view into #basket, plus the
 		// recent-sales journal out of band.
 		writeTenderView := func(viewHTML string) {
@@ -2782,8 +2883,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				iv.Holder = t.HolderLabel
 				iv.Balance = t.BalanceAfterMinor
 				iv.HasBalance = true
+				iv.At = t.CreatedAt
 			}
 			issuedVouchers = append(issuedVouchers, iv)
+		}
+		// ut-docs#6179: the issue date of each issued voucher is read back from
+		// the committed row, once — the paper slip reads the same rows, so the
+		// dates agree by construction. A read error leaves no date line.
+		hasIssued := false
+		for _, iv := range issuedVouchers {
+			hasIssued = hasIssued || !iv.TopUp
+		}
+		if hasIssued {
+			if rows, vErr := repo.VouchersIssuedInSale(r.Context(), saleID); vErr == nil {
+				created := make(map[string]string, len(rows))
+				for _, row := range rows {
+					created[row.ID] = row.CreatedAt
+				}
+				for i := range issuedVouchers {
+					if !issuedVouchers[i].TopUp {
+						issuedVouchers[i].At = created[issuedVouchers[i].Code]
+					}
+				}
+			}
 		}
 		design := receiptDesignFromSettings(r.Context(), d)
 		// ut-docs#908: the customer order-tracking QR on the counter
@@ -2803,7 +2925,23 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
 		if renderErr != nil {
 			printerUnavailable = true
-			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
+			receiptHTML = receiptPrinterWarningHTML(funcs["T"].(func(string) string), httpx.BrowserPrintOff(r), canPerform(d, r, "settings"))
+		}
+
+		// ut-docs#6152: with printer.voucher_slip on, the browser-printed
+		// receipt carries the gift slips too (print-only, each on its own
+		// page), in the printed receipt's language, as paper does. Never in
+		// a suppressed market (returned above); a render failure degrades
+		// to no slips.
+		if renderErr == nil && printerCfg.VoucherSlip && len(issuedVouchers) > 0 {
+			pl := receiptPrintLocale(customerLocale, locale)
+			set := browserSlipSet{Lang: pl, Dir: slipDir(pl),
+				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, voucherSlipLines(design.VoucherSlipText), issuedVouchers)}
+			if slips, err := renderBrowserSlips("voucher_slips_receipt", pl, set); err != nil {
+				log.Printf("tender: browser voucher slips skipped: %v", err)
+			} else {
+				receiptHTML += string(slips)
+			}
 		}
 
 		writeTenderView(receiptHTML)
@@ -2929,6 +3067,9 @@ type receiptVoucherIssue struct {
 	// SinglePurpose (ut-docs#5739): taxed into the subtotal, so NOT part of
 	// the "Vouchers issued" liability row.
 	SinglePurpose bool
+	// At is the stored created_at of the voucher row (issued) or its top_up row
+	// (top-up): the slip's date line. "" = no line (ut-docs#6179).
+	At string
 }
 
 // newReceiptVoucherIssue maps a non-top-up voucher issue of the sale being
@@ -3084,6 +3225,16 @@ func normalizeLegalLines(text string, lines []string) []string {
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
 func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string, serviceCharge int64) (string, error) {
+	// ut-docs#6154: receipt.html reads browserprintoff/allowed; a hand-built
+	// funcs map (tests, other callers) gets the "browser print on" defaults.
+	if _, ok := funcs["browserprintoff"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["browserprintoff"] = func() bool { return false }
+	}
+	if _, ok := funcs["allowed"]; !ok {
+		funcs = maps.Clone(funcs)
+		funcs["allowed"] = func(string) bool { return false }
+	}
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -3468,6 +3619,11 @@ type capturedPaymentLeg struct {
 	index     int
 	requestID string
 	amount    money.Money
+	// transactionRef / tipAmount: the provider reference core holds for this
+	// leg and the tip the reader added (ut-docs#6438), so a reversal can hand
+	// the plugin the charge it must undo.
+	transactionRef string
+	tipAmount      money.Money
 }
 
 // reverseCapturedPaymentLegs sends back every captured leg of a tender that
@@ -3502,6 +3658,13 @@ func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency st
 			"reversal":             true,
 			"authorize_request_id": leg.requestID,
 		}
+		if leg.transactionRef != "" {
+			payload["original_payments"] = []map[string]any{{
+				"transaction_ref": leg.transactionRef,
+				"amount":          amount.Minor(),
+				"tip_amount":      leg.tipAmount.Minor(),
+			}}
+		}
 		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "refund", "", payload); err != nil {
 			logging.L().Warnf("fiscal signing: tender refused as cannot-sign, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309)", p.MethodID, amount.Minor(), legCurrency, leg.requestID, err)
 		}
@@ -3520,3 +3683,9 @@ func isISO4217Code(c string) bool {
 	}
 	return true
 }
+
+// lineSnapshotTestHook (tests only, ut-docs#5417) runs in /api/pos/line
+// between reading the line and applying the change, so a test can land a
+// concurrent writer in exactly that window. Tests that set it must not run
+// in parallel.
+var lineSnapshotTestHook func()

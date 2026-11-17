@@ -161,6 +161,15 @@ const (
 	// error) or has not run yet. Per-till like the queue it annotates: the
 	// key sits under data's "setup.pending_base_plugins" per-till prefix.
 	KeyBasePluginsNotPublished = "setup.pending_base_plugins_not_published"
+	// KeyTaxAutoInstallStatus holds the JSON status of this till's automatic
+	// tax-plugin install (ADR-0172 §5): installing, installed, or retrying
+	// with its error class. Drives the setup-landing and Settings chips.
+	// Per-till (data's "setup.tax_autoinstall." prefix).
+	KeyTaxAutoInstallStatus = "setup.tax_autoinstall.status"
+	// KeyTaxAutoInstallDeclined holds the id of the tax plugin the operator
+	// uninstalled (or dismissed) after it was installed automatically, so the
+	// retry never reinstalls it (ADR-0172 §5). Per-till.
+	KeyTaxAutoInstallDeclined = "setup.tax_autoinstall.declined"
 	// KeyLocaleSwitchPending holds the locale a manager picked in Settings →
 	// Language before its language pack was installed (ut-docs#4477, ADR-0160
 	// §6), as "<locale>@<unix seconds of the pick>". The pack is queued on

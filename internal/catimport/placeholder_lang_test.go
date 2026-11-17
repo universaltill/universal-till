@@ -1,6 +1,9 @@
 package catimport
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // labelFixture is a small map of locale -> icon key -> translated tile
 // label, holding real values from the shipped locales / language packs.
@@ -59,6 +62,36 @@ func TestIconMatcher_ShopLanguages(t *testing.T) {
 		if got := m.Icon(c.name, c.category); got != c.want {
 			t.Errorf("[%s] Icon(%q,%q) = %q, want %q", c.lang, c.name, c.category, got, c.want)
 		}
+	}
+}
+
+// ut-docs#6052: a ZWNJ in the label or the name is not a word boundary.
+func TestIconMatcher_ZWNJ(t *testing.T) {
+	fa := map[string]string{"hot-dog": "هات\u200cداگ / سوسیس", "breakfast": "تخم\u200cمرغ / صبحانه", "cake": "کیک"}
+	look := func(loc, key string) (string, bool) {
+		v, ok := fa[strings.TrimPrefix(key, "catalog.builtin_icon.")]
+		return v, ok && loc == "fa"
+	}
+	cases := []struct{ name, want string }{
+		{"هات\u200cداگ", "hot-dog"}, {"هاتداگ", "hot-dog"}, {"هات داگ", "hot-dog"},
+		{"تخم\u200cمرغ", "breakfast"}, {"تخممرغ", "breakfast"}, {"تخم مرغ", "breakfast"},
+		{"کیک\u200cها", "cake"}, {"کیک\u200cهایی", "cake"},
+		{"ها", "generic"},
+	}
+	for _, c := range cases {
+		if got := NewIconMatcher([]string{"fa"}, look).Icon(c.name, ""); got != c.want {
+			t.Errorf("Icon(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+	// ZWNJ-free label, ZWNJ name.
+	free := func(loc, key string) (string, bool) {
+		if key == "catalog.builtin_icon.hot-dog" {
+			return "هاتداگ", true
+		}
+		return "", false
+	}
+	if got := NewIconMatcher([]string{"fa"}, free).Icon("هات\u200cداگ", ""); got != "hot-dog" {
+		t.Errorf("ZWNJ name vs ZWNJ-free label = %q", got)
 	}
 }
 
