@@ -585,6 +585,10 @@ WHERE g.is_active = 1 AND i.id IN (` + placeholders + `)
 // link at all is a valid, persistent state that /modifiers lists and
 // ResolveGroupsForItem simply never reaches.
 func (r *ModifierRepo) CreateGroup(ctx context.Context, id, name string, required bool, minSelect, maxSelect, sortOrder int) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	if id == "" {
 		return "", errors.New("id required")
 	}
@@ -617,9 +621,26 @@ func (r *ModifierRepo) CreateGroupWithOptions(ctx context.Context, groupID, item
 	if groupID == "" {
 		return "", errors.New("id required")
 	}
+	// ut-docs#5871: create-only, so the single-line rule applies to the
+	// group name and every option name before any write. The caller's slice
+	// is copied, never mutated.
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	if name == "" {
 		return "", errors.New("name required")
 	}
+	checkedOpts := make([]ModifierOption, len(options))
+	for i, opt := range options {
+		n, err := CheckSingleLineName(opt.Name)
+		if err != nil {
+			return "", fmt.Errorf("option %d: %w", i+1, err)
+		}
+		opt.Name = n
+		checkedOpts[i] = opt
+	}
+	options = checkedOpts
 	req := 0
 	if required {
 		req = 1
@@ -1043,6 +1064,10 @@ SELECT COALESCE(MAX(sort_order) + 1, 0) FROM category_modifier_group_links WHERE
 // ordering is LinkGroupToItem's ON CONFLICT DO UPDATE SET sort_order;
 // per-category ordering is LinkGroupToCategory's.
 func (r *ModifierRepo) UpdateGroup(ctx context.Context, id, name string, required bool, minSelect, maxSelect, sortOrder int, isActive bool) error {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return err
+	}
 	if id == "" {
 		return errors.New("id required")
 	}
@@ -1056,7 +1081,7 @@ func (r *ModifierRepo) UpdateGroup(ctx context.Context, id, name string, require
 	if isActive {
 		active = 1
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 UPDATE item_modifier_groups
 SET name = ?, required = ?, min_select = ?, max_select = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
 WHERE id = ?
@@ -1135,6 +1160,10 @@ WHERE id NOT IN (SELECT group_id FROM item_modifier_group_links)
 
 // CreateOption adds a selectable option to a modifier group.
 func (r *ModifierRepo) CreateOption(ctx context.Context, id, groupID, name string, priceDeltaMinor int64, sortOrder int) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	if groupID == "" {
 		return "", errors.New("group_id required")
 	}
@@ -1144,7 +1173,7 @@ func (r *ModifierRepo) CreateOption(ctx context.Context, id, groupID, name strin
 	if priceDeltaMinor < 0 {
 		return "", errors.New("price_delta_minor must be >= 0 (additive-only in v1)")
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order)
 VALUES (?, ?, ?, ?, ?)
 `, id, groupID, name, priceDeltaMinor, sortOrder)
@@ -1156,6 +1185,10 @@ VALUES (?, ?, ?, ?, ?)
 
 // UpdateOption edits an existing option's fields.
 func (r *ModifierRepo) UpdateOption(ctx context.Context, id, name string, priceDeltaMinor int64, sortOrder int, isActive bool) error {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return err
+	}
 	if id == "" {
 		return errors.New("id required")
 	}
@@ -1169,7 +1202,7 @@ func (r *ModifierRepo) UpdateOption(ctx context.Context, id, name string, priceD
 	if isActive {
 		active = 1
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 UPDATE item_modifier_options
 SET name = ?, price_delta_minor = ?, sort_order = ?, is_active = ?
 WHERE id = ?

@@ -3,6 +3,7 @@ id: updates
 title: Software updates
 section: Connecting & extending
 order: 350
+public: true
 summary: The till checks for new versions and tells you when one is available; on most platforms it updates itself with one click.
 keywords: [update, version, upgrade, schedule]
 ---

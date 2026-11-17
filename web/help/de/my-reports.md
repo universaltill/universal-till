@@ -3,6 +3,7 @@ id: my-reports
 title: Meine Berichte
 section: Verbinden & erweitern
 order: 361
+public: true
 summary: "Sehen Sie die von dieser Kasse erfassten Problemberichte — gesendet oder noch ausstehend (die letzten 100) — mit ihrem letzten bekannten Status. Funktioniert auch offline."
 routes: [/my-reports]
 keywords: [fehler, problem, bericht, status, gesendet, ausstehend, github, verfolgung]
@@ -34,4 +35,4 @@ Die Seite benötigt nie das Netzwerk: Sie zeigt immer die Status vom letzten Mal
 
 Kann diese Kasse keine eigene Kopie eines Berichts speichern — zum Beispiel weil ihr Speicher voll ist —, versucht sie es weiter, aber nur eine Weile. Nach mehreren fehlgeschlagenen Versuchen gibt sie auf, sich den Bericht lokal zu merken. Der Bericht selbst erreicht den Support trotzdem; er wird hier nur nicht aufgeführt.
 
-Öffnen Sie es über den Link **Meine Berichte ansehen** im Berichtsfenster (🐞-Schaltfläche im linken Menü — siehe das Thema „Ein Problem melden“). Nur Manager und Administratoren sehen diesen Link und die Seite: Sie listet alle Berichte, die diese Kasse gesendet hat, nicht nur Ihre eigenen.
+Öffnen Sie es über den Link **Meine Berichte ansehen** im Berichtsfenster (Schaltfläche **Problem melden** mit Käfer-Symbol im linken Menü — siehe das Thema „Ein Problem melden“). Nur Manager und Administratoren sehen diesen Link und die Seite: Sie listet alle Berichte, die diese Kasse gesendet hat, nicht nur Ihre eigenen.

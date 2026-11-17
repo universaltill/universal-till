@@ -3,6 +3,7 @@ id: menu
 title: Der Menü-Bildschirm
 section: Täglicher Verkauf
 order: 30
+public: true
 summary: Ein Bildschirm mit großen Touch-Kacheln, der Sie zu jedem Bereich der Kasse führt.
 routes: [/menu, /settings/menu, /admin]
 keywords: [menü, navigation, kacheln, administration]

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SettingsRepo owns all SQL for the settings table.
@@ -336,6 +338,21 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // different id (ut-docs#3307). Unlike till.name, a blank sync.till_id writes
 // nothing: there is no id to keep, and a cloud id kept by an earlier
 // promotion must not be clobbered.
+//
+// The LAN discovery id (LANDiscoveryTillIDSettingsKey) is re-minted, always,
+// in the same transaction (ut-docs#5893). It is a shop-wide setting, so a
+// joined till holds its MAIN till's id (join snapshot and every admin pull);
+// left alone, the promoted till would advertise over mDNS, sign verification
+// codes and primary proofs with, and filter "self" by an id the old main till
+// (and every till still pointed at it) also uses. The pre-join id is gone (the
+// snapshot replaced it, ADR-0033 "two till ids"), so a fresh UUID is the only
+// option; it is never "kept if present" because a present value on a joined
+// till is always the main till's. The cloud id above is unaffected.
+//
+// An admin pull that is in flight when this commits is refused by
+// ApplyAdminWithResult's in-tx sync.primary_url check (ErrNotReplica), so it
+// cannot write the old main's lan_discovery.till_id or till.name back
+// (ut-docs#5896).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
@@ -389,6 +406,10 @@ ON CONFLICT(key) DO UPDATE SET
 		}
 	}
 
+	if _, err = upsertFreshDiscoveryID(ctx, tx); err != nil {
+		return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, LANDiscoveryTillIDSettingsKey)
+	}
+
 	if _, err = tx.ExecContext(ctx,
 		`DELETE FROM settings WHERE key LIKE 'sync.%' AND key != 'sync.receipt_prefix'`); err != nil {
 		return settingsObs.wrapf("clear_replica_identity", "clear replica identity", err)
@@ -440,4 +461,151 @@ func (r *SettingsRepo) All(ctx context.Context) (map[string]string, error) {
 		}
 	}
 	return out, err
+}
+
+// upsertSettingTx upserts one settings row inside tx.
+func upsertSettingTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, key, value, time.Now().UTC())
+	return err
+}
+
+// upsertFreshDiscoveryID mints a new UUID into LANDiscoveryTillIDSettingsKey
+// and records it in TillIdentityOwnDiscoveryIDSettingsKey (the "this till
+// minted its own discovery id" marker), in the caller's transaction. Shared by
+// ClearReplicaIdentity (ut-docs#5893) and RepairInheritedDiscoveryID
+// (ut-docs#5897).
+func upsertFreshDiscoveryID(ctx context.Context, tx *sql.Tx) (string, error) {
+	id := uuid.NewString()
+	if err := upsertSettingTx(ctx, tx, LANDiscoveryTillIDSettingsKey, id); err != nil {
+		return "", err
+	}
+	if err := upsertSettingTx(ctx, tx, TillIdentityOwnDiscoveryIDSettingsKey, id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// DiscoveryIDRepair is the outcome of RepairInheritedDiscoveryID.
+type DiscoveryIDRepair struct {
+	Repaired     bool
+	Deferred     string // "" | "joined_tills" | "pairing_in_flight"
+	Signal       string // "mirror" | "cloud_id" | "restored"
+	OldID, NewID string
+}
+
+// RepairInheritedDiscoveryID re-mints lan_discovery.till_id once on a
+// main/standalone till that was promoted before ut-docs#5893 and so still
+// holds its former main till's id (ut-docs#5897). A till is detected by
+// mirrorMainTillID (SalesMirrorRepo.State().MainTillID, read by the caller)
+// equalling the stored id, or a non-blank till_identity.cloud_id with no
+// own-discovery-id marker, or the stored id equalling the inherited id an
+// earlier repair recorded (a restore of a pre-repair backup brought it back:
+// till_identity.* stays the live till's on restore, lan_discovery.* does
+// not). It is skipped on a replica (sync.primary_url set)
+// and deferred, writing nothing, while any till holds a credential issued by
+// this till or a pairing is in flight: a till that paired while the old id was
+// advertised proved that id and would be stranded by a change. All writes
+// (id, marker, cloud id pin, audit row) share one transaction.
+func (r *SettingsRepo) RepairInheritedDiscoveryID(ctx context.Context, mirrorMainTillID string, now time.Time) (res DiscoveryIDRepair, err error) {
+	done := settingsObs.trace("repair_inherited_discovery_id")
+	defer func() { done(err) }()
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, settingsObs.wrap("repair_inherited_discovery_id", err)
+	}
+	defer tx.Rollback()
+
+	read := func(key string) (string, error) {
+		var v string
+		e := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+		if e == sql.ErrNoRows {
+			return "", nil
+		}
+		return strings.TrimSpace(v), e
+	}
+	primaryURL, err := read("sync.primary_url")
+	if err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "read sync.primary_url", err)
+	}
+	if primaryURL != "" {
+		return res, nil
+	}
+	oldID, err := read(LANDiscoveryTillIDSettingsKey)
+	if err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "read discovery id", err)
+	}
+	if oldID == "" {
+		return res, nil
+	}
+	cloudID, err := read(TillIdentityCloudIDSettingsKey)
+	if err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "read cloud id", err)
+	}
+	marker, err := read(TillIdentityOwnDiscoveryIDSettingsKey)
+	if err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "read marker", err)
+	}
+	inherited, err := read(TillIdentityInheritedDiscoveryIDSettingsKey)
+	if err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "read inherited id", err)
+	}
+	switch mirror := strings.TrimSpace(mirrorMainTillID); {
+	case mirror != "" && mirror == oldID:
+		res.Signal = "mirror"
+	case cloudID != "" && marker == "":
+		res.Signal = "cloud_id"
+	case inherited != "" && inherited == oldID:
+		res.Signal = "restored"
+	default:
+		return res, nil
+	}
+
+	var n int
+	if err = tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL OR bearer_prev_hash IS NOT NULL`).Scan(&n); err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "count credentialed tills", err)
+	}
+	if n > 0 {
+		return DiscoveryIDRepair{Deferred: "joined_tills", Signal: res.Signal, OldID: oldID}, nil
+	}
+	if err = tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pending_pairings WHERE status IN ('pending','approved') AND expires_at >= ?`,
+		now.UTC().Format(time.RFC3339)).Scan(&n); err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "count pairings", err)
+	}
+	if n > 0 {
+		return DiscoveryIDRepair{Deferred: "pairing_in_flight", Signal: res.Signal, OldID: oldID}, nil
+	}
+
+	if cloudID == "" {
+		// Keep discovery.ReportedTillID stable: it falls back to the
+		// discovery id when no cloud id is stored.
+		if err = upsertSettingTx(ctx, tx, TillIdentityCloudIDSettingsKey, oldID); err != nil {
+			return res, settingsObs.wrapf("repair_inherited_discovery_id", "set setting %s", err, TillIdentityCloudIDSettingsKey)
+		}
+	}
+	newID, err := upsertFreshDiscoveryID(ctx, tx)
+	if err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "set setting %s", err, LANDiscoveryTillIDSettingsKey)
+	}
+	if err = upsertSettingTx(ctx, tx, TillIdentityInheritedDiscoveryIDSettingsKey, oldID); err != nil {
+		return res, settingsObs.wrapf("repair_inherited_discovery_id", "set setting %s", err, TillIdentityInheritedDiscoveryIDSettingsKey)
+	}
+	if err = NewPOSRepo(r.db).InsertAudit(ctx, tx, "system", "till", "-", "discovery_id_repaired", map[string]string{
+		"old_id": oldID, "new_id": newID, "signal": res.Signal, "reason": "ut-docs#5897",
+	}, now.UTC().Format(time.RFC3339), ""); err != nil {
+		return DiscoveryIDRepair{}, settingsObs.wrap("repair_inherited_discovery_id", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return DiscoveryIDRepair{}, settingsObs.wrap("repair_inherited_discovery_id", err)
+	}
+	res.Repaired, res.OldID, res.NewID = true, oldID, newID
+	return res, nil
 }

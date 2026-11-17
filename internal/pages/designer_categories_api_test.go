@@ -49,13 +49,16 @@ func seedDesignerCategories(t *testing.T, d *common.Deps) {
 func TestDesignerCategoriesAPI_CatalogManagementGate(t *testing.T) {
 	cashier := auth.User{ID: "c1", Role: "cashier"}
 	routes := []struct {
-		name, path string
-		form       url.Values
+		name, path  string
+		form        url.Values
+		wantTrigger string
 	}{
-		{"create", "/api/designer/categories", url.Values{"name": {"New"}}},
-		{"update", "/api/designer/categories/cat-a", url.Values{"name": {"Renamed"}}},
-		{"active", "/api/designer/categories/cat-b/active", url.Values{"active": {"0"}}},
-		{"reorder", "/api/designer/categories/reorder", url.Values{"ids": {"cat-b,cat-a,cat-c"}}},
+		{"create", "/api/designer/categories", url.Values{"name": {"New"}}, "buttons-changed"},
+		{"update", "/api/designer/categories/cat-a", url.Values{"name": {"Renamed"}}, "buttons-changed"},
+		{"active", "/api/designer/categories/cat-b/active", url.Values{"active": {"0"}}, "buttons-changed"},
+		// Reorder's only caller is list-reorder.js fetch(); the Designer
+		// updates in place off list-reorder:saved (ut-docs#3074, #2713).
+		{"reorder", "/api/designer/categories/reorder", url.Values{"ids": {"cat-b,cat-a,cat-c"}}, ""},
 	}
 	for _, rt := range routes {
 		t.Run(rt.name, func(t *testing.T) {
@@ -76,8 +79,8 @@ func TestDesignerCategoriesAPI_CatalogManagementGate(t *testing.T) {
 				if rec.Code != http.StatusNoContent {
 					t.Fatalf("%s %s = %d, want 204: %s", role, rt.name, rec.Code, rec.Body.String())
 				}
-				if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
-					t.Fatalf("%s %s: HX-Trigger = %q, want buttons-changed (the live preview refreshes off it)", role, rt.name, got)
+				if got := rec.Header().Get("HX-Trigger"); got != rt.wantTrigger {
+					t.Fatalf("%s %s: HX-Trigger = %q, want %q", role, rt.name, got, rt.wantTrigger)
 				}
 			}
 		})

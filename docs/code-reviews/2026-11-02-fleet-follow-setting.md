@@ -53,3 +53,9 @@ Safe to merge once CI is green on a head rebased onto `main`. The card went over
 - Finding 7: nightly retry after a failed attempt.
 
 Both are listed on the card for a follow-up.
+
+## 2026-11-17 PR sweep (lane:cloud-41)
+
+Merged origin/main in. Conflicts: `internal/pages/update_follow_test.go` (import list + two independent test blocks, both kept), `web/i18n-meta/en.meta.json` (both sides' new keys kept), `web/help/img/manifest.json` (re-hashed). Per ADR-0160 §2 (translations come only from Weblate), the PR's edits to `web/locales/{ar,fa,tr}.json` and `web/help/{ar,de,fa,tr}/updates.md` were dropped back to `main`. English carries the 5 new `settings.update.*` keys and the help step.
+
+Pre-flight: web/help topic updated (en `updates.md` step 5; other locales via Weblate); docs-shots surface hash refreshed (`Docs-Shots-Unchanged`, a hash-only refresh as on the original PR); en.json + en.meta.json updated; reference/README n/a (setting described in help); review record updated (this file); follow-ups (findings 4 and 7) are on ut-docs#2739.

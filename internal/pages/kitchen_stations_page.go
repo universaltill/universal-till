@@ -55,6 +55,35 @@ const discoverPrintersTimeout = 25 * time.Second
 // multi-second network scan.
 var discoveryBrowsePrinters = discovery.DiscoverPrinters
 
+// redirectKitchenStations answers a station mutation's SUCCESS with a
+// navigation back to GET /kitchen-stations. Same shape as
+// redirectPromotions / locations_page.go's redirectLocations (ut-docs#5575
+// adopting ut-docs#2010's pattern): the dialog's forms are hx-boosted, so a
+// bare 303 would land the page's HTML in the message region; HX-Redirect
+// forces a real navigation. A non-htmx caller gets the plain 303.
+func redirectKitchenStations(w http.ResponseWriter, r *http.Request, target string) {
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// renderKitchenStationsDialogError answers a REFUSED station mutation: a 400
+// text/html message fragment for the dialog's aria-live region (htmx), or
+// the pre-#5575 redirect-with-?err= for a non-htmx caller.
+func renderKitchenStationsDialogError(w http.ResponseWriter, r *http.Request, errKey string) {
+	if !isHtmxDialogRequest(r) {
+		redirectKitchenStations(w, r, "/kitchen-stations?err="+errKey)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
+}
+
 // stationCheck is one station checkbox: checked when the row (category or
 // item) is currently routed to it.
 type stationCheck struct {
@@ -109,7 +138,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 	// splits the write instead of reusing this gate wholesale.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
-			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.replica_use_primary", http.StatusSeeOther)
+			renderKitchenStationsDialogError(w, r, "kitchenstations.error.replica_use_primary")
 			return false
 		}
 		return true
@@ -198,7 +227,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 
 		httpx.Render("ui/pages/kitchen_stations.html", map[string]any{
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.kitchen_stations"),
-			"theme":         d.CurrentState().Theme,
+			"theme":         d.ResolvedTheme(r),
 			"menuItems":     d.MenuSnapshot(),
 			"stations":      stations,
 			"categories":    catRows,
@@ -298,16 +327,16 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		}
 		name, destinationType, address, errKey := stationForm(r)
 		if errKey != "" {
-			http.Redirect(w, r, "/kitchen-stations?err="+errKey, http.StatusSeeOther)
+			renderKitchenStationsDialogError(w, r, errKey)
 			return
 		}
 		id, err := posRepo.CreateKitchenStation(r.Context(), name, destinationType, address)
 		if err != nil {
-			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.create", http.StatusSeeOther)
+			renderKitchenStationsDialogError(w, r, "kitchenstations.error.create")
 			return
 		}
 		audit(r, actor.ID, id, "kitchen_station_create")
-		http.Redirect(w, r, "/kitchen-stations", http.StatusSeeOther)
+		redirectKitchenStations(w, r, "/kitchen-stations")
 	})
 
 	mux.HandleFunc("POST /api/kitchen-stations/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +347,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		id := r.PathValue("id")
 		name, destinationType, address, errKey := stationForm(r)
 		if errKey != "" {
-			http.Redirect(w, r, "/kitchen-stations?err="+errKey, http.StatusSeeOther)
+			renderKitchenStationsDialogError(w, r, errKey)
 			return
 		}
 		// A joined till gets a narrower rule than requirePrimary's blanket
@@ -335,11 +364,11 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			current, found, err := posRepo.GetKitchenStation(r.Context(), id)
 			if err != nil {
-				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.update", http.StatusSeeOther)
+				renderKitchenStationsDialogError(w, r, "kitchenstations.error.update")
 				return
 			}
 			if !found {
-				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.not_found", http.StatusSeeOther)
+				renderKitchenStationsDialogError(w, r, "kitchenstations.error.not_found")
 				return
 			}
 			// TrimSpace on both sides even though current.Name/DestinationType
@@ -349,15 +378,15 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			// the DB some other way, so a joined till can never be permanently
 			// unable to set its own printer address over whitespace alone.
 			if name != strings.TrimSpace(current.Name) || destinationType != strings.TrimSpace(current.DestinationType) {
-				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.replica_use_primary", http.StatusSeeOther)
+				renderKitchenStationsDialogError(w, r, "kitchenstations.error.replica_use_primary")
 				return
 			}
 			if err := posRepo.SetKitchenStationPrinterAddress(r.Context(), id, address); err != nil {
-				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.update", http.StatusSeeOther)
+				renderKitchenStationsDialogError(w, r, "kitchenstations.error.update")
 				return
 			}
 			audit(r, actor.ID, id, "kitchen_station_update")
-			http.Redirect(w, r, "/kitchen-stations", http.StatusSeeOther)
+			redirectKitchenStations(w, r, "/kitchen-stations")
 			return
 		}
 		if err := posRepo.UpdateKitchenStation(r.Context(), id, name, destinationType, address); err != nil {
@@ -365,11 +394,11 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			if strings.Contains(err.Error(), "not found") {
 				key = "kitchenstations.error.not_found"
 			}
-			http.Redirect(w, r, "/kitchen-stations?err="+key, http.StatusSeeOther)
+			renderKitchenStationsDialogError(w, r, key)
 			return
 		}
 		audit(r, actor.ID, id, "kitchen_station_update")
-		http.Redirect(w, r, "/kitchen-stations", http.StatusSeeOther)
+		redirectKitchenStations(w, r, "/kitchen-stations")
 	})
 
 	mux.HandleFunc("POST /api/kitchen-stations/{id}/active", func(w http.ResponseWriter, r *http.Request) {
@@ -388,7 +417,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			if strings.Contains(err.Error(), "not found") {
 				key = "kitchenstations.error.not_found"
 			}
-			http.Redirect(w, r, "/kitchen-stations?err="+key, http.StatusSeeOther)
+			renderKitchenStationsDialogError(w, r, key)
 			return
 		}
 		action := "kitchen_station_deactivate"
@@ -396,7 +425,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			action = "kitchen_station_activate"
 		}
 		audit(r, actor.ID, id, action)
-		http.Redirect(w, r, "/kitchen-stations", http.StatusSeeOther)
+		redirectKitchenStations(w, r, "/kitchen-stations")
 	})
 
 	// Replace-all routing writes: the form posts every ticked station_id;

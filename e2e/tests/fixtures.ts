@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type Page, type BrowserContext } from '@playwright/test';
 import { drainParkedOrders } from './helpers';
 import { startWorkerTill } from './worker-till';
 
@@ -101,6 +101,8 @@ export const test = base.extend<{ resetPosOncePerFile: void }, WorkerOpts>({
   // (page-transitions-2223 does, for the swap-ease cases only).
   page: async ({ page }, use) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    // ut-docs#2743: see stubPairingStream below.
+    await stubPairingStream(page);
     await use(page);
   },
   // Auto fixture — every test opts in with no changes to the test body.
@@ -171,5 +173,34 @@ export const test = base.extend<{ resetPosOncePerFile: void }, WorkerOpts>({
     { auto: true },
   ],
 });
+
+// ut-docs#2743: a manager page on a main till opens the pairing push stream
+// (GET /api/pairings/stream), an SSE request that never completes, so
+// `waitUntil: 'networkidle'` would never resolve. This swaps the pairing
+// EventSource for an inert, already-CLOSED object before any page script
+// runs, so the request is never made and the 30s poll still runs. It is not
+// page.route(): routing turns the HTTP cache off for the whole page, and the
+// shell/zoom specs depend on that cache (CI run on PR #2296). Every other
+// EventSource URL is untouched. The page fixture applies it. A spec that
+// builds its own browser.newContext() calls it on that context.
+export async function stubPairingStream(target: Page | BrowserContext): Promise<void> {
+  await target.addInitScript(() => {
+    const Real = window.EventSource;
+    if (!Real) return;
+    const Stubbed = function (this: unknown, url: string | URL, init?: EventSourceInit) {
+      if (String(url).includes('/api/pairings/stream')) {
+        return {
+          url: String(url), readyState: 2, withCredentials: false,
+          onopen: null, onmessage: null, onerror: null,
+          close() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
+        };
+      }
+      return new Real(url, init);
+    } as unknown as typeof EventSource;
+    Object.assign(Stubbed, { CONNECTING: 0, OPEN: 1, CLOSED: 2 });
+    Stubbed.prototype = Real.prototype;
+    window.EventSource = Stubbed;
+  });
+}
 
 export { expect };

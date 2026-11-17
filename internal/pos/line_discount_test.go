@@ -56,7 +56,7 @@ func TestUpdateLineByKey_RefusesDiscountAboveLineTotal(t *testing.T) {
 	if l := s.Basket().Lines[0]; l.Qty != 3 || l.LineDiscount.Minor() != 250 {
 		t.Fatalf("refused update must leave the line as it was, got qty %v discount %d", l.Qty, l.LineDiscount.Minor())
 	}
-	if err := s.UpdateLine("ABC", 1, money.FromMinor(121)); err == nil {
+	if err := updateLineByCode(s, "ABC", 1, money.FromMinor(121)); err == nil {
 		t.Fatal("UpdateLine must refuse the same way")
 	}
 	if err := s.UpdateLineByKey(key, 0, money.FromMinor(250)); err != nil || len(s.Basket().Lines) != 0 {

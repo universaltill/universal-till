@@ -3,6 +3,7 @@ id: order-status
 title: Bestellstatus (Küchenfortschritt)
 section: Täglicher Verkauf
 order: 45
+public: true
 summary: "Markieren Sie den Fortschritt jeder Bestellung — in Zubereitung, fertig, abgeholt — mit einem Tipp, damit jeder sehen kann, wo eine Bestellung steht."
 routes: [/orders, /orders/{receipt}]
 keywords: [bestellungen, küche, in zubereitung, fertig, abgeholt, storniert, status, scannen, abholen]
@@ -14,7 +15,7 @@ Markieren Sie den Fortschritt jeder Bestellung — in Zubereitung, fertig, abgeh
 
 ## Verwendung
 
-1. Öffnen Sie **Bestellstatus** — das 🛎️-Symbol in der Seitenleiste des Verkaufsbildschirms oder über das ☰-Menü. Dies ist die *aktive* Warteschlange: aktuelle, noch laufende Verkäufe werden neueste zuerst mit ihrem jeweiligen Status aufgelistet.
+1. Öffnen Sie **Bestellstatus** (Glocken-Symbol) in der Seitenleiste des Verkaufsbildschirms oder über das ☰-Menü. Dies ist die *aktive* Warteschlange: aktuelle, noch laufende Verkäufe werden neueste zuerst mit ihrem jeweiligen Status aufgelistet.
 2. Das Scannen des Kassenbons eines Kunden am Verkaufsbildschirm öffnet ebenfalls direkt dessen Bestellung, falls sie noch nicht abgeholt wurde — mit derselben Ein-Tipp-Schaltfläche **Abgeholt** und einem Link zur Rückerstattung, falls das eigentlich gebraucht wird. Ein bereits abgeholter oder nie nachverfolgter Beleg öffnet direkt die Rückerstattung, genau wie beim Scannen jedes anderen abgeschlossenen Belegs; eine stornierte Bestellung oder ein nie abgeschlossener Verkauf werden stattdessen einfach auf dem Verkaufsbildschirm angezeigt.
 3. Tippen Sie auf **In Zubereitung**, wenn die Küche mit einer Bestellung beginnt, auf **Fertig**, wenn sie abgeholt werden kann, und auf **Abgeholt**, wenn der Kunde sie hat. Das kann jeder Bediener tun — keine Manager-PIN nötig.
 4. Jede Änderung zeichnet auf, wer sie wann vorgenommen hat, neben dem Status. Angezeigt wird die kurze Bestellnummer, die Ihr Kunde erhalten hat (siehe unten) — ein Tipp darauf öffnet den vollständigen Beleg im Kassenjournal, außer bei einer hier angezeigten Bestellung, weil sie an einer *anderen* Kasse aufgenommen wurde (siehe Hinweis unten), wo die Nummer zwar angezeigt, aber kein Link ist, da diese Kasse den Beleg selbst nicht besitzt.

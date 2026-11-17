@@ -87,22 +87,20 @@ func applyWindowsInstaller(ctx context.Context, exe, version string, idle func()
 	}
 	version = strings.TrimPrefix(rel.TagName, "v")
 	setupName := windowsSetupName(version)
-	setupURL, checksumsURL := "", ""
+	setupURL := ""
 	for _, a := range rel.Assets {
-		switch a.Name {
-		case setupName:
+		if a.Name == setupName {
 			setupURL = a.URL
-		case "checksums.txt":
-			checksumsURL = a.URL
 		}
 	}
 	if setupURL == "" {
 		return fmt.Errorf("no Windows installer in release v%s (%s)", version, setupName)
 	}
-	// Fail closed, as on every other platform: a release without
-	// checksums.txt is broken or tampered with.
-	if checksumsURL == "" {
-		return fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version)
+	// Integrity root (ADR-0178), fail closed as on every other platform:
+	// the signed checksums, before any download.
+	checksums, err := verifiedChecksums(ctx, rel)
+	if err != nil {
+		return err
 	}
 
 	root := windowsUpdateDir()
@@ -126,7 +124,7 @@ func applyWindowsInstaller(ctx context.Context, exe, version string, idle func()
 	if err := download(ctx, setupURL, setupPath); err != nil {
 		return discard(fmt.Errorf("download: %w", err))
 	}
-	want, err := checksumFor(ctx, checksumsURL, setupName)
+	want, err := checksums.lookup(setupName)
 	if err != nil {
 		return discard(err)
 	}
