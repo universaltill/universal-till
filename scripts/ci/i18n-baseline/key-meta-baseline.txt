@@ -967,7 +967,6 @@ inventory.cost_optional
 inventory.days_left
 inventory.days_left_hint
 inventory.dialog_context
-inventory.empty
 inventory.item_placeholder
 inventory.location
 inventory.low_stock
@@ -2743,7 +2742,6 @@ shrinkage.reason.void
 shrinkage.reason.waste
 status.cloud_auth.hint
 status.cloud_auth.needs_pairing
-status.cloud_auth.register_new
 status.cloud_auth.revoked
 status.disk_low.hint
 status.disk_low.label

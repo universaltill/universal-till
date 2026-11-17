@@ -781,7 +781,7 @@ func argPairs(pairs []any) map[string]any {
 // `?err=` text. Reuses the existing shared `common.error.server` key rather
 // than minting a new one — same reasoning as ut-docs#1663/#1620's own
 // error-message migrations: it avoids new-key churn across all four locales
-// plus the external ut-plugin-language-{de,es} packs, and no touched page's
+// plus the language bundles (com.universaltill.language-<code>, ADR-0160), and no touched page's
 // own namespace has a better-fitting existing "something went wrong" key.
 const genericErrKey = "common.error.server"
 
@@ -1171,7 +1171,7 @@ func FuncsFor(locale string) template.FuncMap {
 	// {{ bpPercent .Raw }}: a percent discount's rate in the request
 	// locale's decimal separator, next to the locale-bound money above
 	// (ut-docs#4176). The base func stays for non-request callers.
-	funcs["bpPercent"] = func(bp int64) string { return FormatPercentBP(bp, locale) }
+	funcs["bpPercent"] = func(bp int64) string { return FormatPercentBPDisplay(bp, locale) }
 	// {{ qty .Qty }}: locale digit-shape/grouping for an on-screen sale-line
 	// quantity, the quantity-side twin of money above (ut-docs#2221) — an
 	// on-screen amount already gets digit-shape substitution via money;
@@ -1510,6 +1510,10 @@ var renderFiles = []string{
 	// ut-docs#4720: the cloud-terms accept step under Register now and the
 	// auto-register toggle (the setup wizard, rendered standalone, inlines it).
 	"ui/partials/enrol_terms.html",
+	// ADR-0172 §5 (ut-docs#6287): the automatic tax plugin install's status
+	// chip is included by import.html (the setup landing) and settings.html
+	// and polled standalone by GET /ui/tax-autoinstall-chip.
+	"ui/partials/tax_autoinstall_chip.html",
 	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
 	// response AND settings.html's own page render (when a restore is
 	// already staged from an earlier visit) both need this exact markup,

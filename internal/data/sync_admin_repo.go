@@ -795,6 +795,10 @@ var PerTillSettingPrefixes = []string{
 	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
 	// this till's own (each device pulls and tracks read state for itself).
 	"notices.",
+	// ut-docs#5068: the number floors and marker a backup restore leaves on
+	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
+	// "restore.marker"): they guard this till's own receipt/Z sequences.
+	"restore.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is
@@ -855,6 +859,10 @@ var PerTillSettingPrefixes = []string{
 	// the main till's queue overwrote a replica's at every pull. A full key
 	// used as a prefix; the rest of setup.* stays shop-wide.
 	"setup.pending_base_plugins",
+	// ADR-0172 §5 (ut-docs#6287): this till's own tax auto-install status
+	// chip and its "declined" record. Plugins install per machine, so both
+	// are per till, like the queue above.
+	"setup.tax_autoinstall.",
 	// ut-docs#3091: this till's running version, when it first ran it, and
 	// whether its release notes were seen (AppVersionSettingsKey above).
 	// "app.version" as a prefix also covers app.version_first_run_at.

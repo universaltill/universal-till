@@ -593,6 +593,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncBearerRotate(mux, dp)   // a replica swaps its LAN sync bearer, main-till side (ut-docs#5198)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
+	registerTaxAutoInstallChip(mux, dp) // automatic tax plugin install status (ADR-0172 §5, ut-docs#6287)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
 	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)
 	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
@@ -633,6 +634,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
 	dp.CloudLink = newCloudLinkClient(dp)
+	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
+	// host fn #6455) reaches the cloud with the live enrolment.
+	wirePayBroker(dp.Cfg)
 	// Network services start through netaccess.StartService, which skips them
 	// on the public demo till (ADR-0113 §1.6, ut-docs#2795); the local loops
 	// (EOD, sweeps, reconciles) and the main till's inbound link hub always run.
