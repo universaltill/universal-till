@@ -3112,6 +3112,32 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    unscoping the selector below covers both call sites with one rule
    instead of duplicating it under `.catalog-list` too. */
 #tax-codes-table { overflow-x: auto; }
+/* ut-docs#6553: #import-modal / #tax-codes-modal reuse .item-form-modal (flex
+   column, overflow hidden, padding 0), but unlike #item-form-modal they have
+   no pinned head + .catalog-form-body scroller of their own: their fetched
+   page was clipped, untouchable by touch, and flush with the screen edge.
+   The dialog is swapped via innerHTML, so it is the only stable element:
+   make IT the scroller (scoped by id so #item-form-modal keeps its pinned
+   head). display:block lets content overflow and scroll instead of
+   shrinking as flex children. The id rule (1,0,0) beats
+   .item-form-modal:not([open]) (0,2,0), so the closed re-hide is explicit.
+   body.osk-padded .item-form-modal already shortens the dialog above the
+   keyboard, so the scroller ends at the OSK top. */
+#import-modal, #tax-codes-modal {
+  display: block; overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  touch-action: pan-y pinch-zoom;
+  padding: 1rem 1.5rem 2rem;
+}
+#import-modal:not([open]), #tax-codes-modal:not([open]) { display: none; }
+/* Back link stays reachable while the body scrolls. */
+#import-modal .page-head, #tax-codes-modal .page-head {
+  position: sticky; inset-block-start: -1rem; z-index: 1; background: var(--surface);
+  padding-block-start: 1rem; margin-block-start: -1rem;
+}
+@media (max-width: 700px) {
+  #import-modal, #tax-codes-modal { padding-inline: 1rem; }
+}
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not
