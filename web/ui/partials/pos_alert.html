@@ -8,8 +8,9 @@
   Extracted from index.html's own original inline copy — same markup,
   same locale keys (`pos.error.server`/`pos.error.network` — reused
   deliberately rather than adding page-specific keys, since the message
-  itself is already generic/safe and this avoids a lang-pack-drift
-  follow-up), same id, so app.js needs no changes to find it here too.
+  itself is already generic/safe and this avoids new
+  keys in every language bundle), same id, so app.js needs no changes to
+  find it here too.
   Placed OUTSIDE any htmx swap target on every page that includes it — it
   must survive every in-panel swap, not be wiped by one.
 */}}

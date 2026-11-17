@@ -15,8 +15,7 @@ import (
 // source at runtime (that would just move the risk of silent drift from
 // "the copy" to "this list") -- the point is that adding a new detectable
 // format (or removing one) requires a deliberate, reviewed edit HERE too,
-// the same "ratchet" convention the language packs' own
-// i18n-baseline/*.untranslated.txt files already use. "generic"/
+// the same "ratchet" convention as the other shrink-only baselines. "generic"/
 // "generic-erp" are catimport.DetectFormat's fallback buckets, not named
 // systems a merchant would recognise, so they're deliberately excluded.
 //
@@ -39,7 +38,7 @@ var namedAutoDetectedFormats = []string{"Loyverse", "Square", "SumUp", "Shopify"
 // translation can drop a clause entirely and stay perfectly "complete" by
 // that measure (the German pack's import.help/import.file, fixed in the
 // same change as this test, is exactly that case). This test can't reach
-// into the external ut-plugin-language-* pack repos (separate repos), but
+// the Weblate language bundles (com.universaltill.language-<code>), but
 // closes the gap for every locale THIS repo ships and controls.
 func TestImportHelpCopy_NamesEveryAutoDetectedFormat(t *testing.T) {
 	entries, err := locales.FS.ReadDir(".")
