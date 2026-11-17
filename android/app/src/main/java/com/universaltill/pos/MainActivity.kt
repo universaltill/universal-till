@@ -778,6 +778,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         /**
+         * ut-docs#6551: opens Android's "Install unknown apps" screen for THIS
+         * app only (the package is [packageName], never page input; no
+         * argument). The page offers it after the shell reported
+         * `needs_permission`, on the manager's own tap. Changes nothing by
+         * itself: the operator flips the switch on the system screen.
+         */
+        @JavascriptInterface
+        fun canInstallPackages(): Boolean =
+            UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } ==
+                InstallPreflight.PROCEED
+
+        @JavascriptInterface
+        fun openInstallPermissionSettings() {
+            runOnUiThread { openInstallPermissionScreen() }
+        }
+
+        /**
          * Native screenshot for the bug-report panel (ut-docs#1435). Android's
          * WebView implements no `getDisplayMedia` at all, so the panel's
          * screenshot button — which every other platform backs with a one-
@@ -1063,6 +1080,15 @@ class MainActivity : AppCompatActivity() {
         if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
             Log.i(TAG, "update: already in progress, re-reporting state")
             lastUpdateState?.let { pushUpdateState(it) }
+            return
+        }
+        // ut-docs#6551: before spending a ~40 MB download, make sure Android
+        // will let this app hand an APK to the installer. If not, tell the
+        // page (it explains and offers the settings screen) instead of a
+        // silent no-op later.
+        if (UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } == InstallPreflight.NEEDS_PERMISSION) {
+            Log.i(TAG, "update: install-unknown-apps not allowed for this app, asking the operator")
+            reportUpdate(UpdateLogic.STATE_NEEDS_PERMISSION, null, null)
             return
         }
         // ut-docs#4495: a new attempt. A launch Android refused silently
@@ -1579,6 +1605,28 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             PackageInfoCompat.getLongVersionCode(packageManager.getPackageInfo(packageName, 0))
         }.getOrDefault(Long.MAX_VALUE) // unknown: never reuse a file blindly
+
+    /** ut-docs#6551: set while the system permission screen is open, read by [onResume]. */
+    private var updateAwaitingPermission = false
+
+    private fun openInstallPermissionScreen() {
+        try {
+            // Same reason as launchPackageInstaller: a pinned (lock-task) app
+            // cannot start another app's activity.
+            releaseKioskLock()
+            clearImmersiveMode()
+            val intent =
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            updateAwaitingPermission = true
+            startActivity(intent)
+            Log.i(TAG, "update: opened the install-unknown-apps screen")
+        } catch (e: Exception) {
+            updateAwaitingPermission = false
+            failUpdate("permission screen: ${e.message ?: "could not open"}")
+        }
+    }
 
     /**
      * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
@@ -2677,6 +2725,24 @@ class MainActivity : AppCompatActivity() {
         // ut-docs#4312: a download that outlived the previous Activity keeps
         // reporting its progress to the page.
         resumeUpdateWatch()
+        // ut-docs#6551: back from the "install unknown apps" screen. Never
+        // continues the install on its own: the page shows the install
+        // button again and the operator taps it (one explicit tap before the
+        // till restarts).
+        UpdateLogic.permissionResume(updateAwaitingPermission, Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() }?.let {
+            when (it) {
+                PermissionResume.GRANTED -> {
+                    updateAwaitingPermission = false
+                    reportUpdate(UpdateLogic.STATE_PERMISSION_GRANTED, null, null)
+                }
+                PermissionResume.STILL_DENIED -> {
+                    // Report once per visit to the system screen, so a later
+                    // unrelated resume does not re-open the page's panel.
+                    updateAwaitingPermission = false
+                    reportUpdate(UpdateLogic.STATE_NEEDS_PERMISSION, null, UpdateLogic.ERROR_STILL_DENIED)
+                }
+            }
+        }
         // ut-docs#4495: back from Android's installer without an install.
         if (updateInstallerLaunched) {
             updateInstallerLaunched = false
