@@ -20,6 +20,8 @@
 # caller, verified by the caller) is set; otherwise the base module is
 # converted to an APK-shaped zip and read with aapt2. Prints the evidence.
 set -euo pipefail
+# Any unexpected exit under set -e must say so (never a silent failure).
+trap 'echo "check-aab: ERROR: command failed at line $LINENO (exit $?)" >&2' ERR
 
 TARGET_SDK_MIN=36
 aab="" ; want_vc="" ; want_cert="" ; allow_unsigned=0
@@ -83,9 +85,11 @@ grep -oE 'name[=)"]*[^ ]*android\.permission\.[A-Z_]+|android:name="android\.per
 
 # --- sdk levels + version ------------------------------------------------------
 # aapt2 xmltree: `versionCode(0x0101021b)=15`; bundletool XML: `android:versionCode="15"`
-num() { grep -oE "$1(\\(0x[0-9a-f]+\\))?=\"?[0-9]+" "$work/manifest.txt" | head -1 | grep -oE '[0-9]+$'; }
+num() { grep -oE "$1(\\(0x[0-9a-f]+\\))?=\"?[0-9]+" "$work/manifest.txt" | head -1 | grep -oE '[0-9]+$' || true; }
 tsdk="$(num targetSdkVersion)"; msdk="$(num minSdkVersion)"; vc="$(num versionCode)"
-[ -n "$tsdk" ] && [ -n "$msdk" ] && [ -n "$vc" ] || { echo "check-aab: could not read sdk/version from the manifest" >&2; exit 1; }
+for pair in "targetSdkVersion=$tsdk" "minSdkVersion=$msdk" "versionCode=$vc"; do
+  [ -n "${pair#*=}" ] || { echo "FAIL: manifest has no ${pair%%=*} attribute" >&2; echo "check-aab: could not read sdk/version from the manifest" >&2; exit 1; }
+done
 tsdk=$((tsdk)); msdk=$((msdk)); vc=$((vc))
 [ "$tsdk" -ge "$TARGET_SDK_MIN" ] && ok "targetSdkVersion=$tsdk (>= $TARGET_SDK_MIN)" || fail "targetSdkVersion=$tsdk < $TARGET_SDK_MIN"
 ok "minSdkVersion=$msdk"
@@ -96,7 +100,7 @@ else
 fi
 
 # --- ABIs -------------------------------------------------------------------
-abis="$(grep -oE '^base/lib/[^/]+/' <<<"$entries" | cut -d/ -f3 | sort -u)"
+abis="$(grep -oE '^base/lib/[^/]+/' <<<"$entries" | cut -d/ -f3 | sort -u || true)"
 echo "-- native ABIs: $(echo "$abis" | tr '\n' ' ')"
 grep -qx 'arm64-v8a' <<<"$abis" && ok "arm64-v8a (64-bit) present" || fail "no arm64-v8a native libs"
 if grep -qx 'armeabi-v7a' <<<"$abis" && ! grep -qx 'arm64-v8a' <<<"$abis"; then fail "32-bit ABI without its 64-bit twin"; fi
@@ -111,7 +115,7 @@ if unzip -Z1 "$aab" | grep -qE '^META-INF/.*\.(RSA|DSA|EC)$'; then
   sig="$(unzip -Z1 "$aab" | grep -E '^META-INF/.*\.(RSA|DSA|EC)$' | head -1)"
   unzip -p "$aab" "$sig" >"$work/sig.p7"
   keytool -printcert -file "$work/sig.p7" >"$work/cert.txt" 2>&1 || true
-  cert="$(grep -m1 'SHA256:' "$work/cert.txt" | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f')"
+  cert="$(grep -m1 'SHA256:' "$work/cert.txt" | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f' || true)"
   echo "-- signer SHA-256: ${cert:-unknown}"
   if [ -n "$want_cert" ]; then
     [ "$cert" = "$want_cert" ] && ok "signer matches the expected upload certificate" || fail "signer ${cert:-unknown} != expected $want_cert"

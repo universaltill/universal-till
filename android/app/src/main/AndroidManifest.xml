@@ -45,7 +45,7 @@
          update FileProvider here. The sideload flavors (src/sideload/
          AndroidManifest.xml) add them for the in-app APK update; the Google
          Play flavor never has them (Play updates the app itself, and restricts
-         that permission). scripts/ci/check-aab.sh asserts it on the bundle. -->
+         that permission). android/scripts/check-aab.sh asserts it on the bundle. -->
     <!-- ut-docs#1435: back the WebView's getUserMedia() (the bug-report
          panel's voice note today; in-page camera capture as a follow-up).
          Both are dangerous permissions, requested at runtime by
