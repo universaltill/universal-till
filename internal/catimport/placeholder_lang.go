@@ -3,6 +3,7 @@ package catimport
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Shop-language icon suggestion (ut-docs#2654). The English keywordIcons
@@ -12,6 +13,12 @@ import (
 // layers (built-in file, language pack/bundle, shop override), so core
 // carries no non-English data (ADR-0160) — only language-neutral
 // normalisation (placeholder_norm.go).
+//
+// Language facts (as opposed to translations) travel in the string layer too
+// (ADR-0160 §12, ut-docs#6043): a language whose translation sets
+// catalog.icon_match.head_last to "1" has compounds whose main noun comes
+// last ("Milchkaffee"), and its pass then also matches a label at the end of
+// a longer word. Core holds no per-language list (#2848).
 
 // LabelLookup returns the exact-locale translation of an i18n key, with no
 // fallback to another language and no key echo.
@@ -26,9 +33,24 @@ type labelRow struct {
 // langPass is one language's matching step: its normalised label rows, or
 // (english) the Go keyword table.
 type langPass struct {
-	english bool
-	rows    []labelRow
+	english  bool
+	rows     []labelRow
+	headLast bool // compounds end in their main noun (headLastKey is "1")
 }
+
+// headLastKey is the i18n setting that turns head-noun-last matching on for a
+// language. Only the exact value "1" (trimmed) enables it; anything else,
+// including a missing key, keeps the default behaviour.
+const headLastKey = "catalog.icon_match.head_last"
+
+// Head-noun step thresholds, in runes (script-neutral): the label must be at
+// least headMinLabelRunes long and the word must carry at least
+// headMinModifierRunes more in front of it ("Rotwein", modifier 3, stays
+// unmatched; "Schwein" no longer reaches "wein").
+const (
+	headMinLabelRunes    = 3
+	headMinModifierRunes = 4
+)
 
 // IconMatcher suggests icons using the shop's languages. A nil matcher is
 // valid and behaves as English only.
@@ -93,7 +115,8 @@ func NewIconMatcher(locales []string, lookup LabelLookup) *IconMatcher {
 			return runeLen(rows[i].joined) > runeLen(rows[j].joined)
 		})
 		if len(rows) > 0 {
-			m.passes = append(m.passes, langPass{rows: rows})
+			hl, _ := lookup(loc, headLastKey)
+			m.passes = append(m.passes, langPass{rows: rows, headLast: strings.TrimSpace(hl) == "1"})
 		}
 	}
 	return m
@@ -101,14 +124,22 @@ func NewIconMatcher(locales []string, lookup LabelLookup) *IconMatcher {
 
 func runeLen(s string) int { return len([]rune(s)) }
 
-// Icon picks an icon key: the name in each shop language in order (English
-// at its own position, else last), then the same for the category, then
-// "generic".
+// Icon picks an icon key in tiers: a strict match on the name across all
+// passes (each shop language in order, English at its own position, else
+// last), then the same on the category, then — only for head-last languages —
+// the head-noun step on the name, then on the category, then "generic". A weak
+// head-noun hit never beats a strict hit from any language or the category.
 func (m *IconMatcher) Icon(name, category string) string {
-	if icon, ok := m.match(name); ok {
+	if icon, ok := m.match(name, false); ok {
 		return icon
 	}
-	if icon, ok := m.match(category); ok {
+	if icon, ok := m.match(category, false); ok {
+		return icon
+	}
+	if icon, ok := m.match(name, true); ok {
+		return icon
+	}
+	if icon, ok := m.match(category, true); ok {
 		return icon
 	}
 	return "generic"
@@ -120,20 +151,74 @@ func (m *IconMatcher) IconPath(name, category string) string {
 	return path
 }
 
-func (m *IconMatcher) match(s string) (string, bool) {
+// nameView is one normalised reading of an item name: its words joined for
+// phrase matching, and the tokens tried against single-word labels.
+type nameView struct {
+	joined string
+	tokens []string
+}
+
+// matchRows is one non-English pass's strict step over the views: phrase,
+// exact, short-suffix prefix.
+func (p langPass) matchRows(views []nameView) (string, bool) {
+	for _, r := range p.rows {
+		for _, v := range views {
+			if len(r.words) > 1 {
+				if strings.Contains(v.joined, r.joined) {
+					return r.icon, true
+				}
+				continue
+			}
+			for _, t := range v.tokens {
+				if labelWordMatches(r.words[0], t) {
+					return r.icon, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// matchHead is a head-last pass's head-noun step over the views.
+func (p langPass) matchHead(views []nameView) (string, bool) {
+	if !p.headLast {
+		return "", false
+	}
+	// Rows are longest first, so the first hit is the longest label.
+	for _, r := range p.rows {
+		if len(r.words) != 1 {
+			continue
+		}
+		for _, v := range views {
+			for _, t := range v.tokens {
+				if headWordMatches(r.words[0], t) {
+					return r.icon, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// match runs one tier over s: head=false is the strict tier (every pass, then
+// the trailing English table when no pass was English); head=true is the
+// head-noun tier, which only head-last passes take part in.
+func (m *IconMatcher) match(s string, head bool) (string, bool) {
 	if strings.TrimSpace(s) == "" {
 		return "", false
 	}
 	if m == nil || len(m.passes) == 0 {
+		if head {
+			return "", false
+		}
 		return matchKeyword(s)
+	}
+	if head && !m.anyHeadLast() {
+		return "", false
 	}
 	// Views of the name: the ZWNJ-split form, plus the joined form when the
 	// name has a ZWNJ (ut-docs#6052). Either may hit a row.
-	type view struct {
-		joined string
-		tokens []string
-	}
-	mk := func(words []string) view {
+	mk := func(words []string) nameView {
 		// Tokens to try for single-word labels: each word, plus the word
 		// with an Arabic article stripped.
 		tokens := make([]string, 0, len(words)*2)
@@ -143,14 +228,20 @@ func (m *IconMatcher) match(s string) (string, bool) {
 				tokens = append(tokens, st)
 			}
 		}
-		return view{joined: " " + strings.Join(words, " ") + " ", tokens: tokens}
+		return nameView{joined: " " + strings.Join(words, " ") + " ", tokens: tokens}
 	}
-	views := []view{mk(normalizedWords(s))}
+	views := []nameView{mk(normalizedWords(s))}
 	if hasZWNJ(s) {
 		views = append(views, mk(joinedWords(s)))
 	}
 	englishDone := false
 	for _, p := range m.passes {
+		if head {
+			if icon, ok := p.matchHead(views); ok {
+				return icon, true
+			}
+			continue
+		}
 		if p.english {
 			englishDone = true
 			if icon, ok := matchKeyword(s); ok {
@@ -158,26 +249,23 @@ func (m *IconMatcher) match(s string) (string, bool) {
 			}
 			continue
 		}
-		for _, r := range p.rows {
-			for _, v := range views {
-				if len(r.words) > 1 {
-					if strings.Contains(v.joined, r.joined) {
-						return r.icon, true
-					}
-					continue
-				}
-				for _, t := range v.tokens {
-					if labelWordMatches(r.words[0], t) {
-						return r.icon, true
-					}
-				}
-			}
+		if icon, ok := p.matchRows(views); ok {
+			return icon, true
 		}
 	}
-	if englishDone {
+	if head || englishDone {
 		return "", false
 	}
 	return matchKeyword(s)
+}
+
+func (m *IconMatcher) anyHeadLast() bool {
+	for _, p := range m.passes {
+		if p.headLast {
+			return true
+		}
+	}
+	return false
 }
 
 // labelWordMatches: exact, or (label of >= 4 runes) token starting with the
@@ -189,4 +277,15 @@ func labelWordMatches(label, tok string) bool {
 	}
 	lr, tr := runeLen(label), runeLen(tok)
 	return lr >= 4 && tr > lr && tr-lr <= 3 && strings.HasPrefix(tok, label)
+}
+
+// headWordMatches: the token ends in the label (a compound whose main noun
+// comes last, "milchkaffee" -> "kaffee"), the label is at least
+// headMinLabelRunes long and at least headMinModifierRunes precede it.
+func headWordMatches(label, tok string) bool {
+	if !strings.HasSuffix(tok, label) {
+		return false
+	}
+	lr, tr := utf8.RuneCountInString(label), utf8.RuneCountInString(tok)
+	return lr >= headMinLabelRunes && tr-lr >= headMinModifierRunes
 }

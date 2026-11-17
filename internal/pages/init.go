@@ -34,6 +34,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -372,6 +373,15 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
+	// ut-docs#6154: the Pi kiosk's cached `lpstat` probe (never on other tills).
+	if isPiKioskAppliance(windowCtl) {
+		sp := print.NewCachedProber(print.LpstatProber{}, 60*time.Second)
+		dp.SystemPrinters = sp
+		go func() { // warm-up; lpstat absent → instant
+			defer logging.RecoverAndLog("pages.init.printProbe")
+			sp.Refresh(context.Background())
+		}()
+	}
 	// ADR-0088 Decision J / ut-docs#1912: nav.html is a shared partial with
 	// no per-page data of its own, so its railEntries template func reads
 	// the rail-slot amendments through this PluginMu-locked accessor rather
@@ -387,6 +397,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	httpx.InitTranslateMode(func(r *http.Request) bool { return translateModeActive(dp, r) })
 	// ut-docs#3735: <body data-window-toggle> (F11 window toggle) per request.
 	httpx.InitWindowToggle(func(r *http.Request) bool { return windowToggleOffered(dp, r) })
+	// ut-docs#6154: a Pi kiosk with no OS print destination never opens the
+	// browser's PDF-only print dialog. Live per-request check; no probe or
+	// exec on any other till.
+	httpx.InitBrowserPrint(func(r *http.Request) bool { return browserPrintOff(dp, r) })
 	// ut-docs#3091: record this till's running version (and when it first
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())
@@ -579,6 +593,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncBearerRotate(mux, dp)   // a replica swaps its LAN sync bearer, main-till side (ut-docs#5198)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
+	registerTaxAutoInstallChip(mux, dp) // automatic tax plugin install status (ADR-0172 §5, ut-docs#6287)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
 	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)
 	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
@@ -619,6 +634,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
 	dp.CloudLink = newCloudLinkClient(dp)
+	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
+	// host fn #6455) reaches the cloud with the live enrolment.
+	wirePayBroker(dp.Cfg)
 	// Network services start through netaccess.StartService, which skips them
 	// on the public demo till (ADR-0113 §1.6, ut-docs#2795); the local loops
 	// (EOD, sweeps, reconciles) and the main till's inbound link hub always run.

@@ -5,6 +5,24 @@ import { watchConsole } from './helpers';
 // browser-printed sale receipt carries each gift slip on its own page after
 // the receipt (print-only). The setting is restored after every test.
 
+
+// ut-docs#6155: every top-level @page rule the page carries (engine-neutral:
+// CSSPageRule where exposed, else the rule text).
+async function pageMarginRules(page) {
+  return page.evaluate(() => {
+    const out: string[] = [];
+    for (const s of Array.from(document.styleSheets)) {
+      let rules: CSSRule[] = [];
+      try { rules = Array.from(s.cssRules); } catch { continue; }
+      for (const r of rules) {
+        if (r.cssText.startsWith('@page')) out.push(((r as any).style && (r as any).style.margin) || r.cssText);
+      }
+    }
+    return out;
+  });
+}
+function isZero(v: string) { return /^0(px)?$/.test(v.trim()) || /margin:\s*0(px)?\s*(;|\}|$)/.test(v); }
+
 const RUN = Date.now().toString(36).toUpperCase();
 const ITEM = `Gift voucher R6152 ${RUN}`;
 const SKU = `GV-R6152-${RUN}`;
@@ -88,6 +106,22 @@ test.describe.serial('browser receipt carries the gift slips (ut-docs#6152)', ()
     for (let i = 0; i < 3; i++) await expect(slips.nth(i)).toBeVisible();
     const breaks = await page.locator('.voucher-slip-sheet').evaluateAll((els) => els.map((e) => getComputedStyle(e).breakBefore));
     expect(breaks).toEqual(['page', 'page', 'page']);
+    // ut-docs#6155: margin-0 page + the content's own 6mm inset (22.6px).
+    const rules = await pageMarginRules(page);
+    expect(rules.length, '@page rule on the receipt page').toBeGreaterThan(0);
+    for (const r of rules) expect(isZero(r), `@page margin: ${r}`).toBeTruthy();
+    const MM6 = 6 * 96 / 25.4 - 0.5;
+    const inset = (sel: string) => page.locator(sel).first().evaluate((el) => {
+      const s = getComputedStyle(el);
+      return [s.paddingInlineStart, s.paddingInlineEnd, s.paddingBlockStart, s.paddingBlockEnd].map(parseFloat);
+    });
+    for (const sel of ['.receipt-wrap', '.voucher-slip-sheet']) {
+      for (const v of await inset(sel)) expect(v, `${sel} print inset`).toBeGreaterThanOrEqual(MM6);
+    }
+    expect(await page.locator('.receipt-wrap').first().evaluate((el) => getComputedStyle(el).webkitBoxDecorationBreak || (getComputedStyle(el) as any).boxDecorationBreak)).toBe('clone');
+    const w = await page.locator('.voucher-slip-paper').first().evaluate((el) => el.getBoundingClientRect().width);
+    expect(w).toBeLessThanOrEqual(72 * 96 / 25.4 + 1);
+    expect(await page.locator('.receipt-card:not(.receipt-print-copy)').first().evaluate((el) => el.getBoundingClientRect().width)).toBeLessThanOrEqual(421);
     // D1 (review): the slip sheets must not inherit the basket card frame
     // (border, radius, theme surface) on paper.
     const frame = await page.locator('#basket.receipt-view').evaluate((el) => {

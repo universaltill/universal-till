@@ -49,8 +49,8 @@ func ReadCountProtocol(raw string) CountReading {
 	var ok []entry
 	dropped := 0
 	for k, v := range m {
-		n, err := strconv.ParseInt(k, 10, 64)
-		if err != nil || n <= 0 || strconv.FormatInt(n, 10) != k {
+		n, isDenom := parseDenomKey(k)
+		if !isDenom {
 			dropped++
 			continue
 		}
@@ -96,4 +96,15 @@ func ReadCountProtocol(raw string) CountReading {
 	r.Unreadable = dropped > 0 && len(r.Lines) == 0
 	r.Partial = dropped > 0 && len(r.Lines) > 0
 	return r
+}
+
+// parseDenomKey parses a count_protocol key: a canonical positive integer
+// in minor units (no sign, leading zero or whitespace; fits int64). Shared
+// by the tolerant reader and the ValidCountProtocol write gate.
+func parseDenomKey(k string) (int64, bool) {
+	n, err := strconv.ParseInt(k, 10, 64)
+	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != k {
+		return 0, false
+	}
+	return n, true
 }

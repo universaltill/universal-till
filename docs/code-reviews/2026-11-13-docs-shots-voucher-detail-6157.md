@@ -25,3 +25,15 @@ Pre-flight: web/help topic updated (`vouchers.md`, shots regenerated, manifest u
 **Verdict:** approve, with F1 fixed in this branch.
 
 **Deferred:** none.
+
+## Addendum 2026-11-17 — merge of main (PR sweep, lane:cloud-41)
+
+- `web/help/en/vouchers.md`: main (#6154, #6179) rewrote the reprint
+  paragraph (printerless kiosk, **Issued** date, slip text). Kept main's
+  paragraph whole and kept this PR's new "The picture at the top…" paragraph
+  before it.
+- Screenshots: took main's, re-ran `make docs-shots` on the merged tree
+  (172 passed) and kept only the four `vouchers.png` files this PR is about
+  (other topics re-rendered with local font noise only, so main's were kept).
+  The en picture shows the voucher's page with the no-printer note and
+  **Receipt printer** link, matching the text. `guard-docs-shots.sh` passes.

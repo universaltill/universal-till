@@ -90,7 +90,7 @@ Owners manage the shop from any browser at
 - Customer management
 - Receipt printing (thermal and regular)
 - Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff; on linked tills every till sees and updates the whole shop's orders, with silent local fallback when the main till is unreachable)
-- Customer order tracking via QR (paid plans: the self-order kiosk confirmation shows a QR, for orders paid at the kiosk and pay-at-counter orders alike; the customer follows their order's status — and nothing else — live on their own phone over the shop's network, a pay-at-counter order showing "waiting for payment" until it is paid; paid on a different till than the kiosk, the link can't follow it yet — ut-docs#4238; counter sales carry the same QR on the printed and on-screen receipt, switchable in the receipt designer — ut-docs#908)
+- Customer order tracking via QR (Shop plan and up: the self-order kiosk confirmation shows a QR, for orders paid at the kiosk and pay-at-counter orders alike; the customer follows their order's status — and nothing else — live on their own phone over the shop's network, a pay-at-counter order showing "waiting for payment" until it is paid; paid on a different till than the kiosk, the link can't follow it yet — ut-docs#4238; counter sales carry the same QR on the printed and on-screen receipt, switchable in the receipt designer — ut-docs#908)
 - Kitchen station routing (send each category — or a single item — to its own kitchen printer, kitchen display screen, or both; discover network printers already on the LAN instead of typing an address by hand)
 - Kitchen display (a per-station live order screen for a second monitor on the till — same one-tap status buttons and live refresh as the Orders page; the LAN-paired standalone display device is a follow-up)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
@@ -158,12 +158,25 @@ problem surface in Settings, and the wizard states plainly that Universal
 Till holds the device's admin credential (PUK) on the merchant's behalf,
 requestable at any time (ADR-0045/ADR-0053).
 
-Unlike the free language packs above, a country's *fiscal* plugin (e.g.
+One narrow exception installs a *tax* plugin by itself
+([ADR-0172](https://github.com/universaltill/ut-docs/blob/main/adr/0172-a-new-till-auto-installs-its-countrys-tax-rate-plugin.md),
+which amends ADR-0025 decision 4): when setup finishes (a till that joined a
+my. shop or one set up with the wizard alone), the till installs the shop
+country's tax plugin if there is exactly one that is free, first-party
+(`official`), names the country in its `markets`, signs nothing (no
+`fiscal.*` hook or capability) and asks for no network and no permission
+beyond `events:receive`, `sales:read` and `storage` (checked again on the
+Ed25519-verified manifest). It goes through the normal marketplace install,
+is first loaded in an unregistered sandbox with one dry `tax.rate.ask`
+before it is persisted, never blocks setup or checkout, shows a status chip
+(setup landing page, Settings), and is not reinstalled once uninstalled.
+
+Unlike the free language packs above, any other country *fiscal* plugin (e.g.
 [ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) —
 §12 UStG dine-in/takeaway VAT-rate switching plus TSE signing/DSFinV-K
 export) is never auto-installed: the same business-identity step only
 *prompts* to install it when the marketplace actually has a matching
-listing, and only installs on an explicit tap
+listing (by its `markets`), and only installs on an explicit tap
 ([ADR-0025](https://github.com/universaltill/ut-docs/blob/main/adr/0025-country-tax-and-fiscal-compliance.md)
 decision 4) — offline-first means a required fiscal plugin can never be a
 silent hard dependency. Declining costs nothing: the till still runs
@@ -184,7 +197,7 @@ Deliveroo), accounting systems (QuickBooks, Xero, Wave), ERP integration
 
 **Raspberry Pi / Debian / Ubuntu** — the recommended shop install
 (creates the `pos` service user, installs a systemd service, survives
-upgrades, keeps item photos in `/var/lib/unitill`):
+upgrades, keeps shop data and item photos in `/opt/unitill/data`):
 
 ```bash
 # arm64 = Raspberry Pi OS 64-bit; use _amd64.deb on a PC
@@ -245,6 +258,10 @@ All downloads: https://github.com/universaltill/universal-till/releases —
 then open http://localhost:8080; the first-boot wizard sets language,
 currency and the admin PIN, then opens the Import page, where you import
 your products from a file, load sample data to try the till, or skip.
+
+Already have products? The Import page's **Import item photos by SKU** card adds photos in bulk
+(CSV of `sku` + image path/`https` URL, and/or a ZIP of `<SKU>.jpg` files; preview first, existing
+items only, main till only; see `internal/photoimport`).
 
 ### Option 2: Build from Source
 
@@ -678,8 +695,8 @@ We'll even link to notable forks in this README! 🎉
 - **Windows** (x64, ARM64) ✅
 - **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
-- **Android** (tablets, POS terminals) ✅
-- **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
+- **Android** (tablets, POS terminals) ✅ — including 32-bit armv7 devices on Android 8-10 / Fire OS 7, whose app seccomp filter kills unknown syscalls; CI runs the armv7 boot under qemu against the Android 9 allow-list and in a qemu-system-arm VM with the AOSP seccomp filter that must kill the pristine-libc build (`scripts/ci/sim-armv7-seccomp.sh`, ADR-0188). Fire OS 7 hardware check pending (ut-docs#6300)
+- **iOS** (iPhone, iPad; iOS/iPadOS 16 or later) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 
 ### Tested Hardware
@@ -710,7 +727,6 @@ Further languages are translated by the community in
 reach tills as signed language bundles, offered right on the setup wizard's
 language step and installed on selection (German first; Spanish, Portuguese,
 French, Chinese, Malay and more follow as their translations are approved).
-The old per-language plugin repos (`ut-plugin-language-*`) are being retired.
 
 Want to add or improve a language? Translate it in your browser at [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/); see [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.
 

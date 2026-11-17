@@ -15,6 +15,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 )
 
 // ut-docs#2535: till-side producer for the cloud sales-aggregate endpoint
@@ -464,6 +465,46 @@ func TestPushSalesAggregates_NoSaleOpens(t *testing.T) {
 
 	if y := byKey[f.prevDay+"/reg-A"]; y == nil || y["no_sale_count"] != float64(0) {
 		t.Fatalf("yesterday/reg-A no_sale_count = %v, want 0", y)
+	}
+}
+
+// ut-docs#4721: baskets cleared with New sale fill cleared_basket_count /
+// cleared_basket_total_minor, and a (day, till) with only a cleared basket
+// still gets a rollup.
+func TestPushSalesAggregates_ClearedBaskets(t *testing.T) {
+	noAggThrottle(t)
+	cloud := &aggCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedAggFixture(t, "agg-cleared.db")
+	ctx := context.Background()
+	repo := data.NewPOSRepo(f.db)
+	for _, e := range []data.ClearedBasket{
+		{CreatedAt: aggAt(f.todayT), RegisterID: "reg-A", ActorID: "u1", LineCount: 2, Total: money.FromMinor(500)},
+		{CreatedAt: aggAt(f.todayT.Add(time.Hour)), TillID: "reg-A", ActorID: "u1", LineCount: 1, Total: money.FromMinor(250)},
+		{CreatedAt: aggAt(f.todayT), RegisterID: "reg-C", ActorID: "u1", LineCount: 1, Total: money.FromMinor(90)}, // cleared-only till
+	} {
+		if _, err := repo.InsertClearedBasket(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pushSalesAggregates(ctx, testCfg(srv.URL), f.db)
+
+	byKey := map[string]map[string]any{}
+	for _, p := range cloud.since(0) {
+		byKey[p.body["business_date"].(string)+"/"+p.body["till_id"].(string)] = p.body
+	}
+	a := byKey[f.today+"/reg-A"]
+	if a == nil || a["cleared_basket_count"] != float64(2) || a["cleared_basket_total_minor"] != float64(750) {
+		t.Fatalf("today/reg-A cleared = %v/%v, want 2/750", a["cleared_basket_count"], a["cleared_basket_total_minor"])
+	}
+	c := byKey[f.today+"/reg-C"]
+	if c == nil || c["cleared_basket_count"] != float64(1) || c["cleared_basket_total_minor"] != float64(90) {
+		t.Fatalf("today/reg-C (cleared only) = %v", c)
+	}
+	if y := byKey[f.prevDay+"/reg-A"]; y == nil || y["cleared_basket_count"] != float64(0) || y["cleared_basket_total_minor"] != float64(0) {
+		t.Fatalf("yesterday/reg-A cleared = %v", y)
 	}
 }
 
