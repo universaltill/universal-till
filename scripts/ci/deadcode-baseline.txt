@@ -50,6 +50,9 @@ catimport/smart_products.go: unreachable func: withAliasMapping
 catimport/smart_products.go: unreachable func: yesNo
 cmd/unitill-desktop/control.go: unreachable func: controlServer.LastInputAt
 internal/bluetooth/android_bridge.go: unreachable func: SetAndroidBridge
+internal/buildinfo/channel.go: unreachable func: OverrideChannelForTest
+internal/buildinfo/channel.go: unreachable func: RequireExplicitChannel
+internal/buildinfo/channel.go: unreachable func: SetChannelOnce
 internal/config/i18n.go: unreachable func: NewI18n
 internal/data/pairing_repo.go: unreachable func: PairingRepo.Approve
 internal/data/pairing_repo.go: unreachable func: PairingRepo.CreatePendingRequest
