@@ -139,6 +139,16 @@ var AgentSettings = []AgentSetting{
 	{Key: ReportRetentionModeKey, Region: "settings-retention",
 		LabelKey: "settings.retention.title", HintKey: "settings.retention.help", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeEnum, Tier: SettingTierSensitive}, // shortening it deletes records (ut-docs#3390)
+	// ut-docs#2557: explain-only (not Writable) — turning on staff monitoring
+	// stays a human click (ADR-0153 Decision 3).
+	{Key: CloudStaffBreakdownKey, Region: "settings-cloud-staff",
+		LabelKey: "settings.cloud_staff.enable", HintKey: "settings.cloud_staff.help", Kind: AgentSettingBool, On: "true", Off: "false",
+		Type: SettingTypeBool, Tier: SettingTierSensitive}, // staff monitoring: a human click, never remote-writable
+	// ADR-0176 (ut-docs#5366): per-till notices switch, off by default; on
+	// means an extra cloud request, so sensitive and a human click only.
+	{Key: "notices.enabled", Region: "settings-notices",
+		LabelKey: "settings.notices.enable", HintKey: "settings.notices.help", Kind: AgentSettingBool, On: "true", Off: "false",
+		Type: SettingTypeBool, Tier: SettingTierSensitive},
 	{Key: "invoice.seller_name", Region: "settings-invoice",
 		LabelKey: "settings.invoice.title", HintKey: "settings.invoice.help", Kind: AgentSettingText,
 		Type: SettingTypeText, Tier: SettingTierSensitive, RemoteWritable: true}, // seller identity
@@ -169,6 +179,9 @@ var AgentSettings = []AgentSetting{
 	{Key: "store.currency", Region: "settings-currency",
 		LabelKey: "settings.currency.title", HintKey: "settings.currency.help", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeText, Tier: SettingTierSensitive}, // changes the meaning of every price (ut-docs#3390)
+	{Key: "store.currency_display", Region: "settings-currency-display",
+		LabelKey: "settings.currency_display.title", HintKey: "settings.currency_display.help", Kind: AgentSettingText, ReadValue: true,
+		Type: SettingTypeText, Tier: SettingTierNormal}, // display only; not remote-writable until the owner decides
 	{Key: "store.locale", Region: "settings-language",
 		LabelKey: "settings.language.title", HintKey: "settings.language.help", Kind: AgentSettingText, ReadValue: true,
 		Type: SettingTypeEnum, Tier: SettingTierNormal, RemoteWritable: true}, // options: the languages installed on the till

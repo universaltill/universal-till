@@ -30,7 +30,7 @@ func TestAgentSettingsCatalogue_CoversEverySettingsRegion_4129(t *testing.T) {
 	// cloud may write whose cards are not shop-wide-lock fieldsets.
 	registryOnly := map[string]bool{
 		"printer.receipt_policy": true, "receipt.header1": true, "receipt.header2": true, "receipt.header3": true,
-		"receipt.footer": true, "invoice.seller_address": true, "invoice.seller_vat_no": true,
+		"receipt.footer": true, "notices.enabled": true, "invoice.seller_address": true, "invoice.seller_vat_no": true,
 	}
 	for _, s := range data.AgentSettings {
 		if !covered[s.Key] && !registryOnly[s.Key] {
@@ -129,10 +129,9 @@ func TestAgentSettingsCatalogue_LinksAndWordsExist_4129(t *testing.T) {
 			if k == "" {
 				continue
 			}
-			for name, m := range locales {
-				if strings.TrimSpace(m[k]) == "" {
-					t.Errorf("%s: key %s missing in %s", s.Key, k, name)
-				}
+			// English is the only required locale (ADR-0160 section 2).
+			if strings.TrimSpace(locales["en.json"][k]) == "" {
+				t.Errorf("%s: key %s missing in en.json", s.Key, k)
 			}
 		}
 		if s.Writable {

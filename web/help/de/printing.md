@@ -3,6 +3,7 @@ id: printing
 title: Belege & Drucken
 section: Den Betrieb führen
 order: 230
+public: true
 summary: Druckt Belege, Rechnungen und Tagesabschlussberichte auf einem Thermobelegdrucker oder einem gewöhnlichen Bürodrucker; Küchenbestellungen können auf einem separaten Drucker ausgegeben werden.
 keywords: [drucker, beleg, küche, etiketten, papier]
 ---

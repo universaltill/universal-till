@@ -204,6 +204,7 @@ func TestReportedReadOnlyTillSettingKeys_Pinned_5349(t *testing.T) {
 	want := []string{
 		"marketplace.auto_register_opt_in", "payments.default_method", common.KeyReportRetentionMode,
 		"marketplace.telemetry_opt_in", common.KeyStoreName, common.KeyCurrency, common.KeyShopType,
+		"store.currency_display", // display format only (main's #catalogue entry); merge-added, owner to confirm
 	}
 	got := append([]string(nil), reportedReadOnlyTillSettingKeys...)
 	slices.Sort(got)

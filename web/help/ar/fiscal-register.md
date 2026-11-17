@@ -3,6 +3,7 @@ id: fiscal-register
 title: السجل الضريبي (ألمانيا)
 section: إعداد متجرك
 order: 112
+public: false
 summary: "سجّل بيانات الصندوق ووحدة TSE اللازمة لإخطار §146a Abs. 4 AO الألماني، مجمعة حسب موقع العمل — أنتم من يقدّم الإخطار بأنفسكم عبر Mein ELSTER."
 routes: [/fiscal-register]
 keywords: [ضريبة, ألمانيا, AO, TSE, ELSTER, kassensichv, إخطار, صندوق, تسجيل]

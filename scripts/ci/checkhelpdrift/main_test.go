@@ -157,15 +157,15 @@ func TestCheckAllNoDriftIsClean(t *testing.T) {
 	}
 }
 
-func TestCheckAllUnbaselinedDriftFails(t *testing.T) {
+func TestCheckAllUnbaselinedDriftWarnsOnly(t *testing.T) {
 	lib := loadFixtureLibrary(t, map[string][]byte{
 		"help/en/x.md": topicFile("x", "X", "# X\n\n1. Step one\n2. Step two\n"),
 		"help/de/x.md": topicFile("x", "X (de)", "# X (de)\n\n1. Nur ein Schritt\n"),
 	})
 
 	findings := checkAll(lib, map[[2]string]baselineEntry{})
-	if !anyFail(findings) {
-		t.Errorf("drifted topic with no baseline entry should fail; findings: %+v", findings)
+	if anyFail(findings) || len(findings) == 0 {
+		t.Errorf("drifted topic with no baseline entry must warn (non-blocking), never fail (ADR-0160 section 2); findings: %+v", findings)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestCheckAllKnownBaselinedDriftPasses(t *testing.T) {
 	}
 }
 
-func TestCheckAllEnglishMovedSinceBaselineFails(t *testing.T) {
+func TestCheckAllEnglishMovedSinceBaselineWarnsOnly(t *testing.T) {
 	// The locale side is exactly what the baseline recorded, but English
 	// has grown further since — this is the hole an English-blind baseline
 	// used to leave open (independent review finding, ut-docs#1962): a
@@ -212,8 +212,8 @@ func TestCheckAllEnglishMovedSinceBaselineFails(t *testing.T) {
 	}
 
 	findings := checkAll(lib, baseline)
-	if !anyFail(findings) {
-		t.Error("a baseline entry whose recorded English signature no longer matches English's current signature should fail")
+	if anyFail(findings) || len(findings) == 0 {
+		t.Error("ADR-0160 section 2, warn only (never fail): a baseline entry whose recorded English signature no longer matches English's current signature must be a warning")
 	}
 }
 
@@ -229,12 +229,12 @@ func TestCheckAllStaleBaselineFailsOnceDriftIsFixed(t *testing.T) {
 	}
 
 	findings := checkAll(lib, baseline)
-	if !anyFail(findings) {
-		t.Error("a baseline entry for drift that no longer exists should fail (stale entry)")
+	if anyFail(findings) || len(findings) == 0 {
+		t.Error("ADR-0160 section 2, warn only (never fail): a baseline entry for drift that no longer exists should fail (stale entry)")
 	}
 }
 
-func TestCheckAllBaselineDriftedFurtherFails(t *testing.T) {
+func TestCheckAllBaselineDriftedFurtherWarnsOnly(t *testing.T) {
 	// The baseline recorded one mismatch, but the real one has since
 	// changed (got worse, or just different) — must fail, not silently
 	// widen the exemption.
@@ -250,12 +250,12 @@ func TestCheckAllBaselineDriftedFurtherFails(t *testing.T) {
 	}
 
 	findings := checkAll(lib, baseline)
-	if !anyFail(findings) {
-		t.Error("a baseline entry whose recorded signature no longer matches reality should fail")
+	if anyFail(findings) || len(findings) == 0 {
+		t.Error("ADR-0160 section 2, warn only (never fail): a baseline entry whose recorded signature no longer matches reality must be a warning")
 	}
 }
 
-func TestCheckAllBaselineEntryForUncheckedTopicFails(t *testing.T) {
+func TestCheckAllBaselineEntryForUncheckedTopicWarnsOnly(t *testing.T) {
 	lib := loadFixtureLibrary(t, map[string][]byte{
 		"help/en/x.md": topicFile("x", "X", "# X\n\n1. Step one\n"),
 		"help/de/x.md": topicFile("x", "X (de)", "# X (de)\n\n1. Schritt eins\n"),
@@ -265,8 +265,8 @@ func TestCheckAllBaselineEntryForUncheckedTopicFails(t *testing.T) {
 	}
 
 	findings := checkAll(lib, baseline)
-	if !anyFail(findings) {
-		t.Error("a baseline entry naming a locale/topic pair that was never checked should fail")
+	if anyFail(findings) || len(findings) == 0 {
+		t.Error("ADR-0160 section 2, warn only (never fail): a baseline entry naming a locale/topic pair that was never checked must be a warning")
 	}
 }
 

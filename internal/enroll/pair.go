@@ -22,8 +22,8 @@ import (
 
 // Pairing a till with a shop (ADR-0116 D5/D6, ut-docs#3523).
 //
-// The owner's my. "Add or re-pair a till" mints a short, single-use pairing
-// code bound to the store. On the till, Settings → Cloud → "Pair with a
+// The owner's my. "Pair a till" / "Pair again" mints a short, single-use pairing
+// code bound to the store. On the till, Settings → Till registration → "Pair with a
 // shop" (Pair) clears exactly this till's cloud identity — the credential
 // and device keys of db.TillCloudIdentityPrefixes (its own wipe list below;
 // the unpaid check-in markers stay, and Pair's own check-in re-records
@@ -300,6 +300,11 @@ type PairProfile struct {
 	// shoptype.List, else "" (old cloud, unknown or mistyped value).
 	// Validated on parse by UnmarshalJSON, never taken raw.
 	ShopType string `json:"-"`
+	// HadMainTill is the cloud's had_main_till (ADR-0166 amendment
+	// 2026-11-04, ut-docs#5332): the shop had a main till before this
+	// pairing. Only a JSON true counts; absent (older cloud) or a non-bool
+	// is false. Set by UnmarshalJSON, never taken raw.
+	HadMainTill bool `json:"-"`
 }
 
 // UnmarshalJSON reads the store block and keeps shop_type only when it is a
@@ -308,7 +313,8 @@ func (p *PairProfile) UnmarshalJSON(b []byte) error {
 	type plain PairProfile
 	aux := struct {
 		*plain
-		ShopType json.RawMessage `json:"shop_type"`
+		ShopType    json.RawMessage `json:"shop_type"`
+		HadMainTill json.RawMessage `json:"had_main_till"`
 	}{plain: (*plain)(p)}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
@@ -318,6 +324,8 @@ func (p *PairProfile) UnmarshalJSON(b []byte) error {
 	if json.Unmarshal(aux.ShopType, &st) == nil && shoptype.IsKnown(st) {
 		p.ShopType = st
 	}
+	var h bool
+	p.HadMainTill = json.Unmarshal(aux.HadMainTill, &h) == nil && h
 	return nil
 }
 

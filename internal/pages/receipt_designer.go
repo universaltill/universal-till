@@ -2,6 +2,7 @@ package pages
 
 import (
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -21,11 +22,13 @@ import (
 // designFromForm reads UNSAVED designer values (live preview posts these).
 func designFromForm(r *http.Request) receiptDesign {
 	rd := receiptDesign{
-		Footer:      strings.TrimSpace(r.Form.Get("footer")),
-		ShowSKU:     r.Form.Get("show_sku") == "on",
-		ShowTax:     r.Form.Get("show_tax") == "on",
-		ShowBarcode: r.Form.Get("show_barcode") == "on",
-		ShowLogo:    r.Form.Get("show_logo") == "on",
+		Footer: strings.TrimSpace(r.Form.Get("footer")),
+		// ut-docs#6179: lenient — the preview never refuses; only Save does.
+		VoucherSlipText: lenientVoucherSlipText(r.Form.Get("voucher_slip_text")),
+		ShowSKU:         r.Form.Get("show_sku") == "on",
+		ShowTax:         r.Form.Get("show_tax") == "on",
+		ShowBarcode:     r.Form.Get("show_barcode") == "on",
+		ShowLogo:        r.Form.Get("show_logo") == "on",
 		// ut-docs#908: explicit either way — the designer always shows the
 		// effective value (default included) and saves what is ticked.
 		ShowTrackingQR: r.Form.Get("show_tracking_qr") == "on",
@@ -62,7 +65,7 @@ func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.D
 		Header:    rd.Header,
 		// clock.Now (not time.Now) so this sample ticket's date is byte-stable
 		// under `make docs-shots` (ut-docs#930); real wall-clock everywhere else.
-		Meta: []string{fmt.Sprintf(httpx.T(locale, "receipt.paper.receipt_no"), "000000123"), clock.Now().Format("2006-01-02 15:04")},
+		Meta: []string{fmt.Sprintf(httpx.T(locale, "receipt.paper.receipt_no"), "000000123"), httpx.FormatDateTimeLatin(clock.Now(), httpx.DefaultLocale())},
 		Lines: []print.Line{
 			line("Apples", "SKU-001", "2", "£4.32"),
 			line("Orange Juice 1L", "SKU-002", "1", "£2.64"),
@@ -95,6 +98,30 @@ func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.D
 	return doc
 }
 
+// sampleVoucherSlip is the designer's example gift voucher slip
+// (ut-docs#6179): fixed demo content like the sample receipt's amounts; the
+// date uses clock.Now so `make docs-shots` stays byte-stable.
+func sampleVoucherSlip(storeName string, rd receiptDesign, locale string) print.VoucherSlip {
+	return print.VoucherSlip{
+		StoreName: storeName,
+		Header:    rd.Header,
+		Voucher:   print.VoucherBlock{Label: httpx.T(locale, "catalog.item_type.gift_voucher"), Amount: "£25.00", Code: "GV-SAMPLE", Slip: true},
+		Date:      fmt.Sprintf(httpx.T(locale, "receipt.vouchers.issued_on"), httpx.FormatDateLatin(clock.Now(), locale)),
+		Text:      voucherSlipLines(rd.VoucherSlipText),
+	}
+}
+
+// designerPreview is the live preview text: the sample receipt and, once the
+// shop has typed slip text, the sample gift voucher slip under it. With no
+// text it is the receipt alone, byte-identical to before ut-docs#6179.
+func designerPreview(storeName string, rd receiptDesign, locale string) string {
+	out := print.RenderText(sampleReceiptDoc(storeName, rd, locale))
+	if rd.VoucherSlipText != "" {
+		out += "\n" + print.RenderVoucherSlipText(sampleVoucherSlip(storeName, rd, locale))
+	}
+	return out
+}
+
 // registerReceiptDesigner mounts the designer page, live preview, save and
 // test print (docs: architecture/receipt-designer.md, G29).
 //
@@ -125,7 +152,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/receipt_designer.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.receipt_designer"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"D":         rd,
 			"H1":        header[0], "H2": header[1], "H3": header[2],
@@ -134,7 +161,8 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#4260: the tracking box is greyed out until the cloud
 			// tracking page exists (#4238).
 			"TrackingAvailable": orderTrackingLinksAvailable(),
-			"Preview":           print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale())),
+			"Preview":           designerPreview(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale()),
+			"SlipTextHint":      fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "designer.receipt.voucher_slip_text_hint"), maxVoucherSlipTextLines, maxVoucherSlipTextRunes),
 		})(w, r)
 	})
 
@@ -146,7 +174,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		rd := designFromForm(r)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale()))))
+		_, _ = w.Write([]byte(designerPreview(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale())))
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/save", func(w http.ResponseWriter, r *http.Request) {
@@ -161,15 +189,27 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		// session user travels as an allowed actor (what an allowed
 		// checkOrElevate would carry); the main till re-checks it.
 		elev := elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)}
+		// ut-docs#6179: the slip text is validated before anything is built
+		// or sent, so a refusal saves nothing (not the header or footer
+		// either) and an additional till never contacts the main till.
+		slipText, slipErr := normalizeVoucherSlipText(r.Form.Get("voucher_slip_text"))
+		if slipErr != nil {
+			locale := httpx.ResolveLocale(w, r)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(voucherSlipTextTooLongMsg(locale)))
+			return
+		}
 		values := map[string]string{
-			keyReceiptHeader1:     strings.TrimSpace(r.Form.Get("header1")),
-			keyReceiptHeader2:     strings.TrimSpace(r.Form.Get("header2")),
-			keyReceiptHeader3:     strings.TrimSpace(r.Form.Get("header3")),
-			keyReceiptFooter:      strings.TrimSpace(r.Form.Get("footer")),
-			keyReceiptShowSKU:     fmt.Sprintf("%t", r.Form.Get("show_sku") == "on"),
-			keyReceiptShowTax:     fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"),
-			keyReceiptShowBarcode: fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"),
-			keyReceiptShowLogo:    fmt.Sprintf("%t", r.Form.Get("show_logo") == "on"),
+			keyReceiptVoucherSlipText: slipText,
+			keyReceiptHeader1:         strings.TrimSpace(r.Form.Get("header1")),
+			keyReceiptHeader2:         strings.TrimSpace(r.Form.Get("header2")),
+			keyReceiptHeader3:         strings.TrimSpace(r.Form.Get("header3")),
+			keyReceiptFooter:          strings.TrimSpace(r.Form.Get("footer")),
+			keyReceiptShowSKU:         fmt.Sprintf("%t", r.Form.Get("show_sku") == "on"),
+			keyReceiptShowTax:         fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"),
+			keyReceiptShowBarcode:     fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"),
+			keyReceiptShowLogo:        fmt.Sprintf("%t", r.Form.Get("show_logo") == "on"),
 		}
 		// ut-docs#908: saved explicitly, so the default
 		// (receiptTrackingQRDefault) only applies until the first save —

@@ -3,6 +3,7 @@ id: recovery
 title: Recovery screen
 section: Running the business
 order: 255
+public: true
 summary: What you see if the till fails to start, and what each action on that screen does.
 keywords: [recovery, error, won't start, crash, retry, safe mode, corrupt, log, log file, troubleshooting]
 ---

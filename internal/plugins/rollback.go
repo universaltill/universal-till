@@ -328,6 +328,12 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// A revoked release is never restored (ut-docs#5658): the record
+	// outlives the version switch that disabled it.
+	if err := CheckNotRevoked(ctx, repo, tx, pluginID, targetVersion); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Update plugins table
 	if err := repo.UpdatePluginVersion(ctx, tx, pluginID, targetVersion, manifest.Entrypoint, "installed"); err != nil {
 		return err

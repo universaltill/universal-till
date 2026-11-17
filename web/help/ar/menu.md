@@ -3,6 +3,7 @@ id: menu
 title: شاشة القائمة
 section: البيع اليومي
 order: 30
+public: true
 summary: شاشة واحدة بأزرار لمس كبيرة تنقلك إلى كل قسم في الجهاز.
 routes: [/menu, /settings/menu, /admin]
 ---

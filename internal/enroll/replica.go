@@ -274,7 +274,14 @@ func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Ca
 			return
 		}
 	}
-	for _, k := range []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt, entitlement.KeyLastConfirmedAt} {
+	// KeyStoreClaimed (ut-docs#3532) is written only when relayed: an absent
+	// value leaves the replica's own row alone.
+	keys := []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt}
+	if _, ok := vals[entitlement.KeyStoreClaimed]; ok {
+		keys = append(keys, entitlement.KeyStoreClaimed)
+	}
+	keys = append(keys, entitlement.KeyLastConfirmedAt)
+	for _, k := range keys {
 		if err := kv.Set(ctx, k, vals[k]); err != nil {
 			logging.L().Warnf("enrolment: persist relayed %s: %v (will retry on the next vouch)", k, err)
 			return

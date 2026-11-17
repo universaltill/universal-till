@@ -1667,13 +1667,18 @@ ORDER BY id
 }
 
 func (r *PluginRepo) ListMenuEntries(ctx context.Context) ([]MenuEntryRow, error) {
+	// ut-docs#5475: route/menu_group are nullable (migration 089) and the
+	// scan targets are plain strings, so one NULL row (raw insert, restored
+	// DB) failed the whole query and the till refused to boot. COALESCE makes
+	// NULL read as the '' a normal write stores. GROUP BY/ORDER BY stay on
+	// the raw columns.
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
     pe.plugin_id,
     pe.key,
-    pe.route,
-    pe.label,
-    pe.menu_group,
+    COALESCE(pe.route, ''),
+    COALESCE(pe.label, ''),
+    COALESCE(pe.menu_group, ''),
     COALESCE(pe.icon_path, ''),
     COALESCE(pe.config_json, ''),
     GROUP_CONCAT(pp.permission) as required_permissions,

@@ -3,6 +3,7 @@ id: till-designer
 title: Hızlı Düğmeler
 section: Dükkanı kurma
 order: 115
+public: true
 summary: Satış ekranında görünen hızlı satış düğmelerini, ürün ızgarasını ve kategorileri, satış ekranının canlı bir kopyası üzerinde düzenleyin.
 routes: [/designer]
 keywords: [hızlı düğmeler, tasarımcı, düğmeler, düzen, ürün ızgarası, hızlı satış, satış ekranı, kategoriler]

@@ -49,6 +49,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-sell-screen":                    common.KeyBrowsingMode,                     // POST /api/settings/browsing-mode
 	"settings-stock-tracking":                 common.KeyAllowNegativeInventory,           // POST /api/settings/allow-negative-inventory
 	"settings-retention":                      common.KeyReportRetentionMode,              // POST /api/settings/report-retention
+	"settings-cloud-staff":                    data.CloudStaffBreakdownKey,                // POST /api/settings/cloud-staff-breakdown
 	"settings-invoice":                        keyInvoiceSellerName,                       // POST /api/settings/invoice (invoice.seller_*)
 	"settings-idle-lock":                      common.KeyIdleLock,                         // POST /api/settings/idle-lock
 	"settings-kiosk-idle-reset":               common.KeyKioskIdleReset,                   // POST /api/settings/kiosk-idle-reset
@@ -56,6 +57,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-telemetry":                      "marketplace.telemetry_opt_in",             // POST /api/settings/telemetry
 	"settings-store-name":                     common.KeyStoreName,                        // POST /api/settings/store-name
 	"settings-currency":                       common.KeyCurrency,                         // POST /api/settings/save (currency form)
+	"settings-currency-display":               common.KeyCurrencyDisplay,                  // POST /api/settings/save (currency_display form)
 	"settings-language":                       common.KeyLocale,                           // POST /api/settings/save (locale form)
 	"settings-staff-languages":                common.KeyStaffLocales,                     // POST /api/settings/staff-languages
 	"settings-shop-type":                      common.KeyShopType,                         // POST /api/settings/shop-type
