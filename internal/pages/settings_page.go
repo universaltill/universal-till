@@ -847,8 +847,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":             effectsLevelViewFrom(all),
-			"isManager":          isManager,
+			"fxView":    effectsLevelViewFrom(all),
+			"isManager": isManager,
+			// ut-docs#6550: the Android app saves backups through its file picker.
+			"backupNativePicker": hostIsAndroid,
 			"canReportIssue":     canReportIssue,
 			"canManageUsers":     canManageUsers,
 			"canEditPermissions": canEditPermissions,
