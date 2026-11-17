@@ -3,6 +3,7 @@ id: tables
 title: Tische & Sitzplan
 section: Den Betrieb führen
 order: 236
+public: true
 summary: Zeichnen Sie den Sitzplan Ihres Geschäfts — jeden Tisch mit Name, Bereich, Sitzplätzen und Form — und sehen Sie auf einen Blick, welche Tische frei sind und welche eine offene Bestellung haben.
 keywords: [tisch, tische, sitzplan, sitzplatz, vor ort, restaurant, bereich, zone]
 routes: [/tables]

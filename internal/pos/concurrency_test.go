@@ -66,10 +66,10 @@ func TestServiceConcurrentMutations(t *testing.T) {
 		}
 	})
 
-	// UpdateLine with qty 0 (→ Remove) and UpdateLineByKey with qty 0
+	// updateLineByCode and UpdateLineByKey with qty 0
 	// (→ RemoveLine): the two update→remove reentrant chains.
 	worker(func(i int) {
-		s.UpdateLine("A", 0, 0)
+		updateLineByCode(s, "A", 0, 0)
 		if ls := s.Lines(); len(ls) > 0 {
 			s.UpdateLineByKey(ls[0].LineKey, 0, 0)
 		}

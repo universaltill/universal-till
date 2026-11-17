@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 import { startWorkerTill, type WorkerTill } from './worker-till';
-import { watchConsole, expectGermanIfPackLoaded, waitForStableLayout } from './helpers';
+import { watchConsole, expectGermanIfOverlayLoaded, waitForStableLayout } from './helpers';
 import en from '../../web/locales/en.json';
 import fa from '../../web/locales/fa.json';
 import pvEn from '../seed_plugin_views/locales/en.json';
@@ -20,7 +20,7 @@ import pvFa from '../seed_plugin_views/locales/fa.json';
 // Core strings come from web/locales/*.json; the plugin's own strings from
 // e2e/seed_plugin_views/locales/*.json (its bundle, a fixture, not core
 // i18n). The `confirm` component needs an auth-on till and a signed-in
-// manager (ut-docs#5466) and is not covered here.
+// manager and is covered by plugin-confirm-5466.spec.ts (ut-docs#5466).
 test.describe.configure({ mode: 'serial' });
 
 const CORE: Record<string, Record<string, string>> = { en, fa };
@@ -224,7 +224,7 @@ test('German pass over chat, wizard and job (ut-docs#4378)', async () => {
   const done = watchConsole(page);
   const vp = VIEWPORTS[0];
   await open(page, '/plugin/e2e-views/chat', 'de', vp);
-  await expectGermanIfPackLoaded(page);
+  await expectGermanIfOverlayLoaded(page);
   // The plugin's own de bundle is third-party layer: it renders with or
   // without the core language pack (verified), so these are unconditional.
   await expect(page.locator('.plugin-chat-tools li')).toContainText(pvDe['e2eviews.chat.tool']);

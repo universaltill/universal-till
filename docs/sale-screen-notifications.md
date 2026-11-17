@@ -109,6 +109,47 @@ A 400 response whose body is a rendered basket fragment (contains
 specific server-rendered notice wins over the generic alert
 (`htmx:beforeSwap` handler in `app.js`).
 
+## Notices from Universal Till and partners (ADR-0176, ut-docs#5366)
+
+A fifth and sixth slot, same component, fed from the local `cloud_notices`
+table (never the network, never the sale path). Off unless the per-till
+setting `notices.enabled` is on; all of it needs the permission
+`notices.view` except the critical strip.
+
+- **Two new modifiers:** `.pos-notice.important` (warning tint) and
+  `.pos-notice.critical` (danger tint, 2 px border). Severity is also a glyph
+  shape (circle info, triangle important, octagon critical), never colour alone.
+- **Important toast** (`#notices-toast`, first child of `.products`, in flow,
+  `GET /notices/toast`): at most one, once per notice id+revision, 10 s
+  (`data-dismiss-ms`; `scheduleToastDismiss` honours it and pauses while the
+  toast is hovered, focused or touched), two-line body, Open + dismiss. It is
+  **never rendered while `#payment-overlay` is open**: app.js cancels the
+  poll, the server only marks a toast shown when it renders, so the notice
+  stays queued and appears once the overlay closes. Dismissing leaves the
+  notice in the inbox. Info notices never toast.
+- **Critical strip** (`#notices-strip`, `GET /notices/strip`, every page,
+  outside `<main>`): one line, sticky until a manager or admin presses
+  Acknowledge (`acked_at`, reported to the cloud; the notice stays unread until
+  opened). `.critical` is excluded from auto-expiry. A cashier without
+  `notices.view` sees the strip read-only ("A manager has been told. You can
+  keep selling."): no link, no button, no history. A partner can never send a
+  critical, and the till refuses one.
+- **Live region:** the two mounts are persistent `aria-live="polite"`
+  regions; never `role="alert"`, never focus-stealing.
+- **Bell** (`#notices-bell`, rail status group above Help; on a phone a row of
+  the burger drawer): unread count capped at "9+", a square badge with a
+  triangle when a critical is unread, and a count-aware label on the burger.
+- **Inbox** (`GET /notices`): Unread / All tabs, rows expand in place (opening
+  marks read), sender chip rendered by the server (partner = dashed outline),
+  Dismiss, Acknowledge on critical rows.
+- **Safe rendering:** titles and sender names go through `html/template`
+  escaping; bodies through `cloudnotice.RenderBody` (escape first, then bold,
+  italic, https links to `universaltill.com` hosts, line breaks); a link action
+  is re-validated at render (`cloudnotice.ParseLink`), `https` opens with
+  `rel="noopener noreferrer"`, no remote content.
+- **Nothing blocks a sale:** no overlay, no `showModal`, no sound; a failed
+  render is an empty fragment.
+
 ## Out of scope
 
 Still on their own pattern, all of it tracked under ut-docs#238 — don't

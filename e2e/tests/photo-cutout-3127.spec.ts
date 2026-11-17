@@ -156,14 +156,14 @@ test('item photo: offer → remove background (tile colour / white / none, cache
   expect(last.calls).toBe(1);
   expect(last.model).toBe('u2netp');
   await expect(page.locator(`${P} [data-cutout-original]`)).toBeVisible();
-  await expect(page.locator(`${P} [data-cutout-bg-choice="tile"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`${P} [data-cutout-bg-choice="tile"]`)).toHaveAttribute('aria-checked', 'true');
   const hex = palette!.replace('#', '');
   const want = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
   expect((await cornerPixel(page, P)).slice(0, 3)).toEqual(want);
 
   // White, then no background: each a new request…
   await page.locator(`${P} [data-cutout-bg-choice="white"]`).click();
-  await expect(page.locator(`${P} [data-cutout-bg-choice="white"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`${P} [data-cutout-bg-choice="white"]`)).toHaveAttribute('aria-checked', 'true');
   await expect.poll(async () => (await cornerPixel(page, P)).slice(0, 3)).toEqual([255, 255, 255]);
   await page.locator(`${P} [data-cutout-bg-choice="transparent"]`).click();
   await expect.poll(async () => (await cornerPixel(page, P))[3]).toBe(0);
@@ -194,6 +194,40 @@ test('item photo: offer → remove background (tile colour / white / none, cache
   const dims = await thumb.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]);
   expect(dims[0]).toBeGreaterThan(2);
   expect(dims[0]).toBe(dims[1]); // the square tile, not the 4:3 photo
+  assertClean();
+});
+
+test('background choice is a radiogroup: roving tabindex, arrows select and keep focus (ut-docs#5553)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await openItemImageTab(page, 'Apple Juice 1L');
+  const P = '#image-cutout';
+  await page.locator('#image-file').setInputFiles(photo('juice.png'));
+  await removeBackground(page, P);
+  const bg = page.locator(`${P} [data-cutout-bg]`);
+  await expect(bg).toHaveAttribute('role', 'radiogroup');
+  await expect(bg).toHaveAttribute('data-roving-radiogroup', '');
+  await expect(bg.locator('[aria-pressed]')).toHaveCount(0);
+  const choice = (c: string) => page.locator(`${P} [data-cutout-bg-choice="${c}"]`);
+  await expect(choice('tile')).toHaveAttribute('aria-checked', 'true');
+  await expect(choice('tile')).toHaveAttribute('tabindex', '0');
+  await expect(bg.locator('[tabindex="0"]')).toHaveCount(1);
+  const calls0 = (await fakeLast()).calls;
+
+  await choice('tile').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(choice('white')).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(async () => (await cornerPixel(page, P)).slice(0, 3)).toEqual([255, 255, 255]);
+  await expect(choice('white')).toBeFocused();
+  await expect(choice('white')).toHaveAttribute('tabindex', '0');
+  await expect(choice('tile')).toHaveAttribute('tabindex', '-1');
+  await expect(bg.locator('[tabindex="0"]')).toHaveCount(1);
+  await page.keyboard.press('End');
+  await expect(choice('transparent')).toHaveAttribute('aria-checked', 'true');
+  await expect(choice('transparent')).toBeFocused();
+  await expect(choice('transparent')).toHaveAttribute('tabindex', '0');
+  await expect(choice('white')).toHaveAttribute('tabindex', '-1');
+  await expect(bg.locator('[tabindex="0"]')).toHaveCount(1);
+  expect((await fakeLast()).calls).toBe(calls0 + 2);
   assertClean();
 });
 
@@ -639,8 +673,8 @@ test('a built-in icon is not a photo: no Remove background button on item or cat
 // Screenshots of the offer panel for the UX gate (ut-docs#3127): the result
 // state on all three surfaces at the 1024×600 floor and at 360 px, in
 // English and German (the longest shipped locale; a till only has German
-// with the language pack, so run the till with UT_TEST_I18N_OVERLAY_DIR at
-// ut-plugin-language-de/locales), plus one RTL (fa). Off unless
+// with the language bundle, so run the till with UT_TEST_I18N_OVERLAY_DIR at
+// a dir built by scripts/ci/build-locale-overlay.sh), plus one RTL (fa). Off unless
 // UT_CUTOUT_SHOTS_DIR names where to write them — they are for a person to
 // look at, not a CI assertion.
 const SHOTS = process.env.UT_CUTOUT_SHOTS_DIR || '';

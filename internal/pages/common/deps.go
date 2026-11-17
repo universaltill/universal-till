@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -136,6 +137,11 @@ type Deps struct {
 	// handlers nil-check and fall back to NoopWindowController so
 	// bare-Deps tests stay valid.
 	WindowCtl WindowController
+
+	// SystemPrinters reports whether this device's OS print system has a
+	// destination (ut-docs#6154). Set only on the Pi kiosk appliance; nil
+	// elsewhere = "unknown" = the browser's print dialog stays available.
+	SystemPrinters interface{ State() print.DestState }
 
 	// Shell is the server-authoritative live window-mode channel the
 	// desktop shell long-polls via GET /api/window-mode?control=live

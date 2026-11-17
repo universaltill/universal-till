@@ -98,3 +98,69 @@ func TestFormatShortDateTime(t *testing.T) {
 		t.Errorf("fa today = %q, want localized digits", got)
 	}
 }
+
+// ut-docs#5748: date order follows the shop's region for a bare same-language pick.
+func dateFixture5748() time.Time { return time.Date(2025, 11, 6, 21, 33, 0, 0, time.Local) }
+
+func TestDateLocale_KeepsShopRegionForSameLanguage(t *testing.T) {
+	defer SnapshotStateForTests()()
+	cases := []struct{ shop, display, want string }{
+		{"en-US", "en", "en-US"},
+		{"en-GB", "en", "en-GB"},
+		{"en-US", "EN", "en-US"},
+		{"en-US", "en-GB", "en-GB"},
+		{"en-US", "tr", "tr"},
+		{"de-DE", "de", "de-DE"},
+		{"de-DE", "en", "en"},
+		{"en-US", "", "en-US"},
+	}
+	for _, c := range cases {
+		SetDefaultLocale(c.shop)
+		if got := DateLocale(c.display); got != c.want {
+			t.Errorf("shop %q display %q: got %q want %q", c.shop, c.display, got, c.want)
+		}
+	}
+}
+
+func TestFormatDate_BareEnFollowsShopRegion_5748(t *testing.T) {
+	defer SnapshotStateForTests()()
+	d := dateFixture5748()
+	for shop, want := range map[string]string{"en-US": "11/06/2025", "en-GB": "06/11/2025"} {
+		SetDefaultLocale(shop)
+		for name, got := range map[string]string{
+			"FormatDate": FormatDate(d, "en"), "FormatDateLatin": FormatDateLatin(d, "en"),
+		} {
+			if got != want {
+				t.Errorf("shop %s %s(en) = %q want %q", shop, name, got, want)
+			}
+		}
+		for name, got := range map[string]string{
+			"FormatDateTime": FormatDateTime(d, "en"), "FormatDateTimeLatin": FormatDateTimeLatin(d, "en"),
+			"paper": FormatDateTimeLatin(d, DefaultLocale()),
+		} {
+			if got != want+" 21:33" {
+				t.Errorf("shop %s %s = %q want %q", shop, name, got, want+" 21:33")
+			}
+		}
+	}
+}
+
+func TestFormatDate_OtherLocalesUnchanged_5748(t *testing.T) {
+	defer SnapshotStateForTests()()
+	SetDefaultLocale("en-US")
+	d := dateFixture5748()
+	for loc, want := range map[string]string{
+		"de-DE": "06.11.2025", "de": "06.11.2025", "nl-NL": "06-11-2025", "tr": "06.11.2025",
+		"fr-FR": "06/11/2025", "en-GB": "06/11/2025", "en_US": "11/06/2025", "EN-us": "11/06/2025",
+	} {
+		if got := FormatDateLatin(d, loc); got != want {
+			t.Errorf("FormatDateLatin(%q) = %q want %q", loc, got, want)
+		}
+	}
+	if got := FormatDate(d, "fa"); got != "۰۶/۱۱/۲۰۲۵" {
+		t.Errorf("FormatDate(fa) = %q", got)
+	}
+	if got := FormatDateLatin(d, "fa"); got != "06/11/2025" {
+		t.Errorf("FormatDateLatin(fa) = %q", got)
+	}
+}

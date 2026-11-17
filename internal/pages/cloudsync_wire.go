@@ -1192,6 +1192,8 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 	// opened by the user directive hooks.
 	directiveKeys := directivekey.New()
 	return cloudsync.Hooks{
+		// ADR-0176: the notices pull asks for the till's default UI language.
+		NoticeLang: httpx.DefaultLocale,
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			// First, so a refused store.country never reaches the fiscal
 			// posture reset below.
@@ -1622,6 +1624,15 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 // (a primary pinned behind latest would otherwise silently fork its
 // replicas). version=="" keeps the unpinned latest-release behavior.
 func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string) (string, error) {
+	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil)
+}
+
+// cloudInstallPluginVersionChecked is cloudInstallPluginVersion with an
+// optional extra gate on the verified bundle (plugins.PreInstallCheck,
+// ADR-0172 §2.4/§3). It is the SAME install path: same download, same
+// Ed25519 verification, same persist; the gate only adds a refusal before
+// anything is persisted.
+func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck) (string, error) {
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 
 	// One read of the listing's existing record feeds two protections below:
@@ -1726,6 +1737,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		StoreID:    effCfg.Marketplace.StoreID,
 		DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		PreInstall: pre,
 		OnStateChange: func(state plugins.InstallLifecycleState) {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{ListingID: listingID, State: state})
 		},
@@ -1986,6 +1998,7 @@ func cloudRenameItem(ctx context.Context, d *common.Deps, itemID, name string) (
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
 	}
+	name = strings.TrimSpace(name) // the stored value, for the audit row and the message
 	if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
 		return "", err
 	}
@@ -2925,6 +2938,7 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 // and sync_admin.go's admin_pulled already use to distinguish a
 // cloud-originated mutation from an operator's own action at the till.
 func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
+	name = strings.TrimSpace(name) // the stored value, for the dedupe, audit row and message
 	repo := data.NewCatalogRepo(d.Db)
 	// Idempotency check first, gate second: on a replica, the item most
 	// directives replay against has usually already arrived via the normal

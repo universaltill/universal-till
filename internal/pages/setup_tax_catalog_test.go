@@ -37,7 +37,7 @@ func resetTaxCatalogForTest(t *testing.T) {
 func deTaxCatalogEntry(listingID, pluginID, version string) marketplace.PluginSummary {
 	return marketplace.PluginSummary{
 		ID: pluginID, ListingID: listingID, Name: "German fiscal plugin",
-		Version: version, CanonicalType: "tax", AvailableLocales: []string{"de"},
+		Version: version, CanonicalType: "tax", AvailableLocales: []string{"de"}, Markets: []string{"DE"},
 	}
 }
 
@@ -62,9 +62,9 @@ func TestSetupInstallableTaxPlugin_DEMatchesCatalog(t *testing.T) {
 	}
 }
 
-// A country with nothing in countryTaxLocale (this is a deliberately minimal
-// table — not every country) returns nil, false: nothing to prompt, but NOT
-// "catalog unavailable" (which would show a misleading note).
+// A country no tax listing names in its markets returns nil, false: nothing
+// to prompt, but NOT "catalog unavailable" (which would show a misleading
+// note).
 func TestSetupInstallableTaxPlugin_UnmappedCountryReturnsNilNotUnavailable(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	dp := newBasePluginTestDeps(t)
@@ -91,7 +91,7 @@ func TestSetupInstallableTaxPlugin_AlreadyActiveReturnsNil(t *testing.T) {
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
-	spec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	spec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
 		t.Fatalf("seed install: %v", err)
 	}
@@ -136,8 +136,8 @@ func TestSetupInstallableTaxPlugin_PicksHighestSemverVersion(t *testing.T) {
 func TestSetupInstallableTaxPlugin_IgnoresNonTaxListings(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	plugin, _ := setupInstallableTaxPlugin(t.Context(), dp, "DE")
@@ -233,8 +233,7 @@ func TestSetupTaxPluginInstallHappyPath(t *testing.T) {
 	}
 }
 
-// A forged/stale country (no catalog match, or not in countryTaxLocale at
-// all) must be rejected — no install attempt, clean redirect back to the
+// A forged/stale country (no catalog match for it) must be rejected — no install attempt, clean redirect back to the
 // wizard. The request body must never get to pick an arbitrary listing.
 func TestSetupTaxPluginInstallRejectsCountryWithNoMatch(t *testing.T) {
 	resetTaxCatalogForTest(t)
@@ -246,9 +245,9 @@ func TestSetupTaxPluginInstallRejectsCountryWithNoMatch(t *testing.T) {
 
 	for _, country := range []string{"US", "FR"} {
 		rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {country}}, nil)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
-			t.Fatalf("POST with country=%s: code=%d loc=%q, want 303 -> /setup",
-				country, rec.Code, rec.Header().Get("Location"))
+		if want := "/setup?tax_country=" + country; rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != want {
+			t.Fatalf("POST with country=%s: code=%d loc=%q, want 303 -> %s (no install, no pending flag)",
+				country, rec.Code, rec.Header().Get("Location"), want)
 		}
 	}
 	if hits := mkt.downloadTokenHits(); hits != 0 {
@@ -269,7 +268,7 @@ func TestSetupTaxPluginInstallRejectsAlreadyInstalled(t *testing.T) {
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
-	spec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	spec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
 		t.Fatalf("seed install: %v", err)
 	}
@@ -317,7 +316,7 @@ func TestSetupTaxPluginInstallFailureJoinsPendingList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}) {
 		t.Fatalf("expected the tax/de spec pending for the background retry, got %+v", pending)
 	}
 	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
@@ -365,7 +364,7 @@ func TestSetupTaxPluginInstallUnnamedShopQueuesInsteadOfInstalling(t *testing.T)
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}) {
 		t.Fatalf("pending = %+v, want the tax/de spec queued", pending)
 	}
 	if hits := mkt.storeRegisterHits(); hits != 0 {
@@ -483,8 +482,10 @@ func TestSetupWizardShowsTaxPluginInstallTileForDEOnly(t *testing.T) {
 	if !strings.Contains(body, `action="/api/setup/tax-plugin"`) {
 		t.Fatalf("DE re-render missing the tax-plugin install form:\n%s", body)
 	}
-	if !strings.Contains(body, `name="country" value="DE"`) {
-		t.Error("tax-plugin install form is missing its hidden country=DE input")
+	// ADR-0172: one tile per prompted country, revealed for the country the
+	// operator picks; the install form's hidden input follows the picker.
+	if !strings.Contains(body, `data-tax-plugin-country="DE"`) || !strings.Contains(body, `name="country" :value="country"`) {
+		t.Error("tax-plugin install form must carry the DE tile and a country input bound to the picker")
 	}
 	// ut-docs#1180 review finding (2026-08-27): the tile's copy previously
 	// called this plugin "Optional — install it now, or any time later from
@@ -524,7 +525,7 @@ func TestSetupWizardShowsTaxPluginInstallTileForDEOnly(t *testing.T) {
 	// ut-docs#4610: the two ternaries became nxt()/prv() (they also skip
 	// the steps a pair-first wizard already has answered); Germany-only
 	// routing now lives in skip(3).
-	if !strings.Contains(body, `step = nxt(2)`) || !strings.Contains(body, `(s === 3 && this.country !== 'DE')`) {
+	if !strings.Contains(body, `step = nxt(2)`) || !strings.Contains(body, `(s === 3 && !this.stepCountries.includes(this.country))`) || !strings.Contains(body, `stepCountries: ['DE',]`) {
 		t.Error("step 2's Next must stay Germany-only — it is what keeps the unconditionally-rendered DE tax tile off a non-DE operator's screen (ut-docs#1460)")
 	}
 	if !strings.Contains(body, `step = prv(4)`) {
@@ -722,7 +723,7 @@ func TestSetupTaxPluginSkipQueuesPendingAndBackgroundRetryInstallsIt(t *testing.
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}) {
 		t.Fatalf("expected the tax/de spec queued for background retry after a skip, got %+v", pending)
 	}
 	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
@@ -753,9 +754,9 @@ func TestSetupTaxPluginSkipRejectsCountryWithNoMatch(t *testing.T) {
 
 	for _, country := range []string{"US", "FR"} {
 		rec := postForm(mux, "/api/setup/tax-plugin-skip", url.Values{"country": {country}}, nil)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
-			t.Fatalf("POST with country=%s: code=%d loc=%q, want 303 -> /setup",
-				country, rec.Code, rec.Header().Get("Location"))
+		if want := "/setup?tax_country=" + country + "&tax_plugin_skip_ack=1"; rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != want {
+			t.Fatalf("POST with country=%s: code=%d loc=%q, want 303 -> %s (nothing queued)",
+				country, rec.Code, rec.Header().Get("Location"), want)
 		}
 	}
 	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
@@ -773,7 +774,7 @@ func TestSetupTaxPluginSkipNoOpWhenAlreadyInstalled(t *testing.T) {
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
-	spec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	spec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
 		t.Fatalf("seed install: %v", err)
 	}
@@ -881,7 +882,7 @@ func TestSetupWizardSkipButtonTargetsSkipFormWhenTileShowing(t *testing.T) {
 	if !strings.Contains(body, `action="/api/setup/tax-plugin-skip"`) {
 		t.Errorf("expected the tax-plugin-skip form present while the tile is showing, got:\n%s", body)
 	}
-	if !strings.Contains(body, `form="tax-plugin-skip"`) {
+	if !strings.Contains(body, `:form="tileCountries.includes(country) ? 'tax-plugin-skip' : null"`) {
 		t.Errorf("expected the Skip button wired to form=tax-plugin-skip while the tile is showing, got:\n%s", body)
 	}
 }
@@ -978,7 +979,7 @@ func TestSetupTaxPluginInstallOfflineQueuesPendingWithConsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}) {
 		t.Fatalf("expected the tax/de spec queued after offline consent, got %+v", pending)
 	}
 
@@ -1006,7 +1007,7 @@ func TestSetupTaxPluginSkipOfflineQueuesPending(t *testing.T) {
 		t.Fatalf("offline skip redirect = %q, want /setup?tax_country=DE&tax_plugin_skip_ack=1", loc)
 	}
 	pending, _ := loadPendingBasePlugins(t.Context(), dp)
-	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}) {
 		t.Fatalf("expected the tax/de spec queued after an offline skip, got %+v", pending)
 	}
 }
@@ -1028,7 +1029,7 @@ func TestSetupWizardShowsOfflineTaxPluginTile(t *testing.T) {
 	for _, want := range []string{
 		`action="/api/setup/tax-plugin"`,
 		`action="/api/setup/tax-plugin-skip"`,
-		`form="tax-plugin-skip"`,
+		`:form="tileCountries.includes(country) ? 'tax-plugin-skip' : null"`,
 		`hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none"`,
 		`data-tax-plugin-offline`,
 		"Install when online",
@@ -1088,7 +1089,7 @@ func TestBasePluginRetryTick_TaxSpecStaysPendingWhenCatalogHasNoTaxListing(t *te
 	mkt.setCatalog() // reachable, but publishes no tax (or language) listing
 	dp.Cfg.Marketplace = mkt.config()
 
-	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	langSpec := basePluginSpec{CanonicalType: "language", Locale: "de"}
 	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec, langSpec}); err != nil {
 		t.Fatal(err)
@@ -1275,7 +1276,7 @@ func TestBasePluginRetryTick_TaxSpecDroppedWhenLocalTaxPluginActive(t *testing.T
 			dp.Cfg.Marketplace = mkt.config()
 			seedLocalTaxPlugin(t, dp, "com.example.sideloaded-tax", tc.markets...)
 
-			taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+			taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 			if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
 				t.Fatal(err)
 			}
@@ -1312,7 +1313,7 @@ func TestBasePluginRetryTick_TaxSpecStaysPendingWhenLocalTaxPluginIsForOtherMark
 	deadMarketplace(t, dp)
 	seedLocalTaxPlugin(t, dp, "com.example.fr-tax", "FR")
 
-	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
 		t.Fatal(err)
 	}
@@ -1343,7 +1344,7 @@ func TestBasePluginRetryTick_TaxSpecStaysPendingWhenLocalCheckErrors(t *testing.
 		t.Fatalf("drop plugin_markets: %v", err)
 	}
 
-	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
 		t.Fatal(err)
 	}
@@ -1379,10 +1380,10 @@ func TestSetupGETShowsQueuedTaxNoteWhenCatalogHasNoListing(t *testing.T) {
 		sideloaded  bool
 		wantPending bool
 	}{
-		{"pending tax spec", []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}, false, true},
+		{"pending tax spec", []basePluginSpec{{CanonicalType: "tax", Market: "DE", Prompted: true}}, false, true},
 		{"nothing pending", nil, false, false},
 		{"only a language spec pending", []basePluginSpec{{CanonicalType: "language", Locale: "de"}}, false, false},
-		{"pending but a local tax plugin is active", []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}, true, false},
+		{"pending but a local tax plugin is active", []basePluginSpec{{CanonicalType: "tax", Market: "DE", Prompted: true}}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetTaxCatalogForTest(t)
@@ -1422,7 +1423,7 @@ func TestSettingsPendingTaxChipSaysNotPublishedWhenCatalogHasNoListing(t *testin
 	resetTaxCatalogForTest(t)
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
-	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
 		t.Fatal(err)
 	}
@@ -1471,7 +1472,7 @@ func TestDismissPendingBasePluginForgetsNotPublishedReason(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	_, dp := newRealDBDeps(t)
 	initTestPaths(t)
-	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
 		t.Fatal(err)
 	}
@@ -1482,7 +1483,7 @@ func TestDismissPendingBasePluginForgetsNotPublishedReason(t *testing.T) {
 	if got := loadBasePluginsNotPublished(t.Context(), dp); !got[taxSpec] {
 		t.Fatalf("expected tax/de recorded as not published, got %+v", got)
 	}
-	if err := dismissPendingBasePlugin(t.Context(), dp, "tax", "de"); err != nil {
+	if err := dismissPendingBasePluginSpec(t.Context(), dp, taxSpec); err != nil {
 		t.Fatal(err)
 	}
 	if got := loadBasePluginsNotPublished(t.Context(), dp); got[taxSpec] {
@@ -1501,7 +1502,7 @@ func TestSetupGETQueuedTaxNoteSaysNotPublished(t *testing.T) {
 	initTestPaths(t)
 	mkt := newFakeMarketplace(t, map[string]string{}) // reachable, no DE tax listing
 	dp.Cfg.Marketplace = mkt.config()
-	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Market: "DE", Prompted: true}}); err != nil {
 		t.Fatal(err)
 	}
 	body := getSetup(mux, "", "").Body.String()
@@ -1523,7 +1524,7 @@ func TestSetupGETOfflineRerenderAfterConsentShowsQueuedNote(t *testing.T) {
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
 	deadMarketplace(t, dp)
-	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Market: "DE", Prompted: true}}); err != nil {
 		t.Fatal(err)
 	}
 	body := getSetup(mux, "?tax_country=DE", "").Body.String()
@@ -1544,7 +1545,7 @@ func TestNotPublishedReasonNotOrphanedByDismissRaceOrInheritedOnRequeue(t *testi
 	resetTaxCatalogForTest(t)
 	_, dp := newRealDBDeps(t)
 	initTestPaths(t)
-	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	taxSpec := basePluginSpec{CanonicalType: "tax", Market: "DE", Prompted: true}
 
 	// The attempt finishes after the spec was dismissed: nothing is recorded.
 	recordBasePluginAttempt(t.Context(), dp, taxSpec, errBasePluginNotPublished)
@@ -1659,7 +1660,7 @@ func TestSetupGETStaleCachedMissOfflineShowsQueuedOfflineNote_3974(t *testing.T)
 	initTestPaths(t)
 	deadMarketplace(t, dp)
 	seedTaxCatalogCache(t, nil, 3*time.Hour, 3*time.Hour)
-	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Market: "DE", Prompted: true}}); err != nil {
 		t.Fatal(err)
 	}
 

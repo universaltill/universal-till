@@ -647,8 +647,8 @@ func TestCloudSetupShopTypeSideEffectsRunForTheCloudType(t *testing.T) {
 // would be left behind as a silent orphan. UT-0 holds registration.
 func TestCloudSetupDoesNotRegisterATillBornStoreBeforeCommit(t *testing.T) {
 	mux, d, _, nonce := cloudWizard(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 
 	var registers atomic.Int32
 	var registersBeforeCommit int32 = -1

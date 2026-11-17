@@ -3,6 +3,7 @@ id: bug-reporting
 title: Ein Problem melden
 section: Verbinden & erweitern
 order: 360
+public: true
 summary: "Stimmt etwas an der Kasse nicht? Senden Sie einen Bericht — getippt, gesprochen oder mit Bildschirmaufzeichnung — von jedem Bildschirm aus über die Schaltfläche Problem melden."
 routes: [/report-issue]
 keywords: [fehler, problem, bericht, support, aufzeichnung, sprache]

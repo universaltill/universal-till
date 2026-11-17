@@ -3,6 +3,7 @@ id: users
 title: المستخدمون وأرقام PIN والورديات
 section: الاتصال والإضافات
 order: 340
+public: true
 summary: حسابات منفصلة للصرّاف والمدير بدخول برقم PIN، وتتبع للورديات لتعرف من باع ماذا ومتى عُدّ الدرج.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 ---

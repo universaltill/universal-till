@@ -13,6 +13,9 @@
 # internal/selfupdate/macapp_darwin_test.go never executed anywhere.
 #
 # Path-scoped, so most PRs get no run: never make it a required check.
+#
+# A run whose macOS job GitHub never gave a runner (hosted capacity
+# starvation) is re-run by ci-runner-retry.yml (ut-docs#5490).
 name: desktop-darwin
 on:
   pull_request:
@@ -33,6 +36,10 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: macos-15 # Apple Silicon; macos-14 is retired 2026-11-02 (ut-docs#5214)

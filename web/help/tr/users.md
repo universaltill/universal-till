@@ -3,6 +3,7 @@ id: users
 title: Kullanıcılar, PIN'ler ve vardiyalar
 section: Bağlantı ve eklentiler
 order: 340
+public: true
 summary: PIN girişli ayrı kasiyer ve yönetici hesapları; kimin ne sattığını ve çekmecenin ne zaman sayıldığını gösteren vardiya takibi.
 routes: [/users, /pin, /login, /setup, /users/permissions]
 ---
