@@ -1436,6 +1436,15 @@ jobs:
         run: |
           gh workflow run ios-testflight.yml --ref "$TAG" -f version="${TAG#v}" \
             || echo "::warning::could not dispatch ios-testflight.yml for $TAG; run it by hand"
+      - name: Start the Google Play internal-testing upload for this release (ut-docs#6410)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        # Internal track only (play-publish.yml has no other); a Play problem
+        # never fails or rolls back a published release.
+        run: |
+          gh workflow run play-publish.yml --ref "$TAG" -f version="${TAG#v}" -f dry_run=false \
+            || echo "::warning::could not dispatch play-publish.yml for $TAG; run it by hand"
 
   # Attaches the notarized .dmg to the already-published release (ut-docs#2917)
   # and folds its line into checksums.txt — internal/selfupdate's mac update

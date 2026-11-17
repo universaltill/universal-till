@@ -124,6 +124,10 @@ jobs:
         run: bash scripts/ci/ci-heavy-tests_test.sh
       - name: iOS TestFlight workflow never reaches its signing key from a PR — wiring test (ut-docs#3069)
         run: bash scripts/ci/ios-testflight-workflow_test.sh
+      - name: Play publish workflow wiring + upload script self-tests (ut-docs#6410, #6405)
+        run: |
+          bash scripts/ci/play-publish-workflow_test.sh
+          bash scripts/ci/play-upload_test.sh
       - name: App stores stay private until launch — no public release path (ut-docs#3052)
         run: bash scripts/ci/guard-store-private.sh
       - name: Store-private guard regression test (ut-docs#3052)
