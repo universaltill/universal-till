@@ -11,6 +11,8 @@
 .voucher-slip-holder,.voucher-slip-balance{text-align:start}
 .voucher-slip-barcode svg{max-inline-size:100%;block-size:44px}
 .voucher-slip-code{display:block;font-family:monospace;letter-spacing:2px;overflow-wrap:anywhere}
+.voucher-slip-text{margin-block-start:2mm;overflow-wrap:anywhere}
+.voucher-slip-text div:empty{min-block-size:1.3em}
 {{ end }}
 
 {{ define "voucher_slip_paper" }}
@@ -22,7 +24,9 @@
   {{ with .Holder }}<div class="voucher-slip-holder">{{ . }}</div>{{ end }}
   {{ with .Balance }}<div class="voucher-slip-balance">{{ . }}</div>{{ end }}
   <div class="voucher-slip-barcode">{{ barcode128svg .Code }}<span class="voucher-slip-code" dir="ltr">{{ .Code }}</span></div>
+  {{ with .Date }}<div class="voucher-slip-date">{{ . }}</div>{{ end }}
   {{ with .Note }}<div class="voucher-slip-note">{{ . }}</div>{{ end }}
+  {{ if .Text }}<div class="voucher-slip-text">{{ range .Text }}<div dir="auto">{{ . }}</div>{{ end }}</div>{{ end }}
   <div class="voucher-slip-rule"></div>
 </div>
 {{ end }}

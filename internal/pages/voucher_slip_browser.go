@@ -24,7 +24,9 @@ type browserVoucherSlip struct {
 	Holder    string // "For: Anna"; "" = no row
 	Balance   string // "New balance …" (top-up); "" = no row
 	Code      string
-	Note      string // "Reprinted <date>" (voucher page only); "" = no row
+	Note      string   // "Reprinted <date>" (voucher page only); "" = no row
+	Date      string   // "Issued <date>" / "Topped up <date>"; "" = no row (ut-docs#6179)
+	Text      []string // the shop's own slip text, one entry per line (ut-docs#6179)
 }
 
 // browserSlipSet is what the templates execute: the slips plus the lang/dir
@@ -48,13 +50,17 @@ func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, 
 		Holder:    s.Voucher.Holder,
 		Code:      s.Voucher.Code,
 		Note:      s.Note,
+		Date:      s.Date,
+		Text:      s.Text,
 	}
 }
 
 // receiptBrowserSlips maps the sale's issued/topped-up vouchers to browser
 // slips, in the order given. Every entry is eligible: at tender time nothing
 // is void (mirrors voucherSlips, Slip && Void == ""). No Reprinted note.
-func receiptBrowserSlips(locale, storeName string, header []string, vs []receiptVoucherIssue) []browserVoucherSlip {
+// slipText is the shop's own slip text (ut-docs#6179); each entry's At is the
+// stored timestamp of the voucher / top-up row, the same the paper slip reads.
+func receiptBrowserSlips(locale, storeName string, header, slipText []string, vs []receiptVoucherIssue) []browserVoucherSlip {
 	out := make([]browserVoucherSlip, 0, len(vs))
 	for _, v := range vs {
 		s := browserVoucherSlip{
@@ -63,8 +69,11 @@ func receiptBrowserSlips(locale, storeName string, header []string, vs []receipt
 			Label:     httpx.T(locale, "catalog.item_type.gift_voucher"),
 			Amount:    httpx.FormatMoneyDisplay(v.Amount, locale),
 			Code:      v.Code,
+			Text:      slipText,
 		}
+		s.Date = slipDateLine(locale, "receipt.vouchers.issued_on", v.At)
 		if v.TopUp {
+			s.Date = slipDateLine(locale, "receipt.vouchers.topped_up_on", v.At)
 			s.Label = httpx.T(locale, "receipt.vouchers.top_up")
 			s.Amount = "+" + s.Amount
 			if v.HasBalance {

@@ -53,3 +53,15 @@ Pre-flight: web/help topic updated (`printing.md`); docs-shots surface hash refr
 ## Verdict
 
 APPROVE after F1 and F2 (fixed in this branch).
+
+## Addendum 2026-11-17 — merge of main (PR sweep, lane:cloud-41)
+
+- `web/help/en/printing.md`: main (#6154) rewrote the print-dialog paragraph
+  for printerless Pi kiosks. Kept main's text and re-added this PR's clause
+  ("and to print only the receipt — without the till's status bar, buttons or
+  the *Auto-reset* countdown").
+- `web/help/img/manifest.json`: took main's, then
+  `update-docs-shots-surface-hash.sh` — this PR's `receipt.html` change is
+  `@media print` rules plus a class with no screen rule, so no screenshot
+  pixel changes. `guard-docs-shots.sh` passes.
+- `receipt.html` auto-merged; both new print rules and the class are present.

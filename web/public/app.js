@@ -1042,6 +1042,9 @@ function renderNotice(el, level, text){
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
+    // ut-docs#6154: a reusable notice (shown again by later actions) is never
+    // auto-removed, hidden or not; only its own dismiss button hides it.
+    if (toast.hasAttribute('data-reusable') || toast.hidden) return;
     // errors persist until dismissed; a critical notice (ADR-0176) stays until
     // a manager acknowledges it -- it never auto-expires.
     if (toast.classList.contains('error') || toast.classList.contains('critical')) return;
@@ -1338,7 +1341,7 @@ document.addEventListener('click', function(e){
   if (!btn) return;
   var notice = btn.closest('.pos-notice');
   if (!notice) return;
-  if (notice.id === 'pos-alert') { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
+  if (notice.id === 'pos-alert' || notice.hasAttribute('data-reusable')) { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
   notice.classList.add('hide');
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
@@ -3489,7 +3492,7 @@ window.utTabBarFade = function (el) {
 // id, e.g. basket.html's `id="basket"`).
 (function () {
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
-  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // ADR-0119: UT.motionOff() (ut-motion.js) is reduced motion OR
   // the Light effects level; the bare media query is only the fallback for
   // a page outside base.html that loads this file without it.
   var PANES = ['items-panel', 'admin-panel', 'manual-panel'];
@@ -3583,7 +3586,7 @@ window.utTabBarFade = function (el) {
   // the same in WebView2, Android WebView and WebKitGTK. Uniform scale plus
   // translation (so RTL needs nothing), transform and opacity only, from
   // opacity 0.4, never blank. The transform is TRANSIENT (fill 'none') and
-  // registered with UT.trackZoom, so a tap, a popup opening (base.html's
+  // registered with UT.trackZoom, so a tap, a popup opening (ut-motion.js's
   // dialog wrapper) or the next pane swap finish() it: a position:fixed
   // dialog inside the pane is never shown inside a transformed ancestor
   // (the #2338 hazard). A pane that settles with a dialog already open
@@ -3773,7 +3776,7 @@ window.utTabBarFade = function (el) {
   }
 
   // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or Escape --
-  // base.html's shared data-ut-escape-close handler since ut-docs#2097)
+  // ut-motion.js's shared data-ut-escape-close handler since ut-docs#2097)
   // behaves like Cancel for the rest of THIS sale -- suppress the
   // sale-start nag, without touching the per-item/per-Pay gates. `close`
   // does not bubble, so this has to be a capturing document-level

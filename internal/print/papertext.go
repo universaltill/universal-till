@@ -119,6 +119,8 @@ func paperSlip(s VoucherSlip) VoucherSlip {
 	s.StoreName = paperText(s.StoreName)
 	s.Header = paperTexts(s.Header)
 	s.Note = paperText(s.Note)
+	s.Date = paperText(s.Date)
+	s.Text = paperTexts(s.Text)
 	s.Voucher = paperVoucher(s.Voucher)
 	return s
 }

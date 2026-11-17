@@ -319,7 +319,7 @@
       dialog.dispatchEvent(new CustomEvent('record-dialog:open', { bubbles: true, detail: { row: row || null, mode: mode } }));
     }
     if (openers && !dialog.open) openers.set(dialog, opener || document.activeElement);
-    // The open/close motion is base.html's shared popup zoom (ADR-0122 §5,
+    // The open/close motion is ut-motion.js's shared popup zoom (ADR-0122 §5,
     // ut-docs#2944), which wraps .show() itself -- no per-dialog motion
     // here (#2338's own open ease was replaced by it).
     if (!dialog.open) dialog.show();

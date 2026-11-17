@@ -115,8 +115,8 @@ func TestCountryChangeToUnmappedCountry_QueuesNothing(t *testing.T) {
 // 5-minute tick — or, just after boot, the 30s initial delay.
 func TestQueueBasePluginsForCountryChange_NudgesRetryLoop(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
 	drainBasePluginRetryNudge()
@@ -129,7 +129,7 @@ func TestQueueBasePluginsForCountryChange_NudgesRetryLoop(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de")
+		active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "com.universaltill.language-de")
 		if active {
 			break
 		}

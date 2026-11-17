@@ -62,7 +62,7 @@ test('values are compared trimmed, like the rendered lines', () => {
 });
 
 // ---- pack-lag carve-out (ut-docs#5583) ------------------------------------
-// A PRE-EXISTING key (same English value on base) the de pack merely lags on.
+// A PRE-EXISTING key (same English value on base) the German overlay merely lags on.
 const LAG_BASE = { 'tills.title': 'Tills', 'reports.days.last_24h': 'Last 24 hours', 'a.one': 'Shared', 'b.two': 'Shared' };
 const LAG_HEAD = { ...LAG_BASE };
 const PACK = { 'tills.title': 'Kassen', 'a.one': 'Geteilt' };

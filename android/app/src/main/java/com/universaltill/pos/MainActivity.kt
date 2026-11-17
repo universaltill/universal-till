@@ -24,8 +24,14 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
+import android.os.CancellationSignal
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.print.PageRange
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintManager
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
@@ -63,6 +69,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import mobile.Mobile
 // Aliased: this Activity already has an unrelated inner class named
@@ -505,7 +512,72 @@ class MainActivity : AppCompatActivity() {
     // pinned. onPageFinished deliberately leaves the pin alone on the
     // manager-facing pages for exactly that reason; onResume has to agree
     // with it.
+    // @Volatile: the print bridge reads it on the JavaBridge thread (ut-docs#6153).
+    @Volatile
     private var kioskPinned = false
+
+    /** ut-docs#6153: elapsedRealtime when the open print dialog started; 0 = none. */
+    private val printInFlightSince = AtomicLong(0L)
+
+    /**
+     * ut-docs#6153: opens the system print dialog for the WebView's current
+     * page (UI thread). Never unpins the kiosk: [KioskBridge.print] refuses
+     * while pinned. Always clears the in-flight slot on a failure path; on
+     * success the wrapping adapter's onFinish clears it.
+     */
+    private fun startPrint(claimed: Long) {
+        // Release only our own claim: a late onFinish after the in-flight window
+        // expired must not clear a newer dialog's slot (ut-docs#6153 review F2).
+        val release = { printInFlightSince.compareAndSet(claimed, 0L); Unit }
+        try {
+            if (isDestroyed || isFinishing) {
+                release()
+                return
+            }
+            val jobName = PrintLogic.jobName(getString(R.string.app_name), webView.title)
+            val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
+            if (printManager == null) {
+                release()
+                return
+            }
+            val inner = webView.createPrintDocumentAdapter(jobName)
+            printManager.print(jobName, ReleasingPrintAdapter(inner, release), null)
+        } catch (e: Exception) {
+            release()
+            Log.w(TAG, "startPrint failed", e)
+        }
+    }
+
+    /** Forwards to the WebView's adapter and runs [onDone] after onFinish (dialog closed or job spooled). */
+    private class ReleasingPrintAdapter(
+        private val inner: PrintDocumentAdapter,
+        private val onDone: () -> Unit,
+    ) : PrintDocumentAdapter() {
+        override fun onStart() = inner.onStart()
+
+        override fun onLayout(
+            oldAttributes: PrintAttributes?,
+            newAttributes: PrintAttributes,
+            cancellationSignal: CancellationSignal?,
+            callback: LayoutResultCallback?,
+            extras: Bundle?,
+        ) = inner.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras)
+
+        override fun onWrite(
+            pages: Array<out PageRange>?,
+            destination: ParcelFileDescriptor?,
+            cancellationSignal: CancellationSignal?,
+            callback: WriteResultCallback?,
+        ) = inner.onWrite(pages, destination, cancellationSignal, callback)
+
+        override fun onFinish() {
+            try {
+                inner.onFinish()
+            } finally {
+                onDone()
+            }
+        }
+    }
 
     /**
      * ut-docs#3466 (ADR-0142 D3): the remote-unlock release window. 0 when
@@ -623,8 +695,37 @@ class MainActivity : AppCompatActivity() {
      * shouldOverrideUrlLoading confining navigation to the till's own
      * loopback host is what actually closes that gap; without it, this
      * class would be a real bypass of the very lock it exists to release.
+     *
+     * `print` (ut-docs#6153) is covered by the same reasoning: it takes no
+     * argument and prints only the page this WebView already shows.
      */
     private inner class KioskBridge {
+        /**
+         * ut-docs#6153: Android System WebView ignores window.print(). Opens the
+         * system print dialog for THIS WebView's current page. Takes no argument,
+         * deliberately: nothing the page passes reaches a URL, a file or the job
+         * name. Returns true when a dialog was requested, false when printing is
+         * unavailable here (kiosk pinned, activity gone, a dialog already open).
+         * Never throws.
+         */
+        @JavascriptInterface
+        fun print(): Boolean {
+            return try {
+                val now = SystemClock.elapsedRealtime()
+                val prev = printInFlightSince.get()
+                val pinned = kioskPinned || lockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE
+                if (!PrintLogic.canPrint(pinned, isFinishing || isDestroyed, prev, now)) return false
+                // Claim the slot here, on the binder thread, so a double tap's
+                // second call is refused before the UI thread has run.
+                if (!printInFlightSince.compareAndSet(prev, now)) return false
+                runOnUiThread { startPrint(now) }
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "print bridge failed", e)
+                false
+            }
+        }
+
         /** ut-docs#5620: minutes of idle before the till lets the screen sleep (0 = never). */
         @JavascriptInterface
         fun getScreenAwakeMinutes(): Int = screenAwakeMinutes()
