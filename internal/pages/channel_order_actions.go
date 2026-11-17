@@ -151,7 +151,7 @@ func channelOrderDetailData(ctx context.Context, d *common.Deps, r *http.Request
 	}
 	return map[string]any{
 		"title":         httpx.T(httpx.RequestLocale(r), "page.title.channel_orders"),
-		"theme":         d.CurrentState().Theme,
+		"theme":         d.ResolvedTheme(r),
 		"menuItems":     d.MenuSnapshot(),
 		"Order":         o,
 		"Pending":       pending,

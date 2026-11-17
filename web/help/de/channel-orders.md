@@ -3,6 +3,7 @@ id: channel-orders
 title: Online-Bestellungen
 section: Täglicher Verkauf
 order: 16
+public: true
 summary: "Bestellungen aus Ihrem Webshop oder von Marktplätzen, die auf dieser Kasse erfasst wurden: was bestellt wurde, wie weit sie sind und was sie mit Ihrem Bestand gemacht haben."
 routes: [/channel-orders, /channel-orders/{id}]
 keywords: [online-bestellungen, webshop, marktplatz, kanal, shopify, bestellnummer, erstattung, bestand, kein verkauf, annehmen, kommissionieren, verpacken, versenden, sendungsverfolgung, stornieren]
@@ -26,7 +27,7 @@ Bestellungen aus Ihrem Webshop oder von Marktplätzen, die auf dieser Kasse erfa
 
 ## Hinweise
 
-- Diese Bestellungen sind **keine Kassenverkäufe**. Sie stehen weder in der Kassenlade noch im Z-Bericht, im Journal oder im Fiskaljournal; der Shop hat sie online angenommen und online kassiert.
+- Diese Bestellungen sind **keine Kassenverkäufe**. Sie stehen weder in der Kassenlade noch im Z-Bericht, im Journal oder im Fiskaljournal; der Shop hat sie online angenommen und online kassiert. Summen je Kanal für einen Zeitraum sehen Sie im Reiter „Online-Kanäle“ unter „Berichte“ auf der Hauptkasse.
 - Nur die Hauptkasse erfasst Online-Bestellungen und führt Aktionen darauf aus. Wer Berichte sehen darf, kann diese Seite öffnen; für Aktionen braucht es zusätzlich die Berechtigung, den Bestand zu verwalten. Auf einer zusätzlichen Kasse ist die Seite nur lesbar.
 - Ist die Kasse offline, warten die Bestellungen in der Cloud und werden beim nächsten Verbinden erfasst, und Ihre Aktionen warten auf der Kasse und werden beim erneuten Verbinden gesendet. Das Kassieren wird dadurch nie aufgehalten.
 - Wird diese Kasse nicht mehr als Hauptkasse geführt, bleiben noch nicht gesendete Aktionen mit einem Hinweis auf der Seite, bis Sie sie ausblenden. Sie werden nie stillschweigend verworfen.

@@ -145,6 +145,150 @@ page as a PNG data URL (or `""` on failure — the same contract as Android's
 answered. `scripts/ci/ios-screenshot-bridge_test.sh` pins the wiring;
 `e2e/tests/ios-screenshot-bridge-3355.spec.ts` drives the panel side.
 
+## Tap to Pay on iPhone (development)
+
+Card payments on the iPhone itself, with no reader (ut-docs#3049, ADR-0125
+§3, Stripe first). **Off by default**, and only a developer's own
+dev-signed device build can turn it on: Apple's Tap to Pay grant for team
+B45H898ZBK is development-only (ut-docs#3047), so TestFlight and Release
+never carry the entitlement (ut-docs#6460 moves it there later).
+
+How it fits together. The web page never starts a payment and never sees a
+result, so the approval verdict never lives in JS. The chain is: payment
+plugin → host fn (ut-docs#6455) → `internal/devicepay` →
+`mobile.TapToPayBridge` → `UniversalTill/TapToPay/TapToPayBridge.swift` →
+`TapToPayCoordinator` → Stripe Terminal iOS SDK 6.0.0 (pinned; the
+`Package.resolved` under `UniversalTill.xcodeproj/` is committed). The
+Swift side reaches ut-cloud only through `mobile.TapToPayCloud` →
+`internal/paybroker` (fixed op allow-list, the till's own device
+credential, never logged). iPad is never offered Tap to Pay (capability
+reason `ipad`).
+
+**The switch.** `UT_TAP_TO_PAY` in `project.yml` (default `NO`):
+
+- The code is always compiled, so CI builds every line. Only the bridge's
+  registration is gated (`TapToPayFeature.isEnabled`). With the flag off
+  nothing registers, Go reports no capability, and nothing is shown.
+- `YES` in the **Debug** configuration also signs
+  `UniversalTill/UniversalTill.dev.entitlements`
+  (`com.apple.developer.proximity-reader.payment.acceptance`). Release
+  hard-sets `CODE_SIGN_ENTITLEMENTS` to empty and `UT_TAP_TO_PAY_INFO` (the
+  value Info.plist's `UTTapToPayEnabled` gets, which is what the app reads)
+  to `NO`. So a Release build carries no entitlement and registers nothing,
+  even with `UT_TAP_TO_PAY=YES` on the command line.
+- `UT_TAP_TO_PAY_SIMULATED=YES` uses Stripe's simulated reader (no card, no
+  NFC hardware needed).
+- `scripts/ci/guard-ios-tap-to-pay-default-off.sh` (in `ci.yml`) fails a PR
+  that assigns the flag anything but `NO` under `.github/`, `ios/`,
+  `scripts/` or in the `Makefile` (this README excepted), un-pins Release,
+  or adds another entitlement. Never commit the flag on.
+- CI and TestFlight build with `-onlyUsePackageVersionsFromResolvedFile`, so
+  the Stripe SDK is only ever the revision in the committed
+  `Package.resolved`. To move the SDK: change `exactVersion` in
+  `project.yml`, run `xcodegen generate` and
+  `xcodebuild -resolvePackageDependencies -project UniversalTill.xcodeproj`,
+  and commit the new `Package.resolved`.
+
+**Once, in the Apple developer portal** (the owner, Account Holder):
+
+1. Certificates, Identifiers & Profiles → Identifiers →
+   `com.universaltill.pos` → Additional Capabilities: confirm **Tap to Pay
+   on iPhone** is enabled.
+2. Devices: register the test iPhone's UDID (Finder or Xcode → Devices
+   shows it) on team B45H898ZBK.
+3. Regenerate the **development** provisioning profile. Xcode's automatic
+   signing does this on the next device build once steps 1 and 2 are done.
+   A manually managed profile must be regenerated in the portal.
+
+**A dev-signed device build** (the MacBook, Xcode signed in to the team):
+
+```bash
+gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+bash ios/scripts/make-app-icon.sh
+cd ios && xcodegen generate
+# either on the command line, with the iPhone plugged in:
+xcodebuild -project UniversalTill.xcodeproj -scheme UniversalTill -configuration Debug \
+  -destination 'platform=iOS,name=<your iPhone>' -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM=B45H898ZBK UT_TAP_TO_PAY=YES build
+# or in Xcode: open UniversalTill.xcodeproj, target UniversalTill → Build
+# Settings → User-Defined → UT_TAP_TO_PAY = YES (Debug). The generated
+# project is git-ignored, so the change never reaches a commit. Then Run on
+# the iPhone.
+```
+
+Check what got signed:
+`codesign -d --entitlements - <path to UniversalTill.app>` should list the
+proximity-reader key for that build and for no other.
+
+**Unit tests** (the coordinator's state machine, fake reader, cloud and
+clock; no device, no xcframework):
+
+```bash
+cd ios && xcodegen generate && xcodebuild test -scheme UniversalTillTapToPayTests \
+  -destination 'platform=iOS Simulator,name=iPhone 18 Pro'
+```
+
+`ios-ci.yml` runs the same tests before the gomobile bind.
+
+### Device test checklist (iPhone 17 Pro Max, Stripe test mode)
+
+For each check, record what you expected and what you saw, with a screenshot
+or video. A screen that merely shows something is not evidence.
+
+**Testable now** (this change alone; there is no payment entry or settings
+panel yet):
+
+| # | Do | Expect |
+|---|---|---|
+| A | Flag-off Debug build on the iPhone | Launches as before. No location or Bluetooth prompt, no banner, nothing about Tap to Pay. `codesign -d --entitlements -` shows no proximity-reader key. |
+| B | Latest TestFlight build | `codesign -d --entitlements -` on the installed or archived app shows no proximity-reader key. |
+| C | Flag-on Debug build (portal steps done) | Xcode signs it without a provisioning error, and `codesign` shows `com.apple.developer.proximity-reader.payment.acceptance` = true. The app launches and the till works normally. There are no prompts and no banner, because nothing calls Setup yet and prewarm waits for a completed Setup. |
+| D | Flag-on build: background, then foreground, five times | No crash, no prompt, and the till stays usable. |
+| E | Flag-on build on an iPad | Launches normally and shows nothing about Tap to Pay. |
+| F | Unit tests (above) | All tests pass (46 today). |
+| G | Release build with `UT_TAP_TO_PAY=YES` on the command line, unsigned | `UTTapToPayEnabled` in the built `Info.plist` is `NO`, and `-showBuildSettings` shows an empty `CODE_SIGN_ENTITLEMENTS`. |
+
+**After #6455 (host fn), #6456 (plugin), #6454/#3055 (cloud broker) and
+#6458 (settings UI) land.** Prerequisites: a test connected account; a
+business Apple ID (not a sandbox ID); the iPhone has a passcode and runs a
+public (non-beta) iOS; a Stripe physical test card (mobile wallets don't
+work in a sandbox, https://docs.stripe.com/terminal/references/testing).
+
+1. A flag-off build shows no Tap to Pay anywhere. The TestFlight build has
+   no entitlement (`codesign -d --entitlements -`).
+2. iPad with the flag on: Settings shows "Not available" plus the iPad
+   line. There is no pay entry.
+3. New user. A manager taps **Set up**. The location prompt shows our text.
+   Apple's terms are accepted. The determinate progress banner shows. How
+   to Tap opens automatically. The chip reads Ready. A cashier can't see
+   the panel, and a direct POST gets 403.
+4. Existing user. Relaunch, and background then foreground: prewarm
+   reaches Ready with no terms screen.
+5. £10.00 is approved. The sale is recorded as "Tap to Pay on iPhone" with
+   brand and last 4 on the receipt. The PaymentIntent is on the
+   **connected account**, with no application fee and `metadata.ut_key`
+   set.
+6. £10.05 is declined (`generic_decline`). The basket stays open and no
+   sale is recorded.
+7. £10.03 asks for a PIN and is then approved.
+8. The customer dismisses the sheet: cancelled, with no charge.
+9. No card for over 120 s: the sheet closes and the result is not
+   "declined". The PaymentIntent is not succeeded.
+10. Airplane mode at the tick: "Payment not confirmed". After reconnecting,
+    **Check again** gives one PaymentIntent, no second tap, and the right
+    outcome.
+11. A decline, then a retry on the same basket: the same PaymentIntent is
+    reused.
+12. Offline before checkout: the entry is disabled with its chip, and a
+    cash sale completes.
+13. Location denied: the reason chip shows, with no crash.
+14. Rotation or an incoming call during collect: the result is delivered,
+    or it is cancelled or pending. There is never a lost or duplicate
+    charge.
+15. VoiceOver and Dynamic Type XXL on the chip and the banner.
+16. Refund a tap sale from the till: the refund appears on the connected
+    account.
+
 ## What doesn't port (and what isn't built yet)
 
 - **`runtime:"go"` process plugins don't run** — iOS never lets an app

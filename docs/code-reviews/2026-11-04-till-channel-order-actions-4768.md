@@ -6,7 +6,7 @@ Branch `feat/4768-channel-order-actions`. Contract: `ut-docs/reference/contracts
 
 ## What this adds
 
-- Migration `096_channel_order_actions.sql`: the till's action outbox (till-minted `action_id`,
+- Migration `105_channel_order_actions.sql`: the till's action outbox (till-minted `action_id`,
   order key, `base_revision`, staff id, shipment / cancel fields, `state` `pending|refused|noted|blocked`,
   result code, write-back). Not LAN-synced (`sync_admin_repo.go`); checksum pinned.
 - `internal/data/channel_order_actions_repo.go`: `Enqueue` (action row + audit row, one transaction;

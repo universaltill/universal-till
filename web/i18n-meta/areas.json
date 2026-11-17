@@ -29,7 +29,8 @@
         "osk",
         "suggest",
         "filter",
-        "ai"
+        "ai",
+        "notices"
       ]
     },
     "catalog": {
@@ -43,6 +44,7 @@
         "inventory",
         "shrinkage",
         "import",
+        "photoimport",
         "vouchers",
         "vouchers_import",
         "promotions",

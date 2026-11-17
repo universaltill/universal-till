@@ -17,6 +17,10 @@ scripts/release.sh minor    # 0.2.0 → 0.3.0
 scripts/release.sh 1.0.0    # explicit
 ```
 
+Both bumps (A and B) start from the highest plain `vX.Y.Z` tag
+(`scripts/ci/latest-stable-tag.sh`); pre-release tags such as `-beta.N` or
+`-rc1` are ignored.
+
 **C. Manual tag (the classic way still works):**
 ```sh
 git checkout main && git pull
@@ -162,6 +166,39 @@ signing key unlisted.
 A refused release shows on the till as `Update failed (signature)`. It is not
 retried within the same run; "Update now" retries.
 
+## Android update: signer pin (ADR-0179)
+
+The Android shell's in-app update installs an APK only if it is this app's
+package, has a higher versionCode, and has exactly one signing certificate whose
+SHA-256 digest is listed in `android/app/apk-signer-sha256.txt` (1 to 4 lowercase
+hex digests; `#` comments). Gradle stamps it into `BuildConfig.APK_SIGNER_SHA256S`.
+The digest is public; there is no secret or repository variable.
+
+- **The release checks it.** The "Verify each APK" step runs
+  `scripts/ci/check-apk-signer-pin.sh` per flavor and fails the release if the
+  APK's signer is not in the file.
+- **Fork / new key.** Put the SHA-256 of your own signing certificate
+  (`apksigner verify --print-certs app.apk`) in the file. The release fails until you do.
+- **Fork / update source (ut-docs#5271).** The in-app update downloads from the
+  Gradle property `updateApkUrlBase`. A GitHub fork needs nothing: `release.yml`
+  derives it from the repository it releases to. For another host set the
+  repository variable `UT_ANDROID_UPDATE_APK_URL_BASE` (https, ending in `/`);
+  the mirror must serve the three `unitill-pos-android*-latest.apk` names.
+- **Rotation** (needs an APK Signature Scheme v3 lineage old to new).
+  1) Add the new digest next to the old one in the file. 2) Sign with the new
+  key plus the lineage, and keep the v1/v2 signature by the old key while any API
+  24 to 27 till exists: those platforms ignore v3, see the old signer and keep
+  updating only while the old digest stays pinned. API 28+ tills accept the
+  release because the new key is pinned or, on a till that has only the old pin,
+  because the old key is in the APK's platform-verified rotation lineage, so no
+  overlap release is needed. 3) Remove the old digest only when no API below 28
+  till remains; doing so strands them permanently. **Never tell an operator to
+  uninstall:** that deletes local data including unsynced offline sales. Install
+  the new APK over the existing app (Android honours the lineage on API 28+).
+- **Local tests with a test key:** `-PutApkSignerPins=<sha256 of the test cert>`;
+  an empty `-PutApkSignerPins=` builds dormant (no signer check, logged as
+  `not pinned`). Never use the override in `release.yml`.
+
 ## Nightly builds (testing `main`, not a release)
 
 `.github/workflows/nightly.yml` runs daily (03:00 UTC) plus on manual
@@ -182,6 +219,21 @@ version rather than a guessed next one so `internal/updates.Newer` keeps
 ranking it correctly once that next stable actually ships. See
 `universaltill/ut-docs#1432` for the beta channel, the till's channel
 setting, and full platform parity — all tracked as separate follow-ups.
+
+## Re-forking libc (modernc.org/libc, ADR-0188)
+
+`go.mod` replaces `modernc.org/libc` with `github.com/universaltill/modernc-libc`
+(upstream plus one patch) so the armv7 Android app survives Android 8-10 seccomp
+(ut-docs#6300). When a sqlite bump raises the libc require, `guard-libc-fork.sh`
+fails: clone upstream at the new tag, `patch -p1 < scripts/ci/libc-ut.patch`
+(rebase it if it no longer applies), commit, tag `vX-ut.1` on the fork (tags are
+never moved), update the `replace`, run `go mod tidy` and
+`scripts/ci/guard-libc-fork.sh --verify-upstream`.
+
+After a re-fork run `bash scripts/ci/sim-armv7-seccomp.sh` locally (needs `qemu-system-arm`;
+`brew install qemu` on a Mac): it must report GREEN, i.e. pristine libc killed by the Android 9
+seccomp filter and the fork booting under it (CI runs it in the `armv7-seccomp` job).
+It simulates the AOSP filter under qemu; it does not replace the Fire OS 7 hardware check.
 
 ## Notes / gaps
 

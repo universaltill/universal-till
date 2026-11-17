@@ -3,6 +3,7 @@ id: channel-orders
 title: Çevrimiçi siparişler
 section: Günlük satış
 order: 16
+public: true
 summary: "Web mağazanızdan veya pazaryerlerinden gelip bu kasada kaydedilen siparişler: ne sipariş edildi, nasıl ilerliyor ve stokunuza ne yaptı."
 routes: [/channel-orders, /channel-orders/{id}]
 keywords: [çevrimiçi siparişler, web mağaza, pazaryeri, kanal, shopify, sipariş numarası, iade, stok, satış değil, kabul, toplama, paketleme, gönderme, takip, iptal]
@@ -26,7 +27,7 @@ Web mağazanızdan veya pazaryerlerinden gelip bu kasada kaydedilen siparişler:
 
 ## Notlar
 
-- Bu siparişler **kasa satışı değildir**. Çekmecede, Z raporunda, Günlükte ve mali günlükte yer almazlar; mağaza bunları çevrimiçi aldı ve tahsil etti.
+- Bu siparişler **kasa satışı değildir**. Çekmecede, Z raporunda, Günlükte ve mali günlükte yer almazlar; mağaza bunları çevrimiçi aldı ve tahsil etti. Bir dönem için kanal başına toplamları görmek üzere ana kasada Raporlar'daki «Çevrimiçi kanallar» sekmesini açın.
 - Çevrimiçi siparişleri yalnızca ana kasa kaydeder ve onlar üzerindeki işlemleri yalnızca ana kasa yapar. Bu sayfayı Raporları görebilenler açabilir; işlem yapmak için ayrıca stoku yönetme yetkisi gerekir. Ek bir kasada sayfa yalnızca görüntülenir.
 - Kasa çevrimdışıysa siparişler bulutta bekler ve kasa bir sonraki bağlanışında kaydedilir; yaptığınız işlemler de kasada bekler ve kasa yeniden bağlanınca gönderilir. Kasadaki satış bundan asla etkilenmez.
 - Bu kasa artık ana kasa olmazsa, henüz gönderilmemiş işlemler siz gizleyene kadar bir uyarıyla sayfada kalır. Sessizce atılmazlar.

@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Channel order actions (ADR-0169 §9, ut-docs#4768 slice D, migration 096):
+// Channel order actions (ADR-0169 §9, ut-docs#4768 slice D, migration 105):
 // the main till's outbox of staff actions on channel orders. A tap writes a
 // row here and an audit row in ONE transaction. It never calls the network,
 // never changes channel_orders.status and never moves stock: the order changes

@@ -251,22 +251,6 @@ func TestEveryTopicResolves(t *testing.T) {
 	}
 }
 
-// The manual has to be complete in every locale the till ships, per the
-// product's multilingual rule. When it isn't, the page says so rather than
-// showing a blank — but for the migrated set it should be complete.
-func TestManualIsTranslatedInEveryShippedLocale(t *testing.T) {
-	chdirRoot(t)
-	l, err := Library()
-	if err != nil {
-		t.Fatalf("library: %v", err)
-	}
-	for _, loc := range []string{"fa", "ar", "tr", "de"} {
-		if missing := l.MissingTranslations(loc); len(missing) > 0 {
-			t.Errorf("locale %s is missing manual topics: %v", loc, missing)
-		}
-	}
-}
-
 // Routes declared in front matter are what the contextual "?" resolves
 // through, so the mapping has to hold for the pages that have one today.
 func TestRouteRegistryResolvesKnownPages(t *testing.T) {

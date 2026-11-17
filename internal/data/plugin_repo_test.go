@@ -120,6 +120,50 @@ func TestPluginRepo_ListMenuEntries_ReturnsIconName(t *testing.T) {
 	}
 }
 
+// TestPluginRepo_ListMenuEntries_NullRouteAndGroup pins ut-docs#5475:
+// plugin_entries.route and menu_group are nullable (migration 089); a raw
+// insert / restored DB can hold NULL there, and one such row must not fail
+// the whole query (the till would refuse to boot). NULL reads as an empty string.
+func TestPluginRepo_ListMenuEntries_NullRouteAndGroup(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('p1','Plugin One','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,sort_order,is_active) VALUES('pe1','p1','page','normal','/normal','Normal','main',1,1)`); err != nil {
+		t.Fatalf("seed normal entry: %v", err)
+	}
+	// label is NOT NULL in the shipped schema (001/018/089); route and
+	// menu_group are the nullable ones.
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,sort_order,is_active) VALUES('pe2','p1','page','nulls',NULL,'Nulls',NULL,2,1)`); err != nil {
+		t.Fatalf("seed null entry: %v", err)
+	}
+
+	rows, err := repo.ListMenuEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListMenuEntries: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 menu entries, got %d", len(rows))
+	}
+	for _, row := range rows {
+		switch row.Key {
+		case "normal":
+			if row.Route != "/normal" || row.MenuGroup != "main" {
+				t.Errorf("normal row changed: %+v", row)
+			}
+		case "nulls":
+			if row.Route != "" || row.MenuGroup != "" || row.Label != "Nulls" {
+				t.Errorf("null row should read as empty route/group: %+v", row)
+			}
+		default:
+			t.Fatalf("unexpected row key %q", row.Key)
+		}
+	}
+}
+
 func TestPluginRepo_ListInstalledPlugins_ActiveOnly(t *testing.T) {
 	ctx := context.Background()
 	db := newPluginRepoTestDB(t)

@@ -2,12 +2,15 @@
 # Build "Universal Till.app" — a real macOS app bundle that runs the POS server
 # and shows it in an embedded WebView window (no browser chrome, no Terminal).
 #
-# The bundle is AD-HOC codesigned (`codesign --sign -`). That is REQUIRED for
-# Apple Silicon to run it at all (unsigned arm64 binaries are killed on launch);
-# it is NOT Apple notarization, so a *downloaded* copy is still quarantined and
-# Gatekeeper asks the user to right-click → Open once (or run the bundled
-# "Remove quarantine" helper). Proper notarization needs a paid Apple Developer
-# account — see docs/arch/desktop-app.md.
+# Release builds (release.yml, upstream) are Developer ID signed with the
+# hardened runtime and notarized by make-dmg.sh; they refuse to build without
+# the secrets (ut-docs#6025). Without MACOS_SIGN_IDENTITY (forks, local builds)
+# the bundle is AD-HOC codesigned (`codesign --sign -`), which Apple Silicon
+# requires to run it at all (unsigned arm64 binaries are killed on launch). A
+# downloaded ad-hoc copy is quarantined: on macOS 15+ the user opens it via
+# System Settings → Privacy & Security → Open Anyway, or the "Open Universal
+# Till.command" in the .dmg (ut-docs#3803). Developer ID signing requires an
+# Apple Developer ID — see docs/arch/desktop-app.md.
 #
 # Usage:  packaging/macos/build-app.sh [version] [output-dir]
 # Needs:  macOS with Xcode CLT (clang for CGO), Go, iconutil/sips (built in).
@@ -110,7 +113,7 @@ fi
 # the hardened runtime + a secure timestamp, which is what notarization
 # requires. Without it we ad-hoc sign (`--sign -`): free, and required for
 # Apple Silicon to run the app at all, but a downloaded copy still hits
-# Gatekeeper (right-click → Open). See docs/arch/desktop-app.md.
+# Gatekeeper (Open Anyway / the .command helper). See docs/arch/desktop-app.md.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   echo "==> codesign with Developer ID: $MACOS_SIGN_IDENTITY"
   SIGN_ARGS=(--force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY")
@@ -138,8 +141,7 @@ esac
 echo
 echo "Built: $APP"
 if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
-  echo "NOTE: ad-hoc signed — downloaded copies need right-click → Open. Set"
-  echo "      MACOS_SIGN_IDENTITY (+ notarize in make-dmg.sh) for a clean open."
+  echo "NOTE: ad-hoc signed (fork/local build) — downloaded copies need Open Anyway in System Settings → Privacy & Security, or \"Open Universal Till.command\" in the .dmg. Set MACOS_SIGN_IDENTITY (+ notarize in make-dmg.sh) for a clean open."
 fi
 echo "Run locally:  open \"$APP\""
 echo "Distribute:   packaging/macos/make-dmg.sh \"$VERSION\" \"$OUTDIR\""

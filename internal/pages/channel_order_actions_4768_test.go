@@ -369,8 +369,10 @@ func TestChannelActions_ButtonWeightsFollowTheNextStep(t *testing.T) {
 	if !regexp.MustCompile(`class="btn secondary" data-channel-action="pack"`).MatchString(body) {
 		t.Errorf("pack must be secondary")
 	}
-	if strings.Count(body, "btn danger") != 1 {
-		t.Errorf("exactly one danger button (the cancel confirm), got %d", strings.Count(body, "btn danger"))
+	// The shared layout carries its own confirm dialog's danger button
+	// (data-ut-confirm), so count this page's submit buttons only.
+	if n := strings.Count(body, `<button type="submit" class="btn danger"`); n != 1 {
+		t.Errorf("exactly one danger submit button (the cancel confirm), got %d", n)
 	}
 	for _, want := range []string{`hx-disabled-elt`, `novalidate`, `hx-target="#channel-order-actions"`} {
 		if !strings.Contains(body, want) {

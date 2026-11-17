@@ -199,4 +199,147 @@ class UpdateLogicTest {
             UpdateLogic.stateJson("failed", null, "bad \"thing\"\\ \n </script>  "),
         )
     }
+
+    // --- APK signer pin (ut-docs#5436 / ADR-0179) ------------------------------
+
+    private val own = "com.universaltill.pos"
+    private val a = "a".repeat(64)
+    private val b = "b".repeat(64)
+
+    private fun check(
+        pkg: String? = own,
+        versionCode: Long? = 20L,
+        signers: List<String>? = listOf(a),
+        pins: Set<String> = setOf(a),
+        history: List<String>? = null,
+    ) = UpdateLogic.checkUpdateApk(pkg, own, versionCode, 10L, signers, pins, history)
+
+    private fun reason(c: ApkCheck): String = (c as ApkCheck.Refuse).reason
+
+    private fun cls(c: ApkCheck): RefuseClass = (c as ApkCheck.Refuse).cls
+
+    @Test
+    fun parsePinSetTrimsLowercasesAndDropsBlanks() {
+        assertEquals(emptySet<String>(), UpdateLogic.parsePinSet(""))
+        assertEquals(setOf("aa", "bb"), UpdateLogic.parsePinSet(" AA , BB,,"))
+    }
+
+    @Test
+    fun sha256HexMatchesTheKnownVector() {
+        assertEquals(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            UpdateLogic.sha256Hex("abc".toByteArray()),
+        )
+    }
+
+    @Test
+    fun pinnedSignerIsAccepted() {
+        assertEquals(ApkCheck.Accept(a), check())
+    }
+
+    @Test
+    fun unpinnedSignerIsRefused() {
+        assertTrue(reason(check(signers = listOf(b))).contains("not pinned"))
+    }
+
+    // ut-docs#5446: each refusal rule maps to its documented fleet class.
+    @Test
+    fun refusalClassPerRule() {
+        assertEquals(RefuseClass.UNREADABLE_APK, cls(check(pkg = null)))
+        assertEquals(RefuseClass.WRONG_PACKAGE, cls(check(pkg = "com.evil.app")))
+        assertEquals(RefuseClass.NOT_NEWER, cls(check(versionCode = 10L)))
+        assertEquals(RefuseClass.NOT_NEWER, cls(check(versionCode = null)))
+        assertEquals(RefuseClass.SIGNER_UNREADABLE, cls(check(signers = null)))
+        assertEquals(RefuseClass.SIGNER_UNREADABLE, cls(check(signers = emptyList())))
+        assertEquals(RefuseClass.MULTIPLE_SIGNERS, cls(check(signers = listOf(a, b))))
+        assertEquals(RefuseClass.SIGNER_NOT_PINNED, cls(check(signers = listOf(b))))
+        assertEquals(RefuseClass.SIGNER_NOT_PINNED, cls(check(signers = listOf(b), history = listOf(b))))
+    }
+
+    @Test
+    fun acceptPathsCarryNoRefusalClass() {
+        assertTrue(check() is ApkCheck.Accept)
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet()))
+        assertTrue(check(signers = listOf(b), history = listOf(b, a)) is ApkCheck.Accept)
+    }
+
+    // The other half of the cross-language pin (Go: TestClassesAreTheKotlinSet).
+    @Test
+    fun refuseClassWireValuesAreTheGoSet() {
+        assertEquals(
+            listOf(
+                "unreadable_apk", "wrong_package", "not_newer", "signer_unreadable",
+                "multiple_signers", "signer_not_pinned", "check_error",
+            ),
+            RefuseClass.values().map { it.wire },
+        )
+    }
+
+    @Test
+    fun unreadableOrOtherPackageIsRefused() {
+        assertTrue(check(pkg = null) is ApkCheck.Refuse)
+        assertTrue(reason(check(pkg = "com.evil.app")).contains("com.evil.app"))
+        // Even dormant, another package never goes through.
+        assertTrue(check(pkg = "com.evil.app", pins = emptySet()) is ApkCheck.Refuse)
+    }
+
+    @Test
+    fun versionCodeMustBeNewer() {
+        assertTrue(check(versionCode = 10L) is ApkCheck.Refuse)
+        assertTrue(check(versionCode = 9L) is ApkCheck.Refuse)
+        assertTrue(check(versionCode = null) is ApkCheck.Refuse)
+    }
+
+    @Test
+    fun multipleOrMissingSignersAreRefused() {
+        assertTrue(reason(check(signers = listOf(a, b))).contains("multiple"))
+        assertTrue(check(signers = emptyList()) is ApkCheck.Refuse)
+        assertTrue(check(signers = null) is ApkCheck.Refuse)
+    }
+
+    @Test
+    fun anyPinInTheSetIsAccepted() {
+        assertEquals(ApkCheck.Accept(b), check(signers = listOf(b), pins = setOf(a, b)))
+    }
+
+    @Test
+    fun emptyPinSetIsDormant() {
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet()))
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet(), signers = null))
+    }
+
+    @Test
+    fun digestCompareIsCaseInsensitive() {
+        assertEquals(ApkCheck.Accept(a), check(signers = listOf(a.uppercase())))
+    }
+
+    @Test
+    fun packageReasonWinsOverSignerReason() {
+        assertTrue(reason(check(pkg = "com.evil.app", signers = listOf(b))).contains("package"))
+    }
+
+    @Test
+    fun rotatedSignerWithPinnedAncestorInHistoryIsAccepted() {
+        // New key b is not pinned, but the platform-verified lineage contains pinned a.
+        assertEquals(ApkCheck.Accept(a), check(signers = listOf(b), history = listOf(a, b)))
+    }
+
+    @Test
+    fun historyWithoutAnyPinnedKeyIsRefused() {
+        val c = "c".repeat(64)
+        assertTrue(reason(check(signers = listOf(b), history = listOf(c, b))).contains("not pinned"))
+    }
+
+    @Test
+    fun historyNeverOverridesMultipleSigners() {
+        assertTrue(reason(check(signers = listOf(b, c64()), history = listOf(a))).contains("multiple"))
+    }
+
+    @Test
+    fun historyIsIgnoredWhenDormantAndMatchedCaseInsensitively() {
+        assertEquals(ApkCheck.AcceptUnpinned, check(pins = emptySet(), history = listOf(a)))
+        assertEquals(ApkCheck.Accept(a), check(signers = listOf(b), history = listOf(a.uppercase())))
+    }
+
+    private fun c64() = "c".repeat(64)
 }

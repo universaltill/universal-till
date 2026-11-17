@@ -20,8 +20,7 @@
 //
 // A locale/topic pair whose structure doesn't match English is not
 // automatically a failure: scripts/ci/i18n-baseline/help-drift-baseline.json
-// records already-known drift (mirrors the ut-plugin-language-*
-// i18n-baseline/ convention for already-known untranslated keys), so
+// records already-known drift, so
 // existing gaps can be burned down over time instead of blocking every PR
 // from day one. But a baseline entry is a live claim about the *current*
 // mismatch, not a permanent exemption: if the real drift no longer matches
@@ -206,22 +205,22 @@ func checkAll(lib *manual.Library, baseline map[[2]string]baselineEntry) []findi
 			case locSig == enSig:
 				if baselined {
 					findings = append(findings, finding{
-						msg: fmt.Sprintf("guard-help-drift: locale %q topic %q: structure now matches English, but a baseline entry still claims a mismatch (%s) — remove the stale entry from %s",
+						msg: fmt.Sprintf("guard-help-drift: warning (non-blocking): locale %q topic %q: structure now matches English, but a baseline entry still claims a mismatch (%s) — remove the stale entry from %s",
 							locale, id, entry.Signature, baselinePath),
-						fail: true,
+						fail: false, // ADR-0160 section 2: translations are not a code-PR gate
 					})
 				}
 			case !baselined:
 				findings = append(findings, finding{
-					msg: fmt.Sprintf("guard-help-drift: locale %q topic %q: structure differs from English (English %s, %s %s) with no baseline entry — fix the translation or add a reviewed entry to %s",
+					msg: fmt.Sprintf("guard-help-drift: warning (non-blocking): locale %q topic %q: structure differs from English (English %s, %s %s) with no baseline entry — fix the translation or add a reviewed entry to %s",
 						locale, id, enSig, locale, locSig, baselinePath),
-					fail: true,
+					fail: false, // ADR-0160 section 2: translations are not a code-PR gate
 				})
 			case entry.Signature != locSig:
 				findings = append(findings, finding{
-					msg: fmt.Sprintf("guard-help-drift: locale %q topic %q: drift no longer matches the baseline entry (baseline has %s, actual is %s vs English %s) — update %s deliberately",
+					msg: fmt.Sprintf("guard-help-drift: warning (non-blocking): locale %q topic %q: drift no longer matches the baseline entry (baseline has %s, actual is %s vs English %s) — update %s deliberately",
 						locale, id, entry.Signature, locSig, enSig, baselinePath),
-					fail: true,
+					fail: false, // ADR-0160 section 2: translations are not a code-PR gate
 				})
 			case entry.English != enSig:
 				// The locale side hasn't moved, but English has — this is
@@ -230,16 +229,16 @@ func checkAll(lib *manual.Library, baseline map[[2]string]baselineEntry) []findi
 				// forever even as English grows further ahead, because only
 				// the locale signature was ever compared.
 				findings = append(findings, finding{
-					msg: fmt.Sprintf("guard-help-drift: locale %q topic %q: English moved since this drift was recorded (baseline recorded English %s, English is now %s, %s unchanged at %s) — re-translate or re-record the baseline entry in %s",
+					msg: fmt.Sprintf("guard-help-drift: warning (non-blocking): locale %q topic %q: English moved since this drift was recorded (baseline recorded English %s, English is now %s, %s unchanged at %s) — re-translate or re-record the baseline entry in %s",
 						locale, id, entry.English, enSig, locale, locSig, baselinePath),
-					fail: true,
+					fail: false, // ADR-0160 section 2: translations are not a code-PR gate
 				})
 			default:
 				// Known, recorded drift, anchored on both sides — allowed,
 				// but still worth a line so a CI log shows exactly what's
 				// being carried forward.
 				findings = append(findings, finding{
-					msg: fmt.Sprintf("guard-help-drift: locale %q topic %q: known drift (%s vs English %s), tracked: %s", locale, id, locSig, enSig, entry.Reason),
+					msg: fmt.Sprintf("guard-help-drift: warning (non-blocking): locale %q topic %q: known drift (%s vs English %s), tracked: %s", locale, id, locSig, enSig, entry.Reason),
 				})
 			}
 		}
@@ -259,9 +258,9 @@ func checkAll(lib *manual.Library, baseline map[[2]string]baselineEntry) []findi
 		key := [2]string{locale, topicID}
 		if !seen[key] {
 			findings = append(findings, finding{
-				msg: fmt.Sprintf("guard-help-drift: baseline entry for locale %q topic %q does not correspond to any checked topic — remove it from %s",
+				msg: fmt.Sprintf("guard-help-drift: warning (non-blocking): baseline entry for locale %q topic %q does not correspond to any checked topic — remove it from %s",
 					key[0], key[1], baselinePath),
-				fail: true,
+				fail: false, // ADR-0160 section 2: translations are not a code-PR gate
 			})
 		}
 	}
@@ -367,5 +366,5 @@ func main() {
 	if fail {
 		os.Exit(1)
 	}
-	fmt.Println("✓ help-drift guard: every translated topic's structure matches English (or is recorded, current, in the baseline)")
+	fmt.Println("✓ help-drift guard: English is the required locale; translation drift is reported as non-blocking warnings only (ADR-0160)")
 }

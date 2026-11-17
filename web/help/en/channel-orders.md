@@ -3,6 +3,7 @@ id: channel-orders
 title: Online orders
 section: Everyday selling
 order: 16
+public: true
 summary: "Orders taken on your web shop or marketplaces and recorded on this till: what was ordered, how it is progressing and what it did to your stock."
 routes: [/channel-orders, /channel-orders/{id}]
 keywords: [online orders, web shop, webshop, marketplace, channel, shopify, order number, refund, restock, stock, not a sale, accept, pick, pack, ship, tracking, cancel]
@@ -26,7 +27,7 @@ Orders taken on your web shop or marketplaces and recorded on this till: what wa
 
 ## Notes
 
-- These orders are **not till sales**. They are not in the drawer, the Z report, the Journal or the fiscal journal; the shop took and was paid for them online.
+- These orders are **not till sales**. They are not in the drawer, the Z report, the Journal or the fiscal journal; the shop took and was paid for them online. To see totals per channel for a period, open the Online channels tab in Reports on the main till.
 - Only the main till records online orders and takes actions on them. People who may see Reports can open this page; taking actions also needs permission to manage stock. On an additional till the page is view-only.
 - If the till is offline, orders wait in the cloud and are recorded the next time it connects, and the actions you take wait on the till and are sent when it reconnects. Selling at the till is never held up by this.
 - If this till stops being the main till, actions that were not sent yet stay on the page with a notice until you dismiss them. They are never thrown away silently.

@@ -93,7 +93,7 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		// strings.ToUpper isn't Turkish-locale-aware (dotless/dotted I) —
 		// a pre-existing cosmetic quirk, more reachable now that this can
 		// carry real translated text, not just English. Not solved here.
-		line(clip(strings.ToUpper(s), Width))
+		line(clip(strings.ToUpper(paperText(s)), Width)) // paperText first: ToUpper turns an invalid byte into U+FFFD (ut-docs#5847)
 	}
 	if s := strings.TrimSpace(t.Table); s != "" {
 		line(clip(s, Width))
@@ -113,7 +113,7 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		line(clip(label, Width/2)) // double-width halves the columns
 		b.Write(cmdDoubleOff)
 		if m := strings.TrimSpace(it.Mode); m != "" {
-			line(clip("  * "+strings.ToUpper(m), Width))
+			line(clip("  * "+strings.ToUpper(paperText(m)), Width))
 		}
 		for _, m := range it.Modifiers {
 			if m = strings.TrimSpace(m); m != "" {
@@ -125,64 +125,4 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 
 	b.Write(cmdFeedCut)
 	return b.Bytes()
-}
-
-// RenderKitchenTicketText lays a kitchen ticket out as plain text — the same
-// content as RenderKitchenTicket for on-screen preview (no ESC/POS control
-// bytes), mirroring RenderText for receipts.
-//
-// Test-only-reachable today, kept deliberately (ut-docs#1566 — on
-// scripts/ci/deadcode-baseline.txt, not a deletion candidate): unlike
-// RenderText, which the receipt designer's live preview calls
-// (internal/pages/receipt_designer.go), no page renders a kitchen-ticket
-// preview yet, so nothing in production calls this. Its callers are
-// kitchen_test.go's byte-path/text-path parity tests, which pin that the
-// text path drops exactly the lines the byte path drops (ut-docs#261
-// review), centres by display width, not byte length (ut-docs#376, #4685) and
-// carries the per-line Mode marker (ut-docs#1181). Whether to wire a
-// kitchen-ticket preview or drop this together with those tests is a
-// product call, deliberately not made here.
-func RenderKitchenTicketText(t KitchenTicket) string {
-	var b strings.Builder
-	center := func(s string) {
-		s = clip(s, Width)
-		pad := (Width - displayWidth(s)) / 2
-		if pad < 0 {
-			pad = 0
-		}
-		b.WriteString(strings.Repeat(" ", pad) + s + "\n")
-	}
-	if s := strings.TrimSpace(t.Station); s != "" {
-		center(s)
-	}
-	if s := strings.TrimSpace(t.OrderNo); s != "" {
-		center(orderLabel(t) + " " + s)
-	}
-	if s := strings.TrimSpace(t.OrderType); s != "" {
-		center(strings.ToUpper(s))
-	}
-	if s := strings.TrimSpace(t.Table); s != "" {
-		center(s)
-	}
-	if s := strings.TrimSpace(t.Timestamp); s != "" {
-		center(s)
-	}
-	b.WriteString(strings.Repeat("-", Width) + "\n")
-	for _, it := range t.Items {
-		label := strings.TrimSpace(it.Name)
-		if q := strings.TrimSpace(it.Qty); q != "" && q != "1" {
-			label = q + " x " + label
-		}
-		b.WriteString(clip(label, Width) + "\n")
-		if m := strings.TrimSpace(it.Mode); m != "" {
-			b.WriteString(clip("  * "+strings.ToUpper(m), Width) + "\n")
-		}
-		for _, m := range it.Modifiers {
-			if m = strings.TrimSpace(m); m != "" {
-				b.WriteString(clip("  - "+m, Width) + "\n")
-			}
-		}
-	}
-	b.WriteString(strings.Repeat("-", Width) + "\n")
-	return b.String()
 }

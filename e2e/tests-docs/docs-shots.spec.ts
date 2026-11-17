@@ -14,7 +14,7 @@ import * as path from 'path';
 // e2e/run-till.sh (go run ./e2e/seed_demo) — the migrations stopped seeding
 // it in ut-docs#539. The AUTH till (8092) gets no sample data: the wizard
 // below never loads any (ut-docs#3709).
-const { repoRoot, LOCALES, routedTopics, PINNED_FONTS, probePlatformFonts, fontPinProblem } = require('./lib');
+const { repoRoot, LOCALES, routedTopics, extraShotsByTopic, PINNED_FONTS, probePlatformFonts, fontPinProblem } = require('./lib');
 
 const imgRoot = path.join(repoRoot, 'web', 'help', 'img');
 
@@ -33,10 +33,361 @@ const ADMIN_PIN = '482913'; // same PIN login.spec.ts sets, so a reused local au
 // /invoices: the current calendar month — neither reads internal/clock), so
 // each topic addresses the seeded month explicitly instead. Keep these in
 // step with the dates in seed_docs_sales/main.go.
+// ut-docs#6157: the vouchers topic pictures a voucher's DETAIL page (with the
+// "no receipt printer" hint above Print slip), not the empty list. Keep
+// DOCS_VOUCHER_ID equal to docsVoucherID in e2e/seed_docs_sales/main.go.
+const DOCS_VOUCHER_ID = 'DOCS-GV-0001';
+const routeOverride: Record<string, string> = { vouchers: '/vouchers/' + DOCS_VOUCHER_ID };
+// Selector that must be visible before the shot, so a regression (404, hint
+// gone because a printer is configured) fails the capture, not the picture.
+const mustShow: Record<string, string> = { vouchers: '[data-testid="voucher-slip-browser-hint"]' };
+
 const pinnedQuery: Record<string, string> = {
   reports: 'period=month&anchor=2025-12-15',
   invoices: 'from=2025-12-01&to=2025-12-31',
 };
+
+// DIALOG-OPEN SHOTS (ut-docs#5581). The manual keeps ONE header image per topic
+// (internal/manual/manual.go injects web/help/img/<locale>/<id>.png after the
+// topic's <h1>; further inline shots are `extraShots` below), so a topic either shows its resting page (the default) or,
+// if it has a row in `dialogShots`, the same page with a record dialog OPEN on
+// a seeded row. Record dialogs are non-modal (.show(), the no-showModal rule),
+// so nothing blocks the status bar. At the 1024x600 reference viewport the
+// dialog fills the screen and covers the page (and its status bar), so the
+// image shows the dialog INSTEAD of the list; adopting a topic is a choice to
+// show the dialog in place of the resting page. To adopt it for another topic: seed a row idempotently and WITHOUT
+// dates (every locale re-runs the seed on the shared till; fixed dates trip
+// guard-fixed-dates), add a row below naming the clickable cell (`open`), the
+// `<dialog>` (`dialog`), a selector visible only once the prefill is done
+// (`ready`) and optionally a field proving the right record loaded
+// (`prefilled`), then run `make docs-shots`. Missing row/dialog fails the
+// test: a dialog shot must never silently ship as a resting one. Topics not
+// listed here follow the unchanged code path in capture().
+type DialogShot = {
+  seed?: (page: Page) => Promise<void>; // runs in capture() before goto, on the topic's own till/session
+  open: string; // selector clicked once the page settles (a data-record-open row's cell)
+  dialog: string; // the <dialog> that must end up [open] and visible
+  ready: string; // selector visible only once the prefill for THIS record is done
+  prefilled?: { selector: string; value: string }; // a field whose value proves the right row loaded
+};
+
+const DOCS_PROMO_CODE = 'WEEKEND10';
+
+// Creates the sample promotion and deactivates it, through the till's own API
+// (the logged-in page.request carries the manager session). Idempotent: the
+// auth till is shared by the four locale runs, so a repeat create is refused
+// as a duplicate. Without an HX-Request header every refusal is a 303 to
+// /promotions?err=<key> (never a 400), so the Location header is what tells
+// success from failure. No dates, no customer.
+async function ensureInactivePromotion(page: Page) {
+  const created = await page.request.post('/api/promotions', {
+    maxRedirects: 0,
+    form: {
+      code: DOCS_PROMO_CODE,
+      type: 'percent',
+      value_percent: '10',
+      description: 'Weekend 10% off hot drinks',
+      starts_at: '',
+      ends_at: '',
+      customer_id: '',
+    },
+  });
+  const createdTo = created.headers()['location'] ?? '';
+  expect(created.status(), `creating the sample promotion: expected 303, got ${created.status()} (Location ${createdTo})`).toBe(303);
+  expect(
+    createdTo === '/promotions' || createdTo.includes('err=promotions.error.code_exists'),
+    `creating the sample promotion failed: Location ${createdTo}`,
+  ).toBe(true);
+  const off = await page.request.post(`/api/promotions/${DOCS_PROMO_CODE}/active`, {
+    maxRedirects: 0,
+    form: { active: '0' },
+  });
+  const offTo = off.headers()['location'] ?? '';
+  expect(off.status(), `deactivating the sample promotion: expected 303, got ${off.status()} (Location ${offTo})`).toBe(303);
+  expect(offTo, `deactivating the sample promotion failed: Location ${offTo}`).toBe('/promotions');
+}
+
+const dialogShots: Record<string, DialogShot> = {
+  promotions: {
+    seed: ensureInactivePromotion,
+    open: `#promotions-table tr.promotion-row[data-id="${DOCS_PROMO_CODE}"][data-field-active="0"] td:first-child`,
+    dialog: '#promotion-dialog',
+    ready: '#promotion-dialog form[data-record-when="active=0"] button[type="submit"]', // Activate
+    prefilled: { selector: '#promotion-form input[name="code"]', value: DOCS_PROMO_CODE },
+  },
+};
+
+// EXTRA SHOTS (ut-docs#2615): further screenshots a topic shows INLINE, beside
+// the text they illustrate, next to its header image <id>.png. The English
+// markdown is the declaration: `![alt](img/<id>-<part>.png)` in
+// web/help/en/<id>.md declares the shot `<id>-<part>` (lib.js
+// extraShotsByTopic, internal/manual and guard-docs-shots.sh all read it from
+// there; every locale gets its own PNG, captured below).
+//
+// HOW TO ADD AN EXTRA SHOT:
+//   1. reference `![alt](img/<id>-<part>.png)` in web/help/en/<id>.md (the
+//      topic must declare routes:);
+//   2. add a recipe here under the stem `<id>-<part>`: the `route` to visit,
+//      an optional `setup` that puts the shared till into the shown state
+//      through the till's own endpoints, a `teardown` that RESTORES it (it
+//      always runs, in a finally - later shots share this till), and `ready`,
+//      which asserts the frame really shows the intended state, so a shot can
+//      never silently ship as the wrong picture;
+//      Optional `interact` runs on the loaded page after the htmx settle and
+//      before the screenshot, for client-only state (e.g. opening a kiosk dialog);
+//      it must leave no focus ring, hover or running animation (ut-docs#338);
+//   3. `make docs-shots`, commit the new PNGs and manifest.json.
+// A declared stem with no recipe, or a recipe no markdown references, throws
+// at load, before anything is captured or the manifest written. Extras run on
+// the default auth-off till (8091), except the plugins topic's (plugins till, ut-docs#335).
+type ExtraShot = {
+  route: string;
+  setup?: (page: Page) => Promise<void>;
+  teardown?: (page: Page) => Promise<void>;
+  // Runs on the loaded page, after the htmx settle and before the screenshot, to
+  // put client-only state in frame (e.g. open a kiosk dialog); must leave no
+  // focus ring, hover or running animation.
+  interact?: (page: Page) => Promise<void>;
+  ready: (page: Page) => Promise<void>;
+};
+
+const DEFAULT_BROWSING_MODE = 'category_tabs';
+
+// Sets sale.browsing_mode through the till's own endpoint (never the DB).
+async function setBrowsingMode(page: Page, mode: string) {
+  const res = await page.request.post('/api/settings/browsing-mode', { form: { mode } });
+  expect(res.status(), `setting browsing mode ${mode} failed`).toBe(204);
+}
+
+// The sale screen with the shared two-line basket staged, in one browsing mode.
+function browseShot(mode: string, ready: (page: Page) => Promise<void>): ExtraShot {
+  return {
+    route: '/',
+    setup: async (page) => {
+      await ensureBasketLines(page);
+      await setBrowsingMode(page, mode);
+    },
+    teardown: (page) => setBrowsingMode(page, DEFAULT_BROWSING_MODE),
+    ready,
+  };
+}
+
+// Category tiles: the category-tile grid IS the view; no strip, no chips.
+async function assertTilesLayout(page: Page) {
+  expect(await page.locator('#browsing-category-tiles .category-tile').count(), 'no category tiles').toBeGreaterThan(0);
+  await expect(page.locator('#browsing-category-chips')).toHaveCount(0);
+  await expect(page.locator('.tab-bar [data-cat-tab]')).toHaveCount(0);
+}
+
+// All items with filters: one item grid under a chip row whose All chip is on.
+async function assertFiltersLayout(page: Page) {
+  const all = page.locator('#browsing-category-chips .chip-all');
+  await expect(all).toBeVisible();
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#browsing-category-tiles')).toHaveCount(0);
+  expect(await page.locator('#buttons-grid-all .tile-cell').count(), 'no item tiles in the All grid').toBeGreaterThan(0);
+}
+
+// Category strip: category tabs (no All tab), first one selected, quick-button
+// tiles in its panel - never the "no quick buttons yet" note.
+async function assertStripLayout(page: Page) {
+  const tabs = page.locator('.tab-bar [data-cat-tab]');
+  expect(await tabs.count(), 'the strip needs at least two category tabs').toBeGreaterThanOrEqual(2);
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.chip-all')).toHaveCount(0);
+  await expect(page.locator('#browsing-category-tiles')).toHaveCount(0);
+  expect(await page.locator('.products-tab-panel:visible .tile-cell').count(), 'first tab shows no tiles').toBeGreaterThan(0);
+  await expect(page.locator('[data-testid=category-empty-state]:visible')).toHaveCount(0);
+}
+
+// Walk-up GET /self-order Reset()s the shared KioskEngine and clears the
+// kiosk language cookie (self_order_page.go). No ?table= -> never a session.
+async function resetKiosk(page: Page) {
+  const res = await page.request.get('/self-order');
+  expect(res.status(), 'resetting the kiosk basket failed').toBe(200);
+}
+
+// POST /api/settings/kiosk-payment-mode: no PIN under UT_AUTH=off, so 204.
+async function setKioskPaymentMode(page: Page, mode: 'kiosk' | 'counter') {
+  const res = await page.request.post('/api/settings/kiosk-payment-mode', { form: { mode } });
+  expect(res.status(), `setting kiosk payment mode ${mode} failed`).toBe(204);
+}
+
+// Two lines, one at qty 2: Coca-Cola x2, Pepsi x1 (variant-free demo items;
+// a variant-bearing code is refused by /api/self-order/scan).
+async function stageKioskBasket(page: Page) {
+  await resetKiosk(page);
+  for (const code of ['5000000000012', '5000000000012', '5000000000029']) {
+    const res = await page.request.post('/api/self-order/scan', { form: { code } });
+    expect(res.status(), `kiosk scan ${code} failed`).toBe(200);
+  }
+}
+
+// A non-empty kiosk basket blocks Settings -> Data cleanup, so always empty it.
+async function restoreKiosk(page: Page) {
+  await resetKiosk(page);
+  await setKioskPaymentMode(page, 'kiosk');
+}
+
+// Lazy tile photos arrive in an htmx fragment; wait until all are decoded.
+async function kioskImagesLoaded(page: Page) {
+  await page.waitForFunction(() => [...document.images].every((i) => i.complete));
+}
+
+// Tap an opener on /self-order/shop and wait for #selforder-modal to be open,
+// filled, settled and still (same guarantees as openDialog for record dialogs).
+async function openKioskModal(page: Page, opener: string) {
+  const btn = page.locator(opener);
+  await expect(btn, `kiosk opener ${opener} missing`).toHaveCount(1);
+  await btn.click();
+  const dlg = page.locator('#selforder-modal');
+  await expect(dlg).toHaveAttribute('open', '');
+  await expect(dlg).toBeVisible();
+  await page.waitForFunction(() => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'), null, { timeout: 10_000 }).catch(() => {});
+  await page.waitForFunction(() =>
+    [...(document.querySelector('#selforder-modal') as HTMLElement).getAnimations({ subtree: true })].every((a) => a.playState !== 'running'));
+  await kioskImagesLoaded(page);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()); // showModal autofocus ring
+  await page.mouse.move(0, 0); // park the pointer on the inert backdrop: no :hover in frame
+}
+
+const KIOSK_STAGE = async (page: Page) => { await setKioskPaymentMode(page, 'kiosk'); await stageKioskBasket(page); };
+
+const extraShots: Record<string, ExtraShot> = {
+  'self-order-shop': {
+    route: '/self-order/shop',
+    setup: KIOSK_STAGE,
+    interact: kioskImagesLoaded,
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      expect(await page.locator('#selforder-cart .selforder-cart-line').count()).toBe(2);
+      await expect(page.locator('#selforder-cart .selforder-checkout')).toBeVisible();
+      expect(await page.locator('.selforder-cats .cat-chip').count()).toBeGreaterThan(1);
+      await expect(page.locator('#selforder-modal')).not.toHaveAttribute('open', '');
+    },
+  },
+  // Apple Juice 1L (itm006) has Pack of 6 / Pack of 12 variants.
+  'self-order-options': {
+    route: '/self-order/shop',
+    setup: KIOSK_STAGE,
+    interact: (page) => openKioskModal(page, '#selforder-grid .selforder-tile[hx-get*="item=itm006"]'),
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      const m = page.locator('#selforder-modal .modifier-picker');
+      await expect(m).toBeVisible();
+      expect(await m.locator('fieldset.modifier-group input[type=radio]').count()).toBeGreaterThanOrEqual(2);
+      await expect(m.locator('button[type=submit]')).toBeVisible(); // Add to cart
+    },
+  },
+  // Card mode: "Choose a payment method".
+  'self-order-checkout': {
+    route: '/self-order/shop',
+    setup: KIOSK_STAGE,
+    interact: (page) => openKioskModal(page, '#selforder-cart .selforder-checkout'),
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      const p = page.locator('#selforder-modal .payment-picker');
+      await expect(p).toBeVisible();
+      expect(await p.locator('.payment-picker-method').count()).toBeGreaterThanOrEqual(1);
+      await expect(p.locator('.payment-picker-blocked')).toHaveCount(0);
+    },
+  },
+  // Pay-at-counter: "Pay at the counter" + Place order. No checkout is POSTed.
+  'self-order-counter': {
+    route: '/self-order/shop',
+    setup: async (page) => { await stageKioskBasket(page); await setKioskPaymentMode(page, 'counter'); },
+    interact: (page) => openKioskModal(page, '#selforder-cart .selforder-checkout'),
+    teardown: restoreKiosk,
+    ready: async (page) => {
+      const p = page.locator('#selforder-modal .payment-picker');
+      await expect(p).toBeVisible();
+      await expect(p.locator('.payment-picker-methods')).toHaveCount(0);
+      expect(await p.locator('form[hx-post="/api/self-order/checkout"] button[type=submit]').count()).toBe(1);
+    },
+  },
+  'sell-browse-tiles': browseShot('category_tabs', assertTilesLayout),
+  'sell-browse-filters': browseShot('all_filter_chips', assertFiltersLayout),
+  'sell-browse-strip': browseShot('strip_overflow', assertStripLayout),
+  // ut-docs#335: plugins till (8107), read-only. The catalogue is the fixed
+  // snapshot from e2e/seed_docs_plugin_catalog (6 fictional listings).
+  'plugins-store': {
+    route: '/plugins/store',
+    ready: async (page) => {
+      await expect(page.locator('#store-grid .store-tile')).toHaveCount(6);
+      await expect(page.locator('.store-cats .cat-chip')).toHaveCount(7);
+      for (const sel of ['.trust-official', '.trust-verified', '.trust-unverified', '.paid-badge']) {
+        expect(await page.locator(`#store-grid ${sel}`).count(), `store grid has no ${sel}`).toBeGreaterThan(0);
+      }
+      await expect(page.locator('#store-no-matches')).toBeHidden();
+      await expect(page.locator('p.empty:not([hidden])')).toHaveCount(0);
+      await expect(page.locator('#store-grid .store-tile').last()).toBeInViewport();
+    },
+  },
+  'plugins-listing': {
+    route: '/plugins/store/sample-stock-sync',
+    ready: async (page) => {
+      await expect(page.locator('.store-detail[data-listing-id="sample-stock-sync"]')).toBeVisible();
+      await expect(page.locator('.store-detail .trust-unverified')).toBeVisible();
+      const perms = page.locator('.perm-desc .perm-desc-item');
+      expect(await perms.count(), 'too few permission lines').toBeGreaterThanOrEqual(3);
+      await expect(page.locator('.perm-desc .perm-desc-item', { hasText: 'net:validation:validation.example.org' })).toHaveCount(1);
+      await expect(page.locator('#store-accept-terms')).toBeVisible();
+      await expect(page.locator('#store-accept-terms')).not.toBeChecked();
+      const dl = page.locator('[data-store-action="download"]');
+      await expect(dl).toBeVisible();
+      await expect(dl).toBeInViewport({ ratio: 1 });
+    },
+  },
+};
+
+// Declaration (en markdown) and recipes must agree, both ways.
+const declaredExtraShots = extraShotsByTopic() as Record<string, string[]>;
+for (const [tid, stems] of Object.entries(declaredExtraShots)) {
+  for (const stem of stems) {
+    if (!extraShots[stem]) {
+      throw new Error(`web/help/en/${tid}.md references img/${stem}.png but docs-shots.spec.ts has no extraShots recipe for "${stem}"`);
+    }
+  }
+}
+for (const stem of Object.keys(extraShots)) {
+  if (!Object.values(declaredExtraShots).some((stems) => stems.includes(stem))) {
+    throw new Error(`extraShots recipe "${stem}" is dead: no web/help/en/*.md references img/${stem}.png`);
+  }
+}
+
+// Click the seeded row for real (the path record-dialog.js serves), then wait
+// until the dialog is open, prefilled, scrim synced, motion finished and
+// nothing is focused, so the frame holds no timing- or focus-dependent state.
+async function openDialog(page: Page, shot: DialogShot) {
+  const target = page.locator(shot.open);
+  await expect(target, 'dialog-shot row missing').toHaveCount(1);
+  await target.click();
+  const dlg = page.locator(shot.dialog);
+  await expect(dlg).toBeVisible();
+  await expect(dlg).toHaveAttribute('open', '');
+  await expect(page.locator(shot.ready)).toBeVisible();
+  if (shot.prefilled) await expect(page.locator(shot.prefilled.selector)).toHaveValue(shot.prefilled.value);
+  // base.html syncs #ut-scrim on the next animation frame.
+  await expect(page.locator('html')).toHaveClass(/\but-scrim-on\b/);
+  await expect(page.locator('#ut-scrim')).toBeVisible();
+  // Motion backstop (reduced motion is emulated in capture()).
+  await page.waitForFunction(
+    (sel) =>
+      [...(document.querySelector(sel) as HTMLElement).getAnimations({ subtree: true })].every(
+        (a) => a.playState !== 'running',
+      ),
+    shot.dialog,
+  );
+  // record-dialog.js focuses the first enabled field: blur it so no focus ring
+  // is in frame. Blurring fires no focusin, so the focus trap leaves it alone.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(dlg).toHaveAttribute('open', '');
+  await page
+    .waitForFunction(() => !document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling'), null, {
+      timeout: 10_000,
+    })
+    .catch(() => {});
+}
 
 // CLOCK-PINNED FOR DETERMINISM (ut-docs#930, was the accepted gap ut-docs#327
 // flagged): two screens legitimately render the current time server-side —
@@ -109,7 +460,16 @@ async function assertPinnedFonts(page: Page, locale: string) {
   fontsVerified.add(locale);
 }
 
-async function capture(page: Page, id: string, locale: string, route: string) {
+async function capture(page: Page, id: string, locale: string, route: string, interact?: (page: Page) => Promise<void>) {
+  const shot = dialogShots[id];
+  if (shot) {
+    // Reduced motion makes UT.motionOff() true, so the popup zoom (ADR-0122 §5)
+    // never starts and app.css zeroes transitions: nothing animates into frame.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    if (shot.seed) await shot.seed(page);
+  }
+  // Same reason as dialog shots: no popup zoom may start in an interact frame.
+  if (interact) await page.emulateMedia({ reducedMotion: 'reduce' });
   const sep = route.includes('?') ? '&' : '?';
   let url = `${route}${sep}lang=${locale}`;
   if (pinnedQuery[id]) url += `&${pinnedQuery[id]}`;
@@ -133,6 +493,7 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // push stream (GET /api/pairings/stream) — same never-idle shape, same 204.
   await page.route('**/api/pairings/stream', (r) => r.fulfill({ status: 204 }));
   await page.goto(url, { waitUntil: 'networkidle' });
+  if (mustShow[id]) await expect(page.locator(mustShow[id])).toBeVisible();
 
   // The locale actually took: RTL locales must render flipped, same
   // assertion as rtl.spec.ts — a screenshot of the wrong locale (or of a
@@ -164,6 +525,9 @@ async function capture(page: Page, id: string, locale: string, route: string) {
 
   // Cheap no-op safety net (no webfonts today): let any font load finish.
   await page.evaluate(() => (document as any).fonts.ready);
+
+  if (shot) await openDialog(page, shot);
+  if (interact) await interact(page);
 
   // fonts.ready resolves when any font FILES have loaded, not when the
   // browser has actually repainted the glyphs with them — a one-frame gap
@@ -198,13 +562,19 @@ async function capture(page: Page, id: string, locale: string, route: string) {
     // other half of the ut-docs#930 stabilization, alongside the htmx-idle
     // wait above.
     animations: 'disabled',
-    mask: [page.locator('.sb-update'), page.locator('.sb-conn')],
-    maskColor: '#0f172a',
+    // Dialog shots: the full-screen dialog covers the page status bar, and
+    // mask boxes paint over covered elements too (dark boxes on the dialog,
+    // ut-docs#5581 review M1). Hide the volatile chips' paint instead
+    // (visibility keeps layout), which also covers the dialog's own chip.
+    ...(shot
+      ? { style: '.sb-update, .sb-conn { visibility: hidden !important; }' }
+      : { mask: [page.locator('.sb-update'), page.locator('.sb-conn')], maskColor: '#0f172a' }),
   }); // viewport-sized, per config
 
   // A broken/blank capture must fail loudly, not ship silently.
   expect(fs.existsSync(out), `${out} was not written`).toBe(true);
   expect(fs.statSync(out).size, `${out} is suspiciously small — blank capture?`).toBeGreaterThan(MIN_BYTES);
+  if (shot) await expect(page.locator(shot.dialog)).toBeVisible(); // the frame really showed the dialog
 }
 
 // Same barcodes as sale.spec.ts (demo catalog, checksums fixed by migration
@@ -342,7 +712,9 @@ async function ensureOperator(page: Page) {
 // tables there since #902), which would leak into the manual's screenshots.
 // Narrowing this list is therefore a deliberate follow-up decision about
 // screenshot fixtures, not a leftover of the auth fix.
-const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings', 'tables'];
+const AUTH_TILL_TOPICS = ['users', 'translations', 'kitchen-stations', 'promotions', 'country-settings', 'tables', 'my-display'];
+// "my-display" (ut-docs#3440): the auth-off till has no operator, so the page would only show its
+// disabled "sign in" state; the auth till's signed-in admin gets the real, enabled page.
 
 const topics = routedTopics() as { id: string; route: string }[];
 
@@ -355,16 +727,73 @@ const MOVE_BASE = 'http://127.0.0.1:8093';
 const MOVE_ID = '5127d0c5-0000-4000-8000-000000000001';
 const MOVE_TILL_TOPICS = ['claim'];
 
-for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id))) {
+// ut-docs#5366 (ADR-0176): the `notices` topic's first route is the inbox. It is
+// captured on its own till (8105, run-till-notices.sh with the "docs" fixture),
+// which pulls three fixed notices (a critical strip, a partner message, an
+// info) from a fake cloud, so the screenshot shows the bell, the strip and the
+// inbox with one row open. A critical strip shows on every page of a till that
+// holds one, so no other topic may use that till.
+const NOTICES_BASE = 'http://127.0.0.1:8105';
+const NOTICES_OPEN_ID = '5366d000-0000-4000-8000-000000000002';
+const NOTICES_TILL_TOPICS = ['notices'];
+
+// ut-docs#335: the plugins topic's EXTRA shots (store + listing) are taken on a
+// docs-only till (8107, run-till-plugins.sh) that boots with a fixed offline
+// catalogue snapshot (e2e/seed_docs_plugin_catalog). The catalogue is read by
+// other screens too (update chips, /plugins), so no other topic may use that
+// till. The header plugins.png stays on the default till.
+const PLUGINS_BASE = 'http://127.0.0.1:8107';
+const PLUGINS_TILL_TOPICS = ['plugins'];
+
+for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id) && !MOVE_TILL_TOPICS.includes(t.id) && !NOTICES_TILL_TOPICS.includes(t.id))) {
   for (const locale of LOCALES as string[]) {
     test(`screenshot: ${topic.id} (${locale})`, async ({ page }) => {
       // The basket is server-side state shared across the run — staged once,
       // and only the sell screenshots want it in frame.
-      if (topic.id === 'sell') await ensureBasketLines(page);
+      if (topic.id === 'sell') {
+        await ensureBasketLines(page);
+        // sell.png always shows the default layout, whatever ran before it
+        // (the extra shots below change and restore the mode, ut-docs#2615).
+        await setBrowsingMode(page, DEFAULT_BROWSING_MODE);
+      }
       if (topic.id === 'invoices') await ensureInvoiceSeller(page);
       await ensureFullEffects(page);
-      await capture(page, topic.id, locale, topic.route);
+      await capture(page, topic.id, locale, routeOverride[topic.id] ?? topic.route);
     });
+  }
+}
+
+// Extra inline shots (ut-docs#2615), after every default-till topic so nothing
+// above ever sees a changed till setting; each recipe restores it in finally.
+for (const [tid, stems] of Object.entries(declaredExtraShots)) {
+  if (PLUGINS_TILL_TOPICS.includes(tid)) continue; // captured on the plugins till below
+  for (const stem of stems) {
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${stem} (${locale})`, async ({ page }) => {
+        const shot = extraShots[stem];
+        await ensureFullEffects(page);
+        let primary: unknown;
+        try {
+          await shot.setup?.(page);
+          await capture(page, stem, locale, shot.route, shot.interact);
+          await shot.ready(page);
+        } catch (e) {
+          // capture() already wrote the PNG; a failed `ready` means it shows
+          // the wrong screen, so it must not stay on disk to be committed.
+          primary = e;
+          fs.rmSync(path.join(imgRoot, locale, `${stem}.png`), { force: true });
+          throw e;
+        } finally {
+          try {
+            await shot.teardown?.(page);
+          } catch (te) {
+            // Never let a teardown failure mask the original error.
+            if (primary === undefined) throw te;
+            console.error(`teardown of ${stem} (${locale}) also failed:`, te);
+          }
+        }
+      });
+    }
   }
 }
 
@@ -401,6 +830,53 @@ test.describe('move approval (move till)', () => {
         await capture(page, topic!.id, locale, route);
         await expect(page.getByTestId('move-approval')).toBeVisible();
       });
+    }
+  }
+});
+
+test.describe('notices (notices till)', () => {
+  test.use({ baseURL: NOTICES_BASE });
+  for (const id of NOTICES_TILL_TOPICS) {
+    const topic = topics.find((t) => t.id === id);
+    for (const locale of LOCALES as string[]) {
+      test(`screenshot: ${id} (${locale})`, async ({ page }) => {
+        test.skip(!topic, `${id} topic no longer declares routes`);
+        // Turn the (default-off) setting on, as a shop owner does in Settings.
+        expect((await page.request.post('/api/settings/notices', { form: { enabled: 'on' } })).status()).toBe(204);
+        const route = `${topic!.route}?tab=all&open=${NOTICES_OPEN_ID}`;
+        // The notices arrive with the till's first check-ins: wait for them.
+        await expect(async () => {
+          await page.goto(`${route}&lang=${locale}`);
+          await expect(page.getByTestId('notice-row')).toHaveCount(3, { timeout: 1000 });
+        }).toPass({ timeout: 60_000 });
+        await expect(page.getByTestId('notices-strip')).toBeVisible();
+        await ensureFullEffects(page);
+        await capture(page, topic!.id, locale, route);
+        await expect(page.getByTestId('notices-strip')).toBeVisible();
+      });
+    }
+  }
+});
+
+test.describe('plugin store (plugins till)', () => {
+  test.use({ baseURL: PLUGINS_BASE });
+  for (const tid of PLUGINS_TILL_TOPICS) {
+    for (const stem of declaredExtraShots[tid] ?? []) {
+      const shot = extraShots[stem];
+      // Read-only shots only: this till is never restored between captures.
+      if (shot.setup || shot.teardown) throw new Error(`${stem}: plugins-till recipes must be read-only (no setup/teardown)`);
+      for (const locale of LOCALES as string[]) {
+        test(`screenshot: ${stem} (${locale})`, async ({ page }) => {
+          await ensureFullEffects(page);
+          try {
+            await capture(page, stem, locale, shot.route);
+            await shot.ready(page);
+          } catch (e) {
+            fs.rmSync(path.join(imgRoot, locale, `${stem}.png`), { force: true });
+            throw e;
+          }
+        });
+      }
     }
   }
 });

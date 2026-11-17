@@ -3,6 +3,7 @@ id: option-sets
 title: Option sets
 section: Setting up your shop
 order: 112
+public: true
 summary: "Define a reusable list of values once — Size: S / M / L — and generate an item's variants from it in one step, on any number of items."
 routes: [/catalog/option-sets]
 keywords: [option sets, variants, size, colour, generate, sku]

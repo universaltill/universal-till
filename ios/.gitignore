@@ -2,7 +2,16 @@
 # the Xcode project comes from project.yml (XcodeGen), the framework from
 # `gomobile bind` over ../mobile.
 /build/
-/UniversalTill.xcodeproj/
+# ...except the SwiftPM pin file (ut-docs#3049): `xcodegen generate` keeps it,
+# and committing it means no floating package version reaches a build.
+/UniversalTill.xcodeproj/*
+!/UniversalTill.xcodeproj/project.xcworkspace/
+/UniversalTill.xcodeproj/project.xcworkspace/*
+!/UniversalTill.xcodeproj/project.xcworkspace/xcshareddata/
+/UniversalTill.xcodeproj/project.xcworkspace/xcshareddata/*
+!/UniversalTill.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+/UniversalTill.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!/UniversalTill.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 # Written by `xcodegen generate` from project.yml's `info:` block.
 /UniversalTill/Info.plist
 # Written by scripts/make-app-icon.sh from the canonical brand mark

@@ -1,5 +1,42 @@
 package com.universaltill.pos
 
+/** ut-docs#5436 / ADR-0179: the verdict on an APK about to go to the installer. */
+sealed interface ApkCheck {
+    /** Pinned signer matched. */
+    data class Accept(val digest: String) : ApkCheck
+
+    /** Dormant: no pin compiled in (package and version checks still passed). */
+    object AcceptUnpinned : ApkCheck
+
+    /**
+     * [cls] is the closed class reported to the fleet roster (ut-docs#5446);
+     * [reason] is the detailed text for logcat and the page only and must
+     * never leave the device (it carries digests and foreign package names).
+     */
+    data class Refuse(val cls: RefuseClass, val reason: String) : ApkCheck
+}
+
+/**
+ * ut-docs#5446: why an update APK was refused. [wire] is what
+ * `Mobile.reportAndroidUpdateRefused` sends; it mirrors the closed set in Go's
+ * internal/androidupdate (`classes`), which pins it with a test.
+ */
+enum class RefuseClass(val wire: String) {
+    UNREADABLE_APK("unreadable_apk"),
+    WRONG_PACKAGE("wrong_package"),
+    NOT_NEWER("not_newer"),
+    SIGNER_UNREADABLE("signer_unreadable"),
+    MULTIPLE_SIGNERS("multiple_signers"),
+    SIGNER_NOT_PINNED("signer_not_pinned"),
+    CHECK_ERROR("check_error"),
+}
+
+/** ut-docs#6551: what to do before handing an APK to the system installer. */
+enum class InstallPreflight { PROCEED, NEEDS_PERMISSION }
+
+/** ut-docs#6551: what coming back from Android's "install unknown apps" screen means. */
+enum class PermissionResume { GRANTED, STILL_DENIED }
+
 /**
  * The pure decisions behind the in-app Android update (ut-docs#1541,
  * ut-docs#4312). No Android types on purpose: [MainActivity] supplies the
@@ -8,6 +45,40 @@ package com.universaltill.pos
 object UpdateLogic {
     const val ABI_ARM64 = "arm64-v8a"
     const val ABI_ARMV7 = "armeabi-v7a"
+
+    /** ut-docs#6551: bridge states the page (web/public/android-update.js) listens for. */
+    const val STATE_NEEDS_PERMISSION = "needs_permission"
+    const val STATE_PERMISSION_GRANTED = "permission_granted"
+    const val ERROR_STILL_DENIED = "still_denied"
+
+    /**
+     * ut-docs#6551: [canRequestPackageInstalls] false means Android would
+     * bounce the installer hand-off (or swallow it on some ROMs), so the
+     * operator is told and sent to the settings screen instead of seeing a
+     * silent no-op.
+     */
+    fun installPreflight(
+        sdkInt: Int,
+        canRequestPackageInstalls: () -> Boolean,
+    ): InstallPreflight =
+        // canRequestPackageInstalls() exists from API 26 (minSdk is 24): before
+        // that the global "Unknown sources" switch applies and the installer
+        // intent handles it, so proceed without calling the API.
+        if (sdkInt < API_O || canRequestPackageInstalls()) InstallPreflight.PROCEED else InstallPreflight.NEEDS_PERMISSION
+
+    /** Null when no permission screen was opened ([awaiting] false) or API < 26: nothing to report. */
+    fun permissionResume(
+        awaiting: Boolean,
+        sdkInt: Int,
+        canRequestPackageInstalls: () -> Boolean,
+    ): PermissionResume? =
+        when {
+            !awaiting || sdkInt < API_O -> null
+            canRequestPackageInstalls() -> PermissionResume.GRANTED
+            else -> PermissionResume.STILL_DENIED
+        }
+
+    private const val API_O = 26
 
     /**
      * Which release APK this till downloads (ut-docs#1541).
@@ -118,6 +189,47 @@ object UpdateLogic {
     ): Long {
         if (enqueuedWallMs == null || enqueuedWallMs > nowWallMs) return nowElapsedMs
         return nowElapsedMs - (nowWallMs - enqueuedWallMs)
+    }
+
+    /** ut-docs#5436: the pin set compiled into BuildConfig.APK_SIGNER_SHA256S ("" = dormant). */
+    fun parsePinSet(raw: String): Set<String> =
+        raw.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+
+    /** Lowercase hex SHA-256 of [der] (a certificate's DER bytes = Signature.toByteArray()). */
+    fun sha256Hex(der: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(der).joinToString("") { "%02x".format(it) }
+
+    /**
+     * ut-docs#5436 / ADR-0179: whether the APK about to go to the installer
+     * may go. The first failing rule wins; its reason is logged and passed to
+     * failUpdate. Package and version are checked even when dormant.
+     * [signerHistory] (API 28+, single signer only) is the rotation lineage.
+     */
+    fun checkUpdateApk(
+        archivePackage: String?,
+        ownPackage: String,
+        archiveVersionCode: Long?,
+        installedVersionCode: Long,
+        signerDigests: List<String>?,
+        pins: Set<String>,
+        signerHistory: List<String>? = null,
+    ): ApkCheck {
+        if (archivePackage == null) return ApkCheck.Refuse(RefuseClass.UNREADABLE_APK, "not a readable APK")
+        if (archivePackage != ownPackage) return ApkCheck.Refuse(RefuseClass.WRONG_PACKAGE, "package $archivePackage, expected $ownPackage")
+        if (archiveVersionCode == null || archiveVersionCode <= installedVersionCode) {
+            return ApkCheck.Refuse(RefuseClass.NOT_NEWER, "versionCode $archiveVersionCode not newer than $installedVersionCode")
+        }
+        if (pins.isEmpty()) return ApkCheck.AcceptUnpinned
+        if (signerDigests.isNullOrEmpty()) return ApkCheck.Refuse(RefuseClass.SIGNER_UNREADABLE, "signer unreadable")
+        if (signerDigests.size > 1) return ApkCheck.Refuse(RefuseClass.MULTIPLE_SIGNERS, "multiple signers")
+        val d = signerDigests[0].lowercase()
+        if (d in pins) return ApkCheck.Accept(d)
+        // API 28+ key rotation: the platform-verified proof-of-rotation lineage
+        // (signingCertificateHistory) containing a pinned key means the pinned
+        // key vouched for this signer. Only reached for a single signer.
+        val ancestor = signerHistory?.map { it.lowercase() }?.firstOrNull { it in pins }
+        if (ancestor != null) return ApkCheck.Accept(ancestor)
+        return ApkCheck.Refuse(RefuseClass.SIGNER_NOT_PINNED, "signer $d not pinned")
     }
 
     /** Whole percent of [done] over [total], or null when the total is unknown. */
