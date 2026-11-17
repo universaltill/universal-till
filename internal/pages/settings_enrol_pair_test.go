@@ -286,20 +286,6 @@ func TestEnrolPair_PromptFormDropsDuplicateSubmits(t *testing.T) {
 	}
 }
 
-// ut-docs#3861: a refused an explicit operator registration must not print the cloud's raw
-// JSON (or the endpoint) into the card.
-func refusingRegisterCloud(t *testing.T, status int, body string) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 // nameShop gives the shop a real name, so an explicit operator registration reaches the
 // (fake) cloud: an unnamed shop never does (ut-docs#4272).
 func nameShop(t *testing.T, d *common.Deps) {

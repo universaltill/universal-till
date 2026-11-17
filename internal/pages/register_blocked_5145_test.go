@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,27 +99,6 @@ func TestCloudAuthChip_BlockedCashierSeesNeutralChip(t *testing.T) {
 			t.Fatalf("cashier chip leaks %q: %s", leak, body)
 		}
 	}
-}
-
-// Test 15/16 (till side of the stub cloud): an explicit operator registration shows the translated
-// message with the date and never the raw body.
-func newDeviceLiveCloud(t *testing.T, d *common.Deps, usableFrom string) *atomic.Int32 {
-	t.Helper()
-	var calls atomic.Int32
-	m := http.NewServeMux()
-	m.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusConflict)
-		_, _ = fmt.Fprintf(w, `{"data":{"usable_from":%q},"error":{"code":"device_live","message":"RAWBODY this device was in use recently"}}`, usableFrom)
-	})
-	srv := httptest.NewServer(m)
-	t.Cleanup(srv.Close)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-	d.Cfg.Marketplace.PublicKey = strings.Repeat("ab", 32)
-	nameShop(t, d)
-	return &calls
 }
 
 // The plugin install path surfaces the block instead of failing silently, and

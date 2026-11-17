@@ -25,12 +25,6 @@ type termsCloud struct {
 	body  map[string]any
 }
 
-func (c *termsCloud) sent() map[string]any {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.body
-}
-
 // newTermsCloud fakes a cloud that registers successfully and records the
 // request body. It also resets the enroll package state around the test.
 func newTermsCloud(t *testing.T, d *common.Deps) *termsCloud {
