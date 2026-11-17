@@ -41,3 +41,5 @@ Built by Sonnet (subagent); reviewed by Opus 5.5 in a fresh context (different m
 
 ## Verdict
 Safe to merge.
+
+Pre-flight: web/help topic n/a (restores expected scroll behaviour, no operator step); docs-shots surface hash refreshed (no pixel change, `Docs-Shots-Unchanged`); en.json/i18n-meta n/a (no strings); reference/README n/a; review record updated (this file). 2026-11-17 PR sweep (lane:cloud-41): merged origin/main in (only `web/help/img/manifest.json` conflicted, re-hashed); `buttons.html` hunk applied unchanged.
