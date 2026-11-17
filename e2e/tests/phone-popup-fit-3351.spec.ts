@@ -201,16 +201,20 @@ async function gotoRoute(page: Page, route: string) {
 // opens them, with their server-filled content inside.
 const RUN = Date.now().toString(36);
 let seq = 0;
-type ModItem = { itemId: string; name: string; barcode: string; optionName: string };
+type ModItem = { itemId: string; name: string; barcode: string; optionName: string; plain: { itemId: string; name: string; barcode: string } };
 
 // Same seeding path as popup-zoom-2944.spec.ts's seedModifierItem: a CSV
 // import, a sell-screen tile, one modifier group with one option. A fresh
 // item per test (a re-import of a deactivated SKU lands on the inactive row).
+// Plus one plain item with its own tile, for the table-picker phase's basket
+// line: nothing in the shared worker till's seed is reliably sellable there.
 async function seedModifierItem(page: Page): Promise<ModItem> {
   const tag = `${RUN}${++seq}`;
   const name = `Pf3411 Mod ${tag}`;
   const barcode = `PF3411BC-${tag}`;
-  const csv = `Name,SKU,Barcode,Price,Category,In stock\n${name},PF3411${tag},${barcode},1.00,Pf3411 Cat,1\n`;
+  const plainName = `Pf3411 Plain ${tag}`;
+  const plainBarcode = `PF3411PL-${tag}`;
+  const csv = `Name,SKU,Barcode,Price,Category,In stock\n${name},PF3411${tag},${barcode},1.00,Pf3411 Cat,1\n${plainName},PF3411P${tag},${plainBarcode},1.00,Pf3411 Cat,1\n`;
   await page.goto('/import');
   await page.setInputFiles('input[type=file]', { name: `import-pf3411-${RUN}.csv`, mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await Promise.all([
@@ -219,7 +223,9 @@ async function seedModifierItem(page: Page): Promise<ModItem> {
   ]);
   await page.goto('/catalog');
   const itemId = (await page.locator(`.catalog-row[data-name="${name}"]`).first().getAttribute('data-id', { timeout: 15_000 }))!;
+  const plainId = (await page.locator(`.catalog-row[data-name="${plainName}"]`).first().getAttribute('data-id', { timeout: 15_000 }))!;
   expect((await page.request.post('/api/buttons/add', { form: { itemId, label: name, code: barcode } })).ok()).toBe(true);
+  expect((await page.request.post('/api/buttons/add', { form: { itemId: plainId, label: plainName, code: plainBarcode } })).ok()).toBe(true);
   const groupName = `Size ${tag}`;
   expect((await page.request.post('/api/catalog/modifier-group', { form: { itemId, name: groupName, minSelect: '0', maxSelect: '1' } })).ok()).toBe(true);
   const html = await (await page.request.get(`/api/catalog/modifier-groups-panel?item_id=${itemId}`)).text();
@@ -230,7 +236,7 @@ async function seedModifierItem(page: Page): Promise<ModItem> {
   // A realistic long-ish option label, so the option grid has to wrap.
   const optionName = `Extra large with oat milk ${tag}`;
   expect((await page.request.post('/api/catalog/modifier-option', { form: { groupId, itemId, name: optionName } })).ok()).toBe(true);
-  return { itemId, name, barcode, optionName };
+  return { itemId, name, barcode, optionName, plain: { itemId: plainId, name: plainName, barcode: plainBarcode } };
 }
 
 for (const [w, h] of [[390, 844], [440, 956]] as const) {
@@ -399,16 +405,21 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
           await closeAll(page);
         }, STEP);
 
-        // The table picker, opened from the phone's basket sheet with a
-        // dine-in line in the basket (ADR-0073 Decision 5) and one seeded table.
+        // The table picker, opened from the phone's basket sheet with one
+        // line in the basket and one seeded table (the trigger shows once a
+        // table exists).
         await test.step('table picker: seed one table', async () => {
           await deactivateAllTables(page);
           await createTable(page, tableLabel);
         }, { timeout: 45_000 }); // a login + one reload per active table
         await test.step('table picker: open the basket sheet', async () => {
           await page.request.post('/api/pos/reset');
-          await page.request.post('/api/pos/scan', { form: { code: '5000000000012', qty: '1' } });
           await gotoRoute(page, '/');
+          // The basket line comes from this test's own plain tile. A POST of
+          // the seed's fixed barcode left the basket empty on CI's shared
+          // worker till, so the phone bar stayed hidden and its tap hung.
+          await page.locator('.btn-tile:visible', { hasText: item.plain.name }).click(TAP);
+          await expect(page.locator('.basket-phonebar'), 'the tile tap must put a line in the basket').not.toHaveClass(/is-empty/);
           await page.locator('.basket-phonebar').click(TAP);
           await expect(page.locator('body')).toHaveClass(/pos-sheet-open/);
           await page.waitForTimeout(400);
@@ -426,14 +437,16 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
         // A dead page (test timeout) must not skip the data cleanup below, and
         // a cleanup that fails or hangs must not replace the failure above:
         // the cleanup gets its own time and every call is bounded and logged.
-        test.setTimeout(test.info().timeout + 30_000);
+        test.setTimeout(test.info().timeout + 45_000);
         const warn = (what: string) => (e: unknown) => console.warn(`pf3411 cleanup ${what}:`, e);
         await test.step('cleanup', async () => {
           await closeAll(page).catch(warn('closeAll'));
           await page.request.post('/api/buttons/remove', { form: { code: item.barcode }, timeout: 5_000 }).catch(warn('buttons/remove'));
           await page.request.post('/api/catalog/item/deactivate', { form: { id: item.itemId }, timeout: 5_000 }).catch(warn('item/deactivate'));
+          await page.request.post('/api/buttons/remove', { form: { code: item.plain.barcode }, timeout: 5_000 }).catch(warn('plain buttons/remove'));
+          await page.request.post('/api/catalog/item/deactivate', { form: { id: item.plain.itemId }, timeout: 5_000 }).catch(warn('plain item/deactivate'));
           await deactivateAllTables(page).catch(warn('deactivateAllTables'));
-        }, { timeout: 25_000 }).catch(warn('step'));
+        }, { timeout: 40_000 }).catch(warn('step'));
       }
     });
   });

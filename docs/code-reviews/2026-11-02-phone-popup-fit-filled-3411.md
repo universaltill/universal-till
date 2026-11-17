@@ -66,3 +66,10 @@ Mutation (table-picker test id renamed): the test fails in 15 s with `› table 
 Independent review (Sonnet, read-only): it found nothing that hides a failure or passes vacuously. It raised 2 medium findings: the cleanup was still unbounded, and seeding was not instrumented. Both are fixed above. Of its 2 low findings, the 30 s table-seed step is now 45 s, and swallowed cleanup errors are now logged. Its info finding was the stale dates in the comment, now removed. Its note on the `^1.48.0` floor was not acted on: the lockfile pins 1.61.1, which supports step timeouts.
 
 Not merged by this lane: the next CI run names the hanging step, and the fix follows on this PR.
+
+## Fix commit (2026-11-17, lane:cloud-41)
+The diagnostics run (`98ff949`) named the hang in `table picker: open the basket sheet`. The `.basket-phonebar` tap waited because the bar was never visible: the basket was still empty. The `POST /api/pos/scan` of the seed's fixed barcode `5000000000012` had added no line on CI's shared worker till, and its status was never checked. Tapping "the first plain sell tile" instead was not reliable either: locally, none was visible at phone width.
+
+Fix: the CSV import seeds a second plain item with its own sell tile. The phase taps that tile by name and asserts the bar lost `is-empty` (with a message) before opening the sheet. Cleanup also removes the plain tile and deactivates the plain item. The cleanup step was raised to 40 s (+45 s test time), and the stale "dine-in line" comment was reworded. Both tests pass locally (CI=1, de overlay).
+
+Independent review (Sonnet, read-only, same reviewer): safe to merge. Its 2 low findings are fixed: the cleanup budget and the comment. Its info note: the barcode cause is inferred, not proven, because the scan status was never asserted. Other specs that scan `5000000000012` pass in CI, so this test sidesteps the cause rather than chasing it.
