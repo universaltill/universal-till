@@ -62,9 +62,6 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
 internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebuilt
 internal/data/tills_repo.go: unreachable func: TillsRepo.InsertTill
-internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Delete
-internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.GetAll
-internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Set
 internal/devicepay/cloudcall.go: unreachable func: Call
 internal/devicepay/cloudcall.go: unreachable func: Caller.Call
 internal/devicepay/cloudcall.go: unreachable func: Caller.client
