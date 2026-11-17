@@ -70,3 +70,14 @@
 })();
 </script>
 {{ end }}
+
+{{/* ut-docs#6400 (Microsoft Store policy 11.13): the marketplace publisher
+     terms and content guidelines, linked from the store on every channel.
+     Plain links to the website (opened outside the till); nothing is fetched
+     when this renders. Takes the page data (.TermsHref, .GuidelinesHref). */}}
+{{ define "store_marketplace_links" }}
+<p class="muted store-legal-links" style="font-size:.85rem; margin:1rem 0 0; display:flex; flex-wrap:wrap; gap:.25rem 1.2rem">
+  <a href="{{ .TermsHref }}" target="_blank" rel="noopener" hx-boost="false" style="min-height:44px; display:inline-flex; align-items:center">{{ T "plugins.store.marketplace_terms" }}</a>
+  <a href="{{ .GuidelinesHref }}" target="_blank" rel="noopener" hx-boost="false" style="min-height:44px; display:inline-flex; align-items:center">{{ T "plugins.store.content_guidelines" }}</a>
+</p>
+{{ end }}
