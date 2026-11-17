@@ -1,9 +1,9 @@
 package catalog
 
 // ut-docs#6125: the full-screen catalog dialogs sit BESIDE the nav rail and
-// ABOVE the status bar (coding-standards §10, ut-docs#1999), and on a phone
+// ABOVE the status bar (coding-standards §10, ut-docs#1999), and at every width
 // the item editor carries its own Lock + exit-to-OS inside the title line.
-// These pin the server-rendered shape; dialog-lock-status-reachable-6125
+// These pin the server-rendered shape; record-dialog-lock-status-reachable-6125
 // .spec.ts drives the geometry and the real logout in a browser.
 
 import (
@@ -33,7 +33,7 @@ func TestCatalogDialogs_SitBesideChrome(t *testing.T) {
 	// #tax-codes-modal in app.css (ut-docs#6553), keyed by id; no class needed.
 }
 
-func TestItemForm_PhoneLockAndExitInTitleLine(t *testing.T) {
+func TestItemForm_LockAndExitInTitleLine(t *testing.T) {
 	dialog := itemFormDialog(t, catalogPageBody(t))
 	titleStart := strings.Index(dialog, `class="catalog-form-head-title"`)
 	h3 := strings.Index(dialog, `<h3 id="item-form-title"`)

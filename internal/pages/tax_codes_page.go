@@ -253,7 +253,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			// time, same reasoning as bugreport_panel.html just above.
 			filepath.Join("web", "ui", "partials", "pos_alert.html"),
 			filepath.Join("web", "ui", "partials", "tax_codes_table.html"),
-			// ut-docs#6125: the dialog head's phone Lock + exit-to-OS
+			// ut-docs#6125: the dialog head's in-title Lock + exit-to-OS
 			// ("dialog_status_inline").
 			filepath.Join("web", "ui", "partials", "record_dialog.html"),
 		}
