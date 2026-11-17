@@ -33,8 +33,8 @@ func newSettingsLanguageDeps(t *testing.T) (*http.ServeMux, *common.Deps, *fakeM
 	resetLangCatalogForTest(t)
 	mux, d := newRealDBDeps(t)
 	initTestPaths(t)
-	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
-	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "com.universaltill.language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "com.universaltill.language-de", "1.0.0"))
 	d.Cfg.Marketplace = mkt.config()
 	return mux, d, mkt
 }
@@ -179,7 +179,7 @@ func TestSettingsLanguagePickQueuesInstallThenChipAppliesIt(t *testing.T) {
 
 	// The existing background retry installs the pack.
 	basePluginRetryTick(t.Context(), d)
-	if active, _ := data.NewPluginRepo(d.Db).PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+	if active, _ := data.NewPluginRepo(d.Db).PluginActive(t.Context(), "com.universaltill.language-de"); !active {
 		t.Fatal("the retry tick should have installed the de pack")
 	}
 	makeLocaleInstalled(t, "de")
@@ -263,7 +263,7 @@ func TestSettingsLanguageChipReportsPackThatNeverArrived(t *testing.T) {
 	if rec := postForm(mux, "/api/settings/save", url.Values{"locale": {"de"}}, &mgrUser); rec.Code != http.StatusNoContent {
 		t.Fatalf("save de = %d", rec.Code)
 	}
-	if err := dismissPendingBasePlugin(t.Context(), d, "language", "de"); err != nil {
+	if err := dismissPendingBasePluginSpec(t.Context(), d, basePluginSpec{CanonicalType: "language", Locale: "de"}); err != nil {
 		t.Fatalf("dismiss: %v", err)
 	}
 	chip := getLanguageChip(t, mux, &mgrUser)

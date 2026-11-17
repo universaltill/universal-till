@@ -65,10 +65,9 @@ func TestAgentSettingsCatalogue_LinksAndWordsExist_4129(t *testing.T) {
 			if k == "" {
 				continue
 			}
-			for name, m := range locales {
-				if strings.TrimSpace(m[k]) == "" {
-					t.Errorf("%s: key %s missing in %s", s.Key, k, name)
-				}
+			// English is the only required locale (ADR-0160 section 2).
+			if strings.TrimSpace(locales["en.json"][k]) == "" {
+				t.Errorf("%s: key %s missing in en.json", s.Key, k)
 			}
 		}
 		if s.Writable {

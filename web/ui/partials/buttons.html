@@ -70,6 +70,16 @@
        fragment and a page has no such header; sell-screen-watch.js seeds
        from it. The badge template sits first, outside #buttons-grid. */}}
   {{ if not .EditMode }}{{ template "tile-badges-template" . }}{{ end }}
+  {{/* ADR-0176 (ut-docs#5366): the one slot for an "important" notice toast,
+       in flow at the top of the PRODUCTS pane (never the basket column, never
+       over the total or Pay). Static markup, so the cached sell screen stays
+       shared; hx-preserve keeps it (and a toast showing in it) across this
+       grid's own re-fetches. GET /notices/toast is empty unless the flag is
+       on and the operator may see notices. hx-swap="innerHTML" is explicit: the
+       grid root above sets outerHTML and htmx inherits it, which would swap
+       this mount away with its own (empty) answer. app.js skips the poll while the
+       payment overlay is open, which is what queues a toast during tender. */}}
+  {{ if not .EditMode }}<div id="notices-toast" class="notices-toast-mount" aria-live="polite" hx-preserve hx-swap="innerHTML" hx-get="/notices/toast" hx-trigger="load, every 15s, notices-check from:body"></div>{{ end }}
   {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
        one, ut-docs#2294 gave it its own grid of every active item, and
        both are retired here) -- it shows only category tabs plus the
@@ -319,6 +329,32 @@
                detail as the new value, which would overwrite q. */}}
           {{ if not .EditMode }}if (st.q) { this.q = st.q; this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.dispatchEvent(new Event('input', { bubbles: true })); }); }{{ end }}
         }
+        {{/* ut-docs#2876: keep the grid's scroll across THIS root's own
+             buttons-changed / modifiers-changed refresh (ut-docs#2765 fires
+             it on an open sale screen when the catalog changes elsewhere --
+             without this the operator is yanked to the top of a long tab).
+             The scrolling element is the swap root itself (.products,
+             overflow-y:auto), so the offset is captured on the root's own
+             htmx:beforeSwap -- right before a swap that will really happen,
+             so scrolling during the request counts and a failed refresh
+             leaves nothing behind (the listener dies with the old root) --
+             and stashed with the tab and a timestamp. It is consumed here, once,
+             and applied only for that same tab, only moments later and not
+             while a search's results view is what's showing: window.
+             utSaleGridState survives boosted navigation, so a fresh visit or
+             a tab change must never jump to an old offset. */}}
+        const root = this.$el.closest('.products');
+        const sc = st && st.scroll;
+        if (st && sc) window.utSaleGridState = Object.assign({}, st, { scroll: null });
+        const searchShowing = {{ if .EditMode }}false{{ else }}!!(st && st.q){{ end }};
+        if (root && sc && sc.tab === this.tab && Date.now() - sc.at < 10000 && !searchShowing) {
+          this.$nextTick(() => requestAnimationFrame(() => { root.scrollTop = sc.top; }));
+        }
+        if (root) root.addEventListener('htmx:beforeSwap', (ev) => {
+          const d = ev.detail;
+          if (!d || d.elt !== root || d.target !== root || !d.shouldSwap) return;
+          window.utSaleGridState = Object.assign({}, window.utSaleGridState, { scroll: { tab: this.tab, top: root.scrollTop, at: Date.now() } });
+        });
         {{/* Stash the tab now, not only on change: the rendered default tab
              (never clicked, so the watch never fired) must survive a
              buttons-changed re-render too -- otherwise hiding the default
@@ -328,7 +364,19 @@
         this.$watch('tab', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: v }); });
         this.$watch('q', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { q: v }); });
       },
-      openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
+      {{/* ut-docs#5483: WebKit (26.5) once left the field visible but
+           unfocused after $nextTick's focus() (#products-search carries
+           inputmode="none" from osk.js). One retry a frame later, only if
+           focus did not take, so a real tap always lands in the field. */}}
+      openSearch() {
+        this.searching = true;
+        this.$nextTick(() => {
+          const i = this.$refs.search;
+          if (!i) return;
+          i.focus();
+          if (document.activeElement !== i) requestAnimationFrame(() => { if (this.searching) i.focus(); });
+        });
+      },
       closeSearch() {
         this.searching = false;
         this.q = '';
@@ -1142,7 +1190,11 @@
        into the new order IN PLACE -- no buttons-changed re-render, which
        repainted the whole replica and lost the operator's scroll position
        (ut-docs#3074). On a refusal it puts the rows back and shows the
-       reason in #designer-categories-msg.
+       reason on the moved row itself (data-reorder-item-msg), where the
+       operator is looking: under the Move buttons while its form is open
+       (#designer-cat-move-msg-<id>), else under its name
+       (#designer-cat-msg-<id>). #designer-categories-msg can sit scrolled
+       out of view above a long list (ut-docs#3104); it stays the fallback.
        The help text describes the list ONCE (aria-describedby here, not
        on every row's button — a screen reader would repeat it per row);
        each row's button only names its keys (aria-keyshortcuts). */}}
@@ -1182,7 +1234,7 @@
         <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
-              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
+              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}" data-confirm-ok="{{ T "categories.deactivate" }}"{{ end }}>
           <input type="hidden" name="active" value="0">
           <button type="submit" class="btn secondary btn-icon btn-icon-danger" id="designer-cat-active-{{ $c.ID }}"
                   {{ if gt $c.ItemCount 0 }}aria-describedby="designer-cat-blocked-{{ $c.ID }}"{{ end }}
@@ -1201,7 +1253,7 @@
       {{ if and $c.IsActive (gt $c.ItemCount 0) }}
       <p class="muted designer-cat-blocked" id="designer-cat-blocked-{{ $c.ID }}" data-testid="designer-cat-blocked-{{ $c.ID }}">{{ printf (T "designer.category.deactivate_blocked_hint") $c.ItemCount }}</p>
       {{ end }}
-      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite"></p>
+      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite" data-reorder-item-msg></p>
       <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       <form class="designer-cat-form" id="designer-cat-form-{{ $c.ID }}" x-show="editing" x-cloak
             hx-post="/api/designer/categories/{{ $c.ID }}" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML" autocomplete="off">
@@ -1227,6 +1279,10 @@
             <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span> {{ T "designer.move_down" }}
           </button>
         </div>
+        {{/* ut-docs#3104: a refused Move earlier/later says why right here,
+             under the button just pressed -- on a phone the row's own line
+             above sits off-screen behind this tall form. */}}
+        <p class="designer-cat-msg" id="designer-cat-move-msg-{{ $c.ID }}" role="status" aria-live="polite" data-reorder-item-msg></p>
         <div class="designer-cat-form-actions">
           <button type="submit" class="btn primary compact" id="designer-cat-save-{{ $c.ID }}">{{ T "common.save" }}</button>
           <button type="button" class="btn secondary compact" @click="editing = false">{{ T "common.cancel" }}</button>
@@ -1686,7 +1742,7 @@
                    confirm() dialog that would only ever precede the SAME
                    eventual elevation either way. The confirm still guards
                    the real, granted path unchanged. */}}
-              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}"{{ end }}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}" data-confirm-ok="{{ T "confirm.remove" }}"{{ end }}
               hx-swap="none"
               aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
               title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">

@@ -17,7 +17,7 @@ test.beforeAll(async ({ request }) => {
     form: {
       code: CODE, type: 'amount', value_amount: '2.50',
       description: 'Weekend offer on every hot drink and pastry',
-      starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '',
+      starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '', // fixed-date:ok layout seed; /promotions lists by is_active, not dates
     },
     maxRedirects: 0,
   });
@@ -28,29 +28,44 @@ test.beforeAll(async ({ request }) => {
 
 for (const width of [360, 440]) {
   for (const lang of ['en', 'fa']) {
-    test(`/promotions at ${width}px (${lang}): every edit control sits inside its card`, async ({ page }) => {
+    test(`/promotions at ${width}px (${lang}): the card's title is the code button, and the dialog fits`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       await page.goto(`/promotions?lang=${lang}`);
       const card = page.locator('table.t-cards tr.t-cards-row', { hasText: CODE });
       await expect(card).toBeVisible();
       const r = await card.evaluate((tr) => {
         const box = tr.getBoundingClientRect();
-        const controls = Array.from(tr.querySelectorAll('form.users-inline :is(select, input:not([type="hidden"]), button)'))
-          .filter((el) => getComputedStyle(el).display !== 'none')
-          .map((el) => {
-            const b = el.getBoundingClientRect();
-            return { name: el.getAttribute('name') || (el.textContent || '').trim(), type: el.getAttribute('type'), left: Math.round(b.left), right: Math.round(b.right), w: Math.round(b.width) };
-          });
-        return { left: box.left, right: box.right, controls, sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
+        const nameBtn = tr.querySelector('[data-record-edit]')!.getBoundingClientRect();
+        const inTitle = !!tr.querySelector('.t-cards-title [data-record-edit]');
+        return {
+          left: box.left, right: box.right,
+          codeBtn: { left: Math.round(nameBtn.left), right: Math.round(nameBtn.right) },
+          inTitle,
+          // ut-docs#3661: no inline edit form is left in the row.
+          inlineControls: tr.querySelectorAll('form, select, input').length,
+          sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
+        };
       });
       expect(r.sw, 'page must not scroll horizontally').toBeLessThanOrEqual(r.cw);
-      // select + value + description + 2 dates + Save + Deactivate.
-      expect(r.controls.length, JSON.stringify(r.controls)).toBe(7);
-      for (const c of r.controls) {
-        expect(c.left >= r.left - 1 && c.right <= r.right + 1, `${c.name} [${c.left}, ${c.right}] outside card [${r.left}, ${r.right}]`).toBe(true);
-        // The shared 7.5rem input width cut a date off at "31/12/202"; a
-        // manager must read the whole year they are editing.
-        if (c.type === 'date') expect(c.w, `${c.name} too narrow to show its year`).toBeGreaterThanOrEqual(150);
+      expect(r.inlineControls, 'no inline edit form in the card').toBe(0);
+      expect(r.inTitle, 'the code button is the card title').toBe(true);
+      expect(r.codeBtn.left >= r.left - 1 && r.codeBtn.right <= r.right + 1, `code button [${r.codeBtn.left}, ${r.codeBtn.right}] outside card [${r.left}, ${r.right}]`).toBe(true);
+
+      // The More toggle never opens the dialog; the card title (code button) does.
+      const toggle = card.locator('.t-cards-toggle');
+      await expect(toggle).toHaveCount(1);
+      await toggle.click();
+      await expect(page.locator('#promotion-dialog')).toBeHidden();
+
+      // The edit controls moved into the record dialog: open it and check
+      // the dates are wide enough to show the whole year.
+      await card.locator('[data-record-edit]').click();
+      await expect(page.locator('#promotion-dialog')).toBeVisible();
+      for (const name of ['starts_at', 'ends_at']) {
+        const b = (await page.locator(`#promotion-form input[name="${name}"]`).boundingBox())!;
+        expect(b.width, `${name} too narrow to show its year`).toBeGreaterThanOrEqual(150);
+        expect(b.x).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.width).toBeLessThanOrEqual(width + 0.5);
       }
     });
   }

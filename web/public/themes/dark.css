@@ -74,3 +74,11 @@ h2 { color: var(--text); }
    its CHECKED fill in --brand — 1.01:1 against this theme's --surface, so
    ticking it looked like nothing happened. --accent is 9.53:1 there. */
 .offline-toggle input { accent-color: var(--accent); }
+
+/* ADR-0176 notices (ut-docs#5366): the severity tints re-tuned for this
+   theme's surfaces (measured against the design mock's dark pairs). */
+:root {
+  --notice-info-bg: #14264a;  --notice-info-bd: #4f74c4;  --notice-info-fg: #e5e7eb;
+  --notice-imp-bg: #3a2a06;   --notice-imp-bd: #c58a1a;   --notice-imp-fg: #fcd34d;
+  --notice-crit-bg: #3b0d0d;  --notice-crit-bd: #f87171;  --notice-crit-fg: #fecaca;
+}

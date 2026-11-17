@@ -3,6 +3,7 @@ id: quickstart
 title: So verwenden Sie die Kasse
 section: Täglicher Verkauf
 order: 5
+public: true
 summary: Alles, was Sie für einen normalen Tag brauchen, in kleinen Schritten.
 keywords: [start, erster tag, grundlagen, schnell, anleitung, personal]
 ---

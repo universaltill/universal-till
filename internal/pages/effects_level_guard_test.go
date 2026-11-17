@@ -49,9 +49,11 @@ func TestBaseHTMLRendersExactlyOneFxClass(t *testing.T) {
 		if strings.Contains(tag, "fx-auto") {
 			t.Errorf("%s: fx-auto rendered — auto must be resolved on the server", level)
 		}
-		if !strings.Contains(body, "UT.fxLevel = '"+level+"';") {
-			t.Errorf("%s: window.UT.fxLevel not rendered as %q", level, level)
-		}
+	}
+	// ut-docs#2972: UT.fxLevel is no longer templated into an inline script;
+	// ut-motion.js parses it from the fx-* class asserted above.
+	if js := readMotionJS(t); !strings.Contains(js, "fx-(full|balanced|light)") || !strings.Contains(js, "UT.fxLevel = fxm ? fxm[1] : '';") {
+		t.Errorf("ut-motion.js must read UT.fxLevel from the <html> fx-* class")
 	}
 }
 
@@ -124,18 +126,22 @@ func TestAppCSSHasFxLightBlockZeroingMotion(t *testing.T) {
 // ADR-0119 §3 (JS layer): one shared predicate, defined in the first
 // script of the document, reduced motion as its floor.
 func TestBaseHTMLMotionOffPredicate(t *testing.T) {
-	html := readBaseHTML(t)
+	html := readMotionJS(t)
 	def := strings.Index(html, "UT.motionOff = function () {")
 	if def < 0 {
-		t.Fatalf("base.html must define UT.motionOff")
+		t.Fatalf("ut-motion.js must define UT.motionOff")
 	}
 	if !strings.Contains(html[def:def+200], "!!(reduce && reduce.matches) || UT.fxLevel === 'light'") {
 		t.Errorf("UT.motionOff must be reduced motion OR the Light level: %s", html[def:def+200])
 	}
-	if first := strings.Index(html, "<script>"); first < 0 || def < first || strings.Index(html[first+1:], "<script") < def-first-1 {
-		t.Errorf("UT.motionOff must be defined in the FIRST <script> of base.html, before every other script uses it")
+	// ut-docs#2972: defined in ut-motion.js, which base.html loads as its
+	// FIRST <script> (synchronously), before any inline script and app.js.
+	base := readBaseHTML(t)
+	tag := strings.Index(base, `<script src="/public/ut-motion.js`)
+	if first := strings.Index(base, "<script"); tag < 0 || tag != first {
+		t.Errorf("ut-motion.js (UT.motionOff) must be the FIRST <script> of base.html, before every other script uses it")
 	}
-	if app := strings.Index(html, `src="/public/app.js`); app >= 0 && app < def {
+	if app := strings.Index(base, `src="/public/app.js`); app >= 0 && app < tag {
 		t.Errorf("UT.motionOff must be defined before app.js is loaded")
 	}
 }
@@ -148,18 +154,20 @@ func TestEveryMotionPathUsesMotionOff(t *testing.T) {
 	for _, want := range []string{
 		"if (UT.motionOff()) e.viewTransition.skipTransition();",
 		"if (UT.motionOff()) { if (vt.skipTransition) vt.skipTransition(); return; }",
-		"if (UT.motionOff() || !document.startViewTransition) { e.preventDefault(); return; }",
+		"if ((UT.motionOff && UT.motionOff()) || !document.startViewTransition) { e.preventDefault(); return; }",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("base.html motion path does not use UT.motionOff(): missing %q", want)
 		}
 	}
 	// The media query is read exactly once: inside the predicate.
-	if n := strings.Count(html, "matchMedia('(prefers-reduced-motion: reduce)')"); n != 1 {
-		t.Errorf("base.html reads prefers-reduced-motion %d times — every path must go through UT.motionOff()", n)
+	// ut-docs#2972: the predicate moved to ut-motion.js, so count across both.
+	both := html + readMotionJS(t)
+	if n := strings.Count(both, "matchMedia('(prefers-reduced-motion: reduce)')"); n != 1 {
+		t.Errorf("base.html + ut-motion.js read prefers-reduced-motion %d times — every path must go through UT.motionOff()", n)
 	}
-	if strings.Contains(html, "reduce && reduce.matches) ||") && !strings.Contains(html, "!!(reduce && reduce.matches) || UT.fxLevel") {
-		t.Errorf("a bare reduced-motion check is back in base.html")
+	if strings.Contains(both, "reduce && reduce.matches) ||") && !strings.Contains(both, "!!(reduce && reduce.matches) || UT.fxLevel") {
+		t.Errorf("a bare reduced-motion check is back in base.html / ut-motion.js")
 	}
 	app := readAppJS(t)
 	if !strings.Contains(app, "window.UT.motionOff()") || !strings.Contains(app, "    if (motionOff()) return;") {
