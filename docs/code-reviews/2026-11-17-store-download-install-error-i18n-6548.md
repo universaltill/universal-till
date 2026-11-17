@@ -68,9 +68,13 @@ separate worktree). **Tester:** separate agent (driven run + screenshots).
   tag rendered. **Not looked at:** dark theme, de/ar, grid tile after a
   failed install, browser-driven install failure, real touch hardware.
 
-Pre-flight: `web/help/` topic updated (`web/help/en/plugins.md`; no
-screenshot changed — the error line is transient text, the shots show the
-idle page); `en.meta.json` updated for both new keys; `reference/` n/a (no
+Pre-flight: `web/help/` topic updated (`web/help/en/plugins.md`); docs-shots:
+`make docs-shots` re-run after CI's `guard-docs-shots` flagged the changed
+surface + topic hash — only `web/help/img/manifest.json` is committed. Every
+PNG re-rendered differently in this sandbox, including unrelated topics
+(`catalog` 33,840 px, `plugins` 19,275 px of 614,400), i.e. renderer noise,
+not this change (the new text appears only after a failed action; idle
+pages are unchanged), so the committed PNGs are kept; `en.meta.json` updated for both new keys; `reference/` n/a (no
 reference page documents these error strings); README n/a (not stale);
 follow-ups → ut-docs#6555 (Backlog).
 
