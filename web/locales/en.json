@@ -3874,6 +3874,10 @@
   "subscription.cap.order_tracking": "Customer order tracking",
   "subscription.cap.central_catalog": "One product catalogue for all your shops",
   "subscription.cap.consolidated_reporting": "Combined reports across your shops",
+  "settings.enrol.claim_store_code": "Your claim code:",
+  "settings.enrol.claim_store_how": "To manage your till online, sign in to your Universal Till account on another device and enter this code.",
+  "settings.enrol.claim_help_store": "Link this store to your Universal Till account to manage it online. Generate a code, then enter it in your account on another device.",
+  "settings.enrol.cloud_sync_off_store": "Cloud sync is off for this shop. It starts by itself once this shop's online account has it switched on.",
   "settings.enrol.claim_failed": "Could not get a claim code — check the internet connection and try again.",
   "settings.enrol.not_configured": "No cloud address is set up on this till, so it can't register. The till keeps working offline; ask whoever installed it to set one up.",
   "settings.enrol.busy": "Another registration attempt is still running — wait a moment and try again.",
@@ -4168,5 +4172,15 @@
   "photoimport.status.fetch_failed": "Download failed",
   "photoimport.status.blocked_url": "Web address not allowed",
   "photoimport.status.store_failed": "Could not save the photo",
-  "photoimport.status.total_limit": "Skipped: size limit for one run reached"
+  "photoimport.status.total_limit": "Skipped: size limit for one run reached",
+  "about.title": "About Universal Till",
+  "about.installed_version": "Installed version:",
+  "about.privacy_link": "Privacy notice",
+  "about.terms_link": "Terms",
+  "about.licences_link": "Open-source licences",
+  "about.delete_account_link": "Delete your account",
+  "about.delete_account_help": "Deleting your Universal Till account is done on the Universal Till website.",
+  "about.more_link": "Privacy, terms, licences and account deletion",
+  "about.back_link": "Back to About",
+  "about.addresses_help": "This device cannot open web links. To read these pages or delete your account, type the address into a browser on another device."
 }

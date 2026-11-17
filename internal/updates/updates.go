@@ -103,7 +103,7 @@ func CheckNow(ctx context.Context) Status {
 // once the checker goroutine has fully exited (ctx cancelled) — callers use
 // it to wait out shutdown instead of returning while the goroutine still runs.
 func Start(ctx context.Context, wg *sync.WaitGroup) {
-	if !enabledFromEnv() {
+	if !Enabled() {
 		return
 	}
 	if v := strings.TrimSpace(os.Getenv("UT_UPDATE_RELEASES_URL")); v != "" && releasesURL == defaultReleasesURL {
@@ -139,7 +139,10 @@ func Start(ctx context.Context, wg *sync.WaitGroup) {
 // Settings' manual "Check for updates" button — fires without an explicit
 // user action and so must honor the same opt-out) can check the same
 // decision before making an outbound call.
-func Enabled() bool { return enabledFromEnv() }
+//
+// It is also false on a channel that may not self-update (ADR-0194 §2.3,
+// ut-docs#6388: Google Play and App Store builds): no GitHub check is made.
+func Enabled() bool { return enabledFromEnv() && buildinfo.CurrentChannel().InAppUpdateAllowed() }
 
 // enabledFromEnv reports whether the background checker should run at all:
 // only an explicit falsy UT_UPDATE_CHECK (e.g. "0", "false") disables it;
@@ -154,6 +157,12 @@ func enabledFromEnv() bool {
 }
 
 func checkOnce(ctx context.Context) {
+	// ADR-0194 §2.3: a store channel never asks GitHub about a newer build
+	// (the store updates the app), whoever calls: the daily loop, the
+	// Settings button or the wizard. Status stays zero, so no update UI shows.
+	if !buildinfo.CurrentChannel().InAppUpdateAllowed() {
+		return
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, releasesURL, nil)

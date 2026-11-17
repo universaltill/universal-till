@@ -119,7 +119,7 @@ func releaseNoteViews(notes []*releasenotes.Note, locale string) []releaseNoteVi
 		views = append(views, releaseNoteView{
 			Version:    n.Version,
 			DateText:   httpx.FormatDate(n.Date, locale),
-			HTML:       n.HTML,
+			HTML:       n.ForPlanPurchase(planPurchaseAllowed()),
 			Translated: n.Translated,
 		})
 	}
