@@ -180,12 +180,16 @@ func resolvePrinterConfig(ctx context.Context, d *common.Deps, applyShadowGate b
 
 // receiptDesign mirrors the receipt.* settings (docs: receipt-designer.md).
 type receiptDesign struct {
-	Header      []string // up to 3 lines under the shop name
-	Footer      string
-	ShowSKU     bool
-	ShowTax     bool // subtotal+tax rows; off = TOTAL only
-	ShowBarcode bool
-	ShowLogo    bool // uploaded logo as a GS v 0 raster above the name
+	Header []string // up to 3 lines under the shop name
+	Footer string
+	// VoucherSlipText is the shop's own text printed at the foot of every gift
+	// voucher slip, never on the receipt (ut-docs#6179): LF-joined, already
+	// normalised; "" = none.
+	VoucherSlipText string
+	ShowSKU         bool
+	ShowTax         bool // subtotal+tax rows; off = TOTAL only
+	ShowBarcode     bool
+	ShowLogo        bool // uploaded logo as a GS v 0 raster above the name
 	// ShowTrackingQR (ut-docs#908): a counter sale's receipt carries the
 	// customer order-tracking QR — still only on a plan that offers order
 	// tracking (receiptTrackingQROffered). Unset defaults to on, except for
@@ -194,14 +198,18 @@ type receiptDesign struct {
 }
 
 const (
-	keyReceiptHeader1     = "receipt.header1"
-	keyReceiptHeader2     = "receipt.header2"
-	keyReceiptHeader3     = "receipt.header3"
-	keyReceiptFooter      = "receipt.footer"
-	keyReceiptShowSKU     = "receipt.show_sku"
-	keyReceiptShowTax     = "receipt.show_tax"
-	keyReceiptShowBarcode = "receipt.show_barcode"
-	keyReceiptShowLogo    = "receipt.show_logo"
+	keyReceiptHeader1 = "receipt.header1"
+	keyReceiptHeader2 = "receipt.header2"
+	keyReceiptHeader3 = "receipt.header3"
+	keyReceiptFooter  = "receipt.footer"
+	// keyReceiptVoucherSlipText (ut-docs#6179): the shop's own text printed at the
+	// foot of every gift voucher slip, never on the receipt. LF-separated lines,
+	// normalised by normalizeVoucherSlipText on every write; unset/"" = none.
+	keyReceiptVoucherSlipText = "receipt.voucher_slip_text"
+	keyReceiptShowSKU         = "receipt.show_sku"
+	keyReceiptShowTax         = "receipt.show_tax"
+	keyReceiptShowBarcode     = "receipt.show_barcode"
+	keyReceiptShowLogo        = "receipt.show_logo"
 	// keyReceiptShowTrackingQR: "true" | "false" (ut-docs#908); unset →
 	// receiptTrackingQRDefault.
 	keyReceiptShowTrackingQR = "receipt.show_tracking_qr"
@@ -255,11 +263,14 @@ func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesig
 		return def
 	}
 	rd := receiptDesign{
-		Footer:      get(keyReceiptFooter, "Thank you!"),
-		ShowSKU:     get(keyReceiptShowSKU, "false") == "true",
-		ShowTax:     get(keyReceiptShowTax, "true") != "false",
-		ShowBarcode: get(keyReceiptShowBarcode, "true") != "false",
-		ShowLogo:    get(keyReceiptShowLogo, "false") == "true",
+		Footer: get(keyReceiptFooter, "Thank you!"),
+		// ut-docs#6179: stored normalised; stray whitespace in an older or
+		// hand-edited row is trimmed by get.
+		VoucherSlipText: get(keyReceiptVoucherSlipText, ""),
+		ShowSKU:         get(keyReceiptShowSKU, "false") == "true",
+		ShowTax:         get(keyReceiptShowTax, "true") != "false",
+		ShowBarcode:     get(keyReceiptShowBarcode, "true") != "false",
+		ShowLogo:        get(keyReceiptShowLogo, "false") == "true",
 	}
 	switch get(keyReceiptShowTrackingQR, "") {
 	case "true":
@@ -323,7 +334,10 @@ func receiptDocEncodable(doc print.Doc) bool {
 		texts = append(texts, kv.Label, kv.Amount)
 	}
 	for _, v := range doc.Vouchers {
-		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.Void)
+		// SlipDate is a translated label (ut-docs#6179). The shop's slip text is
+		// left out on purpose: it is identical in both docs, so it cannot
+		// decide the shop-language fallback.
+		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.Void, v.SlipDate)
 	}
 	for _, t := range texts {
 		if !print.Encodable(t, doc.Charset) {
@@ -589,6 +603,9 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 		doc.VoucherHeading = T("receipt.vouchers.issued")
 		for _, v := range vs {
 			vb := issuedVoucherBlock(v, printLocale, cfg.Charset)
+			// ut-docs#6179: the slip's own date, from the stored row, so a
+			// reprint prints the original (never today's) date.
+			vb.SlipDate = slipDateLine(printLocale, "receipt.vouchers.issued_on", v.CreatedAt)
 			doc.Vouchers = append(doc.Vouchers, vb)
 		}
 	}
@@ -605,12 +622,24 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 				Amount:  "+" + money(t.AmountMinor),
 				Balance: Tf("receipt.vouchers.new_balance", money(t.BalanceAfterMinor)),
 				Code:    t.VoucherID,
+				// ut-docs#5793: a top-up gets its own slip too, unless the
+				// voucher is void now.
+				Slip: !t.VoucherVoid,
+				// ut-docs#6179: this top-up's own date, not the voucher's issue date.
+				SlipDate: slipDateLine(printLocale, "receipt.vouchers.topped_up_on", t.CreatedAt),
 			}
 			if t.HolderLabel != "" {
 				vb.Holder = Tf("basket.gift_voucher.for", t.HolderLabel)
 			}
-			if t.Reversed {
+			// A top-up taken back says so; otherwise a voucher void since
+			// (its top-up not reversed) prints the issued block's void
+			// notice, so the code is never a scannable symbol for a void
+			// voucher (ut-docs#5794).
+			switch {
+			case t.Reversed:
 				vb.Void = T("receipt.vouchers.top_up_void")
+			case t.VoucherVoid:
+				vb.Void = T("receipt.vouchers.void")
 			}
 			doc.Vouchers = append(doc.Vouchers, vb)
 		}
@@ -624,6 +653,7 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}
 	}
+	doc.VoucherSlipText = voucherSlipLines(rd.VoucherSlipText) // ut-docs#6179: slips only
 	return doc, nil
 }
 
@@ -634,7 +664,7 @@ func issuedVoucherBlock(v data.Voucher, locale, charset string) print.VoucherBlo
 		Label:  httpx.T(locale, "catalog.item_type.gift_voucher"),
 		Amount: httpx.FormatMoneyPrint(v.OriginalAmountMinor, locale, charset),
 		Code:   v.ID,
-		Issued: true,
+		Slip:   true,
 	}
 	if v.HolderLabel != "" {
 		vb.Holder = fmt.Sprintf(httpx.T(locale, "basket.gift_voucher.for"), v.HolderLabel)
@@ -665,9 +695,16 @@ func receiptMethodLabel(locale, method string) string {
 // calls, purely for that — nothing outside _test.go ever reassigns them.
 var (
 	printAsyncTimeout = 15 * time.Second
-	printReceiptFn    = printReceiptIn
+	printReceiptFn    = printReceiptNoSlips
 	printKitchenFn    = printKitchenFiltered
 )
+
+// printReceiptNoSlips is the auto-print path's view of printReceiptIn: only
+// the reprint handler audits the slip count (ut-docs#5783).
+func printReceiptNoSlips(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) error {
+	_, err := printReceiptIn(ctx, d, receiptNo, customerLocale)
+	return err
+}
 
 // recordPrintFailureCtx returns the short-lived context used to WRITE a print
 // failure down (audit row + the /orders warning flag, ut-docs#517a).
@@ -745,43 +782,50 @@ func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string
 
 // printReceiptIn prints a receipt; customerLocale is a kiosk customer's own
 // language for their receipt (customerReceiptDoc), "" the shop's language.
-func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) error {
+// slips is the number of gift voucher slips (ut-docs#4247) in the print job:
+// 0 when the setting is off, the sale issued or topped up none, or the job was refused or
+// never built (no printer, doc error). A job that was built but failed
+// (transport or send error) still reports its slips, as they were attempted —
+// the reprint audit row records the count (ut-docs#5783).
+func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) (slips int, err error) {
 	// ADR-0124 §3: the shared choke point every receipt print path reaches
 	// (tender and refund auto-print, manual print, reprint) refuses here as
 	// well, so a handler that misses the gate still cannot print.
 	if customerDocumentsSuppressed(ctx, d) {
-		return errCustomerDocumentsSuppressed
+		return 0, errCustomerDocumentsSuppressed
 	}
 	cfg := printerConfig(ctx, d)
 	if !cfg.Enabled() {
-		return fmt.Errorf("no printer configured")
+		return 0, fmt.Errorf("no printer configured")
 	}
 	doc, err := customerReceiptDoc(ctx, d, receiptNo, customerLocale)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// PrintDocWithSlips renders ESC/POS for a thermal printer or plain text
 	// via lp for a regular (system) printer, per the configured type. The
 	// voucher slips (ut-docs#4247) ride in the same job as the receipt.
-	var slips []print.VoucherSlip
+	var vs []print.VoucherSlip
 	if cfg.VoucherSlip {
-		slips = voucherSlips(doc)
+		vs = voucherSlips(doc)
 	}
-	return print.PrintDocWithSlips(ctx, cfg, doc, slips)
+	return len(vs), print.PrintDocWithSlips(ctx, cfg, doc, vs)
 }
 
 // voucherSlips derives the stand-alone slips (ut-docs#4247) from the receipt
 // doc itself, so they share its locale, charset and logo: one per voucher the
-// sale issued, none for a voided one or a top-up.
+// sale issued or topped up; none for a voided voucher, a top-up
+// taken back, or a top-up of a voucher void since (ut-docs#5793).
 func voucherSlips(doc print.Doc) []print.VoucherSlip {
 	var out []print.VoucherSlip
 	for _, v := range doc.Vouchers {
-		if !v.Issued || v.Void != "" {
+		if !v.Slip || v.Void != "" {
 			continue
 		}
 		out = append(out, print.VoucherSlip{
 			StoreName: doc.StoreName, Header: doc.Header,
 			Logo: doc.Logo, Charset: doc.Charset, Voucher: v,
+			Date: v.SlipDate, Text: doc.VoucherSlipText, // ut-docs#6179
 		})
 	}
 	return out
@@ -1050,7 +1094,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if !httpx.InstalledLocale(loc) {
 			loc = ""
 		}
-		err := printReceiptIn(ctx, d, receiptNo, loc)
+		slips, err := printReceiptIn(ctx, d, receiptNo, loc)
 		now := time.Now().UTC().Format(time.RFC3339)
 		if errors.Is(err, errCustomerDocumentsSuppressed) {
 			// ADR-0124 §3: refused, with a distinct status the receipt
@@ -1064,6 +1108,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		audit := map[string]any{"ok": err == nil}
 		if loc != "" {
 			audit["customer_locale"] = loc
+		}
+		if slips > 0 {
+			// ut-docs#5783: redeemable voucher codes were printed again.
+			audit["voucher_slips"] = slips
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
 			audit, now, "")

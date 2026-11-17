@@ -3,7 +3,11 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"syscall"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -307,9 +311,39 @@ func TestClassifyInstallError_NewKeysResolveInLocales(t *testing.T) {
 		"plugins.install.error.till_moved",
 		"plugins.install.error.register_new",
 		"plugins.install.error.service_unavailable",
+		"plugins.install.error.unreachable",
+		"plugins.install.error.download_failed",
 	} {
 		if got := i18n.T("en", key); got == key {
 			t.Errorf("locale key %q missing in en.json", key)
 		}
+	}
+}
+
+// TestClassifyInstallError_Unreachable pins ut-docs#6548: a transport failure
+// reaching the marketplace is its own retryable, translated key — not the
+// generic one, and never carrying the raw URL/dial text.
+func TestClassifyInstallError_Unreachable(t *testing.T) {
+	refused := fmt.Errorf("request failed: %w", &url.Error{Op: "Post", URL: "http://x", Err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}})
+	cases := []struct {
+		name      string
+		err       error
+		key       string
+		retryable bool
+	}{
+		{"refused", refused, "plugins.install.error.unreachable", true},
+		{"dns", fmt.Errorf("request failed: %w", &net.DNSError{IsNotFound: true}), "plugins.install.error.unreachable", true},
+		{"deadline", fmt.Errorf("download: %w", context.DeadlineExceeded), "plugins.install.error.unreachable", true},
+		{"canceled dial", &url.Error{Op: "Post", URL: "http://x", Err: &net.OpError{Op: "dial", Err: context.Canceled}}, "plugins.install.error.retryable", true},
+		{"scheme error only", &url.Error{Op: "Get", URL: "x://y", Err: errors.New("unsupported protocol scheme")}, "plugins.install.error.retryable", true},
+		{"marketplace code wins", fmt.Errorf("request failed: %w", &url.Error{Op: "Post", URL: "http://x", Err: &marketplace.APIError{Code: "not_entitled"}}), "plugins.install.error.not_entitled", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := ClassifyInstallError(tc.err, true)
+			if f.MessageKey != tc.key || f.Retryable != tc.retryable {
+				t.Fatalf("got %+v, want key %q retryable %v", f, tc.key, tc.retryable)
+			}
+		})
 	}
 }

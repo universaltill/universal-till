@@ -446,7 +446,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		httpx.Render("ui/pages/pin.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.change_pin"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"errKey":    httpx.QueryErrKey(r),
 		})(w, r)
@@ -519,6 +519,8 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		httpx.RenderPartial("ui/partials/session_chip.html", map[string]any{
 			"name":      u.DisplayName,
 			"isManager": u.IsManager(),
+			// ut-docs#3440: the "My display" link follows the grant, not the role.
+			"personalDisplay": canPerform(d, r, personalDisplayAction),
 		})(w, r)
 	})
 }

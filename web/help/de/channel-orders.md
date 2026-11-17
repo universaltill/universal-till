@@ -21,6 +21,6 @@ Bestellungen aus Ihrem Webshop oder von Marktplätzen, die auf dieser Kasse erfa
 
 ## Hinweise
 
-- Diese Bestellungen sind **keine Kassenverkäufe**. Sie stehen weder in der Kassenlade noch im Z-Bericht, im Journal oder im Fiskaljournal; der Shop hat sie online angenommen und online kassiert.
+- Diese Bestellungen sind **keine Kassenverkäufe**. Sie stehen weder in der Kassenlade noch im Z-Bericht, im Journal oder im Fiskaljournal; der Shop hat sie online angenommen und online kassiert. Summen je Kanal für einen Zeitraum sehen Sie im Reiter „Online-Kanäle“ unter „Berichte“ auf der Hauptkasse.
 - Nur die Hauptkasse erfasst Online-Bestellungen, und nur wer Berichte sehen darf, kann diese Seite öffnen. Annehmen, Packen und Versenden einer Bestellung geschieht vorerst in my.universaltill.com; diese Seite ist nur lesbar.
 - Ist die Kasse offline, warten die Bestellungen in der Cloud und werden beim nächsten Verbinden erfasst. Das Kassieren wird dadurch nie aufgehalten.

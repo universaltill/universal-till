@@ -176,7 +176,7 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 		unread, _, _ := repo().UnreadCount(r.Context(), now)
 		httpx.Render("ui/pages/notices.html", map[string]any{
 			"title":     httpx.T(locale(r), "page.title.notices"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"Rows":      rows,
 			"Tab":       tabName,

@@ -207,6 +207,13 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#5862, #5875: the name shows on the manager's approval card
+		// and becomes the till's name (one line, at most maxTillNameRunes);
+		// no pending row for a refused one.
+		if key := tillNameRefusalKey(in.DeviceName); key != "" {
+			common.LocalizedError(w, r, http.StatusBadRequest, key)
+			return
+		}
 		// The pin this till served on THIS connection ("" over plain
 		// HTTP) — what the joining till saw, unless something in between
 		// presented its own certificate (ut-docs#4091).
