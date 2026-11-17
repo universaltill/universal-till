@@ -60,6 +60,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	settingsRepo := data.NewSettingsRepo(d.Db)
 	registerImportFromSystem(mux, d)
 	registerImportFromFile(mux, d)
+	registerImportPhotos(mux, d)
 
 	registerJoinSyncPoll(mux, d)
 
@@ -132,6 +133,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if systemErr != nil {
 			logging.L().Errorf("import page: list API importers: %v", systemErr)
 		}
+		photosMode := r.URL.Query().Get("mode") == "photos"
 		importData := map[string]any{
 			"showSystemCard":   systemErr == nil,
 			"systemImporters":  systemImporters,
@@ -140,6 +142,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
+			// ADR-0172 §5: the setup landing shows the automatic tax install.
+			"taxAutoInstall": taxAutoInstallWelcomeChip(r, d, welcome),
 			// ut-docs#5070: a replacement till restores its backup instead
 			// (Settings → Backups → Restore from a file, manager only).
 			"canRestoreBackup": canPerform(d, r, "data_management"),
@@ -151,6 +155,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// The wizard's pairing did not complete: a visible note, never
 			// a claim that the shop is syncing.
 			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",
+			// ut-docs#6527: bulk photo import card (catalog managers, main till).
+			// The card lives in its own view (?mode=photos) so the default
+			// page keeps exactly one file input (ut-docs#6527).
+			"showPhotosCard":  photosMode && canPerform(d, r, "catalog_management"),
+			"showPhotosLink":  !photosMode && canPerform(d, r, "catalog_management"),
+			"photosOnReplica": d.SyncPrimaryURL(r.Context()) != "",
 			"showSampleCard":  sampleErr == nil,
 			"sampleItemCount": sampleCount,
 			"sampleLoaded":    sampleLoaded,
@@ -1101,6 +1111,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				taxCodeCache[key] = id
 				return id, created, nil
 			}
+			// ut-docs#2654: placeholder icons match the shop's languages; one
+			// settings read for the whole import, not one per row.
+			iconMatcher := common.ShopIconMatcher(r.Context(), d.Settings)
 			for i := range rows {
 				if rows[i].Skipped {
 					continue
@@ -1359,9 +1372,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// resolved from the .bkp archive's documents.zip is
 				// decoded/re-encoded and written exactly the way a manual
 				// upload does (POST /api/catalog/item/image), then recorded
-				// with the unconditional-overwrite SetItemThumbnail — this
-				// genuinely is "a real photo" (see that method's own doc
-				// comment for why that's the right one, not
+				// with SetItemPhoto — this genuinely is "a real photo": it
+				// overwrites the thumbnail and keeps the icon (ut-docs#3601;
+				// see SetItemThumbnail's doc comment for why that's the right
+				// kind of write, not
 				// EnsureDefaultThumbnail). Falls back to the ut-docs#1189
 				// placeholder icon whenever there's no image, or it fails to
 				// decode — same best-effort, never-fail-the-row spirit as
@@ -1414,7 +1428,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 								}
 								return fmt.Errorf("close thumbnail file: %w", closeErr)
 							}
-							return repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
+							return repo.SetItemPhoto(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
 						}()
 						if writeErr != nil {
 							// A resolvable photo that then failed to save
@@ -1431,7 +1445,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if !imageSet {
-					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, tillimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, iconMatcher.IconPath(it.Name, it.Category)); err != nil {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}
@@ -2530,4 +2544,13 @@ func retireSeededGiftVoucherItem(ctx context.Context, d *common.Deps) (id, name 
 		return "", ""
 	}
 	return res.ID, res.Name
+}
+
+// taxAutoInstallWelcomeChip is the chip on the welcome page the setup wizard
+// lands on: only there, and only for a viewer who may open Settings.
+func taxAutoInstallWelcomeChip(r *http.Request, d *common.Deps, welcome bool) *taxChipView {
+	if !welcome || !canPerform(d, r, "settings") {
+		return nil
+	}
+	return taxAutoInstallChipView(r.Context(), d, httpx.RequestLocale(r))
 }

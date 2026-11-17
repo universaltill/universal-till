@@ -19,13 +19,16 @@ import (
 	"html/template"
 	"io/fs"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	gmtext "github.com/yuin/goldmark/text"
 )
 
 // FallbackLocale is served whenever a topic hasn't been translated yet. A
@@ -67,6 +70,10 @@ type Topic struct {
 	htmlNoPurchase       template.HTML
 	plainNoPurchase      string
 	plainLowerNoPurchase string
+
+	// Inline screenshot files (img/<id>-<name>.png) the markdown references
+	// that no locale (nor the en fallback) provides; sorted, unique.
+	missingImages []string
 }
 
 // WithoutPlanPurchase returns a copy of the topic with its marked
@@ -108,9 +115,36 @@ type Library struct {
 	patterns []string
 	// every known topic id, in en's order
 	ids []string
+	// "<locale>/<id>: img/<file>" for every inline screenshot reference no
+	// image file backs; sorted.
+	missingImages []string
 }
 
 var md = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
+// shotSrc resolves a generated screenshot file name (<id>.png or an inline
+// <id>-<name>.png) for a locale: the locale's own web/help/img/<locale>/<file>
+// when it exists, else the FallbackLocale's, else not ok. A topic with no
+// shot in any locale renders without the image, never a broken one.
+func shotSrc(fsys fs.FS, root, locale, file string) (string, bool) {
+	for _, l := range []string{locale, FallbackLocale} {
+		if _, err := fs.Stat(fsys, path.Join(root, "img", l, file)); err == nil {
+			return "/help/img/" + l + "/" + file, true
+		}
+	}
+	return "", false
+}
+
+// inlineShotRe is the only inline-image destination a topic may use:
+// img/<name>.png, locale-neutral, resolved per locale by Load. The same rule
+// is enforced by e2e/tests-docs/lib.js and scripts/ci/guard-docs-shots.sh,
+// which derive the extra screenshots to capture from these references
+// (ut-docs#2615) - keep the three in lockstep. (Divergence: they scan raw
+// text, so an image inside a fenced code block counts there; none exists.)
+var inlineShotRe = regexp.MustCompile(`^img/([a-z0-9]+(?:-[a-z0-9]+)*)\.png$`)
+
+// mdImageRe matches a Markdown image anywhere in a line.
+var mdImageRe = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
 
 // Load reads every <root>/<locale>/<id>.md out of fsys.
 //
@@ -153,7 +187,13 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			if err != nil {
 				return nil, fmt.Errorf("manual: reading %s: %w", name, err)
 			}
-			tp, err := parseTopic(raw)
+			// A malformed image reference fails Load only in the English
+			// topic (the declaration source the harness and guard read); in
+			// any other locale it is dropped and reported like a missing
+			// image, so one bad Weblate edit cannot nil Builtin().
+			tp, err := parseTopic(raw, func(file string) (string, bool) {
+				return shotSrc(fsys, root, locale, file)
+			}, locale != FallbackLocale)
 			if err != nil {
 				return nil, fmt.Errorf("manual: %s: %w", name, err)
 			}
@@ -183,16 +223,10 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			// prepended before it) so the rendered document still opens with
 			// a heading — screen readers get "Selling & checkout" once, as a
 			// heading, not once as unlabelled alt text and again as the title.
-			imgLocale := locale
-			if _, statErr := fs.Stat(fsys, path.Join(root, "img", locale, tp.ID+".png")); statErr != nil && locale != FallbackLocale {
-				if _, fbErr := fs.Stat(fsys, path.Join(root, "img", FallbackLocale, tp.ID+".png")); fbErr == nil {
-					imgLocale = FallbackLocale
-				}
-			}
-			if _, statErr := fs.Stat(fsys, path.Join(root, "img", imgLocale, tp.ID+".png")); statErr == nil {
+			if figSrc, ok := shotSrc(fsys, root, locale, tp.ID+".png"); ok {
 				fig := fmt.Sprintf(
-					`<figure class="manual-shot"><img src="/help/img/%s/%s.png" alt="%s" loading="lazy"></figure>`,
-					imgLocale, tp.ID, template.HTMLEscapeString(tp.Title),
+					`<figure class="manual-shot"><img src="%s" alt="%s" loading="lazy"></figure>`,
+					figSrc, template.HTMLEscapeString(tp.Title),
 				)
 				html := string(tp.HTML)
 				if i := strings.Index(html, "</h1>"); i >= 0 {
@@ -204,6 +238,9 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 					html = fig + html
 				}
 				tp.HTML = template.HTML(html) //nolint:gosec // locale/id are repo filenames, title is escaped
+			}
+			for _, f := range tp.missingImages {
+				lib.missingImages = append(lib.missingImages, fmt.Sprintf("%s/%s: %s", locale, tp.ID, f))
 			}
 			if lib.byLocale[locale] == nil {
 				lib.byLocale[locale] = map[string]*Topic{}
@@ -250,6 +287,7 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 		}
 	}
 	sort.Strings(lib.patterns)
+	sort.Strings(lib.missingImages)
 	for id := range base {
 		lib.ids = append(lib.ids, id)
 	}
@@ -433,6 +471,13 @@ func (l *Library) RouteCovered(pattern string) bool {
 	return false
 }
 
+// MissingImages lists, sorted, every inline screenshot reference ("<locale>/<id>:
+// img/<file>") that no committed image backs - not even the en fallback. Load
+// drops such an image rather than fail (Builtin() would turn a Load error into
+// "no manual", and `make docs-shots` must run before the shots exist); the
+// help-topics guard fails on a non-empty list instead.
+func (l *Library) MissingImages() []string { return append([]string(nil), l.missingImages...) }
+
 // IDs lists every topic id (English is the authoritative set). The CI
 // translation-drift guard (scripts/ci/checkhelpdrift) is its only non-test
 // caller: it walks every id to compare each translated topic's structure
@@ -571,7 +616,13 @@ func snippet(tp *Topic, terms []string) string {
 // "key: [a, b]" — rather than real YAML. It keeps the manual free of a YAML
 // dependency, and the moment a topic needs more structure than this, that is
 // a signal the manual is drifting toward being a CMS.
-func parseTopic(raw []byte) (*Topic, error) {
+//
+// resolve maps an inline screenshot file name (e.g. "sell-browse-tiles.png")
+// to its served src; nil means nothing resolves. An unresolved image is
+// dropped from the HTML and recorded in Topic.missingImages. With lenient
+// set (translated topics), a malformed inline image reference is dropped and
+// recorded the same way instead of returning an error.
+func parseTopic(raw []byte, resolve func(file string) (string, bool), lenient bool) (*Topic, error) {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	if !strings.HasPrefix(text, "---\n") {
 		return nil, fmt.Errorf("missing front matter")
@@ -637,9 +688,49 @@ func parseTopic(raw []byte) (*Topic, error) {
 	if err != nil {
 		return nil, err
 	}
+	missing := map[string]bool{}
 	render := func(src string) (template.HTML, error) {
+		b := []byte(src)
+		doc := md.Parser().Parse(gmtext.NewReader(b))
+		var drop []*ast.Image
+		walkErr := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+			img, ok := n.(*ast.Image)
+			if !ok || !entering {
+				return ast.WalkContinue, nil
+			}
+			dst := string(img.Destination)
+			m := inlineShotRe.FindStringSubmatch(dst)
+			if m == nil || !strings.HasPrefix(m[1], tp.ID+"-") {
+				if lenient {
+					missing[dst+" (malformed reference)"] = true
+					drop = append(drop, img)
+					return ast.WalkSkipChildren, nil
+				}
+				return ast.WalkStop, fmt.Errorf("inline image %q: inline images must be img/<id>-<name>.png (<id> = this topic's id, lower-case)", dst)
+			}
+			file := path.Base(dst)
+			var s string
+			ok = false
+			if resolve != nil {
+				s, ok = resolve(file)
+			}
+			if !ok {
+				missing[dst] = true
+				drop = append(drop, img)
+				return ast.WalkSkipChildren, nil
+			}
+			img.Destination = []byte(s)
+			img.SetAttributeString("loading", []byte("lazy"))
+			return ast.WalkSkipChildren, nil
+		})
+		if walkErr != nil {
+			return "", walkErr
+		}
+		for _, img := range drop {
+			img.Parent().RemoveChild(img.Parent(), img)
+		}
 		var buf bytes.Buffer
-		if err := md.Convert([]byte(src), &buf); err != nil {
+		if err := md.Renderer().Render(&buf, b, doc); err != nil {
 			return "", fmt.Errorf("rendering markdown: %w", err)
 		}
 		return template.HTML(buf.String()), nil //nolint:gosec // topics are repo content, not user input
@@ -654,6 +745,10 @@ func parseTopic(raw []byte) (*Topic, error) {
 			return nil, rerr
 		}
 	}
+	for f := range missing {
+		tp.missingImages = append(tp.missingImages, f)
+	}
+	sort.Strings(tp.missingImages)
 	tp.Markdown = body
 	tp.plain = plainText(full)
 	tp.plainLower = strings.ToLower(tp.plain)
@@ -737,11 +832,9 @@ func parseList(s string) []string {
 func plainText(body string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(body, "\n") {
+		line = mdImageRe.ReplaceAllString(line, "") // a screenshot's alt text and path are not prose
 		line = strings.TrimSpace(line)
 		line = strings.TrimLeft(line, "#>-* \t")
-		if strings.HasPrefix(line, "![") {
-			continue // a screenshot's alt text is not prose
-		}
 		line = strings.NewReplacer("**", "", "__", "", "`", "", "*", "", "_", "").Replace(line)
 		if line == "" {
 			continue

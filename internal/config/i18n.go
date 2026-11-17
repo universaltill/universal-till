@@ -127,6 +127,17 @@ func (i *I18n) T(locale, key string) string {
 	return key
 }
 
+// Lookup returns key's translation in exactly locale (or its base language),
+// through every layer including shop overrides, with no fallback to the
+// default or English and no key echo — ok is false when that language has no
+// value. For matching against a language's own words (ut-docs#2654).
+func (i *I18n) Lookup(locale, key string) (string, bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	v, _, ok := i.resolveLocked([]string{locale, baseLang(locale)}, key)
+	return v, ok
+}
+
 // resolveLocked walks locales in order and returns the first value for key
 // and the locale it came from, trying each locale's layers in T's order
 // (layerLookupLocked).
@@ -242,11 +253,11 @@ type TranslationEntry struct {
 // baseLocale is always scanned too, the same way T's resolution chain
 // unconditionally falls back to it (ut-docs#995) — otherwise a shop whose
 // store.locale (ut-docs#861) is a non-English, overlay-only locale (a
-// language-pack plugin) missing a key that en.json has never gets that key
+// language bundle) missing a key that en.json has never gets that key
 // listed at all, so the translation editor has no row for a translator to
 // fill in (ut-docs#997). Shipped locales can't drift from en.json
-// (guard-i18n.sh), but a language-pack plugin legitimately can
-// (lang-pack-drift CI is advisory, not blocking, by design).
+// (guard-i18n.sh), but a language bundle legitimately can: it may lag English
+// (ADR-0160 section 2), so a locale may miss keys en.json has.
 func (i *I18n) Entries(locale string) []TranslationEntry {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

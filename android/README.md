@@ -717,6 +717,31 @@ re-arms it) so the OS can sleep an abandoned till. The choice is per device
 Kiosk lock-task mode does not change it. Not covered: a screen turned off with
 the power button, or Doze while the app is backgrounded.
 
+## Printing (ut-docs#6153)
+
+Android System WebView ignores `window.print()`, so the app exposes
+`window.AndroidKiosk.print()`. It takes no argument and opens Android's
+system print dialog for the page the WebView is showing (the receipt and the
+print-only voucher slip are laid out by their `@media print` CSS). The web
+side calls it through `UT.print` (`web/public/inline-actions.js`), the till's
+only print entry point; every other shell keeps `window.print()`.
+
+- Printers come from Android's print services (Mopria/IPP, vendor plugins);
+  "Save as PDF" is always there. ESC/POS receipt printers keep using the
+  hardware path (ADR-0023), not this dialog.
+- One dialog at a time: a second tap while one is open returns `false`
+  (cleared when the framework calls `onFinish`, or after two minutes).
+- Refused (returns `false`, nothing printed, never unpins) while the kiosk
+  lock is engaged (`kioskPinned` or lock-task mode). Only `/self-order*`
+  pages engage the lock and none of them prints. Under device-owner lock-task
+  the print spooler is not allowlisted and would be refused silently; under
+  screen pinning its "Add printer" path leads to Settings and the Play Store.
+  Do not add the spooler to `setLockTaskPackages`.
+- A refusal (including a 451 from the print POST) prints nothing; the web
+  never falls through to the no-op `window.print()` once the bridge exists.
+- Verified by the Gradle build and `PrintLogicTest` in CI only; the real
+  dialog and the lock-task behaviour need a device or emulator check.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)

@@ -16,7 +16,7 @@ name: android-ci
 # cost (a multi-minute tax ci.yml's own steps don't otherwise have).
 #
 # Deliberately NOT a top-level `on.pull_request.paths`/`on.push.paths`
-# filter (unlike lang-pack-drift.yml's convention) — verified empirically
+# filter (unlike the paths:-scoped guard workflows) — verified empirically
 # while building this card, on this exact PR: GitHub's path-filtered
 # `pull_request` trigger silently skipped 2 of 4 real synchronize pushes
 # that genuinely touched android/** (confirmed via the Actions API: zero
@@ -41,6 +41,10 @@ on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   compile:
     runs-on: ubuntu-latest

@@ -125,9 +125,9 @@ func TestResolveAndInstallBasePlugin_AdditionalTillKeepsLocale(t *testing.T) {
 	before := dp.CurrentState().Locale
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
