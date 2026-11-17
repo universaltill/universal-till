@@ -311,6 +311,32 @@
                detail as the new value, which would overwrite q. */}}
           {{ if not .EditMode }}if (st.q) { this.q = st.q; this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.dispatchEvent(new Event('input', { bubbles: true })); }); }{{ end }}
         }
+        {{/* ut-docs#2876: keep the grid's scroll across THIS root's own
+             buttons-changed / modifiers-changed refresh (ut-docs#2765 fires
+             it on an open sale screen when the catalog changes elsewhere --
+             without this the operator is yanked to the top of a long tab).
+             The scrolling element is the swap root itself (.products,
+             overflow-y:auto), so the offset is captured on the root's own
+             htmx:beforeSwap -- right before a swap that will really happen,
+             so scrolling during the request counts and a failed refresh
+             leaves nothing behind (the listener dies with the old root) --
+             and stashed with the tab and a timestamp. It is consumed here, once,
+             and applied only for that same tab, only moments later and not
+             while a search's results view is what's showing: window.
+             utSaleGridState survives boosted navigation, so a fresh visit or
+             a tab change must never jump to an old offset. */}}
+        const root = this.$el.closest('.products');
+        const sc = st && st.scroll;
+        if (st && sc) window.utSaleGridState = Object.assign({}, st, { scroll: null });
+        const searchShowing = {{ if .EditMode }}false{{ else }}!!(st && st.q){{ end }};
+        if (root && sc && sc.tab === this.tab && Date.now() - sc.at < 10000 && !searchShowing) {
+          this.$nextTick(() => requestAnimationFrame(() => { root.scrollTop = sc.top; }));
+        }
+        if (root) root.addEventListener('htmx:beforeSwap', (ev) => {
+          const d = ev.detail;
+          if (!d || d.elt !== root || d.target !== root || !d.shouldSwap) return;
+          window.utSaleGridState = Object.assign({}, window.utSaleGridState, { scroll: { tab: this.tab, top: root.scrollTop, at: Date.now() } });
+        });
         {{/* Stash the tab now, not only on change: the rendered default tab
              (never clicked, so the watch never fired) must survive a
              buttons-changed re-render too -- otherwise hiding the default
@@ -1144,7 +1170,7 @@
         <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
-              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
+              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}" data-confirm-ok="{{ T "categories.deactivate" }}"{{ end }}>
           <input type="hidden" name="active" value="0">
           <button type="submit" class="btn secondary btn-icon btn-icon-danger" id="designer-cat-active-{{ $c.ID }}"
                   {{ if gt $c.ItemCount 0 }}aria-describedby="designer-cat-blocked-{{ $c.ID }}"{{ end }}
@@ -1645,7 +1671,7 @@
                    confirm() dialog that would only ever precede the SAME
                    eventual elevation either way. The confirm still guards
                    the real, granted path unchanged. */}}
-              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}"{{ end }}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}" data-confirm-ok="{{ T "confirm.remove" }}"{{ end }}
               hx-swap="none"
               aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
               title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">

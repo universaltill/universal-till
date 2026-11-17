@@ -6,7 +6,7 @@ order: 210
 public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [day so far, shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
+keywords: [denomination count, count protocol, coin count, day so far, shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai, staff breakdown, staff sales, cashier performance, works council, Betriebsrat]
 ---
 
 # Reports & end of day
@@ -292,6 +292,33 @@ archived report, and how many) and an **export** button — pick a date
 range and download the matching reports as CSV or JSON, e.g. to hand to an
 auditor.
 
+## Staff sales in cloud reports
+
+Your cloud reports can show sales for each staff member. This is **off
+unless you turn it on**, and only a manager or owner can change it:
+open **Settings → Advanced → Staff sales in cloud reports** (cashiers do
+not see the card), tick **Send sales per staff member to cloud reports**
+and tap **Save**. Untick it and save to turn it off again.
+
+- **What is sent.** For each staff member, per day: sales total, number of
+  sales, average sale, items per sale, refunds, voids, discounts and
+  "No sale" drawer opens. A staff member who only opened the drawer is
+  listed too. Staff are identified by their staff ID, never by name.
+- **Every till in the shop.** It is one setting for the whole shop. Change
+  it on the main till; on an additional till the change is sent to the main
+  till, and the card is locked while the main till cannot be reached.
+- **When it takes effect.** At the next upload, about every 10 minutes,
+  and only while your subscription is active, like other cloud sync.
+- **The last 14 days.** Changing the setting also updates the last 14 days
+  in your cloud reports at the next upload while your subscription is
+  active: turning it on fills in those days, turning it off
+  clears the staff figures for them. Staff figures already sent for older
+  days stay in the cloud reports.
+- **Works council (Germany).** Staff sales figures can show how
+  individual staff work. If your business has a works council, it may need
+  to agree before you turn this on.
+- **Record.** Each change is written to the audit log with who made it.
+
 ## Cash adjustments & payouts (Shifts)
 
 The Shifts page's "Cash adjustment / payout" form records anything that
@@ -388,6 +415,16 @@ before. Two optional extras join it:
   of each coin and note) stored with the close as a count protocol, for
   shops that want the till count documented piece by piece. Leave it
   empty to skip it entirely.
+
+**Seeing the count again.** Each closed shift in the Shifts **History**
+table has a **Show count** button. It opens a panel below the table with
+each coin and note counted, how many, the amount, the **Total of the
+count**, and the **Counted** figure you entered at close. If the two
+differ, a short note says so; it is information, not an error. A shift
+closed without a denomination count says so instead. Anyone who can open
+Shifts can see it, and it needs no manager PIN: the Counted figure is
+already in the history. Viewing it changes nothing and leaves no audit
+entry. Tap **Hide** to close the panel.
 
 While a shift is open, the **Current Shift** card on the Shifts page
 shows how often the cash drawer was opened without a sale ("no sale") on
