@@ -69,11 +69,11 @@ Until you choose, the card (and a **Backup key choice** chip in the status bar) 
 
 Use this when a till was lost or broken and a new till has taken its place as the shop's main till.
 
-1. On the new till: Settings → Backups → **Restore from the cloud** (managers and admins only). On a new till it is also offered on the home screen, and on the last setup step after a replace.
-2. Choose a backup. The list says when each was made: sales after that moment are not in it. If this till already has sales, the page says they will be replaced.
-3. Press **Restore this backup** and confirm with your manager PIN.
-4. The till shows an 8-character code and a QR code. On your phone, open my.universaltill.com, sign in again as the shop owner, and approve the restore with that code. The approval runs out after 15 minutes. Only approve it when you are at this till.
-5. The till downloads and checks the backup, backs up its current data first, then shows **Restart now**. Nothing changes until it restarts.
+- **Step 1.** On the new till: Settings → Backups → **Restore from the cloud** (managers and admins only). On a new till it is also offered on the home screen, and on the last setup step after a replace.
+- **Step 2.** Choose a backup. The list says when each was made: sales after that moment are not in it. If this till already has sales, the page says they will be replaced.
+- **Step 3.** Press **Restore this backup** and confirm with your manager PIN.
+- **Step 4.** The till shows an 8-character code and a QR code. On your phone, open my.universaltill.com, sign in again as the shop owner, and approve the restore with that code. The approval runs out after 15 minutes. Only approve it when you are at this till.
+- **Step 5.** The till downloads and checks the backup, backs up its current data first, then shows **Restart now**. Nothing changes until it restarts.
 
 The new till keeps its own connection to your shop's cloud account and its own receipt prefix. If something goes wrong (the owner declines, the code expires, the file fails its check, it is another shop's), the till says so and your data is unchanged.
 
