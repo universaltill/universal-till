@@ -50,5 +50,13 @@
   {
     "text": "English",
     "reason": "self-order start screen's language picker names every installed language in that language (ut-docs#4200, httpx.NativeLanguageName) — an endonym, correct on a German page; also translations.mode.english's en value"
+  },
+  {
+    "text": "Amber",
+    "reason": "built-in theme name (themes.go availableThemes: titleCase of the theme key, never a T key) shown in the theme pickers on /my-display and Settings — theme names are product names, identical in every locale; collides only by spelling with catalog.color.amber (ut-docs#3440)"
+  },
+  {
+    "text": "Slate",
+    "reason": "built-in theme name (themes.go availableThemes: titleCase of the theme key, never a T key) shown in the theme pickers on /my-display and Settings — theme names are product names, identical in every locale; collides only by spelling with catalog.color.slate (ut-docs#3440)"
   }
 ]
