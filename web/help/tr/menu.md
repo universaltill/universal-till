@@ -3,6 +3,7 @@ id: menu
 title: Menü ekranı
 section: Günlük satış
 order: 30
+public: true
 summary: Kasanın her bölümüne götüren büyük dokunmatik karolardan oluşan tek ekran.
 routes: [/menu, /settings/menu, /admin]
 ---

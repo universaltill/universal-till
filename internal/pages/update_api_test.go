@@ -504,6 +504,64 @@ func TestPostSettingsUpdateSchedule_ValidatesTimeFormat(t *testing.T) {
 	}
 }
 
+// ut-docs#2739 (ADR-0114 §5): update.fleet_follow. Unset (next_idle) is the
+// default and stays unset, like update.auto_enabled; "nightly" is explicit;
+// anything else is refused before anything is written.
+func TestPostSettingsUpdateSchedule_FleetFollow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newEODTestDeps(t)
+	mux := http.NewServeMux()
+	registerUpdateAPI(mux, dp)
+	post := func(body string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	stored := func(k string) string { v, _, _ := dp.Settings.Get(t.Context(), k); return v }
+
+	if c := post("enabled=on&time=03:00&fleet_follow=nightly"); c != http.StatusNoContent {
+		t.Fatalf("nightly = %d", c)
+	}
+	if got := stored(keyFleetFollow); got != "nightly" {
+		t.Fatalf("%s = %q, want nightly", keyFleetFollow, got)
+	}
+	// Absent: the key is not touched (the form of an older page).
+	if c := post("enabled=on&time=03:30"); c != http.StatusNoContent {
+		t.Fatalf("absent = %d", c)
+	}
+	if got := stored(keyFleetFollow); got != "nightly" {
+		t.Fatalf("absent field changed %s to %q", keyFleetFollow, got)
+	}
+	if c := post("enabled=on&time=03:30&fleet_follow=next_idle"); c != http.StatusNoContent {
+		t.Fatalf("next_idle = %d", c)
+	}
+	if got := stored(keyFleetFollow); got != "" {
+		t.Fatalf("next_idle stored %q, want the default (unset)", got)
+	}
+	_ = dp.Settings.Set(t.Context(), keyFleetFollow, "nightly")
+	if c := post("enabled=on&time=03:30&fleet_follow="); c != http.StatusNoContent {
+		t.Fatalf("empty = %d", c)
+	}
+	if got := stored(keyFleetFollow); got != "" {
+		t.Fatalf("empty stored %q, want the default (unset)", got)
+	}
+
+	// A bad value is a 400 and writes nothing, not even the schedule.
+	_ = dp.Settings.Set(t.Context(), keyFleetFollow, "nightly")
+	_ = dp.Settings.Set(t.Context(), keyAutoUpdateTime, "01:00")
+	if c := post("enabled=on&time=04:45&fleet_follow=weekly"); c != http.StatusBadRequest {
+		t.Fatalf("bad value = %d, want 400", c)
+	}
+	if got := stored(keyFleetFollow); got != "nightly" {
+		t.Fatalf("a refused save changed %s to %q", keyFleetFollow, got)
+	}
+	if got := stored(keyAutoUpdateTime); got != "01:00" {
+		t.Fatalf("a refused save changed %s to %q", keyAutoUpdateTime, got)
+	}
+}
+
 // --- autoUpdateTick (the scheduler's per-tick decision + side effect) ---
 //
 // These swap the package-level seams (autoUpdateCurrent/autoUpdateCheckNow/

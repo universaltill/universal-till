@@ -30,15 +30,20 @@
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
     <!-- ut-docs#3325: data-action / data-* hooks (see base.html). -->
     <script defer src="/public/inline-actions.js?v={{ assetv "public/inline-actions.js" }}"></script>
+    <!-- ut-docs#1103: arrow-key navigation for the radiogroup tile pickers
+         (opt-in via data-roving-radiogroup). -->
+    <script defer src="/public/radiogroup.js?v={{ assetv "public/radiogroup.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <!-- ut-docs#590: country/currency/tax start pre-filled from the OS locale
          + timezone (Go side, setup_detect.go) instead of blank — still freely
          changeable via the select below, detection is a default, never a
          lock. -->
-    <!-- Step numbering: the Germany-only business-identity step (ADR-0053,
-         ut-docs#802) is step 3, skipped entirely for every other country —
-         step 2's Next jumps straight to 4 unless country === 'DE'. On an
+    <!-- Step numbering: step 3 (the fiscal business-identity form, ADR-0053,
+         ut-docs#802, plus the prompted tax-plugin tile, ADR-0129 §4) is
+         skipped entirely unless the server says the picked country has
+         something to show there (stepCountries, ADR-0172): step 2's Next
+         jumps straight to 4 otherwise. On an
          error re-render the server picks which step to land on (errStep):
          business-identity validation errors return to 3, everything else to
          the PIN step. The server resolves that, a tax-plugin install
@@ -62,7 +67,10 @@
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudShopType: {{ if .cloudShop }}{{ if .cloudShop.ShopType }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        seq: [2, 3, 4, 5, 6, 7],
-                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName) || (s === 5 && this.cloud && this.cloudShopType); },
+                                       stepCountries: [{{ range .taxStepCountries }}'{{ . }}',{{ end }}],
+                                       tileCountries: [{{ range .installableTaxPlugins }}'{{ .Country }}',{{ end }}],
+                                       tseCountry: '{{ .tseCountry }}',
+                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && !this.stepCountries.includes(this.country)) || (s === 4 && this.cloud && this.cloudName) || (s === 5 && this.cloud && this.cloudShopType); },
                                        nxt(f) { let i = this.seq.indexOf(f); for (i++; i < this.seq.length; i++) { if (!this.skip(this.seq[i])) return this.seq[i]; } return 7; },
                                        prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; } }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
@@ -70,7 +78,7 @@
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
       </div>
 
-      {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+      {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
       <form method="post" action="/api/setup">
         <input type="hidden" name="setup_nonce" value="{{ .setupNonce }}">
@@ -171,12 +179,15 @@
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
           <input type="hidden" name="country" :value="country">
-          <div class="picker-grid" role="group" aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
-            {{ range .countries }}
-            <button type="button" class="picker-tile" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-pressed="country === '{{ .Code }}'" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
+          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
+            {{ range $i, $c := .countries }}
+            <button type="button" class="picker-tile" role="radio" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-checked="country === '{{ .Code }}' ? 'true' : 'false'" :tabindex="country === '{{ .Code }}' || (!country && {{ $i }} === 0) ? 0 : -1" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
             {{ end }}
           </div>
-          <!-- Review finding (Should-fix 2): expanding used to leave focus
+          <!-- ut-docs#1103: the tiles above are a WAI-ARIA radiogroup (role=radio +
+               aria-checked, roving tabindex: the checked tile, else the first,
+               is the single tab stop; arrows/Home/End via radiogroup.js).
+               Review finding (Should-fix 2): expanding used to leave focus
                on this now-hidden button (dropped to <body>), so a keyboard/
                switch-access operator had to tab from the top of the
                document to reach the 13 tiles that just appeared, with no
@@ -184,9 +195,9 @@
                $nextTick waits for the newly-shown tiles to actually be in
                the DOM (x-show removes display:none synchronously, but
                .focus() on a still-transitioning element is unreliable)
-               before moving focus onto the selected tile, or the first
-               tile if nothing's picked yet. -->
-          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-pressed=true]') || $refs.countryGrid.querySelector('button')).focus())">{{ T "setup.country.show_all" }}</button>
+               before moving focus onto the aria-checked tile, or the first
+               radio if nothing's picked yet. -->
+          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-checked=true]') || $refs.countryGrid.querySelector('[role=radio]')).focus())">{{ T "setup.country.show_all" }}</button>
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
@@ -218,49 +229,52 @@
              plainly that Universal Till holds this device's admin credential
              (PUK), assigned to this step by ut-docs#802. -->
         <section x-show="step === 3" x-cloak data-step="3">
-          <h1>{{ T "setup.tse.title" }}</h1>
-          <p class="muted">{{ T "setup.tse.hint" }}</p>
+          <h1 x-show="country === tseCountry">{{ T "setup.tse.title" }}</h1>
+          <h1 x-show="country !== tseCountry">{{ T "setup.tax_plugin.title" }}</h1>
+          <p class="muted" x-show="country === tseCountry">{{ T "setup.tse.hint" }}</p>
           <!-- ut-docs#1180: ADR-0025 decision 4 — a marketplace tax-capability
                plugin for this country (ut-plugin-tax-de: §12 UStG dine-in/
                takeaway VAT-rate switching plus TSE signing/DSFinV-K export)
                is PROMPTED, never silently auto-installed. The tile only
                appears when setupInstallableTaxPlugin actually found a
                not-yet-installed match; it's gone once installed, and stays
-               gone for a country with nothing mapped (countryTaxLocale).
+               gone for a country the catalog names no prompted listing for.
                Same out-of-band-form pattern as step 1's catalog-language
                buttons: the real <form> lives AFTER the wizard's closing
                </form> (nested forms are dropped by the HTML parser), this
                button targets it via form=. Sits BELOW the step's own <h1>
                so its <h2> nests under a heading rather than preceding one,
                and so the step still reads as "business details" first. -->
-          {{ if .installableTaxPlugin }}
-          <div class="setup-tax-plugin-prompt">
-            <h2>{{ T "setup.tax_plugin.title" }}</h2>
+          {{ range .installableTaxPlugins }}
+          <div class="setup-tax-plugin-prompt" data-tax-plugin-country="{{ .Country }}" x-show="country === '{{ .Country }}'" x-cloak>
+            <h2 x-show="country === tseCountry">{{ T "setup.tax_plugin.title" }}</h2>
             <p class="muted">{{ T "setup.tax_plugin.description" }}</p>
-            {{ if and .taxPluginPending .installableTaxPlugin.Offline }}
+            {{ if and (or .Pending (and $.taxPluginPending (eq $.taxResumeCountry .Country))) .Offline }}
               <p class="muted" data-tax-plugin-pending data-tax-plugin-queued>{{ T "setup.tax_plugin.queued_offline" }}</p>
-            {{ else if .taxPluginPending }}
+            {{ else if or .Pending (and $.taxPluginPending (eq $.taxResumeCountry .Country)) }}
               <p class="muted" data-tax-plugin-pending>{{ T "setup.tax_plugin.install_pending" }}</p>
-            {{ else if .installableTaxPlugin.Offline }}
+            {{ else if .Offline }}
               <!-- ut-docs#1512: fully offline first boot — the catalog could
                    not be checked, but the operator is still prompted (owner
                    decision 2026-09-28). The button queues the install for the
                    background retry; Skip/Next below queue it too (#1506). -->
               <p class="muted" data-tax-plugin-offline>{{ T "setup.tax_plugin.offline_note" }}</p>
             {{ end }}
-            <button type="submit" class="btn secondary setup-tax-plugin-install-btn" form="tax-plugin-install">{{ if .installableTaxPlugin.Offline }}{{ T "setup.tax_plugin.install_when_online_btn" }}{{ else }}{{ T "setup.tax_plugin.install_btn" }}{{ end }}</button>
+            <button type="submit" class="btn secondary setup-tax-plugin-install-btn" form="tax-plugin-install">{{ if .Offline }}{{ T "setup.tax_plugin.install_when_online_btn" }}{{ else }}{{ T "setup.tax_plugin.install_btn" }}{{ end }}</button>
           </div>
-          {{ else if .taxPluginQueued }}
+          {{ end }}
+          {{ range .taxPluginQueuedCountries }}
           <!-- ut-docs#3244: the operator already consented and the spec is on
                the background retry list, but the reachable catalog has no
                listing to match, so there is no tile and nothing to install
                now — keep saying it is queued rather than going silent.
                ut-docs#3243: and say why — it isn't published yet. -->
-          <div class="setup-tax-plugin-prompt">
+          <div class="setup-tax-plugin-prompt" x-show="country === '{{ . }}'" x-cloak>
             <h2>{{ T "setup.tax_plugin.title" }}</h2>
             <p class="muted" data-tax-plugin-pending>{{ T "setup.tax_plugin.not_published" }}</p>
           </div>
           {{ end }}
+          <div x-show="country === tseCountry" data-tse-fields>
           <label>{{ T "setup.tse.legal_name" }}
             <input type="text" class="tse-field" name="tse_legal_name" maxlength="200" value="{{ .tseLegalName }}">
           </label>
@@ -274,6 +288,7 @@
             <input type="text" class="tse-field" name="tse_address" maxlength="200" value="{{ .tseAddress }}">
           </label>
           <p class="muted">{{ T "setup.tse.custody_note" }}</p>
+          </div>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = prv(3)">{{ T "setup.back" }}</button>
             <!-- ut-docs#1506 review finding B1: Skip is not the only door off
@@ -295,7 +310,7 @@
                  from firing it twice — harmless either way since
                  addPendingBasePlugins already dedupes, but no reason to. -->
             <button type="button" class="btn primary"
-                    {{ if .installableTaxPlugin }}hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none" hx-trigger="click once"{{ end }}
+                    {{ if .installableTaxPlugins }}hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none" hx-trigger="click once"{{ end }}
                     @click="step = nxt(3)">{{ T "setup.next" }}</button>
             <!-- Skip clears the fields so a half-typed form can't fail the
                  final submit's all-or-nothing validation later.
@@ -311,9 +326,9 @@
                  back with tax_plugin_skip_ack=1, which is what drives step
                  4's skip_warning note. When there's no tile (nothing to
                  queue), it stays the original client-only step change. -->
-            <button type="{{ if .installableTaxPlugin }}submit{{ else }}button{{ end }}" class="btn secondary" style="margin-top:.4rem"
-                    {{ if .installableTaxPlugin }}form="tax-plugin-skip"{{ end }}
-                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = '');{{ if not .installableTaxPlugin }} step = nxt(3);{{ end }}">{{ T "setup.tse.skip" }}</button>
+            <button :type="tileCountries.includes(country) ? 'submit' : 'button'" class="btn secondary" style="margin-top:.4rem"
+                    :form="tileCountries.includes(country) ? 'tax-plugin-skip' : null"
+                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = ''); if (!tileCountries.includes(country)) { step = nxt(3); }">{{ T "setup.tse.skip" }}</button>
           </div>
         </section>
 
@@ -335,9 +350,9 @@
                unlike step 3's softer install_pending note this says plainly
                what that means, not just that a background retry exists. -->
           {{ if .taxPluginSkipped }}
-            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p>
+            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p> <!-- login-error-role:allow confirms the operator's own skip choice (not an error) and is read in order under the step heading -->
           {{ end }}
-          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}"
+          <input type="text" name="store_name" maxlength="{{ maxStoreNameRunes }}" placeholder="{{ T "setup.store.placeholder" }}"
                  value="{{ .storeName }}" x-model="storeName" aria-required="true">
           <label>{{ T "setup.till_name.title" }}
             <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true">
@@ -364,9 +379,9 @@
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
           <input type="hidden" name="shop_type" :value="shopType">
-          <div class="picker-grid" role="group" aria-label="{{ T "setup.shop_type.title" }}">
-            {{ range .shopTypes }}
-            <button type="button" class="picker-tile" data-value="{{ . }}" :aria-pressed="shopType === '{{ . }}'" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
+          <div class="picker-grid" role="radiogroup" data-roving-radiogroup aria-label="{{ T "setup.shop_type.title" }}">
+            {{ range $i, $t := .shopTypes }}
+            <button type="button" class="picker-tile" role="radio" data-value="{{ . }}" :aria-checked="shopType === '{{ . }}' ? 'true' : 'false'" :tabindex="shopType === '{{ . }}' || (!shopType && {{ $i }} === 0) ? 0 : -1" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
             {{ end }}
           </div>
           <div class="setup-nav">
@@ -482,18 +497,18 @@
            outside-the-wizard-form placement and reasoning as the language
            install forms just above (nested forms are dropped by the HTML
            parser). country is all the handler needs — it re-resolves the
-           listing server-side through the same countryTaxLocale mapping and
-           catalog cache, so the body can't pick an arbitrary listing. -->
-      {{ if .installableTaxPlugin }}
+           listing server-side through the same catalog resolution and
+           cache, so the body can't pick an arbitrary listing. -->
+      {{ if .installableTaxPlugins }}
       <form method="post" action="/api/setup/tax-plugin" id="tax-plugin-install" hidden>
-        <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
+        <input type="hidden" name="country" :value="country">
       </form>
       <!-- ut-docs#1506: step 3's "Skip for now" button's own form, same
            out-of-wizard-form placement/reasoning as tax-plugin-install just
            above — queues the same spec for background retry instead of
            silently dropping it. -->
       <form method="post" action="/api/setup/tax-plugin-skip" id="tax-plugin-skip" hidden>
-        <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
+        <input type="hidden" name="country" :value="country">
       </form>
       {{ end }}
 
@@ -750,7 +765,7 @@
                 var addr = hostOf(p.base_url);
                 var addrPart = addr ? (' · ' + esc(i18n.resultAddress) + ': ' + esc(addr)) : '';
                 return '<li style="padding:.3rem 0">' + esc(p.name)
-                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
+                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + '<bdi dir="ltr">' + esc(p.till_id) + '</bdi>' + addrPart + '</span> '
                   + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
                   + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name, #setup-pairing-join-role, #pairing-replace-local" '
                   // ut-docs#1540: this button lives outside any <form>, so

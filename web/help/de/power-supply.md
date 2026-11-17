@@ -3,6 +3,7 @@ id: power-supply
 title: Netzteil-Warnung
 section: Verbinden & erweitern
 order: 355
+public: true
 summary: Auf einem Raspberry Pi warnt die Statusleiste, wenn das Netzteil nicht genug Strom für den Touchscreen und andere USB-Geräte liefern kann.
 keywords: [strom, netzteil, USB, Raspberry Pi, unterspannung, touchscreen]
 ---

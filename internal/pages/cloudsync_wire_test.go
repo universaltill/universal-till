@@ -13,6 +13,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
@@ -654,6 +655,35 @@ func TestCollectProblems_IncludesRecentLogLines(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected the logged warning to appear in collectProblems output")
+	}
+}
+
+// ut-docs#5446: an Android in-app update refusal reaches the heartbeat
+// problems payload, and leaves it once a later APK is accepted.
+func TestCollectProblems_IncludesAndroidUpdateRefusal(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	logging.ResetRecent()
+	t.Cleanup(func() { androidupdate.ReportAccepted(); logging.ResetRecent() })
+
+	has := func() bool {
+		for _, p := range collectProblems(ctx, dp) {
+			if msg, _ := p["msg"].(string); strings.Contains(msg, "signer_not_pinned") {
+				if p["level"] != "WARN" {
+					t.Fatalf("expected level WARN, got %v", p["level"])
+				}
+				return true
+			}
+		}
+		return false
+	}
+	androidupdate.ReportRefused("signer_not_pinned")
+	if !has() {
+		t.Fatal("refusal missing from collectProblems output")
+	}
+	androidupdate.ReportAccepted()
+	if has() {
+		t.Fatal("resolved refusal still in collectProblems output")
 	}
 }
 

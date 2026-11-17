@@ -86,7 +86,7 @@ func TestEraseCustomer_StripsCustomerFromParkedBaskets(t *testing.T) {
 func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO customers (id, name, phone, email, address, loyalty_no, notes, phone_e164)
 		VALUES ('c1', ?, '555-0100', 'erased@example.com', '1 Test Street', 'L-77', 'likes extra cheese', '5550100')`, erasedName)
@@ -157,7 +157,7 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 func TestAdminApply_ErasedCustomerWithoutSatelliteHistoryStripsParkedBasket(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	mustExec(t, primary, `INSERT INTO customers (id, name) VALUES ('c1', ?)`, erasedName)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
 	if err != nil {

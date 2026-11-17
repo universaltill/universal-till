@@ -262,8 +262,11 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 			fresh := withinLast(get("sync.last_contact_at"), 90*time.Second)
 			// A restored copy has no bearer or till id (ut-docs#5162).
 			rejoin := replicaUnpaired(r.Context(), d)
+			// A sale the main till refuses as too large holds the queue
+			// (ut-docs#5428): same warn hook, no separate text.
+			held := get(salesPushHeldKey) != ""
 			class := "ok"
-			if !fresh || rejoin {
+			if !fresh || rejoin || held {
 				class = "warn"
 			}
 			label := get("sync.till_name")
@@ -538,6 +541,16 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	if !out.Data.Unchanged {
 		basketCustomers := basketCustomersKnown(ctx, d, posRepo) // ut-docs#3253
 		applied, err := adminRepo.ApplyAdminWithResult(ctx, out.Data.Bundle)
+		if errors.Is(err, data.ErrNotReplica) {
+			// ut-docs#5896: promoted to main till while this pull was in
+			// flight. Benign race, not a failure. This till is no longer a
+			// replica, so stop here: no pull_version / last_pull_at /
+			// admin_pulled audit / refresh / last_pull_ok_at / main contact
+			// (promote just wiped those sync.* keys), and no plugin or stock
+			// pull from the old main.
+			logging.L().Infof("sync pull: skipped, this till was promoted to main till during the pull")
+			return
+		}
 		if err != nil {
 			logging.L().Errorf("sync pull: apply failed: %v", err)
 			// ut-docs#807: sync.last_contact_at deliberately NOT set here.

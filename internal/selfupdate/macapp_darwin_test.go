@@ -84,10 +84,15 @@ func TestApplyMacAppDmgDownloadFails(t *testing.T) {
 	oldVer := buildinfo.Version
 	buildinfo.Version = "0.1.0"
 	t.Cleanup(func() { buildinfo.Version = oldVer })
-	// A nil asset body is listed in /latest but 404s on download.
-	// checksums.txt must be listed too: a release without one is refused
-	// before the dmg is fetched (ut-docs#4080).
-	newReleaseServer(t, "v0.2.0", map[string][]byte{"unitill-pos-0.2.0-macOS-arm64.dmg": nil, "checksums.txt": []byte("x")})
+	// A nil asset body is listed in /latest but 404s on download. The
+	// release still carries checksums.txt with the dmg's line: since
+	// ADR-0178 the checksums are read before any download, so without it
+	// this would stop at "no checksums.txt" and never reach the download.
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		dmgName:         nil,
+		"checksums.txt": []byte(sha256hex([]byte("x")) + "  " + dmgName + "\n"),
+	})
 	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "download .dmg") {
 		t.Fatalf("err = %v, want download failure", err)
@@ -256,5 +261,31 @@ func TestApplyMacAppRefusesUntrustedAssets(t *testing.T) {
 				t.Errorf("a work dir was created: %d (was %d)", after, before)
 			}
 		})
+	}
+}
+
+// ADR-0178: an armed build refuses an unsigned release before the .dmg is
+// downloaded or mounted.
+func TestApplyMacAppArmedRefusesUnsignedReleaseBeforeDownload(t *testing.T) {
+	oldVer := buildinfo.Version
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { buildinfo.Version = oldVer })
+	armKeys(t, sigPubHex(1))
+	before := countLeakedWorkDirs(t)
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	dmg := []byte("not a real dmg")
+	hs := newHitServer(t, "v0.2.0", map[string][]byte{
+		dmgName:         dmg,
+		"checksums.txt": []byte(sha256hex(dmg) + "  " + dmgName + "\n"),
+	})
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
+	if !errors.Is(err, ErrSignature) {
+		t.Fatalf("err = %v, want ErrSignature", err)
+	}
+	if hs.count(dmgName) != 0 {
+		t.Error("the .dmg was downloaded before the signature check")
+	}
+	if after := countLeakedWorkDirs(t); after != before {
+		t.Errorf("leaked work dirs: %d (was %d)", after, before)
 	}
 }

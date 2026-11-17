@@ -141,6 +141,31 @@ func TestLoadMenuEntriesExcludesDocsEntry(t *testing.T) {
 	}
 }
 
+// ut-docs#5475: a plugin_entries page row with NULL route/menu_group (raw
+// insert, restored DB) used to fail ListMenuEntries and so Init — the till
+// refused to boot. Init must succeed and the row load with empty route/group.
+func TestLoadMenuEntries_ToleratesNullRouteAndGroup(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	seedInstalledPlugin(t, db, "com.test.nulls", "Nulls", "1.0.0", "none", true)
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,sort_order,is_active) VALUES('pe-null','com.test.nulls','page','null-page',NULL,'Null Page',NULL,1,1)`); err != nil {
+		t.Fatalf("seed null entry: %v", err)
+	}
+
+	m, err := Init(ctx, &config.Config{Env: "test"}, db)
+	if err != nil {
+		t.Fatalf("Init must survive a NULL route/menu_group entry, got: %v", err)
+	}
+	mp, ok := m.MenuPlugins["null-page"]
+	if !ok {
+		t.Fatalf("NULL-route entry not loaded: %+v", m.MenuPlugins)
+	}
+	if mp.Route != "" || mp.Menu != "" || mp.Label != "Null Page" {
+		t.Fatalf("NULL columns should read as empty: %+v", mp)
+	}
+}
+
 // A page-key collision predating validatePageEntryKeys (ut-docs#472) — two
 // installed plugins whose type:"page" entries already share a key, seeded
 // directly like a till that had this before the install-time guard existed
