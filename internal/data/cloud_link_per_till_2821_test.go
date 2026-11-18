@@ -64,7 +64,7 @@ func TestCloudLinkRefreshLeavesAdminCursorUnchanged(t *testing.T) {
 func TestCloudLinkNeverAppliedFromAdminBundle(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "cloud_link_primary.db")
-	replica := openMigratedDB(t, "cloud_link_replica.db")
+	replica := openReplicaDB(t, "cloud_link_replica.db")
 	mustExec(t, primary, `INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud.link_tier', 'realtime'), ('cloud.link_mode', 'always'), ('store.currency', 'EUR')`)
 	mustExec(t, replica, `INSERT INTO settings (key, value) VALUES ('cloud.link_tier', 'periodic')`)
 

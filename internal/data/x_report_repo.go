@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -63,6 +64,9 @@ type XAdjustment struct {
 	Reason string
 	Amount money.Money // signed, as stored
 	At     string      // audit_log.created_at as stored
+	// AtClose: the skim pos.CloseShift stamps at_close:true when it closes
+	// the shift (same predicate as CashReconciliationForLocalDay, #5841).
+	AtClose bool
 }
 
 // getShiftRow reads one shift plus its raw opened_at/closed_at (the window
@@ -220,7 +224,8 @@ func (r *POSRepo) ShiftXReport(ctx context.Context, shiftID string, now time.Tim
 
 	adj, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(json_extract(data_json,'$.type'),''), COALESCE(json_extract(data_json,'$.reason'),''),
-       CAST(COALESCE(json_extract(data_json,'$.amount'),0) AS INTEGER), created_at
+       CAST(COALESCE(json_extract(data_json,'$.amount'),0) AS INTEGER), created_at,
+       COALESCE(json_extract(data_json,'$.type'),'') = 'skim' AND COALESCE(json_extract(data_json,'$.at_close') = 1, 0)
 FROM audit_log
 WHERE entity_type = 'shift' AND entity_id = ? AND action = 'cash_adjustment'
 ORDER BY datetime(created_at), rowid`, shiftID)
@@ -231,7 +236,7 @@ ORDER BY datetime(created_at), rowid`, shiftID)
 	for adj.Next() {
 		var a XAdjustment
 		var amt int64
-		if err := adj.Scan(&a.Type, &a.Reason, &amt, &a.At); err != nil {
+		if err := adj.Scan(&a.Type, &a.Reason, &amt, &a.At, &a.AtClose); err != nil {
 			return XReport{}, fmt.Errorf("x report adjustments scan: %w", err)
 		}
 		a.Amount = money.FromMinor(amt)
@@ -248,4 +253,99 @@ ORDER BY datetime(created_at), rowid`, shiftID)
 
 	rep.GeneratedAt = now.UTC().Format(time.RFC3339)
 	return rep, nil
+}
+
+// OpenShift is one register's open shift with display names, for the /shifts
+// X picker and Current card (ut-docs#5797). Names use ShiftXReport's fallbacks.
+type OpenShift struct {
+	ShiftID, RegisterID, RegisterName, CashierID, CashierName, OpenedAt string
+}
+
+// ListOpenShifts returns the newest open shift (closed_at IS NULL) of each
+// register, ordered by register name then id. Read-only. A deactivated
+// register's open shift is still listed: its drawer still holds cash.
+func (r *POSRepo) ListOpenShifts(ctx context.Context) ([]OpenShift, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT s.id, s.register_id, COALESCE(NULLIF(rg.name,''), s.register_id),
+       COALESCE(s.cashier_id,''),
+       COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), COALESCE(s.cashier_id,'')),
+       s.opened_at
+FROM shifts s
+LEFT JOIN registers rg ON rg.id = s.register_id
+LEFT JOIN users u      ON u.id  = s.cashier_id
+WHERE s.closed_at IS NULL
+ORDER BY COALESCE(NULLIF(rg.name,''), s.register_id), s.register_id, s.opened_at DESC, s.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list open shifts: %w", err)
+	}
+	defer rows.Close()
+	var out []OpenShift
+	seen := map[string]bool{}
+	for rows.Next() {
+		var o OpenShift
+		if err := rows.Scan(&o.ShiftID, &o.RegisterID, &o.RegisterName, &o.CashierID, &o.CashierName, &o.OpenedAt); err != nil {
+			return nil, fmt.Errorf("list open shifts: %w", err)
+		}
+		if seen[o.RegisterID] {
+			continue // newest first: keep the first row per register
+		}
+		seen[o.RegisterID] = true
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list open shifts: %w", err)
+	}
+	return out, nil
+}
+
+// ErrShiftNotClosed: ShiftCloseSlip was asked for a shift that is still open.
+var ErrShiftNotClosed = errors.New("shift not closed")
+
+// ShiftCloseSlip is one closed shift's X figures with the at-close skim moved
+// out of the Cash block into the close block (ut-docs#5841).
+type ShiftCloseSlip struct {
+	X XReport // Cash.Adjustments/AdjustmentsTotal/Expected exclude the at-close skim
+	// Stored shifts-row figures, never recomputed: Variance = Counted -
+	// Expected; Skim = Counted - NewFloat (0 on a legacy close).
+	Expected, Counted, Variance, Skim, NewFloat money.Money
+}
+
+// ShiftCloseSlip reads a closed shift for the "Shift close" slip. Read-only.
+// Unknown or empty id: an error wrapping sql.ErrNoRows; an open shift:
+// ErrShiftNotClosed.
+func (r *POSRepo) ShiftCloseSlip(ctx context.Context, shiftID string, now time.Time) (ShiftCloseSlip, error) {
+	x, err := r.ShiftXReport(ctx, shiftID, now)
+	if err != nil {
+		return ShiftCloseSlip{}, err
+	}
+	if x.Shift.Open {
+		return ShiftCloseSlip{}, ErrShiftNotClosed
+	}
+	var counted, expected, newFloat int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(closing_cash,0), COALESCE(expected_cash,0), COALESCE(new_float, closing_cash, 0) FROM shifts WHERE id = ?`, shiftID).
+		Scan(&counted, &expected, &newFloat); err != nil {
+		return ShiftCloseSlip{}, fmt.Errorf("shift close slip: %w", err)
+	}
+	s := ShiftCloseSlip{
+		X: x, Expected: money.FromMinor(expected), Counted: money.FromMinor(counted),
+		NewFloat: money.FromMinor(newFloat),
+	}
+	s.Variance = s.Counted.Sub(s.Expected)
+	s.Skim = s.Counted.Sub(s.NewFloat)
+
+	kept := make([]XAdjustment, 0, len(x.Cash.Adjustments))
+	total := x.Cash.AdjustmentsTotal
+	for _, a := range x.Cash.Adjustments {
+		if a.AtClose {
+			total = total.Sub(a.Amount)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	c := &s.X.Cash
+	c.Adjustments, c.AdjustmentsTotal = kept, total
+	c.Expected = c.Opening.Add(c.CashSales).Add(c.TipsHeldOut).Add(total)
+	return s, nil
 }

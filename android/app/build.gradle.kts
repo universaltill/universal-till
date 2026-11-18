@@ -95,6 +95,34 @@ require(apkSignerPinsOverride != null || apkSignerPins.isNotEmpty()) {
     "apk-signer-sha256.txt must list at least one digest (an empty pin set needs an explicit -PutApkSignerPins=)"
 }
 
+// ADR-0194 §2.3 (ut-docs#6388): the install channel (see defaultConfig). Any
+// value outside the four names becomes "appstore" (fail closed).
+val installChannelProp = (project.findProperty("installChannel") as String?) ?: "sideload"
+val installChannel = if (installChannelProp in listOf("sideload", "play", "appstore", "direct")) installChannelProp else "appstore"
+
+// Review S7: a Play build (any assemble/bundle/publish task naming "Play", e.g.
+// bundlePlayRelease) and ANY bundle* task (an AAB only goes to a store; early
+// review F4: bundleUniversalRelease would ship "sideload") must carry -PinstallChannel=play, otherwise it would ship
+// with plan purchase and self-update switched ON. Refuse at graph time.
+gradle.taskGraph.whenReady {
+    val playTask = allTasks.firstOrNull {
+        it.project == project && Regex("^(assemble|bundle|publish|package).*Play|^bundle[A-Z]\\w*(Release|Debug)$", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
+    }
+    if (playTask != null && installChannel != "play") {
+        throw GradleException("Task ${playTask.name} builds for Google Play but installChannel is '$installChannel' (from -PinstallChannel). Pass -PinstallChannel=play (ADR-0194 §2.3).")
+    }
+}
+
+// #3048 / ADR-0125 Amendment 1: Stripe Terminal Tap to Pay. COMPILE-TIME flag,
+// default OFF, honoured by the arm64 flavor ONLY (the SDK is arm-only and
+// Android 13+; universal carries armv7 and so is excluded on purpose). Off =
+// the SDK is not on the classpath, a no-op stub is compiled, the manifest
+// gains nothing and the bridge is never registered. release.yml never passes
+// it (scripts/ci/guard-android-tap-to-pay-flag.sh fails any workflow that
+// does, until a signed-off card adds android/tap-to-pay-release-approved.txt).
+val tapToPay = (project.findProperty("tapToPay") as String?) == "true"
+val stripeTerminalVersion = "6.0.0"
+
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
@@ -123,6 +151,14 @@ android {
         buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
         // ut-docs#5436 / ADR-0179: pinned APK signer certificate digests ("" = dormant).
         buildConfigField("String", "APK_SIGNER_SHA256S", "\"${apkSignerPins.joinToString(",")}\"")
+        // ADR-0194 §2.3 (ut-docs#6388): the install channel, passed to Go once
+        // before Mobile.start (TillService.kt). Build-time only. Today's three
+        // abi flavors are the GitHub-release (sideload) APK, so that is the
+        // default. A store flavor (e.g. a future "play" dimension) MUST set its
+        // own value in its flavor block; -PinstallChannel= overrides for a CI
+        // build. Any value outside the four names becomes "appstore" (fail
+        // closed: no purchase, no link-out, no self-update). Signing untouched.
+        buildConfigField("String", "INSTALL_CHANNEL", "\"$installChannel\"")
     }
 
     // ut-docs#1541: tasks are assemble{Arm64,Armv7,Universal}{Debug,Release}.
@@ -134,6 +170,7 @@ android {
             versionCode = baseVersionCode * 10 + 2
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArm64\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "$tapToPay")
         }
         create("armv7") {
             dimension = "abi"
@@ -141,6 +178,8 @@ android {
             versionCode = baseVersionCode * 10 + 1
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArmv7\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            // Hard-coded: -PtapToPay is ignored here (armv7 and Android < 13).
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
         }
         create("universal") {
             dimension = "abi"
@@ -148,7 +187,19 @@ android {
             versionCode = baseVersionCode * 10
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlUniversal\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "true")
+            // Hard-coded false on purpose: universal carries armv7 and cannot ship the arm-only SDK path.
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
         }
+    }
+
+    // #3048: one `abi` dimension, so flavor source sets only. The stub is what
+    // every shipped build compiles; the real Stripe adapter and its manifest
+    // overlay exist only for arm64 with -PtapToPay=true.
+    sourceSets {
+        getByName("armv7").java.srcDir("src/ttpStub/java")
+        getByName("universal").java.srcDir("src/ttpStub/java")
+        getByName("arm64").java.srcDir(if (tapToPay) "src/ttpReal/java" else "src/ttpStub/java")
+        if (tapToPay) getByName("arm64").manifest.srcFile("src/ttpReal/AndroidManifest.xml")
     }
 
     // ut-docs#1541: compress libgojni.so inside the APK (74.5 MB -> ~35 MB per
@@ -191,9 +242,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     // ut-docs#412: BuildConfig generation is opt-in as of AGP 8.0 — without
     // this, MainActivity's BuildConfig.DEBUG check (gating the debug-only
     // status bar) fails to compile with "unresolved reference: BuildConfig"
@@ -201,6 +249,14 @@ android {
     // review before merge, 2026-08-07).
     buildFeatures {
         buildConfig = true
+    }
+}
+
+// #3048: the compilerOptions DSL (kotlinOptions.jvmTarget is a hard error from Kotlin 2.2+,
+// which the -PtapToPay=true build uses; the same JVM 17 target as before).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -348,7 +404,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )
@@ -372,6 +428,14 @@ dependencies {
     // ut-docs#1541/#4312: JVM unit tests for the pure update decisions
     // (UpdateLogic, UpdateSourceBuildConfigTest) — `./gradlew testArm64DebugUnitTest`, no device needed.
     testImplementation("junit:junit:4.13.2")
+    // #3048: the Android org.json is a stub on the JVM; the tap bridge's JSON tests need a real one.
+    testImplementation("org.json:json:20240303")
+
+    // #3048: Stripe Terminal, arm64 + -PtapToPay=true ONLY. Exact versions, no ranges.
+    if (tapToPay) {
+        add("arm64Implementation", "com.stripe:stripeterminal-taptopay:$stripeTerminalVersion")
+        add("arm64Implementation", "com.stripe:stripeterminal-core:$stripeTerminalVersion")
+    }
 
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
