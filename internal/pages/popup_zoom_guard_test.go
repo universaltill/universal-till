@@ -2,7 +2,7 @@ package pages
 
 // ut-docs#2944 / ADR-0122 §5, §6, §8: every popup -- each <dialog>, sheet
 // and picker -- grows from the tapped element and shrinks back into it on
-// close through ONE shared mechanism in base.html's first script. These are
+// close through ONE shared mechanism in web/public/ut-motion.js (ut-docs#2972). These are
 // static guards over the shipped source (the same pattern as
 // transitions_test.go); e2e/tests/popup-zoom-2944.spec.ts proves the
 // behaviour in a real Chromium.
@@ -17,17 +17,17 @@ import (
 	"testing"
 )
 
-// popupBlock returns base.html's shared popup-motion code: from the
+// popupBlock returns ut-motion.js's shared popup-motion code: from the
 // HTMLDialogElement wrapper to the end of the popup section marker.
 func popupBlock(t *testing.T, html string) string {
 	t.Helper()
 	i := strings.Index(html, "// ADR-0122 §5 (ut-docs#2944): the ONE popup motion")
 	if i < 0 {
-		t.Fatalf("base.html has no shared popup-motion section (ADR-0122 §5)")
+		t.Fatalf("ut-motion.js has no shared popup-motion section (ADR-0122 §5)")
 	}
 	j := strings.Index(html[i:], "// end ADR-0122 §5 popup motion")
 	if j < 0 {
-		t.Fatalf("base.html's popup-motion section has no end marker")
+		t.Fatalf("ut-motion.js's popup-motion section has no end marker")
 	}
 	return html[i : i+j]
 }
@@ -70,18 +70,18 @@ func webFiles(t *testing.T) map[string]string {
 
 // Consequences: wrapping HTMLDialogElement.prototype is a global patch, so
 // it is installed exactly once, in base.html, and nowhere else in web/.
-func TestDialogPrototypeIsWrappedOnceOnlyInBaseHTML(t *testing.T) {
+func TestDialogPrototypeIsWrappedOnceOnlyInMotionJS(t *testing.T) {
 	files := webFiles(t)
 	for p, src := range files {
 		n := strings.Count(src, "HTMLDialogElement.prototype[m] = ")
 		switch p {
-		case "web/ui/layouts/base.html":
+		case "web/public/ut-motion.js":
 			if n != 1 {
-				t.Errorf("base.html must assign the showModal/show wrapper exactly once, found %d", n)
+				t.Errorf("ut-motion.js must assign the showModal/show wrapper exactly once, found %d", n)
 			}
 		default:
 			if strings.Contains(src, "HTMLDialogElement.prototype") {
-				t.Errorf("%s patches HTMLDialogElement.prototype -- the ONE wrapper lives in base.html (ADR-0122 §5)", p)
+				t.Errorf("%s patches HTMLDialogElement.prototype -- the ONE wrapper lives in web/public/ut-motion.js (ADR-0122 §5, ut-docs#2972)", p)
 			}
 		}
 	}
@@ -93,20 +93,19 @@ func TestDialogPrototypeIsWrappedOnceOnlyInBaseHTML(t *testing.T) {
 // itself here.
 func TestOnlyTheSharedZoomsCallAnimate(t *testing.T) {
 	allowed := map[string]int{
-		"web/ui/layouts/base.html": 3, // popup open, its ::backdrop, the closing shrink
-		"web/public/app.js":        1, // zoomPane (tree panes, #2943)
+		"web/public/ut-motion.js": 3, // popup open, its ::backdrop, the closing shrink
+		"web/public/app.js":       1, // zoomPane (tree panes, #2943)
 	}
 	re := regexp.MustCompile(`\.animate\(`)
 	for p, src := range webFiles(t) {
 		n := len(re.FindAllStringIndex(stripCodeComments(src), -1))
 		if n != allowed[p] {
-			t.Errorf("%s calls .animate( %d times, want %d -- per-popup motion must go through base.html's shared zoom (ADR-0122 §5)", p, n, allowed[p])
+			t.Errorf("%s calls .animate( %d times, want %d -- per-popup motion must go through ut-motion.js's shared zoom (ADR-0122 §5)", p, n, allowed[p])
 		}
 	}
-	// base.html's three are all inside the shared popup section.
-	html := readBaseHTML(t)
-	if n := strings.Count(stripCodeComments(popupBlock(t, html)), ".animate("); n != 3 {
-		t.Errorf("base.html's .animate( calls must all live in the shared popup section, found %d there", n)
+	// ut-motion.js's three are all inside the shared popup section.
+	if n := strings.Count(stripCodeComments(popupBlock(t, readMotionJS(t))), ".animate("); n != 3 {
+		t.Errorf("ut-motion.js's .animate( calls must all live in the shared popup section, found %d there", n)
 	}
 }
 
@@ -122,9 +121,8 @@ func TestPerDialogOpenEaseIsGone(t *testing.T) {
 	}
 }
 
-func TestBaseHTMLSharedPopupZoom(t *testing.T) {
-	html := readBaseHTML(t)
-	b := popupBlock(t, html)
+func TestMotionJSSharedPopupZoom(t *testing.T) {
+	b := popupBlock(t, readMotionJS(t))
 
 	// Opening: the wrapper runs the native method FIRST and returns its
 	// value, then starts the motion inside a try (never throws into the
@@ -275,15 +273,32 @@ func firstSub(m []string) string {
 // ut-docs#2944 review (major): the dialog `close` event is a queued task, so
 // a close site that empties the dialog right after .close() hands the shared
 // shrink an already-empty element -- a blank card shrinks into the tile. No
-// page under base.html's shared motion may mutate a dialog at its close
-// site. (The self-order kiosk partials are not under base.html; a backlog
-// card covers them.)
-func TestNoDialogIsEmptiedAtItsCloseSite(t *testing.T) {
-	re := regexp.MustCompile(`\.close\(\)[;,]?\s*[A-Za-z_.$()']*\.innerHTML\s*=`)
-	for p, src := range webFiles(t) {
-		if strings.HasPrefix(filepath.Base(p), "self_order_") {
-			continue
+// close site may mutate a dialog (ut-docs#2972 extends this to the kiosk and
+// to inline-actions' close-clear: the kiosk's clearing is the dialog's
+// data-ut-clear-on-close, done by ut-motion.js after the shrink).
+var closeThenEmptyRE = regexp.MustCompile(`(\.close\(\)|closeDialog\([^)]*\))[;,]?\s*[A-Za-z_.$()']*\.(innerHTML\s*=|textContent\s*=|innerText\s*=|replaceChildren\()`)
+
+// The close-then-empty pattern catches every way of blanking the dialog.
+func TestCloseThenEmptyPatternCoversAllForms(t *testing.T) {
+	for _, bad := range []string{
+		"dlg.close(); dlg.innerHTML = '';",
+		"dlg.close(); dlg.textContent = '';",
+		"dlg.close(); dlg.innerText = '';",
+		"dlg.close(); dlg.replaceChildren();",
+		"closeDialog(dlg); dlg.textContent = '';",
+	} {
+		if !closeThenEmptyRE.MatchString(bad) {
+			t.Errorf("pattern must flag %q", bad)
 		}
+	}
+	if closeThenEmptyRE.MatchString("dlg.close(); other.focus();") {
+		t.Errorf("pattern must not flag an unrelated statement")
+	}
+}
+
+func TestNoDialogIsEmptiedAtItsCloseSite(t *testing.T) {
+	re := closeThenEmptyRE
+	for p, src := range webFiles(t) {
 		if loc := re.FindStringIndex(src); loc != nil {
 			t.Errorf("%s empties a dialog right after .close() (%q) -- the close event is queued, so the shared shrink would show a blank frame (ADR-0122 §5)", p, src[loc[0]:loc[1]])
 		}
@@ -292,7 +307,7 @@ func TestNoDialogIsEmptiedAtItsCloseSite(t *testing.T) {
 
 // ut-docs#2944 review: popupClose's backstops and the closing target rule.
 func TestPopupCloseGuardsAndCloseTarget(t *testing.T) {
-	b := popupBlock(t, readBaseHTML(t))
+	b := popupBlock(t, readMotionJS(t))
 	i := strings.Index(b, "function popupClose(")
 	if i < 0 {
 		t.Fatalf("no popupClose in the shared section")
@@ -335,7 +350,7 @@ func TestPopupCloseGuardsAndCloseTarget(t *testing.T) {
 // popup was 2/3 shrunk and 2/3 transparent after 60ms under the old,
 // shared open curve/duration).
 func TestPopupCloseUsesCloseMsAndEase(t *testing.T) {
-	b := popupBlock(t, readBaseHTML(t))
+	b := popupBlock(t, readMotionJS(t))
 	if !strings.Contains(b, "var POPUP_CLOSE_EASE = 'cubic-bezier(.4, 0, .6, 1)';") {
 		t.Errorf("shared popup section must define POPUP_CLOSE_EASE next to POPUP_EASE (ADR-0123)")
 	}
@@ -390,7 +405,7 @@ func TestPopupCloseUsesCloseMsAndEase(t *testing.T) {
 // ADR-0122 §7: UT.finishZooms() reports only NON-passive zooms, so a
 // passive one (the closing shrink) never arms the click re-dispatch.
 func TestFinishZoomsIgnoresPassiveForReDispatch(t *testing.T) {
-	html := readBaseHTML(t)
+	html := readMotionJS(t)
 	i := strings.Index(html, "UT.trackZoom = function (anim, opts)")
 	if i < 0 {
 		t.Fatalf("UT.trackZoom must take (anim, opts) with opts.passive")
@@ -417,5 +432,104 @@ func TestStripCodeComments(t *testing.T) {
 		"    // h.animate(\n"
 	if n := strings.Count(stripCodeComments(src), ".animate("); n != 3 {
 		t.Errorf("want 3 code .animate( calls after stripping comments, got %d: %q", n, stripCodeComments(src))
+	}
+}
+
+// ut-docs#2972: the standalone kiosk page hosts a <dialog> too, so it loads
+// the SAME motion file, synchronously, first in <head> (the wrapper must be
+// installed before htmx or inline-actions.js can open anything).
+func TestStandaloneDialogPagesLoadSharedMotion(t *testing.T) {
+	files := webFiles(t)
+	tag := regexp.MustCompile(`<script src="/public/ut-motion\.js\?v=\{\{ assetv "public/ut-motion\.js" \}\}"></script>`)
+	checked := 0
+	for p, src := range files {
+		base := p == "web/ui/layouts/base.html"
+		page := strings.HasPrefix(p, "web/ui/pages/") && strings.Contains(src, "<!DOCTYPE") && strings.Contains(src, "<dialog")
+		if !base && !page {
+			continue
+		}
+		checked++
+		if n := len(tag.FindAllString(src, -1)); n != 1 {
+			t.Errorf("%s must load /public/ut-motion.js exactly once (sync, no defer/async), found %d", p, n)
+			continue
+		}
+		head := src
+		if e := strings.Index(head, "</head>"); e > 0 {
+			head = head[:e]
+		}
+		at := tag.FindStringIndex(head)
+		if at == nil {
+			t.Errorf("%s: ut-motion.js must be in <head>", p)
+			continue
+		}
+		if i := strings.Index(src, "<script"); i != at[0] && !base {
+			t.Errorf("%s: ut-motion.js must be the first <script> in the document", p)
+		}
+		if base && strings.Index(src, "<script") != at[0] {
+			t.Errorf("base.html: ut-motion.js must be the first <script> in the document")
+		}
+	}
+	if checked < 2 {
+		t.Errorf("expected base.html and at least one standalone dialog page, checked %d", checked)
+	}
+	if !strings.Contains(files["web/ui/pages/self_order_shop.html"], "<dialog") {
+		t.Errorf("self_order_shop.html no longer hosts the kiosk dialog? update this guard")
+	}
+}
+
+// ut-docs#2972: the kiosk clears its dialog's markup AFTER the closing
+// shrink, declaratively (data-ut-clear-on-close), never at the close site.
+func TestClearOnCloseRunsAfterShrink(t *testing.T) {
+	files := webFiles(t)
+	js := files["web/public/ut-motion.js"]
+	if js == "" {
+		t.Fatalf("web/public/ut-motion.js is missing")
+	}
+	if !strings.Contains(files["web/ui/pages/self_order_shop.html"], `<dialog id="selforder-modal" class="modifier-modal" data-ut-clear-on-close>`) {
+		t.Errorf("#selforder-modal must carry data-ut-clear-on-close")
+	}
+	ia := files["web/public/inline-actions.js"]
+	i := strings.Index(ia, "'close-clear'")
+	if i < 0 {
+		t.Fatalf("inline-actions.js lost the close-clear action")
+	}
+	ca := ia[i:]
+	if e := strings.Index(ca, "\n    },"); e > 0 {
+		ca = ca[:e]
+	}
+	if strings.Contains(stripCodeComments(ca), "innerHTML") {
+		t.Errorf("close-clear must not empty the dialog itself (the shared motion does, after the shrink): %s", ca)
+	}
+	if strings.Count(js, "data-ut-clear-on-close") < 1 {
+		t.Fatalf("ut-motion.js must honour data-ut-clear-on-close")
+	}
+	b := popupBlock(t, js)
+	pc := b[strings.Index(b, "function popupClose("):]
+	if e := strings.Index(pc, "UT.popupOpened = function"); e > 0 {
+		pc = pc[:e]
+	}
+	di := strings.Index(pc, "var done = function () {")
+	if di < 0 {
+		t.Fatalf("popupClose has no done callback")
+	}
+	done := pc[di:]
+	if e := strings.Index(done, "};"); e > 0 {
+		done = done[:e]
+	}
+	end := strings.Index(done, "endClosing(el);")
+	clr := strings.Index(done, "clearKids")
+	if end < 0 || clr < 0 || clr < end || !strings.Contains(done, "!el.open") {
+		t.Errorf("popupClose's done must clear the recorded clearKids only AFTER endClosing(el) and only while !el.open, got: %s", done)
+	}
+	pcl := b[strings.Index(b, "UT.popupClosed = function"):]
+	if e := strings.Index(pcl, "};"); e > 0 {
+		pcl = pcl[:e]
+	}
+	if !strings.Contains(pcl, "data-ut-clear-on-close") || !strings.Contains(pcl, "clearKids") {
+		t.Errorf("UT.popupClosed must record clearKids for a data-ut-clear-on-close dialog, got: %s", pcl)
+	}
+	w := b[strings.Index(b, "['showModal', 'show'].forEach"):]
+	if strings.Contains(w, "clearKids") || strings.Contains(w, "data-ut-clear-on-close") {
+		t.Errorf("the open wrapper must never clear content")
 	}
 }

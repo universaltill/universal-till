@@ -573,6 +573,63 @@ test.describe.serial('first-boot setup and PIN login', () => {
     }
   });
 
+  // ut-docs#5602: on a short till screen (1024x600 kiosk Pi) the wizard
+  // card's dead top margin pushed Back/Next below the fold when the "PINs do
+  // not match" error re-rendered the PIN step. Needs the first-boot till, so
+  // it lives in this serial block before the wizard is completed; a failed
+  // POST /api/setup (mismatched PINs) consumes nothing.
+  test("PIN mismatch keeps the wizard's Back/Next above the fold at 1024x600, phone and desktop (ut-docs#5602)", async ({ browser }) => {
+    const viewports = [
+      { name: 'kiosk 1024x600', width: 1024, height: 600 },
+      { name: 'phone 360x740', width: 360, height: 740 },
+      { name: 'desktop 1280x800', width: 1280, height: 800 },
+    ];
+    for (const vp of viewports) {
+      const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+      const p = await ctx.newPage();
+      await p.emulateMedia({ reducedMotion: 'reduce' });
+      try {
+        await p.goto('/setup');
+        await expect(p, `${vp.name}: needs the first-boot till (/setup must not redirect)`).toHaveURL(/\/setup/);
+        // Jump to the admin PIN step (Alpine) instead of clicking through six steps.
+        await p.evaluate(() => {
+          (document.querySelector('main.setup-card') as any)._x_dataStack[0].step = 6;
+        });
+        await p.fill('input[name=pin]', '1234');
+        await p.fill('input[name=pin_confirm]', '5678');
+        await Promise.all([
+          p.waitForResponse((r) => r.url().includes('/api/setup') && r.request().method() === 'POST'),
+          p.evaluate(() => (document.querySelector('form[action="/api/setup"]') as HTMLFormElement).submit()),
+        ]);
+
+        await expect(p.locator('.login-error[role="alert"]'), vp.name).toContainText(/PINs do not match/i);
+        await p.evaluate(() => document.fonts.ready);
+
+        const m = await p.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll('section[data-step="6"] .setup-nav .btn'));
+          return {
+            innerHeight: window.innerHeight,
+            scrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+            btns: btns.map((e) => {
+              const r = e.getBoundingClientRect();
+              return { top: r.top, bottom: r.bottom, height: r.height };
+            }),
+          };
+        });
+        expect(m.btns.length, vp.name).toBe(2);
+        for (const b of m.btns) {
+          expect(b.top, `${vp.name}: button top`).toBeGreaterThanOrEqual(0);
+          expect(b.bottom, `${vp.name}: button bottom within ${m.innerHeight}`).toBeLessThanOrEqual(m.innerHeight);
+          expect(b.height, `${vp.name}: button height`).toBeGreaterThanOrEqual(44);
+        }
+        expect(m.scrollWidth, `${vp.name}: horizontal overflow`).toBeLessThanOrEqual(m.innerWidth);
+      } finally {
+        await ctx.close();
+      }
+    }
+  });
+
   test('completing the wizard creates the admin PIN and logs in', async () => {
     // Scoped to each numbered section (data-step, set on every <section>
     // in setup.html) rather than a flat sequence of `.setup-nav button`

@@ -100,6 +100,12 @@
   {{ if .CanViewShrinkage }}
   <button id="report-tab-shrinkage" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/shrinkage?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.shrinkage" }}</button>
   {{ end }}
+  {{/* ut-docs#5427 (ADR-0169 §9): web shop / marketplace orders, not till
+       sales. Last in the strip, shown only once this till has recorded an
+       online order. */}}
+  {{ if .ShowOnlineChannels }}
+  <button id="report-tab-online-channels" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/online-channels?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.online_channels" }}</button>
+  {{ end }}
 </div>
 <div id="report-tab-panel" role="tabpanel" style="margin-top:1rem"></div>
 {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (reports.panels), fetched

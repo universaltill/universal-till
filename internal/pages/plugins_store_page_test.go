@@ -103,6 +103,19 @@ func TestPluginStoreJSErrorLookupCoversServerErrorKeys(t *testing.T) {
 		"plugins.install.error.till_moved",
 		"plugins.install.error.register_new",
 		"plugins.install.error.service_unavailable",
+		// ut-docs#6548
+		"plugins.install.error.unreachable",
+		"plugins.install.error.download_failed",
+		"plugins.install.error.retryable",
+		"plugins.install.error.configuration",
+		"plugins.install.error.incompatible",
+		"plugins.install.error.invalid_package",
+		"plugins.install.error.revoked",
+		"plugins.install.error.payment_conflict",
+		"plugins.install.error.page_conflict",
+		"plugins.install.error.page_route_conflict",
+		"plugins.install.error.forbidden",
+		"plugins.install.error.invalid_request",
 	} {
 		if !strings.Contains(body, "'"+key+"':") {
 			t.Errorf("store page's inline-script T lookup is missing %q — a shop owner would see the raw key instead of a translated message", key)

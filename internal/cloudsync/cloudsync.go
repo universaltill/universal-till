@@ -118,7 +118,14 @@ type Hooks struct {
 	// portal can never push a printer address, a TSE credential, a PIN or a
 	// network setting through. Deliberately a separate hook from SetSetting:
 	// that one stays the generic, unrestricted channel and is untouched.
-	SetTillSetting func(ctx context.Context, key, value string) (string, error)
+	//
+	// expect (ut-docs#5349) is the optional compare-and-set: the value the
+	// proposer saw, in the till's stored spelling; nil = the field was
+	// absent (an older cloud: unconditional write, as before), a pointer to
+	// "" = the proposer saw it unset. A till older than the release that
+	// added it ignores the field and writes unconditionally, so the cloud
+	// must not rely on it below the registry's RegistryMinTillVersion.
+	SetTillSetting func(ctx context.Context, key, value string, expect *string) (string, error)
 	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
 	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
@@ -637,6 +644,16 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
 	}
+	// ut-docs#4768 (channel-order-action.md "Upload order"): the main till's queued
+	// channel order actions go up after the check-in answered and BEFORE this tick's
+	// channel_order(_update) directives are applied, so an action is judged against the
+	// cloud's newest state and its answer's `current` is applied first (a directive of
+	// the same revision is then ignored). Runs on a 304 tick too: the queue does not
+	// depend on catalogue changes. Logged, never returned.
+	if !refusedMidTick {
+		// A non-main or unenrolled till blocks its stranded rows inside (finding 2).
+		uploadChannelOrderActions(ctx, cfg, db, hooks)
+	}
 	// Archived reports (ADR-0147 §2, ut-docs#574): only in retention mode
 	// cloud/both, from EVERY till — report_archive is per-till and not
 	// synced, so each till uploads its own Z chain, an additional till under
@@ -845,7 +862,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if key == "" {
 			return "failed", "missing setting key"
 		}
-		msg, err = hooks.SetTillSetting(ctx, key, str("value"))
+		var expect *string
+		if raw, present := d.Payload["expect"]; present && raw != nil {
+			e, ok := raw.(string)
+			if !ok {
+				return "failed", "expect must be a string"
+			}
+			expect = &e
+		}
+		msg, err = hooks.SetTillSetting(ctx, key, str("value"), expect)
 	case "install_plugin":
 		if hooks.InstallPlugin == nil {
 			return "failed", "install_plugin is not supported on this till"
@@ -1878,6 +1903,12 @@ type snapshotItemRow struct {
 	// path and items.icon, the same read the category report uses
 	// (ut-docs#2717), so my. draws and preselects what the till draws.
 	Icon string `json:"icon"`
+	// IconStored (ut-docs#6028) is the raw items.icon, "" for none — set
+	// even while a photo hides it (Icon above is the displayed one), so my.'s
+	// picker shows the icon actually stored; the item counterpart of the
+	// categories report's icon_stored (ut-docs#3585). A lone library tile
+	// reports its id in Icon and "" here, as for categories.
+	IconStored string `json:"icon_stored"`
 	// EverSold (ut-docs#3317) is true once the item or one of its variants
 	// has a sale line here (live or archived). my. offers Delete only while
 	// it is false; the cloud keeps it true once any till reported it.
@@ -2036,6 +2067,7 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB, 
 			Variants:     make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256:  ServedImageSHA256(thumbs[it.ID]),
 			Icon:         iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
+			IconStored:   it.Icon,
 			SellScreen:   it.SellScreen,
 		}
 		if len(it.Barcodes) > 0 {

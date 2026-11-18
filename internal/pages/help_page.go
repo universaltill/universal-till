@@ -55,7 +55,7 @@ func registerHelp(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		q := r.URL.Query().Get("q")
 		httpx.RenderPartial("ui/partials/help_results.html", map[string]any{
-			"results": l.Search(locale, q),
+			"results": l.SearchFor(locale, q, planPurchaseAllowed()),
 			"query":   q,
 		})(w, r)
 	})
@@ -110,6 +110,9 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 			return
 		}
 		topic = t
+		if !planPurchaseAllowed() { // ut-docs#3434: no purchase instructions in the iOS app
+			topic = topic.WithoutPlanPurchase()
+		}
 	}
 
 	data := map[string]any{
@@ -130,7 +133,9 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 	// network, so it is the same offline.
 	// Guarded on the one resolved copy (CredentialsComplete), so a Pair
 	// in between can't mix two identities into the link.
-	if topicID == "support-partner" {
+	// ADR-0194 §2.3 (ut-docs#6401): the link and QR lead into the account
+	// area where checkout lives, so store builds get the prose only.
+	if topicID == "support-partner" && accountLinkOutAllowed() {
 		if m := enroll.Effective(d.Cfg).Marketplace; enroll.CredentialsComplete(m) {
 			target := enroll.PartnerURL(m.EndpointURL, m.StoreID, locale)
 			data["partnerURL"] = target

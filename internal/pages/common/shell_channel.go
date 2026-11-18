@@ -138,6 +138,28 @@ func (c *ShellChannel) SetMode(mode string) {
 	c.broadcastLocked()
 }
 
+// CompareAndSetMode sets the live mode to target (clamped) only if the live
+// mode still equals expect, reading and writing under the channel lock, and
+// reports whether it did. It lets a caller that derived target from a prior
+// read (the F11 toggle, ut-docs#3735) refuse when something else — a kiosk
+// saved in Settings — changed the mode in between. Like SetMode it counts
+// as an explicit instruction on success and bumps rev/broadcasts.
+func (c *ShellChannel) CompareAndSetMode(expect, target string) bool {
+	target = ClampWindowMode(target)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mode != expect {
+		return false
+	}
+	c.touched = true
+	if target != c.mode {
+		c.mode = target
+		c.rev++
+		c.broadcastLocked()
+	}
+	return true
+}
+
 // MarkExitPath declares that this channel is genuinely the exit path —
 // see the exitPath field comment. Production's only call site is
 // NewShellPollWindowController, the controller that consumes the channel;

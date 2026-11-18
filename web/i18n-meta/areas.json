@@ -44,6 +44,7 @@
         "inventory",
         "shrinkage",
         "import",
+        "photoimport",
         "vouchers",
         "vouchers_import",
         "promotions",
@@ -88,11 +89,13 @@
     "settings": {
       "description": "Settings, admin menus, locations, registers, country settings, translations and the subscription.",
       "namespaces": [
+        "about",
         "settings",
         "admin",
         "nav",
         "menu",
         "page",
+        "backup",
         "locations",
         "registers",
         "countrysettings",
