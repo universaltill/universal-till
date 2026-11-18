@@ -33,6 +33,7 @@ func TestUpdateApplyErrorKey(t *testing.T) {
 		{"releases API", errors.New("releases API: HTTP 403"), "settings.update.check_failed"},
 		{"checksum mismatch", errors.New("checksum mismatch: got a want b"), "settings.update.error.verify_failed"},
 		{"no checksums", errors.New("release v1 has no checksums.txt — refusing to install an unverified update"), "settings.update.error.verify_failed"},
+		{"bad signature (ADR-0178)", fmt.Errorf("v1 checksums.txt: %w", selfupdate.ErrSignature), "settings.update.error.verify_failed"},
 		{"untrusted asset (stand-in for #2285)", errors.New("release asset is not on the trusted release host"), "settings.update.error.failed"},
 		{"unknown", errors.New("disk full"), "settings.update.error.failed"},
 	} {
@@ -56,10 +57,14 @@ func TestRespondUpdateApplyError_LocalizedNoRawText(t *testing.T) {
 	chdirRoot(t)
 	initAuthTestI18n(t)
 	raw := errors.New("copy /opt/ut/bin/unitill: permission denied (secret-path-xyz)")
+	// A key the tr pack already carries: this PR's new keys are English-only
+	// in the repo (ADR-0160, translations come from Weblate), so they can't
+	// prove the request's locale is honoured.
+	const key = "settings.update.check_failed"
 	for _, loc := range []string{"en", "tr"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/update/apply?lang="+loc, nil)
 		rec := httptest.NewRecorder()
-		respondUpdateApplyError(rec, req, http.StatusBadGateway, "settings.update.error.failed", "update_apply", raw)
+		respondUpdateApplyError(rec, req, http.StatusBadGateway, key, "update_apply", raw)
 		if rec.Code != http.StatusBadGateway {
 			t.Fatalf("%s: status %d, want 502", loc, rec.Code)
 		}
@@ -70,15 +75,15 @@ func TestRespondUpdateApplyError_LocalizedNoRawText(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 			t.Fatalf("%s: decode: %v (%s)", loc, err, rec.Body.String())
 		}
-		want := httpx.T(loc, "settings.update.error.failed")
-		if env.Data != nil || env.Error != want || want == "settings.update.error.failed" {
+		want := httpx.T(loc, key)
+		if env.Data != nil || env.Error != want || want == key {
 			t.Errorf("%s: envelope %+v, want data:null error:%q", loc, env, want)
 		}
 		if strings.Contains(rec.Body.String(), "secret-path-xyz") || strings.Contains(rec.Body.String(), "permission denied") {
 			t.Errorf("%s: raw error leaked into the response: %s", loc, rec.Body.String())
 		}
 	}
-	if httpx.T("tr", "settings.update.error.failed") == httpx.T("en", "settings.update.error.failed") {
+	if httpx.T("tr", key) == httpx.T("en", key) {
 		t.Error("tr must not be an English copy")
 	}
 }

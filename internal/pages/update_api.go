@@ -503,7 +503,7 @@ func updateApplyErrorKey(err error) string {
 		return "settings.update.error.busy"
 	case "network", "release":
 		return "settings.update.check_failed"
-	case "checksum":
+	case "checksum", "signature":
 		return "settings.update.error.verify_failed"
 	}
 	return "settings.update.error.failed"

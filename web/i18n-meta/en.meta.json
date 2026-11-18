@@ -89,7 +89,7 @@
   "settings.update.android.authorized": {"description": "Short confirmation returned when a manager approves installing the Android update; the download starts next.", "review": "standard"},
   "settings.update.error.busy": {"description": "Shown when Update now is pressed while another update is still being installed on this till.", "review": "standard", "max_length": 120},
   "settings.update.error.failed": {"description": "Generic message when installing an update failed for any reason without a more specific message; the details go to the till's log.", "review": "standard", "max_length": 120},
-  "settings.update.error.verify_failed": {"description": "Shown when the downloaded update's checksum did not match, so nothing was installed.", "review": "standard", "max_length": 120},
+  "settings.update.error.verify_failed": {"description": "Shown when the downloaded update failed verification (its checksum did not match, or the release's signed checksum list did not verify), so nothing was installed.", "review": "standard", "max_length": 120},
   "promotions.customer.clear": {"description": "Aria-label and tooltip of the x button beside the promotion's customer field; after Save any customer can use the code.", "review": "standard"},
   "promotions.customer.deleted": {"description": "Promotions list and dialog: the promotion is bound to a customer who no longer exists on this till (erased elsewhere). Shown instead of an id.", "review": "standard"},
   "promotions.customer.unpicked": {"description": "Promotion dialog error when text was typed in the customer field but no search result was chosen.", "review": "standard"},
