@@ -30,15 +30,15 @@ func TestRowTapEdit_6046(t *testing.T) {
 	}
 
 	type page struct {
-		name, path, tableID, dialog string
-		render                      func(t *testing.T) string
+		name, path, tableID, dialog, hintID string
+		render                              func(t *testing.T) string
 		// wantInButton must all appear inside the first-cell name button.
 		wantInButton []string
 		// buttonStarts, when set, is the text the button's content begins with.
 		buttonStarts string
 	}
 	pages := []page{
-		{name: "kitchen", path: "/kitchen-stations", tableID: "kitchen-stations-table", dialog: "kitchen-station-dialog",
+		{name: "kitchen", hintID: "kitchen-stations-row-edit-hint", path: "/kitchen-stations", tableID: "kitchen-stations-table", dialog: "kitchen-station-dialog",
 			wantInButton: []string{"Pass"},
 			render: func(t *testing.T) string {
 				mux, _ := newKitchenStationsTestMux(t)
@@ -49,21 +49,21 @@ func TestRowTapEdit_6046(t *testing.T) {
 				}
 				return body
 			}},
-		{name: "locations", path: "/locations", tableID: "locations-table", dialog: "location-dialog",
+		{name: "locations", hintID: "locations-row-edit-hint", path: "/locations", tableID: "locations-table", dialog: "location-dialog",
 			wantInButton: []string{"Back Room"},
 			render: func(t *testing.T) string {
 				mux, _ := newLocationsTestMux(t)
 				postForm(mux, "/api/locations", url.Values{"name": {"Back Room"}}, &manager)
 				return get(mux, "/locations")
 			}},
-		{name: "promotions", path: "/promotions", tableID: "promotions-table", dialog: "promotion-dialog",
+		{name: "promotions", hintID: "promotions-row-edit-hint", path: "/promotions", tableID: "promotions-table", dialog: "promotion-dialog",
 			wantInButton: []string{"NAMED"},
 			render: func(t *testing.T) string {
 				mux, _ := newPromotionsTestMux(t)
 				postForm(mux, "/api/promotions", url.Values{"code": {"NAMED"}, "type": {"percent"}, "value_percent": {"10"}}, &manager)
 				return get(mux, "/promotions")
 			}},
-		{name: "country", path: "/country-settings?all=1", tableID: "country-settings-table", dialog: "country-dialog",
+		{name: "country", hintID: "country-settings-row-edit-hint", path: "/country-settings?all=1", tableID: "country-settings-table", dialog: "country-dialog",
 			wantInButton: []string{"ZZ", "added here"},
 			buttonStarts: "Germany",
 			render: func(t *testing.T) string {
@@ -77,7 +77,7 @@ func TestRowTapEdit_6046(t *testing.T) {
 				}
 				return get(mux, "/country-settings?all=1")
 			}},
-		{name: "registers", path: "/registers", tableID: "registers-table", dialog: "register-dialog",
+		{name: "registers", hintID: "registers-row-edit-hint", path: "/registers", tableID: "registers-table", dialog: "register-dialog",
 			wantInButton: []string{"Active Till", "Old Till"},
 			render: func(t *testing.T) string {
 				mux, d := newRegistersTestMux(t)
@@ -93,10 +93,18 @@ func TestRowTapEdit_6046(t *testing.T) {
 			}},
 	}
 
-	btnRe := `<button type="button" class="record-row-open" data-record-edit><span class="record-row-name">`
 	for _, p := range pages {
 		t.Run(p.name, func(t *testing.T) {
+			btnRe := `<button type="button" class="record-row-open" data-record-edit aria-describedby="` + p.hintID + `"><span class="record-row-name">`
 			body := p.render(t)
+			assertEditHint6056(t, body, p.tableID, p.hintID)
+			if p.name == "country" {
+				// The chip swap replaces #country-settings-view only; the hint
+				// must sit outside it so it is neither dropped nor duplicated.
+				if h, v := strings.Index(body, `id="`+p.hintID+`"`), strings.Index(body, `id="country-settings-view"`); h < 0 || h > v {
+					t.Errorf("country hint must precede #country-settings-view (hint %d, view %d)", h, v)
+				}
+			}
 			i := strings.Index(body, `id="`+p.tableID+`"`)
 			if i < 0 {
 				t.Fatalf("table %s missing", p.tableID)
@@ -127,6 +135,9 @@ func TestRowTapEdit_6046(t *testing.T) {
 				}
 			}
 			for _, tag := range regexp.MustCompile(`<button[^>]*data-record-edit[^>]*>`).FindAllString(tbl, -1) {
+				if !strings.Contains(tag, ` aria-describedby="`+p.hintID+`"`) {
+					t.Errorf("name button lacks aria-describedby=%q: %s", p.hintID, tag)
+				}
 				for _, bad := range []string{"aria-label", "title=", "aria-keyshortcuts"} {
 					if strings.Contains(tag, bad) {
 						t.Errorf("name button tag carries %s: %s", bad, tag)
@@ -150,5 +161,61 @@ func TestRowTapEdit_6046(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// assertEditHint6056 pins the page-level description target (ut-docs#6056):
+// exactly one, hidden, outside the table, carrying the rendered common.edit.
+func assertEditHint6056(t *testing.T, body, tableID, hintID string) {
+	t.Helper()
+	if n := strings.Count(body, `id="`+hintID+`"`); n != 1 {
+		t.Fatalf("id=%q appears %d times, want 1", hintID, n)
+	}
+	const tag = `<span id="%s" class="visually-hidden" hidden>Edit</span>`
+	want := strings.Replace(tag, "%s", hintID, 1)
+	h := strings.Index(body, want)
+	if h < 0 {
+		t.Fatalf("hint %s missing", want)
+	}
+	i := strings.Index(body, `id="`+tableID+`"`)
+	if i < 0 {
+		t.Fatalf("table %s missing", tableID)
+	}
+	end := strings.Index(body[i:], "</table>")
+	if end < 0 {
+		t.Fatalf("table %s not closed", tableID)
+	}
+	if h >= i && h < i+end {
+		t.Errorf("hint %s must sit outside the table", hintID)
+	}
+}
+
+// ut-docs#6056: categories uses the same page-level hint; the table keeps its
+// reorder hint, and the buttons keep their aria-keyshortcuts.
+func TestRowTapEdit_Categories_6056(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	seed2699(t, func(s string, a ...any) error { _, err := d.Db.Exec(s, a...); return err })
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /categories: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	assertEditHint6056(t, body, "categories-table", "categories-row-edit-hint")
+	if !strings.Contains(body, `id="categories-table" aria-describedby="categories-reorder-hint"`) {
+		t.Errorf("table lost its reorder hint")
+	}
+	btns := regexp.MustCompile(`<button[^>]*data-record-edit[^>]*>`).FindAllString(body, -1)
+	if len(btns) == 0 {
+		t.Fatalf("no category name buttons")
+	}
+	for _, b := range btns {
+		if !strings.Contains(b, `aria-describedby="categories-row-edit-hint"`) || !strings.Contains(b, "aria-keyshortcuts=") {
+			t.Errorf("category button: %s", b)
+		}
+		if strings.Contains(b, "categories-reorder-hint") {
+			t.Errorf("button must not carry the table-level reorder hint: %s", b)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/updates"
 )
@@ -388,5 +389,27 @@ func TestSetupUpdateApplyExemptFromAuthMiddleware(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "setup-update-restart-msg") {
 		t.Fatalf("POST /api/setup/update-apply through real middleware: code=%d body=%q, want 200 restarting response",
 			rec.Code, rec.Body.String())
+	}
+}
+
+// ADR-0194 §2.3 (ut-docs#6388): on Google Play / App Store the wizard's
+// update routes do not exist: 404, no check, no apply.
+func TestSetupUpdate_RefusedOnStoreChannels(t *testing.T) {
+	for _, c := range allChannels {
+		open := c == buildinfo.ChannelSideload || c == buildinfo.ChannelDirect
+		t.Run(string(c), func(t *testing.T) {
+			withChannel(t, c)
+			mux, _, _ := newFullAuthDeps(t)
+			applyCalls := stubSetupUpdateSeams(t, updates.Status{Latest: "0.6.0", Available: true}, true, nil)
+			for _, p := range []string{"/api/setup/update-check", "/api/setup/update-apply"} {
+				rec := postSetupUpdate(t, mux, p)
+				if got404 := rec.Code == http.StatusNotFound; got404 == open {
+					t.Errorf("%s on %s: code %d, 404 expected=%v", p, c, rec.Code, !open)
+				}
+			}
+			if !open && *applyCalls != 0 {
+				t.Errorf("%s: apply ran %d times", c, *applyCalls)
+			}
+		})
 	}
 }

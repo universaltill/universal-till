@@ -61,8 +61,7 @@ test.describe('wrapped-control labels stack above their inputs (ut-docs#300)', (
   // exactly what a naive one-line layout re-breaks on.
   //
   // German is NOT driven via ?lang=de here, deliberately: it ships as a
-  // language-pack PLUGIN (ut-plugin-language-de/locales/de.json, ut-docs#292),
-  // not a core locale — the shipped core locales are en/ar/fa/tr. A till
+  // Weblate language bundle (ut-docs#292), not a core locale — the shipped core locales are en/ar/fa/tr. A till
   // without that plugin resolves de → en and renders English, so `?lang=de`
   // against this suite's till would assert nothing at all while looking like
   // a German check. (The first draft of this spec did exactly that and passed

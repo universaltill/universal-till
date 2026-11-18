@@ -3,7 +3,7 @@ id: translations
 title: محرر الترجمة
 section: إعداد متجرك
 order: 150
-public: true
+public: false
 summary: يمكن للمديرين إعادة صياغة أي نص أو رسالة في الجهاز وبأي من لغاته.
 routes: [/translations]
 ---

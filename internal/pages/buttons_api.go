@@ -427,13 +427,12 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/buttons/add", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#2312: parsed here (ahead of ui.ButtonsHTTP.Add's own,
 		// idempotent ParseForm call below) so the elevation check has
-		// label/code/itemId/imageUrl to mirror as hidden fields on the
+		// label/code/itemId to mirror as hidden fields on the
 		// dialog's retry -- checkOrElevate itself never touches the body.
 		_ = r.ParseForm()
 		label := r.Form.Get("label")
 		code := r.Form.Get("code")
 		itemID := r.Form.Get("itemId")
-		imageURL := r.Form.Get("imageUrl")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			// ut-docs#2174: the retry target is the Designer's own
@@ -446,7 +445,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "label", Value: label},
 					{Name: "code", Value: code},
 					{Name: "itemId", Value: itemID},
-					{Name: "imageUrl", Value: imageURL},
 				}, elev)
 			return
 		}

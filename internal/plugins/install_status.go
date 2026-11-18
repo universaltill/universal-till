@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -162,13 +163,36 @@ func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 		return InstallFailure{MessageKey: "plugins.install.error.service_unavailable", Message: "Plugin downloads are not available for this shop.", Status: http.StatusForbidden}, true
 	case "unauthorized", "token_retired":
 		if !hasOwner {
-			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Register this till as a new store.", Status: http.StatusForbidden}, true
+			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Reconnect this till in Settings → Till registration.", Status: http.StatusForbidden}, true
 		}
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	case "device_mismatch":
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	}
 	return InstallFailure{}, false
+}
+
+// marketplaceUnreachable reports a transport-level failure reaching the
+// marketplace (refused, DNS, timeout) found with errors.As through any "%w"
+// wrapper. A caller cancel is not one, and *url.Error alone is not enough: it
+// also wraps scheme/configuration errors. Mirrors netreach.networkDown.
+func marketplaceUnreachable(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // hasOwner is forwarded to MarketplaceCodeFailure.
@@ -188,6 +212,11 @@ func ClassifyInstallError(err error, hasOwner bool) InstallFailure {
 	// ut-docs#5658: a revoked release stays refused until another version is installed.
 	if errors.Is(err, ErrRevokedRelease) {
 		return InstallFailure{MessageKey: "plugins.install.error.revoked", Message: "The marketplace has withdrawn this plugin version, so it can't be installed. Install another version.", Retryable: false}
+	}
+
+	// ut-docs#6548: the till could not reach the marketplace at all.
+	if marketplaceUnreachable(err) {
+		return InstallFailure{MessageKey: "plugins.install.error.unreachable", Message: "Can't reach the plugin marketplace.", Retryable: true}
 	}
 
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))

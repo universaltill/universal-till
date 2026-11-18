@@ -84,8 +84,11 @@ func TestSearchResultAddVals_QuotesAndBackslashesSurvive(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.AddVals()), &vals); err != nil {
 		t.Fatalf("AddVals not valid JSON: %v (%s)", err, r.AddVals())
 	}
-	if vals["label"] != r.Name || vals["code"] != r.Barcode || vals["itemId"] != "i1" || vals["imageUrl"] != r.Image {
+	if vals["label"] != r.Name || vals["code"] != r.Barcode || vals["itemId"] != "i1" {
 		t.Fatalf("unexpected vals: %#v", vals)
+	}
+	if _, ok := vals["imageUrl"]; ok {
+		t.Fatalf("AddVals must not carry imageUrl (ut-docs#6097): %#v", vals)
 	}
 }
 
@@ -149,8 +152,8 @@ func TestButtonStoreLoad_ThumbnailFallbackPriceOrderAndModifiers(t *testing.T) {
 	if tea.Label != "Tea Tile" || coffee.Label != "Coffee Tile" {
 		t.Fatalf("sort_order not honored: %+v", btns)
 	}
-	if tea.ImageURL != "/public/images/tea-explicit.png" {
-		t.Fatalf("explicit image lost: %q", tea.ImageURL)
+	if tea.ImageURL != "" {
+		t.Fatalf("a button's own image_path is not a picture source (ut-docs#6076): %q", tea.ImageURL)
 	}
 	if coffee.ImageURL != "/public/images/coffee.png" {
 		t.Fatalf("thumbnail fallback missing: %q", coffee.ImageURL)

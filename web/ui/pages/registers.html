@@ -25,6 +25,8 @@
   {{ if and (not .registers) (not .inactive) }}
   <p class="muted">{{ T "registers.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="registers-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <div class="list-scroll">
   <table class="table" id="registers-table">
     <thead>
@@ -97,7 +99,7 @@
      form, surfaced the same in-dialog way as any other refusal. */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "registers.deactivate_confirm" }}"
+      hx-confirm="{{ T "registers.deactivate_confirm" }}" data-confirm-ok="{{ T "registers.deactivate" }}"
       hx-boost="true" hx-target="#register-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"
@@ -121,7 +123,7 @@
     data-field-name="{{ .Name }}"
     data-field-location_id="{{ .LocationValue }}"
     data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-  <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name">{{ if .IsActive }}{{ .Name }}{{ else }}<span class="muted">{{ .Name }}</span>{{ end }}</span></button></td>
+  <td><button type="button" class="record-row-open" data-record-edit aria-describedby="registers-row-edit-hint"><span class="record-row-name">{{ if .IsActive }}{{ .Name }}{{ else }}<span class="muted">{{ .Name }}</span>{{ end }}</span></button></td>
   <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.new.location_none" }}</span>{{ end }}</td>
   <td>
     {{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}

@@ -26,6 +26,8 @@
   {{ if not .stations }}
   <p class="muted">{{ T "kitchenstations.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="kitchen-stations-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <div class="list-scroll">
   <table class="table" id="kitchen-stations-table">
     <thead>
@@ -46,7 +48,7 @@
           data-field-destination_type="{{ .DestinationType }}"
           data-field-printer_address="{{ .PrinterAddress }}"
           data-field-active="{{ if .Enabled }}1{{ else }}0{{ end }}">
-        <td><button type="button" class="record-row-open" data-record-edit><span class="record-row-name"><bdi dir="auto">{{ .Name }}</bdi></span></button></td>
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="kitchen-stations-row-edit-hint"><span class="record-row-name"><bdi dir="auto">{{ .Name }}</bdi></span></button></td>
         <td>
           {{ if eq .DestinationType "display" }}{{ T "kitchenstations.destination.display" }}{{ else if eq .DestinationType "both" }}{{ T "kitchenstations.destination.both" }}{{ else }}{{ T "kitchenstations.destination.printer" }}{{ end }}
           {{/* Kitchen display (ut-docs#544): only an ENABLED display-capable
@@ -322,7 +324,7 @@
      data-record-when="active=…" matches the opened row). */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}"
+      hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}" data-confirm-ok="{{ T "kitchenstations.deactivate" }}"
       hx-boost="true" hx-target="#kitchen-station-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"
