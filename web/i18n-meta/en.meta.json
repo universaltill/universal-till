@@ -924,7 +924,6 @@
   "backup.cloud.key.err.bad": {"description": "Error: the saved key text failed its checksum or is incomplete.", "review": "standard"},
   "backup.cloud.key.err.wrong": {"description": "Error: the saved key is valid but is another shop's key.", "review": "standard"},
   "backup.cloud.key.err.not_stuck": {"description": "Error: starting a new key is not possible now.", "review": "standard"},
-  "settings.telemetry.help": {"description": "Help text under the plugin status sharing switch: what is shared and that it is off by default.", "review": "standard"},
   "backup.cloud.key.err.owner_approval": {"description": "Error: the cloud will not start a new backup key until the shop owner approves it on my.universaltill.com.", "review": "standard"},
   "backup.cloud.restore.needkey_title": {"description": "Heading while a restore waits for the owner's saved backup key.", "review": "standard"},
   "backup.cloud.restore.needkey_hint": {"description": "Instruction while a restore waits for the saved backup key.", "review": "standard"},
