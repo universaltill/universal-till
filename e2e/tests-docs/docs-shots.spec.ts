@@ -126,7 +126,8 @@ const dialogShots: Record<string, DialogShot> = {
 //
 // HOW TO ADD AN EXTRA SHOT:
 //   1. reference `![alt](img/<id>-<part>.png)` in web/help/en/<id>.md (the
-//      topic must declare routes:);
+//      topic may be route-less: ut-docs#337; the recipe's route must then be
+//      some routed topic's routes[0], or the shot could go stale unnoticed);
 //   2. add a recipe here under the stem `<id>-<part>`: the `route` to visit,
 //      an optional `setup` that puts the shared till into the shown state
 //      through the till's own endpoints, a `teardown` that RESTORES it (it
@@ -157,6 +158,22 @@ const DEFAULT_BROWSING_MODE = 'category_tabs';
 async function setBrowsingMode(page: Page, mode: string) {
   const res = await page.request.post('/api/settings/browsing-mode', { form: { mode } });
   expect(res.status(), `setting browsing mode ${mode} failed`).toBe(204);
+}
+
+// One settings card, shown on its own (ut-docs#337).
+function settingsCardShot(cardId: string): ExtraShot {
+  return {
+    route: '/settings',
+    interact: async (page) => {
+      await page.evaluate((id) => { location.hash = id; }, cardId);
+      await expect(page.locator(`#${cardId}`)).toBeVisible();
+      await page.locator(`#${cardId}`).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    },
+    ready: async (page) => {
+      await expect(page.locator(`#${cardId}`)).toBeVisible();
+    },
+  };
 }
 
 // The sale screen with the shared two-line basket staged, in one browsing mode.
@@ -254,6 +271,15 @@ async function openKioskModal(page: Page, opener: string) {
 const KIOSK_STAGE = async (page: Page) => { await setKioskPaymentMode(page, 'kiosk'); await stageKioskBasket(page); };
 
 const extraShots: Record<string, ExtraShot> = {
+  // Settings cards (ut-docs#337). The topics (backups, updates, data-management,
+  // telemetry) are route-less: the card lives on /settings, which display owns.
+  // Read-only, so no setup/teardown. The fragment is set in `interact` because
+  // capture() appends ?lang= to the route; naming a card's own id shows that
+  // card (settings.html resolveHash).
+  'backups-card': settingsCardShot('settings-backup'),
+  'updates-card': settingsCardShot('settings-update'),
+  'data-management-card': settingsCardShot('settings-data'),
+  'telemetry-card': settingsCardShot('settings-telemetry'),
   'self-order-shop': {
     route: '/self-order/shop',
     setup: KIOSK_STAGE,

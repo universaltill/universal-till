@@ -39,13 +39,35 @@ import (
 // can map it to its own HTTP status instead of a generic 400.
 type paymentDeclinedError struct {
 	Method string
-	// OutcomeUnknown: the plugin reported decline_code "outcome_unknown" —
-	// the reader may or may not have charged (ut-docs#6439).
-	OutcomeUnknown bool
 }
 
 func (e *paymentDeclinedError) Error() string {
 	return "payment declined: " + e.Method
+}
+
+// paymentOutcomeUnknownError (ut-docs#6600): the card plugin could not tell
+// whether the customer was charged (exit non-zero, decline_code
+// outcome_unknown). Not a decline: the basket stays locked on that tender
+// until it settles, and no other payment may be taken meanwhile.
+type paymentOutcomeUnknownError struct {
+	Method string
+}
+
+func (e *paymentOutcomeUnknownError) Error() string {
+	return "payment outcome unknown: " + e.Method
+}
+
+// declineCodeOutcomeUnknown is the decline_code a card plugin prints (exit 2)
+// when it cannot tell whether the customer was charged.
+const declineCodeOutcomeUnknown = "outcome_unknown"
+
+// tenderSignature identifies a tender by method and amount per leg.
+func tenderSignature(payments []pos.PaymentInput) string {
+	var b strings.Builder
+	for _, p := range payments {
+		fmt.Fprintf(&b, "%s:%d;", p.MethodID, p.Amount.Minor())
+	}
+	return b.String()
 }
 
 // fiscalDeviceNoReceiptError signals the ut-docs#1779 fail-closed backstop:
@@ -385,6 +407,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// a split tender's separate legs distinct even when two legs happen
 	// to carry identical content.
 	attemptID := engine.TenderAttemptID()
+	// ut-docs#6600: a possibly-charged card tender locks the basket to that
+	// exact tender; anything else is refused before any plugin is asked.
+	tenderSig := tenderSignature(payments)
+	if lock := engine.TenderLock(); lock != "" && lock != tenderSig {
+		return "", &paymentOutcomeUnknownError{}
+	}
 	var deviceEvidence *fiscal.DeviceEvidence
 	// capturedLegs records every leg whose payment.<key>.authorize actually
 	// reached a plugin and approved, with that leg's own idempotency key —
@@ -446,9 +474,31 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			// a till that refuses every sale undiagnosable. Log it here,
 			// the one place this error is still available.
 			log.Printf("tender declined for method %q (attempt %s): %v", p.MethodID, requestID, err)
-			var de *plugins.PaymentDeclineError
-			unknown := errors.As(err, &de) && de.Code == plugins.DeclineOutcomeUnknown
-			return "", &paymentDeclinedError{Method: p.MethodID, OutcomeUnknown: unknown}
+			var exitErr *plugins.HandlerExitError
+			isUnknown := errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown
+			// While locked on this tender, only a real plugin decline (a
+			// plugin answer that is not outcome_unknown) settles the question.
+			// A timeout, an unloaded plugin, a DB or permission error says
+			// nothing about the money, so the lock and request id stay.
+			if !isUnknown && engine.TenderLock() == tenderSig && exitErr == nil {
+				isUnknown = true
+			}
+			if isUnknown {
+				// The card may have been charged. Earlier legs stay captured
+				// and the attempt id is kept: the retry re-asks every leg with
+				// the same request id, so providers dedupe and settle.
+				engine.LockTender(tenderSig)
+				logging.L().Warnf("payment outcome UNKNOWN — method %q, amount %d, authorize_request_id %s: the card may have been charged; the till is locked on this tender until it is retried and settled — check the provider before taking another payment", p.MethodID, amount.Minor(), requestID)
+				return "", &paymentOutcomeUnknownError{Method: p.MethodID}
+			}
+			// A definitive decline: earlier approved legs are returned and the
+			// request ids are spent (ut-docs#6602).
+			engine.UnlockTender()
+			if len(capturedLegs) > 0 {
+				reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs, "a later leg was declined")
+				engine.RotateTenderAttemptID()
+			}
+			return "", &paymentDeclinedError{Method: p.MethodID}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
 		// doc comment claims "fail-closed by construction, no override
@@ -564,7 +614,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// outcome — signing never happened, so nothing may be journaled as a
 	// sale — it becomes a named Problems-ring item for a human instead.
 	if signRes.Outcome == fiscalSignCannotSign {
-		reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs)
+		reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs, "fiscal signer answered cannot-sign")
 		// The reversed authorizes are spent: the kept basket's next tender
 		// must mint fresh idempotency keys, or a provider deduping on the
 		// old key could replay an approval whose money was just returned.
@@ -651,6 +701,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
+		// ut-docs#6602: no sale row, so the captured card legs go back.
+		if len(capturedLegs) > 0 {
+			reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs, "the sale could not be completed")
+			engine.RotateTenderAttemptID()
+		}
 		return "", err
 	}
 
@@ -2660,13 +2715,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// localized, method-agnostic message, mirroring the
 				// self-order kiosk's own "selforder.checkout.declined" copy.
 				log.Printf("tender rejected: %v", err)
-				msgKey := "pos.toast.payment_declined"
-				if declined.OutcomeUnknown {
-					// ut-docs#6439: not a plain decline — retrying with a
-					// changed basket would mint a new idempotency key.
-					msgKey = "pos.toast.payment_outcome_unknown"
-				}
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), msgKey), http.StatusPaymentRequired)
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
 				return
 			}
 			// ut-docs#1779: distinct from a plain decline above — the device
@@ -2677,6 +2726,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// telling the operator to check the device first.
 			var noReceipt *fiscalDeviceNoReceiptError
 			var deviceRequired *fiscalDeviceRequiredError
+			// ut-docs#6600: the card may have been charged. Own toast, 200
+			// with the basket re-rendered (kept, locked to this tender).
+			var unknown *paymentOutcomeUnknownError
+			if errors.As(err, &unknown) {
+				log.Printf("tender held: %v", err)
+				locale := httpx.ResolveLocale(w, r)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.payment_outcome_unknown")
+				b.ToastLevel = "error"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			if errors.As(err, &noReceipt) || errors.As(err, &deviceRequired) {
 				// ut-docs#1768: same operator-facing copy as #1779's per-leg
 				// backstop above — whether an OKC leg answered with no
@@ -3651,7 +3715,7 @@ type capturedPaymentLeg struct {
 // warned into the Problems ring naming method, amount and
 // authorize_request_id — an un-reversed capture must reach a human — and
 // never changes the caller's refusal.
-func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency string, payments []pos.PaymentInput, legs []capturedPaymentLeg) {
+func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency string, payments []pos.PaymentInput, legs []capturedPaymentLeg, why string) {
 	for _, leg := range legs {
 		p := payments[leg.index]
 		amount := leg.amount
@@ -3677,7 +3741,7 @@ func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency st
 			}}
 		}
 		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "refund", "", payload); err != nil {
-			logging.L().Warnf("fiscal signing: tender refused as cannot-sign, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309)", p.MethodID, amount.Minor(), legCurrency, leg.requestID, err)
+			logging.L().Warnf("tender refused (%s), but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", why, p.MethodID, amount.Minor(), legCurrency, leg.requestID, maskTxnRef(leg.transactionRef), err)
 		}
 	}
 }
@@ -3700,3 +3764,15 @@ func isISO4217Code(c string) bool {
 // concurrent writer in exactly that window. Tests that set it must not run
 // in parallel.
 var lineSnapshotTestHook func()
+
+// maskTxnRef keeps only the last 4 characters of a provider reference for
+// logs (ut-docs#6606), like the plugins' maskRef.
+func maskTxnRef(ref string) string {
+	if ref == "" {
+		return `""`
+	}
+	if len(ref) <= 4 {
+		return "…"
+	}
+	return "…" + ref[len(ref)-4:]
+}

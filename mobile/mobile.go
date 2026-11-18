@@ -72,6 +72,7 @@ import (
 	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -378,6 +379,10 @@ func waitForRestartLocked() {
 // re-exec, and Supported() is true only because of this registration.
 func init() {
 	procrestart.SetRestarter(restartInProcess)
+	// ADR-0194 §2.3: the AAR is one build for every flavor and carries no
+	// linker stamp, so the install channel comes only from SetInstallChannel.
+	// A shell that never calls it fails closed to "appstore".
+	buildinfo.RequireExplicitChannel()
 }
 
 // restartInProcess stops the running server and starts it again on the
@@ -545,6 +550,16 @@ func SetDiscoveryBridge(b DiscoveryBridge) {
 	discovery.SetNativeBridge(b) // a nil DiscoveryBridge converts to a nil NativeBridge
 }
 
+// SetInstallChannel hands the build's install channel (ADR-0194 §2.3:
+// sideload | play | appstore | direct) to the till. The Kotlin shell passes
+// BuildConfig.INSTALL_CHANNEL exactly once, from TillService.kt, BEFORE
+// Mobile.start(). The first call wins and later calls change nothing; an
+// unknown value is stored as "appstore" (fail closed). Nothing else (settings,
+// env, a synced directive, request input) can set or change the channel.
+func SetInstallChannel(channel string) {
+	buildinfo.SetChannelOnce(channel)
+}
+
 // SetDeviceModel registers the on-device hardware model string (Android's
 // Build.MODEL) with internal/diagnostics (ut-docs#2235), mirroring
 // SetBluetoothBridge's shape above. Kotlin calls it exactly once, from
@@ -639,6 +654,20 @@ type TapToPayBridge interface {
 // sheets cause mid-payment.
 func SetTapToPayBridge(b TapToPayBridge) {
 	devicepay.SetBridge(b) // a nil TapToPayBridge converts to a nil devicepay.Bridge
+}
+
+// TapToPayResolver is the gomobile-bind-visible mirror of
+// devicepay.Resolver (ut-docs#6533): the Android shell's "the operator says
+// the earlier payment was not charged". Separate from TapToPayBridge so the
+// iOS protocol is unchanged. One string in, a JSON SetupResult out.
+type TapToPayResolver interface {
+	ResolveUnknown(idempotencyKey string) string
+}
+
+// SetTapToPayResolver registers the Android resolver with internal/devicepay;
+// nil un-registers it. Registered and cleared together with the bridge.
+func SetTapToPayResolver(r TapToPayResolver) {
+	devicepay.SetResolver(r) // a nil TapToPayResolver converts to a nil devicepay.Resolver
 }
 
 // TapToPayCloud forwards one payment-broker call to ut-cloud

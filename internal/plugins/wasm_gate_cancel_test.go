@@ -1,8 +1,6 @@
 package plugins
 
 import (
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 )
@@ -30,33 +28,5 @@ func TestGateRequestTimeout(t *testing.T) {
 	// Past the deadline: tiny positive timeout, never zero/negative.
 	if d, _ = gateRequestTimeout(now.Add(-time.Second), now); d <= 0 {
 		t.Fatalf("past deadline: got %v", d)
-	}
-}
-
-func TestDeclineCodeFrom(t *testing.T) {
-	cases := map[string]string{
-		`{"outcome":"declined","decline_code":"outcome_unknown"}` + "\n": "outcome_unknown",
-		`{"decline_code":"card_declined"}`:                               "card_declined",
-		`{"outcome":"declined"}`:                                         "",
-		`{"decline_code":"x\ny"}`:                                        "",
-		`not json`:                                                       "",
-		``:                                                               "",
-	}
-	for in, want := range cases {
-		if got := declineCodeFrom(in); got != want {
-			t.Errorf("declineCodeFrom(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestPaymentDeclineError_UnwrapsThroughGateChain(t *testing.T) {
-	base := errors.New("exit_code(2)")
-	err := fmt.Errorf("blocking event x failed: %w", fmt.Errorf("wasm handler: %w", &PaymentDeclineError{Code: DeclineOutcomeUnknown, Err: base}))
-	var de *PaymentDeclineError
-	if !errors.As(err, &de) || de.Code != DeclineOutcomeUnknown {
-		t.Fatalf("decline code lost in chain: %v", err)
-	}
-	if !errors.Is(err, base) {
-		t.Fatal("must still unwrap to the exit error")
 	}
 }

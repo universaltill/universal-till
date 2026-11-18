@@ -1,4 +1,4 @@
-# Review: payment gate cancel reserve + outcome_unknown toast (ut-docs#6439)
+# Review: payment gate cancel reserve (ut-docs#6439)
 
 Reviewer: Opus-class inline review of HEAD (b9ba7923a), diff HEAD~1..HEAD.
 
@@ -24,3 +24,15 @@ Pre-flight: build, vet, gofmt, targeted tests run; full pages suite skipped by i
 
 ## Verdict
 Approve with fix applied. No deferred items.
+
+## Update 2026-11-18: merged with main after #2594
+Main (#2594, cdd0651c9) implemented the outcome_unknown half of #6439 differently
+(`HandlerExitError`/`DeclineCode`, tender lock, `paymentOutcomeUnknownError`,
+`pos.toast.payment_outcome_unknown`). Superseded and DROPPED from this PR:
+`PaymentDeclineError`, `declineCodeFrom` (and its log-injection finding 1),
+the `completeTender` mapping, the duplicate toast key, and their tests
+(`TestDeclineCodeFrom`, `TestPaymentDeclineError_UnwrapsThroughGateChain`,
+`TestTenderHandler_OutcomeUnknownDeclineTellsCashierToRetrySameBasket`).
+Kept: the cancel reserve (`gateRequestTimeout`, `gateCancelReserve`,
+`hostState.gateDeadline` set in `handleEvent`, applied in `hostHTTPRequest`)
+and `TestGateRequestTimeout`; main has nothing equivalent.

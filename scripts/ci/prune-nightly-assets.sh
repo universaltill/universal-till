@@ -27,7 +27,7 @@ list_assets() {
 }
 
 delete_asset() {
-  gh release delete-asset "${RELEASE}" "$1" --yes
+  gh release delete-asset "${RELEASE}" "$1" --yes # release-asset-clobber:allow rolling-nightly-prerelease-never-store-fed
 }
 
 # prune KEEP...: deletes every asset list_assets() reports that isn't one

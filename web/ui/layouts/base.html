@@ -1239,6 +1239,12 @@
            specifically the language pack, not some other plugin type. -->
       <a class="sb-item sb-language-pack-update" href="/plugins" data-testid="sb-language-pack-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.language_pack_update_available" }}</a>
       {{ end }}
+      {{ if registrationnoticepending }}{{ if allowed "settings" }}
+      <!-- ADR-0200 (ut-docs#6559): a till set up before the notice existed
+           shows it once, in Settings, Cloud record. A link, never a modal;
+           the till registers only after the notice was shown. -->
+      <a class="sb-item sb-registration-notice" href="/settings#registration" data-testid="sb-registration-notice"><span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span> {{ T "registration.notice.prompt" }}</a>
+      {{ end }}{{ end }}
       {{ with releasenoticeversion }}{{ if allowed "settings" }}
       <!-- ut-docs#3091: once after an update — a non-blocking notice, never a
            modal. The customer-facing self-order kiosk pages never include this
@@ -1556,7 +1562,21 @@
               // A failed apply never left the server mid-restart — nothing to
               // poll for, and polling anyway just leaves the failure message
               // sitting there for 3 minutes before silently going stale.
-              if (failed) { btn.disabled = false; return; }
+              if (failed) {
+                btn.disabled = false;
+                // ut-docs#5274: the server already translated the reason
+                // (never raw error text); show it in the shared, non-modal
+                // #pos-alert banner. textContent only.
+                if (typeof res.error === 'string') {
+                  var pa = document.getElementById('pos-alert');
+                  if (pa) {
+                    pa.hidden = false;
+                    var pt = pa.querySelector('.notice-text');
+                    if (pt) pt.textContent = res.error;
+                  }
+                }
+                return;
+              }
               // Archive installs re-exec in place (reconnect + reload). The mac
               // .app quits and relaunches itself, so the window just closes and
               // reopens on the new version.

@@ -928,6 +928,47 @@ body.sale-screen .session-admin-link { display: none; }
 .catalog-list #catalog-table thead th { position: sticky; inset-block-start: 0;
                                         background: var(--surface); z-index: 1; }
 .catalog-row { cursor: pointer; }
+/* ut-docs#5782: /shifts only (.catalog-layout itself is untouched). History
+   scrolls inside its card (never the page), close form is a compact grid. */
+.shifts-history-scroll { overflow-x: auto; max-inline-size: 100%; }
+/* <=480px the table is a card list (table-cards.js, ut-docs#3359): no min width there. */
+@media (min-width: 481px) { .shifts-history-scroll .table { min-inline-size: 32rem; } }
+.shifts-layout .catalog-list { min-inline-size: 0; }
+/* History is its own grid row spanning both columns, so all six columns fit at 900-1199px. */
+.shifts-history-card { grid-column: 1 / -1; }
+#shift-result { min-block-size: 1.3rem; margin-block-start: .5rem; }
+/* the cash-count grid sits in the narrow form column: inputs must shrink to their cell */
+#denom-grid input { inline-size: 100%; min-inline-size: 0; }
+.shifts-close-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .4rem .6rem; }
+.shifts-close-grid > .shifts-close-hint { margin-block: 0; }
+@media (min-width: 900px) {
+  .shifts-layout { grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem); }
+  .shifts-close-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; }
+  /* the grid's own row gap replaces each label's .catalog-form margin-bottom
+     (the :not() chain out-specifies a class rule, so key on the form id) */
+  #close-shift-form .shifts-close-grid > label { margin-block-end: 0; }
+  .shifts-close-grid > .shifts-close-wide,
+  .shifts-close-grid > .shifts-close-hint { grid-column: 1 / -1; }
+  /* PIN | note share a row; the hint follows full width (DOM keeps PIN, hint, note). */
+  .shifts-close-grid > .shifts-close-pin,
+  .shifts-close-grid > .shifts-close-note { order: 1; }
+  .shifts-close-grid > .shifts-close-hint { order: 2; }
+  /* ux fallback (ut-docs#5782): result directly under the submit button, the
+     collapsed adjustment/formula <details> after it (#shift-result is aria-live,
+     so no tab-order change). */
+  .shifts-layout .catalog-form { display: flex; flex-direction: column; }
+  .shifts-layout .catalog-form > #shift-result { order: 1; }
+  .shifts-layout .catalog-form > details { order: 2; }
+}
+/* Short wide screens (1024x600 kiosk Pi: ~170px of chrome plus the 33px status
+   bar leave ~400px for the form column): tighten the form's own vertical rhythm,
+   never the 46px controls. The manager-PIN session adds a row and a hint. */
+@media (min-width: 900px) and (max-height: 700px) {
+  .shifts-layout .catalog-form { padding-block: .6rem; }
+  .shifts-layout .catalog-form > h3 { margin-block: 0 .25rem; }
+  .shifts-close-grid { row-gap: .25rem; }
+  .shifts-layout .catalog-form > #shift-result { margin-block-start: .25rem; }
+}
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
 
@@ -7771,6 +7812,28 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* Staff actions on an online order (ut-docs#4768 slice D). Logical properties
+   only (RTL). Three blocks, never one flex row: opening Ship or Cancel must not
+   move its own summary from under the finger (the parked-orders bug, #3630) -- the
+   panel opens BELOW the summary. Targets keep .btn's 3rem; no nowrap, so the longest
+   de/tr labels wrap instead of clipping. */
+.channel-order-status[data-status="pending"] { border-style: dashed; }
+.channel-order-status[data-status="refused"] { font-weight: 600; }
+.channel-order-actions-card > h2 { margin-block-start: 0; }
+.channel-order-pending { list-style: none; margin: 0 0 .5rem; padding: 0; display: grid; gap: .5rem; }
+.channel-order-pending > li { display: grid; gap: .35rem; justify-items: start; }
+.channel-order-actions-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+.channel-order-actions-row > form { margin: 0; }
+.channel-order-action-form { margin-block-start: .75rem; }
+.channel-order-cancel { margin-block-start: 1rem; padding-block-start: 1rem; border-block-start: 1px solid var(--border); }
+.channel-order-action-form > summary { list-style: none; cursor: pointer; inline-size: fit-content; }
+.channel-order-action-form > summary::-webkit-details-marker { display: none; }
+.channel-order-action-panel { display: grid; gap: .75rem; margin-block-start: .75rem; max-inline-size: 32rem; }
+.channel-order-field { display: grid; gap: .25rem; }
+.channel-order-field input, .channel-order-field select { inline-size: 100%; min-inline-size: 0; box-sizing: border-box; min-block-size: 46px; }
+.channel-order-check { display: flex; align-items: center; gap: .5rem; min-block-size: 46px; }
+.channel-order-check input { inline-size: 1.25rem; block-size: 1.25rem; }
+.channel-order-outcome form { margin-block-start: .5rem; }
 /* Reports → Online channels (ut-docs#5427). Reuses .channel-order-scroll,
    .channel-orders-num and .channel-order-key; logical properties only. */
 .online-channels-notice { margin-block: .25rem .75rem; max-inline-size: 70ch; }
@@ -8000,3 +8063,12 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
+
+/* About screen (ut-docs#6402): a plain list of full-width touch links. */
+.about-links { list-style: none; margin: 1rem 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; max-inline-size: 28rem; }
+.about-links .btn { display: block; text-align: start; }
+.manual-about-link { margin-block: 1rem 0; padding-inline: .5rem; }
+.about-addresses { margin: 1rem 0; }
+.about-addresses dt { font-weight: 600; margin-block-start: .5rem; }
+.about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
+.about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }

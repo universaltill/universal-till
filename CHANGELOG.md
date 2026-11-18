@@ -7,6 +7,21 @@ Release notes for the till. Versions come from the release tag
 
 ### Added
 
+- **Every till registers itself and reports its changes (ut-docs#6559,
+  ADR-0200).** Once setup is finished, the till registers itself with the
+  Universal Till cloud in the background (never during a sale, retried with
+  capped backoff while offline) and refreshes its record on every start. It
+  also reports which software version or plugin changed and when (a small
+  local queue, 200 events at most, sent with the next check-in; there is no
+  shutdown signal). The setup wizard's last screen and Settings → Till
+  registration → Cloud record tell the owner exactly what is sent, show
+  whether the till is registered and when the cloud last answered, and have
+  a **Stop sending** switch. The "Register this till" opt-in, the Register
+  now button and the terms box in the wizard are gone. A source build, a
+  demo, a test till (`UT_NEVER_REGISTER=1`, set by every CI and e2e
+  launcher) and a shop in a refused country never register. The notice
+  wording is a draft awaiting owner approval.
+
 - **Camera barcode scan on iPhone and iPad (ut-docs#696).** The sale
   screen's camera-scan button now shows on every device. Where the browser
   has no native barcode reader (WebKit, so every iPhone/iPad, and some
@@ -35,6 +50,10 @@ Release notes for the till. Versions come from the release tag
   `set_user_pin` and `deactivate_user` is the release that ships this entry
   (the first release after **v0.28.0**, which was cut just before this
   merged; v0.28.0 does not contain it).
+- **Install channel for store builds (ut-docs#6388, ADR-0194).** Each build knows whether it is a sideload, Google Play, App Store or direct build; on Play and App Store there is no plan purchase surface (the routes answer 404), no self-update check and no marketplace paid badge, and an unknown channel fails closed to the App Store rules.
+- **Claim code as text on store builds (ut-docs#6401).** On Google Play and App Store builds the claim card shows the code as plain text with instructions for another device, with no link or QR; help and release notes drop the plan-purchase text there, and `guard-store-strings.sh` keeps checkout URLs, prices and buy wording out of them.
+- **About screen with legal links (ut-docs#6402).** A new About screen, open to every signed-in role on every channel, links to the privacy notice, the terms, a generated open-source licences page (CI fails when it is stale) and account deletion.
+- **Store-build review fixes (ut-docs#6388, #6401, #6402).** On Google Play and App Store builds the Support partner topic shows no link or QR, the Software update topic no longer explains sideloading and is not linked from Settings, and the setup wizard's update routes answer 404. The About screen's privacy link opens the app privacy notice, the licences open inside the till with a back link, and web addresses are shown as text on a kiosk. The licences page now also lists the Go runtime and the front-end code shipped with the till. `guard-store-strings.sh` also catches schemeless checkout addresses, prices, "Upgrade now" style wording, templates, scripts and translations; a Play Android build must carry `-PinstallChannel=play`.
 
 ### Fixed
 

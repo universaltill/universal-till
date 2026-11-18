@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -879,12 +880,15 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		return nil, fmt.Errorf("wasm handler: %s answer to %s exceeds %d bytes", pluginID, ev.Type, stdout.max)
 	}
 	if runErr != nil {
-		// A payment plugin that declines exits non-zero but still names why
-		// on stdout ({"decline_code": …}); keep the code so the cashier can
-		// be told apart "declined" from "outcome unknown" (ut-docs#6439).
-		if isPaymentGateClassEvent(ev.Type) {
-			if code := declineCodeFrom(stdout.buf.String()); code != "" {
-				return nil, fmt.Errorf("wasm handler: %w", &PaymentDeclineError{Code: code, Err: runErr})
+		// ut-docs#6600: a payment authorize that exits non-zero may still have
+		// printed a decline_code (outcome_unknown: the card may have been
+		// charged). Keep the stdout on the error so core can tell that apart
+		// from a plain decline; the line is logged through the same redaction.
+		var exitErr *sys.ExitError
+		if strings.HasSuffix(ev.Type, ".authorize") && errors.As(runErr, &exitErr) {
+			if out := strings.TrimSpace(stdout.buf.String()); out != "" {
+				logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
+				return nil, &HandlerExitError{Code: int(exitErr.ExitCode()), Stdout: json.RawMessage(out), err: runErr}
 			}
 		}
 		return nil, fmt.Errorf("wasm handler: %w", runErr)
@@ -894,6 +898,34 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
 	}
 	return json.RawMessage(out), nil
+}
+
+// HandlerExitError is a wasm handler that exited non-zero after printing an
+// answer (ut-docs#6600). Only produced for ".authorize" events, where the
+// stdout carries a decline_code core must read.
+type HandlerExitError struct {
+	Code   int
+	Stdout json.RawMessage
+	err    error
+}
+
+func (e *HandlerExitError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("wasm handler: exit code %d", e.Code)
+	}
+	return "wasm handler: " + e.err.Error()
+}
+func (e *HandlerExitError) Unwrap() error { return e.err }
+
+// DeclineCode is the stdout's decline_code, "" when absent or not JSON.
+func (e *HandlerExitError) DeclineCode() string {
+	var v struct {
+		DeclineCode string `json:"decline_code"`
+	}
+	if json.Unmarshal(e.Stdout, &v) != nil {
+		return ""
+	}
+	return v.DeclineCode
 }
 
 // maxUIAnswerBytes caps a ui.* answer (ui.view.ask / ui.action.ask, a view
@@ -997,6 +1029,11 @@ const maxAskLogBytes = 500
 // secrets.Prefix is redacted regardless of its field name — see redactField.
 func looksLikeSensitiveFieldName(key string) bool {
 	lower := strings.ToLower(key)
+	// ut-docs#6606: provider references (exact names, so "reference" and
+	// "key" stay readable).
+	if lower == "ref" || lower == "transaction_ref" {
+		return true
+	}
 	for _, marker := range [...]string{"b64", "token", "secret", "password", "passwd", "api_key", "apikey", "auth_value", "private_key"} {
 		if strings.Contains(lower, marker) {
 			return true
@@ -1179,38 +1216,4 @@ func truncateForLog(s string) string {
 		cut--
 	}
 	return fmt.Sprintf("%s...(truncated, %d bytes total)", s[:cut], len(s))
-}
-
-// PaymentDeclineError is a payment gate plugin's non-zero exit together with
-// the decline_code it printed (e.g. "outcome_unknown": the reader may or may
-// not have charged). It unwraps to the exit error, so callers that only ask
-// "did it fail" are unchanged (ut-docs#6439).
-type PaymentDeclineError struct {
-	Code string
-	Err  error
-}
-
-func (e *PaymentDeclineError) Error() string { return e.Err.Error() + " (decline_code " + e.Code + ")" }
-func (e *PaymentDeclineError) Unwrap() error { return e.Err }
-
-// DeclineOutcomeUnknown is the decline_code a payment plugin sets when it
-// cannot tell whether the card was charged.
-const DeclineOutcomeUnknown = "outcome_unknown"
-
-// declineCodeFrom reads decline_code from a plugin's stdout answer; "" when
-// absent or not JSON. Codes are short identifiers, anything else is dropped.
-func declineCodeFrom(out string) string {
-	var a struct {
-		Code string `json:"decline_code"`
-	}
-	if json.Unmarshal([]byte(strings.TrimSpace(out)), &a) != nil || len(a.Code) > 64 {
-		return ""
-	}
-	// The code lands in logs via Error(): identifier characters only.
-	for _, r := range a.Code {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
-			return ""
-		}
-	}
-	return a.Code
 }
