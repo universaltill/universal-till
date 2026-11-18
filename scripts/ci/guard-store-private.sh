@@ -180,6 +180,13 @@ violations="$(awk '
       report("release-asset-clobber", raw)
     }
     if (inUp && code !~ /\\[ \t]*$/) inUp = 0
+    # Deleting a published asset (to upload a different one under the same
+    # name), clobber held in a variable, and the softprops release action all
+    # replace a published asset.
+    if (lc ~ /release[ \t]+delete-asset|releases\/assets\/[^ ]*|softprops\/action-gh-release|--clobber/ && lc !~ /release[ \t]+upload/ \
+        && lc ~ /delete-asset|-x[ \t]+delete|softprops\/action-gh-release|clobber[a-z_]*[ \t]*=/ && raw !~ /release-asset-clobber:allow [a-z]/) {
+      report("release-asset-clobber", raw)
+    }
 
     # A line left of the upload key column (the next list item, `end`,
     # the next lane) ends its step. A command-line upload (fastlane supply,
@@ -216,7 +223,7 @@ violations="$(awk '
     n = split(tv, arr, " ")
     for (i = 1; i <= n; i++) if (arr[i] != "internal") { report("play-track", raw); next }
 
-    if (lc ~ /msstore[ \t]+(publish|submission|package)|store-submission@|microsoft-store-apppublisher|storebroker|manage\.devcenter\.microsoft\.com|api\.store\.microsoft\.com|\/ingestion\/|ingestion\.[a-z.]*microsoft|(new|get|update|complete|commit|submit)-applicationsubmission|applications\/[^\/ ]+\/submissions/ \
+    if (lc ~ /msstore[ \t]+(publish|submission|package)|store-submission@|microsoft-store-apppublisher|storebroker|manage\.devcenter\.microsoft\.com|api\.store\.microsoft\.com|submission\/v1\/product\/|isaacrlevin\/windows-store-action|microsoft\/store-submission|\/ingestion\/|ingestion\.[a-z.]*microsoft|(new|get|update|complete|commit|submit)-applicationsubmission|applications\/[^\/ ]+\/submissions/ \
         && lc !~ /--flightid|flight_?id|flights\// && !(lc ~ /msstore/ && lc ~ /(^|[ \t])-f[ \t]/)) {
       report("msstore-public", raw); next
     }
@@ -230,7 +237,7 @@ sw="$(
   script="${SCAN_ROOT}/scripts/ci/msstore-submit.sh"
   wf="${SCAN_ROOT}/.github/workflows/msstore-submit.yml"
   opened="${SCAN_ROOT}/store-release/microsoft.opened"
-  if [ -f "$script" ] && ! grep -qF 'store-release/microsoft.opened' "$script"; then
+  if [ -f "$script" ] && ! grep -v '^[[:space:]]*#' "$script" | grep -qE '\[ -f "\$opened" \]'; then
     echo "scripts/ci/msstore-submit.sh: [msstore-submit-switch] the submit script does not check store-release/microsoft.opened"
   fi
   if [ -f "$opened" ]; then

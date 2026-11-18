@@ -1,12 +1,15 @@
-# Microsoft Store submission API coordinates for scripts/ci/msstore-submit.sh
-# (ut-docs#6407). A data file on purpose: the store-private guard
-# (scripts/ci/guard-store-private.sh) scans code, and the submit path is held
-# shut by store-release/microsoft.opened instead until the owner's opening
-# card (ut-docs#6408). KEY=value, no quoting; {app} and {sub} are substituted.
-# UNVERIFIED against a live tenant: the owner/opening card confirms these and
-# the package JSON shape in msstore-submit.sh with a real dry run first.
-API_BASE=https://manage.devcenter.microsoft.com/v1.0/my
-TOKEN_RESOURCE=https://manage.devcenter.microsoft.com
-CREATE_PATH=/applications/{app}/submissions
-UPDATE_PATH=/applications/{app}/submissions/{sub}
-COMMIT_PATH=/applications/{app}/submissions/{sub}/commit
+# Microsoft Store submission API for EXE/MSI apps, coordinates for
+# scripts/ci/msstore-submit.sh (ut-docs#6407). Source: Microsoft Learn,
+# "Microsoft Store submission API for MSI or EXE app"
+# (learn.microsoft.com/windows/apps/publish/store-submission-api). A data file
+# on purpose: the store-private guard scans code, and the write path is held
+# shut by store-release/microsoft.opened until the owner's opening card
+# (ut-docs#6408). KEY=value, no quoting; {id} is the Store product id.
+# Every call also sends X-Seller-Account-Id. The packaged-app (MSIX) API on
+# manage.devcenter.microsoft.com is NOT used: this product is an EXE.
+API_BASE=https://api.store.microsoft.com
+TOKEN_RESOURCE=https://api.store.microsoft.com
+PACKAGES_PATH=/submission/v1/product/{id}/packages
+COMMIT_PATH=/submission/v1/product/{id}/packages/commit
+STATUS_PATH=/submission/v1/product/{id}/status
+SUBMIT_PATH=/submission/v1/product/{id}/submit

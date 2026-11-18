@@ -8,10 +8,11 @@
 #   verify  no secrets, no environment: proves the published release is what
 #           the Store will fetch (digest, signed checksums, Authenticode,
 #           silent flag, a soak over a window) and uploads the verdict.
-#   submit  only with dry_run=false, in the `msstore-submit` environment (owner
-#           required reviewer; ut-infra), through a federated Entra credential
-#           (no client secret), via scripts/ci/msstore-submit.sh. That script
-#           is held shut until the owner's opening card (ut-docs#6408) adds
+#   submit  in the `msstore-submit` environment (owner required reviewer;
+#           ut-infra), through a federated Entra credential (no client secret),
+#           via scripts/ci/msstore-submit.sh. dry_run=true is a READ-ONLY probe
+#           of the Store API (proves token, seller id, product id; changes
+#           nothing). dry_run=false writes, and the script is held shut until the owner's opening card (ut-docs#6408) adds
 #           store-release/microsoft.opened: this workflow deliberately carries
 #           NO `store-release:allow` marker yet, and the store guard fails if
 #           that file ever appears without one.
@@ -25,7 +26,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: "Verify only; never touch Partner Center"
+        description: "Read-only probe of the Store API; false = live package update (needs store-release/microsoft.opened)"
         required: true
         type: boolean
         default: true
@@ -59,12 +60,13 @@ jobs:
     outputs:
       ready: ${{ steps.verify.outputs.ready }}
       tag: ${{ steps.verify.outputs.tag }}
+      sha256: ${{ steps.verify.outputs.sha256 }}
     steps:
       - name: Check the inputs
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must be vX.Y.Z"; exit 1; }
-          [[ "$SOAK_MINUTES" =~ ^[0-9]{1,3}$ ]] || { echo "::error::soak_minutes must be a whole number"; exit 1; }
+          [[ "$SOAK_MINUTES" =~ ^([2-9]|1[0-9]|20)$ ]] || { echo "::error::soak_minutes must be 2 to 20"; exit 1; }
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # tags: the installer.nsi of the release is read with git show
@@ -96,6 +98,8 @@ jobs:
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
+          sha="$(jq -r '.sha256 // empty' "$OUT/result.json" 2>/dev/null || true)"
+          echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
           v="${TAG#v}"
           echo "tag=v${v}" >> "$GITHUB_OUTPUT"
           mkdir -p "$RUNNER_TEMP/msstore-report"
@@ -111,7 +115,7 @@ jobs:
 
   submit:
     needs: verify
-    if: ${{ inputs.dry_run == false && needs.verify.outputs.ready == 'true' }}
+    if: ${{ needs.verify.outputs.ready == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: msstore-submit
@@ -122,7 +126,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.verify.outputs.tag }}
       COMMIT: ${{ inputs.commit }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      EXPECT_SHA256: ${{ needs.verify.outputs.sha256 }}
       MSSTORE_APP_ID: ${{ vars.MSSTORE_APP_ID }}
+      MSSTORE_SELLER_ID: ${{ vars.MSSTORE_SELLER_ID }}
     steps:
       - uses: actions/checkout@v7
       - name: Azure login (OIDC, federated credential, no secret)
@@ -140,7 +147,7 @@ jobs:
           echo "::add-mask::${token}"
           ( umask 077; printf '%s' "$token" > "$RUNNER_TEMP/msstore-token" )
           echo "MSSTORE_TOKEN_FILE=$RUNNER_TEMP/msstore-token" >> "$GITHUB_ENV"
-      - name: Set the package on the Store submission
+      - name: Probe the Store API (dry run) or set the package (live run)
         run: bash scripts/ci/msstore-submit.sh "$TAG"
       - name: Drop the token
         if: always()

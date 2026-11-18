@@ -248,6 +248,16 @@ reset_tree; wf '      - run: |' '          gh release upload "$TAG" a.apk b.apk 
 expect_fail release-asset-clobber "a --clobber on a continuation line of an upload"
 reset_tree; wf '      - run: gh release upload "$TAG" app.exe --clobber # release-asset-clobber:allow draft-only'
 expect_pass "a --clobber upload with the reviewed marker"
+reset_tree; wf '      - run: gh release delete-asset "$TAG" app.exe --yes'
+expect_fail release-asset-clobber "deleting a published asset"
+reset_tree; wf '      - run: gh api -X DELETE "repos/o/r/releases/assets/$ID"'
+expect_fail release-asset-clobber "deleting an asset through the API"
+reset_tree; wf '      - run: curl -X POST "$BASE/submission/v1/product/$ID/submit"'
+expect_fail msstore-public "EXE Store submit with the host in a variable"
+reset_tree; wf '      - run: curl -X POST https://api.store.microsoft.com/submission/v1/product/$ID/packages/commit'
+expect_fail msstore-public "EXE Store commit by literal host"
+reset_tree; wf '      - uses: microsoft/store-submission@v1'
+expect_fail msstore-public "the Microsoft store-submission action"
 reset_tree; wf '      - run: gh release upload "$TAG" app.exe'
 expect_pass "a plain upload (no --clobber)"
 reset_tree; wf '      - run: gh release download "$TAG" --dir d --clobber'
@@ -274,7 +284,9 @@ expect_pass "a submission API call with the opening-card marker"
 # --- Microsoft Store switch (ut-docs#6408) -----------------------------------
 reset_tree; printf '%s\n' 'echo no switch check here' >"${REPO}/scripts/release/x.sh"; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' 'echo no switch' >"${REPO}/scripts/ci/msstore-submit.sh"
 expect_fail msstore-submit-switch "a submit script that never checks the opening file"
-reset_tree; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' '[ -f store-release/microsoft.opened ] || exit 1' >"${REPO}/scripts/ci/msstore-submit.sh"
+reset_tree; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' '# store-release/microsoft.opened is checked below' >"${REPO}/scripts/ci/msstore-submit.sh"
+expect_fail msstore-submit-switch "a submit script that only names the opening file in a comment"
+reset_tree; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' 'opened=store-release/microsoft.opened; [ -f "$opened" ] || exit 1' >"${REPO}/scripts/ci/msstore-submit.sh"
 expect_pass "a submit script that checks the opening file (file absent = closed)"
 mkdir -p "${REPO}/store-release"; printf '%s\n' 'opened by the owner' >"${REPO}/store-release/microsoft.opened"
 expect_fail msstore-submit-switch "an opening file that names no card"
