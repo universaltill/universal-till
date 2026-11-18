@@ -836,5 +836,7 @@
   "settings.my_display.error.replica_use_primary": {"description": "Error shown after Save on My display when an additional till refuses the change.", "review": "standard"},
   "settings.my_display.error.unknown_theme": {"description": "Error shown after Save on My display when the chosen theme is not installed on this till.", "review": "standard"},
   "settings.my_display.error.unknown_mode": {"description": "Error shown after Save on My display when the chosen sale screen layout is not one of the offered layouts.", "review": "standard"},
-  "settings.my_display.error.invalid": {"description": "Error shown after Save on My display when the submitted value is malformed or too long.", "review": "standard"}
+  "settings.my_display.error.invalid": {"description": "Error shown after Save on My display when the submitted value is malformed or too long.", "review": "standard"},
+  "pos.toast.payment_outcome_unknown": {"description": "Error toast on the till when a card payment may have been charged but the reader could not confirm it: tells the cashier to tap Pay again to settle it and not to take another payment.", "review": "standard"},
+  "selforder.checkout.outcome_unknown": {"description": "Message on the self-order kiosk when the customer's card payment could not be confirmed: sends them to the cashier and tells them not to pay again.", "review": "standard"}
 }

@@ -3,6 +3,9 @@
 // goreleaser at release time via:
 //
 //	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=<tag>"
+//
+// The other -X values are MarketplacePublicKey, BuildDate and
+// ReleasesBaseURL.
 package buildinfo
 
 import (
@@ -56,6 +59,19 @@ func init() {
 // key — unless built with -tags devplugins. CI resolves the value with
 // scripts/ci/resolve-marketplace-key.sh.
 var MarketplacePublicKey = ""
+
+// ReleasesBaseURL is the releases API collection this build's update check
+// polls and its self-updater downloads from (ut-docs#4080), without
+// "/latest": an independent operator's build stamps its own:
+//
+//	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.ReleasesBaseURL=https://api.github.com/repos/<owner>/<repo>/releases"
+//
+// Empty = our GitHub releases (releasesource.DefaultBase). Like
+// MarketplacePublicKey (ADR-0158) it is build-time only: UT_UPDATE_RELEASES_URL
+// redirects only the check, never the download or its trusted asset host.
+// Must be an absolute https URL; anything else disables self-update and the
+// default check (fail closed, never falls back to our GitHub).
+var ReleasesBaseURL = ""
 
 // ReleasePublicKeys is the comma list (1..4, lowercase 64-hex Ed25519 public
 // keys) the till trusts to sign a release's checksums.txt (ADR-0178 section

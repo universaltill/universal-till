@@ -74,7 +74,22 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 			switch ev.Type {
 			case "payment.demopay.authorize":
 				gotAuthIDs = append(gotAuthIDs, ev.ID)
-				return json.RawMessage(answer(len(gotAuthIDs))), nil
+				a := answer(len(gotAuthIDs))
+				// Test markers: a plain decline, or a plugin that exited
+				// non-zero printing decline_code outcome_unknown (#6600).
+				if a == "DECLINE" {
+					return nil, errors.New("declined")
+				}
+				if a == "REALDECLINE" {
+					return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"card_declined"}`)}
+				}
+				if a == "TIMEOUT" {
+					return nil, errors.New("context deadline exceeded")
+				}
+				if a == "UNKNOWN" {
+					return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"outcome_unknown"}`)}
+				}
+				return json.RawMessage(a), nil
 			case "payment.demopay.refund":
 				var p map[string]any
 				_ = json.Unmarshal(ev.Payload, &p)
