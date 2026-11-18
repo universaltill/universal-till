@@ -39,10 +39,10 @@ type browserSlipSet struct {
 // browserVoucherSlipFor builds the voucher page's browser slip. It reuses
 // voucherSlipFor so the content is the paper slip's; the amount is the
 // display form (the paper's FormatMoneyPrint is bound to the printer charset).
-func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, now time.Time) browserVoucherSlip {
+func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, bal slipBalance, now time.Time) browserVoucherSlip {
 	loc := httpx.DefaultLocale()
-	s := voucherSlipFor(ctx, d, v, printerConfig(ctx, d), now)
-	return browserVoucherSlip{
+	s := voucherSlipFor(ctx, d, v, bal, printerConfig(ctx, d), now)
+	out := browserVoucherSlip{
 		StoreName: s.StoreName,
 		Header:    s.Header,
 		Label:     s.Voucher.Label,
@@ -53,6 +53,11 @@ func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, 
 		Date:      s.Date,
 		Text:      s.Text,
 	}
+	// ut-docs#6044: the "Balance on <date>" line, in the display money form.
+	if s.Voucher.BalanceLabel != "" {
+		out.Balance = s.Voucher.BalanceLabel + " " + httpx.FormatMoneyDisplay(bal.Minor, loc)
+	}
+	return out
 }
 
 // receiptBrowserSlips maps the sale's issued/topped-up vouchers to browser

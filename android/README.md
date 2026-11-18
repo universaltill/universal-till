@@ -742,6 +742,27 @@ only print entry point; every other shell keeps `window.print()`.
 - Verified by the Gradle build and `PrintLogicTest` in CI only; the real
   dialog and the lock-task behaviour need a device or emulator check.
 
+## Install channel (ut-docs#6388, ADR-0194)
+
+The till core behaves differently per install channel: `sideload | play |
+appstore | direct`. On `play` and `appstore` it offers no plan purchase, no
+claim link or QR, and no self-update. The channel is a build constant:
+`BuildConfig.INSTALL_CHANNEL` (app/build.gradle.kts) is handed to Go once by
+`TillService.kt` with `Mobile.setInstallChannel(...)` BEFORE `Mobile.start`.
+Nothing at runtime (settings, env, a synced directive, a request) can change
+it, and the first call wins.
+
+- Today's three `abi` flavors are the GitHub-release APK, so the default is
+  `sideload`.
+- A store flavor (the planned `play` one, #6409) MUST set its own
+  `INSTALL_CHANNEL` in its flavor block; `-PinstallChannel=<name>` overrides
+  it for a CI build.
+- A value outside the four names becomes `appstore` in Gradle, and the Go
+  side stores any unknown or missing value as `appstore` too: the build
+  fails closed. The shared `.aar` has no linker stamp, so a shell that never
+  calls `setInstallChannel` is treated as `appstore`.
+- Signing is untouched by this setting.
+
 ## Tap to Pay (Stripe Terminal, off by default) (ut-docs#3048, ADR-0125)
 
 Tap to Pay on the phone's own NFC, with the Stripe Terminal Android SDK. It is a

@@ -95,6 +95,24 @@ require(apkSignerPinsOverride != null || apkSignerPins.isNotEmpty()) {
     "apk-signer-sha256.txt must list at least one digest (an empty pin set needs an explicit -PutApkSignerPins=)"
 }
 
+// ADR-0194 §2.3 (ut-docs#6388): the install channel (see defaultConfig). Any
+// value outside the four names becomes "appstore" (fail closed).
+val installChannelProp = (project.findProperty("installChannel") as String?) ?: "sideload"
+val installChannel = if (installChannelProp in listOf("sideload", "play", "appstore", "direct")) installChannelProp else "appstore"
+
+// Review S7: a Play build (any assemble/bundle/publish task naming "Play", e.g.
+// bundlePlayRelease) and ANY bundle* task (an AAB only goes to a store; early
+// review F4: bundleUniversalRelease would ship "sideload") must carry -PinstallChannel=play, otherwise it would ship
+// with plan purchase and self-update switched ON. Refuse at graph time.
+gradle.taskGraph.whenReady {
+    val playTask = allTasks.firstOrNull {
+        it.project == project && Regex("^(assemble|bundle|publish|package).*Play|^bundle[A-Z]\\w*(Release|Debug)$", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
+    }
+    if (playTask != null && installChannel != "play") {
+        throw GradleException("Task ${playTask.name} builds for Google Play but installChannel is '$installChannel' (from -PinstallChannel). Pass -PinstallChannel=play (ADR-0194 §2.3).")
+    }
+}
+
 // #3048 / ADR-0125 Amendment 1: Stripe Terminal Tap to Pay. COMPILE-TIME flag,
 // default OFF, honoured by the arm64 flavor ONLY (the SDK is arm-only and
 // Android 13+; universal carries armv7 and so is excluded on purpose). Off =
@@ -133,6 +151,14 @@ android {
         buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
         // ut-docs#5436 / ADR-0179: pinned APK signer certificate digests ("" = dormant).
         buildConfigField("String", "APK_SIGNER_SHA256S", "\"${apkSignerPins.joinToString(",")}\"")
+        // ADR-0194 §2.3 (ut-docs#6388): the install channel, passed to Go once
+        // before Mobile.start (TillService.kt). Build-time only. Today's three
+        // abi flavors are the GitHub-release (sideload) APK, so that is the
+        // default. A store flavor (e.g. a future "play" dimension) MUST set its
+        // own value in its flavor block; -PinstallChannel= overrides for a CI
+        // build. Any value outside the four names becomes "appstore" (fail
+        // closed: no purchase, no link-out, no self-update). Signing untouched.
+        buildConfigField("String", "INSTALL_CHANNEL", "\"$installChannel\"")
     }
 
     // ut-docs#1541: tasks are assemble{Arm64,Armv7,Universal}{Debug,Release}.
@@ -378,7 +404,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )

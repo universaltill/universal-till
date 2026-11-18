@@ -71,7 +71,7 @@ func blockedHintText(locale string, until time.Time) string {
 	return fmt.Sprintf(httpx.T(locale, "status.cloud_auth.blocked_hint"), blockedWhen(locale, until))
 }
 
-// deviceLiveText is "Register now"'s answer for a device_live refusal, as
+// deviceLiveText is an explicit operator registration's answer for a device_live refusal, as
 // HTML-safe text with the date in a <bdi>. The raw cloud body is never used.
 func deviceLiveText(locale string, usableFrom time.Time) string {
 	tmpl := html.EscapeString(httpx.T(locale, "settings.enrol.device_live"))
@@ -84,7 +84,7 @@ func deviceLiveText(locale string, usableFrom time.Time) string {
 	return strings.Replace(tmpl, "%s", "<bdi>"+when+"</bdi>", 1)
 }
 
-// enrolFailureHTML is the HTML-safe, translated message for a Register now /
+// enrolFailureHTML is the HTML-safe, translated message for an explicit operator registration /
 // Pair failure that is not a network problem, or "" for the generic text. It
 // adds the device_live refusal (which carries a date) to enrolFailureKey.
 func enrolFailureHTML(locale string, err error) string {
