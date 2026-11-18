@@ -44,6 +44,8 @@ You use this page when you want to add a feature, check what an installed plugin
 4. On a till that is not registered yet, the first **Download** registers it with the cloud, so the plugin's page first shows the cloud terms box: tick it to accept the terms (once per terms version). Without the tick nothing is downloaded and the page tells you to accept the terms first.
 5. A plugin marked **Paid** needs an entitlement your merchant manager approves in the marketplace portal before it can be installed. Trying to download one without approval shows a message explaining that, instead of downloading.
 6. Press **Download**, then **Install**. A plugin from an unverified publisher asks you to confirm first.
+
+**Report a plugin.** A plugin's page has a **Report this listing** link. It opens the marketplace's report page in your browser, where you pick a reason and describe what is wrong; you need no account and the till does not have to be online for the page to show the link. The foot of the store pages links the **Marketplace publisher terms** and the **Marketplace content guidelines**, which say who may publish and what a plugin may not do.
 7. To get back to your installed plugins, press **Manage installed plugins** at the top of the store. On a plugin's page, it takes the place of **Download** once the plugin is installed.
 
 What the store shows for a plugin you have already started with:

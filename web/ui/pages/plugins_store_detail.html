@@ -81,8 +81,12 @@
   {{ if not .Installed }}
   <p class="muted" style="font-size:.85rem; margin:.6rem 0 0">🔒 {{ T "plugins.store.manager_approval_notice" }}</p>
   {{ end }}
+  {{/* ut-docs#6400: report a listing (opens the marketplace page in the browser). */}}
+  <p style="margin:.6rem 0 0"><a href="{{ .ReportHref }}" target="_blank" rel="noopener" hx-boost="false" data-testid="store-report-link" style="min-height:44px; display:inline-flex; align-items:center">{{ T "plugins.store.report_listing" }}</a></p>
 </div>
 {{ end }}
+
+{{ template "store_marketplace_links" . }}
 
 {{ template "store_logo_js" }}
 <script>
