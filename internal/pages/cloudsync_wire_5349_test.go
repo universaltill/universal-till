@@ -28,7 +28,7 @@ func TestAllowedRemoteTillSettingKeys_IsTheRegistry_5349(t *testing.T) {
 	for _, k := range []string{keyPrinterReceiptPolicy, keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3, keyReceiptFooter,
 		keyInvoiceSellerName, keyInvoiceSellerAddress, keyInvoiceSellerVATNo, common.KeyKioskIdleReset, common.KeyBrowsingMode,
 		common.KeyIdleLock, common.KeyKioskPaymentMode, common.KeyLocale, common.KeyStaffLocales, common.KeyAllowNegativeInventory,
-		common.KeyReportRetentionMode, common.KeyCurrency, common.KeyShopType, common.KeyStoreName, common.KeyAutoRegisterOptIn} {
+		common.KeyReportRetentionMode, common.KeyCurrency, common.KeyShopType, common.KeyStoreName} {
 		if _, ok := data.LookupAgentSetting(k); !ok {
 			t.Errorf("%s has no registry entry", k)
 		}
@@ -202,7 +202,7 @@ func TestRegistryDefaultsAndBoundsMatchCode_5349(t *testing.T) {
 // heartbeat is a deliberate act (ut-docs#5349 added the last four).
 func TestReportedReadOnlyTillSettingKeys_Pinned_5349(t *testing.T) {
 	want := []string{
-		"marketplace.auto_register_opt_in", "payments.default_method", common.KeyReportRetentionMode,
+		"payments.default_method", common.KeyReportRetentionMode,
 		"marketplace.telemetry_opt_in", common.KeyStoreName, common.KeyCurrency, common.KeyShopType,
 		"store.currency_display", // display format only (main's #catalogue entry); merge-added, owner to confirm
 	}

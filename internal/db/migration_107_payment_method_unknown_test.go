@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestMigration106_PaymentMethodUnknownPlaceholder(t *testing.T) {
-	// Opened at 105, the schema just before migration 106.
+func TestMigration107_PaymentMethodUnknownPlaceholder(t *testing.T) {
+	// Opened at 106, the schema just before migration 107.
 	path := filepath.Join(t.TempDir(), "pm-unknown.db")
-	d := openMigratedTo(t, path, 105)
+	d := openMigratedTo(t, path, 106)
 	stmts := `
 INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id) VALUES
  ('sumup', 'sumup', 'cash', 1, 0, NULL),
@@ -27,7 +27,7 @@ INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id) V
 	genBefore := scalarInt(t, d, `SELECT generation FROM sync_admin_version WHERE id = 1`)
 	d.Close()
 
-	d = openMigratedTo(t, path, 106)
+	d = openMigratedTo(t, path, 107)
 	defer d.Close()
 
 	typeOf := func(id string) string {

@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
@@ -635,6 +636,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ADR-0117 (ut-docs#2824): the main till's cloud link. Set before the
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
+	// ADR-0200 (ut-docs#6559): once the background loop has registered this
+	// till, open the operator check-in window so the cloud sees its device
+	// report at once (ADR-0148 section 2), like every other registration.
+	enroll.SetRegisteredHook(func() { requestOperatorCheckin(dp, operatorCheckinWindow) })
 	dp.CloudLink = newCloudLinkClient(dp)
 	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
 	// host fn #6455) reaches the cloud with the live enrolment.

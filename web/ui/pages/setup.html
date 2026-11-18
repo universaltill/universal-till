@@ -61,7 +61,6 @@
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false,
-                                       autoReg: false,
                                        cloud: {{ if .cloudShop }}true{{ else }}false{{ end }},
                                        cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
@@ -411,35 +410,26 @@
         <section x-show="step === 7" x-cloak data-step="7">
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
-          <!-- ADR-0071 (ut-docs#879): explicit, opt-in-gated eager store
-               registration — asked once, on the wizard's last screen, NOT
-               pre-ticked. On yes, POST /api/setup makes one best-effort,
-               time-boxed registration attempt; on no (the default) the till
-               keeps today's lazy registration (ADR-0015). Same
-               labelled-checkbox idiom as the rest of the wizard. -->
-          {{/* ut-docs#4803: a till that joined a my. shop is already registered
-               and paired (ADR-0166), so the opt-in and the terms box are
-               not asked; the server ignores them on this path. */}}
+          {{/* ADR-0200 (ut-docs#6559): no opt-in question. The till registers
+               itself in the background once setup is finished; this screen
+               tells the owner plainly what it sends (information, not a
+               checkbox) and Finish stores that it was shown. The wording is
+               the owner-approved checkin-notice-v2 text. The
+               cloud terms are no longer asked here: they stay at claim, on a
+               paid feature and at a plugin download. */}}
           {{ if .cloudShop }}
           {{ if .cloudShop.HasName }}<p data-testid="setup-joined-shop">{{ T "setup.cloud.shop_name" }}: <strong>{{ .cloudShop.Name }}</strong></p>{{ end }}
-          {{ else }}
-          <label class="set-row" style="margin-top:.6rem">
-            <input type="checkbox" name="auto_register" x-model="autoReg">
-            {{ T "setup.auto_register.label" }}
-          </label>
-          <p class="muted">{{ T "setup.auto_register.hint" }}</p>
-          {{/* ut-docs#4720: the cloud terms, asked only while the opt-in
-               above is ticked (shown + required then); without the tick the
-               server saves the opt-in as off and does not register. */}}
-          {{ if .terms.accepted }}
-          <p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
-          {{ else }}
-          <div class="terms-accept set-gap-s" x-show="autoReg" x-cloak>
-            <label class="set-row"><input type="checkbox" id="setup-accept-terms" name="accept_terms" :required="autoReg"> {{ .terms.label }}</label>
-            <a href="{{ .terms.url }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.terms.link" }}</a>
+          {{ end }}
+          <div class="registration-notice set-gap-s" data-testid="registration-notice">
+            <h2 class="h5 set-gap-s">{{ T "registration.notice.title" }}</h2>
+            <p class="muted">{{ T "registration.notice.body" }}</p>
+            <p class="muted">{{ T "registration.notice.fields" }}</p>
+            <p class="muted">{{ T "registration.notice.purpose" }}</p>
+            <p class="muted">{{ T "registration.notice.retention" }}</p>
+            <p class="muted">{{ T "registration.notice.availability" }}</p>
+            <p class="muted">{{ T "registration.notice.stop_hint" }}</p>
+            <p class="muted">{{ T "registration.notice.controller" }}</p>
           </div>
-          {{ end }}
-          {{ end }}
           {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
                rendered inline by the handler (renderSetupSlot) and
                read-only: the wizard is auth-exempt, plugin routes are not,

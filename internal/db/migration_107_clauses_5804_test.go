@@ -5,14 +5,14 @@ import (
 	"testing"
 )
 
-// Tester (ut-docs#5804): each guard clause of migration 106 on its own keeps
-// a row typed 'cash'. In TestMigration106_PaymentMethodUnknownPlaceholder
+// Tester (ut-docs#5804): each guard clause of migration 107 on its own keeps
+// a row typed 'cash'. In TestMigration107_PaymentMethodUnknownPlaceholder
 // every kept row is excluded by two or more clauses at once, so dropping the
 // id, plugin_id or sort_order clause alone went unnoticed (mutation-tested).
 // Here each kept row matches every clause but one.
-func TestMigration106_EachGuardClauseIsLoadBearing(t *testing.T) {
+func TestMigration107_EachGuardClauseIsLoadBearing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pm-clauses.db")
-	d := openMigratedTo(t, path, 105)
+	d := openMigratedTo(t, path, 106)
 	if _, err := d.DB.Exec(`
 INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id) VALUES
  ('plugmade', 'plugmade', 'cash', 1, 0,   'com.x.p'),
@@ -23,7 +23,7 @@ UPDATE payment_methods SET name = 'cash', sort_order = 0, plugin_id = NULL WHERE
 	}
 	d.Close()
 
-	d = openMigratedTo(t, path, 106)
+	d = openMigratedTo(t, path, 107)
 	defer d.Close()
 	for id, want := range map[string]string{
 		"cash":     "cash",    // only the id clause keeps it

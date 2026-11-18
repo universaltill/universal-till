@@ -1,4 +1,4 @@
--- 106_payment_method_unknown_placeholder.sql — ut-docs#5804: rows that
+-- 107_payment_method_unknown_placeholder.sql — ut-docs#5804: rows that
 -- EnsurePaymentMethod auto-created for an unknown method id were typed 'cash',
 -- so shift close / Z / cloud ExpectedCash counted e.g. a plugin card tender
 -- synced from another till as drawer cash. Retype exactly those rows:

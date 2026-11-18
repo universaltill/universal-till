@@ -269,6 +269,7 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 // the same way for Settings pairing and the wizard's final post.
 func adoptPaired(ctx context.Context, kv Settings, replica bool, newID, storeID, merchantID, token string) {
 	log := logging.L()
+	setAutoRegistered(ctx, kv, false) // ADR-0200: the operator paired this till
 	adoptOwnCredential(ctx, kv, token, storeID)
 	persist := [][2]string{
 		{keyEnrolledAt, time.Now().UTC().Format(time.RFC3339)},
@@ -448,7 +449,7 @@ func postPairFull(ctx context.Context, endpoint, code, deviceID, deviceName, ver
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &fail)
-		// Typed like Register now / claim (ut-docs#4058) so the Settings
+		// Typed like an explicit operator registration / claim (ut-docs#4058) so the Settings
 		// handler can branch on Status/Code. Only the sanitised code is
 		// kept: the raw body (which could echo the pairing code or a
 		// token) never enters the error.
