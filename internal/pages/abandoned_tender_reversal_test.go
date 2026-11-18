@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -183,9 +185,54 @@ func TestAbandon_OpenOrdersResumeReverses(t *testing.T) {
 	lockAgain(t, mux, dp)
 	rec := abandonPost(t, mux, "/open-orders/resume", url.Values{"id": {h1}})
 	wantOneReversal(t, refunds, authIDs)
-	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "msg=pos.toast.tender_abandoned_returned_unknown") {
-		t.Fatalf("want 303 with the abandon msg, got %d %q", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "warn=pos.toast.tender_abandoned_returned_unknown") ||
+		strings.Contains(rec.Header().Get("Location"), "msg=") {
+		t.Fatalf("want 303 with the abandon warn (error level, not msg), got %d %q", rec.Code, rec.Header().Get("Location"))
 	}
+}
+
+// D1: the abandon warning from /open-orders is carried at error level and the
+// sale screen renders it as a persistent role=alert notice, not the green
+// auto-fading success banner.
+func TestSaleScreen_WarnParamRendersErrorNotice(t *testing.T) {
+	mux, _ := quickPayTestMux(t)
+	get := func(target string) string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		return rec.Body.String()
+	}
+	body := get("/?warn=pos.toast.tender_abandoned_returned_unknown")
+	if !strings.Contains(body, `data-testid="resume-warning-banner"`) ||
+		!strings.Contains(body, `class="pos-notice error" role="alert" data-testid="resume-warning-banner"`) ||
+		!strings.Contains(body, httpx.T("en", "pos.toast.tender_abandoned_returned_unknown")) {
+		t.Fatalf("want an error-level role=alert banner with the text, got: %s", body)
+	}
+	if strings.Contains(body, "resume-notice-banner") {
+		t.Fatalf("warning must not render as the success banner")
+	}
+	if g := get("/?warn=<b>evil</b>"); strings.Contains(g, "<b>evil</b>") || strings.Contains(g, "evil") {
+		t.Fatalf("unknown warn text must not be echoed")
+	}
+}
+
+func TestAbandon_OpenOrdersCounterOpenWarnsAtErrorLevel(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	registerHoldAPI(mux, dp)
+	registerOpenOrders(mux, dp)
+	refunds, authIDs := seedCardPluginWithAnswerFunc(t, dp, nil, firstApprovedThenUnknown)
+	lockAgain(t, mux, dp)
+	legacy, err := data.NewKioskCounterOrdersRepo(dp.Db).Create(context.Background(), data.KioskCounterOrder{
+		OrderType: "takeaway", Lines: []data.KioskCounterOrderLine{{Name: "Zzz Unmatched", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := abandonPost(t, mux, "/open-orders/counter/open", url.Values{"id": {legacy.ID}})
+	loc := rec.Header().Get("Location")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(loc, "warn=pos.toast.tender_abandoned_") || strings.Contains(loc, "msg=") {
+		t.Fatalf("want 303 with warn=, got %d %q", rec.Code, loc)
+	}
+	wantOneReversal(t, refunds, authIDs)
 }
 
 func TestAbandon_RestoreHeldDirectReverses(t *testing.T) {
@@ -469,5 +516,52 @@ func TestTender_DuplicateVoucherRefusedBeforeAuthorize(t *testing.T) {
 	}
 	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
 		t.Fatalf("sales=%d", n)
+	}
+}
+
+// A retry that stays locked (leg 2 unknown again) must keep the captured leg
+// (same request id across retries, merged once): reset reverses it once.
+func TestAbandon_LockedRetryKeepsEarlierCaptureForReversal(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	registerHoldAPI(mux, dp)
+	refunds, authIDs := seedCardPluginWithAnswerFunc(t, dp, nil, func(n int) string {
+		if n%2 == 0 {
+			return "UNKNOWN"
+		}
+		return `{"provider":"demopay","outcome":"approved"}`
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	postTender(t, mux, twoLegTender)
+	postTender(t, mux, twoLegTender)
+	if dp.Engine.TenderLock() == "" {
+		t.Fatalf("setup: tender must still be locked after the retry")
+	}
+	abandonPost(t, mux, "/api/pos/reset", nil)
+	got := refunds()
+	if len(got) != 1 || got[0]["authorize_request_id"] != authIDs()[0] {
+		t.Fatalf("want leg 0 (same request id across the retry) reversed exactly once, got %+v", got)
+	}
+}
+
+// AC4: on resume-over, the locked basket's captured legs are reversed and the
+// other order is then restored, whatever the reversal's outcome.
+func TestAbandon_ResumeOverReversalFailureStillRestoresOtherOrder(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	registerHoldAPI(mux, dp)
+	_, _ = seedCardPluginWithAnswerFunc(t, dp, errors.New("terminal offline"), firstApprovedThenUnknown)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	abandonPost(t, mux, "/api/pos/hold", url.Values{})
+	h1 := heldID(t, dp)
+	lockAgain(t, mux, dp)
+	rec := abandonPost(t, mux, "/api/pos/resume", url.Values{"id": {h1}})
+	if rec.Code != http.StatusOK || dp.Engine.HeldOrigin().ID != h1 || len(dp.Engine.Basket().Lines) == 0 {
+		t.Fatalf("other order must be restored even when the reversal fails: %d origin=%q", rec.Code, dp.Engine.HeldOrigin().ID)
+	}
+	if !strings.Contains(rec.Body.String(), toastCheckText) {
+		t.Fatalf("want the check-provider toast: %s", rec.Body.String())
 	}
 }

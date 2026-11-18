@@ -189,13 +189,13 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			// notice from being dropped by a backoffice-mode till's own
 			// "?stay=1" target (ut-docs#2347).
 			if key, ok := abandonToastKey(d.Engine); ok {
-				http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, key), http.StatusSeeOther)
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
 				return
 			}
 			http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, "hold.toast.parked_and_resumed"), http.StatusSeeOther)
 		default:
 			if key, ok := abandonToastKey(d.Engine); ok {
-				http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, key), http.StatusSeeOther)
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
 				return
 			}
 			http.Redirect(w, r, saleScreenReturnURL(mode), http.StatusSeeOther)
@@ -260,13 +260,13 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			back("hold.error.failed")
 		case resumeOKParkedPrior:
 			if key, ok := abandonToastKey(d.Engine); ok {
-				http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, key), http.StatusSeeOther)
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
 				return
 			}
 			http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, "hold.toast.parked_and_resumed"), http.StatusSeeOther)
 		default:
 			if key, ok := abandonToastKey(d.Engine); ok {
-				http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, key), http.StatusSeeOther)
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
 				return
 			}
 			http.Redirect(w, r, saleScreenReturnURL(mode), http.StatusSeeOther)
