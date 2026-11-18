@@ -32,6 +32,20 @@ if ! command -v osslsigncode >/dev/null; then
   exit 1
 fi
 
+# SETUP_SIGNING_VERIFY_ONLY=1 (publish-installer.yml, ut-docs#6407): only the
+# pinned CA bundle + publisher for `sign-exe.sh --verify-only`; no signing
+# identity, no jsign, no token.
+if [ "${SETUP_SIGNING_VERIFY_ONLY:-}" = 1 ]; then
+  curl -fsSL -o "$dir/msroot.crt" "${MS_ROOT_URL}"
+  echo "${MS_ROOT_SHA256}  $dir/msroot.crt" | sha256sum -c -
+  { cat /etc/ssl/certs/ca-certificates.crt; openssl x509 -inform DER -in "$dir/msroot.crt"; } > "$dir/ca-bundle.pem"
+  {
+    echo "SIGN_CA_BUNDLE=$dir/ca-bundle.pem"
+    echo "SIGN_PUBLISHER=TASK RUNNER TECHNOLOGY LTD"
+  } >> "$GITHUB_ENV"
+  exit 0
+fi
+
 curl -fsSL -o "$dir/jsign.jar" "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
 echo "${JSIGN_SHA256}  $dir/jsign.jar" | sha256sum -c -
 curl -fsSL -o "$dir/msroot.crt" "${MS_ROOT_URL}"
