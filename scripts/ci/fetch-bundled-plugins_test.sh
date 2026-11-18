@@ -85,7 +85,7 @@ expect_fail() { # <fixture> <what>
   local name="$1"
   if bash "${SCRIPT}" --lock "${WORK}/${name}/lock.json" --dest "${WORK}/${name}/dest" --from-dir "${WORK}/${name}/bundles" >"${WORK}/out" 2>&1; then
     echo "❌ FAIL: expected a refusal for $2, but the script passed" >&2; FAIL_COUNT=$((FAIL_COUNT + 1))
-  elif [ -e "${WORK}/${name}/dest" ] && [ -n "$(find "${WORK}/${name}/dest" -type f 2>/dev/null | head -1)" ]; then
+  elif [ -e "${WORK}/${name}/dest" ] && [ -n "$(find "${WORK}/${name}/dest" -type f -print -quit 2>/dev/null)" ]; then
     echo "❌ FAIL: $2 was refused but left files in the embed dir" >&2; FAIL_COUNT=$((FAIL_COUNT + 1))
   else
     echo "✓ refused $2 and wrote nothing"
