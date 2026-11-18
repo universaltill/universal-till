@@ -1080,6 +1080,8 @@ jobs:
         run: go build -tags bundledplugins ./...
       - name: Real Stripe and SumUp wasm install, load and run their demo paths on the App Store channel
         run: go vet -tags bundledplugins ./internal/plugins/bundled && go test -tags bundledplugins -count=1 ./internal/plugins/bundled
+      - name: Real Stripe and SumUp authorize reaches the provider host only while net:<host> is granted (ut-docs#6627)
+        run: go test -tags bundledplugins -count=1 -run TestBundledProviders_AuthorizeReachesProviderHostOnlyWhileNetGranted ./internal/plugins
 
   contract:
     runs-on: ubuntu-latest
