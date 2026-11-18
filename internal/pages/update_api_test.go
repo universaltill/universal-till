@@ -175,7 +175,7 @@ func TestUpdateApplyResponseHelpers_EnvelopeShape(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	respondUpdateApplyCurrent(rec)
+	respondUpdateApplyCurrent(rec, "en")
 	var curBody struct {
 		Data struct {
 			AlreadyCurrent bool   `json:"already_current"`
