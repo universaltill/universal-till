@@ -22,7 +22,7 @@ for apk in "$@"; do
   if ! entries="$(unzip -Z1 "${apk}" 2>/dev/null)"; then
     echo "check-android-stripe-sdk: ${apk} is not a readable zip" >&2; fail=1; continue
   fi
-  if ! printf '%s\n' "${entries}" | grep -Eq '(^|/)classes[0-9]*\.dex$'; then
+  if ! grep -Eq '(^|/)classes[0-9]*\.dex$' <<<"${entries}"; then
     echo "check-android-stripe-sdk: ${apk} holds no classes*.dex, nothing to check" >&2; fail=1; continue
   fi
   # A damaged or encrypted dex must not read as "no SDK": test the archive first.
