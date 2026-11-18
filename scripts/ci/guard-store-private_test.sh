@@ -8,6 +8,8 @@
 # submission without a flight), ignores comments and prose, honours
 # `store-release:allow ut-docs#<N>` (and only with a card number), and
 # passes on the real tree.
+# Fixture and `A && ok || fail` assertion style used throughout this test.
+# shellcheck disable=SC2016,SC1003
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -238,6 +240,60 @@ wf '      - run: |' '          bundle exec fastlane supply \' '            --aab
 expect_pass "a CLI upload whose continuation lines name the internal track"
 reset_tree; printf '%s\n' 'lane :release do' '  deliver' 'end' >"${REPO}/fastlane/Fastfile"
 expect_fail app-store-review "a bare fastlane deliver action"
+
+# --- Release-asset clobber (ut-docs#6405) -----------------------------------
+reset_tree; wf '      - run: gh release upload "$TAG" app.exe --clobber'
+expect_fail release-asset-clobber "gh release upload --clobber"
+reset_tree; wf '      - run: |' '          gh release upload "$TAG" a.apk b.apk \' '            --clobber'
+expect_fail release-asset-clobber "a --clobber on a continuation line of an upload"
+reset_tree; wf '      - run: gh release upload "$TAG" app.exe --clobber # release-asset-clobber:allow draft-only'
+expect_pass "a --clobber upload with the reviewed marker"
+reset_tree; wf '      - run: gh release delete-asset "$TAG" app.exe --yes'
+expect_fail release-asset-clobber "deleting a published asset"
+reset_tree; wf '      - run: gh api -X DELETE "repos/o/r/releases/assets/$ID"'
+expect_fail release-asset-clobber "deleting an asset through the API"
+reset_tree; wf '      - run: curl -X POST "$BASE/submission/v1/product/$ID/submit"'
+expect_fail msstore-public "EXE Store submit with the host in a variable"
+reset_tree; wf '      - run: curl -X POST https://api.store.microsoft.com/submission/v1/product/$ID/packages/commit'
+expect_fail msstore-public "EXE Store commit by literal host"
+reset_tree; wf '      - uses: microsoft/store-submission@v1'
+expect_fail msstore-public "the Microsoft store-submission action"
+reset_tree; wf '      - run: gh release upload "$TAG" app.exe'
+expect_pass "a plain upload (no --clobber)"
+reset_tree; wf '      - run: gh release download "$TAG" --dir d --clobber'
+expect_pass "gh release download --clobber (local files only)"
+
+# --- Microsoft Store submission API forms (ut-docs#6405) ---------------------
+reset_tree; printf '%s\n' 'curl -X POST "https://manage.devcenter.microsoft.com/v1.0/my/x"' >"${REPO}/scripts/release/ms.sh"
+expect_fail msstore-public "the Partner Center host"
+reset_tree; printf '%s\n' 'curl "https://api.store.microsoft.com/submission/v1/x"' >"${REPO}/scripts/release/ms.sh"
+expect_fail msstore-public "the api.store.microsoft.com host"
+reset_tree; wf '      - run: msstore submission update 12345 pkg.json'
+expect_fail msstore-public "msstore submission"
+reset_tree; wf '      - run: msstore package ./app'
+expect_fail msstore-public "msstore package"
+reset_tree; printf '%s\n' 'Update-ApplicationSubmission -AppId 1' >"${REPO}/scripts/release/ms.ps1"
+expect_fail msstore-public "Update-ApplicationSubmission"
+reset_tree; printf '%s\n' 'curl "$BASE/ingestion/v1/x"' >"${REPO}/scripts/release/ms.sh"
+expect_fail msstore-public "an ingestion API path"
+reset_tree; printf '%s\n' 'msstore submission update --flightId f1 x' >"${REPO}/scripts/release/ms.sh"
+expect_pass "a submission update naming a flight"
+reset_tree; printf '%s\n' 'curl "https://manage.devcenter.microsoft.com/x" # store-release:allow ut-docs#6408' >"${REPO}/scripts/release/ms.sh"
+expect_pass "a submission API call with the opening-card marker"
+
+# --- Microsoft Store switch (ut-docs#6408) -----------------------------------
+reset_tree; printf '%s\n' 'echo no switch check here' >"${REPO}/scripts/release/x.sh"; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' 'echo no switch' >"${REPO}/scripts/ci/msstore-submit.sh"
+expect_fail msstore-submit-switch "a submit script that never checks the opening file"
+reset_tree; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' '# store-release/microsoft.opened is checked below' >"${REPO}/scripts/ci/msstore-submit.sh"
+expect_fail msstore-submit-switch "a submit script that only names the opening file in a comment"
+reset_tree; mkdir -p "${REPO}/scripts/ci"; printf '%s\n' 'opened=store-release/microsoft.opened; [ -f "$opened" ] || exit 1' >"${REPO}/scripts/ci/msstore-submit.sh"
+expect_pass "a submit script that checks the opening file (file absent = closed)"
+mkdir -p "${REPO}/store-release"; printf '%s\n' 'opened by the owner' >"${REPO}/store-release/microsoft.opened"
+expect_fail msstore-submit-switch "an opening file that names no card"
+printf '%s\n' 'opened: ut-docs#6408' >"${REPO}/store-release/microsoft.opened"
+expect_fail msstore-submit-switch "an opening file without the workflow marker"
+printf '%s\n' 'name: s' 'on: workflow_dispatch' 'jobs:' '  submit:' '    runs-on: ubuntu-latest' '    steps:' '      - run: bash scripts/ci/msstore-submit.sh # store-release:allow ut-docs#6408' >"${REPO}/.github/workflows/msstore-submit.yml"
+expect_pass "an opening file with its card marker in the workflow"
 
 # --- Real tree ---------------------------------------------------------------
 if bash "${GUARD}" >"${WORK}/out" 2>&1; then
