@@ -39,7 +39,7 @@ func TestServiceUpdateLine(t *testing.T) {
 		t.Fatalf("expected qty 1.5, got %+v", b.Lines)
 	}
 	// update qty and discount
-	s.UpdateLine("ABC", 2.0, 50)
+	updateLineByCode(s, "ABC", 2.0, 50)
 	b = s.Basket()
 	if b.Subtotal != 150 { // 2*100 -50
 		t.Fatalf("expected subtotal 150, got %d", b.Subtotal)
@@ -48,7 +48,7 @@ func TestServiceUpdateLine(t *testing.T) {
 		t.Fatalf("expected line total 150, got %d", b.Lines[0].LineTotal)
 	}
 	// zero qty removes line
-	s.UpdateLine("ABC", 0, 0)
+	updateLineByCode(s, "ABC", 0, 0)
 	b = s.Basket()
 	if len(b.Lines) != 0 {
 		t.Fatalf("expected line removed on zero qty")

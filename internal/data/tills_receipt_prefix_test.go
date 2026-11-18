@@ -170,7 +170,7 @@ func allReceiptNos(t *testing.T, repo *TillsRepo) []string {
 func TestEnrolTill_HighWaterTravelsInTheAdminBundle(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "hw-primary.db")
-	replica := openMigratedDB(t, "hw-replica.db")
+	replica := openReplicaDB(t, "hw-replica.db")
 	if _, _, err := NewTillsRepo(primary.DB).EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil {
 		t.Fatal(err)
 	}

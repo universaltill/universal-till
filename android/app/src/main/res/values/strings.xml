@@ -29,4 +29,20 @@
          page's own strings and needs its own. -->
     <string name="error_bar_message">This page couldn’t load.</string>
     <string name="error_bar_action">Back to till</string>
+
+    <!-- #3048 Tap to Pay (Stripe Terminal). Shown only in a build made with -PtapToPay=true.
+         English only (ADR-0160). tap_edu_body needs a Skill(legal) pass before the flag is ever turned on. -->
+    <string name="tap_edu_title">Tap to Pay on this phone</string>
+    <string name="tap_edu_body">Take contactless card and phone payments by tapping the customer\'s card or phone on the back of this device. It needs a phone with NFC, an internet connection and a Stripe account connected to your shop. Stripe\'s own fees apply to each payment; Universal Till adds none. Universal Till does not see or store card details.</string>
+    <string name="tap_edu_accept">Turn on</string>
+    <string name="tap_edu_decline">Not now</string>
+    <string name="tap_loc_rationale_title">Location is needed</string>
+    <string name="tap_loc_rationale_body">Stripe requires this device\'s location for every tap payment, to reduce fraud. Location is not used for anything else.</string>
+    <string name="tap_loc_rationale_ok">Continue</string>
+    <string name="tap_loc_rationale_cancel">Cancel</string>
+    <string name="tap_enable_nfc_title">Turn on NFC</string>
+    <string name="tap_enable_nfc_body">NFC is switched off. Turn it on in Settings to take tap payments.</string>
+    <string name="tap_enable_location_title">Turn on location</string>
+    <string name="tap_enable_location_body">Location is switched off. Turn it on in Settings to take tap payments.</string>
+    <string name="tap_settings_open">Open settings</string>
 </resources>

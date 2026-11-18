@@ -107,6 +107,17 @@ func reportApprovalKeyOnce(ctx context.Context, m config.MarketplaceConfig) repo
 	}
 }
 
+// kickApprovalKeyReportUnlessStopped is the once-per-start kick: a shop that
+// switched "Send usage facts" off, on a till whose cloud identity was made
+// automatically, makes no start-up POST (ut-docs#6618). Operator-driven
+// callers (claim, pair, move) use kickApprovalKeyReport directly.
+func kickApprovalKeyReportUnlessStopped(ctx context.Context, kv Settings, m config.MarketplaceConfig, wg *sync.WaitGroup) {
+	if Stopped(ctx, kv) && AutoRegistered(ctx, kv) {
+		return
+	}
+	kickApprovalKeyReport(ctx, m, wg)
+}
+
 // kickApprovalKeyReport starts the background report unless this identity
 // (device + store) already got a final answer or one is already running for
 // it. wg, when given, tracks the goroutine for shutdown. ctx must outlive the

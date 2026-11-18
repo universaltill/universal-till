@@ -401,7 +401,8 @@ func ParseXLSXMapped(r io.ReaderAt, size int64, m Mapping, currencyDecimals int,
 	_, hasPrice := idx["price"]
 	_, hasStock := idx["stock"]
 	_, hasNetQty := idx["net_quantity"]
-	if hasPrice || hasStock || hasNetQty {
+	_, hasReorder := idx["reorder_level"]
+	if hasPrice || hasStock || hasNetQty || hasReorder {
 		rawRows, rerr = f.GetRows(sheetName, excelize.Options{RawCellValue: true})
 		if rerr != nil {
 			return Result{}, fmt.Errorf("read raw rows: %w", rerr)
@@ -468,6 +469,8 @@ func ParseXLSXMapped(r io.ReaderAt, size int64, m Mapping, currencyDecimals int,
 				item.Stock, item.HasStock = qty, true
 			}
 		}
+		applyTrackStock(&item, get(rec, "track_stock"))
+		applyReorderLevel(&item, getNum(rowNo, rec, "reorder_level"), get(rec, "reorder_alert"))
 		if raw := get(rec, "tax"); raw != "" {
 			if bp, err := ParseTaxRateBP(raw); err == nil {
 				item.TaxRateBP, item.HasTax = bp, true

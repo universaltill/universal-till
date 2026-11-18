@@ -32,6 +32,7 @@ export UT_UPDATE_RELEASES_URL="http://127.0.0.1:${FAKE_PORT}/latest"
 # the loopback fake UT_UPDATE_RELEASES_URL above) — forced, so a developer's
 # exported UT_UPDATE_CHECK=0 can't silently empty its "update available" state.
 export UT_UPDATE_CHECK=1
+: "${UT_NEVER_REGISTER:=1}"; export UT_NEVER_REGISTER # ADR-0200: a throwaway till never registers itself in the cloud
 
 cd "$ROOT"
 TAG="$(find web/release-notes/en -name 'v*.md' -exec basename {} .md \; | sort -V | tail -n 1)"

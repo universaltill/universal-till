@@ -555,3 +555,69 @@ func TestRedactedJoinSnapshot_ResetsSalesMirrorBookkeeping(t *testing.T) {
 		t.Errorf("join snapshot mirror_sales = %d, want the copied row kept", n)
 	}
 }
+
+// ut-docs#5808: a till that re-joins a promoted main till inherits, through
+// the join snapshot, the recording time of the sales that main till adopted
+// late (sales.recorded_at) and its Z-window floor, so a second promote still
+// counts each such sale in exactly one Z. Neither may be redacted.
+func TestRedactedJoinSnapshot_KeepsRecordedAtAndWindowFloor_5808(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	recorded := time.Now().UTC().Add(-90 * time.Second).Format(time.RFC3339)
+	floor := time.Now().UTC().Add(-2 * time.Minute).Format("2006-01-02 15:04:05")
+	for _, s := range []string{
+		`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at, recorded_at)
+  VALUES ('s1', 'R-1', 'completed', 'sale', 'GBP', 1, 0, 0, 1, '` + recorded + `', '` + recorded + `', '` + recorded + `')`,
+		`INSERT INTO settings (key, value) VALUES ('reports.eod_window_floor', '` + floor + `')`,
+	} {
+		if _, err := d.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cdb.Close()
+	var gotRec sql.NullString
+	if err := cdb.QueryRow(`SELECT recorded_at FROM sales WHERE id = 's1'`).Scan(&gotRec); err != nil {
+		t.Fatal(err)
+	}
+	if !gotRec.Valid || gotRec.String != recorded {
+		t.Errorf("join snapshot sales.recorded_at = %v, want %q", gotRec, recorded)
+	}
+	var gotFloor string
+	if err := cdb.QueryRow(`SELECT value FROM settings WHERE key = 'reports.eod_window_floor'`).Scan(&gotFloor); err != nil || gotFloor != floor {
+		t.Errorf("join snapshot eod_window_floor = %q (%v), want %q", gotFloor, err, floor)
+	}
+}
+
+func TestRedactedJoinSnapshot_StripsRestoreState(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('restore.marker', '{}'), ('restore.receipt_floor', '9000'), ('store.name', 'Shop')`); err != nil {
+		t.Fatal(err)
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	c := openTest(t, copyPath)
+	var n int
+	if err := c.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'restore.%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("restore.* in the join snapshot: %d %v", n, err)
+	}
+	if err := c.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'store.name'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("other settings must stay: %d %v", n, err)
+	}
+	var live int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'restore.%'`).Scan(&live); err != nil || live != 2 {
+		t.Fatalf("the live DB must keep its rows: %d %v", live, err)
+	}
+}
