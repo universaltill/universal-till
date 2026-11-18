@@ -1059,3 +1059,40 @@ func TestTapToPayCloud(t *testing.T) {
 		t.Fatalf("unenrolled err = %v, want not_enrolled", err)
 	}
 }
+
+// TapToPayResolver and devicepay.Resolver stay identical in both directions.
+var (
+	_ devicepay.Resolver = TapToPayResolver(nil)
+	_ TapToPayResolver   = devicepay.Resolver(nil)
+)
+
+type stubResolver struct{ keys []string }
+
+func (s *stubResolver) ResolveUnknown(k string) string {
+	s.keys = append(s.keys, k)
+	return `{"ok":true}`
+}
+
+type managerActor bool
+
+func (m managerActor) IsManager() bool { return bool(m) }
+
+// The Android shell registers the resolver with the bridge; a manager's
+// resolve reaches it, a cashier's never does, and nil un-registers.
+func TestSetTapToPayResolver_RegistersWithDevicepay(t *testing.T) {
+	t.Cleanup(func() { SetTapToPayResolver(nil) })
+	stub := &stubResolver{}
+	SetTapToPayResolver(stub)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if got := devicepay.ResolveUnknown(ctx, managerActor(false), "stripe", "k1"); got.OK || len(stub.keys) != 0 {
+		t.Fatalf("cashier resolve = %+v, keys %v", got, stub.keys)
+	}
+	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); !got.OK || len(stub.keys) != 1 || stub.keys[0] != "k1" {
+		t.Fatalf("manager resolve = %+v, keys %v", got, stub.keys)
+	}
+	SetTapToPayResolver(nil)
+	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); got.Reason != devicepay.ReasonNotForeground {
+		t.Fatalf("after SetTapToPayResolver(nil): %+v, want not_foreground", got)
+	}
+}

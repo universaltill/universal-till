@@ -1,12 +1,13 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
-import { startWorkerTill, type WorkerTill } from './worker-till';
+import { startWorkerTill, REPO_ROOT, type WorkerTill } from './worker-till';
 import { markTourDone } from './helpers';
+import { execFileSync } from 'node:child_process';
 
 // ut-docs#4391: a manager on an unnamed MAIN till is asked for the shop and
 // till name before an admin page opens -- never on the sale screen. Runs on
 // an AUTH-ON worker till (the gate does not exist with UT_AUTH=off); the
-// names are un-set through the settings API after sign-in.
+// names are un-set in the till's database after sign-in.
 test.describe.configure({ mode: 'serial' });
 
 let till: WorkerTill;
@@ -27,11 +28,22 @@ test.beforeAll(async ({ browser }, workerInfo) => {
   till = await startWorkerTill(workerInfo.parallelIndex, { auth: true });
   context = await browser.newContext({ baseURL: till.url });
   page = await context.newPage();
+  // Own context, so the fixture's reduced motion does not apply: without it a
+  // cross-document view transition stalls the page after a gated navigation.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await pinLogin(page, till.adminPin!);
-  for (const key of ['store.name', 'till.name']) {
-    const res = await page.request.post('/api/settings/upsert', { form: { key, value: '' } });
-    expect(res.ok(), `un-set ${key}`).toBe(true);
-  }
+  // The raw upsert refuses a blank or placeholder shop name (ut-docs#5874), so
+  // both names are changed out of band in the till's own database: the shop
+  // name becomes the placeholder (an unset name is deliberately not asked for)
+  // and the till name is removed.
+  const setting = (...args: string[]) =>
+    execFileSync('go', ['run', './e2e/till_setting', ...args], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, UT_DATA_DIR: till.dataDir! },
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
+  setting('set', 'store.name', 'My Store');
+  setting('delete', 'till.name');
 });
 
 test.afterAll(async () => {
