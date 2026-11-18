@@ -73,11 +73,11 @@ fi
 
 size="$(wc -c <"$f" | tr -d ' ')"
 head="$(curl -sI --max-time 60 "$url")"
-status="$(printf '%s\n' "$head" | head -1 | tr -d '\r' | awk '{print $2}')"
+status="$(printf '%s\n' "$head" | sed -n 1p | tr -d '\r' | awk '{print $2}')"
 if [ "$status" != "200" ]; then
   echo "::error::$url answered HTTP '$status', want 200" >&2; exit 1
 fi
-if printf '%s\n' "$head" | grep -iq '^location:'; then
+if printf '%s\n' "$head" | grep -i '^location:' >/dev/null; then
   echo "::error::$url redirects (Location header present)" >&2; exit 1
 fi
 clen="$(printf '%s\n' "$head" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}')"
