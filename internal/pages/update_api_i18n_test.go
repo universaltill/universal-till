@@ -173,3 +173,12 @@ func TestAndroidInstallPINFailuresAreLocalized(t *testing.T) {
 		t.Error("auth.error.locked missing in tr")
 	}
 }
+
+func TestUpdateApplyErrorStatus(t *testing.T) {
+	if got := updateApplyErrorStatus(selfupdate.ErrApplyInProgress); got != http.StatusConflict {
+		t.Errorf("busy: status %d, want 409", got)
+	}
+	if got := updateApplyErrorStatus(errors.New("disk full")); got != http.StatusBadGateway {
+		t.Errorf("other: status %d, want 502", got)
+	}
+}

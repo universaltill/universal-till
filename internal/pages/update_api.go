@@ -509,6 +509,16 @@ func updateApplyErrorKey(err error) string {
 	return "settings.update.error.failed"
 }
 
+// updateApplyErrorStatus is the HTTP status for a failed apply: 409 when
+// another update is already being applied (a double press, logged at Info),
+// otherwise 502 — the release source or the install failed.
+func updateApplyErrorStatus(err error) int {
+	if followErrorCode(err) == "busy" {
+		return http.StatusConflict
+	}
+	return http.StatusBadGateway
+}
+
 // updateApplyAlreadyCurrent reports the race where the release moved under
 // us and selfupdate found nothing newer. Matched by text because the sentinel
 // would touch lines open PR #2285 edits; follow-up card sentinelizes it.
@@ -566,7 +576,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 				respondUpdateApplyCurrent(w, locale)
 				return
 			}
-			respondUpdateApplyError(w, r, http.StatusBadGateway, updateApplyErrorKey(err), "update_apply", err)
+			respondUpdateApplyError(w, r, updateApplyErrorStatus(err), updateApplyErrorKey(err), "update_apply", err)
 			return
 		}
 		respondUpdateApplyInstalled(w, locale, st.Latest)
