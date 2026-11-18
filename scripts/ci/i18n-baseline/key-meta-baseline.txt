@@ -2547,7 +2547,6 @@ settings.tax_rate_switcher.missing.install_btn
 settings.tax_rate_switcher.missing.message
 settings.tax_rate_switcher.missing.title
 settings.telemetry.enable
-settings.telemetry.help
 settings.telemetry.save
 settings.telemetry.title
 settings.theme.apply
