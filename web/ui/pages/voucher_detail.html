@@ -19,7 +19,7 @@
   {{/* ut-docs#5740: print this voucher's gift slip again (no receipt).
        Inline, never a modal; outcome swaps into #voucher-slip-msg. */}}
   <div class="voucher-slip" style="margin-block-start:.8rem">
-    {{ if ne $v.BalanceMinor $v.OriginalAmountMinor }}<p class="muted" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.original_value_note" }}</p>{{ end }}
+    {{ if $s.originalOnly }}<p class="muted" style="margin:0 0 .4rem">{{ T "vouchers.print_slip.balance_unknown_note" }}</p>{{ end }}
     {{/* ut-docs#6152: with no receipt printer the press opens the browser's
          print dialog on this page (the answer carries the slip, OOB into
          #voucher-slip-print); the hint says so before the press. */}}

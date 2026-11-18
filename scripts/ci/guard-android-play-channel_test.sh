@@ -27,4 +27,6 @@ expect "Play task with the property on a continuation line" 0 "${REAL}" "${WORK}
 
 printf 'jobs:\n  b:\n    steps:\n      - run: ./gradlew -PinstallChannel=sideload bundlePlayRelease\n' > "${WORK}/wf/a.yml"
 expect "Play task with the wrong channel" 1 "${REAL}" "${WORK}/wf"
+printf 'jobs:\n  b:\n    steps:\n      - run: ./gradlew bundleUniversalRelease\n' > "${WORK}/wf/a.yml"
+expect "any bundle task without the property (F4)" 1 "${REAL}" "${WORK}/wf"
 exit "${FAIL}"

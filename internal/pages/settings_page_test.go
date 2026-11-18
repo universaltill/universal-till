@@ -2392,13 +2392,13 @@ func TestEnrolDevicesEndpointRefusesNonManager(t *testing.T) {
 // ut-docs#865: claim-code and enrol/now moved off the flat canPerform gate
 // onto checkOrElevate (#557/#796 mechanism) — a denied cashier now gets the
 // in-place elevation prompt, not the flat forbidden span.
-func TestEnrolClaimCodeAndNow_RefuseNonManagerViaElevation(t *testing.T) {
+func TestEnrolClaimCodeAndRegistrationStop_RefuseNonManagerViaElevation(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 
-	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
+	for _, path := range []string{"/api/enrol/claim-code", "/api/settings/registration-stop"} {
 		// accept_terms: the terms check runs before the elevation gate
 		// (ut-docs#4720), so tick it to reach the gate under test.
-		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, strings.NewReader("accept_terms=on")), cashUser)
+		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, strings.NewReader("accept_terms=on&stop=1")), cashUser)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -2489,7 +2489,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
-		{"enrol-now", http.MethodPost, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, gateElevation},
+		{"registration-stop", http.MethodPost, "/api/settings/registration-stop", url.Values{"stop": {"1"}}, gateElevation},
 		{"enrol-pair", http.MethodPost, "/api/enrol/pair", url.Values{"code": {"K7QX-M2RP"}}, gateElevation},
 		{"enrol-check-plan", http.MethodPost, "/api/enrol/check-plan", nil, gateElevation},
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
@@ -2597,8 +2597,8 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 //
 // The enrollment card's enrolled branch (claim-code) can't be exercised
 // here — "enrolled" reads package-global enroll.CurrentStatus() — so the
-// card is covered via its unenrolled branch (/api/enrol/now), the identical
-// un-gating in the same card.
+// card is covered by the Cloud record card's Stop sending form
+// (/api/settings/registration-stop), the same un-gating (ADR-0200).
 func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
@@ -2635,7 +2635,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 
 	// One marker per elevation-wired site, unique to that form/button.
 	elevationWired := []string{
-		`hx-post="/api/enrol/now"`,                   // enrollment card, unenrolled branch
+		`hx-post="/api/settings/registration-stop"`,  // cloud record card: Stop sending (ADR-0200)
 		`hx-post="/api/settings/display-mode"`,       // display-advanced: mode form
 		`id="window-mode-form"`,                      // display-advanced: window mode
 		`id="launch-on-startup-cb"`,                  // display-advanced: autostart checkbox
@@ -3772,8 +3772,12 @@ func TestSettingsPage_MainTillShowsFleetFollowSelect(t *testing.T) {
 }
 
 // The replica sees the policy read-only: a second line only for nightly,
-// naming the main till's update time.
+// naming the window THIS till installs in (the main till's update time plus
+// this till's own offset), ut-docs#6552.
 func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
 	mux, _, d := newFullAuthDeps(t)
 	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
 	line := `data-testid="update-follow-policy"`
@@ -3793,18 +3797,54 @@ func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
 	if !strings.Contains(body, line) {
 		t.Fatal("nightly replica: no policy line")
 	}
-	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly"), "02:15")); !strings.Contains(body, want) {
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "02:22", "02:52")); !strings.Contains(body, want) {
 		t.Fatalf("nightly replica: expected %q", want)
 	}
 	if strings.Contains(body, `name="fleet_follow"`) {
 		t.Fatal("a replica must not render the select")
 	}
 
-	// update.auto_time unset: the default time.
+	// update.auto_time unset: the default time plus the offset.
 	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, ""); err != nil {
 		t.Fatal(err)
 	}
-	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly"), autoUpdateDefaultTime)); !strings.Contains(getSettingsAsManager(t, mux), want) {
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "03:07", "03:37")); !strings.Contains(getSettingsAsManager(t, mux), want) {
 		t.Fatalf("nightly replica, time unset: expected %q", want)
+	}
+
+	// An invalid time prints nothing rather than a bad time.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "25:99"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(getSettingsAsManager(t, mux), line) {
+		t.Fatal("invalid auto_time: the window line must be omitted")
+	}
+}
+
+// ut-docs#6552: a nightly replica whose attempt failed says it will try again
+// at the next nightly update, with the window.
+func TestSettingsPage_NightlyReplicaFailedSaysItRetries(t *testing.T) {
+	origVer, origSupported, origJitter := autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter
+	t.Cleanup(func() {
+		autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter = origVer, origSupported, origJitter
+	})
+	autoUpdateBuildVersion = func() string { return "1.4.0" }
+	autoUpdateSupported = func() bool { return true }
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	for k, v := range map[string]string{keyMainVersion: "1.4.2", keyFleetFollow: "nightly", keyAutoUpdateTime: "03:00",
+		keyFollowAttempted: "1.4.2", keyFollowError: "failed:download"} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getSettingsAsManager(t, mux)
+	if !strings.Contains(body, `data-follow-line="failed_nightly"`) {
+		t.Fatal("expected follow line state failed_nightly")
+	}
+	want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_failed_nightly"), "v1.4.2", "03:07", "03:37"))
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected %q", want)
 	}
 }

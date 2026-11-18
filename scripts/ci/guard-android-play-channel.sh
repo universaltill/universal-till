@@ -25,7 +25,7 @@ g = open(gradle, encoding="utf-8").read()
 if not (re.search(r"taskGraph\.whenReady", g) and re.search(r"installChannel\s*!=\s*\"play\"", g) and "GradleException" in g):
     print(f"::error file={gradle}::the Play-build channel assertion (taskGraph.whenReady ... installChannel != \"play\" -> GradleException) is gone")
     fails += 1
-TASK = re.compile(r"(?:assemble|bundle|publish|package)\w*Play", re.I)
+TASK = re.compile(r"(?:(?:assemble|bundle|publish|package)\w*Play|\bbundle[A-Z]\w*)")
 for f in sorted(glob.glob(wf + "/*.yml") + glob.glob(wf + "/*.yaml")):
     lines = open(f, encoding="utf-8").read().split("\n")
     for i, line in enumerate(lines):
@@ -40,7 +40,7 @@ for f in sorted(glob.glob(wf + "/*.yml") + glob.glob(wf + "/*.yaml")):
             b += 1
         cmd = "\n".join(lines[a:b + 1])
         if not re.search(r"-PinstallChannel=play\b", cmd):
-            print(f"::error file={f},line={i+1}::a Play gradle task runs without -PinstallChannel=play (ADR-0194 §2.3)")
+            print(f"::error file={f},line={i+1}::a Play/bundle gradle task runs without -PinstallChannel=play (ADR-0194 §2.3)")
             fails += 1
 if fails:
     sys.exit(1)

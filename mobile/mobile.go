@@ -656,6 +656,20 @@ func SetTapToPayBridge(b TapToPayBridge) {
 	devicepay.SetBridge(b) // a nil TapToPayBridge converts to a nil devicepay.Bridge
 }
 
+// TapToPayResolver is the gomobile-bind-visible mirror of
+// devicepay.Resolver (ut-docs#6533): the Android shell's "the operator says
+// the earlier payment was not charged". Separate from TapToPayBridge so the
+// iOS protocol is unchanged. One string in, a JSON SetupResult out.
+type TapToPayResolver interface {
+	ResolveUnknown(idempotencyKey string) string
+}
+
+// SetTapToPayResolver registers the Android resolver with internal/devicepay;
+// nil un-registers it. Registered and cleared together with the bridge.
+func SetTapToPayResolver(r TapToPayResolver) {
+	devicepay.SetResolver(r) // a nil TapToPayResolver converts to a nil devicepay.Resolver
+}
+
 // TapToPayCloud forwards one payment-broker call to ut-cloud
 // (internal/paybroker.Call: fixed op allow-list, this till's ADR-0116
 // device credential, 15 s bound) and returns the response body. It is an

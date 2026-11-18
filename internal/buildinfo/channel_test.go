@@ -5,7 +5,7 @@ import "testing"
 // ADR-0194 §2.3 binding table, one row per channel.
 func TestChannelPredicates_Table(t *testing.T) {
 	cases := []struct {
-		ch                 Channel
+		ch                 InstallChannel
 		plan, link, update bool
 	}{
 		{ChannelSideload, true, true, true},
@@ -27,7 +27,7 @@ func TestChannelPredicates_Table(t *testing.T) {
 }
 
 func TestParseChannel_UnknownFailsClosedToAppStore(t *testing.T) {
-	for in, want := range map[string]Channel{
+	for in, want := range map[string]InstallChannel{
 		"sideload": ChannelSideload, "play": ChannelPlay, "appstore": ChannelAppStore, "direct": ChannelDirect,
 		"": ChannelAppStore, "Play": ChannelAppStore, "microsoft-store": ChannelAppStore, " direct": ChannelAppStore, "ios": ChannelAppStore,
 	} {
@@ -39,9 +39,9 @@ func TestParseChannel_UnknownFailsClosedToAppStore(t *testing.T) {
 
 func TestCurrentChannel_ReadsStampedValueFailClosed(t *testing.T) {
 	t.Cleanup(resetChannelForTest)
-	for stamp, want := range map[string]Channel{"play": ChannelPlay, "direct": ChannelDirect, "bogus": ChannelAppStore, "": ChannelAppStore} {
+	for stamp, want := range map[string]InstallChannel{"play": ChannelPlay, "direct": ChannelDirect, "bogus": ChannelAppStore, "": ChannelAppStore} {
 		resetChannelForTest()
-		stamped = stamp
+		Channel = stamp
 		if got := CurrentChannel(); got != want {
 			t.Errorf("stamp %q: CurrentChannel = %q, want %q", stamp, got, want)
 		}
@@ -77,7 +77,7 @@ func TestSetChannelOnce_UnknownStoresFailClosed(t *testing.T) {
 func TestMobileBuildWithoutChannelFailsClosed(t *testing.T) {
 	t.Cleanup(resetChannelForTest)
 	resetChannelForTest()
-	stamped = "direct" // an AAR is never ldflags-stamped; a stale default must not open purchase
+	Channel = "sideload" // an AAR is never ldflags-Channel; a stale default must not open purchase
 	RequireExplicitChannel()
 	if CurrentChannel() != ChannelAppStore {
 		t.Fatalf("got %q", CurrentChannel())
@@ -93,13 +93,13 @@ func TestOverrideChannelForTest(t *testing.T) {
 		t.Fatal("override not applied")
 	}
 	restore()
-	if CurrentChannel() != ParseChannel(stamped) {
+	if CurrentChannel() != ParseChannel(Channel) {
 		t.Fatal("restore failed")
 	}
 }
 
 func resetChannelForTest() {
 	chMu.Lock()
-	chSet, chExplicit, chValue, stamped = false, false, "", "direct"
+	chSet, chExplicit, chValue, Channel = false, false, "", "sideload"
 	chMu.Unlock()
 }

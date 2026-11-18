@@ -17,6 +17,7 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8091
 # ut-docs#5237: never poll the real GitHub releases from a throwaway till —
 # a new release would show "Update now" and change regenerated screenshots. Overridable.
 : "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
+: "${UT_NEVER_REGISTER:=1}"; export UT_NEVER_REGISTER # ADR-0200: a throwaway till never registers itself in the cloud
 
 cd "$ROOT"
 # Installs the real FAQ plugin (page entry + content bundles) so faq.spec.ts
