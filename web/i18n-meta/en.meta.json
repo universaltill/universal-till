@@ -1030,5 +1030,7 @@
   "setup.cloud.restore_link": {"description": "Link in that hint to the cloud restore page.", "review": "standard"},
   "setup.next_steps.cloud_restore": {"description": "Next-steps line on the home screen of an empty main till whose plan includes cloud backups.", "review": "standard"},
   "pos.toast.payment_outcome_unknown": {"description": "Error toast on the till when a card payment may have been charged but the reader could not confirm it: tells the cashier to tap Pay again to settle it and not to take another payment.", "review": "standard"},
+  "pos.toast.tender_abandoned_check_provider": {"description": "Error toast on the till after the cashier cleared, parked or switched away from a sale with an unconfirmed card payment, when a payment could not be sent back automatically or its outcome is unknown: tells the cashier to check with the payment provider and refund there.", "review": "standard"},
+  "pos.toast.tender_abandoned_returned_unknown": {"description": "Error toast on the till after the cashier cleared, parked or switched away from a sale whose card payment was still unconfirmed: payments already taken were sent back automatically, but one card payment's outcome is unknown and must be checked with the provider.", "review": "standard"},
   "selforder.checkout.outcome_unknown": {"description": "Message on the self-order kiosk when the customer's card payment could not be confirmed: sends them to the cashier and tells them not to pay again.", "review": "standard"}
 }

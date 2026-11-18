@@ -701,6 +701,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			var declined *paymentDeclinedError
 			var unknown *paymentOutcomeUnknownError
+			var abandoned *tenderAbandonedError
 			var noReceipt *fiscalDeviceNoReceiptError
 			var deviceRequired *fiscalDeviceRequiredError
 			var fiscalNC *fiscalNeverConfiguredError
@@ -712,8 +713,9 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
-			case errors.As(err, &unknown):
-				// ut-docs#6600: the card may have been charged; an anonymous
+			case errors.As(err, &unknown), errors.As(err, &abandoned):
+				// ut-docs#6600 (and #6602: the basket was abandoned while a
+				// card leg was in flight): the card may have been charged; an anonymous
 				// customer is sent to the counter, never invited to pay again.
 				status = http.StatusConflict
 				msgKey = "selforder.checkout.outcome_unknown"
