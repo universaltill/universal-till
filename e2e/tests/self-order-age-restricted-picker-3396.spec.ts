@@ -30,6 +30,10 @@ test('the kiosk payment picker sends an age-restricted basket to the counter up 
   ]) {
     const ctx = await browser.newContext({ hasTouch: true, viewport: { width: vp.width, height: vp.height } });
     const kiosk = await ctx.newPage();
+    // A fresh context is not the suite's reduced-motion user (fixtures.ts):
+    // since ut-docs#2972 the Full-level kiosk picker zooms in, and this spec
+    // measures layout, so it must not read a box mid-zoom.
+    await kiosk.emulateMedia({ reducedMotion: 'reduce' });
     const assertClean = watchConsole(kiosk);
     try {
       if (vp.lang) {

@@ -67,3 +67,36 @@ func TestPairingClearsReplacedState(t *testing.T) {
 		t.Fatal("a fresh pairing kept the replaced state: the new identity would show 'Replaced by'")
 	}
 }
+
+func TestStoreLeftHookRunsOnlyAfterPairingToADifferentShop(t *testing.T) {
+	ctx := context.Background()
+	var left []string
+	OnStoreLeft = func(old string) { left = append(left, old) }
+	t.Cleanup(func() { OnStoreLeft = nil })
+
+	// Resetting the identity (before the new pairing) never fires the hook,
+	// and reports the shop being left; a replica leaves nothing.
+	kv := newFakeKV()
+	kv.m[keyStoreID] = "st_old"
+	if got := resetIdentityForPair(ctx, kv, false, "till-new"); got != "st_old" {
+		t.Fatalf("left shop = %q, want st_old", got)
+	}
+	if len(left) != 0 {
+		t.Fatalf("hook ran before the new pairing succeeded: %v", left)
+	}
+	rep := newFakeKV()
+	rep.m[keyStoreID] = "st_old"
+	if got := resetIdentityForPair(ctx, rep, true, "till-new"); got != "" {
+		t.Fatalf("a replica reported leaving %q", got)
+	}
+
+	storeLeft("st_old", "st_old") // re-pair to the SAME shop
+	storeLeft("", "st_new")       // no previous shop
+	if len(left) != 0 {
+		t.Fatalf("hook ran for the same shop / no old shop: %v", left)
+	}
+	storeLeft("st_old", "st_new")
+	if len(left) != 1 || left[0] != "st_old" {
+		t.Fatalf("hook calls = %v, want [st_old]", left)
+	}
+}

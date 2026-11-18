@@ -36,7 +36,10 @@ func balanceLinePrinted(v data.Voucher, b slipBalance) bool {
 // voucher prints too — in the shop's language, plus the "Reprinted <date>"
 // note (Latin digits, as every printed date). The value row is always the
 // original value; when bal is known and differs, a "Balance on <date>" line
-// carries the current balance (ut-docs#6044).
+// carries the current balance (ut-docs#6044). ut-docs#6179: it also carries
+// the "Issued <date>" line (the reprint date never replaces it; none for a
+// voucher with no issuing sale — an imported opening balance's created_at is
+// the import time — nor for an unparseable timestamp) and the shop's slip text.
 func voucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, bal slipBalance, cfg print.Config, now time.Time) print.VoucherSlip {
 	loc := httpx.DefaultLocale()
 	rd := receiptDesignFromSettings(ctx, d)
@@ -46,12 +49,18 @@ func voucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, bal sli
 		vb.BalanceLabel = fmt.Sprintf(httpx.T(loc, "receipt.vouchers.balance_on_label"), date)
 		vb.BalanceAmount = httpx.FormatMoneyPrint(bal.Minor, loc, cfg.Charset)
 	}
+	issuedDate := ""
+	if v.IssuedSaleID != "" {
+		issuedDate = slipDateLine(loc, "receipt.vouchers.issued_on", v.CreatedAt)
+	}
 	return print.VoucherSlip{
 		StoreName: storeNameOrDefault(ctx, d),
 		Header:    rd.Header,
 		Logo:      receiptLogoRaster(rd),
 		Charset:   cfg.Charset,
 		Voucher:   vb,
+		Date:      issuedDate,
+		Text:      voucherSlipLines(rd.VoucherSlipText),
 		Note:      fmt.Sprintf(httpx.T(loc, "receipt.vouchers.reprinted"), date),
 	}
 }

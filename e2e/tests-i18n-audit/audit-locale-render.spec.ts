@@ -6,7 +6,7 @@ import * as path from 'path';
 // page route (reusing tests-docs/lib.js's routedTopics(), the same
 // CI-guaranteed-complete route source the docs-shots screenshot harness
 // uses) in German (?lang=de) against a till whose I18n has the REAL
-// ut-plugin-language-de pack loaded as a test-only overlay
+// German strings from ut-translations loaded as a test-only overlay
 // (UT_TEST_I18N_OVERLAY_DIR — see internal/pages/init.go and
 // loadTestI18nOverlays), and fails if any rendered, visible line of text is
 // an EXACT match for a value that exists in the base web/locales/en.json
@@ -26,12 +26,12 @@ import * as path from 'path';
 // claimed as solved.
 //
 // Also out of scope, matching this repo's own accepted gaps:
-//   - any locale other than German (`de`) — other packs are separate cards.
+//   - any locale other than German (`de`) — other locales are separate cards.
 //   - a topic's secondary routes (routes[1:]) — same accepted gap as the
 //     docs-shots harness itself (ut-docs#900); only routes[0] is checked.
 const { routedTopics } = require('../tests-docs/lib');
 // PR-only carve-outs for keys NEW in the PR (ut-docs#2805) and keys the de
-// pack merely lags on (ut-docs#5583) — the rules and reasons live in
+// overlay merely lags on (ut-docs#5583) — the rules and reasons live in
 // lib/new-keys.js, unit-tested by
 // lib/new-keys_test.js.
 const { partitionFindings } = require('./lib/new-keys');
@@ -74,8 +74,8 @@ function loadAllowlist(): Set<string> {
 
 // The base BRANCH's en.json (ut-docs#2805) — set by
 // locale-render-audit.yml on pull_request runs only (AUDIT_BASE_EN_JSON),
-// so findings for keys this PR adds can be deferred until the de pack PR
-// that follows the merge. Unset/empty (push to main, workflow_dispatch, a
+// so findings for keys this PR adds can be deferred: Weblate translates them
+// only after the merge. Unset/empty (push to main, workflow_dispatch, a
 // local run) => null => strict, nothing deferred. Set but unreadable is a
 // workflow bug, so it throws rather than quietly going strict.
 function loadBaseEnglishCatalog(): Record<string, string> | null {
@@ -84,10 +84,10 @@ function loadBaseEnglishCatalog(): Record<string, string> | null {
   return JSON.parse(fs.readFileSync(basePath, 'utf8')) as Record<string, string>;
 }
 
-// The de pack's catalog (ut-docs#5583) — read only when a base catalog is set
+// The German overlay's catalog (ut-docs#5583) — read only when a base catalog is set
 // (PR runs), from de.json in the overlay dir audit-locale-render.sh already exports, so
-// pre-existing keys the pack merely lags on can be deferred too. Set base but
-// unreadable pack is a workflow bug: throws, never silently strict/lenient.
+// pre-existing keys the overlay merely lags on can be deferred too. Set base but
+// unreadable overlay is a workflow bug: throws, never silently strict/lenient.
 function loadPackCatalog(): Record<string, string> | null {
   if (!BASE_EN_CATALOG) return null;
   const dir = process.env.UT_TEST_I18N_OVERLAY_DIR;
@@ -221,7 +221,7 @@ function formatReport(flags: Flag[]): string {
 }
 
 // Splits a test's findings, prints the deferred ones (keys new in this PR, and
-// pre-existing keys the de pack merely lags on — ADR-0160 section 2) as GitHub
+// pre-existing keys the de overlay merely lags on — ADR-0160 section 2) as GitHub
 // ::notice:: lines (still visible on the PR, never red), and returns only the
 // ones that must fail.
 function failuresAfterNewKeyCarveOut(flags: Flag[]): Flag[] {
@@ -238,14 +238,14 @@ function failuresAfterNewKeyCarveOut(flags: Flag[]): Flag[] {
   if (deferredNew.length > 0) {
     const detail = deferredNew.map((f) => `[${f.topicId}] ${f.route} -> "${f.text}"`).join('; ');
     console.log(
-      `::notice file=web/locales/en.json::${deferredNew.length} new key(s) not yet in the de pack — ` +
-        `the pack PR follows after merge (ut-docs#1857). ${detail}`,
+      `::notice file=web/locales/en.json::${deferredNew.length} new key(s) not yet in the German overlay — ` +
+        `Weblate translates them after merge. ${detail}`,
     );
   }
   if (deferredLag.length > 0) {
     const keys = [...new Set(deferredLag.flatMap((f) => f.keys))].sort().join(', ');
     console.log(
-      `::notice file=web/locales/en.json::${deferredLag.length} finding(s) from keys the de pack lags on ` +
+      `::notice file=web/locales/en.json::${deferredLag.length} finding(s) from keys the German overlay lags on ` +
         `(pre-existing, ADR-0160 §2: Weblate fills it later): ${keys}`,
     );
   }

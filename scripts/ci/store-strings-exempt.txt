@@ -1,0 +1,17 @@
+# Locale keys guard-store-strings.sh does not scan (ADR-0194 §2.3, ut-docs#6401).
+# Each key is rendered ONLY where PlanPurchaseAllowed is true: the surface is
+# not in the DOM on Google Play / App Store builds and its routes answer 404
+# (internal/pages/store_channel_6388_test.go proves both). Format:
+#   <key>  # <why it never reaches a store build>
+# Shrink-only: a new entry needs the same proof; never exempt help or notes.
+elevation.summary.subscription_panel  # PIN prompt of POST /api/subscription/panel, a route that 404s on store builds
+subscription.renew_open_btn  # opener of the subscription panel, not rendered when planpurchaseallowed is false
+subscription.panel.title  # title of the subscription panel dialog, not in the DOM on store builds
+subscription.panel.renew  # button inside the subscription panel, not in the DOM on store builds
+subscription.panel.change_plan  # button inside the subscription panel, not in the DOM on store builds
+subscription.panel.choose  # button inside the subscription panel, not in the DOM on store builds
+subscription.panel.scan_change  # QR handoff step of the subscription panel, route 404s on store builds
+tills.join_error.unsent_day_closes_refused  # shown only where planpurchaseallowed; the _ios variant (no "Renew it") is used elsewhere
+subscription.banner.lapsed.fix  # banner variant for purchase-allowed builds; the _ios variant is used on store builds
+subscription.banner.lapsed.fix_via_main  # same: the _via_main_ios variant is used on store builds
+subscription.panel.scan_renew  # inside the subscription panel dialog (not in the DOM on store builds, route 404s); was in the review as the proof the guard missed it

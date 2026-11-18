@@ -41,3 +41,13 @@ Verdict: **APPROVE** (Opus), with no blocking findings.
   - Screens checked: `/vouchers/{id}` at 1024×700 (en) and 360px (fa, RTL).
 - **Gates:** gofmt, `go build ./...`, and go vet on pages/print pass. `go test ./internal/print/...` passes, as does `go test ./internal/pages/ -run 'Voucher|Slip|TopUp|Receipt'`. The full `internal/pages` suite passes without `-race` (424s). With `-race` on the 4-core container, `internal/pages` hit the timeout in an unrelated sync-join test, with no failure or race reported before that point. golangci-lint reports 0 issues. The touched-file guards all pass: i18n, i18n-meta, fixed-dates, help-*, compliance-claims, competitor-naming, rtl-logical-css, data-access, no-showmodal, core-neutral and mail-addresses.
 - Not checked: a real 80 mm or 58 mm printer. That needs a device check on the owner's hardware, which belongs to the remaining items of #5744.
+
+## Rebase onto main (2026-11-18)
+
+Main moved under this PR: ut-docs#6179 (the shop's own slip text and the "Issued <date>" line, `print.VoucherSlip.Date`/`Text`, `VoucherBlock.SlipDate`) and ut-docs#6152/#6154 (browser print dialog when no receipt printer is set up, `voucher_slip_browser.go`). Supersession check: main prints the issue date but no balance, so the feature is still needed. Merged `origin/main`, adopting main's structure:
+
+- `voucherSlipFor` keeps main's `Date`/`Text` and adds the balance row; the "Issued", "Balance on" and "Reprinted" lines all print.
+- `receiptDocEncodable` checks `SlipDate` and the new `BalanceLabel`/`BalanceAmount`.
+- The browser slip (`browserVoucherSlipFor`) now takes the same `slipBalance` and fills its existing balance row with "Balance on <date> <amount>" (display money). The "main till can't be reached" note shows for both the paper and the browser path, so it is no longer gated on a printer.
+- Locale/meta keys: both sides kept. The help topic carries main's text plus the Balance row. `manifest.json` is regenerated.
+- Test added: `TestVoucherSlipFor_BalanceWithIssuedAndBrowser`.

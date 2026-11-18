@@ -34,7 +34,7 @@
 {{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏅 {{ T "plugins.trust.official" }}</span>
 {{ else if eq .Tier "verified" }}<span class="trust-badge trust-verified" title="{{ T "plugins.trust.verified_hint" }}">✔ {{ T "plugins.trust.verified" }}</span>
 {{ else }}<span class="trust-badge trust-unverified" title="{{ T "plugins.trust.unverified_hint" }}">⚠ {{ T "plugins.trust.unverified" }}</span>{{ end }}
-{{ if .Paid }}<span class="paid-badge" title="{{ T "plugins.store.paid_hint" }}">{{ T "plugins.store.paid_badge" }}</span>{{ end }}
+{{/* Legal record 6380 section 6: no paid badge on App Store / Play builds. */}}{{ if and .Paid planpurchaseallowed }}<span class="paid-badge" title="{{ T "plugins.store.paid_hint" }}">{{ T "plugins.store.paid_badge" }}</span>{{ end }}
 {{ end }}
 
 {{ define "store_state" }}

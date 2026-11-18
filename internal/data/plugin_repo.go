@@ -113,6 +113,9 @@ ON CONFLICT(id) DO UPDATE SET
 // UpsertPluginManifest persists/updates plugin metadata from a manifest.
 func (r *PluginRepo) UpsertPluginManifest(ctx context.Context, tx *sql.Tx, manifest ManifestRow) error {
 	exec := r.executor(tx)
+	// ADR-0200: the previous version, read in the same transaction, tells an
+	// install from an update from a re-install of the same version.
+	prevVersion, hadPrev := pluginVersionOf(ctx, exec, manifest.ID)
 	_, err := exec.ExecContext(ctx, `
 INSERT INTO plugins (
     id, name, version, install_state, description,
@@ -139,14 +142,51 @@ ON CONFLICT(id) DO UPDATE SET
 	if err != nil {
 		return pluginObs.wrapf("upsert_manifest", "upsert plugin %s", err, manifest.ID)
 	}
+	// Built-in (system) plugins seed on every boot and are not the shop's
+	// choice: no event. Written in the same transaction, so a rolled-back
+	// install leaves none.
+	if manifest.TrustLevel != "system" {
+		switch {
+		case !hadPrev:
+			recordPluginEvent(ctx, exec, manifest.ID, ChangeActionInstall, "", manifest.Version)
+		case prevVersion != manifest.Version:
+			recordPluginEvent(ctx, exec, manifest.ID, ChangeActionUpdate, prevVersion, manifest.Version)
+		}
+	}
 	return nil
+}
+
+// pluginVersionOf reads an installed plugin's version and reports whether the
+// row exists.
+func pluginVersionOf(ctx context.Context, exec executor, id string) (string, bool) {
+	var v string
+	if err := exec.QueryRowContext(ctx, `SELECT version FROM plugins WHERE id = ?`, id).Scan(&v); err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// pluginRowOf is pluginVersionOf plus the trust level.
+func pluginRowOf(ctx context.Context, exec executor, id string) (version, trust string, ok bool) {
+	if err := exec.QueryRowContext(ctx, `SELECT version, trust_level FROM plugins WHERE id = ?`, id).Scan(&version, &trust); err != nil {
+		return "", "", false
+	}
+	return version, trust, true
+}
+
+func recordPluginEvent(ctx context.Context, exec executor, id, action, from, to string) {
+	recordChangeEvent(ctx, exec, ChangeEvent{Kind: ChangeKindPlugin, PluginID: id, Action: action, From: from, To: to})
 }
 
 // DeletePlugin removes a plugin and cascades related data via FK.
 func (r *PluginRepo) DeletePlugin(ctx context.Context, tx *sql.Tx, pluginID string) error {
 	exec := r.executor(tx)
+	prevVersion, trust, hadPrev := pluginRowOf(ctx, exec, pluginID)
 	if _, err := exec.ExecContext(ctx, `DELETE FROM plugins WHERE id = ?`, pluginID); err != nil {
 		return pluginObs.wrap("delete_plugin", err)
+	}
+	if hadPrev && trust != "system" { // ADR-0200: built-ins record nothing
+		recordPluginEvent(ctx, exec, pluginID, ChangeActionRemove, prevVersion, "")
 	}
 	return nil
 }
@@ -194,13 +234,18 @@ VALUES (?, NULL, ?, ?, ?, ?, ?)
 
 // UpdatePluginVersion updates plugin version/entrypoint/state.
 func (r *PluginRepo) UpdatePluginVersion(ctx context.Context, tx *sql.Tx, pluginID, version, entrypoint string, installState string) error {
-	_, err := r.executor(tx).ExecContext(ctx, `
+	exec := r.executor(tx)
+	prevVersion, trust, hadPrev := pluginRowOf(ctx, exec, pluginID)
+	_, err := exec.ExecContext(ctx, `
 UPDATE plugins 
 SET version = ?, entrypoint = ?, updated_at = ?, install_state = ?
 WHERE id = ?
 `, version, entrypoint, time.Now().UTC().Format(time.RFC3339), installState, pluginID)
 	if err != nil {
 		return pluginObs.wrapf("update_version", "update version %s", err, pluginID)
+	}
+	if hadPrev && trust != "system" && prevVersion != version { // ADR-0200 (a rollback is an update)
+		recordPluginEvent(ctx, exec, pluginID, ChangeActionUpdate, prevVersion, version)
 	}
 	return nil
 }

@@ -295,19 +295,6 @@ func TestVoucherSlipReprint_VoidAndUsedUpRefused(t *testing.T) {
 	}
 }
 
-func TestVoucherSlipReprint_NoPrinter(t *testing.T) {
-	mux, dp := newVoucherImportTestMux(t)
-	seedActive(t, dp, "GV-A", "")
-	setSettings(t, dp, map[string]string{keyPrinterMode: "off"})
-	rec := vPrintSlip(t, mux, "GV-A", &vManager)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), httpx.T("en", "vouchers.print_slip.no_printer")) {
-		t.Fatalf("status %d %s", rec.Code, rec.Body.String())
-	}
-	if len(slipAuditRows(t, dp, "GV-A")) != 0 {
-		t.Error("audited without reaching a printer")
-	}
-}
-
 func TestVoucherSlipReprint_PrinterFails(t *testing.T) {
 	mux, dp := newVoucherImportTestMux(t)
 	seedActive(t, dp, "GV-A", "")
@@ -401,9 +388,11 @@ func TestVoucherDetail_PrintSlipButton(t *testing.T) {
 	}
 	setSettings(t, dp, map[string]string{keyPrinterMode: "off"})
 	b := vGet(t, mux, "/vouchers/GV-A?lang=en", &vManager, false).Body.String()
-	if strings.Contains(b, `data-testid="voucher-print-slip"`) || !strings.Contains(b, `href="/settings#settings-printer"`) ||
-		!strings.Contains(b, httpx.T("en", "vouchers.print_slip.no_printer")) {
-		t.Error("no-printer branch wrong")
+	for _, want := range []string{`data-testid="voucher-print-slip"`, `data-testid="voucher-slip-browser-hint"`, `href="/settings#settings-printer"`,
+		`data-after-request="ut-response:print-slip print"`, html.EscapeString(httpx.T("en", "vouchers.print_slip.browser_hint"))} {
+		if !strings.Contains(b, want) {
+			t.Errorf("no-printer page lacks %q", want)
+		}
 	}
 }
 
@@ -480,5 +469,28 @@ func TestVoucherSlipFor_BalanceLine(t *testing.T) {
 		if bal := voucherSlipFor(ctx, dp, v, b, print.Config{}, now).Voucher; bal.BalanceLabel != "" || bal.BalanceAmount != "" {
 			t.Errorf("%s: balance row = %q/%q, want empty", name, bal.BalanceLabel, bal.BalanceAmount)
 		}
+	}
+}
+
+// ut-docs#6044 on top of ut-docs#6179: the balance row, the "Issued" line and
+// the shop's text all ride on one reprinted slip, and the browser slip shows
+// the same balance (display money) in its balance row.
+func TestVoucherSlipFor_BalanceWithIssuedAndBrowser(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	setSettings(t, dp, map[string]string{keyReceiptVoucherSlipText: "Valid in store."})
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	v := data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, Currency: "GBP", Status: "active", IssuedSaleID: "sale1", CreatedAt: slip6179Issued}
+	bal := slipBalance{Minor: 1000, Known: true}
+	s := voucherSlipFor(ctx, dp, v, bal, printerConfig(ctx, dp), now)
+	if s.Voucher.BalanceAmount == "" || s.Date == "" || len(s.Text) != 1 {
+		t.Fatalf("slip = %+v, want balance row, issued date and text", s)
+	}
+	b := browserVoucherSlipFor(ctx, dp, v, bal, now)
+	if want := s.Voucher.BalanceLabel + " " + httpx.FormatMoneyDisplay(1000, "en"); b.Balance != want {
+		t.Errorf("browser Balance = %q, want %q", b.Balance, want)
+	}
+	if b := browserVoucherSlipFor(ctx, dp, v, slipBalance{}, now); b.Balance != "" {
+		t.Errorf("unknown balance printed %q", b.Balance)
 	}
 }
