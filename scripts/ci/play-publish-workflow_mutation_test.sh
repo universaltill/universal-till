@@ -4,7 +4,7 @@
 # removes one protection from a COPY of the workflow / release.yml /
 # verify-release-tag.sh; the wiring test must then fail. Any mutant that still
 # passes (or does not change the file) fails this script.
-set -euo pipefail
+set -eu # no pipefail: the checks pipe a captured text into grep -q, whose early exit would SIGPIPE the writer on Linux
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 T="$ROOT/scripts/ci/play-publish-workflow_test.sh"
 W="$ROOT/.github/workflows/play-publish.yml"; R="$ROOT/.github/workflows/release.yml"; V="$ROOT/scripts/ci/verify-release-tag.sh"

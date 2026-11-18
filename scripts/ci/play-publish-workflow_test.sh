@@ -2,7 +2,7 @@
 # shellcheck disable=SC2015,SC2016
 # Wiring guard for .github/workflows/play-publish.yml (ut-docs#6410): pins the
 # properties its safety rests on.
-set -euo pipefail
+set -eu # no pipefail: the checks pipe a captured text into grep -q, whose early exit would SIGPIPE the writer on Linux
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WF="${1:-$ROOT/.github/workflows/play-publish.yml}"
 fails=0
