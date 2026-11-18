@@ -13,6 +13,7 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8107
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
 : "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
 : "${UT_UPDATE_CHECK:=0}"; export UT_UPDATE_CHECK
+: "${UT_NEVER_REGISTER:=1}"; export UT_NEVER_REGISTER # ADR-0200: a throwaway till never registers itself in the cloud
 # Nothing listens on port 1, so every background catalogue refresh fails at
 # once and the seeded snapshot stays (a developer's local cloud on the default
 # endpoint could otherwise replace it).

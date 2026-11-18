@@ -323,7 +323,6 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/subscription/panel/handoff": true, // ut-docs#4286: a QR to the real plans page
 	"POST /api/subscription/panel/poll":    true, // ut-docs#4286: an operator check-in
 	"POST /api/enrol/claim-code":           true,
-	"POST /api/enrol/now":                  true,
 	"POST /api/enrol/pair":                 true,
 	"POST /api/enrol/reconnect":            true, // ut-docs#5145: a demo till never contacts the cloud
 	"POST /api/enrol/new-shop":             true, // ut-docs#5145: same
@@ -332,7 +331,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /settings/cloud/move/{id}":             true,
 	"POST /api/cloud/move/{id}":                 true,
 	"POST /api/enrol/terms":                     true, // ut-docs#4792: a demo till never contacts the cloud
-	"POST /api/settings/auto-register":          true,
+	"POST /api/settings/registration-stop":      true, // ADR-0200: a demo till never registers or reports
 	"POST /api/settings/telemetry":              true,
 	"POST /api/settings/cloud-staff-breakdown":  true, // ut-docs#2557
 	"POST /api/setup/join":                      true,
