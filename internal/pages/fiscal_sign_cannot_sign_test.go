@@ -96,6 +96,7 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 			case "payment.demopay.refund":
 				var p map[string]any
 				_ = json.Unmarshal(ev.Payload, &p)
+				p["_event_id"] = ev.ID // test-only: the refund request id (ut-docs#6601)
 				mu.Lock()
 				gotRefunds = append(gotRefunds, p)
 				mu.Unlock()
