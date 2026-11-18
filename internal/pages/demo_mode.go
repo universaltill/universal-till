@@ -246,6 +246,20 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/backup/retention":        true,
 	"POST /api/backup/save-copy/{name}": true,
 	"POST /api/backup/upload":           true,
+	// ut-docs#5066: the cloud copy and cloud restore are never for a demo
+	// database: the actions and the restore page are denied.
+	"POST /api/offsite/now":            true,
+	"POST /api/offsite/recover/start":  true,
+	"POST /api/offsite/recover/cancel": true,
+	"GET /backups/cloud-restore":       true,
+	"GET /backups/cloud-key":           true,
+	"POST /api/offsite/link/start":     true,
+	"POST /api/offsite/recover/key":    true,
+	"POST /api/offsite/key/choice":     true,
+	"POST /api/offsite/key/new":        true,
+	"POST /api/offsite/key/enter":      true,
+	"POST /api/offsite/key/show":       true,
+	"POST /api/offsite/key/print":      true,
 	// Uploads with their own endpoint (item/variant photos, receipt logo) —
 	// the multipart file filter also covers them; denied outright here.
 	"POST /api/catalog/item/image":    true,
@@ -533,12 +547,17 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /open-orders/counter/open":    true,
 	// Status chips every page loads (local reads only; denying them would
 	// stamp the demo message into the nav).
-	"GET /ui/bugreport-chip":               true,
-	"GET /ui/cloud-auth-chip":              true,
-	"GET /ui/tax-autoinstall-chip":         true, // ADR-0172 §5; local settings read only
-	"GET /ui/move-pending-chip":            true, // ut-docs#5287: read-only chip, empty unless a move waits
-	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
-	"GET /ui/backup-copy-chip":             true, // ut-docs#5071; reads two settings
+	"GET /ui/bugreport-chip":       true,
+	"GET /ui/cloud-auth-chip":      true,
+	"GET /ui/tax-autoinstall-chip": true, // ADR-0172 §5; local settings read only
+	"GET /ui/move-pending-chip":    true, // ut-docs#5287: read-only chip, empty unless a move waits
+	"GET /ui/disk-space-chip":      true, // ut-docs#3121; local statfs only
+	"GET /ui/backup-copy-chip":     true, // ut-docs#5071; reads two settings
+	// ut-docs#5066: read-only partials of the cloud backup (local settings
+	// only; empty on an unpaired demo till).
+	"GET /ui/backup-cloud-card":            true,
+	"GET /ui/backup-cloud-restore/status":  true,
+	"GET /ui/offsite-nextstep":             true,
 	"GET /ui/settings/language-install":    true, // ut-docs#4477; reads local settings only
 	"GET /ui/shop-currency-chip":           true, // ut-docs#4539; local settings read only
 	"GET /ui/diagnostics-chip":             true,

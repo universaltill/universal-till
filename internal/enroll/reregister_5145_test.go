@@ -417,3 +417,31 @@ func TestReconnectDoesNotNameAnUnnamedShopAfterItsID(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6612: "Register as a new shop" leaves the old shop for good, so the
+// old shop's off-site backup key file goes (ADR-0199 D2), even when the register
+// itself then fails.
+func TestStartAsNewStoreReportsTheLeftShop(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		h    func(int, regReq, http.ResponseWriter)
+	}{
+		{"register ok", func(_ int, _ regReq, w http.ResponseWriter) { writeOK(w, "tok-fresh") }},
+		{"register fails", func(_ int, _ regReq, w http.ResponseWriter) { http.Error(w, "boom", 500) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetState()
+			var left []string
+			OnStoreLeft = func(old string) { left = append(left, old) }
+			t.Cleanup(func() { OnStoreLeft = nil })
+			cloud := newScriptedCloud(t, tc.h)
+			kv := newFakeKV()
+			cfg := registeredTill(t, cloud.srv.URL, kv)
+			kv.m[keyStoreID] = "st_old"
+			_, _ = StartAsNewStore(context.Background(), cfg, kv)
+			if len(left) != 1 || left[0] != "st_old" {
+				t.Fatalf("left shops = %v, want [st_old]", left)
+			}
+		})
+	}
+}

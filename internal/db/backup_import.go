@@ -319,3 +319,46 @@ func IsUploadedBackupName(name string) bool {
 	}
 	return true
 }
+
+// StripCloudIdentityCopy copies the file src to dst and removes the copy's
+// till cloud identity (TillCloudIdentityPrefixes, secure_delete), so the
+// off-site backup never carries a device credential (ut-docs#5066, AC1.6).
+// src is never opened for writing. On any error dst is removed.
+func StripCloudIdentityCopy(src, dst string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(dst)
+			_ = os.Remove(dst + "-wal")
+			_ = os.Remove(dst + "-shm")
+			_ = os.Remove(dst + "-journal")
+		}
+	}()
+	if _, err = io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	return stripCloudIdentityFile(dst)
+}
+
+// LatestMigrationVersion is the newest schema version this build ships; the
+// off-site backup reports it so a restore can tell a too-new backup before
+// downloading it (ut-docs#5066). 0 when the migrations cannot be listed.
+func LatestMigrationVersion() int {
+	migs, err := loadMigrations()
+	if err != nil || len(migs) == 0 {
+		return 0
+	}
+	return migs[len(migs)-1].Version
+}

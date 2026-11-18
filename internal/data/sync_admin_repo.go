@@ -793,6 +793,8 @@ const BackupRetentionDaysSettingsKey = "backup.retention_days"
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
 	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey, BackupRetentionDaysSettingsKey,
+	// ut-docs#5066: this till's own off-site backup state (data.OffsiteBackup*).
+	OffsiteBackupPrefix,
 	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
 	// this till's own (each device pulls and tracks read state for itself).
 	"notices.",

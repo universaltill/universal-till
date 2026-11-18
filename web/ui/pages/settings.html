@@ -1290,6 +1290,7 @@
     <span id="backup-retention-msg" aria-live="polite"></span>
   </form>
   <p class="muted">{{ T "settings.backup.retention_hint" }}</p>
+  <div id="backup-cloud-slot" hx-get="/ui/backup-cloud-card" hx-trigger="load" hx-swap="innerHTML"></div>{{/* ut-docs#5066: Cloud backups card */}}
   {{ end }}
   </div>
   {{ if .isManager }}

@@ -104,7 +104,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	// 1+2. Clear exactly this till's cloud identity and take a fresh device
 	// id (ADR-0116 D5).
 	newID := "till-" + uuid.NewString()
-	resetIdentityForPair(ctx, kv, replica, newID)
+	oldStore := resetIdentityForPair(ctx, kv, replica, newID)
 
 	// 3. Pair.
 	storeID, merchantID, token, err := postPair(ctx, m.EndpointURL, code, newID, DeviceName(ctx, kv), buildinfo.Version)
@@ -117,6 +117,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 		return CurrentStatus(), ErrPairStoreMismatch
 	}
 	adoptPaired(ctx, kv, replica, newID, storeID, merchantID, token)
+	storeLeft(oldStore, storeID)
 	logging.ResolveProblems(ProblemKeyPairFailed)
 	log.Infof("enrolment: this till is now paired with store %s as device %s (ADR-0116 D5)", storeID, newID)
 	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
@@ -193,17 +194,37 @@ func PairPrecheck(ctx context.Context, cfg *config.Config, kv Settings, code str
 	return nil
 }
 
+// OnStoreLeft, when set, runs once a main till has been paired with a
+// DIFFERENT shop than it belonged to, with the shop it left. It never runs
+// before the new pairing is committed, and never for a re-pair to the same
+// shop (ut-docs#5066, H2). The off-site backup package sets it to delete the
+// left shop's key file.
+var OnStoreLeft func(oldStoreID string)
+
+// storeLeft runs OnStoreLeft after a pairing committed newStore, when the
+// till really changed shop (oldStore known and different).
+func storeLeft(oldStore, newStore string) {
+	oldStore, newStore = strings.TrimSpace(oldStore), strings.TrimSpace(newStore)
+	if OnStoreLeft != nil && oldStore != "" && oldStore != newStore {
+		OnStoreLeft(oldStore)
+	}
+}
+
 // resetIdentityForPair clears exactly this till's cloud identity (ADR-0116
 // D5) and gives it the fresh device id newID. The credential being
 // replaced carries nothing worth keeping: this flow runs on a till that is
 // unpaired, revoked or retired, so a refused code leaves it cleanly
 // unregistered rather than half-old. newID is the fresh device id. Caller
 // holds the attempt slot.
-func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID string) {
+func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID string) (oldStore string) {
 	log := logging.L()
 	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID}
 	if !replica {
 		wipe = append(wipe, keyStoreID, keyMerchantID)
+		// The caller reports the left shop (storeLeft) only once the new
+		// pairing succeeded.
+		oldStore, _, _ = kv.Get(ctx, keyStoreID)
+		oldStore = strings.TrimSpace(oldStore)
 	}
 	for _, key := range wipe {
 		if err := kv.Set(ctx, key, ""); err != nil {
@@ -241,6 +262,7 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 	}
 	mu.Unlock()
 	unsavedToken.Store(false)
+	return oldStore
 }
 
 // adoptPaired adopts and persists the credential a pairing answered with,
@@ -553,8 +575,9 @@ func (p *FirstTillPairing) Commit(ctx context.Context, cfg *config.Config, kv Se
 		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
 	}
 	defer releaseAttempt()
-	resetIdentityForPair(ctx, kv, false, p.DeviceID)
+	oldStore := resetIdentityForPair(ctx, kv, false, p.DeviceID)
 	adoptPaired(ctx, kv, false, p.DeviceID, p.StoreID, p.MerchantID, p.Token)
+	storeLeft(oldStore, p.StoreID)
 	logging.ResolveProblems(ProblemKeyPairFailed)
 	logging.L().Infof("enrolment: this till is now paired with store %s as device %s (ADR-0166)", p.StoreID, p.DeviceID)
 	return CurrentStatus(), nil
