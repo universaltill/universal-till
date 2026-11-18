@@ -310,3 +310,56 @@ func TestTxnRef_PluginReportedTransactionRef(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6603: with more than one leg of the method the refund names how
+// much goes back to each leg, in payment order, instead of leaving the plugin
+// to guess which charge to refund.
+func TestAllocateRefundAcrossLegs(t *testing.T) {
+	cases := []struct {
+		total int64
+		caps  []int64
+		want  []int64
+	}{
+		{120, []int64{50, 70}, []int64{50, 70}},
+		{60, []int64{50, 70}, []int64{50, 10}},
+		{30, []int64{50, 70}, []int64{30, 0}},
+		{500, []int64{50, 70}, []int64{50, 70}},
+		{0, []int64{50, 70}, []int64{0, 0}},
+	}
+	for _, c := range cases {
+		got := allocateRefundAcrossLegs(c.total, c.caps)
+		if fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("allocate(%d, %v) = %v, want %v", c.total, c.caps, got, c.want)
+		}
+	}
+}
+
+func TestTxnRef_SplitCardLegsRefundNamesPerLegAmounts(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	rig := newRefCardRig(t, func(n int) string { return fmt.Sprintf(`"pi_%d"`, n) }, "")
+	rig.sell(t, `[{"method":"demopay","amount":50},{"method":"demopay","amount":70}]`)
+	rig.refund(t, rig.receiptNo(t, 1))
+	got := rig.refunds()
+	raw, _ := got[len(got)-1]["original_payments"].([]any)
+	if len(raw) != 2 {
+		t.Fatalf("original_payments = %v", raw)
+	}
+	for i, want := range []float64{50, 70} {
+		if a, _ := raw[i].(map[string]any)["refund_amount"].(float64); a != want {
+			t.Errorf("leg %d refund_amount = %v, want %v", i, a, want)
+		}
+	}
+}
+
+// A single leg is unchanged: no guessing to remove.
+func TestTxnRef_SingleLegRefundHasNoRefundAmount(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	rig := newRefCardRig(t, func(n int) string { return `"pi_1"` }, "")
+	rig.sell(t, `[{"method":"demopay","amount":120}]`)
+	rig.refund(t, rig.receiptNo(t, 1))
+	got := rig.refunds()
+	op := got[len(got)-1]["original_payments"].([]any)[0].(map[string]any)
+	if _, has := op["refund_amount"]; has {
+		t.Fatalf("single-leg entry must not carry refund_amount: %v", op)
+	}
+}

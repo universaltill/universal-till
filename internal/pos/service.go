@@ -136,6 +136,11 @@ type Service struct {
 	// Minted lazily by TenderAttemptID on first read after a reset; cleared
 	// by resetLocked so the next, genuinely different basket mints its own.
 	tenderAttemptID string
+	// tenderLock (ut-docs#6600) is the signature of the tender whose card
+	// outcome is UNKNOWN: until that tender settles, only the identical tender
+	// may be retried (same authorize request id), so a possibly-charged card
+	// is never followed by another payment. Cleared with tenderAttemptID.
+	tenderLock string
 	// ageChecks (ut-docs#3340) holds the ID-check outcome the cashier
 	// recorded for each age-restricted ITEM in the current sale, keyed by
 	// ItemID — per item, not per LineKey, so a line that later merges,
@@ -1724,7 +1729,25 @@ func (s *Service) RotateTenderAttemptID() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tenderAttemptID = ""
+	s.tenderLock = ""
 }
+
+// LockTender records sig as the only tender this basket may attempt next
+// (ut-docs#6600); TenderLock returns it ("" = unlocked); UnlockTender
+// clears it once the provider has answered definitively.
+func (s *Service) LockTender(sig string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tenderLock = sig
+}
+
+func (s *Service) TenderLock() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tenderLock
+}
+
+func (s *Service) UnlockTender() { s.LockTender("") }
 
 // resetLocked is Reset's lock-free core — also called by Restore before
 // loading a snapshot. Caller must hold s.mu.
@@ -1748,6 +1771,7 @@ func (s *Service) resetLocked() {
 	s.tableID = ""
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
+	s.tenderLock = ""
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""

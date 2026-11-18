@@ -850,5 +850,7 @@
   "about.delete_account_help": {"description": "Short note under the About links saying account deletion happens on the Universal Till website.", "review": "legal"},
   "about.more_link": {"description": "Link text from Settings, About and the manual to the About screen with the legal links.", "review": "standard"},
   "about.back_link": {"description": "Link text at the top of the open-source licences page that returns to the About screen.", "review": "standard"},
-  "about.addresses_help": {"description": "Note on the About screen where web links cannot be opened (kiosk): the addresses above are shown as text to type on another device.", "review": "legal"}
+  "about.addresses_help": {"description": "Note on the About screen where web links cannot be opened (kiosk): the addresses above are shown as text to type on another device.", "review": "legal"},
+  "pos.toast.payment_outcome_unknown": {"description": "Error toast on the till when a card payment may have been charged but the reader could not confirm it: tells the cashier to tap Pay again to settle it and not to take another payment.", "review": "standard"},
+  "selforder.checkout.outcome_unknown": {"description": "Message on the self-order kiosk when the customer's card payment could not be confirmed: sends them to the cashier and tells them not to pay again.", "review": "standard"}
 }
