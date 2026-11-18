@@ -232,3 +232,28 @@ func TestRenderVoucherSlip_TopUpBlock(t *testing.T) {
 		t.Error("text slip must carry no barcode command")
 	}
 }
+
+func dirtySlip(f func(string) string, cs string) VoucherSlip {
+	in := func(s string) string { return f(s + kick + forged) }
+	return VoucherSlip{
+		StoreName: in("Shop"), Header: []string{in("Hdr")}, Note: in("Reprinted"), Charset: cs,
+		Voucher: VoucherBlock{Label: in("Gift"), Amount: in("5.00"), Holder: in("Anna"), Balance: in("Bal"), Void: in("VOID"), Code: in("CODE")},
+	}
+}
+
+func TestRenderVoucherSlip_ControlRunesNeverReachPrinter(t *testing.T) {
+	ident := func(s string) string { return s }
+	for _, cs := range allCharsets {
+		out := RenderVoucherSlip(dirtySlip(ident, cs))
+		if n := bytes.Count(out, cmdKickDrawer); n != 0 {
+			t.Errorf("%q: cmdKickDrawer x%d", cs, n)
+		}
+		if want := RenderVoucherSlip(dirtySlip(twinOf, cs)); !bytes.Equal(out, want) {
+			t.Errorf("%q: differs from twin\n got %q\nwant %q", cs, out, want)
+		}
+		clean := RenderVoucherSlip(dirtySlip(func(string) string { return "x" }, cs))
+		if a, b := bytes.Count(out, []byte("\n")), bytes.Count(clean, []byte("\n")); a != b {
+			t.Errorf("%q: %d newlines, clean slip has %d", cs, a, b)
+		}
+	}
+}

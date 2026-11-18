@@ -2499,6 +2499,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gateElevation},
 		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gateElevation},
 		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
+		{"cloud-staff-breakdown", http.MethodPost, "/api/settings/cloud-staff-breakdown", url.Values{"enabled": {"on"}}, gate403}, // ut-docs#2557
 		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gateElevation},
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
 		{"store-name", http.MethodPost, "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}, gateElevation},
@@ -3718,5 +3719,132 @@ func TestMainTillHostPort(t *testing.T) {
 		if got := mainTillHostPort(tc.in); got != tc.want {
 			t.Errorf("mainTillHostPort(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// ut-docs#2739 (ADR-0114 §5): the main till chooses when additional tills
+// update; next_idle is the default and is what renders until "nightly" is saved.
+func TestSettingsPage_MainTillShowsFleetFollowSelect(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	selectRe := regexp.MustCompile(`(?s)<select name="fleet_follow"[^>]*>(.*?)</select>`)
+	opt := func(inner, value string) string {
+		m := regexp.MustCompile(`<option value="` + value + `"([^>]*)>`).FindStringSubmatch(inner)
+		if m == nil {
+			t.Fatalf("no <option value=%q> in %s", value, inner)
+		}
+		return m[1]
+	}
+
+	body := getSettingsAsManager(t, mux)
+	m := selectRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("main till: no fleet_follow select inside the update form")
+	}
+	if !strings.Contains(opt(m[1], "next_idle"), "selected") || strings.Contains(opt(m[1], "nightly"), "selected") {
+		t.Fatalf("untouched till: next_idle must be the selected option, got %s", m[1])
+	}
+	for _, key := range []string{"settings.update.fleet_follow_label", "settings.update.fleet_follow_next_idle",
+		"settings.update.fleet_follow_nightly", "settings.update.fleet_follow_hint"} {
+		if !strings.Contains(body, html.EscapeString(httpx.T("en", key))) {
+			t.Errorf("main till: %s not rendered", key)
+		}
+	}
+	// It lives in the locked fieldset, like the rest of the form.
+	if !regexp.MustCompile(`(?s)<fieldset class="set-lock" data-lock-region="settings-update-schedule".*?<select name="fleet_follow".*?</fieldset>`).MatchString(body) {
+		t.Fatal("the fleet_follow select must sit inside the settings-update-schedule fieldset")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	m = selectRe.FindStringSubmatch(getSettingsAsManager(t, mux))
+	if m == nil || !strings.Contains(opt(m[1], "nightly"), "selected") || strings.Contains(opt(m[1], "next_idle"), "selected") {
+		t.Fatalf("nightly saved: nightly must be the selected option, got %v", m)
+	}
+	// Hand-edited garbage reads as the default.
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "weekly"); err != nil {
+		t.Fatal(err)
+	}
+	m = selectRe.FindStringSubmatch(getSettingsAsManager(t, mux))
+	if m == nil || !strings.Contains(opt(m[1], "next_idle"), "selected") {
+		t.Fatalf("unknown value: next_idle must be selected, got %v", m)
+	}
+}
+
+// The replica sees the policy read-only: a second line only for nightly,
+// naming the window THIS till installs in (the main till's update time plus
+// this till's own offset), ut-docs#6552.
+func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	line := `data-testid="update-follow-policy"`
+
+	body := getSettingsAsManager(t, mux)
+	if strings.Contains(body, line) || strings.Contains(body, `name="fleet_follow"`) {
+		t.Fatal("next_idle replica: no policy line and no select")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "02:15"); err != nil {
+		t.Fatal(err)
+	}
+	body = getSettingsAsManager(t, mux)
+	if !strings.Contains(body, line) {
+		t.Fatal("nightly replica: no policy line")
+	}
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "02:22", "02:52")); !strings.Contains(body, want) {
+		t.Fatalf("nightly replica: expected %q", want)
+	}
+	if strings.Contains(body, `name="fleet_follow"`) {
+		t.Fatal("a replica must not render the select")
+	}
+
+	// update.auto_time unset: the default time plus the offset.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "03:07", "03:37")); !strings.Contains(getSettingsAsManager(t, mux), want) {
+		t.Fatalf("nightly replica, time unset: expected %q", want)
+	}
+
+	// An invalid time prints nothing rather than a bad time.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "25:99"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(getSettingsAsManager(t, mux), line) {
+		t.Fatal("invalid auto_time: the window line must be omitted")
+	}
+}
+
+// ut-docs#6552: a nightly replica whose attempt failed says it will try again
+// at the next nightly update, with the window.
+func TestSettingsPage_NightlyReplicaFailedSaysItRetries(t *testing.T) {
+	origVer, origSupported, origJitter := autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter
+	t.Cleanup(func() {
+		autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter = origVer, origSupported, origJitter
+	})
+	autoUpdateBuildVersion = func() string { return "1.4.0" }
+	autoUpdateSupported = func() bool { return true }
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	for k, v := range map[string]string{keyMainVersion: "1.4.2", keyFleetFollow: "nightly", keyAutoUpdateTime: "03:00",
+		keyFollowAttempted: "1.4.2", keyFollowError: "failed:download"} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getSettingsAsManager(t, mux)
+	if !strings.Contains(body, `data-follow-line="failed_nightly"`) {
+		t.Fatal("expected follow line state failed_nightly")
+	}
+	want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_failed_nightly"), "v1.4.2", "03:07", "03:37"))
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected %q", want)
 	}
 }

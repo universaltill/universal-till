@@ -163,7 +163,7 @@ func TestDetectCountry(t *testing.T) {
 
 // detectLanguage depends on httpx's wired translator (AvailableLocales) —
 // load the real locale bundle so "which locales are available" matches
-// production (core ships ar/en/fa/tr; a plugin like ut-plugin-language-de is
+// production (core ships ar/en/fa/tr; a bundle like com.universaltill.language-de is
 // never installed in this unit test, so "de" is a real, current example of
 // "detected but unavailable").
 func initDetectTestI18n(t *testing.T) {

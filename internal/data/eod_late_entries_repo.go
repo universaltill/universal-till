@@ -57,13 +57,21 @@ func (r *POSRepo) LateEntriesForInstantWindow(ctx context.Context, from, to time
 	}
 
 	swin, sargs := instantWindow(saleArrivalCol("s"), from, to)
+	// An own sale marked at a promote (recorded_at, ut-docs#5777) is listed
+	// under this till's own roster id and name: ClearReplicaIdentity keeps
+	// sync.till_id as till_identity.cloud_id, the id the old main till filed
+	// it under.
+	const key = `CASE WHEN COALESCE(s.till_id, '') = '' THEN COALESCE((SELECT value FROM settings WHERE key = 'till_identity.cloud_id'), '') ELSE s.till_id END`
+	// Only an own row (empty till_id) falls back to this till's name; another
+	// till missing from the roster keeps the roster's (possibly empty) name.
+	const name = `CASE WHEN COALESCE(s.till_id, '') = '' THEN COALESCE(NULLIF(t.name, ''), (SELECT value FROM settings WHERE key = 'till.name'), '') ELSE COALESCE(t.name, '') END`
 	rows, err := r.db.QueryContext(ctx, `
-SELECT s.till_id, COALESCE(t.name, ''), s.sale_type, COUNT(*), COALESCE(SUM(s.total), 0), MIN(datetime(s.created_at))
+SELECT `+key+`, `+name+`, s.sale_type, COUNT(*), COALESCE(SUM(s.total), 0), MIN(datetime(s.created_at))
 FROM sales s
-LEFT JOIN tills t ON t.id = s.till_id
-WHERE s.status = 'completed' AND COALESCE(s.till_id, '') <> '' AND `+swin+`
+LEFT JOIN tills t ON t.id = `+key+`
+WHERE s.status = 'completed' AND (COALESCE(s.till_id, '') <> '' OR s.recorded_at IS NOT NULL) AND `+swin+`
   AND datetime(s.created_at) < datetime(?)
-GROUP BY s.till_id, s.sale_type`, append(sargs, fromStr)...)
+GROUP BY `+key+`, s.sale_type`, append(sargs, fromStr)...)
 	if err != nil {
 		return nil, fmt.Errorf("late sales: %w", err)
 	}

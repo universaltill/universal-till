@@ -621,7 +621,7 @@ func TestShiftsPage_CurrentShowsCashierName(t *testing.T) {
 	}{
 		{"display name", "user5782", "<td>Alice Jones</td>", "<td>user5782</td>"},
 		{"unknown id falls back to raw id", "ghost", "<td>ghost</td>", ""},
-		{"empty id renders em dash", "", "<td>—</td>", "<td></td>"},
+		{"empty id renders em dash", "", "<td>—</td>", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -655,7 +655,7 @@ func TestShiftsPage_CurrentShowsCashierName(t *testing.T) {
 				t.Fatalf("expected %s in the Current card, got: %s", tc.wantCell, body)
 			}
 			if tc.notCell != "" && strings.Contains(body, tc.notCell) {
-				t.Fatalf("did not expect %s", tc.notCell)
+				t.Fatalf("did not expect %s in: %s", tc.notCell, body)
 			}
 		})
 	}

@@ -11,9 +11,9 @@
 # This calls the Go half (scripts/ci/checkhelpbreadcrumbs), which maps each
 # English breadcrumb to its en.json key and checks the same numbered item of
 # every translated topic for that key's value in the locale. A locale whose
-# strings are not in web/locales (a language pack, e.g. de) is read from
-# $UT_<LOC>_PACK_DIR or the sibling ut-plugin-language-<loc> checkout, and
-# skipped with a notice when neither exists. Known mismatches live in
+# strings are not in web/locales (a Weblate bundle, e.g. de) is read from
+# $UT_TEST_I18N_OVERLAY_DIR/<loc>.json (scripts/ci/build-locale-overlay.sh),
+# and skipped with a notice when that is unset. Known mismatches live in
 # scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt (shrink-only: a stale
 # entry fails). Quoted action/button labels are out of scope.
 #

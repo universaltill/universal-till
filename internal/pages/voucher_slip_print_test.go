@@ -265,8 +265,8 @@ func TestPrintReceiptIn_TopUpReversedNoSlip(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := mustReceiptDoc(t, ctx, dp, "R-TU", "")
-	if len(doc.Vouchers) != 1 || doc.Vouchers[0].Void == "" {
-		t.Fatalf("precondition: receipt block must be marked void: %+v", doc.Vouchers)
+	if len(doc.Vouchers) != 1 || doc.Vouchers[0].Void != "VOID - top-up taken back" {
+		t.Fatalf("precondition: receipt block must be marked as a top-up taken back: %+v", doc.Vouchers)
 	}
 	dev := slipDevice(t, dp, "true")
 	if n, err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil || n != 0 {
@@ -286,8 +286,28 @@ func TestPrintReceiptIn_TopUpOfVoidVoucherNoSlip(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := mustReceiptDoc(t, ctx, dp, "R-TU", "")
-	if len(doc.Vouchers) != 1 || doc.Vouchers[0].Void != "" {
-		t.Fatalf("receipt block must stay as today (not void): %+v", doc.Vouchers)
+	// ut-docs#5794: the receipt block agrees with the slip — a top-up of a
+	// voucher void since prints the void notice, and the code as text only.
+	if len(doc.Vouchers) != 1 || doc.Vouchers[0].Void != "VOID - not valid" {
+		t.Fatalf("receipt block must be marked void: %+v", doc.Vouchers)
+	}
+	// ESC/POS GS k 73 starts a CODE128 symbol. Compare against the same
+	// receipt with the voucher active: the void one prints one symbol fewer
+	// (the voucher's) and still prints the code as text.
+	gsK := []byte{0x1d, 0x6b, 0x49}
+	voidOut := print.Render(doc)
+	if !bytes.Contains(voidOut, []byte("GV-A")) {
+		t.Fatal("the void top-up must still print its code as text")
+	}
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE vouchers SET status = 'active' WHERE id = 'GV-A'`); err != nil {
+		t.Fatal(err)
+	}
+	activeOut := print.Render(mustReceiptDoc(t, ctx, dp, "R-TU", ""))
+	if got, want := bytes.Count(voidOut, gsK), bytes.Count(activeOut, gsK)-1; got != want {
+		t.Fatalf("CODE128 symbols = %d, want %d: a top-up of a void voucher must not print a scannable symbol", got, want)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE vouchers SET status = 'void' WHERE id = 'GV-A'`); err != nil {
+		t.Fatal(err)
 	}
 	dev := slipDevice(t, dp, "true")
 	if n, err := printReceiptIn(ctx, dp, "R-TU", ""); err != nil || n != 0 {
