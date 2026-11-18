@@ -26,7 +26,7 @@ import (
 const localNetworkKey = "NSLocalNetworkUsageDescription"
 
 // packLocales: the core web/locales/*.json languages plus the
-// ut-plugin-language-* packs the product ships (de, es, pt).
+// language bundles (com.universaltill.language-<code>) the product ships (de, es, pt).
 var packLocales = []string{"de", "es", "pt"}
 
 // plistTop returns the top-level <dict> of an XML plist as key -> node, where

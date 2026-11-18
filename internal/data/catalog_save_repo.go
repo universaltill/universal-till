@@ -91,9 +91,9 @@ type ItemSaveResult struct {
 	Name    string
 	// Changed lists the patch's fields that were present, for the audit row.
 	Changed []string
-	// ClearedImagePath is the thumbnail path a non-empty icon replaced
-	// (ut-docs#3584, as CategorySaveResult's), "" when none was cleared —
-	// the caller deletes a superseded upload's file.
+	// ClearedImagePath is the library tile a non-empty icon replaced, "" when
+	// none was cleared. Never an uploaded photo since ut-docs#6028, which an
+	// icon keeps; the caller's upload-file removal is defensive.
 	ClearedImagePath string
 }
 
@@ -522,16 +522,14 @@ func saveItemSellScreenTx(ctx context.Context, tx *sql.Tx, p ItemPatch, res *Ite
 	return nil
 }
 
-// save_item still replaces an uploaded photo with an icon; letting a photo
-// keep a save_item icon is ut-docs#6028 (cross-repo with my./ut-cloud).
-//
-// saveItemIconTx applies save_item's icon (ut-docs#3584) with the
-// one-picture rule SaveCategory applies to a category's (ut-docs#2717): an
-// icon set from my. replaces whatever thumbnail the till had — a library
-// tile or an uploaded photo — or it would stay hidden behind it on the sale
-// screen. A cleared icon ("") leaves an uploaded photo alone, but a library
-// tile in the thumbnail row IS the item's icon (it renders and is reported
-// as its id), so clearing the icon clears that tile too.
+// saveItemIconTx applies save_item's icon (ut-docs#3584) with the rule
+// SaveCategory applies to a category's (ut-docs#3585, ut-docs#6028): an
+// uploaded photo is kept — it shows, and the icon is its fallback once the
+// photo is removed — while a library tile (named or the generic one) is
+// dropped, since the icon replaces it. A cleared icon ("") leaves a photo
+// alone, but a library tile in the thumbnail row IS the item's icon (it
+// renders and is reported as its id), so clearing the icon clears that tile
+// too.
 func saveItemIconTx(ctx context.Context, tx *sql.Tx, itemID, icon string, res *ItemSaveResult) error {
 	var thumb string
 	err := tx.QueryRowContext(ctx, `SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID).Scan(&thumb)
@@ -539,15 +537,20 @@ func saveItemIconTx(ctx context.Context, tx *sql.Tx, itemID, icon string, res *I
 		return fmt.Errorf("save item: read thumbnail: %w", err)
 	}
 	keep := thumb
-	if icon != "" && thumb != "" {
-		res.ClearedImagePath, keep = thumb, ""
-	} else if icon == "" && iconid.IDForAssetPath(thumb) != "" {
+	if icon != "" {
+		// iconid.Resolve draws a set icon over a library tile, so the tile
+		// is redundant; an uploaded photo wins and is kept.
+		if path, _ := iconid.Resolve(thumb, icon); path == "" && thumb != "" {
+			keep = ""
+			res.ClearedImagePath = thumb // a tile has no file to remove
+		}
+	} else if iconid.IDForAssetPath(thumb) != "" {
 		keep = ""
 	}
-	if keep != "" && keep == thumb {
-		// The photo stays: write only the icon column, leaving the
+	if thumb != "" && keep == thumb {
+		// The thumbnail stays: write only the icon column, leaving the
 		// thumbnail row (and the sell-screen generation it drives) alone.
-		if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = NULL WHERE id = ?`, itemID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = ? WHERE id = ?`, nullableString(icon), itemID); err != nil {
 			return fmt.Errorf("save item: icon: %w", err)
 		}
 		return nil

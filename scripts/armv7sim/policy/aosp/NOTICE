@@ -1,0 +1,18 @@
+Vendored from the Android Open Source Project, platform/bionic, tag
+android-9.0.0_r61, libc/seccomp/. Licensed under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). Unmodified.
+
+  arm_app_policy.cpp    sha256 9718688cea3e3096cfbaf968694a36215542142329dcd979e3b4c791a2a5a358
+  arm64_app_policy.cpp  sha256 dee2d8d6a2f209bdd19adc83d28a81e42319ea91490c4c9084368eca904de815
+
+Source URL pattern:
+  https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r61/libc/seccomp/<file>?format=TEXT
+(base64; decode, then compare the sha256 above)
+
+seccomp_policy.cpp (sha256 76e189f05df20ec35dcff256f3e47af2b18c99936c97be46e9e418afec04dc66,
+same tag and path) is NOT vendored; its _set_seccomp_filter(APP) logic for
+__arm__ (dual arch, arm64 primary, arm secondary, SECCOMP_RET_TRAP) is ported
+by policy.go.
+
+Purpose: scripts/armv7sim reproduces the Android 9 app seccomp kill (ut-docs#6300).
+Test tooling only, never shipped.
