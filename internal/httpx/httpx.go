@@ -832,6 +832,12 @@ func QueryMsgKey(r *http.Request) string {
 	return queryBannerKey(r, "msg")
 }
 
+// QueryWarnKey is QueryMsgKey's error-level counterpart (`?warn=`): same
+// known-key-only validation, rendered as a persistent alert (ut-docs#6602).
+func QueryWarnKey(r *http.Request) string {
+	return queryBannerKey(r, "warn")
+}
+
 // queryBannerKey backs both QueryErrKey and QueryMsgKey: reads the named
 // query parameter and returns it only if it resolves to a real i18n key.
 func queryBannerKey(r *http.Request, param string) string {
