@@ -316,6 +316,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/enrol/terms":                     true, // ut-docs#4792: a demo till never contacts the cloud
 	"POST /api/settings/auto-register":          true,
 	"POST /api/settings/telemetry":              true,
+	"POST /api/settings/cloud-staff-breakdown":  true, // ut-docs#2557
 	"POST /api/setup/join":                      true,
 	"POST /api/setup/language":                  true,
 	"POST /api/setup/pair-start":                true,
@@ -759,6 +760,9 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/barcode-symbology":              true,
 	"POST /api/settings/basket-panel-width":             true,
 	"POST /api/settings/browsing-mode":                  true,
+	"GET /my-display":                                   true, // ut-docs#3440: per-operator cosmetic preference, same class as browsing-mode above
+	"POST /api/my-display/theme":                        true,
+	"POST /api/my-display/browsing-mode":                true,
 	"POST /api/settings/catalog-import-barcode-default": true,
 	"POST /api/settings/catalog-pre-pack-unit-price":    true,
 	"POST /api/settings/demo-item/{id}/keep":            true,

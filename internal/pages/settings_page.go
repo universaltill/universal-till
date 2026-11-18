@@ -445,6 +445,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
+		"settings-cloud-staff": !isManager,      // ut-docs#2557: manager-only, like the card
 		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
@@ -585,9 +586,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// that can't replace itself, a failed attempt) the line says that
 		// instead of claiming it follows (followLine).
 		autoUpdateFollowLine := ""
+		autoUpdateFollowFrom, autoUpdateFollowTo := "", ""
+		// ut-docs#2739: when additional tills update (update.fleet_follow).
+		fleetFollowStored, _, _ := d.Settings.Get(r.Context(), keyFleetFollow)
+		autoUpdateFleetFollow := followPolicyOf(fleetFollowStored)
 		if autoUpdateFollowsMain {
 			in := followInputsOf(r.Context(), d)
 			autoUpdateFollowLine = followLine(in)
+			// ut-docs#6552: the window THIS till installs in, not the raw
+			// replicated time; empty when auto_time is invalid.
+			autoUpdateFollowFrom, autoUpdateFollowTo, _ = followNightlyWindow(autoUpdateTime, autoUpdateJitter(r.Context(), d))
 			if releaseVersion(in.Target) {
 				autoUpdateMainVersion = "v" + normVersion(in.Target)
 			}
@@ -844,8 +852,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":             effectsLevelViewFrom(all),
-			"isManager":          isManager,
+			"fxView":    effectsLevelViewFrom(all),
+			"isManager": isManager,
+			// ut-docs#6550: the Android app saves backups through its file picker.
+			"backupNativePicker": hostIsAndroid,
 			"canReportIssue":     canReportIssue,
 			"canManageUsers":     canManageUsers,
 			"canEditPermissions": canEditPermissions,
@@ -910,9 +920,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"exportEntries":         exportEntries,
 			"autoUpdateFollowsMain": autoUpdateFollowsMain,
 			"autoUpdateFollowLine":  autoUpdateFollowLine,
+			"autoUpdateFollowFrom":  autoUpdateFollowFrom,
+			"autoUpdateFollowTo":    autoUpdateFollowTo,
 			"autoUpdateMainVersion": autoUpdateMainVersion,
 			"autoUpdateEnabled":     autoUpdateEnabled,
 			"autoUpdateTime":        autoUpdateTime,
+			"autoUpdateFleetFollow": autoUpdateFleetFollow,
 			"about":                 aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
 			"TillName":              deviceNameOrDefault(r.Context(), d, locale),
 			"TillRegisterID":        tillRegisterID,
@@ -2379,6 +2392,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsAudit(r, posRepo, elev, "settings", "marketplace.telemetry_opt_in", "telemetry_opt_in_changed", map[string]any{"opt_in": optIn})
 		settingsRespondSaved(w, r, elev)
 	})
+
+	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 
 	// ADR-0119: this till's visual effects level, beside the interface scale.
 	registerEffectsLevel(mux, d.Settings)
