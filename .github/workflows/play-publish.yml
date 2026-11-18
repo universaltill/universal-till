@@ -235,9 +235,9 @@ jobs:
           pin_file=android/app/play-upload-cert-sha256.txt
           rel_file=android/app/apk-signer-sha256.txt
           [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::$rel_file is missing or empty; cannot prove the upload key differs from the release key"; exit 1; }
-          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"
+          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
           [ -n "$pin" ] || { echo "::error::$pin_file holds no upload-cert SHA-256 pin; commit it (README, owner action) before the first upload"; exit 1; }
-          if grep -E '^[0-9a-f]{64}$' "$rel_file" | grep -qx "$pin"; then
+          if grep -E '^[0-9a-f]{64}$' "$rel_file" | grep -qx "$pin"; then  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
             echo "::error::the upload-cert pin equals a release signer in apk-signer-sha256.txt; the upload key must be a different key"
             exit 1
           fi
@@ -277,14 +277,14 @@ jobs:
           set -euo pipefail
           pin_file=android/app/play-upload-cert-sha256.txt
           [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::apk-signer-sha256.txt missing"; exit 1; }
-          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"
+          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
           [ -n "$pin" ] || { echo "::error::no upload-cert pin"; exit 1; }
           out="$(bash android/scripts/check-aab.sh "$RUNNER_TEMP/signed.aab" \
             --expect-version-code "$VERSION_CODE" --expect-cert-sha256 "$pin")"
           printf '%s\n' "$out"
           # Belt and braces: whatever signer check-aab printed must not be a release cert.
-          signer="$(printf '%s\n' "$out" | grep -oE '[0-9a-f]{64}' | head -1 || true)"
-          if [ -n "$signer" ] && grep -E '^[0-9a-f]{64}$' android/app/apk-signer-sha256.txt | grep -qx "$signer"; then
+          signer="$(printf '%s\n' "$out" | grep -oE '[0-9a-f]{64}' | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+          if [ -n "$signer" ] && grep -E '^[0-9a-f]{64}$' android/app/apk-signer-sha256.txt | grep -qx "$signer"; then  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
             echo "::error::the bundle is signed with a RELEASE cert, not the upload key"
             exit 1
           fi
