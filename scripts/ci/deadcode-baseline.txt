@@ -109,6 +109,7 @@ internal/paybroker/paybroker.go: unreachable func: Call
 internal/paybroker/paybroker.go: unreachable func: HTTPError.Error
 internal/paybroker/paybroker.go: unreachable func: errorCode
 internal/pihealth/pihealth.go: unreachable func: CheckNow
+internal/plugins/bundled/bundled.go: unreachable func: OverrideAvailableForTest
 internal/plugins/ipc.go: unreachable func: EventBus.GetEventMode
 internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
 internal/plugins/ipc.go: unreachable func: EventBus.Unsubscribe
