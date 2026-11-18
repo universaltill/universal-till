@@ -414,7 +414,7 @@
                itself in the background once setup is finished; this screen
                tells the owner plainly what it sends (information, not a
                checkbox) and Finish stores that it was shown. The wording is
-               a DRAFT pending owner approval (checkin-notice-v1). The
+               the owner-approved checkin-notice-v2 text. The
                cloud terms are no longer asked here: they stay at claim, on a
                paid feature and at a plugin download. */}}
           {{ if .cloudShop }}
@@ -424,8 +424,11 @@
             <h2 class="h5 set-gap-s">{{ T "registration.notice.title" }}</h2>
             <p class="muted">{{ T "registration.notice.body" }}</p>
             <p class="muted">{{ T "registration.notice.fields" }}</p>
+            <p class="muted">{{ T "registration.notice.purpose" }}</p>
             <p class="muted">{{ T "registration.notice.retention" }}</p>
+            <p class="muted">{{ T "registration.notice.availability" }}</p>
             <p class="muted">{{ T "registration.notice.stop_hint" }}</p>
+            <p class="muted">{{ T "registration.notice.controller" }}</p>
           </div>
           {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
                rendered inline by the handler (renderSetupSlot) and

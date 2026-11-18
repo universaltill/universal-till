@@ -258,8 +258,11 @@
       <h4 style="margin:.6rem 0 .2rem">{{ T "registration.notice.title" }}</h4>
       <p>{{ T "registration.notice.body" }}</p>
       <p>{{ T "registration.notice.fields" }}</p>
+      <p>{{ T "registration.notice.purpose" }}</p>
       <p>{{ T "registration.notice.retention" }}</p>
+      <p>{{ T "registration.notice.availability" }}</p>
       <p>{{ T "registration.notice.stop_hint" }}</p>
+      <p>{{ T "registration.notice.controller" }}</p>
     </div>
     <form hx-post="/api/settings/registration-stop" hx-swap="none" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
           data-after-request="ok not-html reload:settings-registration; fail save-error:settings-save-error">

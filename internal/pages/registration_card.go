@@ -16,8 +16,8 @@ import (
 // notice (what this till tells Universal Till) and the "Stop sending" switch.
 // There is no Register button and no opt-in: the till registers itself.
 //
-// NOTICE TEXT PENDING OWNER APPROVAL: the registration.notice.* strings are the
-// DRAFT checkin-notice-v1 (legal-reviews/2026-11-17-auto-registration-6559.md).
+// The registration.notice.* strings are the owner-approved
+// checkin-notice-v2 text (legal-reviews/2026-11-17-auto-registration-6559.md).
 //
 // Showing the card is what "the notice was shown" means for a till that was
 // set up before the notice existed: the card renders the full text, so the
@@ -68,9 +68,22 @@ func registerRegistrationStop(mux *http.ServeMux, d *common.Deps, posRepo *data.
 				[]elevationHiddenField{{Name: "stop", Value: r.Form.Get("stop")}}, elev)
 			return
 		}
-		if err := enroll.SetStopped(r.Context(), d.Settings, stop); err != nil {
+		// ut-docs#6618: the switch is shop-wide, so an additional till writes it
+		// through to the main till (a local write would be overwritten by the
+		// next admin pull); the main till stores it itself.
+		v := "false"
+		if stop {
+			v = "true"
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{enroll.KeyStopped: v}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_registration_stop", err)
 			return
+		}
+		if !stop {
+			enroll.KickAutoRegister()
 		}
 		action := "registration_resumed"
 		if stop {

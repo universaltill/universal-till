@@ -35,7 +35,7 @@ func TestSetupWizardShowsTheNoticeNotAnOptInCheckbox(t *testing.T) {
 			t.Errorf("wizard still renders %q: registration is automatic (ADR-0200), nothing to tick", bad)
 		}
 	}
-	for _, want := range []string{`data-testid="registration-notice"`, "What this till tells us", "We never send your sales, customers, staff or items"} {
+	for _, want := range []string{`data-testid="registration-notice"`, "What this till tells us", "We never send your sales, customers, staff, items or anything you type"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("wizard's last screen lacks %q", want)
 		}

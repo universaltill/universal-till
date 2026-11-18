@@ -25,13 +25,13 @@ import (
 // the honesty guards before every attempt so a till that is stopped, held or
 // not yet told about the data it sends never sends anything.
 //
-// NOTICE TEXT PENDING OWNER APPROVAL: NoticeVersion names the DRAFT notice
-// (legal-reviews/2026-11-17-auto-registration-6559.md section 5). Its wording
-// is the owner's to approve, and the notice page must be live before a release
-// that auto-registers. Nothing here sends before the notice has been shown.
+// NoticeVersion names the owner-approved notice text
+// (legal-reviews/2026-11-17-auto-registration-6559.md section 5). Nothing here
+// sends before the notice has been shown.
 
-// Settings keys of the registration notice and stop switch. Per-till on
-// purpose: a replica never checks in itself (its main till does).
+// Settings keys of the registration notice and stop switch. The notice
+// keys are per-till (a replica never checks in itself); KeyStopped is
+// shop-wide (ut-docs#6618).
 const (
 	// KeyNoticeShownAt (RFC 3339) is when this till first showed the notice;
 	// KeyNoticeVersion is the NoticeVersion it showed.
@@ -58,9 +58,9 @@ const (
 )
 
 // NoticeVersion is the version of the registration notice text the till shows
-// (DRAFT checkin-notice-v1, pending owner approval). A material change of what
+// (owner-approved text checkin-notice-v2; the legal draft v1 was a different text). A material change of what
 // is sent bumps it, which re-shows the notice before anything more is sent.
-const NoticeVersion = "checkin-notice-v1"
+const NoticeVersion = "checkin-notice-v2"
 
 // DenyCountries are the shop countries a till never registers or reports for.
 // It must equal ut-cloud's default CLOUD_REFUSED_COUNTRIES (IR): a test pins
@@ -468,19 +468,25 @@ var NoticePayloadKeys = []string{
 // compared (KeyLastReportedVersion) and, when they differ, hands (from, to) to
 // record, then stores the new one. The first ever start stores the version and
 // records nothing (the register call already carries it); a downgrade counts.
-// Does nothing while the guards say no, so a till reports no change from
-// before its notice was shown. Local only; call once at start.
+// While the guards say no it records nothing but still stores the running
+// version, so a till reports no change from before its notice was shown or
+// while the shop had sending stopped. Local only; call once at start.
 func ReportVersionChange(ctx context.Context, cfg *config.Config, kv Settings, record func(ctx context.Context, from, to string)) {
-	if ok, _ := ReportingAllowed(ctx, cfg, kv); !ok {
-		return
-	}
-	stored := kvGetter(ctx, kv)(KeyLastReportedVersion)
 	running := strings.TrimSpace(buildinfo.Version)
+	stored := kvGetter(ctx, kv)(KeyLastReportedVersion)
 	if stored == running {
 		return
 	}
-	if stored != "" && record != nil {
+	// ut-docs#6618: the running version is remembered even while a guard says
+	// no (stopped, notice not shown, ...), so a change made then is never
+	// reported later, stamped with a later start. A source build ("dev") is
+	// not remembered: it is not a release a change event could name.
+	allowed, _ := ReportingAllowed(ctx, cfg, kv)
+	if allowed && stored != "" && record != nil {
 		record(ctx, stored, running)
+	}
+	if !allowed && !IsReleaseVersion(running) {
+		return
 	}
 	if err := kv.Set(ctx, KeyLastReportedVersion, running); err != nil {
 		logging.L().Warnf("enrolment: remember the reported version: %v", err)

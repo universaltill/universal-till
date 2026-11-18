@@ -797,8 +797,10 @@ var PerTillSettingPrefixes = []string{
 	// this till's own (each device pulls and tracks read state for itself).
 	"notices.",
 	// ADR-0200 (ut-docs#6559): this till's own registration state (notice
-	// shown, stop switch, last compared version, last cloud answer).
-	"registration.",
+	// shown, last compared version, last cloud answer, whether its identity
+	// was made automatically). NOT registration.stopped: the stop switch is
+	// shop-wide (ADR-0200 decision 6, ut-docs#6618), so it syncs to every till.
+	"registration.notice_", "registration.last_", "registration.auto_registered",
 	// ut-docs#5068: the number floors and marker a backup restore leaves on
 	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
 	// "restore.marker"): they guard this till's own receipt/Z sequences.
@@ -2298,6 +2300,9 @@ const (
 // wins where both match (reports.eod_* under reports.,
 // fiscal.pending_sign_retries under fiscal.).
 var ShopWideSettingPrefixes = []string{
+	// ADR-0200 decision 6 (ut-docs#6618): "Send usage facts" off is for the
+	// whole shop, so every till follows the main till's switch.
+	"registration.stopped",
 	// Shop identity, money, tax, locale and trading rules.
 	"store.", "shop.", "sale.", "pos.", "payments.", "invoice.", "receipt.",
 	// Fiscal posture and override state (fiscal.pending_sign_retries is

@@ -469,11 +469,12 @@ func TestReportVersionChange(t *testing.T) {
 	if got := run(t, kv, "0.36.5"); len(got) != 1 {
 		t.Fatalf("downgrade recorded %v, want one event", got)
 	}
-	// A guard says no: nothing recorded, nothing remembered.
+	// A guard says no: nothing recorded, but the running version is remembered
+	// so the change is not reported after the guard lifts (ut-docs#6618).
 	kv2 := readyKV(t)
 	_ = kv2.Set(t.Context(), KeyStopped, "true")
-	if got := run(t, kv2, "0.37.0"); len(got) != 0 || kv2.get(KeyLastReportedVersion) != "" {
-		t.Fatalf("stopped till reported/remembered: %v %q", got, kv2.get(KeyLastReportedVersion))
+	if got := run(t, kv2, "0.37.0"); len(got) != 0 || kv2.get(KeyLastReportedVersion) != "0.37.0" {
+		t.Fatalf("stopped till reported/not remembered: %v %q", got, kv2.get(KeyLastReportedVersion))
 	}
 }
 

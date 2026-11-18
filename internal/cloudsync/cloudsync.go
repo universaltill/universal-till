@@ -1489,6 +1489,30 @@ func modifierGroupOptions(raw any) ([]ModifierGroupOption, error) {
 // buildSyncRequest keeps it only on a role "primary" report.
 const LANAddressKey = "lan_address"
 
+// minimalDeviceKeys is the allow-list of a minimal device report (ut-docs#6613,
+// ADR-0200): the facts the registration notice lists, and nothing else. The
+// change `events` are attached later by attachChangeEvents. A golden test
+// pins this list (approval_kid is an opaque key id the cloud needs to keep a
+// pinned approval key from being cancelled, not shop data); adding a key means a notice review and a NoticeVersion bump.
+var minimalDeviceKeys = []string{"device_id", "version", "platform", "channel", "country", "locale", "approval_kid"}
+
+// minimalDeviceReport copies only the allow-listed keys of device; "health"
+// is cut to uptime_min (when the till last started).
+func minimalDeviceReport(device map[string]any) map[string]any {
+	out := make(map[string]any, len(minimalDeviceKeys)+1)
+	for _, k := range minimalDeviceKeys {
+		if v, ok := device[k]; ok {
+			out[k] = v
+		}
+	}
+	if h, ok := device["health"].(map[string]any); ok {
+		if up, ok := h["uptime_min"]; ok {
+			out["health"] = map[string]any{"uptime_min": up}
+		}
+	}
+	return out
+}
+
 // syncRequest is the /v1/stores/sync body before it is sent: built every
 // tick (the check-in hashes its device part), sent only when the check-in
 // says so.
@@ -1558,10 +1582,12 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// automatic register, and that is still unpaid, tells the cloud neither
 	// the shop name nor the till name. A paid till, or one the operator
 	// claimed or paired (which clears the mark), keeps today's behaviour.
-	if enroll.AutoRegistered(ctx, settings) && !syncAllowedFn(ctx, settings) {
-		delete(device, "name")
-		delete(device, "store_name")
-	}
+	// ut-docs#6613/#6618: such a till (and an auto-registered one whose shop
+	// pressed "Stop sending", whatever opened the check-in window) sends an
+	// ALLOW-LIST, never "everything the pages hook knows": the notice says
+	// no staff, settings, items or LAN address leave the till. Applied after
+	// the isReplica/diagnostics steps below so nothing later can add a key.
+	minimal := enroll.AutoRegistered(ctx, settings) && (!syncAllowedFn(ctx, settings) || enroll.Stopped(ctx, settings))
 	// ut-docs#2774: only a main till (no sync.primary_url — ADR-0011's single
 	// source of truth, same rule as discovery.RoleCheckFromSettings) tells
 	// the cloud where it is on the LAN. Gated on isReplica, not the reported
@@ -1590,8 +1616,13 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// the bounded lag §1 names, closed for upload purposes by the cloud's
 	// own "reject any batch for a non-active session" check.
 	stopReport, hasStop := diagnostics.StopReport(ctx, settings)
-	if hasStop {
+	if hasStop && !minimal {
 		device["diagnostics"] = stopReport
+	} else {
+		hasStop = false // not sent, so its marker must not clear
+	}
+	if minimal {
+		device = minimalDeviceReport(device)
 	}
 	return syncRequest{
 		storeID: enroll.Effective(cfg).Marketplace.StoreID,

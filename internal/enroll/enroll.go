@@ -751,7 +751,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	m := &cfg.Marketplace
 	// ut-docs#5127: once per start, in the background, offline-safe. Runs
 	// after the startup fill below on the same config copy.
-	defer func() { kickApprovalKeyReport(ctx, *m, wg) }()
+	defer func() { kickApprovalKeyReportUnlessStopped(ctx, kv, *m, wg) }()
 	if m.DeviceID == "" {
 		m.DeviceID = id.DeviceID
 	}
