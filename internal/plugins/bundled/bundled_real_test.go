@@ -115,3 +115,61 @@ func TestRealBundles_InstallVerifyLoadAndRunDemoPaths_AppStore(t *testing.T) {
 		t.Fatalf("a modified bundled wasm was loaded: %v", err)
 	}
 }
+
+// ut-docs#6626, #6627: the real third entry (UK VAT) installs with the others,
+// and every real plugin gets its declared permissions granted at install,
+// including the provider hosts of Stripe, SumUp and (sandbox) HMRC, with no
+// shop action: the net: call needs a granted net:<host>. A plugin stays OFF
+// until enabled, and the UK VAT one is the lock's enable_for_countries GB.
+func TestRealBundles_InstallGrantsDeclaredPermissions_AppStore(t *testing.T) {
+	realEmbedPresent(t)
+	t.Cleanup(buildinfo.OverrideChannelForTest(buildinfo.ChannelAppStore))
+	d := openTestDB(t)
+	ctx := context.Background()
+	if changed, err := Sync(ctx, d.DB); err != nil || !changed {
+		t.Fatalf("Sync = %v, %v", changed, err)
+	}
+	repo := data.NewPluginRepo(d.DB)
+	want := map[string][]string{
+		"com.universaltill.payment-stripe": {"net:api.stripe.com"},
+		"com.universaltill.payment-sumup":  {"net:api.sumup.com"},
+		"com.universaltill.tax-uk":         {"net:test-api.service.hmrc.gov.uk", "events:receive"},
+	}
+	for id, perms := range want {
+		got := grantedSet(t, repo, id)
+		for _, p := range perms {
+			if !got[p] {
+				t.Errorf("%s: %s not granted after install: %v", id, p, got)
+			}
+		}
+		if on, _ := repo.PluginActive(ctx, id); on {
+			t.Errorf("%s starts enabled", id)
+		}
+	}
+	if id, ok := EnabledByDefaultFor("GB"); !ok || id != "com.universaltill.tax-uk" {
+		t.Fatalf("EnabledByDefaultFor(GB) = %q, %v", id, ok)
+	}
+}
+
+// Finding 19: the embedded set is exactly the lock, byte for byte (the tagged
+// build cannot compile without the named files; this fails if their bytes
+// differ from the pinned hashes).
+func TestEmbeddedSetMatchesLock(t *testing.T) {
+	realEmbedPresent(t)
+	fsys := embeddedFS()
+	l, err := compiledLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Plugins) < 3 {
+		t.Fatalf("lock has %d plugins, want stripe, sumup and tax-uk", len(l.Plugins))
+	}
+	for _, e := range l.Plugins {
+		if _, err := readVerified(fsys, e.ID, e.WasmPath, e.WasmSHA256); err != nil {
+			t.Errorf("%s: %v", e.ID, err)
+		}
+		if _, err := readVerified(fsys, e.ID, "manifest.json", e.ManifestSHA256); err != nil {
+			t.Errorf("%s: %v", e.ID, err)
+		}
+	}
+}

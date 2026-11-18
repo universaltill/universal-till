@@ -137,6 +137,16 @@ jobs:
       # token, no secret.
       - name: Fetch the pinned first-party plugin bundles (lock-verified)
         run: bash scripts/ci/fetch-bundled-plugins.sh
+      # Finding 19 (ut-docs#6565): a tagged build cannot compile with a bundle
+      # missing (every locked file is embedded by name), and the embedded bytes
+      # must equal the lock. The guard also RUNS the gate's tests, so a
+      # predicate forced to `return true` fails here, not only a missing token.
+      - name: App Store build gate (guard + embedded set equals the lock + gate behaviour)
+        run: |
+          set -euo pipefail
+          bash scripts/ci/guard-appstore-no-code-fetch.sh
+          go vet -tags bundledplugins ./internal/plugins/bundled
+          go test -tags bundledplugins -count=1 -run 'TestEmbeddedSetMatchesLock|TestEmbedOnNamesEveryLockedFile|TestRealBundles_InstallGrantsDeclaredPermissions_AppStore' ./internal/plugins/bundled
       - name: Bind the Go till server (gomobile bind -target=ios)
         run: |
           set -euo pipefail

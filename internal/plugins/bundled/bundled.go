@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -22,7 +23,22 @@ import (
 
 // Available reports whether this binary embeds the bundled set at all (the
 // bundledplugins build tag). A default build is empty.
-func Available() bool { return embeddedFS() != nil }
+func Available() bool {
+	if v := availableOverride.Load(); v != nil {
+		return *v
+	}
+	return embeddedFS() != nil
+}
+
+var availableOverride atomic.Pointer[bool]
+
+// OverrideAvailableForTest makes Available report v for a test and returns
+// the restore func. Test-only: scripts/ci/guard-appstore-no-code-fetch.sh
+// fails on a caller outside a _test.go file.
+func OverrideAvailableForTest(v bool) (restore func()) {
+	prev := availableOverride.Swap(&v)
+	return func() { availableOverride.Store(prev) }
+}
 
 // IDs are the ids of the bundled first-party plugins in the compiled-in lock
 // (the Settings > Plugins "Built in" group), whether or not embedded in this
@@ -37,6 +53,40 @@ func IDs() []string {
 		ids = append(ids, e.ID)
 	}
 	return ids
+}
+
+// EnabledByDefaultFor returns the bundled plugin that is a legal necessity
+// for a shop in country (the lock's enable_for_countries), e.g. the UK VAT
+// plugin for GB, from the compiled-in lock. Callers gate on the appstore
+// channel (the only one that embeds the set).
+func EnabledByDefaultFor(country string) (id string, ok bool) {
+	l, err := compiledLock()
+	if err != nil {
+		return "", false
+	}
+	country = strings.ToUpper(strings.TrimSpace(country))
+	for _, e := range l.Plugins {
+		for _, c := range e.EnableForCountries {
+			if c == country {
+				return e.ID, true
+			}
+		}
+	}
+	return "", false
+}
+
+// LockedVersion is the version of id pinned in the compiled-in lock.
+func LockedVersion(id string) (string, bool) {
+	l, err := compiledLock()
+	if err != nil {
+		return "", false
+	}
+	for _, e := range l.Plugins {
+		if e.ID == id {
+			return e.Version, true
+		}
+	}
+	return "", false
 }
 
 // IsBundled reports whether id is a bundled first-party plugin.
@@ -147,18 +197,18 @@ func syncOne(ctx context.Context, db *sql.DB, fsys fs.FS, e Entry) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("check installed: %w", err)
 	}
-	if found && plugins.CompareVersions(installed, e.Version) >= 0 {
-		// Same version (files verified at load time) or a newer one: an app
-		// downgrade never rolls a shop's plugin back.
-		if installed == e.Version {
-			if verifyOnDisk(e, paths.Plugins(e.ID, e.Version)) {
-				return false, nil
-			}
-			// Files missing or altered: rewrite them from the verified embed.
-		} else {
+	if found && installed == e.Version {
+		if verifyOnDisk(e, paths.Plugins(e.ID, e.Version)) && trustIsSystem(ctx, repo, e.ID) {
 			return false, nil
 		}
+		// Files missing or altered, or the row lost its system trust: rewrite
+		// from the verified embed.
 	}
+	// installed != embedded (older: an app update; NEWER: an app downgrade, a
+	// marketplace copy restored from a backup or joined from another till):
+	// on this channel the loader only runs the locked bytes, so a row at any
+	// other version is dead. The embedded version replaces it, keeping the
+	// shop's enabled state and settings (ut-docs#6565, version skew).
 	wasActive := false
 	if found {
 		if wasActive, err = repo.PluginActive(ctx, e.ID); err != nil {
@@ -166,6 +216,7 @@ func syncOne(ctx context.Context, db *sql.DB, fsys fs.FS, e Entry) (bool, error)
 		}
 	}
 
+	previouslyDeclared, prevErr := plugins.DeclaredPermissionNames(ctx, db, e.ID)
 	defer plugins.LockPluginTree(paths.Plugins(), e.ID)()
 	dest := paths.Plugins(e.ID, e.Version)
 	files := map[string][]byte{"manifest.json": manifestRaw, e.WasmPath: wasmRaw}
@@ -192,6 +243,10 @@ func syncOne(ctx context.Context, db *sql.DB, fsys fs.FS, e Entry) (bool, error)
 	}); err != nil {
 		return false, fmt.Errorf("persist: %w", err)
 	}
+	// The lock vouches for these bytes as the marketplace signature does for
+	// a download: grant the declared permissions by the marketplace rule
+	// (first declaration only), or a net: call never reaches the provider.
+	plugins.GrantDeclaredPermissions(ctx, db, m, previouslyDeclared, prevErr)
 	if afterPersist != nil {
 		afterPersist()
 	}
@@ -249,3 +304,8 @@ func verifyAgainst(lock *Lock, id, version, wasmPath string, wasm []byte) bool {
 // Register wires Verify into the wasm loader. Called once at boot, before the
 // first plugin Reload.
 func Register() { plugins.SetBundledCodeVerifier(Verify) }
+
+func trustIsSystem(ctx context.Context, repo *data.PluginRepo, id string) bool {
+	trust, ok, err := repo.PluginTrustLevel(ctx, id)
+	return err == nil && ok && trust == "system"
+}

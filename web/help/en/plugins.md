@@ -114,13 +114,17 @@ A tax plugin that supports takeaway rate overrides shows a dedicated editor on i
 
 ## Built-in card payments on the iPhone and iPad app
 
-On the iPhone and iPad app, plugins that run code can't be downloaded or imported: the store and **Import from file** refuse them. The Stripe and SumUp card payment plugins are built into the app instead, so you don't install them.
+On the iPhone and iPad app, plugins that run code can't be downloaded or imported: the store and **Import from file** refuse them. The Stripe and SumUp card payment plugins and the UK VAT plugin are built into the app instead, so you don't install them. Their permissions (for example, reaching Stripe or SumUp to take a payment) are already granted; there is nothing to approve.
 
-1. Open **Plugins**. The two plugins sit first, under **Built in**, both switched off.
+1. Open **Plugins**. The built-in plugins sit first, under **Built in**. Stripe and SumUp start switched off.
 2. Press **Settings** on the one you use, enter your keys and save. The settings stay editable while the plugin is off.
 3. Press **Enable**. Its card button now appears on the payment screen. **Disable** takes it away again.
 
-A plugin that runs code and reached the iPhone or iPad app another way, for example from the main till it follows or from a restored backup, shows as **Broken** and does not run there. Items whose tax comes from a broken tax plugin can't be sold on that device.
+The UK VAT plugin is switched on for you when the shop's country is the United Kingdom, because UK tax is not optional. If you switch it off yourself, the till keeps it off.
+
+A plugin that runs code and reached the iPhone or iPad app another way, for example from a restored backup, shows as **Broken** for a moment: the app replaces it with its own built-in version of the same plugin, keeping your settings and whether it was on. Any other plugin that runs code from another source never runs there. Items whose tax comes from a broken tax plugin can't be sold on that device until it is replaced.
+
+On an iPad that follows a main till (see [Several tills](#several-tills)), a built-in plugin's card shows **Set by the main till**: the main till's on or off choice reaches the iPad within about half a minute, and Enable and Disable are not offered there.
 
 Only a manager or an admin can switch a built-in plugin on or off. A built-in plugin can't be uninstalled and shows no "update available": it updates when the app does. Themes and language packs still install from the store as usual.
 

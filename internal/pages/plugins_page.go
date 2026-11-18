@@ -134,6 +134,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			}
 			items = append(items, map[string]any{
 				"bundled":          isBundled,
+				"mainControlled":   isBundled && d.SyncPrimaryURL(ctx) != "", // ADR-0194: on a satellite the main till switches it
 				"autoNote":         autoNote,
 				"uninstallConfirm": uninstallConfirm,
 				"id":               row.ID,

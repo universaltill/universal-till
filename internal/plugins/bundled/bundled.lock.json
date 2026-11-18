@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "_comment": "Pinned first-party plugin releases embedded in the App Store build (ADR-0194, Apple 2.5.2). Edits need owner review. Refresh: publish the plugin release, then update version, release_tag, bundle_sha256 and the file hashes from that release's bundle.",
+  "_comment": "Pinned first-party plugin releases embedded in the App Store build (ADR-0194, Apple 2.5.2). Edits need owner review (CODEOWNERS). Refresh: publish the plugin release, then update version, release_tag, bundle_sha256 and the file hashes from that release's bundle.",
   "plugins": [
     {
       "id": "com.universaltill.payment-stripe",
@@ -29,6 +29,25 @@
         "locales/en.json": "bd884bb25d90bdb20db49c11ebfcb5f3c30c3e5d8f51c5cd074bcd79da03ee19",
         "locales/tr.json": "88a8cad53ec53495c49e47b7e254b8ee0f72450832762c0a3301ee2d9f0c9c6b"
       }
+    },
+    {
+      "id": "com.universaltill.tax-uk",
+      "version": "1.3.1",
+      "repo": "universaltill/ut-plugin-tax-uk",
+      "release_tag": "v1.3.1",
+      "bundle_name": "com.universaltill.tax-uk_1.3.1_universal.tar.gz",
+      "bundle_sha256": "e91227f98a3a9d3ed41c0c1f37b9be6904661d9b5fcc713ee5e9b9cf91169e9d",
+      "manifest_sha256": "0f9541b6fe0f613c31297c2ebc02a64a41b934bea83fcac78231a0751e4396eb",
+      "wasm_path": "bin/plugin.wasm",
+      "wasm_sha256": "f6be7f21724fd1c119578cd6ea57e49f7c34d0c543cd3b4290fd28ea1776d7a4",
+      "files": {
+        "content/index.html": "f04c2aa985bb6aef772a5e6306f6bce8c172f10332a175b5242c1a497d49d7a3",
+        "locales/en-GB.json": "9f10b2786ddb302c3c86b1ef8ede2907c7a5bc9ed89caf7f96b99dd121c87854",
+        "locales/en.json": "9f10b2786ddb302c3c86b1ef8ede2907c7a5bc9ed89caf7f96b99dd121c87854"
+      },
+      "enable_for_countries": [
+        "GB"
+      ]
     }
   ]
 }

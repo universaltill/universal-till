@@ -18,7 +18,16 @@
 #            lowercase hex characters;
 #   flag     BundledLockVerified (the one switch that lets a code plugin be
 #            persisted on the App Store channel) is set outside
-#            internal/plugins/bundled.
+#            internal/plugins/bundled;
+#   embed    embed_on.go embeds by directory or glob (a missing bundle would
+#            then not be a compile error), or a bundle file is committed
+#            under internal/plugins/bundled/embedded (only .gitkeep may be);
+#   seam     a non-test file calls OverrideChannelForTest or
+#            OverrideAvailableForTest (test-only seams);
+#   behaviour the gate does not BEHAVE: `go test` of CodePluginInstallAllowed
+#            (and, on the real tree, the plugins gate tests) fails, e.g. the
+#            predicate forced to return true. The token checks above are a
+#            tripwire only; this is the check that a mutation cannot dodge.
 #
 # Reviewed exception: a same-line `appstore-code-gate:allow <reason>` on the
 # line naming the entry point.
@@ -49,6 +58,8 @@ internal/pages/plugin_api.go|ErrCodePluginRefused
 internal/pages/plugins_store_page.go|refuseCodeInstall
 internal/pages/cloudsync_wire.go|refuseCodeInstall
 internal/buildinfo/channel.go|CodePluginInstallAllowed
+internal/buildinfo/channel_test.go|TestCodePluginInstallAllowed_Table
+internal/plugins/code_gate_test.go|TestAppStore_PersistManifestRefusesCodeUnlessBundledVerified
 '
 while IFS='|' read -r file token; do
   [ -n "${file}" ] || continue
@@ -137,8 +148,54 @@ while IFS= read -r f; do
   fi
 done < <(grep -rl 'BundledLockVerified' --include='*.go' "${ROOT}/internal" "${ROOT}/cmd" "${ROOT}/mobile" 2>/dev/null | grep -v '_test\.go$' | LC_ALL=C sort -u)
 
+# embed: named embeds only, nothing fetched is committed.
+EMBED_ON="${ROOT}/internal/plugins/bundled/embed_on.go"
+if [ ! -f "${EMBED_ON}" ]; then
+  report embed "internal/plugins/bundled/embed_on.go is missing"
+elif grep -E '^//go:embed ' "${EMBED_ON}" | grep -E 'all:|\*|embedded/?([[:space:]]|$)' >/dev/null; then
+  report embed "embed_on.go embeds a directory or glob; embed every locked file by name so a missing bundle is a compile error"
+fi
+if git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if git -C "${ROOT}" ls-files internal/plugins/bundled/embedded | grep -v '\.gitkeep$' | grep . >/dev/null; then
+    report embed "a fetched bundle file is committed under internal/plugins/bundled/embedded (only .gitkeep may be)"
+  fi
+fi
+
+# seam: the test-only overrides are never called from production code.
+while IFS= read -r f; do
+  rel="${f#"${ROOT}"/}"
+  case "${rel}" in
+    internal/buildinfo/channel.go | internal/plugins/bundled/bundled.go) continue ;;
+  esac
+  report seam "${rel} calls a test-only override (OverrideChannelForTest / OverrideAvailableForTest)"
+done < <(grep -rlE 'OverrideChannelForTest|OverrideAvailableForTest' --include='*.go' "${ROOT}/internal" "${ROOT}/cmd" "${ROOT}/mobile" 2>/dev/null | grep -v '_test\.go$' | LC_ALL=C sort -u)
+
+# behaviour: run the gate's own tests. A grep cannot tell a gate from a comment
+# that names it (the predicate forced to `return true` still contains every
+# token above).
+if [ -f "${ROOT}/go.mod" ] && [ -d "${ROOT}/internal/buildinfo" ]; then
+  if ! command -v go >/dev/null 2>&1; then
+    report behaviour "go is not installed: the gate cannot be tested"
+  else
+    if ! (cd "${ROOT}" && go test ./internal/buildinfo -run 'TestCodePluginInstallAllowed' -count=1 >"${TMPDIR:-/tmp}/appstore-guard-go.$$" 2>&1); then
+      report behaviour "go test ./internal/buildinfo (CodePluginInstallAllowed is false on the appstore channel) fails:"
+      sed 's/^/     /' "${TMPDIR:-/tmp}/appstore-guard-go.$$" >&2
+    fi
+    rm -f -- "${TMPDIR:-/tmp}/appstore-guard-go.$$"
+    # The plugins package is too heavy for the fixture copies; the real tree
+    # runs it.
+    if [ "${ROOT}" = "${ROOT_DIR}" ]; then
+      if ! (cd "${ROOT}" && go test ./internal/plugins -run 'TestRefuseCodeRuntime_ByChannel|TestRefuseCodeCanonicalType|TestAppStore_PersistManifestRefusesCodeUnlessBundledVerified|TestAppStore_InstallBundleBackstopRefusesWasmManifest|TestAppStore_ImportRefusesCodePlugin|TestAppStore_RollbackRefusesCodeTargetKeepsRow' -count=1 >"${TMPDIR:-/tmp}/appstore-guard-go.$$" 2>&1); then
+        report behaviour "go test ./internal/plugins (the App Store gate tests) fails:"
+        sed 's/^/     /' "${TMPDIR:-/tmp}/appstore-guard-go.$$" >&2
+      fi
+      rm -f -- "${TMPDIR:-/tmp}/appstore-guard-go.$$"
+    fi
+  fi
+fi
+
 if [ "${fail}" -ne 0 ]; then
   echo "   The App Store build never downloads or imports code (ADR-0194, Apple 2.5.2)." >&2
   exit 1
 fi
-echo "✓ appstore-no-code-fetch guard: every install path is gated, the bundled set has no network, the lock is well-formed"
+echo "✓ appstore-no-code-fetch guard: every install path is gated and the gate behaves, the bundled set has no network, the lock is well-formed, embeds are by name"

@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/bundled"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
@@ -206,7 +207,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
 		}
-		bundle, err := pluginsRepo.DumpActivePlugins(r.Context())
+		bundle, err := dumpPluginSet(r.Context(), pluginsRepo)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
 			return
@@ -855,6 +856,83 @@ func resolvePluginSyncListing(listingID string) {
 	}
 }
 
+// dumpPluginSet is the plugin set this till serves to its satellites: the
+// marketplace-installed active plugins plus its enabled bundled first-party
+// plugins (ADR-0194), so the main till's switch for those reaches them.
+func dumpPluginSet(ctx context.Context, repo *data.SyncPluginsRepo) (data.PluginsBundle, error) {
+	return repo.DumpActivePluginsWithSystem(ctx, bundled.IDs())
+}
+
+// bundledSyncFn is the boot-time embedded install, a seam for tests (the
+// default test build embeds nothing).
+var bundledSyncFn = bundled.Sync
+
+// followBundledState applies the main till's choice for the bundled
+// first-party plugins this build embeds (ADR-0194): ON when the main reports
+// the plugin active (a row naming it, with or without a marketplace listing),
+// OFF when it does not. The marketplace is never asked: only the embedded,
+// lock-verified version runs here, whatever version the main holds. It
+// reports whether every local state now matches; a failed write is not
+// converged.
+func followBundledState(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow) (ok, changed bool) {
+	if !bundled.Available() {
+		return true, false
+	}
+	repo := data.NewPluginRepo(d.Db)
+	syncRepo := data.NewSyncPluginsRepo(d.Db)
+	want := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		want[row.PluginID] = true
+	}
+	// A row that arrived with a join snapshot or a restore (rows without
+	// bytes: another version, another trust level, or broken) is put back on
+	// the embedded, lock-verified plugin right away, not at the next boot.
+	needsSync := false
+	for _, id := range bundled.IDs() {
+		locked, _ := bundled.LockedVersion(id)
+		ver, state, found, err := syncRepo.InstalledPluginVersion(ctx, id)
+		if err != nil || !found {
+			continue
+		}
+		trust, _, _ := repo.PluginTrustLevel(ctx, id)
+		if ver != locked || state == data.PluginStateBroken || trust != "system" {
+			needsSync = true
+		}
+	}
+	if needsSync {
+		c, err := bundledSyncFn(ctx, d.Db)
+		if err != nil {
+			logging.L().Errorf("plugin sync: re-installing the embedded bundled plugins: %v", err)
+			return false, c
+		}
+		changed = c
+	}
+	ok = true
+	for _, id := range bundled.IDs() {
+		trust, found, err := repo.PluginTrustLevel(ctx, id)
+		if err != nil || !found || trust != "system" {
+			continue // not installed here (yet): the boot sync installs it
+		}
+		cur, err := repo.PluginActive(ctx, id)
+		if err != nil {
+			logging.L().Errorf("plugin sync: read bundled state of %s: %v", id, err)
+			ok = false
+			continue
+		}
+		if cur == want[id] {
+			continue
+		}
+		if err := repo.SetPluginActive(ctx, nil, id, want[id]); err != nil {
+			logging.L().Errorf("plugin sync: set bundled %s active=%v: %v", id, want[id], err)
+			ok = false
+			continue
+		}
+		logging.L().Infof("plugin sync: bundled %s switched %s to follow the main till", id, map[bool]string{true: "on", false: "off"}[want[id]])
+		changed = true
+	}
+	return ok, changed
+}
+
 // convergePluginSet makes this till's marketplace-installed plugin set match
 // the given primary registry rows — the shared diff loop of both the
 // changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
@@ -879,9 +957,28 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	// transfer mechanism, the install simply re-lands the files and flips
 	// the row back to 'installed'.
 	inPrimary := make(map[string]bool, len(rows))
+	// The bundled first-party plugins follow the main's switch and are never
+	// fetched; their rows are not marketplace installs.
+	bundledOK, bundledChanged := followBundledState(ctx, d, rows)
+	if !bundledOK {
+		converged = false
+	}
+	if bundledChanged {
+		changed = true
+		if err := d.ReloadPlugins(ctx); err != nil {
+			logging.L().Warnf("plugin sync: reload after following the main till's bundled switch: %v", err)
+		}
+	}
 	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
-			continue // defense in depth; DumpActivePlugins already filters these
+			continue // a bundled-state row (handled above) or a malformed one
+		}
+		if bundled.Available() && bundled.IsBundled(row.PluginID) {
+			// Never installed from the marketplace on this build; the listing
+			// is not an install record here, so the prune loop below must not
+			// see it as one either (it has none).
+			inPrimary[row.ListingID] = true
+			continue
 		}
 		inPrimary[row.ListingID] = true
 		version, installState, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)

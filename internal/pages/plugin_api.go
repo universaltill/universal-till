@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -392,11 +393,17 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// primary-authoritative. Nothing in the sync pull reconciles a
 		// locally flipped is_active back, so a replica-local toggle would
 		// be permanent silent drift from the shop's set — reject it.
+		pluginID := r.PathValue("id")
 		if d.SyncPrimaryURL(ctx) != "" {
+			// A bundled plugin's switch is the main till's: it travels to this
+			// satellite with the plugin set (convergePluginSet). Say so.
+			if isBundledInstalled(ctx, d, pluginID) {
+				writeReplicaGuard(w, "plugins.manage.error.bundled_main_till_controls")
+				return
+			}
 			writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
 			return
 		}
-		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
@@ -1092,6 +1099,13 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 		trustLevel := r.FormValue("trust_level")
 		if trustLevel == "" {
 			trustLevel = "untrusted"
+		}
+		// "system" is the bundled first-party level only bundled.Sync sets
+		// (it drives the Built in group and the uninstall refusal); an
+		// import never gets it, nor any value outside the known levels.
+		if !slices.Contains([]string{"untrusted", "verified", "trusted"}, trustLevel) {
+			http.Error(w, "invalid trust_level", http.StatusBadRequest)
+			return
 		}
 
 		// Get uploader (TODO: extract from session)

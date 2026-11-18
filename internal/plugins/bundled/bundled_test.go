@@ -152,17 +152,18 @@ func TestSync_UpgradeKeepsEnabledStateAndSettings(t *testing.T) {
 	}
 }
 
-func TestSync_UpgradeKeepsDisabledStateAndNeverDowngrades(t *testing.T) {
+func TestSync_UpgradeKeepsDisabledStateAndEmbeddedVersionWins(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 	fsys, lock := fixture(t, "1.1.0")
 	if _, err := syncFrom(ctx, d.DB, fsys, lock); err != nil {
 		t.Fatal(err)
 	}
-	// Older app build: embedded 1.0.0 < installed 1.1.0 changes nothing.
+	// Older app build: the loader only runs the locked bytes, so the embedded
+	// 1.0.0 replaces the newer row (version skew; see bundled_apple2_test.go).
 	fsysOld, lockOld := fixture(t, "1.0.0")
-	if changed, err := syncFrom(ctx, d.DB, fsysOld, lockOld); err != nil || changed {
-		t.Fatalf("downgrade sync = %v, %v; want no-op", changed, err)
+	if changed, err := syncFrom(ctx, d.DB, fsysOld, lockOld); err != nil || !changed {
+		t.Fatalf("downgrade sync = %v, %v; want the embedded version installed", changed, err)
 	}
 	fsysNew, lockNew := fixture(t, "1.2.0")
 	if _, err := syncFrom(ctx, d.DB, fsysNew, lockNew); err != nil {
@@ -238,7 +239,7 @@ func TestDefaultBuildEmbedsNothing(t *testing.T) {
 }
 
 // The committed lock: exactly the plugins we own, well-formed.
-func TestCommittedLock_IsExactlyStripeAndSumUp(t *testing.T) {
+func TestCommittedLock_IsExactlyStripeSumUpAndUKTax(t *testing.T) {
 	l, err := compiledLock()
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +248,7 @@ func TestCommittedLock_IsExactlyStripeAndSumUp(t *testing.T) {
 	for _, e := range l.Plugins {
 		got[e.ID] = e.Version
 	}
-	want := map[string]string{"com.universaltill.payment-stripe": "1.5.0", "com.universaltill.payment-sumup": "1.5.1"}
+	want := map[string]string{"com.universaltill.payment-stripe": "1.5.0", "com.universaltill.payment-sumup": "1.5.1", "com.universaltill.tax-uk": "1.3.1"}
 	if len(got) != len(want) {
 		t.Fatalf("bundled set = %v, want %v", got, want)
 	}

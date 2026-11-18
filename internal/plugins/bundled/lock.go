@@ -36,6 +36,12 @@ type Entry struct {
 	WasmPath       string            `json:"wasm_path"`
 	WasmSHA256     string            `json:"wasm_sha256"`
 	Files          map[string]string `json:"files"` // other embedded files (locales) -> sha256
+	// EnableForCountries (ISO 3166-1 alpha-2, upper case) names the shop
+	// countries for which the plugin is a legal necessity, not a switch the
+	// shop chooses (the UK VAT plugin, ut-docs#6626): the tax setup path
+	// enables it for a shop in one of them. Payment plugins leave it empty
+	// and stay off until the shop enables them.
+	EnableForCountries []string `json:"enable_for_countries,omitempty"`
 }
 
 // Lock is the parsed bundled.lock.json.
@@ -49,6 +55,7 @@ var (
 	idRe      = regexp.MustCompile(`^com\.universaltill\.[a-z0-9][a-z0-9.-]*$`)
 	versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	repoRe    = regexp.MustCompile(`^universaltill/ut-plugin-[a-z0-9-]+$`)
+	countryRe = regexp.MustCompile(`^[A-Z]{2}$`)
 	relPathRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)*$`)
 )
 
@@ -88,6 +95,11 @@ func ParseLock(raw []byte) (*Lock, error) {
 		}
 		if !relPathRe.MatchString(e.WasmPath) || strings.Contains(e.WasmPath, "..") {
 			return nil, fmt.Errorf("bundled lock: %s: bad wasm_path %q", e.ID, e.WasmPath)
+		}
+		for _, c := range e.EnableForCountries {
+			if !countryRe.MatchString(c) {
+				return nil, fmt.Errorf("bundled lock: %s: enable_for_countries %q is not an upper-case ISO 3166-1 alpha-2 code", e.ID, c)
+			}
 		}
 		for f, h := range e.Files {
 			if !relPathRe.MatchString(f) || strings.Contains(f, "..") || f == "manifest.json" || f == e.WasmPath {

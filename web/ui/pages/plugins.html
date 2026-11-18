@@ -58,6 +58,7 @@
                 style="background:rgba(220,38,38,.12); color:var(--danger)"
                 title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
           <span class="tag" x-text="p.trust"></span>
+          <span class="tag" x-show="p.mainControlled" data-testid="plugin-main-controlled">{{ T "plugins.manage.main_till_controls" }}</span>
           <span class="tag warn" x-show="p.hasUpdate" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
           {{/* ut-docs#2131: a plugin the till couldn't resolve against the
                marketplace catalog (most commonly one installed via "Import
@@ -71,9 +72,9 @@
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
           <a class="btn secondary" x-show="p.enabled || p.bundled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
           <a class="btn secondary" x-show="p.docsRoute" :href="p.docsRoute">{{ T "plugins.manage.action.docs" }}</a>
-          <button class="btn secondary" x-show="p.enabled"
+          <button class="btn secondary" x-show="p.enabled && !p.mainControlled"
                   @click="act('/api/plugins/' + p.id + '/disable', 'POST')">{{ T "plugins.manage.action.disable" }}</button>
-          <button class="btn" x-show="!p.enabled"
+          <button class="btn" x-show="!p.enabled && !p.mainControlled"
                   @click="act('/api/plugins/' + p.id + '/enable', 'POST')">{{ T "plugins.manage.action.enable" }}</button>
           <button class="btn" x-show="p.hasUpdate"
                   @click="act('/api/plugins/' + p.id + '/update', 'POST')">{{ T "plugins.manage.action.update" }}</button>
@@ -158,6 +159,7 @@
     'plugins.uninstall.error.replica_use_primary': '{{ T "plugins.uninstall.error.replica_use_primary" }}',
     'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}',
     'plugins.manage.error.revoked': '{{ T "plugins.manage.error.revoked" }}',
+    'plugins.manage.error.bundled_main_till_controls': '{{ T "plugins.manage.error.bundled_main_till_controls" }}',
     'plugins.manage.error.bundled_no_uninstall': '{{ T "plugins.manage.error.bundled_no_uninstall" }}',
     'plugins.install.error.code_refused_appstore': '{{ T "plugins.install.error.code_refused_appstore" }}'
   };

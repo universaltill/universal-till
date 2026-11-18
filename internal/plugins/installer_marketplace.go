@@ -431,14 +431,7 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// without this, installed pages never surface in the menu. Manual imports
 	// stay ungranted for the operator to approve. What an update grants
 	// follows installGrantsPermission (ut-docs#4145, ADR-0153 Decision 5).
-	for _, perm := range manifest.Permissions {
-		if !installGrantsPermission(manifest, perm, prevErr != nil || previouslyDeclared[perm]) {
-			continue
-		}
-		if err := GrantPermission(ctx, i.db, manifest.ID, perm); err != nil {
-			logging.L().Warnf("[MarketplaceInstaller] grant declared permission %s to %s: %v", perm, manifest.ID, err)
-		}
-	}
+	GrantDeclaredPermissions(ctx, i.db, manifest, previouslyDeclared, prevErr)
 
 	return &MarketplaceInstallResult{
 		PluginID: manifest.ID,

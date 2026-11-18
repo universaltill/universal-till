@@ -41,10 +41,11 @@ func refuseCodeInstall(d *common.Deps, listingID string) (string, error) {
 
 // isBundledPlugin reports whether an installed plugin is one of the
 // first-party plugins that ship inside the app (ADR-0194): in the compiled-in
-// lock AND persisted with system trust, so a marketplace-installed copy of the
-// same plugin on another channel is never mistaken for it.
+// lock AND persisted with system trust AND this build embeds the set, so a
+// marketplace-installed copy of the same plugin on another channel, or an
+// import that forged trust_level=system, is never mistaken for it.
 func isBundledPlugin(id, trustLevel string) bool {
-	return trustLevel == "system" && bundled.IsBundled(id)
+	return bundled.Available() && trustLevel == "system" && bundled.IsBundled(id)
 }
 
 // isBundledInstalled reads the installed row's trust level and applies

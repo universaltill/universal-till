@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/bundled"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -278,6 +279,7 @@ func TestAppStore_ApplyPluginUpdateRefused_NoNetwork(t *testing.T) {
 // installed any other way is NOT flagged, and a bundled plugin cannot be
 // uninstalled (the shop switches it off instead).
 func TestPluginsPage_BuiltInGroupFlagsOnlyLockedSystemPlugins(t *testing.T) {
+	t.Cleanup(bundled.OverrideAvailableForTest(true))
 	t.Cleanup(buildinfo.OverrideChannelForTest(buildinfo.ChannelAppStore))
 	d := pluginsManagerTestDeps(t)
 	const stripe = "com.universaltill.payment-stripe"
@@ -313,6 +315,7 @@ func TestPluginsPage_BuiltInGroupFlagsOnlyLockedSystemPlugins(t *testing.T) {
 }
 
 func TestBundledPlugin_UninstallRefusedAndKept(t *testing.T) {
+	t.Cleanup(bundled.OverrideAvailableForTest(true))
 	t.Cleanup(buildinfo.OverrideChannelForTest(buildinfo.ChannelAppStore))
 	isolatePluginsDir(t)
 	t.Setenv("UT_AUTH", "off")

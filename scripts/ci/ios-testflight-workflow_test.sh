@@ -153,6 +153,18 @@ check_wf() {
     || [ "$aud_at" -lt "$export_at" ] || [ "$aud_at" -gt "$cleanup_at" ]; then
     echo "FAIL:no TestFlight audience check (scripts/asc-testflight-check) between the upload and the key cleanup"
   fi
+  # ut-docs#6565 (finding 19): before the bind, a step runs the App Store
+  # no-code-fetch guard (which also runs the gate's tests) and the tagged
+  # test that the embedded set equals the lock.
+  local gate gate_at
+  gate="$(awk '/^      - name: /{p = ($0 ~ /^      - name: App Store build gate/)} p' "$wf")"
+  gate_at="$(awk '/^      - name: App Store build gate/{print NR; exit}' "$wf")"
+  if [ -z "$gate" ] || ! grep -qF 'bash scripts/ci/guard-appstore-no-code-fetch.sh' <<<"$gate" \
+    || ! grep -qF -- '-tags bundledplugins' <<<"$gate" || ! grep -qF 'TestEmbeddedSetMatchesLock' <<<"$gate" \
+    || [ -z "${gate_at}" ] || [ -z "$(awk '/^      - name: Bind the Go till server/{print NR; exit}' "$wf")" ] \
+    || [ "${gate_at}" -gt "$(awk '/^      - name: Bind the Go till server/{print NR; exit}' "$wf")" ]; then
+    echo "FAIL:no App Store build gate step (guard + tagged embedded-set test) before the gomobile bind"
+  fi
   # ...and the version must be resolved before the bind runs.
   local resolve_at bind_at
   resolve_at="$(awk '/^      - name: Resolve marketing and build versions/{print NR; exit}' "$wf")"
@@ -190,7 +202,7 @@ bad="$(check_wf "$fixture")"
 for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-26' 'iOS SDK version check' 'self-hosted' \
   'timeout-minutes' 'write permission' 'concurrency' 'secrets expanded inside a run' 'RUNNER_TEMP' \
   'umask 077' 'if: always()' 'ASC_KEY_P8 printed' 'stamp buildinfo.Version' 'resolved after the gomobile bind' \
-  'no TestFlight audience check'; do
+  'no TestFlight audience check' 'no App Store build gate'; do
   if grep -qF -- "$want" <<<"$bad"; then
     pass "self-test: broken fixture trips '${want}'"
   else

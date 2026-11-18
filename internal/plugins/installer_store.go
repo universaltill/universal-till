@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -201,6 +202,11 @@ func (i *MarketplaceInstaller) InstallFromStore(ctx context.Context, listingID, 
 		DeviceArch: runtime.GOOS + "/" + runtime.GOARCH,
 	})
 	if err != nil {
+		if errors.Is(err, ErrCodePluginRefused) {
+			// App Store channel: the catalogue called it asset-only but the
+			// verified manifest runs code. Leave no staged wasm on disk.
+			_ = i.DeleteStoreDownload(listingID)
+		}
 		return nil, err
 	}
 	// The staged bundle served its purpose.

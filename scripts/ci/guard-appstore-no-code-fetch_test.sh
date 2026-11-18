@@ -30,6 +30,8 @@ reset_tree() {
       echo internal/plugins/bundled/bundled.lock.json
       find internal/plugins/bundled -maxdepth 1 -name '*.go' ! -name '*_test.go'
       echo internal/pages/common/deps.go
+      echo go.mod
+      find internal/buildinfo -maxdepth 1 -name '*.go'
     } | LC_ALL=C sort -u | while IFS= read -r f; do
       mkdir -p "${REPO}/$(dirname "${f}")"
       cp "${f}" "${REPO}/${f}"
@@ -121,6 +123,43 @@ reset_tree; rm -f -- "${lock}";                                        expect_fa
 reset_tree
 printf 'package pages\n\nvar _ = plugins.InstallOptions{BundledLockVerified: true}\n' >"${REPO}/internal/pages/flag.go"
 expect_fail flag "BundledLockVerified set in the pages package"
+
+# 6. Mutation: the predicate forced to `return true` keeps every token the
+# grep looks for, so only the behaviour check (go test) can catch it.
+reset_tree
+python3 -I - "${REPO}/internal/buildinfo/channel.go" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }"
+assert old in s
+open(p, "w").write(s.replace(old, "func (c Channel) CodePluginInstallAllowed() bool { return true }"))
+PY
+expect_fail behaviour "CodePluginInstallAllowed forced to return true"
+reset_tree
+python3 -I - "${REPO}/internal/buildinfo/channel.go" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }"
+open(p, "w").write(s.replace(old, "func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore && c != ChannelDirect }"))
+PY
+expect_fail behaviour "CodePluginInstallAllowed refusing another channel"
+
+# 7. Embeds by name; no fetched bundle committed; no production caller of a test seam.
+reset_tree
+sed -i.bak 's#^//go:embed embedded/#//go:embed all:embedded/#' "${REPO}/internal/plugins/bundled/embed_on.go" 2>/dev/null || true
+rm -f -- "${REPO}/internal/plugins/bundled/embed_on.go.bak"
+expect_fail embed "embed_on.go embedding a directory"
+reset_tree
+printf 'package pages\n\nvar _ = buildinfo.OverrideChannelForTest\n' >"${REPO}/internal/pages/seam.go"
+expect_fail seam "a production caller of OverrideChannelForTest"
+reset_tree
+git -C "${REPO}" init -q
+mkdir -p "${REPO}/internal/plugins/bundled/embedded/com.universaltill.payment-stripe/bin"
+printf 'x' >"${REPO}/internal/plugins/bundled/embedded/com.universaltill.payment-stripe/bin/plugin.wasm"
+git -C "${REPO}" add -f internal/plugins/bundled/embedded
+expect_fail embed "a committed wasm bundle under the embed dir"
 
 if [ "${FAIL_COUNT}" -ne 0 ]; then
   echo "${FAIL_COUNT} guard test(s) failed" >&2
