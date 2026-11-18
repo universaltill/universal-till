@@ -1,9 +1,6 @@
-# Review record (IN PROGRESS, not approved): ut-docs#3241 phone tile basket badge
+# Review record: ut-docs#3241 phone tile basket badge
 
-**Status: open findings, do not merge yet.** The build lane stopped this card on its
-time budget (`card-budget.sh`: 52 of 45 min) after the Dev, Tester and independent
-review phases. The next cycle needs to fix review minors 1–3 and the Tester's e2e
-gap below, re-run the gate, and then finish this record (verdict + `Pre-flight:` line).
+**Status: approved (2026-11-18, round 2).** Round 1 stopped on the card time budget (2026-11-11) with four open items; the PR sweep (`lane:cloud-41`) fixed them, a second independent Opus review found no Major, and its two Minors are fixed (see the end of this record).
 
 - Card: universaltill/ut-docs#3241 (complexity:easy). Branch: `feat/3241-phone-tile-basket-badge`.
 - Phases run as separate agents: BA, Architect, UX (session model), Dev (Sonnet),
@@ -229,3 +226,25 @@ Fixes for the four "To do before merge" items:
 2. `e2e/tests/phone-sell-3059.spec.ts`: the 768/1024/1280 cases assert `toHaveCount(1)` on `.tile-qty-badge` and `.tile-qty-sr` before the `toBeHidden()` checks.
 3. `basket.tile_in_basket` is now `", %d in basket"` (en.json); the en.meta.json description says the string starts with a comma and space separator and is read right after the price. No punctuation in JS.
 4. The "remove clears" test now removes the line on the live page (basket sheet, line void), closes the sheet, and asserts both `.tile-qty-badge` and `.tile-qty-sr` have count 0 with no reload. Mutation proof: deleting the `badge.remove(); sr.remove();` else-branch in app.js turns this test red (25 pass, 1 fail); restored, 26/26 pass.
+
+## Independent review round 2 (Opus, 2026-11-18)
+
+Read-only, on the round-2 diff plus the net PR diff against `origin/main` (merge-damage check).
+- Major: none.
+- Minor 1, no test pinned to-do 1 (the `applyTileBadges()` call after `submitPayments`' raw swap): **fixed**. Added the Tester's e2e test "a split-tender sale ... clears the badge and SR span". It stubs the polling fragments to 204, because the `notices-check` that fires when the overlay closes would otherwise re-apply the badges and hide the bug. It fails on the mutant (no call) and passes on the fix.
+- Minor 2, no test pinned the separator (substring matches): **fixed**. The spec asserts `.tile-qty-sr` `toHaveText(', 2 in basket')`.
+- Nit 3, Chrome computes "... £4.50 , 2 in basket" with a space before the comma, because the `position:absolute` visually-hidden span is block-level. **Accepted**: speech output is unaffected. Restructuring the span into `.tile-price` is not worth the churn.
+- Nit 4, plural / `%d` only: **fixed in meta**. The description now says to write `%d` exactly and that the string has one form.
+- Verified OK: `window.UT` is never clobbered (every assignment uses `window.UT || {}`). No other raw `#basket` swap exists. Every `BasketView.Render` caller passes `pos.Basket` or `*pos.Basket`. Merge damage: none. The net diff is 12 files, feature-only, and no main-side line was dropped.
+
+## Tester round 2 (2026-11-18)
+Worktree at bfe3d062, Chromium, 390x844, deviceScaleFactor 1, seed_demo, auth off.
+- [x] **Split tender clears the badge.** Ran a 2× sale paid as £1 plus fill-remaining, then pressed Escape: no badge or SR span. The mutant keeps "2" when the polling is stubbed.
+- [~] **Accessible name.** Has the space before the comma (nit 3 above).
+- [x] `phone-sell-3059.spec.ts`: 26/26 at bfe3d062. After adding the split-tender test, the 3241 block passes 8/8.
+- [x] `go test ./...` green. `internal/plugins` needs more than 10m under load: ok in 681s with `-timeout 40m`. golangci-lint 0 issues, gofmt clean, 173/175 build-job guards pass. shellcheck and the catimport-tag guard could not run in this sandbox (no binary, no tags); catimport is untouched, and CI runs both.
+
+## Verdict
+Approved. Merge once CI is green.
+
+Pre-flight: help topic `web/help/en/sell.md` updated (badge sentence); `make docs-shots` n/a (badge is phone-tier only, no screenshotted pixel changed; surface + sell topic hash updated); reference docs n/a (UI-only); `README.md` n/a; new `en.json` key `basket.tile_in_basket` has an `en.meta.json` entry; follow-ups already filed: ut-docs#6049, ut-docs#6050.

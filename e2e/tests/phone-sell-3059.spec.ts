@@ -388,6 +388,40 @@ test.describe('in-basket tile badge (ut-docs#3241)', () => {
     await expect(page.locator('.tile-qty-badge')).toHaveCount(0);
   });
 
+  test('a split-tender sale (raw outerHTML swap, no afterSettle) clears the badge and SR span', async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await tapFirst(page);
+    await tapFirst(page);
+    await expect(firstTile(page).locator('.tile-qty-badge')).toHaveText('2');
+    // Any other htmx swap (status chips, notices toast, the notices-check fired when the
+    // payment dialog closes) re-applies badges via afterSettle and would hide a missing
+    // re-apply after submitPayments' raw swap: answer polling fragments with 204.
+    await page.route(
+      (u) => /^\/(ui|notices)\//.test(u.pathname) && u.pathname !== '/ui/basket',
+      (r) => r.fulfill({ status: 204, body: '' }),
+    );
+    await page.locator('.basket-phonebar').click();
+    await page.getByTestId('payment-open').click();
+    await page.locator('.tender .tab', { hasText: /split/i }).click();
+    await page.locator('#split-tender-form select[name="method"]').selectOption({ index: 0 });
+    await page.locator('#split-tender-form input[name="amount"]').fill('1.00');
+    await page.locator('#split-tender-add').click();
+    await page.locator('#split-tender-fill').click();
+    await page.locator('#split-tender-add').click();
+    await expect(page.locator('.payment-pill')).toHaveCount(2);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/tender')),
+      page.locator('#split-tender-submit').click(),
+    ]);
+    await expect(page.locator('#basket.receipt-view')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('body')).not.toHaveClass(/pos-sheet-open/);
+    await expect(page.locator('.tile-qty-badge')).toHaveCount(0);
+    await expect(page.locator('.tile-qty-sr')).toHaveCount(0);
+  });
+
   test('qty 120 reads 99+ with the real number in the accessible name; survives a grid re-render', async ({ page }) => {
     await page.request.post('/api/pos/reset');
     await page.setViewportSize({ width: 390, height: 844 });
