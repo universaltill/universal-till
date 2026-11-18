@@ -170,8 +170,12 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /csp-report":  true,
 	// Online orders (ADR-0169 §9, ut-docs#4768): a demo till has no sales
 	// channel; the pages are shop data a public visitor has no use for.
-	"GET /channel-orders":      true,
-	"GET /channel-orders/{id}": true,
+	// Slice D (accept/pick/pack/ship/cancel): also writes to a cloud sales channel.
+	"GET /channel-orders":                                   true,
+	"GET /channel-orders/{id}":                              true,
+	"POST /channel-orders/{id}/actions":                     true,
+	"POST /channel-orders/{id}/actions/{action_id}/dismiss": true,
+	"POST /channel-orders/blocked/dismiss":                  true,
 	// Notices from Universal Till and partners (ADR-0176, ut-docs#5366): a
 	// demo till is not registered with the cloud and has nothing to receive;
 	// the switch and every route stay out of a public demo.
