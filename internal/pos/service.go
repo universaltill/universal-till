@@ -141,6 +141,15 @@ type Service struct {
 	// may be retried (same authorize request id), so a possibly-charged card
 	// is never followed by another payment. Cleared with tenderAttemptID.
 	tenderLock string
+	// pendingTender (ut-docs#6602) is what the locked tender leaves behind:
+	// the legs already captured (to reverse if the tender is abandoned) and
+	// the legs of unknown outcome (to warn about). Same lifetime as
+	// tenderLock; set by LockTender, cleared by SettleTender, the reset
+	// core and RotateTenderAttemptID. abandonHandler receives it (outside
+	// mu) when a reset drops it; abandonNotice is the one-shot result.
+	pendingTender  PendingTender
+	abandonHandler AbandonedTenderHandler
+	abandonNotice  *AbandonResult
 	// ageChecks (ut-docs#3340) holds the ID-check outcome the cashier
 	// recorded for each age-restricted ITEM in the current sale, keyed by
 	// ItemID — per item, not per LineKey, so a line that later merges,
@@ -1685,10 +1694,15 @@ func (s *Service) removeLineLocked(key string) {
 }
 
 // Reset clears basket and lines after completion.
-func (s *Service) Reset() {
+func (s *Service) Reset() { s.ResetBecause(AbandonCleared) }
+
+// ResetBecause is Reset naming why, for the abandoned-tender handoff
+// (ut-docs#6602). The handler runs after s.mu is released.
+func (s *Service) ResetBecause(r AbandonReason) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.resetLocked()
+	p := s.resetLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(r, p)
 }
 
 // ResetAndSnapshot clears the basket like Reset and returns what it held,
@@ -1696,9 +1710,10 @@ func (s *Service) Reset() {
 // Snapshot and Reset would be wiped without being in the snapshot.
 func (s *Service) ResetAndSnapshot() BasketSnapshot {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	snap := s.snapshotLocked()
-	s.resetLocked()
+	p := s.resetLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(AbandonCleared, p)
 	return snap
 }
 
@@ -1730,14 +1745,21 @@ func (s *Service) RotateTenderAttemptID() {
 	defer s.mu.Unlock()
 	s.tenderAttemptID = ""
 	s.tenderLock = ""
+	s.pendingTender = PendingTender{}
 }
 
 // LockTender records sig as the only tender this basket may attempt next
-// (ut-docs#6600); TenderLock returns it ("" = unlocked); UnlockTender
-// clears it once the provider has answered definitively.
-func (s *Service) LockTender(sig string) {
+// (ut-docs#6600) plus what it leaves behind (ut-docs#6602); TenderLock
+// returns the signature ("" = unlocked); SettleTender clears both once the
+// provider has answered definitively. A retry of the same tender merges.
+func (s *Service) LockTender(sig string, p PendingTender) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.tenderLock == sig {
+		s.pendingTender = mergePending(s.pendingTender, p)
+	} else {
+		s.pendingTender = mergePending(PendingTender{}, p)
+	}
 	s.tenderLock = sig
 }
 
@@ -1747,11 +1769,21 @@ func (s *Service) TenderLock() string {
 	return s.tenderLock
 }
 
-func (s *Service) UnlockTender() { s.LockTender("") }
+// SettleTender clears the tender lock and returns the stash it held.
+func (s *Service) SettleTender() PendingTender {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pendingTender
+	s.pendingTender = PendingTender{}
+	s.tenderLock = ""
+	return p
+}
 
 // resetLocked is Reset's lock-free core — also called by Restore before
 // loading a snapshot. Caller must hold s.mu.
-func (s *Service) resetLocked() {
+// It returns the pending-tender stash it dropped (ut-docs#6602): callers hand
+// it to handOffAbandoned once s.mu is released.
+func (s *Service) resetLocked() PendingTender {
 	// Mutates totals-relevant state without recomputing — must invalidate
 	// any in-flight optimistic recompute (see recomputeGen's doc comment).
 	s.recomputeGen++
@@ -1772,6 +1804,8 @@ func (s *Service) resetLocked() {
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
 	s.tenderLock = ""
+	dropped := s.pendingTender
+	s.pendingTender = PendingTender{}
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""
@@ -1787,6 +1821,7 @@ func (s *Service) resetLocked() {
 	// the next one. Unlike customerID/tableID, voucher state has no
 	// separate private mirror field to also clear here (nothing reads it
 	// outside the Basket itself).
+	return dropped
 }
 
 func (s *Service) clearCacheForCode(code string) {

@@ -413,11 +413,30 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if lock := engine.TenderLock(); lock != "" && lock != tenderSig {
 		return "", &paymentOutcomeUnknownError{}
 	}
+	// ut-docs#6602: a duplicate voucher leg is refused BEFORE any authorize,
+	// so no money is taken for a sale that can never complete (the check
+	// reads only VoucherIDs, which the authorize loop does not change).
+	if err := pos.DuplicateVoucherPaymentError(saleInput.Payments); err != nil {
+		return "", err
+	}
 	var deviceEvidence *fiscal.DeviceEvidence
 	// capturedLegs records every leg whose payment.<key>.authorize actually
 	// reached a plugin and approved, with that leg's own idempotency key —
 	// what a refused cannot-sign tender must reverse (ADR-0136 Decision 2).
-	var capturedLegs []capturedPaymentLeg
+	var capturedLegs []pos.CapturedLeg
+	// ut-docs#6602: one defer reverses every captured leg on ANY error return
+	// after capture, so a new failure path cannot forget it. asked = request
+	// ids dispatched this attempt; ownCaptured goes false once the legs are
+	// stashed on the engine (unknown outcome) or the sale is saved.
+	asked := map[string]bool{}
+	ownCaptured := true
+	why := "tender refused (the sale could not be completed)"
+	defer func() {
+		if ownCaptured && len(capturedLegs) > 0 {
+			reversePaymentLegs(ctx, d, capturedLegs, why)
+			engine.RotateTenderAttemptID()
+		}
+	}()
 	// legRequestIDs[i] is leg i's authorize event id when that authorize was
 	// dispatched to a plugin, "" otherwise; the settle event carries it so a
 	// plugin can match its own approval exactly (ut-docs#6438).
@@ -463,6 +482,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 		payloadDigest := sha256.Sum256(payloadBytes)
 		requestID := fmt.Sprintf("%s:%d:%x", attemptID, i, payloadDigest[:8])
+		asked[requestID] = true
 		resp, dispatched, err := blockingPaymentEventDispatch(ctx, d, p.MethodID, "authorize", requestID, payload)
 		if err != nil {
 			// ut-docs#2278 review finding: paymentDeclinedError carries no
@@ -487,17 +507,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				// The card may have been charged. Earlier legs stay captured
 				// and the attempt id is kept: the retry re-asks every leg with
 				// the same request id, so providers dedupe and settle.
-				engine.LockTender(tenderSig)
+				engine.LockTender(tenderSig, pos.PendingTender{
+					Captured: capturedLegs,
+					Unknown:  []pos.UnknownLeg{{MethodID: p.MethodID, Currency: payCurrency, RequestID: requestID, Amount: amount}},
+				})
+				ownCaptured = false
 				logging.L().Warnf("payment outcome UNKNOWN — method %q, amount %d, authorize_request_id %s: the card may have been charged; the till is locked on this tender until it is retried and settled — check the provider before taking another payment", p.MethodID, amount.Minor(), requestID)
 				return "", &paymentOutcomeUnknownError{Method: p.MethodID}
 			}
 			// A definitive decline: earlier approved legs are returned and the
 			// request ids are spent (ut-docs#6602).
-			engine.UnlockTender()
-			if len(capturedLegs) > 0 {
-				reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs, "a later leg was declined")
-				engine.RotateTenderAttemptID()
-			}
+			stash := engine.SettleTender()
+			// a leg captured on an earlier attempt and not re-asked this time
+			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
+			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tender declined")
+			why = "tender refused (a later leg was declined)"
 			return "", &paymentDeclinedError{Method: p.MethodID}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
@@ -517,6 +541,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// OKC leg that returned none if this per-leg gate were removed.
 		if _, legValid := fiscal.ParseDeviceEvidence(resp); p.MethodID == fiscal.MethodKeyOKC && !legValid {
 			log.Printf("tender rejected: fiscal device %q approved sale with no receipt evidence (attempt %s) (ut-docs#1779 fail-closed)", p.MethodID, requestID)
+			why = "tender refused (the fiscal device confirmed no receipt)"
 			return "", &fiscalDeviceNoReceiptError{Method: p.MethodID}
 		}
 		// A fiscal-device plugin's approved answer carries what the device
@@ -560,8 +585,19 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 		if dispatched {
 			legRequestIDs[i] = requestID
-			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured, transactionRef: payments[i].TraceID, tipAmount: payments[i].TipAmount})
+			capturedLegs = append(capturedLegs, pos.CapturedLeg{MethodID: p.MethodID, Currency: legCurrency(payments[i], saleInput.Currency), RequestID: requestID, Amount: captured, TransactionRef: payments[i].TraceID, TipAmount: payments[i].TipAmount})
 		}
+	}
+
+	// All legs approved: settle the lock. A retry whose request ids changed
+	// (changed reference/currency) leaves an earlier capture superseded:
+	// reverse it, or it would stand beside the new one (ut-docs#6602).
+	{
+		stash := engine.SettleTender()
+		if stale := minusCaptured(stash.Captured, capturedLegs); len(stale) > 0 {
+			reversePaymentLegs(ctx, d, stale, "tender retried (an earlier capture was superseded)")
+		}
+		warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tender retried")
 	}
 
 	// Tip recipient default (ADR-0061 Decision 3), decided HERE — the one
@@ -614,7 +650,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// outcome — signing never happened, so nothing may be journaled as a
 	// sale — it becomes a named Problems-ring item for a human instead.
 	if signRes.Outcome == fiscalSignCannotSign {
-		reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs, "fiscal signer answered cannot-sign")
+		why = "tender refused (fiscal signer answered cannot-sign)"
 		// The reversed authorizes are spent: the kept basket's next tender
 		// must mint fresh idempotency keys, or a provider deduping on the
 		// old key could replay an approval whose money was just returned.
@@ -662,7 +698,8 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	//     was lost — tracked exactly like a confirmed one, since release is
 	//     a safe no-op on a voucher that was never actually reserved.
 	//   - Two legs against the SAME voucher in one sale are refused up
-	//     front (pos.DuplicateVoucherPaymentError — the idempotency key is
+	//     front (pos.DuplicateVoucherPaymentError, checked before any authorize
+	//     so no money is taken — the idempotency key is
 	//     one redemption per voucher per sale), BEFORE anything is
 	//     reserved, so an invalid sale never round-trips to the primary.
 	// Not a replica, or the primary unreachable / 404: this payment is left
@@ -670,9 +707,6 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// next (offline-first, unchanged).
 	if saleInput.SaleID == "" {
 		saleInput.SaleID = uuid.NewString()
-	}
-	if err := pos.DuplicateVoucherPaymentError(saleInput.Payments); err != nil {
-		return "", err
 	}
 	var reservedVoucherIDs []string
 	for i := range saleInput.Payments {
@@ -682,6 +716,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		preauth, maybeReserved, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
 		if err != nil {
 			releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
+			why = "tender refused (a voucher could not be reserved)"
 			return "", err
 		}
 		saleInput.Payments[i].VoucherPreauthorized = preauth
@@ -701,13 +736,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
-		// ut-docs#6602: no sale row, so the captured card legs go back.
-		if len(capturedLegs) > 0 {
-			reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs, "the sale could not be completed")
-			engine.RotateTenderAttemptID()
-		}
+		// ut-docs#6602: no sale row; the deferred reversal sends the
+		// captured card legs back.
 		return "", err
 	}
+	ownCaptured = false
 
 	// What the fiscal device printed for this sale (Turkey's ÖKC), if a
 	// device plugin took the tender: persisted now that the sale row
@@ -1089,6 +1122,7 @@ type tenderVoucherIssue struct {
 }
 
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
+	wireAbandonedTenderReversal(d)
 	repo := data.NewPOSRepo(d.Db)
 	scan := func(w http.ResponseWriter, r *http.Request) {
 		in := struct {
@@ -2069,6 +2103,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			b, _ := d.Engine.Scan("")
 			b.ToastMessage = fmt.Sprintf(httpx.T(locale, "hold.toast.reparked"), origin.Label)
 			b.ToastLevel = "success"
+			// ut-docs#6602: a payment warning replaces "re-parked".
+			if key, ok := abandonToastKey(d.Engine); ok {
+				b.ToastMessage = httpx.T(locale, key)
+				b.ToastLevel = "error"
+			}
 			_ = basketView.Render(w, b)
 			return
 		}
@@ -2080,6 +2119,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		recordClearedBasket(r.Context(), d, r, cleared)
 		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		b, _ := d.Engine.Scan("")
+		if key, ok := abandonToastKey(d.Engine); ok {
+			b.ToastMessage = httpx.T(locale, key)
+			b.ToastLevel = "error"
+		}
 		_ = basketView.Render(w, b)
 	})
 
@@ -3683,67 +3726,47 @@ func stockMovementReason(movementType string) string {
 	}
 }
 
-// capturedPaymentLeg is one tender leg whose payment.<key>.authorize was
-// delivered to a plugin and approved: its position in the tender's
-// payments slice, the per-leg idempotency key completeTender minted for
-// that authorize call (ut-docs#1762), and the exact amount that call
-// captured — the authorize payload's amount plus any tip the reader
-// reported on its answer — recorded at capture time so a reversal sends
-// back precisely what was taken, never a later recomputation.
-type capturedPaymentLeg struct {
-	index     int
-	requestID string
-	amount    money.Money
-	// transactionRef / tipAmount: the provider reference core holds for this
-	// leg and the tip the reader added (ut-docs#6438), so a reversal can hand
-	// the plugin the charge it must undo.
-	transactionRef string
-	tipAmount      money.Money
+// legCurrency is the leg's own currency, else the sale's — the same rule
+// pos.CompleteSale applies when it persists a payment row.
+func legCurrency(p pos.PaymentInput, saleCurrency string) string {
+	if p.Currency != "" {
+		return p.Currency
+	}
+	return saleCurrency
 }
 
-// reverseCapturedPaymentLegs sends back every captured leg of a tender that
-// is being refused after authorize (ADR-0136 Decision 2): the existing
-// blocking payment.<key>.refund event, with the base refund payload plus
-// two additive fields — reversal:true (this undoes an authorize that never
-// became a sale, not a return against a recorded one) and
-// authorize_request_id (the exact authorize to reverse).
-// original_sale_id/original_receipt are deliberately absent: there is no
-// sale. The amount is capturedPaymentLeg.amount — exactly what that leg's
-// authorize captured (the payload's amount plus a reader-reported tip,
-// ut-docs#2571), never recomputed from the PaymentInput. A method with no
-// .refund subscriber is a clean no-op. A failed or timed-out reversal is
-// warned into the Problems ring naming method, amount and
-// authorize_request_id — an un-reversed capture must reach a human — and
-// never changes the caller's refusal.
-func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency string, payments []pos.PaymentInput, legs []capturedPaymentLeg, why string) {
+// reversePaymentLegs sends back every captured leg of a tender that is being
+// abandoned or refused after authorize (ADR-0136 Decision 2, ut-docs#6602):
+// the existing blocking payment.<key>.refund event, with the base refund
+// payload plus two additive fields — reversal:true and authorize_request_id.
+// The amount is the leg's own captured Amount (the payload's amount plus a
+// reader-reported tip), never recomputed. A method with no .refund
+// subscriber is a clean no-op. A failed or timed-out reversal is warned into
+// the Problems ring (masked ref) and counted in the return value; it never
+// changes the caller's outcome.
+func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.CapturedLeg, what string) (failed int) {
 	for _, leg := range legs {
-		p := payments[leg.index]
-		amount := leg.amount
-		// The leg's own currency wins, else the sale's — the same rule
-		// pos.CompleteSale applies when it persists a payment row (the
-		// kiosk path sets currency per payment only).
-		legCurrency := p.Currency
-		if legCurrency == "" {
-			legCurrency = currency
-		}
+		amount := leg.Amount
 		payload := map[string]any{
-			"method":               p.MethodID,
+			"method":               leg.MethodID,
 			"amount":               amount.Minor(),
-			"currency":             legCurrency,
+			"currency":             leg.Currency,
 			"reversal":             true,
-			"authorize_request_id": leg.requestID,
+			"authorize_request_id": leg.RequestID,
 		}
-		if leg.transactionRef != "" {
+		if leg.TransactionRef != "" {
 			payload["original_payments"] = []map[string]any{{
-				"transaction_ref": leg.transactionRef,
+				"transaction_ref": leg.TransactionRef,
 				"amount":          amount.Minor(),
-				"tip_amount":      leg.tipAmount.Minor(),
+				"tip_amount":      leg.TipAmount.Minor(),
 			}}
 		}
-		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "refund", "", payload); err != nil {
-			logging.L().Warnf("tender refused (%s), but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", why, p.MethodID, amount.Minor(), legCurrency, leg.requestID, maskTxnRef(leg.transactionRef), err)
+		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, leg.MethodID, "refund", "", payload); err != nil {
+			failed++
+			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
 		}
 	}
+	return failed
 }
 
 // isISO4217Code reports whether c is three uppercase ASCII letters.
