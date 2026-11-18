@@ -8,10 +8,45 @@
 // ReleasesBaseURL.
 package buildinfo
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Version is the release version, e.g. "0.1.2". Overridden at build time.
 var Version = "dev"
+
+// Channel is how this build reaches a shop (ADR-0194): "sideload" (website,
+// GitHub release, source), "play", "appstore" or "direct" (the Microsoft Store
+// binary, which is the same signed installer as the website download).
+// Stamped per artifact by every build definition:
+//
+//	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=<channel>"
+//
+// A source build is "sideload". Predicates on it belong to ADR-0194 (never
+// read from settings, config, env or request input).
+var Channel = "sideload"
+
+// ChannelStamp is the CI-inspectable twin of Channel: the literal
+// "ut-channel:<channel>", stamped on the same line. Release builds use
+// -trimpath, so `go version -m` records no -ldflags and the short channel word
+// would be lost among other strings; this longer value is found by
+// scripts/ci/check-artifact-channel.sh with `strings`. Nothing reads it at
+// runtime. scripts/ci/guard-channel-stamped.sh keeps both stamped together.
+var ChannelStamp = ""
+
+// channelMismatch reports a build whose two channel stamps disagree. Referencing
+// ChannelStamp here also keeps the linker from dropping the stamped string,
+// which is what lets scripts/ci/check-artifact-channel.sh find it.
+func channelMismatch(channel, stamp string) bool {
+	return stamp != "" && strings.TrimPrefix(stamp, "ut-channel:") != channel
+}
+
+func init() {
+	if channelMismatch(Channel, ChannelStamp) {
+		panic("buildinfo: Channel " + Channel + " does not match ChannelStamp " + ChannelStamp)
+	}
+}
 
 // MarketplacePublicKey is the marketplace's Ed25519 plugin-signing public key
 // (64 hex characters), compiled into release builds (ADR-0158):

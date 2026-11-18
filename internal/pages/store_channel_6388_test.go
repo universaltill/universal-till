@@ -20,17 +20,17 @@ import (
 // purchase surface exists. Hide AND refuse. These tests flip the process-wide
 // channel, so none may run in parallel.
 
-var allChannels = []buildinfo.Channel{
+var allChannels = []buildinfo.InstallChannel{
 	buildinfo.ChannelSideload, buildinfo.ChannelPlay, buildinfo.ChannelAppStore, buildinfo.ChannelDirect,
 }
 
-func withChannel(t *testing.T, c buildinfo.Channel) {
+func withChannel(t *testing.T, c buildinfo.InstallChannel) {
 	t.Helper()
 	t.Cleanup(buildinfo.OverrideChannelForTest(c))
 }
 
 func TestPlanPurchaseAllowed_ByChannel(t *testing.T) {
-	want := map[buildinfo.Channel]bool{
+	want := map[buildinfo.InstallChannel]bool{
 		buildinfo.ChannelSideload: true, buildinfo.ChannelPlay: false,
 		buildinfo.ChannelAppStore: false, buildinfo.ChannelDirect: true,
 	}
@@ -82,7 +82,7 @@ func TestStoreChannel_PurchaseRoutesAndSurfaces(t *testing.T) {
 
 func TestStoreChannel_UpdateRoutesAndCard(t *testing.T) {
 	// Hard-coded on purpose: never derive this from InAppUpdateAllowed().
-	wantOpen := map[buildinfo.Channel]bool{
+	wantOpen := map[buildinfo.InstallChannel]bool{
 		buildinfo.ChannelDirect: true, buildinfo.ChannelSideload: true,
 		buildinfo.ChannelPlay: false, buildinfo.ChannelAppStore: false,
 	}
