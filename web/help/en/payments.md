@@ -84,6 +84,17 @@ What can go wrong:
 - **Fill Remaining** itself is refused if the pending payments already cover the total (there's nothing left to fill), or if the basket isn't in a state to accept a payment right now.
 - The Amount and Change boxes here take a normal currency amount (e.g. `2.50`) — unlike the small per-line discount box on the basket itself, which takes the smallest currency unit (see **Selling & checkout**'s Discounts section) — so don't carry that habit over between the two.
 
+## When a card payment can't be confirmed
+
+Sometimes a card reader can't tell the till whether a payment went through. The till then shows **The card may have been charged. Tap Pay again to settle it. Do not take another payment.** and keeps the sale on the screen.
+
+- **Tap Pay again with the same payment.** The till asks the provider again, using the same request, so the customer is not charged twice. Any other payment (a different method or amount) is refused until this one is settled.
+- **If you clear the sale instead** (**New sale**), park it, or open another order over it, the till sends back the card payments it already knows were taken for that sale, automatically. The payment it could not confirm is **not** sent back, because the customer may never have been charged. A red message tells you which case applies.
+- **What to do next:** check the payment with your payment provider, and refund it there if the customer was charged. Do not charge the customer again until you have checked.
+- **Where to find the details:** each payment (method, amount and request reference) is listed under **Recent problems** on the Back office page. Your provider's dashboard shows the final state of each payment.
+
+The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: clearing or parking works offline, but the screen may take a moment to update while the till waits for the card provider to confirm each payment it sends back. If a payment was still being taken when you cleared or parked the sale, the till does not complete that sale and sends the payment back too.
+
 ## Gift vouchers
 
 To sell a gift voucher, or take one the till issued as payment, use the **Split** tab too — see [Gift vouchers](/help/vouchers).

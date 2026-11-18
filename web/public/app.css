@@ -2851,10 +2851,14 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 /* Screen-reader-only text (aria-label is ignored on generic spans). */
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-/* Always-visible total-quantity badge next to the basket title (ut-docs#213). */
+/* Always-visible total-quantity badge next to the basket title (ut-docs#213).
+   --surface on --text, like the phone tile's in-basket badge (ut-docs#3241):
+   --accent-contrast on --accent is ~2.5-2.8:1 in amber, fresh and monarch;
+   this pair passes 4.5:1 in every theme (ut-docs#6050, pinned by
+   TestBasketCountBadgeContrast). */
 .basket-count { display: inline-flex; align-items: center; justify-content: center;
   min-width: 1.7em; padding: .08em .5em; margin-inline-start: .45rem;
-  border-radius: 999px; background: var(--accent); color: var(--accent-contrast, #fff);
+  border-radius: 999px; background: var(--text); color: var(--surface);
   font-size: .72em; font-weight: 700; font-variant-numeric: tabular-nums;
   vertical-align: middle; line-height: 1.4; }
 /* A DIV inside the item <td>, not a class on the <td> itself (ut-docs#391):
@@ -6748,6 +6752,22 @@ td.list-actions > * + * { margin-inline-start: .5rem; }
 .list-empty-row td { text-align: center; color: var(--muted); }
 [data-record-open] { cursor: pointer; }
 [data-record-open]:hover > td { background: var(--surface-2); }
+/* ut-docs#6055: pressed state for touch (no hover there). base.html sets
+   .ut-pressed on pointerdown, only when the tap will open the row (no
+   :active here: it would also paint the row for a press on a link inside
+   it, which never opens it). --border is a step darker than --surface-2 in
+   every theme, so it still shows over a sticky :hover. Colour only
+   (ADR-0119). Placed after :hover so it wins at equal specificity. On the
+   ≤480px card list the row itself is the rounded card: paint it, not its
+   cells (which would leave a square block inset in the card). */
+[data-record-open].ut-pressed > td { background: var(--border); }
+@media (max-width: 480px) {
+  table.t-cards tr.t-cards-row[data-record-open]:hover { background: var(--surface-2); }
+  table.t-cards tr.t-cards-row[data-record-open].ut-pressed { background: var(--border); }
+  /* The cell rules above would paint a square block over the card; a
+     dragged category row (.is-dragging, below) keeps its own cell colour. */
+  table.t-cards tr.t-cards-row[data-record-open]:is(:hover, .ut-pressed):not(.is-dragging) > td { background: none; }
+}
 
 /* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
    reason, see .item-form-modal above), a flex column of exactly two parts:
