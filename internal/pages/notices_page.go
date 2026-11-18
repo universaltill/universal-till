@@ -58,7 +58,14 @@ type noticeRowView struct {
 	Tab          string
 }
 
+// noticesEnabled: the per-till flag, and never on a store channel (play,
+// appstore) or iOS: a notice is free text from the cloud whose price or
+// purchase pitch cannot be filtered here (ADR-0194 §3, ut-docs#6622). The flag
+// is ignored there, so a stored row is never shown either.
 func noticesEnabled(ctx context.Context, d *common.Deps) bool {
+	if !accountLinkOutAllowed() {
+		return false
+	}
 	if d == nil || d.Db == nil {
 		return false
 	}
@@ -134,6 +141,12 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		on := r.Form.Get("enabled") == "on" || r.Form.Get("enabled") == "1"
+		// Store channels: the switch does not exist (404, like the purchase
+		// routes); turning it off stays possible and erases held notices.
+		if on && !accountLinkOutAllowed() {
+			http.NotFound(w, r)
+			return
+		}
 		val := "false"
 		if on {
 			val = "true"
