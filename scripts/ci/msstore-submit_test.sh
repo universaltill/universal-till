@@ -58,7 +58,7 @@ grep -q -- '-X PUT' "$W/log" && grep -q -- '--data-binary' "$W/log" && echo "ok 
 COMMIT=true t 0 "COMMIT=true commits and submits"
 grep -q '/packages/commit' "$W/log" && grep -q -- '-X POST.*/submit' "$W/log" && echo "ok   - commit and submit sent" || { echo "FAIL - commit/submit" >&2; fails=$((fails+1)); }
 EXPECT_SHA256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb t 1 "refuses when the asset changed since verification"
-EXPECT_SHA256= t 1 "refuses without the verified digest"
+EXPECT_SHA256="" t 1 "refuses without the verified digest"
 t 1 "refuses a /latest/ URL" v1.2.3 "https://github.com/o/r/releases/latest/download/unitill-pos-setup-1.2.3.exe"
 t 1 "refuses another repo's URL" v1.2.3 "https://github.com/evil/r/releases/download/v1.2.3/unitill-pos-setup-1.2.3.exe"
 t 1 "refuses a bad tag" latest

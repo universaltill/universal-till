@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Wiring test for .github/workflows/msstore-submit.yml (ut-docs#6407).
 # Fixture and `A && ok || fail` assertion style used throughout this test.
-# shellcheck disable=SC2015
+# shellcheck disable=SC2015,SC2016
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

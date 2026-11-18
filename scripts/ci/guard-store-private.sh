@@ -237,6 +237,7 @@ sw="$(
   script="${SCAN_ROOT}/scripts/ci/msstore-submit.sh"
   wf="${SCAN_ROOT}/.github/workflows/msstore-submit.yml"
   opened="${SCAN_ROOT}/store-release/microsoft.opened"
+  # shellcheck disable=SC2016 # the pattern is a literal grep expression
   if [ -f "$script" ] && ! grep -v '^[[:space:]]*#' "$script" | grep -qE '\[ -f "\$opened" \]'; then
     echo "scripts/ci/msstore-submit.sh: [msstore-submit-switch] the submit script does not check store-release/microsoft.opened"
   fi
