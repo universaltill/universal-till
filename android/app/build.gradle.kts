@@ -378,7 +378,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )

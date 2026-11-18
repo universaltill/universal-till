@@ -175,7 +175,7 @@ jobs:
           set -euo pipefail
           BUILD_DATE="$(bash scripts/ci/build-date.sh)"
           CGO_ENABLED=1 go build -trimpath -tags desktop \
-            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}" \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}" \
             -o unitill-desktop ./cmd/unitill-desktop
           file unitill-desktop
       - uses: actions/upload-artifact@v7
@@ -433,6 +433,9 @@ jobs:
           mapfile -t INNER < <(find "$STAGE" -iname '*.exe')
           test "${#INNER[@]}" -gt 0
           for f in "${INNER[@]}"; do "$SIGN" --verify-only "$f"; done
+          # ADR-0194: the Store binary is the `direct` build; an exe built
+          # without (or with another) channel never reaches the installer.
+          bash scripts/ci/check-artifact-channel.sh direct "${INNER[@]}"
 
           # UNINST_SIGN_CMD: makensis signs + verifies uninstall.exe before
           # embedding it, and aborts on failure.
@@ -443,7 +446,7 @@ jobs:
           echo "built installer: $EXE"
           test -n "$EXE" && test -f "$EXE"
           "$SIGN" "$EXE"
-          gh release upload "${TAG}" "$EXE" --clobber
+          bash scripts/ci/release-upload.sh "${TAG}" "$EXE"
           # ut-docs#2863: the `checksums` job needs the exact bytes this job
           # signed and uploaded, to prove the published asset it later
           # downloads is the same file (not a race with a re-upload).
@@ -892,7 +895,7 @@ jobs:
           APK="unitill-pos_${VERSION}_android.apk"
           APK_ARM64="unitill-pos_${VERSION}_android-arm64.apk"
           APK_ARMV7="unitill-pos_${VERSION}_android-armv7.apk"
-          gh release upload "${TAG}" "$APK" "$APK_ARM64" "$APK_ARMV7" --clobber
+          bash scripts/ci/release-upload.sh "${TAG}" "$APK" "$APK_ARM64" "$APK_ARMV7"
           # ut-docs#2863: the `checksums` job needs the exact bytes this job
           # signed and uploaded, to prove the published asset it later
           # downloads is the same file (not a race with a re-upload). Each
@@ -929,8 +932,8 @@ jobs:
           cp "unitill-pos_${VERSION}_android.apk" unitill-pos-android-latest.apk
           cp "unitill-pos_${VERSION}_android-arm64.apk" unitill-pos-android-arm64-latest.apk
           cp "unitill-pos_${VERSION}_android-armv7.apk" unitill-pos-android-armv7-latest.apk
-          gh release upload "${TAG}" unitill-pos-android-latest.apk \
-            unitill-pos-android-arm64-latest.apk unitill-pos-android-armv7-latest.apk --clobber
+          bash scripts/ci/release-upload.sh "${TAG}" unitill-pos-android-latest.apk \
+            unitill-pos-android-arm64-latest.apk unitill-pos-android-armv7-latest.apk
 
   # Regression gate for a real bug found 2026-07-28: the Windows and Linux
   # desktop-shell (WebView) builds had no buildinfo.Version ldflag at all
@@ -1081,6 +1084,9 @@ jobs:
               fail=1
               return
             fi
+            if ! bash "$GITHUB_WORKSPACE/scripts/ci/check-artifact-channel.sh" "${CHANNEL:-sideload}" "$file"; then
+              fail=1
+            fi
             if grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: $label carries version $VERSION"
             else
@@ -1098,8 +1104,11 @@ jobs:
           rm -rf extracted && mkdir extracted
 
           unzip -qo "unitill-pos_${VERSION}_windows_amd64.zip" -d extracted
+          # Windows binaries are the `direct` channel (ADR-0194), the rest default to sideload.
+          CHANNEL=direct
           check extracted/unitill-pos.exe "windows unitill-pos.exe" key
           check extracted/unitill-desktop.exe "windows unitill-desktop.exe (the omission that caused the real bug)"
+          unset CHANNEL
           rm -rf extracted && mkdir extracted
 
           tar xzf "unitill-pos_${VERSION}_darwin_arm64.tar.gz" -C extracted
@@ -1375,9 +1384,9 @@ jobs:
           set -euo pipefail
           ASSETS="$RUNNER_TEMP/assets"
           if [ -f "$ASSETS/checksums.txt.sig" ]; then
-            gh release upload "$TAG" "$ASSETS/checksums.txt.sig" --clobber
+            bash scripts/ci/release-upload.sh "$TAG" "$ASSETS/checksums.txt.sig"
           fi
-          gh release upload "$TAG" "$ASSETS/checksums.txt" --clobber
+          bash scripts/ci/release-upload.sh "$TAG" "$ASSETS/checksums.txt"
 
   # Flips the release goreleaser created (draft: true, .goreleaser.yaml) to
   # published/"Latest" — the ONLY point in this whole workflow that does.
@@ -1540,12 +1549,12 @@ jobs:
         run: |
           set -euo pipefail
           dmg="dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
-          gh release upload "$TAG" "$dmg" --clobber
+          bash scripts/ci/release-upload.sh "$TAG" "$dmg"
           if [ -n "${UT_RELEASE_KEYS_HEX:-}" ]; then
             # Signature first: the old checksums.txt still verifies against it.
-            gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt.sig" --clobber
+            bash scripts/ci/release-upload.sh "$TAG" "$RUNNER_TEMP/checksums.txt.sig"
           fi
-          gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt" --clobber
+          bash scripts/ci/release-upload.sh "$TAG" "$RUNNER_TEMP/checksums.txt"
       # The gate verify-versions used to run for the .dmg: the published
       # checksums.txt entry must match the published artifact — plus every
       # other asset, since checksums.txt was just rewritten.

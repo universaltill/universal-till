@@ -674,13 +674,17 @@ func StartAsNewStore(ctx context.Context, cfg *config.Config, kv Settings) (Stat
 		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
 	}
 	defer releaseAttempt()
-	resetIdentityForPair(ctx, kv, false, "till-"+uuid.NewString())
+	oldStore := resetIdentityForPair(ctx, kv, false, "till-"+uuid.NewString())
 	for _, key := range []string{keyRegisterBlockedUntil, keyRegisterKeyRefused} {
 		if err := kv.Set(ctx, key, ""); err != nil {
 			logging.L().Warnf("enrolment: new shop: clear %s: %v", key, err)
 		}
 	}
-	return registerLocked(ctx, cfg, kv, "")
+	st, err := registerLocked(ctx, cfg, kv, "")
+	// The till chose to leave the old shop: its off-site backup key file goes
+	// whether or not the register worked (ADR-0199 D2, ut-docs#6612).
+	storeLeft(oldStore, st.StoreID)
+	return st, err
 }
 
 // Init loads (or creates) this till's marketplace identity, fills the empty
