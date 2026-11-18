@@ -302,7 +302,7 @@ func TestPersistentShell_BeforeSwapDefersTheShellSync(t *testing.T) {
 		t.Errorf("htmx:swapError must drop a pending shell sync (ut-docs#2496 review M2)")
 	}
 	// Review M1: the mouse hand-over must focus the control under the pointer.
-	if !strings.Contains(src, "if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }") {
+	if !strings.Contains(readMotionJS(t), "if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }") {
 		t.Errorf("the mid-transition click hand-over must focus the field under the pointer (ut-docs#2496 review M1)")
 	}
 }

@@ -93,6 +93,7 @@ func registerShiftXReport(mux *http.ServeMux, d *common.Deps) {
 		})(w, r)
 	})
 	registerShiftXReportPrint(mux, d)
+	registerShiftCloseSlipPrint(mux, d) // ut-docs#5841
 }
 
 func wantsJSON(r *http.Request) bool {

@@ -530,3 +530,150 @@ func TestListOpenShifts_InactiveRegisterStillListed(t *testing.T) {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 }
+
+// ut-docs#5841: ShiftCloseSlip. xrCloseF closes fixture F's shift S the way
+// pos.CloseShift does: stored expected (before the skim), counted, new float,
+// plus the at-close skim audit row stamped at closed_at.
+func xrCloseF(t *testing.T, f *xrFx, skim int64) (expected, counted, newFloat int64) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := f.repo.ShiftCashBreakdown(ctx, "S", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = b.Expected.Minor()
+	counted = expected + 50
+	newFloat = counted - skim
+	closedAt := b8At(f.t0.Add(40 * time.Minute))
+	mustExec(t, f.d, `UPDATE shifts SET closed_at=?, closing_cash=?, expected_cash=?, new_float=? WHERE id='S'`, closedAt, counted, expected, newFloat)
+	if skim > 0 {
+		if err := f.repo.InsertAudit(ctx, nil, "u-a", "shift", "S", "cash_adjustment", map[string]any{"type": "skim", "amount": -skim, "reason": "Skim to safe", "at_close": true}, closedAt, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return expected, counted, newFloat
+}
+
+func TestShiftXReport_AtCloseSkimFlagged(t *testing.T) {
+	f := xrFixtureF(t)
+	xrCloseF(t, f, 1000)
+	r, err := f.repo.ShiftXReport(context.Background(), "S", f.t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flagged, total int
+	for _, a := range r.Cash.Adjustments {
+		total++
+		if a.AtClose {
+			flagged++
+			if a.Type != "skim" || a.Amount.Minor() != -1000 {
+				t.Errorf("flagged = %+v", a)
+			}
+		}
+	}
+	if total != 3 || flagged != 1 {
+		t.Fatalf("adjustments total=%d flagged=%d: %+v", total, flagged, r.Cash.Adjustments)
+	}
+}
+
+func TestShiftCloseSlip_ExcludesAtCloseSkim(t *testing.T) {
+	f := xrFixtureF(t)
+	expected, counted, newFloat := xrCloseF(t, f, 1000)
+	s, err := f.repo.ShiftCloseSlip(context.Background(), "S", f.t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.X.Cash.Adjustments) != 2 {
+		t.Fatalf("adjustments = %+v, want payout + top-up only", s.X.Cash.Adjustments)
+	}
+	for _, a := range s.X.Cash.Adjustments {
+		if a.AtClose || a.Type == "skim" {
+			t.Errorf("at-close skim leaked: %+v", a)
+		}
+	}
+	c := s.X.Cash
+	if got := c.Opening.Add(c.CashSales).Add(c.TipsHeldOut).Add(c.AdjustmentsTotal).Minor(); got != expected || c.Expected.Minor() != expected {
+		t.Errorf("cash block sums to %d, Expected %d, stored %d", got, c.Expected.Minor(), expected)
+	}
+	if s.Expected.Minor() != expected || s.Counted.Minor() != counted || s.Variance.Minor() != counted-expected ||
+		s.Skim.Minor() != 1000 || s.NewFloat.Minor() != newFloat {
+		t.Errorf("close block = %+v (want exp %d counted %d float %d)", s, expected, counted, newFloat)
+	}
+}
+
+func TestShiftCloseSlip_OpenIsErrShiftNotClosed(t *testing.T) {
+	f := xrFixtureF(t)
+	if _, err := f.repo.ShiftCloseSlip(context.Background(), "S", f.t0); !errors.Is(err, ErrShiftNotClosed) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestShiftCloseSlip_UnknownAndEmptyIsErrNoRows(t *testing.T) {
+	f := xrFixtureF(t)
+	for _, id := range []string{"nope", ""} {
+		if _, err := f.repo.ShiftCloseSlip(context.Background(), id, f.t0); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("id %q: err = %v", id, err)
+		}
+	}
+}
+
+func TestShiftCloseSlip_LegacyNullNewFloat(t *testing.T) {
+	f := xrFixtureF(t)
+	_, counted, _ := xrCloseF(t, f, 0)
+	mustExec(t, f.d, `UPDATE shifts SET new_float = NULL WHERE id='S'`)
+	s, err := f.repo.ShiftCloseSlip(context.Background(), "S", f.t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.NewFloat.Minor() != counted || s.Skim.Minor() != 0 {
+		t.Errorf("legacy: float %d skim %d, counted %d", s.NewFloat.Minor(), s.Skim.Minor(), counted)
+	}
+}
+
+func TestShiftCloseSlip_WindowEndsAtClose(t *testing.T) {
+	f := xrFixtureF(t)
+	xrCloseF(t, f, 0)
+	xrSale(t, f, "late", "A-LATE", "completed", "sale", "reg-a", 7777, 0, b8At(f.t0.Add(50*time.Minute)), "")
+	xrPay(t, f, "plate", "late", "cash", 7777, 0, 0)
+	s, err := f.repo.ShiftCloseSlip(context.Background(), "S", f.t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.X.SalesCount != 3 || s.X.SalesGross.Minor() != 6500 {
+		t.Errorf("sales = %d / %d, want 3 / 6500 (post-close and other-register sales excluded)", s.X.SalesCount, s.X.SalesGross.Minor())
+	}
+}
+
+// A skim taken mid-shift is a real drawer movement: it stays in the slip's
+// Cash block; only the at-close skim moves to the close block (review m1).
+func TestShiftCloseSlip_KeepsMidShiftSkim(t *testing.T) {
+	f := xrFixtureF(t)
+	if err := f.repo.InsertAudit(context.Background(), nil, "u-a", "shift", "S", "cash_adjustment",
+		map[string]any{"type": "skim", "amount": -700, "reason": "Mid-shift skim"},
+		b8At(f.t0.Add(30*time.Minute)), ""); err != nil {
+		t.Fatal(err)
+	}
+	expected, _, _ := xrCloseF(t, f, 1000)
+	s, err := f.repo.ShiftCloseSlip(context.Background(), "S", f.t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.X.Cash.Adjustments) != 3 {
+		t.Fatalf("adjustments = %+v, want payout + top-up + mid-shift skim", s.X.Cash.Adjustments)
+	}
+	var mid int
+	for _, a := range s.X.Cash.Adjustments {
+		if a.AtClose {
+			t.Errorf("at-close skim leaked: %+v", a)
+		}
+		if a.Type == "skim" && a.Amount.Minor() == -700 {
+			mid++
+		}
+	}
+	if mid != 1 {
+		t.Errorf("mid-shift skim rows kept = %d, want 1", mid)
+	}
+	if s.X.Cash.Expected.Minor() != expected {
+		t.Errorf("cash block Expected %d, stored %d", s.X.Cash.Expected.Minor(), expected)
+	}
+}

@@ -717,6 +717,145 @@ re-arms it) so the OS can sleep an abandoned till. The choice is per device
 Kiosk lock-task mode does not change it. Not covered: a screen turned off with
 the power button, or Doze while the app is backgrounded.
 
+## Printing (ut-docs#6153)
+
+Android System WebView ignores `window.print()`, so the app exposes
+`window.AndroidKiosk.print()`. It takes no argument and opens Android's
+system print dialog for the page the WebView is showing (the receipt and the
+print-only voucher slip are laid out by their `@media print` CSS). The web
+side calls it through `UT.print` (`web/public/inline-actions.js`), the till's
+only print entry point; every other shell keeps `window.print()`.
+
+- Printers come from Android's print services (Mopria/IPP, vendor plugins);
+  "Save as PDF" is always there. ESC/POS receipt printers keep using the
+  hardware path (ADR-0023), not this dialog.
+- One dialog at a time: a second tap while one is open returns `false`
+  (cleared when the framework calls `onFinish`, or after two minutes).
+- Refused (returns `false`, nothing printed, never unpins) while the kiosk
+  lock is engaged (`kioskPinned` or lock-task mode). Only `/self-order*`
+  pages engage the lock and none of them prints. Under device-owner lock-task
+  the print spooler is not allowlisted and would be refused silently; under
+  screen pinning its "Add printer" path leads to Settings and the Play Store.
+  Do not add the spooler to `setLockTaskPackages`.
+- A refusal (including a 451 from the print POST) prints nothing; the web
+  never falls through to the no-op `window.print()` once the bridge exists.
+- Verified by the Gradle build and `PrintLogicTest` in CI only; the real
+  dialog and the lock-task behaviour need a device or emulator check.
+
+## Install channel (ut-docs#6388, ADR-0194)
+
+The till core behaves differently per install channel: `sideload | play |
+appstore | direct`. On `play` and `appstore` it offers no plan purchase, no
+claim link or QR, and no self-update. The channel is a build constant:
+`BuildConfig.INSTALL_CHANNEL` (app/build.gradle.kts) is handed to Go once by
+`TillService.kt` with `Mobile.setInstallChannel(...)` BEFORE `Mobile.start`.
+Nothing at runtime (settings, env, a synced directive, a request) can change
+it, and the first call wins.
+
+- Today's three `abi` flavors are the GitHub-release APK, so the default is
+  `sideload`.
+- A store flavor (the planned `play` one, #6409) MUST set its own
+  `INSTALL_CHANNEL` in its flavor block; `-PinstallChannel=<name>` overrides
+  it for a CI build.
+- A value outside the four names becomes `appstore` in Gradle, and the Go
+  side stores any unknown or missing value as `appstore` too: the build
+  fails closed. The shared `.aar` has no linker stamp, so a shell that never
+  calls `setInstallChannel` is treated as `appstore`.
+- Signing is untouched by this setting.
+
+## Tap to Pay (Stripe Terminal, off by default) (ut-docs#3048, ADR-0125)
+
+Tap to Pay on the phone's own NFC, with the Stripe Terminal Android SDK. It is a
+**compile-time flag, default off, honoured by the `arm64` flavor only**:
+
+```sh
+./gradlew -PtapToPay=true assembleArm64Debug     # real adapter + SDK (debug = Stripe's simulated reader)
+./gradlew assembleArm64Debug                     # normal build: stub, no SDK
+```
+
+| Build | SDK on classpath | Manifest additions | devicepay bridge (Go) | Kotlin |
+|---|---|---|---|---|
+| `armv7`, `universal` (any property) | no | none | never registered | 2.0.21 |
+| `arm64` without the flag (every `release.yml` build) | no | none | never registered | 2.0.21 |
+| `arm64` with `-PtapToPay=true` | yes (`stripeterminal-core` + `-taptopay` 6.0.0) | NFC, location, SDK permissions | registered | 2.3.21 |
+
+There is no runtime, page or remote switch. `release.yml` never passes the flag;
+`scripts/ci/guard-android-tap-to-pay-flag.sh` fails any workflow other than
+`android-ci.yml` (compile and JVM tests only) that does, until an owner-signed card
+adds `android/tap-to-pay-release-approved.txt`. `android-ci.yml` proves the shipped
+flavors carry no `com/stripe/stripeterminal` class and no Tap to Pay manifest entries
+(`check-android-stripe-sdk.sh`, `guard-android-manifest-features.sh ... shipped`), and
+compiles + unit-tests the real adapter with the flag on.
+
+**Spike results (2026-11-16, Stripe Terminal Android 6.0.0):**
+- Kotlin: the SDK is compiled with Kotlin 2.3 and pulls `kotlin-stdlib` 2.3.x, which the
+  app's 2.0.21 compiler cannot read. A flag-on build therefore uses Kotlin 2.3.21 (chosen
+  in `settings.gradle.kts` only when `-PtapToPay=true`); all other builds keep 2.0.21.
+  `kotlinOptions.jvmTarget` is a hard error on 2.3, so the build uses the
+  `kotlin { compilerOptions }` DSL (same JVM 17 target).
+- minSdk: the SDK AARs declare 26 (app: 24). The overlay manifest uses
+  `tools:overrideLibrary`; this is safe only because every SDK touch is behind
+  `SDK_INT >= 33` (`TillApplication`, `TapToPayPlatform.create`).
+- Manifest: the SDK adds Bluetooth, `ACCESS_COARSE_LOCATION`, `READ_PHONE_STATE`, NFC, USB
+  features (all `required=false` except the permissions) and a separate `:stripetaptopay`
+  process (the SDK starts a second `Application` there, so `TillApplication` returns early
+  in it). The overlay replaces `ACCESS_FINE_LOCATION` (the main manifest caps it at API 30)
+  and keeps NFC/telephony features optional so Play never derives `required="true"`.
+- arm64 debug APK size: 45.3 MB without the SDK, 87.0 MB with it (+41.7 MB, mostly the SDK's native libraries; debug APKs, not release-measured; shipped builds are unaffected while the flag is off).
+
+**Device minimums (Stripe docs, fetched 2026-11-16):** Android 13+, ARM, NFC, not rooted,
+locked bootloader, security patch under 12 months, Google Mobile Services with the Play
+Store, hardware keystore >= 100, Developer options off, location permission and
+location services on. Emulators, the TECLAST tablet (Developer options on, no NFC recorded),
+the iMin Falcon 1 (Android 11) and Fire tablets cannot take a live tap: the page sees
+`supported:false` and renders nothing. Whether a *sideloaded* self-signed APK passes
+Stripe's attestation is **unverified** (no Google approval step is documented; checklist D12).
+
+**Code layout** (`com.universaltill.pos.tap`): `TapToPayCapability` (pure device rules),
+`DevicepayCodec` (the JSON that crosses the gomobile boundary, strict in and out),
+`DevicepayBridgeCore` (the Kotlin `internal/devicepay` Bridge: `Capabilities`/`Collect`/
+`Cancel`/`Setup`/`ShowEducation`, plus the `Resolver`), `GoDevicepayBridge` (the thin
+`mobile.TapToPayBridge`/`TapToPayResolver` adapter), `TapToPayFlow` (one payment: collect
+window 18 s, hard deadline 24 s, never `declined` on a timer once confirm began, late results
+kept), `TapToPayEngine` (single-flight, persisted pending/paid records), `TapToPayShell`
+(registers the bridge while the Activity is started). Interfaces `Reader`, `CloudApi`,
+`PendingStore`, `Scheduler` have fakes in `src/test`.
+`src/ttpStub` (no-op) and `src/ttpReal` (`StripeTerminalReader`, `TillApplication`,
+manifest overlay) are chosen by the flag. Cloud calls go through Go
+(`Mobile.tapToPayCloud("stripe", op, body)` -> `internal/paybroker.Call`, the one forwarder
+shared with iOS): the device credential and the op allow-list stay in Go. Ops used:
+`connection_token` (`{secret}`), `onboarding_status` (`{onboarded, charges_enabled,
+location_id}`), `session_create` (`{client_secret, amount_minor, currency}`). The cloud
+creates the PaymentIntent; `StripeTerminalReader` retrieves it by client secret and
+collects only on a fresh `requires_payment_method` intent of exactly this amount. Same
+decision table as iOS for an intent the cloud returns for a retried key: `succeeded` (matching
+amount) is reported approved without collecting; `processing`/`requires_capture`/
+`requires_confirmation`/unrecognised status, a mismatch on a moved intent, or a failed read-back
+is `pending` with an unresolved record (never declined, never collected, never recreated);
+a `canceled` intent is declined `intent_canceled`: a new attempt needs a NEW idempotency
+key. A reader connect that never finishes (discovery that ends with nothing, a connect that
+never calls back) is aborted after 45 s (`ConnectAttempt`).
+
+**No page API (ut-docs#6533).** The path is plugin -> `internal/devicepay` (Go) -> this
+bridge -> Stripe Terminal, exactly as on iOS: the amount, currency and idempotency key are
+the till's own sale as Go sends them (`devicepay.Request`), never anything the web page
+supplies. The old `window.AndroidTapToPay` WebMessage bridge, its origin lock and its
+message protocol are gone: no `addWebMessageListener`, no `addJavascriptInterface`, so there
+is no origin to lock. The shell registers the bridge with Go (`Mobile.setTapToPayBridge`,
+`setTapToPayResolver`) in `onStart` and clears it in `onStop` (not `onPause`: Stripe's tap
+screen pauses the Activity mid-payment). Results use the main branch vocabulary:
+`approved` (always with a provider transaction id), `declined`, `cancelled`, and `pending`
+for anything unsure (an unknown outcome is never declined, #6439). The verdict is advisory:
+a sale is recorded only when the payment plugin verifies the PaymentIntent server-side.
+`Setup` (manager-gated by its Go caller) asks for the location permission, shows the
+education text, opens the NFC or location settings screen when one is off, and connects the
+reader. `resolve_unknown` is `devicepay.ResolveUnknown`: Go refuses anyone who is not a
+manager (`ReasonForbidden`) before the app is reached; the app then drops that key's
+unresolved record, which unblocks other baskets (until then they are declined
+`unknown_pending`; the same key is `pending/outcome_unknown`). Repeating a paid key returns
+the stored approval and never charges again; the same key with another amount is
+`key_mismatch`. No card data is in any message; amounts are 1..9,999,999 minor units.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)

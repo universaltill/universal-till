@@ -280,6 +280,7 @@
       <li><a href="/users">{{ T "setup.next_steps.pins" }}</a></li>
       <li><a href="/settings#settings-printer">{{ T "setup.next_steps.devices" }}</a></li>
       <li><a href="/inventory">{{ T "setup.next_steps.stock" }}</a></li>
+      <li hx-get="/ui/offsite-nextstep" hx-trigger="load" hx-swap="outerHTML" hidden></li>{{/* ut-docs#5066: cloud restore, only an empty entitled main till, only a manager */}}
     </ul>
   </section>
   {{ end }}

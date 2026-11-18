@@ -6,7 +6,7 @@ order: 210
 public: true
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
+keywords: [denomination count, count protocol, coin count, day so far, shift slip, shift close slip, z report, x report, x-report, mid-shift, interim report, x read, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai, staff breakdown, staff sales, cashier performance, works council, Betriebsrat]
 ---
 
 # Reports & end of day
@@ -17,7 +17,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in. Inside Custom, "Last 24 hours" is the rolling 24 hours up to now, not the business day — use the Today chip for that.
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), (for a manager/admin) Shrinkage & Loss, or Online channels (once this till has recorded an online order) — and that report loads when you open it.
-3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
+3. Want to see how the day stands before you close? Tap **Show day so far** in the same tab (see "Day so far" below). Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
 
@@ -292,6 +292,33 @@ archived report, and how many) and an **export** button — pick a date
 range and download the matching reports as CSV or JSON, e.g. to hand to an
 auditor.
 
+## Staff sales in cloud reports
+
+Your cloud reports can show sales for each staff member. This is **off
+unless you turn it on**, and only a manager or owner can change it:
+open **Settings → Advanced → Staff sales in cloud reports** (cashiers do
+not see the card), tick **Send sales per staff member to cloud reports**
+and tap **Save**. Untick it and save to turn it off again.
+
+- **What is sent.** For each staff member, per day: sales total, number of
+  sales, average sale, items per sale, refunds, voids, discounts and
+  "No sale" drawer opens. A staff member who only opened the drawer is
+  listed too. Staff are identified by their staff ID, never by name.
+- **Every till in the shop.** It is one setting for the whole shop. Change
+  it on the main till; on an additional till the change is sent to the main
+  till, and the card is locked while the main till cannot be reached.
+- **When it takes effect.** At the next upload, about every 10 minutes,
+  and only while your subscription is active, like other cloud sync.
+- **The last 14 days.** Changing the setting also updates the last 14 days
+  in your cloud reports at the next upload while your subscription is
+  active: turning it on fills in those days, turning it off
+  clears the staff figures for them. Staff figures already sent for older
+  days stay in the cloud reports.
+- **Works council (Germany).** Staff sales figures can show how
+  individual staff work. If your business has a works council, it may need
+  to agree before you turn this on.
+- **Record.** Each change is written to the audit log with who made it.
+
 ## Cash adjustments & payouts (Shifts)
 
 The Shifts page's "Cash adjustment / payout" form records anything that
@@ -343,6 +370,19 @@ The **Expected** line in the cash section is the same figure the shift close cou
 
 **Printing it.** With the figures shown, tap **Print X report**. The till reads the shift again at that moment and prints those figures, so the paper can be newer than the screen. It needs a receipt printer set up under Settings → Receipt printer; without one, or if the printer does not answer, a red "Print failed" message next to the button tells you to check the printer under Settings → Receipt printer and tap Print X report again; nothing is recorded. The printout is titled "X REPORT" and says it is not a day close: it has no end-of-day number and does not open the cash drawer. The same permission or manager PIN applies as for viewing, and the PIN is asked again for printing. Unlike viewing, printing leaves an audit entry (who printed it, and who approved).
 
+## Day so far (X report for the whole till)
+
+The **day so far** report shows what the next end-of-day (Z) report would contain if you ran it right now: every sale, return, void, cleared basket and no-sale on every register since your last day close, with the same layout as the end-of-day report, including the VAT-rate breakdown. It is for the whole till, not one register; for one register's open shift use the X report on Shifts above.
+
+It is not a day close. Nothing is closed, reset or archived, it has no end-of-day number, it takes no fiscal-device action and it does not open the cash drawer. Your next end-of-day report covers exactly the same period as if you had never looked, and the day-so-far report is never archived and is not part of the end-of-day or report exports. Only printing it leaves an audit entry (who, when, the number of sales and the net total), and that entry appears in the audit log export. The printed report is titled "X REPORT - DAY SO FAR" and says it is not a day close.
+
+1. Open **Reports → Day-end (EOD)**. The **Day so far (X report)** section is above Run End of day.
+2. Tap **Show day so far**. The report appears as it would print, with the time the figures are "as of" and the moment of the last day close they start from (or a note that this till has no day close yet). Tap the button again to read fresh figures. If nothing has been sold since the last close you see a note saying so.
+3. Tap **Print day so far** to print it. The till reads the figures again at that moment, so the paper can be newer than the screen. It needs a receipt printer set up under Settings → Receipt printer; without one, or if the printer does not answer, a red "Print failed" message next to the button tells you to check the printer and tap Print day so far again, and nothing is recorded.
+4. Tap **Hide day so far** to clear the figures from the screen before you step away from a till customers can see.
+
+Who can use it: the section is shown to roles with Reports access. Roles with the **End-of-day reports** permission use it directly; a role with Reports access but without that permission is asked for a manager PIN in the same dialog the till uses for other approvals, for viewing and again for printing. Roles without Reports access do not see the Day-end tab; with sign-in turned off there is no PIN. Viewing leaves no audit entry; printing does (who printed it, and who approved). Checkout is never held up while you look, and it works with no internet connection.
+
 ## Counting the drawer at close: skim & new float
 
 The opening cash for a new shift is **carried over automatically** from
@@ -376,6 +416,16 @@ before. Two optional extras join it:
   shops that want the till count documented piece by piece. Leave it
   empty to skip it entirely.
 
+**Seeing the count again.** Each closed shift in the Shifts **History**
+table has a **Show count** button. It opens a panel below the table with
+each coin and note counted, how many, the amount, the **Total of the
+count**, and the **Counted** figure you entered at close. If the two
+differ, a short note says so; it is information, not an error. A shift
+closed without a denomination count says so instead. Anyone who can open
+Shifts can see it, and it needs no manager PIN: the Counted figure is
+already in the history. Viewing it changes nothing and leaves no audit
+entry. Tap **Hide** to close the panel.
+
 While a shift is open, the **Current Shift** card on the Shifts page
 shows how often the cash drawer was opened without a sale ("no sale") on
 that shift's register since it opened. From the first one it also lists
@@ -386,6 +436,26 @@ variance, the skim or the new float. The card shows 0 until the drawer is
 opened without a sale. The per-cashier list appears from the first one.
 The close message mentions it only when there was at least one.
 
+### Printing a shift slip
+
+After you close a shift, the confirmation message has a **Print shift slip**
+button. It prints a slip titled **SHIFT CLOSE** on the receipt printer: the
+register, the cashier, when the shift was opened and closed, the shift's
+sales, payments, voids and cash (the same figures as the X report, up to the
+moment of the close), and then the drawer count: **Expected**, **Counted**,
+**Variance**, **Skim to safe** (only when you skimmed) and **New float**.
+
+It is not a day close: it has no end-of-day number, it does not open the cash
+drawer and it changes nothing — the shift, the Z report and your exports stay
+as they were. You can print it again from the same message; each print leaves
+an entry in the audit log. The button is only on that confirmation message,
+so reload the page and it is gone.
+
+Printing needs the **Reports** permission; without it the till asks for a
+manager's PIN (with sign-in off, no PIN is asked). If the receipt printer is
+off or does not answer, you see "Print failed" under the button and nothing
+is recorded.
+
 ## Cash reconciliation on the day-end report
 
 The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
@@ -393,7 +463,8 @@ section on any day at least one shift was closed: opening float, cash
 sales, tips held out (only printed on a day that actually has a cash
 tip), pay-ins, pay-outs, calculated (what should be in the drawers),
 counted (what was in them), variance, skim to safe, and the new float
-carried to the next day. Cash sales excludes any cash tip the same way
+carried to the next day. Cash sales counts every payment method of the
+cash type, not only the built-in Cash button, and excludes any cash tip the same way
 tips are already held out of revenue elsewhere on the report — that is
 why the "Tips held out" line sits between cash sales and pay-ins:
 opening float + cash sales + tips held out + pay-ins + pay-outs together

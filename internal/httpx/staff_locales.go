@@ -78,6 +78,29 @@ func StaffLocales(stored string) []string {
 	return StaffLocalesFor(stored, DefaultLocale(), AvailableLocales())
 }
 
+// ShopLanguagesFor is the shop's languages for matching its own words (icon
+// suggestions, ut-docs#2654): the default language first, then the rest of
+// the effective staff-language list, deduped.
+func ShopLanguagesFor(stored, defaultLocale string, available []string) []string {
+	def := MatchLocale(defaultLocale, available)
+	out := make([]string, 0, 4)
+	if def != "" {
+		out = append(out, def)
+	}
+	for _, l := range StaffLocalesFor(stored, defaultLocale, available) {
+		if l != def {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// ShopLanguages is ShopLanguagesFor with this till's default and installed
+// locales.
+func ShopLanguages(stored string) []string {
+	return ShopLanguagesFor(stored, DefaultLocale(), AvailableLocales())
+}
+
 // DefaultStaffLocale is the installed locale code the shop's default
 // language maps to — the one entry the staff-language list can't drop.
 // "" when the default isn't installed.
