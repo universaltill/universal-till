@@ -2,3 +2,5 @@
 "NSLocalNetworkUsageDescription" = "يعثر Universal Till على صناديق متجرك الأخرى ويتزامن معها عبر الشبكة المحلية.";
 "NSCameraUsageDescription" = "يستخدم Universal Till الكاميرا لمسح الرموز الشريطية والتقاط صور الأصناف.";
 "NSMicrophoneUsageDescription" = "يستخدم Universal Till الميكروفون لتسجيل ملاحظة صوتية في الإبلاغ عن مشكلة.";
+"NSLocationWhenInUseUsageDescription" = "يستخدم Universal Till موقعك لقبول المدفوعات بالبطاقات، كما تشترط شبكات البطاقات.";
+"NSBluetoothAlwaysUsageDescription" = "يستخدم Universal Till البلوتوث للاتصال بقارئات البطاقات المدعومة.";

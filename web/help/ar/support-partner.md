@@ -3,7 +3,7 @@ id: support-partner
 title: شريك الدعم
 section: الاتصال والإضافات
 order: 362
-public: true
+public: false
 summary: "شريك الدعم شركة تساعد متجرك في Universal Till. يربطه مالك المتجر أو يفصله من «إدارة المتجر» على my.universaltill.com، وليس من الصندوق نفسه."
 keywords: [شريك, موزّع, دعم, مساعدة, موافقة, مالك, رمز الشريك, فصل]
 ---

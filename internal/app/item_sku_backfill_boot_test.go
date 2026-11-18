@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#3097: an upgraded primary/standalone till gives every SKU-less
@@ -23,7 +23,7 @@ func (l *recordingLog) Errorf(f string, a ...any) { l.errors = append(l.errors, 
 
 func openBackfillBootDB(t *testing.T) *sql.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "unitill-pos.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "unitill-pos.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
