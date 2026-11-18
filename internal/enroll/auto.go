@@ -271,22 +271,6 @@ func MarkNoticeShown(ctx context.Context, kv Settings, now time.Time) error {
 	return nil
 }
 
-// SetStopped switches "Send usage facts" off (true) or on (false). Switching
-// on wakes the registration loop.
-func SetStopped(ctx context.Context, kv Settings, stopped bool) error {
-	v := "false"
-	if stopped {
-		v = "true"
-	}
-	if err := kv.Set(ctx, KeyStopped, v); err != nil {
-		return err
-	}
-	if !stopped {
-		KickAutoRegister()
-	}
-	return nil
-}
-
 // Stopped reports the stop switch.
 func Stopped(ctx context.Context, kv Settings) bool { return kvGetter(ctx, kv)(KeyStopped) == "true" }
 

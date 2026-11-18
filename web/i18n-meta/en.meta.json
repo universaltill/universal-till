@@ -857,5 +857,7 @@
   "settings.registration.stop_help": {"description": "Help under the Stop sending button: what stopping does and does not do.", "review": "standard"},
   "settings.registration.resume_help": {"description": "Help under the Resume sending button.", "review": "standard"},
   "elevation.summary.registration_stop": {"description": "Sentence in the manager-PIN prompt shown when a cashier presses Stop sending on Settings, Cloud record: names the action the approver is allowing.", "review": "standard"},
-  "elevation.summary.registration_resume": {"description": "Sentence in the manager-PIN prompt shown when a cashier presses Resume sending on Settings, Cloud record: names the action the approver is allowing.", "review": "standard"}
+  "elevation.summary.registration_resume": {"description": "Sentence in the manager-PIN prompt shown when a cashier presses Resume sending on Settings, Cloud record: names the action the approver is allowing.", "review": "standard"},
+  "pos.toast.payment_outcome_unknown": {"description": "Error toast on the till when a card payment may have been charged but the reader could not confirm it: tells the cashier to tap Pay again to settle it and not to take another payment.", "review": "standard"},
+  "selforder.checkout.outcome_unknown": {"description": "Message on the self-order kiosk when the customer's card payment could not be confirmed: sends them to the cashier and tells them not to pay again.", "review": "standard"}
 }

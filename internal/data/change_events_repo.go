@@ -116,26 +116,12 @@ type ChangeEventsRepo struct{ db *sql.DB }
 // NewChangeEventsRepo returns the outbox repository.
 func NewChangeEventsRepo(db *sql.DB) *ChangeEventsRepo { return &ChangeEventsRepo{db: db} }
 
-func (r *ChangeEventsRepo) executor(tx *sql.Tx) executor {
-	if tx != nil {
-		return tx
-	}
-	return r.db
-}
-
 func newChangeEventID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b[:]), nil
-}
-
-// Append stores one event (id generated when empty) and trims the outbox to
-// ChangeEventCap, dropping the oldest, in the same transaction when tx is set.
-// It does not consult the policy: the Record* helpers do.
-func (r *ChangeEventsRepo) Append(ctx context.Context, tx *sql.Tx, ev ChangeEvent) error {
-	return appendChangeEvent(ctx, r.executor(tx), ev)
 }
 
 var changeEventsDropLogged atomic.Bool
@@ -211,12 +197,6 @@ func (r *ChangeEventsRepo) Ack(ctx context.Context, ids []string) error {
 }
 
 // Count is the number of waiting events.
-func (r *ChangeEventsRepo) Count(ctx context.Context) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM till_change_events`).Scan(&n)
-	return n, err
-}
-
 // recordAllowed asks the wired policy, reading settings through exec so a
 // caller holding a transaction on a one-connection database never waits on a
 // second connection.

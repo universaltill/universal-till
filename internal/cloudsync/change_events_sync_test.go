@@ -34,13 +34,11 @@ func reportingTill(t *testing.T, db *sql.DB) *data.ChangeEventsRepo {
 	return data.NewChangeEventsRepo(db)
 }
 
-func addEvents(t *testing.T, repo *data.ChangeEventsRepo, n int) {
+func addEvents(t *testing.T, db *sql.DB, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		err := repo.Append(context.Background(), nil, data.ChangeEvent{
-			Kind: data.ChangeKindPlugin, PluginID: fmt.Sprintf("ut-plugin-p%d", i), Action: data.ChangeActionInstall, To: "1.0.0", At: time.Now().UTC(),
-		})
-		if err != nil {
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO till_change_events (id, kind, plugin_id, action, from_version, to_version, at) VALUES (?, 'plugin', ?, 'install', '', '1.0.0', ?)`,
+			fmt.Sprintf("%032x", i+1), fmt.Sprintf("ut-plugin-p%d", i), time.Now().UTC().Format(time.RFC3339)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -66,7 +64,7 @@ func TestChangeEvents_RideThePostOldestFirstAndAckOnSuccess(t *testing.T) {
 	defer srv.Close()
 	db := testDB(t)
 	repo := reportingTill(t, db)
-	addEvents(t, repo, 60)
+	addEvents(t, db, 60)
 
 	mustTick(t, srv.URL, db, Hooks{})
 
@@ -88,7 +86,7 @@ func TestChangeEvents_RideThePostOldestFirstAndAckOnSuccess(t *testing.T) {
 			t.Errorf("event carries key %q outside the wire contract", k)
 		}
 	}
-	if n, _ := repo.Count(context.Background()); n != 10 {
+	if n, _ := pendingCount(repo); n != 10 {
 		t.Fatalf("outbox after ack = %d, want the 10 not yet sent", n)
 	}
 }
@@ -98,14 +96,14 @@ func TestChangeEvents_NonEmptyOutboxForcesThePostPast304(t *testing.T) {
 	cloud, srv := newCheckinCloud(3)
 	defer srv.Close()
 	db := testDB(t)
-	repo := reportingTill(t, db)
+	reportingTill(t, db)
 
 	mustTick(t, srv.URL, db, Hooks{}) // 200 -> POST
 	mustTick(t, srv.URL, db, Hooks{}) // 304 -> no POST
 	if cloud.posts() != 1 {
 		t.Fatalf("posts = %d before any event, want 1 (the 304 skipped the second)", cloud.posts())
 	}
-	addEvents(t, repo, 1)
+	addEvents(t, db, 1)
 	mustTick(t, srv.URL, db, Hooks{})
 	if cloud.posts() != 2 {
 		t.Fatalf("posts = %d, want 2: a waiting event must force a POST past a 304", cloud.posts())
@@ -153,13 +151,13 @@ func TestChangeEvents_AckedOn402ButKeptOnOtherFailures(t *testing.T) {
 			t.Cleanup(srv.Close)
 			db := testDB(t)
 			repo := reportingTill(t, db)
-			addEvents(t, repo, 3)
+			addEvents(t, db, 3)
 			armStartup()
 			_, _ = tick(context.Background(), testCfg(srv.URL), db, Hooks{})
 			if cloud.count(reqSyncPost) != 1 {
 				t.Fatalf("sync POSTs = %d, want 1", cloud.count(reqSyncPost))
 			}
-			if n, _ := repo.Count(context.Background()); n != tc.wantLeft {
+			if n, _ := pendingCount(repo); n != tc.wantLeft {
 				t.Fatalf("outbox = %d, want %d", n, tc.wantLeft)
 			}
 		})
@@ -183,13 +181,13 @@ func TestChangeEvents_NotSentWhenAGuardSaysNo(t *testing.T) {
 			defer srv.Close()
 			db := testDB(t)
 			repo := reportingTill(t, db)
-			addEvents(t, repo, 2)
+			addEvents(t, db, 2)
 			mutate(t, db)
 			mustTick(t, srv.URL, db, Hooks{})
 			if _, has := syncDevice(t, cloud.fakeCloud, 0)["events"]; has {
 				t.Fatal("events were sent although the guards say no")
 			}
-			if n, _ := repo.Count(context.Background()); n != 2 {
+			if n, _ := pendingCount(repo); n != 2 {
 				t.Fatalf("outbox = %d, want the 2 events kept", n)
 			}
 		})
@@ -218,9 +216,9 @@ func TestChangeEvents_OldCloudIgnoringTheFieldStillWorks(t *testing.T) {
 	defer srv.Close()
 	db := testDB(t)
 	repo := reportingTill(t, db)
-	addEvents(t, repo, 1)
+	addEvents(t, db, 1)
 	mustTick(t, srv.URL, db, Hooks{})
-	if n, _ := repo.Count(context.Background()); n != 0 {
+	if n, _ := pendingCount(repo); n != 0 {
 		t.Fatalf("outbox = %d after a 200", n)
 	}
 }
@@ -253,4 +251,10 @@ func TestStoppedTillMakesNoStartupCheckin(t *testing.T) {
 	if got := cloud.requests(); len(got) != 0 {
 		t.Fatalf("a stopped till made requests %v", got)
 	}
+}
+
+// pendingCount is how many events still wait in the outbox.
+func pendingCount(repo *data.ChangeEventsRepo) (int, error) {
+	evs, err := repo.ListPending(context.Background(), data.ChangeEventCap)
+	return len(evs), err
 }
