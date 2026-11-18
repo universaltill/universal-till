@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { watchConsole, nameShop } from './helpers';
+import { watchConsole, ensureRegisteredAutomatically } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -111,15 +111,7 @@ async function expectChipHitTestable(page: Page, where: string) {
 const DIAG_SECTION = '/settings#settings-diagnostics';
 
 async function ensureRegistered(page: Page) {
-  await page.goto('/settings#registration');
-  const registerBtn = page.locator('#registration button[hx-post="/api/enrol/now"]');
-  if (await registerBtn.count()) {
-    await nameShop(page); // ut-docs#4272: registration waits for a real shop name
-    await page.locator('#enrol-accept-terms').check(); // ut-docs#4720: the cloud terms are accepted first
-    await registerBtn.click();
-    await expect(page.locator('#enrol-msg')).toContainText('✅');
-    await page.goto('/settings#registration');
-  }
+  await ensureRegisteredAutomatically(page);
   await expect(page.locator('#registration')).toContainText('e2e-store');
 }
 

@@ -24,8 +24,14 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
+import android.os.CancellationSignal
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.print.PageRange
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintManager
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
@@ -59,10 +65,12 @@ import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.universaltill.pos.tap.TapToPayShell
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import mobile.Mobile
 // Aliased: this Activity already has an unrelated inner class named
@@ -151,6 +159,10 @@ class MainActivity : AppCompatActivity() {
     // shouldOverrideUrlLoading refuses everything, which is correct: no
     // page has loaded yet for anything to navigate away from.
     private var allowedHost: String? = null
+
+    // #3048: Stripe Terminal Tap to Pay. null in every build made without
+    // -PtapToPay=true (all shipped builds): no listener, no engine, no code runs.
+    private var tapShell: TapToPayShell? = null
 
     private val listener: (String?, String?) -> Unit = { address, error ->
         runOnUiThread {
@@ -505,7 +517,72 @@ class MainActivity : AppCompatActivity() {
     // pinned. onPageFinished deliberately leaves the pin alone on the
     // manager-facing pages for exactly that reason; onResume has to agree
     // with it.
+    // @Volatile: the print bridge reads it on the JavaBridge thread (ut-docs#6153).
+    @Volatile
     private var kioskPinned = false
+
+    /** ut-docs#6153: elapsedRealtime when the open print dialog started; 0 = none. */
+    private val printInFlightSince = AtomicLong(0L)
+
+    /**
+     * ut-docs#6153: opens the system print dialog for the WebView's current
+     * page (UI thread). Never unpins the kiosk: [KioskBridge.print] refuses
+     * while pinned. Always clears the in-flight slot on a failure path; on
+     * success the wrapping adapter's onFinish clears it.
+     */
+    private fun startPrint(claimed: Long) {
+        // Release only our own claim: a late onFinish after the in-flight window
+        // expired must not clear a newer dialog's slot (ut-docs#6153 review F2).
+        val release = { printInFlightSince.compareAndSet(claimed, 0L); Unit }
+        try {
+            if (isDestroyed || isFinishing) {
+                release()
+                return
+            }
+            val jobName = PrintLogic.jobName(getString(R.string.app_name), webView.title)
+            val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
+            if (printManager == null) {
+                release()
+                return
+            }
+            val inner = webView.createPrintDocumentAdapter(jobName)
+            printManager.print(jobName, ReleasingPrintAdapter(inner, release), null)
+        } catch (e: Exception) {
+            release()
+            Log.w(TAG, "startPrint failed", e)
+        }
+    }
+
+    /** Forwards to the WebView's adapter and runs [onDone] after onFinish (dialog closed or job spooled). */
+    private class ReleasingPrintAdapter(
+        private val inner: PrintDocumentAdapter,
+        private val onDone: () -> Unit,
+    ) : PrintDocumentAdapter() {
+        override fun onStart() = inner.onStart()
+
+        override fun onLayout(
+            oldAttributes: PrintAttributes?,
+            newAttributes: PrintAttributes,
+            cancellationSignal: CancellationSignal?,
+            callback: LayoutResultCallback?,
+            extras: Bundle?,
+        ) = inner.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras)
+
+        override fun onWrite(
+            pages: Array<out PageRange>?,
+            destination: ParcelFileDescriptor?,
+            cancellationSignal: CancellationSignal?,
+            callback: WriteResultCallback?,
+        ) = inner.onWrite(pages, destination, cancellationSignal, callback)
+
+        override fun onFinish() {
+            try {
+                inner.onFinish()
+            } finally {
+                onDone()
+            }
+        }
+    }
 
     /**
      * ut-docs#3466 (ADR-0142 D3): the remote-unlock release window. 0 when
@@ -623,8 +700,37 @@ class MainActivity : AppCompatActivity() {
      * shouldOverrideUrlLoading confining navigation to the till's own
      * loopback host is what actually closes that gap; without it, this
      * class would be a real bypass of the very lock it exists to release.
+     *
+     * `print` (ut-docs#6153) is covered by the same reasoning: it takes no
+     * argument and prints only the page this WebView already shows.
      */
     private inner class KioskBridge {
+        /**
+         * ut-docs#6153: Android System WebView ignores window.print(). Opens the
+         * system print dialog for THIS WebView's current page. Takes no argument,
+         * deliberately: nothing the page passes reaches a URL, a file or the job
+         * name. Returns true when a dialog was requested, false when printing is
+         * unavailable here (kiosk pinned, activity gone, a dialog already open).
+         * Never throws.
+         */
+        @JavascriptInterface
+        fun print(): Boolean {
+            return try {
+                val now = SystemClock.elapsedRealtime()
+                val prev = printInFlightSince.get()
+                val pinned = kioskPinned || lockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE
+                if (!PrintLogic.canPrint(pinned, isFinishing || isDestroyed, prev, now)) return false
+                // Claim the slot here, on the binder thread, so a double tap's
+                // second call is refused before the UI thread has run.
+                if (!printInFlightSince.compareAndSet(prev, now)) return false
+                runOnUiThread { startPrint(now) }
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "print bridge failed", e)
+                false
+            }
+        }
+
         /** ut-docs#5620: minutes of idle before the till lets the screen sleep (0 = never). */
         @JavascriptInterface
         fun getScreenAwakeMinutes(): Int = screenAwakeMinutes()
@@ -674,6 +780,23 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun installUpdate() {
             runOnUiThread { downloadAndInstallUpdate() }
+        }
+
+        /**
+         * ut-docs#6551: opens Android's "Install unknown apps" screen for THIS
+         * app only (the package is [packageName], never page input; no
+         * argument). The page offers it after the shell reported
+         * `needs_permission`, on the manager's own tap. Changes nothing by
+         * itself: the operator flips the switch on the system screen.
+         */
+        @JavascriptInterface
+        fun canInstallPackages(): Boolean =
+            UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } ==
+                InstallPreflight.PROCEED
+
+        @JavascriptInterface
+        fun openInstallPermissionSettings() {
+            runOnUiThread { openInstallPermissionScreen() }
         }
 
         /**
@@ -962,6 +1085,15 @@ class MainActivity : AppCompatActivity() {
         if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
             Log.i(TAG, "update: already in progress, re-reporting state")
             lastUpdateState?.let { pushUpdateState(it) }
+            return
+        }
+        // ut-docs#6551: before spending a ~40 MB download, make sure Android
+        // will let this app hand an APK to the installer. If not, tell the
+        // page (it explains and offers the settings screen) instead of a
+        // silent no-op later.
+        if (UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } == InstallPreflight.NEEDS_PERMISSION) {
+            Log.i(TAG, "update: install-unknown-apps not allowed for this app, asking the operator")
+            reportUpdate(UpdateLogic.STATE_NEEDS_PERMISSION, null, null)
             return
         }
         // ut-docs#4495: a new attempt. A launch Android refused silently
@@ -1478,6 +1610,28 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             PackageInfoCompat.getLongVersionCode(packageManager.getPackageInfo(packageName, 0))
         }.getOrDefault(Long.MAX_VALUE) // unknown: never reuse a file blindly
+
+    /** ut-docs#6551: set while the system permission screen is open, read by [onResume]. */
+    private var updateAwaitingPermission = false
+
+    private fun openInstallPermissionScreen() {
+        try {
+            // Same reason as launchPackageInstaller: a pinned (lock-task) app
+            // cannot start another app's activity.
+            releaseKioskLock()
+            clearImmersiveMode()
+            val intent =
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            updateAwaitingPermission = true
+            startActivity(intent)
+            Log.i(TAG, "update: opened the install-unknown-apps screen")
+        } catch (e: Exception) {
+            updateAwaitingPermission = false
+            failUpdate("permission screen: ${e.message ?: "could not open"}")
+        }
+    }
 
     /**
      * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
@@ -2055,6 +2209,8 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "reload: activity recreated (savedInstanceState present)")
         }
         setContentView(R.layout.activity_main)
+        // #3048: must be created here (it registers an activity-result launcher).
+        tapShell = TapToPayShell.create(this)
         pruneStaleUpdateCopy()
 
         webView = findViewById(R.id.webview)
@@ -2576,6 +2732,24 @@ class MainActivity : AppCompatActivity() {
         // ut-docs#4312: a download that outlived the previous Activity keeps
         // reporting its progress to the page.
         resumeUpdateWatch()
+        // ut-docs#6551: back from the "install unknown apps" screen. Never
+        // continues the install on its own: the page shows the install
+        // button again and the operator taps it (one explicit tap before the
+        // till restarts).
+        UpdateLogic.permissionResume(updateAwaitingPermission, Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() }?.let {
+            when (it) {
+                PermissionResume.GRANTED -> {
+                    updateAwaitingPermission = false
+                    reportUpdate(UpdateLogic.STATE_PERMISSION_GRANTED, null, null)
+                }
+                PermissionResume.STILL_DENIED -> {
+                    // Report once per visit to the system screen, so a later
+                    // unrelated resume does not re-open the page's panel.
+                    updateAwaitingPermission = false
+                    reportUpdate(UpdateLogic.STATE_NEEDS_PERMISSION, null, UpdateLogic.ERROR_STILL_DENIED)
+                }
+            }
+        }
         // ut-docs#4495: back from Android's installer without an install.
         if (updateInstallerLaunched) {
             updateInstallerLaunched = false
@@ -2661,8 +2835,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // #3048: onStart/onStop, not onResume/onPause: Stripe's tap screen pauses this Activity mid-payment.
+    override fun onStart() {
+        super.onStart()
+        tapShell?.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        tapShell?.onStop()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        tapShell?.onDestroy(isFinishing)
         // ut-docs#2788: pairs with onCreate's "activity recreated" line.
         Log.i(TAG, "reload: activity destroyed (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)")
         // ut-docs#1639: drop any pending delayed pin-verification callback —

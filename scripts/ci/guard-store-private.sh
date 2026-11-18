@@ -46,7 +46,24 @@
 #                       store-submission / apppublisher actions, StoreBroker
 #                       *-ApplicationSubmission, the Partner Center
 #                       applications/<id>/submissions API) without a package
-#                       flight (--flightId / -f / flight_id / flights/)
+#                       flight (--flightId / -f / flight_id / flights/).
+#                       Also the Store submission API forms: manage.devcenter
+#                       .microsoft.com, api.store.microsoft.com, the
+#                       `ingestion` submissions API, `msstore submission` /
+#                       `msstore package`, Get-/Update-/Commit-
+#                       ApplicationSubmission (ut-docs#6405)
+#   release-asset-clobber `gh release upload ... --clobber` (also across `\`
+#                       continuations): a published release asset must never
+#                       be overwritten (the Store submission and self-update
+#                       point at its bytes); upload through
+#                       scripts/ci/release-upload.sh. Exception: a same-line
+#                       `release-asset-clobber:allow <why>` marker
+#   msstore-submit-switch the Microsoft Store submit path stays shut until the
+#                       owner's opening card (ut-docs#6408): the real-submit
+#                       script must check store-release/microsoft.opened, and
+#                       that file may exist only if it names its card
+#                       (ut-docs#N) AND .github/workflows/msstore-submit.yml
+#                       carries a `store-release:allow ut-docs#N` marker
 #
 # Reviewed exception: a same-line `store-release:allow ut-docs#<N>` marker
 # naming the owner-approved card that opens that store to the public. On a
@@ -64,6 +81,7 @@
 # Explicit-args form for fixture-based testing (guard-store-private_test.sh):
 # the single arg is the repo root to scan.
 set -euo pipefail
+export LC_ALL=C # awk tolower() aborts on a multibyte byte under a UTF-8 locale
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCAN_ROOT="${1:-$ROOT_DIR}"
@@ -146,7 +164,7 @@ violations="$(awk '
     }
     return out
   }
-  FNR == 1 { closeUpload(); slash = (FILENAME ~ /\.(go|kts|gradle|js|mjs)$/) }
+  FNR == 1 { closeUpload(); inUp = 0; slash = (FILENAME ~ /\.(go|kts|gradle|js|mjs)$/) }
   {
     raw = $0
     code = strip(raw)
@@ -154,6 +172,21 @@ violations="$(awk '
     lc = tolower(code)
     match(code, /^[ \t]*/); lead = RLENGTH
     allowed = (raw ~ /store-release:allow (ut-docs)?#[0-9]+/)
+
+    # A published release asset is never overwritten: `release upload` with
+    # --clobber on the same logical line (continuations included).
+    if (lc ~ /release[ \t]+upload/) inUp = 1
+    if (inUp && lc ~ /--clobber/ && raw !~ /release-asset-clobber:allow [a-z]/) {
+      report("release-asset-clobber", raw)
+    }
+    if (inUp && code !~ /\\[ \t]*$/) inUp = 0
+    # Deleting a published asset (to upload a different one under the same
+    # name), clobber held in a variable, and the softprops release action all
+    # replace a published asset.
+    if (lc ~ /release[ \t]+delete-asset|releases\/assets\/[^ ]*|softprops\/action-gh-release|--clobber/ && lc !~ /release[ \t]+upload/ \
+        && lc ~ /delete-asset|-x[ \t]+delete|softprops\/action-gh-release|clobber[a-z_]*[ \t]*=/ && raw !~ /release-asset-clobber:allow [a-z]/) {
+      report("release-asset-clobber", raw)
+    }
 
     # A line left of the upload key column (the next list item, `end`,
     # the next lane) ends its step. A command-line upload (fastlane supply,
@@ -190,13 +223,40 @@ violations="$(awk '
     n = split(tv, arr, " ")
     for (i = 1; i <= n; i++) if (arr[i] != "internal") { report("play-track", raw); next }
 
-    if (lc ~ /msstore[ \t]+publish|store-submission@|microsoft-store-apppublisher|(new|update|complete|commit|submit)-applicationsubmission|applications\/[^\/ ]+\/submissions/ \
+    if (lc ~ /msstore[ \t]+(publish|submission|package)|store-submission@|microsoft-store-apppublisher|storebroker|manage\.devcenter\.microsoft\.com|api\.store\.microsoft\.com|submission\/v1\/product\/|isaacrlevin\/windows-store-action|microsoft\/store-submission|\/ingestion\/|ingestion\.[a-z.]*microsoft|(new|get|update|complete|commit|submit)-applicationsubmission|applications\/[^\/ ]+\/submissions/ \
         && lc !~ /--flightid|flight_?id|flights\// && !(lc ~ /msstore/ && lc ~ /(^|[ \t])-f[ \t]/)) {
       report("msstore-public", raw); next
     }
   }
   END { closeUpload() }
 ' $files)"
+
+# msstore-submit-switch (ut-docs#6408): the Store submit path stays shut until
+# the owner's opening card flips store-release/microsoft.opened.
+sw="$(
+  script="${SCAN_ROOT}/scripts/ci/msstore-submit.sh"
+  wf="${SCAN_ROOT}/.github/workflows/msstore-submit.yml"
+  opened="${SCAN_ROOT}/store-release/microsoft.opened"
+  # The submit script must really test the opening file: comments stripped, then
+  # matched on a here-string (no pipe into grep -q under pipefail, ut-docs#2946).
+  code_only=""
+  [ -f "$script" ] && code_only="$(grep -v '^[[:space:]]*#' "$script" || true)"
+  # shellcheck disable=SC2016 # the pattern is a literal grep expression
+  if [ -f "$script" ] && ! grep -qE '\[ -f "\$opened" \]' <<<"$code_only"; then
+    echo "scripts/ci/msstore-submit.sh: [msstore-submit-switch] the submit script does not check store-release/microsoft.opened"
+  fi
+  if [ -f "$opened" ]; then
+    card="$(grep -oE 'ut-docs#[0-9]+' "$opened" | sed -n 1p || true)"
+    if [ -z "$card" ]; then
+      echo "store-release/microsoft.opened: [msstore-submit-switch] the opening file must name its owner-approved card (ut-docs#<N>)"
+    elif [ ! -f "$wf" ] || ! grep -qE "store-release:allow ${card}( |\$)" "$wf"; then
+      echo ".github/workflows/msstore-submit.yml: [msstore-submit-switch] store-release/microsoft.opened names ${card} but the workflow carries no 'store-release:allow ${card}' marker"
+    fi
+  fi
+)"
+if [ -n "$sw" ]; then
+  violations="${violations:+${violations}$'\n'}${sw}"
+fi
 
 if [ -n "$violations" ]; then
   echo "❌ store-private guard: a release path can reach a PUBLIC store audience (ut-docs#3052)" >&2

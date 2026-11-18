@@ -2,6 +2,7 @@ package pos
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -136,6 +137,25 @@ type Service struct {
 	// Minted lazily by TenderAttemptID on first read after a reset; cleared
 	// by resetLocked so the next, genuinely different basket mints its own.
 	tenderAttemptID string
+	// tenderLock (ut-docs#6600) is the signature of the tender whose card
+	// outcome is UNKNOWN: until that tender settles, only the identical tender
+	// may be retried (same authorize request id), so a possibly-charged card
+	// is never followed by another payment. Cleared with tenderAttemptID.
+	tenderLock string
+	// pendingTender (ut-docs#6602) is what the locked tender leaves behind:
+	// the legs already captured (to reverse if the tender is abandoned) and
+	// the legs of unknown outcome (to warn about). Same lifetime as
+	// tenderLock; set by LockTender, cleared by SettleTender, the reset
+	// core and RotateTenderAttemptID. abandonHandler receives it (outside
+	// mu) when a reset drops it; abandonNotice is the one-shot result.
+	pendingTender  PendingTender
+	abandonHandler AbandonedTenderHandler
+	abandonNotice  *AbandonResult
+	// handedOff holds the authorize request ids of captured legs a reset
+	// passed to the abandon handler (ut-docs#6602 review M1): a tender still
+	// in flight on the old basket must not reverse them a second time.
+	// Request ids embed the attempt uuid, so they are never reused; guarded by mu.
+	handedOff map[string]bool
 	// ageChecks (ut-docs#3340) holds the ID-check outcome the cashier
 	// recorded for each age-restricted ITEM in the current sale, keyed by
 	// ItemID — per item, not per LineKey, so a line that later merges,
@@ -560,6 +580,12 @@ type Basket struct {
 	// most the discount can be. Handlers set both on their own Basket copy.
 	DiscountErrorKey   string      `json:"-"`
 	DiscountErrorLimit money.Money `json:"-"`
+	// LineChangedKey (ut-docs#5417) is a PER-RESPONSE render hint like
+	// DiscountErrorKey: the LineKey whose /api/pos/line update was refused
+	// because the line changed (or went) since the handler read it.
+	// basket.html notes it under that line, or above the totals when no
+	// line carries the key any more.
+	LineChangedKey string `json:"-"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --
@@ -1709,10 +1735,15 @@ func (s *Service) removeLineLocked(key string) {
 }
 
 // Reset clears basket and lines after completion.
-func (s *Service) Reset() {
+func (s *Service) Reset() { s.ResetBecause(AbandonCleared) }
+
+// ResetBecause is Reset naming why, for the abandoned-tender handoff
+// (ut-docs#6602). The handler runs after s.mu is released.
+func (s *Service) ResetBecause(r AbandonReason) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.resetLocked()
+	p := s.resetLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(r, p)
 }
 
 // ResetAndSnapshot clears the basket like Reset and returns what it held,
@@ -1720,9 +1751,10 @@ func (s *Service) Reset() {
 // Snapshot and Reset would be wiped without being in the snapshot.
 func (s *Service) ResetAndSnapshot() BasketSnapshot {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	snap := s.snapshotLocked()
-	s.resetLocked()
+	p := s.resetLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(AbandonCleared, p)
 	return snap
 }
 
@@ -1742,22 +1774,81 @@ func (s *Service) TenderAttemptID() string {
 	return s.tenderAttemptID
 }
 
-// RotateTenderAttemptID discards the current tender attempt's id so the
-// next TenderAttemptID call mints a fresh one, WITHOUT touching the basket.
-// For a tender refused after its authorized legs were reversed (ADR-0136,
-// ut-docs#3309): the basket is kept for the cashier to fix, but the old
-// authorize requests are spent — a retry must be a new request, never one a
-// provider's own dedupe (ut-docs#1762) could answer with the memoized
-// approval for money that was just sent back.
-func (s *Service) RotateTenderAttemptID() {
+// TenderAttemptIs reports whether id is still the live tender attempt of this
+// basket. False once a reset (clear, park, resume, completed sale) or a
+// rotation dropped it, so a tender still in flight learns that its basket was
+// abandoned under it (ut-docs#6602 review M1). Never mints an id.
+func (s *Service) TenderAttemptIs(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return id != "" && s.tenderAttemptID == id
+}
+
+// RotateTenderAttemptIDIf is RotateTenderAttemptID, but only while id is
+// still the live attempt: a tender whose basket was abandoned must not
+// clear the lock of whatever basket came next. Reports whether it rotated.
+func (s *Service) RotateTenderAttemptIDIf(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" || s.tenderAttemptID != id {
+		return false
+	}
 	s.tenderAttemptID = ""
+	s.tenderLock = ""
+	s.pendingTender = PendingTender{}
+	return true
+}
+
+// NotHandedOff returns the legs whose request id no reset has already handed
+// to the abandon handler (which reverses them itself).
+func (s *Service) NotHandedOff(legs []CapturedLeg) []CapturedLeg {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []CapturedLeg
+	for _, l := range legs {
+		if !s.handedOff[l.RequestID] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// LockTender records sig as the only tender this basket may attempt next
+// (ut-docs#6600) plus what it leaves behind (ut-docs#6602); TenderLock
+// returns the signature ("" = unlocked); SettleTender clears both once the
+// provider has answered definitively. A retry of the same tender merges.
+func (s *Service) LockTender(sig string, p PendingTender) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tenderLock == sig {
+		s.pendingTender = mergePending(s.pendingTender, p)
+	} else {
+		s.pendingTender = mergePending(PendingTender{}, p)
+	}
+	s.tenderLock = sig
+}
+
+func (s *Service) TenderLock() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tenderLock
+}
+
+// SettleTender clears the tender lock and returns the stash it held.
+func (s *Service) SettleTender() PendingTender {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pendingTender
+	s.pendingTender = PendingTender{}
+	s.tenderLock = ""
+	return p
 }
 
 // resetLocked is Reset's lock-free core — also called by Restore before
 // loading a snapshot. Caller must hold s.mu.
-func (s *Service) resetLocked() {
+// It returns the pending-tender stash it dropped (ut-docs#6602): callers hand
+// it to handOffAbandoned once s.mu is released.
+func (s *Service) resetLocked() PendingTender {
 	// Mutates totals-relevant state without recomputing — must invalidate
 	// any in-flight optimistic recompute (see recomputeGen's doc comment).
 	s.recomputeGen++
@@ -1777,6 +1868,15 @@ func (s *Service) resetLocked() {
 	s.tableID = ""
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
+	s.tenderLock = ""
+	dropped := s.pendingTender
+	s.pendingTender = PendingTender{}
+	for _, l := range dropped.Captured {
+		if s.handedOff == nil || len(s.handedOff) > 4096 {
+			s.handedOff = map[string]bool{}
+		}
+		s.handedOff[l.RequestID] = true
+	}
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""
@@ -1792,6 +1892,7 @@ func (s *Service) resetLocked() {
 	// the next one. Unlike customerID/tableID, voucher state has no
 	// separate private mirror field to also clear here (nothing reads it
 	// outside the Basket itself).
+	return dropped
 }
 
 func (s *Service) clearCacheForCode(code string) {
@@ -1805,37 +1906,7 @@ func (s *Service) clearCacheForCode(code string) {
 	}
 }
 
-// UpdateLine sets qty/discount for a given SKU (or item/variant match) and
-// recomputes totals. Matches only the FIRST line for code — same caveat as
-// Remove (see its doc comment): unsafe once multiple modifier-distinct
-// lines can share a SKU. The cashier UI uses UpdateLineByKey instead.
-//
-// A discount above the line's total at the new qty is refused with a
-// *LineDiscountTooLargeError and the line is left unchanged (ut-docs#4627).
-func (s *Service) UpdateLine(code string, qty float64, discount money.Money) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if qty < 0 {
-		qty = 0
-	}
-	for i := range s.lines {
-		if s.lines[i].SKU == code || (s.lines[i].ItemID == code || s.lines[i].VariantID == code) {
-			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
-				return err
-			}
-			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
-			if s.lines[i].Qty == 0 {
-				s.removeLocked(s.lines[i].SKU)
-				return nil
-			}
-			s.recomputeTotals()
-			return nil
-		}
-	}
-	return nil
-}
-
-// LineDiscountTooLargeError (ut-docs#4627) is UpdateLine/UpdateLineByKey
+// LineDiscountTooLargeError (ut-docs#4627) is UpdateLineByKey / UpdateLineByKeyIfQty
 // refusing a discount above the line's total at the requested qty: Limit
 // is that total, the most the discount can be. The line is left as it was.
 type LineDiscountTooLargeError struct {
@@ -1870,29 +1941,58 @@ func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (floa
 	return 1, 0
 }
 
+// ErrLineChanged (ut-docs#5417): the line is gone or its qty is no longer
+// the one the caller read; nothing was changed.
+var ErrLineChanged = errors.New("basket line changed since it was read")
+
 // UpdateLineByKey sets qty/discount for the single line matching key
-// exactly (ADR-0020) — safe even when multiple lines share a SKU. Same
-// discount refusal as UpdateLine.
+// exactly (ADR-0020) — safe even when multiple lines share a SKU. A
+// discount above the line's total is refused (LineDiscountTooLargeError).
 func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for i := range s.lines {
+		if s.lines[i].LineKey == key {
+			return s.updateLineAtLocked(i, qty, discount)
+		}
+	}
+	return nil
+}
+
+// UpdateLineByKeyIfQty is UpdateLineByKey as a compare-and-set
+// (ut-docs#5417): it applies only if the line still has the qty the caller
+// read (fromQty — the value its gate decision was made against). A line that
+// is gone, or whose qty changed meanwhile, returns ErrLineChanged and
+// nothing is modified. The comparison is exact: both sides are the same
+// stored float64.
+func (s *Service) UpdateLineByKeyIfQty(key string, fromQty, qty float64, discount money.Money) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.lines {
+		if s.lines[i].LineKey == key {
+			if s.lines[i].Qty != fromQty {
+				return ErrLineChanged
+			}
+			return s.updateLineAtLocked(i, qty, discount)
+		}
+	}
+	return ErrLineChanged
+}
+
+// updateLineAtLocked applies qty/discount to s.lines[i]; s.mu must be held.
+func (s *Service) updateLineAtLocked(i int, qty float64, discount money.Money) error {
 	if qty < 0 {
 		qty = 0
 	}
-	for i := range s.lines {
-		if s.lines[i].LineKey == key {
-			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
-				return err
-			}
-			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
-			if s.lines[i].Qty == 0 {
-				s.removeLineLocked(key)
-				return nil
-			}
-			s.recomputeTotals()
-			return nil
-		}
+	if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
+		return err
 	}
+	s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
+	if s.lines[i].Qty == 0 {
+		s.removeLineLocked(s.lines[i].LineKey)
+		return nil
+	}
+	s.recomputeTotals()
 	return nil
 }
 

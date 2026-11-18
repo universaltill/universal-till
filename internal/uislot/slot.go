@@ -581,6 +581,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
 	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300, Group: "settings.cat.advanced.label"},
 	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
+	{Key: "settings-cloud-staff", Href: "#settings-cloud-staff", LabelKey: "settings.cloud_staff.title", Order: 1450, Group: "settings.cat.advanced.label"},
 	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},
 	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
 	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
