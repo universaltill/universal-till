@@ -51,7 +51,7 @@ func TestFollowDecision_Forced(t *testing.T) {
 
 // What the replica reports to its main till's Tills page.
 func TestFollowReportState(t *testing.T) {
-	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true}
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true, JitterDue: true}
 	with := func(f func(*followInputs)) followInputs { in := base; f(&in); return in }
 	for _, c := range []struct {
 		name string

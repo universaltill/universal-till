@@ -42,11 +42,12 @@ func TestSettingsAndStatusBar_ReplicaRegisteredViaMainTill(t *testing.T) {
 		}
 	}
 
-	// Not vouched yet: the chip and Register now show.
+	// Not vouched yet: the status-bar chip links to the Cloud record card; there
+	// is no Register now button any more (ADR-0200).
 	enroll.Init(ctx, &config.Config{}, emptyKV{}, &sync.WaitGroup{})
 	body := get()
-	if !strings.Contains(body, `sb-enrol`) || !strings.Contains(body, `hx-post="/api/enrol/now"`) {
-		t.Fatalf("unregistered till: want the register chip and Register now")
+	if !strings.Contains(body, `sb-enrol`) || strings.Contains(body, `hx-post="/api/enrol/now"`) {
+		t.Fatalf("unregistered till: want the register chip and no Register now button")
 	}
 
 	// Vouched replica.

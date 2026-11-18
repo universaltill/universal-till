@@ -71,6 +71,7 @@ func TestExportItemRowSchema_PinnedFields(t *testing.T) {
 		"is_weighed", "stock", "is_active", "tax_rate_bp", "has_tax",
 		"takeaway_rate_bp", "has_takeaway",
 		"net_quantity_value", "net_quantity_unit", "age_restricted", "item_type",
+		"reorder_level",
 	})
 }
 

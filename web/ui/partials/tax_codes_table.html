@@ -19,8 +19,8 @@
               data-takeaway="{{ .TakeawayPercent }}"
               data-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
             <td class="catalog-name">{{ .Name }}</td>
-            <td>{{ .RatePercent }}%</td>
-            <td>{{ if .TakeawayPercent }}{{ .TakeawayPercent }}%{{ else }}—{{ end }}</td>
+            <td>{{ .RateDisplay }}</td>
+            <td>{{ if .TakeawayPercent }}{{ .TakeawayDisplay }}{{ else }}—{{ end }}</td>
             <td>{{ if .IsActive }}✓{{ else }}—{{ end }}</td>
             <td class="btn-actions">
               <button class="btn secondary tax-code-edit" type="button">{{ T "common.edit" }}</button>

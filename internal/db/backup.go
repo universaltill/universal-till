@@ -364,16 +364,27 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 			return false, nil
 		}
 	}
+	// A backup restore (not a LAN join) lacks the receipts and Zs the lost
+	// till issued after the backup. Owe the number jump BEFORE the swap, so
+	// a crash between the swap and the jump still jumps on the next boot
+	// (ut-docs#5068).
+	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil {
+		if err := writeNumberJumpPending(dbPath); err != nil {
+			return false, fmt.Errorf("record the owed number jump: %w", err)
+		}
+	}
 	if _, err := os.Stat(dbPath); err == nil {
 		aside := filepath.Join(dir, preRestorePrefix+time.Now().UTC().Format(backupTimeLayout)+".db")
 		// Journal the swap before the first rename: a crash between the two
 		// renames leaves no db file, and RecoverInterruptedRestore finishes
 		// (or undoes) it at the next boot instead of opening an empty DB.
 		if err := writeRestoreSwap(dbPath, filepath.Base(aside)); err != nil {
+			ClearNumberJumpPending(dbPath) // nothing moved yet: no jump owed
 			return false, fmt.Errorf("journal restore swap: %w", err)
 		}
 		if err := os.Rename(dbPath, aside); err != nil {
 			clearRestoreSwap(dbPath)
+			ClearNumberJumpPending(dbPath) // nothing was swapped: no jump owed
 			return false, fmt.Errorf("set aside current db: %w", err)
 		}
 		// SQLite sidecar files from the old DB must not pollute the restored one.
@@ -381,6 +392,9 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		_ = os.Remove(dbPath + "-shm")
 	}
 	if err := os.Rename(pending, dbPath); err != nil {
+		// The marker stays: with the live DB set aside, the journal makes
+		// RecoverInterruptedRestore finish this restore on the next attempt,
+		// and that restore owes its jump (or undoes it and drops the marker).
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
 	clearRestoreSwap(dbPath)
@@ -449,6 +463,14 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 		// The old DB's sidecars must not be replayed into the restored file.
 		_ = os.Remove(dbPath + "-wal")
 		_ = os.Remove(dbPath + "-shm")
+		// A backup restore (not a LAN join) owes its number jump. The marker
+		// is normally there already; re-owe it before the move in case power
+		// loss lost it (ut-docs#5068).
+		if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil && !NumberJumpPending(dbPath) {
+			if err := writeNumberJumpPending(dbPath); err != nil {
+				return false, fmt.Errorf("record the owed number jump: %w", err)
+			}
+		}
 		if err := os.Rename(pending, dbPath); err != nil {
 			return false, fmt.Errorf("finish interrupted restore: %w", err)
 		}
@@ -468,8 +490,75 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 		return false, fmt.Errorf("undo interrupted restore (journal %s, previous data expected at %s): %w", restoreSwapName, filepath.Join(bdir, aside), err)
 	}
 	clearRestoreSwap(dbPath)
+	// The restore never happened: the marker written before the swap owes a
+	// number jump for nothing (ut-docs#5068).
+	ClearNumberJumpPending(dbPath)
 	logging.L().Warnf("restore: undid a restore interrupted between its two file moves; the previous data is back")
 	return false, nil
+}
+
+// numberJumpPendingName is the marker file ApplyPendingRestore leaves next to
+// the DB when a backup restore was applied: receipt and Z numbers still owe
+// their jump (data.POSRepo.JumpNumbersAfterRestore). The file, not the
+// in-memory restoreApplied flag, is what survives a crash after the swap.
+const numberJumpPendingName = "restore-numbers-pending"
+
+func numberJumpPendingPath(dbPath string) string {
+	return filepath.Join(filepath.Dir(dbPath), numberJumpPendingName)
+}
+
+// NumberJumpPending reports whether a restored backup still owes its
+// receipt/Z number jump.
+func NumberJumpPending(dbPath string) bool {
+	_, err := os.Stat(numberJumpPendingPath(dbPath))
+	return err == nil
+}
+
+// NumberJumpToken is the marker file's content: a unique id of this restore
+// (written as a timestamp). data.POSRepo.JumpNumbersAfterRestore stores it
+// with the jump so one restore never jumps twice.
+//
+// A marker left empty (power loss after the create, before the data hit the
+// disk) still names one restore: its modification time, stable across boots.
+func NumberJumpToken(dbPath string) string {
+	path := numberJumpPendingPath(dbPath)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if tok := strings.TrimSpace(string(raw)); tok != "" {
+		return tok
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return "mtime-" + fi.ModTime().UTC().Format(time.RFC3339Nano)
+}
+
+// writeNumberJumpPending records the owed jump with a fresh token, synced to
+// disk like the swap journal so the renames that follow cannot outlive it.
+func writeNumberJumpPending(dbPath string) error {
+	f, err := os.OpenFile(numberJumpPendingPath(dbPath), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(time.Now().UTC().Format(time.RFC3339Nano) + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// ClearNumberJumpPending drops the marker once the jump is recorded.
+func ClearNumberJumpPending(dbPath string) {
+	if err := os.Remove(numberJumpPendingPath(dbPath)); err != nil && !os.IsNotExist(err) {
+		logging.L().Warnf("restore: clear the number-jump marker: %v", err)
+	}
 }
 
 // restoreRefusedName is the marker ApplyPendingRestore leaves next to the DB
@@ -530,7 +619,17 @@ var RestoreKeepsLivePrefixes = append(append([]string(nil), TillCloudIdentityPre
 // so the main till mints a new epoch on its next feed request or
 // maintenance tick and every additional till re-syncs by state.
 var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
-	"backup.last_copied_at", "backup.copy_reminder_since", "sales_mirror.epoch"}
+	"backup.last_copied_at", "backup.copy_reminder_since", "sales_mirror.epoch",
+	// ut-docs#5066: the off-site backup's per-till state (data.OffsiteBackup*
+	// keys, spelled out: this package cannot import data). Dropped like the
+	// copy reminder: an old backup's dates and a pending upload id mean
+	// nothing on the restored till.
+	"backup.offsite.last_success_at", "backup.offsite.last_snapshot", "backup.offsite.last_error",
+	"backup.offsite.last_error_at", "backup.offsite.failing_since", "backup.offsite.next_attempt_at",
+	"backup.offsite.attempts", "backup.offsite.refused_reason", "backup.offsite.pending_id",
+	"backup.offsite.pending_file", "backup.offsite.pending_meta",
+	"backup.offsite.key_in_cloud", "backup.offsite.escrow_blocked", "backup.offsite.key_exported_at",
+	"backup.offsite.link_copy"}
 
 // keepLiveCloudIdentity rewrites the staged restore so its
 // RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are
