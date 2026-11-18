@@ -337,7 +337,7 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 }
 
 // shippingLocalesBeyondCore are the locales this product ships as external
-// LANGUAGE PACKS (ut-plugin-language-{de,es}) rather than in web/locales.
+// LANGUAGE BUNDLES (com.universaltill.language-<code>, ADR-0160) rather than in web/locales.
 // They are listed explicitly because no test in this repo can see those
 // sibling repos, and the consequence of forgetting one is silent: a plugin
 // label with no translation for the locale falls back to the core label

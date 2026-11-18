@@ -71,7 +71,7 @@ names = sorted(set(re.findall(r'"(unitill-pos-android(?:-[a-z0-9]+)?-latest\.apk
 if not names:
     errors.append(f"{gradle_path} bakes in no unitill-pos-android*-latest.apk update URL")
 for name in names:
-    uploaded = re.search(r"gh release upload[^\n]*(?:\\\n[^\n]*)*" + re.escape(name), release)
+    uploaded = re.search(r"(?:gh release upload|release-upload\.sh)[^\n]*(?:\\\n[^\n]*)*" + re.escape(name), release)
     if not uploaded:
         errors.append(f"the app updates from {name}, but {release_path} never uploads it to a release")
 

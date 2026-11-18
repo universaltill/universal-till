@@ -12,7 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -287,117 +286,12 @@ func TestEnrolPair_PromptFormDropsDuplicateSubmits(t *testing.T) {
 	}
 }
 
-// ut-docs#3861: a refused "Register now" must not print the cloud's raw
-// JSON (or the endpoint) into the card.
-func refusingRegisterCloud(t *testing.T, status int, body string) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func TestEnrolNow_ServiceRefusedShowsTranslatedMessageOnly(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	srv := refusingRegisterCloud(t, http.StatusForbidden,
-		`{"data":null,"error":{"code":"service_unavailable","message":"Shops in XX are not served"}}`)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-	nameShop(t, d) // an unnamed shop never reaches the cloud (ut-docs#4272)
-
-	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) {
-		t.Fatalf("refused register = %d %s, want 200 with the failure span", rec.Code, body)
-	}
-	if !strings.Contains(body, "The Universal Till cloud is not available for this shop. The till keeps working offline.") {
-		t.Fatalf("missing the service-unavailable message: %s", body)
-	}
-	for _, bad := range []string{"register returned", "{", "service_unavailable", "not served", srv.URL, "Registration failed"} {
-		if strings.Contains(body, bad) {
-			t.Fatalf("body leaks %q: %s", bad, body)
-		}
-	}
-}
-
-// nameShop gives the shop a real name, so "Register now" reaches the
+// nameShop gives the shop a real name, so an explicit operator registration reaches the
 // (fake) cloud: an unnamed shop never does (ut-docs#4272).
 func nameShop(t *testing.T, d *common.Deps) {
 	t.Helper()
 	if err := d.Settings.Set(t.Context(), common.KeyStoreName, "Corner Shop"); err != nil {
 		t.Fatalf("seed store.name: %v", err)
-	}
-}
-
-// ut-docs#4272: "Register now" on a till whose shop is still unnamed (the
-// migration-seeded "My Store") never calls the cloud; it tells the owner to
-// name the shop first and links to the Shop name card.
-func TestEnrolNow_UnnamedShopAsksForNameAndLinksToCard(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	var calls atomic.Int32
-	cloud := http.NewServeMux()
-	cloud.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"data":{"store_id":"s","token":"t"}}`))
-	})
-	srv := httptest.NewServer(cloud)
-	t.Cleanup(srv.Close)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	if err := d.Settings.Set(t.Context(), common.KeyStoreName, "My Store"); err != nil {
-		t.Fatalf("seed store.name: %v", err)
-	}
-	d.Cfg.StoreName = "My Store"
-	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-	d.Cfg.Marketplace.PublicKey = strings.Repeat("ab", 32) // no signing-key fetch
-
-	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) {
-		t.Fatalf("unnamed register = %d %s, want 200 with the failure span", rec.Code, body)
-	}
-	for _, want := range []string{
-		"Name your shop first: the till registers with the cloud only once the shop has a real name.",
-		`<a href="/settings#settings-store-name">Shop name</a>`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("body lacks %q: %s", want, body)
-		}
-	}
-	if strings.Contains(body, "Registration failed") || strings.Contains(body, "127.0.0.1") {
-		t.Fatalf("unnamed shop shows the generic failure: %s", body)
-	}
-	if n := calls.Load(); n != 0 {
-		t.Fatalf("/stores/register called %d times for an unnamed shop", n)
-	}
-}
-
-func TestEnrolNow_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	srv := refusingRegisterCloud(t, http.StatusInternalServerError, `{"error":{"code":"internal","message":"db exploded <b>"}}`)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-	nameShop(t, d) // an unnamed shop never reaches the cloud (ut-docs#4272)
-
-	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
-	body := rec.Body.String()
-	if !strings.Contains(body, "Registration failed") {
-		t.Fatalf("missing the generic failure text: %s", body)
-	}
-	for _, bad := range []string{"register returned", "{", "db exploded", "<b>", "not available for this shop"} {
-		if strings.Contains(body, bad) {
-			t.Fatalf("body leaks %q: %s", bad, body)
-		}
-	}
-	if !strings.Contains(body, "(") || !strings.Contains(body, "127.0.0.1") {
-		t.Fatalf("generic failure should still name the endpoint tried: %s", body)
 	}
 }
 
@@ -465,69 +359,6 @@ func TestClaimCode_UnregisteredTillSaysNotRegistered(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "This till is not registered yet.") || strings.Contains(body, "marketplace yet") {
 		t.Fatalf("unregistered claim = %s, want the translated not-registered text only", body)
-	}
-}
-
-// ut-docs#3990: "Register now" with no cloud address configured, or while
-// another attempt holds the slot, says what is actually wrong instead of
-// "check the internet connection".
-func TestEnrolNow_NotConfiguredHasOwnMessage(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	d.Cfg.Marketplace.EndpointURL = ""
-	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
-	body := rec.Body.String()
-	if !strings.Contains(body, "No cloud address is set up on this till") {
-		t.Fatalf("missing the not-configured text: %s", body)
-	}
-	for _, bad := range []string{"check the internet connection", "not configured", "marketplace endpoint"} {
-		if strings.Contains(body, bad) {
-			t.Fatalf("body has %q: %s", bad, body)
-		}
-	}
-}
-
-func TestEnrolNow_BusySlotHasOwnMessage(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	release := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	cloud := http.NewServeMux()
-	cloud.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
-		entered <- struct{}{}
-		<-release
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	srv := httptest.NewServer(cloud)
-	t.Cleanup(srv.Close)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-	nameShop(t, d) // an unnamed shop never reaches the cloud (ut-docs#4272)
-
-	// A first attempt holds the slot inside the (blocked) cloud call.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = enroll.RegisterNow(context.Background(), d.Cfg, d.Settings)
-	}()
-	<-entered
-	t.Cleanup(func() { close(release); <-done })
-
-	form := url.Values{"accept_terms": {"on"}}
-	req := httptest.NewRequest(http.MethodPost, "/api/enrol/now", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req = auth.WithUser(req, mgrUser)
-	ctx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
-	defer cancel()
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req.WithContext(ctx))
-	body := rec.Body.String()
-	if !strings.Contains(body, "Another registration attempt is still running") {
-		t.Fatalf("missing the busy text: %s", body)
-	}
-	if strings.Contains(body, "check the internet connection") || strings.Contains(body, "slot held") {
-		t.Fatalf("busy answer = %s, want only the busy text", body)
 	}
 }
 

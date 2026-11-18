@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -58,6 +59,11 @@ type hostState struct {
 	// httpClient is the http_request egress client (tests inject a stubbed
 	// resolver/dialer); nil → defaultPluginHTTPClient.
 	httpClient *http.Client
+	// gateDeadline is the end of a payment authorize/refund event's deadline
+	// (zero for any other event); http_request bounds each call by it so one
+	// stalled call cannot eat the time the plugin needs to cancel the reader
+	// (ut-docs#6439).
+	gateDeadline time.Time
 
 	// httpCacheReq/httpCacheResp cache the most recently completed
 	// hostHTTPRequest call for THIS event (ut-docs#754). WasmRuntime.HandleEvent
@@ -403,6 +409,11 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	if req.Method == "" {
 		req.Method = http.MethodGet
 	}
+	if d, ok := gateRequestTimeout(s.gateDeadline, time.Now()); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return hostErrInvalid
@@ -566,4 +577,26 @@ func pluginHasNetPermission(ctx context.Context, db *sql.DB, pluginID string) bo
 		}
 	}
 	return false
+}
+
+// gateCancelReserve is the slice of a payment gate's deadline kept back for
+// the plugin's cancel call: an http_request that would run into it is cut
+// short, so the guest regains control with time left to cancel the reader.
+const gateCancelReserve = 5 * time.Second
+
+// gateRequestTimeout bounds one http_request inside a payment gate event:
+// the time left minus gateCancelReserve, or — once inside the reserve — all
+// that is left (that call is the cancel). ok is false outside a gate event.
+func gateRequestTimeout(deadline, now time.Time) (time.Duration, bool) {
+	if deadline.IsZero() {
+		return 0, false
+	}
+	left := deadline.Sub(now)
+	if left > gateCancelReserve {
+		return left - gateCancelReserve, true
+	}
+	if left < time.Millisecond {
+		left = time.Millisecond
+	}
+	return left, true
 }

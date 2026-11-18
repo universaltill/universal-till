@@ -928,8 +928,57 @@ body.sale-screen .session-admin-link { display: none; }
 .catalog-list #catalog-table thead th { position: sticky; inset-block-start: 0;
                                         background: var(--surface); z-index: 1; }
 .catalog-row { cursor: pointer; }
+/* ut-docs#5782: /shifts only (.catalog-layout itself is untouched). History
+   scrolls inside its card (never the page), close form is a compact grid. */
+.shifts-history-scroll { overflow-x: auto; max-inline-size: 100%; }
+/* <=480px the table is a card list (table-cards.js, ut-docs#3359): no min width there. */
+@media (min-width: 481px) { .shifts-history-scroll .table { min-inline-size: 32rem; } }
+.shifts-layout .catalog-list { min-inline-size: 0; }
+/* History is its own grid row spanning both columns, so all six columns fit at 900-1199px. */
+.shifts-history-card { grid-column: 1 / -1; }
+#shift-result { min-block-size: 1.3rem; margin-block-start: .5rem; }
+/* the cash-count grid sits in the narrow form column: inputs must shrink to their cell */
+#denom-grid input { inline-size: 100%; min-inline-size: 0; }
+.shifts-close-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .4rem .6rem; }
+.shifts-close-grid > .shifts-close-hint { margin-block: 0; }
+@media (min-width: 900px) {
+  .shifts-layout { grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem); }
+  .shifts-close-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; }
+  /* the grid's own row gap replaces each label's .catalog-form margin-bottom
+     (the :not() chain out-specifies a class rule, so key on the form id) */
+  #close-shift-form .shifts-close-grid > label { margin-block-end: 0; }
+  .shifts-close-grid > .shifts-close-wide,
+  .shifts-close-grid > .shifts-close-hint { grid-column: 1 / -1; }
+  /* PIN | note share a row; the hint follows full width (DOM keeps PIN, hint, note). */
+  .shifts-close-grid > .shifts-close-pin,
+  .shifts-close-grid > .shifts-close-note { order: 1; }
+  .shifts-close-grid > .shifts-close-hint { order: 2; }
+  /* ux fallback (ut-docs#5782): result directly under the submit button, the
+     collapsed adjustment/formula <details> after it (#shift-result is aria-live,
+     so no tab-order change). */
+  .shifts-layout .catalog-form { display: flex; flex-direction: column; }
+  .shifts-layout .catalog-form > #shift-result { order: 1; }
+  .shifts-layout .catalog-form > details { order: 2; }
+}
+/* Short wide screens (1024x600 kiosk Pi: ~170px of chrome plus the 33px status
+   bar leave ~400px for the form column): tighten the form's own vertical rhythm,
+   never the 46px controls. The manager-PIN session adds a row and a hint. */
+@media (min-width: 900px) and (max-height: 700px) {
+  .shifts-layout .catalog-form { padding-block: .6rem; }
+  .shifts-layout .catalog-form > h3 { margin-block: 0 .25rem; }
+  .shifts-close-grid { row-gap: .25rem; }
+  .shifts-layout .catalog-form > #shift-result { margin-block-start: .25rem; }
+}
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
+
+/* Receipt designer (ut-docs#6179): the hint under the slip-text field, and the
+   Save / Print test row, which wraps so the longer inline refusal drops to its
+   own line under the buttons on a phone instead of crushing them. */
+.rd-hint { display: block; margin-block-end: .6rem; }
+.rd-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-block-start: .6rem; }
+.rd-msg { flex: 1 1 12rem; min-inline-size: 0; }
+label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
 
 /* ---------- Tills / pairing (ut-docs#1548) ---------- */
 /* Same escape-hatch pattern .users-list .table / .settings-grid .card .table
@@ -951,6 +1000,7 @@ body.sale-screen .session-admin-link { display: none; }
 .x-report h4 { margin-block: .8rem .3rem; }
 #x-report-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
 .x-report-num :is(td, th):not(:first-child) { text-align: end; font-variant-numeric: tabular-nums; }
+.x-report-num tfoot th { text-align: start; font-weight: 600; }
 .x-report-tenders { display: block; overflow-x: auto; inline-size: max-content; max-inline-size: 100%; }
 .x-report-reason { overflow-wrap: anywhere; }
 .x-report-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
@@ -1160,6 +1210,23 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .ps-affix { display: flex; align-items: center; gap: .4rem; }
 .ps-affix input { flex: 1 1 auto; min-inline-size: 0; }
 .ps-suffix { flex: none; color: var(--muted); }
+/* Settings tabs (S1, ut-docs#4666). The server draws every tab as an open
+   <details> (no JS: one after another, all expanded). With JS, at 600px and
+   up a tab strip replaces the summaries and one panel shows; below 600px the
+   <details> stay an accordion (the active one opened). Logical properties only. */
+.ps-tab { margin-block-end: .5rem; }
+.ps-tab > summary { cursor: pointer; padding-block: .6rem; min-block-size: 44px; font-weight: 600; }
+.ps-tab > summary:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }
+.ps-tab-errs { color: var(--danger); font-weight: 600; white-space: nowrap; margin-inline-start: .5rem; }
+.ps-tab-help { margin-block: 0 .75rem; }
+.ps-tabs--strip > .ps-tab > summary { display: none; }
+.ps-tabs--strip > .ps-tab[data-ps-off] { display: none; }
+.ps-tablist { display: flex; gap: .25rem; overflow-x: auto; border-block-end: 1px solid var(--border); margin-block-end: .75rem; }
+.ps-tablist button { flex: none; min-block-size: 44px; min-inline-size: 44px; padding-inline: .9rem; background: transparent;
+                     border: 0; border-block-end: 3px solid transparent; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
+.ps-tablist button[aria-selected="true"] { border-block-end-color: var(--accent); font-weight: 600; }
+.ps-tablist button:focus-visible { outline: 2px solid var(--focus-border); outline-offset: -2px; }
+.ps-tablist button[hidden] { display: none; }
 .modifier-attach-option { display: flex; flex-direction: row; align-items: center; gap: .5rem;
                            min-height: 44px; padding-inline: .25rem; }
 .modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;
@@ -1501,6 +1568,10 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
                            flex: 1 1 12rem; min-inline-size: 0; }
 .catalog-form-head-title h3 { margin: 0; min-inline-size: 0; overflow: hidden;
                               text-overflow: ellipsis; white-space: nowrap; }
+/* ut-docs#6125: groups the in-title Lock/exit-to-OS with the h3 so the pair
+   stays one line when the title group is flattened below (#6138/#6176).
+   Transparent to layout wherever the title group is a plain flex row. */
+.catalog-form-head-titleline { display: contents; }
 .catalog-form-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
                              margin-inline-start: auto; }
 /* Icon-only delete (catalog.delete): a .btn.secondary in the danger colour,
@@ -1527,6 +1598,22 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    controls. Edit mode: the reverse. Toggled by setMode() in catalog.html. */
 .catalog-form.is-create .item-form-needs-item { display: none; }
 .catalog-form:not(.is-create) .item-form-needs-save { display: none; }
+/* ut-docs#6176: ut-docs#6138 gave the edit-mode title its own full-width line,
+   but only at <=700px. From 701px up to the kiosk floor (1024px, which keeps
+   the single-row head untouched) the labelled +New/Close/Save group leaves
+   the 12rem-basis title group as little as 161px at 701px and ~260px at
+   800px, so "Edit: <item name>" was still ellipsised (263px needed) and the
+   operator could not see which item was open. Same remedy as the phone
+   query, minus the icon-only collapse: the title takes its own line and
+   Delete joins the one action row (still a single button row, +~1 text
+   line of head height). */
+@media (min-width: 701px) and (max-width: 1023px) {
+  .catalog-form-head-title { display: contents; }
+  .catalog-form-head-titleline { display: flex; align-items: center; gap: .5rem; flex: 1 0 100%; min-inline-size: 0; }
+  /* The Lock/exit pair takes ~96px of the line, so a long item name wraps
+     (never ellipsised: #6138 wants the open item readable) onto a second line. */
+  .catalog-form-head-titleline h3 { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+}
 @media (max-width: 700px) {
   .catalog-form-head { padding-inline: 1rem; }
   .catalog-form-body { padding-inline: 1rem; }
@@ -1565,6 +1652,24 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
     padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
   }
   .catalog-form-head-actions .btn { min-inline-size: 3rem; padding-inline: .65rem; }
+  /* ut-docs#6138: in edit mode the visible +New button joins Close/Save, so
+     the 12rem title group no longer fit beside the action group on a 360px
+     row and the head wrapped into two 3rem button rows (32.3% of 360x640).
+     Shrinking the title group's basis instead fit one row but left the h3
+     ~45px ("Edi…"), so the operator could no longer see which item was
+     open (independent review, UX gate). Instead the title becomes its own
+     full-width text line and the delete button joins the action row:
+     one text line + one button row (~28% in both modes), full item name
+     visible. display: contents only flattens a semantics-free wrapper div;
+     the h3 and the delete button keep their own roles and names. */
+  .catalog-form-head-title { display: contents; }
+  .catalog-form-head-titleline { display: flex; align-items: center; gap: .5rem; flex: 1 0 100%; min-inline-size: 0; }
+  /* The Lock/exit pair takes ~96px of the line, so a long item name wraps
+     (never ellipsised: #6138 wants the open item readable) onto a second line. */
+  .catalog-form-head-titleline h3 { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+  .catalog-form-head-titleline h3 { font-size: .9rem; line-height: 1.2; }
+  /* One text line + one button row: .4rem between them keeps the edit head under #2000's 30% budget. */
+  .catalog-form-head-row { row-gap: .4rem; }
   .catalog-form-head-actions .btn .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
   .catalog-form-head-actions .btn:focus-visible {
     outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px;
@@ -2048,9 +2153,9 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    ~700px tall, so 900x600, 768x600 and 600x600 clipped the grand Total
    line inside the basket's own scroll. A taller window keeps the stacked
    tier, where the cap fits. The 700px threshold and the 301px are at UI
-   scale 1 (media queries are px, the min-content is rem); larger scales
-   are ut-docs#5220. These windows overlap the min-height: 481px
-   tablet blocks below; only the basket's container (#3050) applies there,
+   scale 1 (media queries are px, the min-content is rem); taller windows
+   at larger scales: the ut-docs#5220 block below. These windows overlap
+   the min-height: 481px tablet blocks below; only the basket's container (#3050) applies there,
    and it just picks the line shape for the basket's own width.
    Regression tests: e2e/tests/landscape-phone-sale-2918.spec.ts,
    e2e/tests/tablet-tier-totals-416.spec.ts. */
@@ -2155,6 +2260,46 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
   .pos-container > .products { max-height: 80dvh; }
 }
 
+/* ut-docs#5220: the stacked tier taller than 700px at UI scale > 1. The
+   basket's min-content (header, toggle, thead, .basket-scroll's 6rem floor,
+   totals: ~17.7rem) is in rem and grows with --ui-scale, but the cap was in
+   dvh, and the `auto` basket and tender rows let the grid squeeze both
+   scroll containers below even that cap. Measured: from scale 1.25 at
+   600x760, 768x760, 900x720 and from 1.5 at 768x800, 880x960, 700x900 the
+   grand Total line sat below the basket's bottom edge, and at 768x760/1.5
+   the tender row shrank to 38px with Pay out of sight. Media queries are px
+   and the scale is any value from 0.5 to 2, so no threshold can follow it.
+   Instead:
+   - the cap gets a rem floor, 18.5rem (315px / 17px: what 45dvh gives at
+     scale 1 at this tier's 701px edge), so the Total line fits the basket
+     at any scale exactly as it does at scale 1;
+   - the basket and tender rows are max-content, so the grid never squeezes
+     them; products keep their 8rem floor and the extra height scrolls the
+     sale screen;
+   - the tender is pinned to the bottom of that scroll, as in the #2918
+     pinned layout above (unpinned while a dialog inside is open), so Pay stays
+     whole. Where everything fits (every height here at scale 1) nothing
+     scrolls and the pin is a no-op: the scale-1 rendering is unchanged.
+   Only a window with very little rem height (900x701-720 at scale 2:
+   ~22rem) cannot show the whole basket and the tender at once; the Total
+   line then sits under the pinned tender and is one scroll away, uncovered.
+   The 18.5rem leaves the same slack scale 1 has at 701px (~0.8rem over the
+   chrome with no discount or customer row), so an extra totals row is a
+   scroll away here exactly as it is at scale 1. The 900px+-tall cap below
+   (38dvh) gets the same floor. The <=700px-tall
+   windows use the short-window layouts above, the <=480px tier its own.
+   Regression test: e2e/tests/tablet-tier-totals-416.spec.ts. */
+@media (min-width: 481px) and (max-width: 900px) and (min-height: 701px) {
+  .pos-container { grid-template-rows: max-content max-content minmax(8rem, 1fr); overflow-y: auto; }
+  /* 45vh first: an engine without dvh drops the max() line and keeps a cap,
+     which the max-content row (unlike the old `auto`) would not enforce. */
+  .pos-container > .basket { max-height: 45vh; max-height: max(45dvh, 18.5rem); }
+  .pos-container > .tender {
+    position: sticky; bottom: 0; z-index: 2;
+    box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
+  }
+  .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
+}
 /* ---------- Cards & forms ---------- */
 .card {
   background: var(--surface); border: 1px solid var(--border);
@@ -2666,6 +2811,30 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .btn-tile.tile-colored .tile-name,
 .btn-tile.tile-colored .tile-price,
 .btn-tile.tile-colored .muted { color: #fff; }
+/* ut-docs#5458: tapped tile whose request is still pending (app.js sets
+   aria-busy after 300 ms). Outline only: inside the border box so no layout
+   shift, not stripped by fx-light (which drops box-shadow), logical/RTL
+   neutral. Plain tiles use the focus token (3:1 non-text floor); coloured
+   tiles keep the fixed white their labels use (the button's own colour is
+   the dark text colour, near-invisible on the swatch). The pulse only dips to
+   a 45% mix, never transparent, so the cue is always visible; the static
+   outline is the floor for reduced motion and fx-light. */
+.btn-tile[aria-busy="true"] {
+  outline: 3px solid var(--focus-border, var(--accent)); outline-offset: -3px; cursor: progress;
+}
+.btn-tile.tile-colored[aria-busy="true"] { outline-color: #fff; }
+@media (prefers-reduced-motion: no-preference) {
+  html:not(.fx-light) .btn-tile[aria-busy="true"] { animation: ut-tile-busy 1s ease-in-out infinite alternate; }
+  html:not(.fx-light) .btn-tile.tile-colored[aria-busy="true"] { animation-name: ut-tile-busy-c; }
+}
+@keyframes ut-tile-busy {
+  from { outline-color: var(--focus-border, var(--accent)); }
+  to { outline-color: color-mix(in srgb, var(--focus-border, var(--accent)) 45%, transparent); }
+}
+@keyframes ut-tile-busy-c {
+  from { outline-color: #fff; }
+  to { outline-color: color-mix(in srgb, #fff 45%, transparent); }
+}
 .tile-name {
   font-weight: 600; font-size: .9rem; line-height: 1.2; white-space: normal;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -2682,10 +2851,14 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 /* Screen-reader-only text (aria-label is ignored on generic spans). */
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-/* Always-visible total-quantity badge next to the basket title (ut-docs#213). */
+/* Always-visible total-quantity badge next to the basket title (ut-docs#213).
+   --surface on --text, like the phone tile's in-basket badge (ut-docs#3241):
+   --accent-contrast on --accent is ~2.5-2.8:1 in amber, fresh and monarch;
+   this pair passes 4.5:1 in every theme (ut-docs#6050, pinned by
+   TestBasketCountBadgeContrast). */
 .basket-count { display: inline-flex; align-items: center; justify-content: center;
   min-width: 1.7em; padding: .08em .5em; margin-inline-start: .45rem;
-  border-radius: 999px; background: var(--accent); color: var(--accent-contrast, #fff);
+  border-radius: 999px; background: var(--text); color: var(--surface);
   font-size: .72em; font-weight: 700; font-variant-numeric: tabular-nums;
   vertical-align: middle; line-height: 1.4; }
 /* A DIV inside the item <td>, not a class on the <td> itself (ut-docs#391):
@@ -3021,6 +3194,37 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    unscoping the selector below covers both call sites with one rule
    instead of duplicating it under `.catalog-list` too. */
 #tax-codes-table { overflow-x: auto; }
+/* ut-docs#6553: #import-modal / #tax-codes-modal reuse .item-form-modal (flex
+   column, overflow hidden, padding 0), but unlike #item-form-modal they have
+   no pinned head + .catalog-form-body scroller of their own: their fetched
+   page was clipped, untouchable by touch, and flush with the screen edge.
+   The dialog is swapped via innerHTML, so it is the only stable element:
+   make IT the scroller (scoped by id so #item-form-modal keeps its pinned
+   head). display:block lets content overflow and scroll instead of
+   shrinking as flex children. The id rule (1,0,0) beats
+   .item-form-modal:not([open]) (0,2,0), so the closed re-hide is explicit.
+   body.osk-padded .item-form-modal already shortens the dialog above the
+   keyboard, so the scroller ends at the OSK top. */
+#import-modal, #tax-codes-modal {
+  display: block; overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  touch-action: pan-y pinch-zoom;
+  padding: 1rem 1.5rem 2rem;
+}
+#import-modal:not([open]), #tax-codes-modal:not([open]) { display: none; }
+/* Back link stays reachable while the body scrolls. */
+/* ut-docs#6125: the head also carries the in-title Lock/exit-to-OS (the page's
+   own dialog_status_inline), so it stays pinned above the content (z 2) with
+   a divider, and its h1 shrinks instead of pushing the Lock off the row. */
+#import-modal .page-head, #tax-codes-modal .page-head {
+  position: sticky; inset-block-start: -1rem; z-index: 2; background: var(--surface);
+  padding-block-start: 1rem; margin-block-start: -1rem;
+  border-block-end: 1px solid var(--border); margin-block-end: 1rem;
+}
+#import-modal .page-head > h1, #tax-codes-modal .page-head > h1 { flex: 1 1 auto; min-inline-size: 0; margin: 0; }
+@media (max-width: 700px) {
+  #import-modal, #tax-codes-modal { padding-inline: 1rem; }
+}
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not
@@ -3108,6 +3312,54 @@ body.osk-padded #table-add-modal .modifier-actions {
    needs the identical fixed position + z-index, which .modifier-modal
    alone does not provide (ut-docs#2873's scrim sweep caught the gap). */
 #confirm-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#5524: the client hx-confirm dialog (till-confirm.js). Same frame as
+   #confirm-modal (.modifier-modal supplies width/padding); above the popups it
+   can be raised from (#modifier-modal 560, #hold-modal 550, record/item-form
+   dialogs 500), below #osk (1000). The status bar stays reachable over
+   #ut-scrim (450/460). Scrim tap is deliberately not an answer. */
+#ut-confirm { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 590;
+  max-block-size: calc(100vh - 8vh - 1rem); max-block-size: calc(100dvh - 8vh - 1rem); overflow-y: auto; }
+#ut-confirm .ut-confirm-msg { margin-block: 0 .75rem; color: var(--text); text-align: start;
+  white-space: pre-line; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  /* The rail is a top bar here holding ☰; Lock is in its drawer, which
+     floats above this dialog while the scrim is on (ut-docs#6118). Start
+     below the bar (as #category-items-modal does) so ☰ stays tappable —
+     except over a full-screen dialog (next rule). */
+  #ut-confirm { inset-block-start: calc(var(--topbar-h) + .5rem);
+    max-block-size: calc(100vh - var(--topbar-h) - 1.5rem); max-block-size: calc(100dvh - var(--topbar-h) - 1.5rem); }
+  /* ut-docs#6131: over a full-screen dialog there is no ☰ to keep clear, and
+     the dialog's own head (title + Lock/exit-to-OS/status row, #2099/#6125)
+     sits right under the top edge — beneath this z-590 question (the dialog
+     is a z-500 stacking context, so its Lock cannot be raised over it).
+     Anchor to the bottom, above the status row: the head stays the hit
+     target and the answer sits under the thumb. 11rem is the head at 360px
+     (measured 160.7px = 10.04rem) plus slack; a long question scrolls
+     (overflow-y:auto) instead of growing up into the head. */
+  html:has(:is(.record-dialog, .dialog-beside-chrome)[open]) #ut-confirm {
+    inset-block: auto calc(var(--phone-sb-h, 4rem) + .5rem + env(safe-area-inset-bottom));
+    max-block-size: calc(100vh - var(--phone-sb-h, 4rem) - 11rem);
+    max-block-size: calc(100dvh - var(--phone-sb-h, 4rem) - 11rem); }
+  /* With the keyboard band reserved the box ends higher, so re-cap it too
+     (bottom offset + 11rem): otherwise a long question grows up over the
+     head again (review of #6131: top -32px at 320x568). */
+  html:has(:is(.record-dialog, .dialog-beside-chrome)[open]) body.osk-padded #ut-confirm {
+    inset-block-end: calc(var(--osk-reserved-height, 17rem) + .5rem);
+    max-block-size: calc(100vh - var(--osk-reserved-height, 17rem) - 11.5rem);
+    max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 11.5rem); }
+  /* ut-docs#6117: verb labels ("Promote this till", de "Bestellung
+     stornieren") can be longer than half a 360px row. A 7.5rem basis
+     keeps the short Cancel/Confirm pair side by side at 360px; a long label
+     wraps inside its button and the target never drops below 44px. */
+  #ut-confirm .modifier-actions .btn { flex: 1 1 7.5rem; min-block-size: 44px;
+    white-space: normal; overflow-wrap: anywhere; text-align: center; }
+}
+/* ut-docs#6149: the dialog always moves focus to exactly one button (the safe
+   one; OK when neutral) so Enter's target is known. A pointer/touch open gets
+   no UA :focus-visible ring, hence :focus (not :focus-visible) here: the ring
+   is the "Enter goes here" cue on tap, click and key alike. Same declaration
+   as the --focus-border rings elsewhere (>=3:1 per theme). */
+#ut-confirm .modifier-actions .btn:focus { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 /* ut-docs#4286: the Renew / Choose-a-plan panel (base.html). Non-modal
    .show() over #ut-scrim like #table-qr-modal: fixed, centred, capped short
    of the viewport so it never covers the status bar (z 460, reachable);
@@ -3754,8 +4006,9 @@ body.osk-padded #table-add-modal .modifier-actions {
 }
 /* Upright only (landscape in this width range is never this tall): products
    get the height back. A long basket scrolls inside .basket-scroll. */
+/* ut-docs#5220: the same 18.5rem floor as the 701px+ block's 45dvh cap. */
 @media (min-width: 481px) and (max-width: 900px) and (min-height: 900px) {
-  .pos-container > .basket { max-height: 38dvh; }
+  .pos-container > .basket { max-height: max(38dvh, 18.5rem); }
 }
 /* Tier 1 -- room for everything on one row (800px at scale 1). Tier 2 --
    the name gets its own row above the controls (600px at scale 1, 800px at
@@ -3902,6 +4155,9 @@ body.osk-padded #table-add-modal .modifier-actions {
   display: inline-flex; align-items: center; justify-content: center; }
 .notice-dismiss:hover { background: rgba(15, 23, 42, .08); }
 #pos-alert { margin-block-end: .6rem; }
+/* ut-docs#6154: the printerless-kiosk notice wraps so its link drops under the text at 360px / long locales. */
+#ut-print-unavailable { flex-wrap: wrap; }
+#ut-print-unavailable .notice-text { flex: 1 1 14rem; }
 
 /* ---------- Toasts (legacy overlay — self-order screens only; the sale
    screen uses .pos-notice above) ---------- */
@@ -4760,6 +5016,18 @@ body.login-screen {
 .sync-banner { background: var(--warning-tint); color: var(--warning-text); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* ut-docs#6551: Android "update available" banner at the top of Settings and
+   the neutral "ask a manager" status pill. Tokens only; logical properties. */
+.android-update-banner { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem;
+  border: 1px solid var(--warning-tint-border); text-align: start; }
+.android-update-banner .android-update-banner-text { flex: 1 1 16rem; }
+.android-update-banner p { margin: .25rem 0 0; }
+.android-update-banner .btn { flex: 0 0 auto; min-inline-size: 8rem; text-align: center; text-decoration: none; }
+.android-allow-panel { margin-block: .75rem; padding: .6rem .9rem; border-radius: var(--radius); }
+.android-allow-panel p { margin: .35rem 0; }
+.android-allow-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-block-start: .5rem; }
+.statusbar .sb-update.is-info { background: var(--warning, #d97706); color: #451a03;
+  white-space: normal; min-width: 0; max-inline-size: 100%; }
 
 /* ut-docs#1551: nav-level dismissible notice for a pending pairing
    request -- mounted in base.html as a sibling of <nav>/<main> (not
@@ -5286,7 +5554,11 @@ body.login-screen {
    rather than a new one. */
 .items-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
                 gap: 1.2rem; align-items: start; }
-@media (max-width: 52rem) { .items-layout { grid-template-columns: 1fr; } }
+/* ut-docs#6138: minmax(0, 1fr), not 1fr (= minmax(auto, 1fr)): the single
+   stacked track's automatic minimum was the rail rows' nowrap text
+   min-content, which at 360px in fa/ar (longer labels) pushed the page
+   1-5px wider than the viewport. The rows ellipsise (.items-text). */
+@media (max-width: 52rem) { .items-layout { grid-template-columns: minmax(0, 1fr); } }
 
 .items-rail-wrap { position: sticky; inset-block-start: .5rem; }
 /* ut-docs#3297: stacked, the section list sits above the panel; pinned,
@@ -5753,6 +6025,28 @@ body.login-screen {
 }
 .statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
 #sb-cloud-auth-mount:empty { display: none; }
+/* ut-docs#5145: Settings > Till registration, the device ID and key
+   fingerprint support asks for. Selectable with one tap, wrapping at group
+   (space) boundaries, logical properties only. */
+.register-facts { margin-block: .5rem 0; display: grid; gap: .35rem; }
+.register-facts dt { font-size: .85em; opacity: .75; }
+.register-facts dd { margin-inline-start: 0; word-break: normal; overflow-wrap: anywhere; user-select: all; }
+.reconnect-actions { display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; }
+.reconnect-actions .reconnect-newshop { margin-block-start: 1.5rem; padding-block-start: 1.5rem; align-self: stretch; }
+@media (min-width: 601px) { .reconnect-actions { gap: 1rem; } }
+.register-facts code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal; }
+/* ut-docs#5287: a move of this till into another shop waits for a manager
+   (move_pending_chip.html). Same amber pill as sb-cloud-auth: the till
+   waits on a person and keeps selling. Wraps (a sentence, long in some
+   locales). Plain text for a cashier (no href), a link for a manager. */
+.statusbar .sb-move-pending {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-move-pending[href]:hover { filter: brightness(0.92); }
+#sb-move-pending-mount:empty { display: none; }
 /* ut-docs#574 (ADR-0147): the cloud refused the archived-report upload
    (report_archive_chip.html). Same amber pill as sb-cloud-auth: the till
    still sells and keeps every report; the upload waits for an active
@@ -6119,6 +6413,9 @@ body.kiosk .settings-panel label:not(.staff-lang-opt):not(.ps-switch) > input[ty
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }
 .set-gap-s { margin-block-start: .45rem; }
+/* "My display" form groups: a fieldset only for the disabled state, so strip
+   the browser box and the min-content width that overflowed at 360px. */
+fieldset.my-display-set { border: 0; padding: 0; margin-inline: 0; margin-block-end: 0; min-inline-size: 0; }
 .set-divider { margin-block-start: .8rem; border-block-start: 1px solid var(--border);
                padding-block-start: .6rem; }
 /* ut-docs#2981: a Settings region that writes a shop-wide key sits in a
@@ -6455,6 +6752,22 @@ td.list-actions > * + * { margin-inline-start: .5rem; }
 .list-empty-row td { text-align: center; color: var(--muted); }
 [data-record-open] { cursor: pointer; }
 [data-record-open]:hover > td { background: var(--surface-2); }
+/* ut-docs#6055: pressed state for touch (no hover there). base.html sets
+   .ut-pressed on pointerdown, only when the tap will open the row (no
+   :active here: it would also paint the row for a press on a link inside
+   it, which never opens it). --border is a step darker than --surface-2 in
+   every theme, so it still shows over a sticky :hover. Colour only
+   (ADR-0119). Placed after :hover so it wins at equal specificity. On the
+   ≤480px card list the row itself is the rounded card: paint it, not its
+   cells (which would leave a square block inset in the card). */
+[data-record-open].ut-pressed > td { background: var(--border); }
+@media (max-width: 480px) {
+  table.t-cards tr.t-cards-row[data-record-open]:hover { background: var(--surface-2); }
+  table.t-cards tr.t-cards-row[data-record-open].ut-pressed { background: var(--border); }
+  /* The cell rules above would paint a square block over the card; a
+     dragged category row (.is-dragging, below) keeps its own cell colour. */
+  table.t-cards tr.t-cards-row[data-record-open]:is(:hover, .ut-pressed):not(.is-dragging) > td { background: none; }
+}
 
 /* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
    reason, see .item-form-modal above), a flex column of exactly two parts:
@@ -6475,6 +6788,45 @@ td.list-actions > * + * { margin-inline-start: .5rem; }
                  background: var(--surface); color: var(--text); }
 /* Out-specifies the display:flex above so a closed dialog renders nothing. */
 .record-dialog:not([open]) { display: none; }
+/* ut-docs#6125 (coding-standards §10, ut-docs#1999/#6118): the catalogue and
+   inventory full-screen dialogs (#item-form-modal, #import-modal,
+   #tax-codes-modal, #stock-dialog) no longer cover the nav rail or the status
+   bar. Block-end stops at the measured status row (--phone-sb-h: app.js
+   measureBar, not width-gated; 2rem until measured) so .statusbar (z 460 over
+   the scrim) stays the hit target. block-size:auto lets both insets size the
+   box; with the on-screen keyboard open body.osk-padded .item-form-modal /
+   .record-dialog (0,2,1) re-impose an explicit block-size, the box is
+   top-anchored and this end inset is ignored, so keyboard space is unchanged.
+   A CLASS, never an id: an id selector would beat that OSK rule. Placed after
+   .item-form-modal and .record-dialog (same 0,1,0) so it wins by order. */
+.dialog-beside-chrome { inset-block: 0 var(--phone-sb-h, 2rem); block-size: auto; }
+/* >=481px: BESIDE the rail (mirrors under RTL), as .category-items-modal does
+   (#3073), so the rail stays visible; Lock is the dialog's own
+   .dialog-status-inline below (the rail's is not always on screen).
+   <=480px: full width under the top bar, where ☰ is covered by the dialog. */
+@media (min-width: 481px) {
+  .dialog-beside-chrome { inset-inline: var(--rail-width) 0; inline-size: auto; }
+}
+.dialog-beside-chrome [data-ut-focus-home]:focus { outline: none; }
+/* Compact Lock + exit-to-OS (record_dialog.html "dialog_status_inline"): the
+   first children of the dialog's existing title line, at EVERY width. They
+   are the dialog's Lock because the rail's is not reliably reachable beside
+   it: under a scrim the rail is pointer-events:none (it cannot be scrolled),
+   and with a real manager session its Lock sits at y~674-722 of a 600px
+   viewport at 1024x600 (measured, ut-docs#6125), and ☰ is covered by the
+   dialog on a phone. No extra head row (UX-1, #2000 budget): at <=480px the
+   44px controls take the title line's own vertical padding via a negative
+   block margin, so the line does not grow. 44px literals, as
+   .record-dialog-status-row. */
+.dialog-status-inline { display: flex; flex: none; align-items: center; gap: .5rem; }
+.dialog-status-inline form { margin: 0; display: inline-flex; }
+.dialog-status-inline .btn { min-block-size: 44px; padding: .2rem .5rem; }
+.dialog-status-inline .btn-icon { min-inline-size: 44px; padding-inline: .4rem; }
+.dialog-status-inline .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
+@media (max-width: 480px) {
+  .catalog-form-head-titleline > .dialog-status-inline,
+  .record-dialog-head-title > .dialog-status-inline { margin-block: -.6rem; }
+}
 .record-dialog-inner { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
 .record-dialog-head { flex: none; padding: .6rem 1.5rem .5rem;
                       border-block-end: 1px solid var(--border); background: var(--surface); }
@@ -6782,16 +7134,18 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .cat-thumb-swatch { inline-size: 1.25rem; block-size: 1.25rem; border-radius: 50%; background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
 .cat-thumb-placeholder { display: inline-flex; color: var(--muted); }
 .cat-thumb-placeholder svg { inline-size: 1.1rem; block-size: 1.1rem; }
-.category-row-open {
+/* Row-tap list name button (ut-docs#2699 categories; ut-docs#6046 every other
+   record list). */
+.category-row-open, .record-row-open {
   display: inline-flex; align-items: center; gap: .6rem; min-block-size: 3rem; max-inline-size: 100%;
   padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
   border-radius: var(--radius);
 }
-.category-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
-.category-row-name { overflow-wrap: break-word; }
+.category-row-open:focus-visible, .record-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.category-row-name, .record-row-name { overflow-wrap: break-word; }
 /* The name column keeps room for the picture plus a short word at 360px;
-   the table's own .list-scroll wrapper scrolls sideways if it must,
-   rather than breaking names mid-word. */
+   the phone tier stacks the table as cards (table-cards.js / .t-cards,
+   ut-docs#3359) rather than breaking names mid-word. */
 .category-name-cell { min-inline-size: 9.5rem; }
 .list-reorder-hint { font-size: .85rem; margin-block: 0 .5rem; }
 .list-reorder-msg { margin-block: 0 .5rem; color: var(--danger); font-size: .9rem; }
@@ -6945,7 +7299,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
      moves to the foot of the ☰ drawer (the approved mock-up's layout). A
      problem still shows on the sale screen itself (offline-first: offline
      state is never hidden): no internet, main till not reachable, a
-     refused cloud credential (ADR-0116 D6), a disk below the low-disk floor
+     refused cloud credential (ADR-0116 D6), a move of this till waiting
+     for a manager (ut-docs#5287), a disk below the low-disk floor
      (ut-docs#3121) or an underpowered supply bring the row back just above the pay bar (or, in
      the open sheet, at the very bottom, with Pay pinned above it). So does
      an open dialog: the scrim covers ☰, and status must stay reachable
@@ -6956,7 +7311,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-move-pending, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */
@@ -6969,7 +7324,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     border-block-start: 1px solid rgba(255, 255, 255, .15);
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
-  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
+  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-move-pending, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky
      .statusbar), so the drawer reserves the row's measured open height
@@ -6980,6 +7335,28 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   /* ...and, like everywhere else, it stays above #ut-scrim while a dialog
      is open (status stays reachable; base rule html.ut-scrim-on .statusbar). */
   html.ut-scrim-on body.sale-screen .statusbar { z-index: 460; }
+  /* ut-docs#6118 (#1999, #2873): Lock is a drawer row here, and the nav is
+     pointer-events:none under the scrim, so lift ☰ above the dim and let the
+     opened drawer float over the popup (500-590), below #osk (1000). Only
+     Lock is live in it, every other row dimmed and dead, as on the rail. */
+  html.ut-scrim-on .nav .nav-drawer-toggle { z-index: 1; pointer-events: auto; }
+  html.ut-scrim-on body.nav-drawer-open .nav { z-index: 595; }
+  /* The drawer and its backdrop absorb taps (never fall through to the
+     popup or scrim). */
+  html.ut-scrim-on body.nav-drawer-open :is(.nav-drawer, .nav-drawer-backdrop) { pointer-events: auto; }
+  html.ut-scrim-on .nav-drawer * { pointer-events: none; }
+  html.ut-scrim-on .nav-drawer :is(.session-lock, .session-lock *) { pointer-events: auto; }
+  html.ut-scrim-on .nav-drawer .nav-toggle:not(.btn-lock) { opacity: .45; }
+  /* Status stays reachable over the opened drawer (its foot on Sell). */
+  html.ut-scrim-on body.nav-drawer-open .statusbar { z-index: 596; }
+  /* Focus lands on Lock when the drawer opens over a popup: show it. */
+  .nav-drawer .btn-lock:focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
+  /* With the on-screen keyboard open these popups start at the top edge,
+     over the 56px top bar and ☰; keep them below it (ut-docs#6118). */
+  body.osk-padded :is(#elevation-modal, #hold-modal, #pfand-modal, #table-add-modal)[open] {
+    inset-block-start: calc(var(--phone-top-h) + .5rem);
+    max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - var(--phone-top-h) - 1rem);
+  }
   .pos-container {
     display: flex; flex-direction: column; overflow: hidden;
     flex: 1 1 auto; min-height: 0;
@@ -7210,6 +7587,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   .pos-container .btn-tile .tile-price,
   .pos-container .btn-tile.tile-colored .tile-price { color: var(--muted); font-size: .85rem; }
+  /* ut-docs#5458: this tile has no swatch behind it here, so the busy
+     outline uses the plain-tile token, not the coloured tile's white. */
+  .pos-container .btn-tile.tile-colored[aria-busy="true"] { outline-color: var(--focus-border, var(--accent)); }
+  @media (prefers-reduced-motion: no-preference) {
+    html:not(.fx-light) .pos-container .btn-tile.tile-colored[aria-busy="true"] { animation-name: ut-tile-busy; }
+  }
 }
 
 /* ---------- Guided tour (ut-docs#3710, web/public/tour.js) ----------
@@ -7452,6 +7835,28 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* Staff actions on an online order (ut-docs#4768 slice D). Logical properties
+   only (RTL). Three blocks, never one flex row: opening Ship or Cancel must not
+   move its own summary from under the finger (the parked-orders bug, #3630) -- the
+   panel opens BELOW the summary. Targets keep .btn's 3rem; no nowrap, so the longest
+   de/tr labels wrap instead of clipping. */
+.channel-order-status[data-status="pending"] { border-style: dashed; }
+.channel-order-status[data-status="refused"] { font-weight: 600; }
+.channel-order-actions-card > h2 { margin-block-start: 0; }
+.channel-order-pending { list-style: none; margin: 0 0 .5rem; padding: 0; display: grid; gap: .5rem; }
+.channel-order-pending > li { display: grid; gap: .35rem; justify-items: start; }
+.channel-order-actions-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+.channel-order-actions-row > form { margin: 0; }
+.channel-order-action-form { margin-block-start: .75rem; }
+.channel-order-cancel { margin-block-start: 1rem; padding-block-start: 1rem; border-block-start: 1px solid var(--border); }
+.channel-order-action-form > summary { list-style: none; cursor: pointer; inline-size: fit-content; }
+.channel-order-action-form > summary::-webkit-details-marker { display: none; }
+.channel-order-action-panel { display: grid; gap: .75rem; margin-block-start: .75rem; max-inline-size: 32rem; }
+.channel-order-field { display: grid; gap: .25rem; }
+.channel-order-field input, .channel-order-field select { inline-size: 100%; min-inline-size: 0; box-sizing: border-box; min-block-size: 46px; }
+.channel-order-check { display: flex; align-items: center; gap: .5rem; min-block-size: 46px; }
+.channel-order-check input { inline-size: 1.25rem; block-size: 1.25rem; }
+.channel-order-outcome form { margin-block-start: .5rem; }
 /* Reports → Online channels (ut-docs#5427). Reuses .channel-order-scroll,
    .channel-orders-num and .channel-order-key; logical properties only. */
 .online-channels-notice { margin-block: .25rem .75rem; max-inline-size: 70ch; }
@@ -7681,3 +8086,12 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option:focus-visible { outline: 2px solid ButtonText; outline-offset: -5px; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
+
+/* About screen (ut-docs#6402): a plain list of full-width touch links. */
+.about-links { list-style: none; margin: 1rem 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; max-inline-size: 28rem; }
+.about-links .btn { display: block; text-align: start; }
+.manual-about-link { margin-block: 1rem 0; padding-inline: .5rem; }
+.about-addresses { margin: 1rem 0; }
+.about-addresses dt { font-weight: 600; margin-block-start: .5rem; }
+.about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
+.about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }
