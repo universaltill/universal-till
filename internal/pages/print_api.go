@@ -337,7 +337,7 @@ func receiptDocEncodable(doc print.Doc) bool {
 		// SlipDate is a translated label (ut-docs#6179). The shop's slip text is
 		// left out on purpose: it is identical in both docs, so it cannot
 		// decide the shop-language fallback.
-		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.Void, v.SlipDate)
+		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.BalanceLabel, v.BalanceAmount, v.Void, v.SlipDate)
 	}
 	for _, t := range texts {
 		if !print.Encodable(t, doc.Charset) {
