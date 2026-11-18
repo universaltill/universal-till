@@ -29,7 +29,7 @@ Verdict: approve, no blockers/majors.
    missing PIN → **accepted**: the till's JS maps the 403 itself; API-only.
 3. minor, pre-existing — base.html treats a non-JSON reply (the
    `http.Error` "manager only" 403) as success and polls 3 min; that reply
-   is untranslated → **deferred → Backlog card** (filed at close-out).
+   is untranslated → **deferred → ut-docs#5302** (same flow; detail added there).
 4. nit — "up to date (vX)" is joined in Go, not a `%s` key → accepted.
 5. nit — releases-API non-200 shown as "could not reach the update
    server" → accepted.
@@ -45,4 +45,4 @@ go1.27 deadcode, shellcheck) — CI runs those.
 Pre-flight: help topic `updated` (en/updates.md); docs-shots `updated`
 (surface hash only, script-only UI change); en.meta.json `updated`;
 reference page `n/a` (no reference doc covers update API errors); README
-`n/a` (no stale text); follow-up `deferred → Backlog card` (finding 3).
+`n/a` (no stale text); follow-up `deferred → ut-docs#5302` (finding 3).
