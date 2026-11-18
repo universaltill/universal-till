@@ -948,6 +948,25 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 				})
 			}
 		}
+		// ut-docs#6603: with several legs of this method, say how much goes back
+		// to each, in payment order (a leg's own amount is its cap), so the
+		// plugin never has to guess which charge to refund. Earlier partial
+		// refunds are not tracked per leg yet (see the card's notes).
+		if len(originalPayments) > 1 {
+			caps := make([]int64, len(originalPayments))
+			for i, op := range originalPayments {
+				caps[i], _ = op["amount"].(int64)
+			}
+			alloc := allocateRefundAcrossLegs(refundTotal.Minor(), caps)
+			kept := originalPayments[:0:0]
+			for i, op := range originalPayments {
+				if alloc[i] > 0 {
+					op["refund_amount"] = alloc[i]
+					kept = append(kept, op)
+				}
+			}
+			originalPayments = kept
+		}
 		if len(originalPayments) > 0 {
 			refundPayload["original_payments"] = originalPayments
 		}
@@ -1343,4 +1362,23 @@ func refundServiceCharges(amount int64, taxBasisBP int) []pos.ChargeInput {
 		TaxBasisBP: taxBasisBP,
 		Base:       pos.ChargeBaseNetLines,
 	}}
+}
+
+// allocateRefundAcrossLegs splits a refund total over the original legs in
+// payment order, each capped at its own amount (ut-docs#6603). Any remainder
+// beyond the legs' sum is left unallocated rather than guessed onto a leg.
+func allocateRefundAcrossLegs(total int64, caps []int64) []int64 {
+	out := make([]int64, len(caps))
+	for i, c := range caps {
+		a := total
+		if a > c {
+			a = c
+		}
+		if a < 0 {
+			a = 0
+		}
+		out[i] = a
+		total -= a
+	}
+	return out
 }

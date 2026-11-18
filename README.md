@@ -279,6 +279,14 @@ make run          # or: ./bin/unitill-pos
 
 Open http://localhost:8080
 
+**Till settings registry.** `internal/data/agent_settings.go` is the one typed
+list of till settings (type, bounds, risk tier, stored spelling, whether the
+cloud may write it). The cloud's `set_till_setting` whitelist and the
+heartbeat report derive from it, and `docs/till-settings-registry.json` is
+generated from it for ut-cloud: after changing an entry run
+`make gen-settings-registry` and commit the result (a test fails when stale).
+A new Settings card needs an entry with a tier.
+
 ### Option 3: Docker
 
 ```bash
@@ -397,12 +405,16 @@ UT_SAMPLES_DIR=/path/to/images        # Sample product images
 
 # Update check
 UT_UPDATE_CHECK=1                     # 0 = never ask GitHub for new versions (air-gapped tills)
-UT_UPDATE_RELEASES_URL=               # Empty = the public GitHub Releases API. Set to a
+UT_UPDATE_RELEASES_URL=               # Empty = the build's buildinfo.ReleasesBaseURL
+                                       # (the public GitHub Releases API in an
+                                       # unstamped build). Set to a
                                        # mirror of releases/latest (air-gapped shops,
                                        # e2e) — its host may also serve the release's
                                        # release-notes.json (ut-docs#3940). Only where the
                                        # till learns about a release; the update download
-                                       # itself is unaffected.
+                                       # always comes from the build's
+                                       # buildinfo.ReleasesBaseURL (default: our GitHub),
+                                       # which this variable never changes.
 
 # Logging (ut-docs#2720)
 UT_LOG_LEVEL=info                     # debug | info | warn | error

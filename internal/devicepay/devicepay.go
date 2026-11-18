@@ -70,6 +70,7 @@ const (
 	ReasonTimeout         = "timeout"           // the caller's context ended first
 	ReasonContextCanceled = "context_cancelled" // the caller cancelled its context
 	ReasonBadNativeResult = "bad_native_result" // the native reply was not a verdict this package recognises
+	ReasonForbidden       = "forbidden"         // the caller is not a manager (ResolveUnknown)
 )
 
 // ProviderStripe is the one provider with a device integration today
@@ -287,6 +288,69 @@ func setupCall(ctx context.Context, provider string, call func(Bridge) string) S
 			return SetupResult{Reason: ReasonBadNativeResult}
 		}
 		return r
+	case <-ctx.Done():
+		return SetupResult{Reason: ReasonTimeout}
+	}
+}
+
+// Resolver is the native side of "the operator says an earlier payment was
+// NOT charged" (ut-docs#6533): it drops the native side's unresolved-payment
+// record for one idempotency key, which unblocks the next sale. It is
+// registered separately from Bridge because Bridge is a gobind protocol the
+// iOS shell already implements; Android registers both while in the
+// foreground (mobile.SetTapToPayResolver).
+type Resolver interface {
+	// ResolveUnknown answers a SetupResult as JSON.
+	ResolveUnknown(idempotencyKey string) string
+}
+
+// Actor is who is asking; auth.User satisfies it. Declared here so this
+// neutral package does not import auth (and, through it, the data layer).
+type Actor interface {
+	IsManager() bool
+}
+
+var resolver Resolver // guarded by mu
+
+// SetResolver registers the native resolver; nil un-registers it. Its one
+// production caller is mobile.SetTapToPayResolver.
+func SetResolver(r Resolver) {
+	mu.Lock()
+	defer mu.Unlock()
+	resolver = r
+}
+
+// ResolveUnknown asks the native side to forget the unresolved payment for
+// idempotencyKey. The caller states the earlier payment was not charged
+// (checked in the provider's dashboard), after which another sale may
+// start: a wrong answer can double-charge a customer, so only a manager is
+// let through and a cashier (or no actor) is refused here, before the native
+// side is reached, whatever the web layer did.
+func ResolveUnknown(ctx context.Context, who Actor, provider, idempotencyKey string) SetupResult {
+	if who == nil || !who.IsManager() {
+		return SetupResult{Reason: ReasonForbidden}
+	}
+	mu.RLock()
+	r := resolver
+	mu.RUnlock()
+	if r == nil {
+		return SetupResult{Reason: ReasonNotForeground}
+	}
+	if !supportedProviders[provider] || idempotencyKey == "" {
+		return SetupResult{Reason: ReasonBadRequest}
+	}
+	replies := make(chan string, 1)
+	go func() {
+		defer logging.RecoverAndLog("devicepay resolve unknown")
+		replies <- r.ResolveUnknown(idempotencyKey)
+	}()
+	select {
+	case raw := <-replies:
+		var res SetupResult
+		if err := strictDecode(raw, &res); err != nil {
+			return SetupResult{Reason: ReasonBadNativeResult}
+		}
+		return res
 	case <-ctx.Done():
 		return SetupResult{Reason: ReasonTimeout}
 	}

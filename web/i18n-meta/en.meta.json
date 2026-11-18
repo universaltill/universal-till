@@ -93,6 +93,10 @@
   "agent.field.setting": {"description": "Column value on the assistant's confirm card for a settings change: names the row's change as a setting (the row's item is the setting's own label from the Settings screen).", "review": "standard"},
   "agent.value.on": {"description": "Before/after value on the assistant's confirm card for an on/off setting that is switched on.", "review": "standard"},
   "agent.value.off": {"description": "Before/after value on the assistant's confirm card for an on/off setting that is switched off.", "review": "standard"},
+  "settings.update.android.authorized": {"description": "Short confirmation returned when a manager approves installing the Android update; the download starts next.", "review": "standard"},
+  "settings.update.error.busy": {"description": "Shown when Update now is pressed while another update is still being installed on this till.", "review": "standard", "max_length": 120},
+  "settings.update.error.failed": {"description": "Generic message when installing an update failed for any reason without a more specific message; the details go to the till's log.", "review": "standard", "max_length": 120},
+  "settings.update.error.verify_failed": {"description": "Shown when the downloaded update failed verification (its checksum did not match, or the release's signed checksum list did not verify), so nothing was installed.", "review": "standard", "max_length": 120},
   "promotions.customer.clear": {"description": "Aria-label and tooltip of the x button beside the promotion's customer field; after Save any customer can use the code.", "review": "standard"},
   "promotions.customer.deleted": {"description": "Promotions list and dialog: the promotion is bound to a customer who no longer exists on this till (erased elsewhere). Shown instead of an id.", "review": "standard"},
   "promotions.customer.unpicked": {"description": "Promotion dialog error when text was typed in the customer field but no search result was chosen.", "review": "standard"},
@@ -155,6 +159,7 @@
   "import.issue.name_invalid": {"description": "Import row detail: the product name is missing, too long or has forbidden characters.", "review": "standard"},
   "import.issue.net_quantity_invalid": {"description": "Import row detail: the pre-packed product's net quantity (its content: grams, millilitres or a count) is incomplete or not valid. 'g', 'ml' and 'ea' are unit codes: keep them as they are.", "review": "standard"},
   "import.issue.price_invalid": {"description": "Import row detail: the price is missing, negative or implausibly large.", "review": "standard"},
+  "import.issue.reorder_level_invalid": {"description": "Import row warning: the item was imported, but its reorder level (the low-stock threshold) from the file was not used because it could not be read as a whole number in the allowed range; tells the user to write it without thousands separators.", "review": "standard", "placeholders": ["the value from the file exactly as written, e.g. '2.5'", "the lowest allowed reorder level, in the locale's digits, e.g. '0'", "the highest allowed reorder level, in the locale's digits and deliberately without thousands separators, e.g. '1000000'"]},
   "import.issue.row_not_object": {"description": "Import row detail: the importer sent something for this row that is not a product record.", "review": "standard"},
   "import.issue.row_not_single_object": {"description": "Import row detail: the importer sent more than one product record in one row.", "review": "standard"},
   "import.issue.sku_duplicate": {"description": "Import row detail: the same SKU (stock-keeping code) is on two or more rows of this import.", "review": "standard"},
@@ -719,6 +724,7 @@
   "page.title.notices": {"description": "Browser tab title of the Notices inbox page.", "review": "standard"},
   "permissions.action.notices.view": {"description": "Name of the permission that lets a role see the Notices bell and inbox, and mark notices read or acknowledged.", "review": "standard"},
   "permissions.action_desc.notices.view": {"description": "One-line description of the Notices permission on the Permissions page.", "review": "standard"},
+  "settings.telemetry.help": {"description": "Help text of the Plugin telemetry settings card: what the periodic report contains (active plugins, versions, shop and device IDs), that no sales or customer data is sent, and that it is off by default.", "review": "standard"},
   "settings.notices.title": {"description": "Heading of the Settings card that switches Notices on or off for this till.", "review": "standard"},
   "settings.notices.help": {"description": "Help text of the Notices settings card: what it shows, that a notice never blocks a sale, off by default, and that turning it off removes held notices.", "review": "standard"},
   "settings.notices.enable": {"description": "Checkbox label that switches Notices on for this till.", "review": "standard"},
@@ -851,5 +857,7 @@
   "about.delete_account_help": {"description": "Short note under the About links saying account deletion happens on the Universal Till website.", "review": "legal"},
   "about.more_link": {"description": "Link text from Settings, About and the manual to the About screen with the legal links.", "review": "standard"},
   "about.back_link": {"description": "Link text at the top of the open-source licences page that returns to the About screen.", "review": "standard"},
-  "about.addresses_help": {"description": "Note on the About screen where web links cannot be opened (kiosk): the addresses above are shown as text to type on another device.", "review": "legal"}
+  "about.addresses_help": {"description": "Note on the About screen where web links cannot be opened (kiosk): the addresses above are shown as text to type on another device.", "review": "legal"},
+  "pos.toast.payment_outcome_unknown": {"description": "Error toast on the till when a card payment may have been charged but the reader could not confirm it: tells the cashier to tap Pay again to settle it and not to take another payment.", "review": "standard"},
+  "selforder.checkout.outcome_unknown": {"description": "Message on the self-order kiosk when the customer's card payment could not be confirmed: sends them to the cashier and tells them not to pay again.", "review": "standard"}
 }

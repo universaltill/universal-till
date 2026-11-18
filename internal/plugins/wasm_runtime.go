@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -885,6 +886,17 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		return nil, fmt.Errorf("wasm handler: %s answer to %s exceeds %d bytes", pluginID, ev.Type, stdout.max)
 	}
 	if runErr != nil {
+		// ut-docs#6600: a payment authorize that exits non-zero may still have
+		// printed a decline_code (outcome_unknown: the card may have been
+		// charged). Keep the stdout on the error so core can tell that apart
+		// from a plain decline; the line is logged through the same redaction.
+		var exitErr *sys.ExitError
+		if strings.HasSuffix(ev.Type, ".authorize") && errors.As(runErr, &exitErr) {
+			if out := strings.TrimSpace(stdout.buf.String()); out != "" {
+				logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
+				return nil, &HandlerExitError{Code: int(exitErr.ExitCode()), Stdout: json.RawMessage(out), err: runErr}
+			}
+		}
 		return nil, fmt.Errorf("wasm handler: %w", runErr)
 	}
 	out := strings.TrimSpace(stdout.buf.String())
@@ -892,6 +904,34 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
 	}
 	return json.RawMessage(out), nil
+}
+
+// HandlerExitError is a wasm handler that exited non-zero after printing an
+// answer (ut-docs#6600). Only produced for ".authorize" events, where the
+// stdout carries a decline_code core must read.
+type HandlerExitError struct {
+	Code   int
+	Stdout json.RawMessage
+	err    error
+}
+
+func (e *HandlerExitError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("wasm handler: exit code %d", e.Code)
+	}
+	return "wasm handler: " + e.err.Error()
+}
+func (e *HandlerExitError) Unwrap() error { return e.err }
+
+// DeclineCode is the stdout's decline_code, "" when absent or not JSON.
+func (e *HandlerExitError) DeclineCode() string {
+	var v struct {
+		DeclineCode string `json:"decline_code"`
+	}
+	if json.Unmarshal(e.Stdout, &v) != nil {
+		return ""
+	}
+	return v.DeclineCode
 }
 
 // maxUIAnswerBytes caps a ui.* answer (ui.view.ask / ui.action.ask, a view
@@ -995,6 +1035,11 @@ const maxAskLogBytes = 500
 // secrets.Prefix is redacted regardless of its field name — see redactField.
 func looksLikeSensitiveFieldName(key string) bool {
 	lower := strings.ToLower(key)
+	// ut-docs#6606: provider references (exact names, so "reference" and
+	// "key" stay readable).
+	if lower == "ref" || lower == "transaction_ref" {
+		return true
+	}
 	for _, marker := range [...]string{"b64", "token", "secret", "password", "passwd", "api_key", "apikey", "auth_value", "private_key"} {
 		if strings.Contains(lower, marker) {
 			return true

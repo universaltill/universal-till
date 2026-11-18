@@ -33,7 +33,7 @@ func TestAboutPage_LinksOnEveryChannelAndRole(t *testing.T) {
 				for _, want := range []string{
 					`data-testid="about-licences-link"`, `href="/about/licences"`,
 					`data-testid="about-version"`,
-					aboutPrivacyURL, aboutTermsURL, aboutDeleteAccountURL,
+					aboutPrivacyURL, aboutTermsURL,
 				} {
 					if !strings.Contains(body, want) {
 						t.Errorf("%s About missing %s", c, want)
@@ -41,6 +41,10 @@ func TestAboutPage_LinksOnEveryChannelAndRole(t *testing.T) {
 				}
 				if !strings.Contains(body, `data-testid="about-privacy-link"`) && !strings.Contains(body, `data-testid="about-addresses"`) {
 					t.Errorf("%s About shows the privacy address neither as a link nor as text", c)
+				}
+				// F3: no delete-account row (placeholder address) on any channel until #6399.
+				if strings.Contains(body, "about-delete-account-link") || strings.Contains(body, "/account/delete") {
+					t.Errorf("%s About renders the delete-account placeholder", c)
 				}
 				low := strings.ToLower(body)
 				for _, bad := range []string{"/plans", "checkout", "pricing"} {
@@ -131,7 +135,7 @@ func TestAboutURLs(t *testing.T) {
 	if !strings.HasSuffix(aboutPrivacyURL, "/legal/app-privacy/") {
 		t.Errorf("privacy link must be the app privacy notice (#6398): %s", aboutPrivacyURL)
 	}
-	for name, u := range map[string]string{"privacy": aboutPrivacyURL, "terms": aboutTermsURL, "delete": aboutDeleteAccountURL} {
+	for name, u := range map[string]string{"privacy": aboutPrivacyURL, "terms": aboutTermsURL} {
 		if !strings.HasPrefix(u, "https://") || !strings.Contains(u, "/en-gb/") {
 			t.Errorf("%s URL %q: want https with the locale (en-gb) in the path", name, u)
 		}
