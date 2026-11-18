@@ -255,6 +255,8 @@ android {
             buildConfigField("String", "INSTALL_CHANNEL", "\"play\"")
             buildConfigField("String", "UPDATE_APK_URL", "\"\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            // #3048: Tap to Pay is dark on Play too (the stub, no Stripe SDK).
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
             signingConfigs.findByName("upload")?.let { signingConfig = it }
         }
     }
@@ -288,6 +290,7 @@ android {
     sourceSets {
         getByName("armv7").java.srcDir("src/ttpStub/java")
         getByName("universal").java.srcDir("src/ttpStub/java")
+        getByName("play").java.srcDir("src/ttpStub/java")
         getByName("arm64").java.srcDir(if (tapToPay) "src/ttpReal/java" else "src/ttpStub/java")
         if (tapToPay) getByName("arm64").manifest.srcFile("src/ttpReal/AndroidManifest.xml")
     }
