@@ -445,8 +445,9 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
 		"settings-all":         !isManager,
-		"settings-cloud-staff": !isManager,      // ut-docs#2557: manager-only, like the card
-		"settings-staff-links": !showStaffLinks, // ut-docs#3208: user_management || permission_management
+		"settings-cloud-staff": !isManager,               // ut-docs#2557: manager-only, like the card
+		"settings-staff-links": !showStaffLinks,          // ut-docs#3208: user_management || permission_management
+		"settings-notices":     !accountLinkOutAllowed(), // ut-docs#6622: the inbox is off on store channels
 	}
 	out := make([]settingsnav.Row, 0, len(rows))
 	for _, row := range rows {
