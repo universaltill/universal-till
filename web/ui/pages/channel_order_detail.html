@@ -2,10 +2,13 @@
 {{/* One online order (ADR-0169 §9, ut-docs#4768). Customer country only: the
      directive carries no name, address, e-mail or phone.
 
-     TODO(accept/pick/pack/ship): the till-to-cloud action payload is not
-     designed yet (sales-channel-v1.md §5.1, "Out of scope of v1"). Until its
-     card lands there are NO action buttons here; the note below says where
-     the actions are taken. Do not add disabled teaser buttons. */}}
+     Actions (slice D): the main till queues accept/pick/pack/ship/cancel in an
+     outbox; a tap never calls the network and never changes the status shown
+     here, which moves only when the cloud's answer (or a directive) is applied.
+     The block "channel_order_actions" is the inner HTML of #channel-order-actions
+     and is also what the htmx POST routes return. No dialog, no showModal: the
+     open <details> is the confirmation, so the status bar stays reachable. The
+     tracking link is shown as escaped text, never an anchor, and never fetched. */}}
 {{ $o := .Order }}
 <div class="page-head">
   <h1>{{ T "channel_orders.detail.title" }} {{ $o.OrderNumber }} {{ helpLink "channel-orders" }}</h1>
@@ -23,6 +26,9 @@
   {{ if $o.CurrencyMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.currency_mismatch" }} ({{ $o.Currency }})</p>{{ end }}
   {{ if $o.TotalMismatch }}<p class="login-error" role="alert">{{ T "channel_orders.detail.total_mismatch" }}</p>{{ end }}
 </div>
+<section class="card channel-order-actions-card" id="channel-order-actions" data-testid="channel-order-actions" aria-labelledby="channel-order-actions-heading" data-after-settle="restore-focus" style="margin-block-start:1rem">
+{{ template "channel_order_actions" . }}
+</section>
 <div class="card" style="margin-block-start:1rem">
   <div class="channel-order-scroll">
   <table class="table" id="channel-order-lines">
@@ -58,5 +64,131 @@
     {{ if $o.RefundTotal.IsPositive }}<dt>{{ T "channel_orders.detail.refunded_total" }}</dt><dd>{{ moneyIn $o.RefundTotal $o.Currency }}</dd>{{ end }}
   </dl>
 </div>
-<p class="muted channel-orders-intro">{{ T "channel_orders.detail.actions_note" }}</p>
+{{ end }}
+{{ define "channel_order_actions" }}
+{{ $o := .Order }}{{ $url := printf "/channel-orders/%s/actions" $o.ID }}
+<h2 id="channel-order-actions-heading" tabindex="-1">{{ T "channel_orders.actions.heading" }}</h2>
+{{ if and .FormError (not .FormField) }}<p class="login-error" role="alert" data-testid="channel-order-actions-error">{{ T .FormError }}</p>{{ end }}
+
+{{ if gt .BlockedCount 0 }}
+<div class="notice-block-warn" role="status" data-testid="channel-order-blocked">
+  <p>{{ T (printf "channel_orders.blocked.%s" .BlockedKey) }}</p>
+  <p>{{ T "channel_orders.blocked.count" }}: <strong>{{ qty .BlockedCount }}</strong></p>
+  {{ if .CanDismiss }}
+  <form method="post" action="/channel-orders/blocked/dismiss" hx-post="/channel-orders/blocked/dismiss" hx-target="#channel-order-actions" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
+        data-before-request="remember-focus:channel-order-actions,channel-order-actions-heading">
+    <input type="hidden" name="order_id" value="{{ $o.ID }}">
+    <button type="submit" class="btn secondary">{{ T "channel_orders.blocked.dismiss_all" }}</button>
+  </form>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ if or .Pending .Blocked }}
+<ul class="channel-order-pending" role="status" data-testid="channel-order-pending">
+  {{ range .Blocked }}{{ template "channel_order_queued_row" . }}{{ end }}
+  {{ range .Pending }}{{ template "channel_order_queued_row" . }}{{ end }}
+</ul>
+{{ if .Pending }}<p class="muted">{{ T "channel_orders.pending.hint" }}</p>{{ end }}
+{{ end }}
+
+{{ range .Outcomes }}
+<div class="notice-block-warn channel-order-outcome" role="status" data-testid="channel-order-outcome" data-outcome="{{ .State }}">
+  {{ if eq .State "refused" }}
+  <p><strong>{{ T "channel_orders.refused.title" }}</strong> {{ T (printf "channel_orders.outcome.%s" .Action) }}</p>
+  <p>{{ T .ReasonKey }}</p>
+  {{ else }}
+  <p><strong>{{ T (printf "channel_orders.outcome.%s" .Action) }}</strong></p>
+  <p>{{ T "channel_orders.note.writeback_skipped" }}</p>
+  {{ end }}
+  {{ if $.CanDismiss }}
+  <form method="post" action="/channel-orders/{{ $o.ID }}/actions/{{ .ActionID }}/dismiss" hx-post="/channel-orders/{{ $o.ID }}/actions/{{ .ActionID }}/dismiss" hx-target="#channel-order-actions" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
+        data-before-request="remember-focus:channel-order-actions,channel-order-actions-heading">
+    <button type="submit" class="btn secondary">{{ T "channel_orders.dismiss" }}<span class="visually-hidden"> · {{ T (printf "channel_orders.outcome.%s" .Action) }}</span></button>
+  </form>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ if .CanAct }}
+  {{ if .Forward }}
+  <div class="channel-order-actions-row" data-testid="channel-order-forward">
+    {{ range .Forward }}
+    <form method="post" action="{{ $url }}" hx-post="{{ $url }}" hx-target="#channel-order-actions" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
+          data-before-request="remember-focus:channel-order-actions,channel-order-actions-heading">
+      <input type="hidden" name="action" value="{{ . }}">
+      <button type="submit" class="{{ if eq . $.NextStep }}btn{{ else }}btn secondary{{ end }}" data-channel-action="{{ . }}">{{ T (printf "channel_orders.action.%s" .) }}</button>
+    </form>
+    {{ end }}
+  </div>
+  {{ end }}
+
+  {{ if .CanShip }}
+  {{/* No name= on a re-render that reopens a form: htmx inserts the new block before removing the old one, and an
+       exclusive accordion would close the reopened panel (the old one is still open in the group). */}}
+  <details class="channel-order-action-form"{{ if not .FormAction }} name="channel-order-action"{{ end }} data-form="ship"{{ if eq .FormAction "ship" }} open{{ end }}>
+    <summary class="{{ if eq .NextStep "ship" }}btn{{ else }}btn secondary{{ end }}" data-channel-action="ship">{{ T "channel_orders.action.ship" }}</summary>
+    <form class="channel-order-action-panel" method="post" action="{{ $url }}" hx-post="{{ $url }}" hx-target="#channel-order-actions" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]" novalidate
+          data-before-request="remember-focus:channel-order-actions,channel-order-actions-heading">
+      <input type="hidden" name="action" value="ship">
+      <label class="channel-order-field">{{ T "channel_orders.ship.carrier" }}
+        <input type="text" name="carrier" value="{{ .Form.Carrier }}" maxlength="64" required dir="auto" autocomplete="off"{{ if eq .FormField "carrier" }} class="field-invalid" aria-invalid="true" aria-describedby="channel-ship-carrier-err" autofocus{{ end }}>
+      </label>
+      {{ if eq .FormField "carrier" }}<p class="field-error-msg" id="channel-ship-carrier-err" role="alert">{{ T .FormError }}</p>{{ end }}
+      <label class="channel-order-field">{{ T "channel_orders.ship.tracking_number" }}
+        <input type="text" name="tracking_number" value="{{ .Form.TrackingNumber }}" maxlength="64" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false"{{ if eq .FormField "tracking_number" }} class="field-invalid" aria-invalid="true" aria-describedby="channel-ship-number-err" autofocus{{ end }}>
+      </label>
+      {{ if eq .FormField "tracking_number" }}<p class="field-error-msg" id="channel-ship-number-err" role="alert">{{ T .FormError }}</p>{{ end }}
+      <label class="channel-order-field">{{ T "channel_orders.ship.tracking_url" }}
+        <input type="url" name="tracking_url" value="{{ .Form.TrackingURL }}" maxlength="512" dir="ltr" autocomplete="off" spellcheck="false"{{ if eq .FormField "tracking_url" }} class="field-invalid" aria-invalid="true" aria-describedby="channel-ship-url-err" autofocus{{ end }}>
+      </label>
+      {{ if eq .FormField "tracking_url" }}<p class="field-error-msg" id="channel-ship-url-err" role="alert">{{ T .FormError }}</p>{{ end }}
+      <div class="channel-order-actions-row">
+        <button type="submit" class="btn">{{ T "channel_orders.ship.submit" }}</button>
+        <button type="button" class="btn secondary" data-action="close-details">{{ T "common.close" }}</button>
+      </div>
+    </form>
+  </details>
+  {{ end }}
+
+  {{ if .CanCancel }}
+  <details class="channel-order-action-form channel-order-cancel"{{ if not .FormAction }} name="channel-order-action"{{ end }} data-form="cancel"{{ if eq .FormAction "cancel" }} open{{ end }}>
+    <summary class="btn secondary" data-channel-action="cancel">{{ T "channel_orders.action.cancel" }}</summary>
+    <form class="channel-order-action-panel" method="post" action="{{ $url }}" hx-post="{{ $url }}" hx-target="#channel-order-actions" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]" novalidate
+          data-before-request="remember-focus:channel-order-actions,channel-order-actions-heading">
+      <input type="hidden" name="action" value="cancel">
+      <p class="muted">{{ T "channel_orders.cancel.warning" }}</p>
+      <label class="channel-order-field">{{ T "channel_orders.cancel.reason" }}
+        <select name="reason" required{{ if eq .FormField "reason" }} class="field-invalid" aria-invalid="true" aria-describedby="channel-cancel-reason-err" autofocus{{ end }}>
+          <option value=""{{ if not .Form.Reason }} selected{{ end }}>{{ T "channel_orders.cancel.reason.choose" }}</option>
+          {{ range .CancelReasons }}<option value="{{ . }}"{{ if eq . $.Form.Reason }} selected{{ end }}>{{ T (printf "channel_orders.cancel.reason.%s" .) }}</option>{{ end }}
+        </select>
+      </label>
+      {{ if eq .FormField "reason" }}<p class="field-error-msg" id="channel-cancel-reason-err" role="alert">{{ T .FormError }}</p>{{ end }}
+      <label class="channel-order-check"><input type="checkbox" name="restock" value="1"{{ if .Form.Restock }} checked{{ end }}> {{ T "channel_orders.cancel.restock" }}</label>
+      <p class="muted">{{ T "channel_orders.cancel.restock_hint" }}</p>
+      <div class="channel-order-actions-row">
+        <button type="submit" class="btn danger">{{ T "channel_orders.cancel.submit" }}</button>
+        <button type="button" class="btn secondary" data-action="close-details">{{ T "channel_orders.cancel.keep" }}</button>
+      </div>
+    </form>
+  </details>
+  {{ end }}
+  {{ if or .Forward .CanShip .CanCancel }}<p class="muted">{{ T "channel_orders.detail.offline_note" }}</p>{{ end }}
+{{ else if not (gt .BlockedCount 0) }}
+  <p class="muted" data-testid="channel-order-no-actions">{{ T "channel_orders.detail.no_actions_note" }}</p>
+{{ end }}
+{{ end }}
+
+{{ define "channel_order_queued_row" }}
+<li data-queued-action="{{ .Action }}" data-state="{{ .State }}">
+  <span class="channel-order-status" data-status="pending">{{ T (printf "channel_orders.pending_short.%s" .Action) }}</span>
+  {{ if .Shipment }}
+  <dl class="channel-order-facts">
+    <dt>{{ T "channel_orders.ship.carrier" }}</dt><dd><bdi dir="auto">{{ .Shipment.Carrier }}</bdi></dd>
+    {{ if .Shipment.TrackingNumber }}<dt>{{ T "channel_orders.queued.tracking_number" }}</dt><dd><code dir="ltr">{{ .Shipment.TrackingNumber }}</code></dd>{{ end }}
+    {{ if .Shipment.TrackingURL }}<dt>{{ T "channel_orders.queued.tracking_url" }}</dt><dd><code dir="ltr" class="channel-order-key">{{ .Shipment.TrackingURL }}</code></dd>{{ end }}
+  </dl>
+  {{ end }}
+</li>
 {{ end }}

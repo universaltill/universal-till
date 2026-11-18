@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudnotice"
 	"github.com/universaltill/universal-till/internal/data"
@@ -73,9 +74,15 @@ func (n *noticeClient) get(ctx context.Context, k string) string {
 	return v
 }
 
-// enabled: the flag is on and memory is not below the floor.
+// enabled: the flag is on, the channel allows it and memory is not below the floor.
 func (n *noticeClient) enabled(ctx context.Context) bool {
 	if n == nil || !cloudnotice.Truthy(n.get(ctx, cloudnotice.SettingEnabled)) {
+		return false
+	}
+	// Store channels (play, appstore): a notice's free-text price/purchase
+	// pitch cannot be filtered on the till, so the inbox stays off whatever
+	// the flag says (ADR-0194 §3, ut-docs#6622).
+	if !buildinfo.CurrentChannel().AccountLinkOutAllowed() {
 		return false
 	}
 	if avail, ok := noticeMemAvailable(); ok && avail < noticeMemFloor {

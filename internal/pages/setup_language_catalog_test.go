@@ -174,7 +174,7 @@ func TestSetupWizardCatalogPaginationCapPreventsInfiniteLoop(t *testing.T) {
 // catalog, and browsing must never mint the shop's cloud store identity.
 // Only a plugin download/install (the POST below, via
 // resolveAndInstallBasePlugin) or an operator's explicit Settings →
-// "Register now" may enrol. Independent review caught GET /setup calling
+// an explicit operator registration may enrol. Independent review caught GET /setup calling
 // enroll.EnsureRegistered, which enrolled every till that ever reached its
 // first screen — precisely the "every download, demo, test boot and CI run
 // mints a store org" the ADR exists to prevent.
@@ -195,7 +195,7 @@ func TestSetupWizardCatalogBrowseDoesNotRegisterStore(t *testing.T) {
 	}
 	if hits := mkt.storeRegisterHits(); hits != 0 {
 		t.Fatalf("GET /setup enrolled the shop's cloud store (%d POST /v1/stores/register) — "+
-			"ADR-0015 allows that only on a plugin download/install or an explicit Register now", hits)
+			"ADR-0015 allows that only on a plugin download/install or an explicit operator registration", hits)
 	}
 }
 

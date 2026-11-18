@@ -426,9 +426,12 @@ func TestSetupWizardInstallsQueuedTaxPluginOnceShopIsNamed(t *testing.T) {
 			if len(names) == 0 {
 				t.Fatal("the install never asked to register the shop")
 			}
+			// ADR-0200 (owner decision): an automatic registration (this
+			// install's lazy fallback) sends no shop name, though it still
+			// waits until the shop is named.
 			for _, n := range names {
-				if n != "Corner Café" {
-					t.Fatalf("register store_name(s) = %q, want only the typed name", names)
+				if n != "" {
+					t.Fatalf("register store_name(s) = %q, want none (automatic register is anonymous)", names)
 				}
 			}
 		})
