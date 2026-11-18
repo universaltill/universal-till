@@ -39,8 +39,8 @@ name: play-publish
 # No stored credential anywhere: Azure and Google both take GitHub's OIDC token.
 #
 # Interface with the flavor card (#6409, android/app/build.gradle.kts and
-# android/scripts/check-aab.sh): `./gradlew :app:bundlePlayRelease
-# -PinstallChannel=play -PversionCode=<BASE>` writes an UNSIGNED bundle to
+# android/scripts/check-aab.sh): the Play bundle task (flags
+# -PinstallChannel=play -PversionCode=<BASE>; exact line further down) writes an UNSIGNED bundle to
 # android/app/build/outputs/bundle/playRelease/app-play-release.aab (the build
 # never sees a key). Gradle multiplies the BASE itself: versionCode = base*10+5,
 # base = MA*1000000+MI*1000+PA (release.yml's formula). check-aab.sh takes

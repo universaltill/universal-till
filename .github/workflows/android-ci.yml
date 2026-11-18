@@ -182,3 +182,38 @@ jobs:
           # proves the update code is absent from the flavor.
           ./gradlew testPlayReleaseUnitTest bundlePlayRelease -PinstallChannel=play --no-daemon
           bash scripts/check-aab.sh app/build/outputs/bundle/playRelease/app-play-release.aab --allow-unsigned
+      # #3048 (Stripe Terminal Tap to Pay, ADR-0125 Amendment 1): the feature is a
+      # compile-time flag, off for every shipped build. Prove that on the
+      # shipped flavors (no SDK in any dex, no Tap to Pay in the merged
+      # manifest), THEN compile the real adapter with the flag on so it
+      # cannot rot. The default arm64 APK is checked before the flag-on build
+      # overwrites it.
+      - name: Tap to Pay is absent from shipped flavors (#3048)
+        if: steps.filter.outputs.match == 'true'
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew assembleUniversalDebug assembleArmv7Debug --no-daemon
+          cd ..
+          bash scripts/ci/check-android-stripe-sdk.sh absent \
+            android/app/build/outputs/apk/arm64/debug/*.apk \
+            android/app/build/outputs/apk/universal/debug/*.apk \
+            android/app/build/outputs/apk/armv7/debug/*.apk
+          for v in arm64Debug universalDebug armv7Debug; do
+            m="$(find android/app/build/intermediates/merged_manifests -path "*/${v}/*" -name AndroidManifest.xml | sed -n 1p)"
+            [ -n "${m}" ] || { echo "no merged manifest for ${v}" >&2; exit 1; }
+            bash scripts/ci/guard-android-manifest-features.sh "${m}" shipped
+          done
+      - name: Tap to Pay real adapter compiles and tests pass with the flag on (#3048)
+        if: steps.filter.outputs.match == 'true'
+        # Compile and JVM tests only: this step never builds a release, signs or uploads.
+        env:
+          UT_EXPECT_TAP_TO_PAY: "true"
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew -PtapToPay=true assembleArm64Debug testArm64DebugUnitTest --no-daemon
+          cd ..
+          bash scripts/ci/check-android-stripe-sdk.sh present android/app/build/outputs/apk/arm64/debug/*.apk
+          m="$(find android/app/build/intermediates/merged_manifests -path '*/arm64Debug/*' -name AndroidManifest.xml | sed -n 1p)"
+          bash scripts/ci/guard-android-manifest-features.sh "${m}"

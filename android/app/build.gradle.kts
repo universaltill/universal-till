@@ -128,6 +128,16 @@ gradle.taskGraph.whenReady {
     }
 }
 
+// #3048 / ADR-0125 Amendment 1: Stripe Terminal Tap to Pay. COMPILE-TIME flag,
+// default OFF, honoured by the arm64 flavor ONLY (the SDK is arm-only and
+// Android 13+; universal carries armv7 and so is excluded on purpose). Off =
+// the SDK is not on the classpath, a no-op stub is compiled, the manifest
+// gains nothing and the bridge is never registered. release.yml never passes
+// it (scripts/ci/guard-android-tap-to-pay-flag.sh fails any workflow that
+// does, until a signed-off card adds android/tap-to-pay-release-approved.txt).
+val tapToPay = (project.findProperty("tapToPay") as String?) == "true"
+val stripeTerminalVersion = "6.0.0"
+
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
@@ -206,6 +216,7 @@ android {
             versionCode = baseVersionCode * 10 + 2
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArm64\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "$tapToPay")
         }
         create("armv7") {
             dimension = "abi"
@@ -214,6 +225,8 @@ android {
             versionCode = baseVersionCode * 10 + 1
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArmv7\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            // Hard-coded: -PtapToPay is ignored here (armv7 and Android < 13).
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
         }
         create("universal") {
             dimension = "abi"
@@ -222,6 +235,8 @@ android {
             versionCode = baseVersionCode * 10
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlUniversal\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "true")
+            // Hard-coded false on purpose: universal carries armv7 and cannot ship the arm-only SDK path.
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
         }
         // ADR-0194 / ut-docs#6409: the Google Play bundle (bundlePlayRelease).
         // versionCode base*10+5 (universal 0, armv7 1, arm64 2, play 5) keeps
@@ -239,6 +254,8 @@ android {
             buildConfigField("String", "INSTALL_CHANNEL", "\"play\"")
             buildConfigField("String", "UPDATE_APK_URL", "\"\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            // #3048: Tap to Pay is dark on Play too (the stub, no Stripe SDK).
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
             signingConfigs.findByName("upload")?.let { signingConfig = it }
         }
     }
@@ -264,6 +281,17 @@ android {
     // language.
     bundle {
         language { enableSplit = false }
+    }
+
+    // #3048: one `abi` dimension, so flavor source sets only. The stub is what
+    // every shipped build compiles; the real Stripe adapter and its manifest
+    // overlay exist only for arm64 with -PtapToPay=true.
+    sourceSets {
+        getByName("armv7").java.srcDir("src/ttpStub/java")
+        getByName("universal").java.srcDir("src/ttpStub/java")
+        getByName("play").java.srcDir("src/ttpStub/java")
+        getByName("arm64").java.srcDir(if (tapToPay) "src/ttpReal/java" else "src/ttpStub/java")
+        if (tapToPay) getByName("arm64").manifest.srcFile("src/ttpReal/AndroidManifest.xml")
     }
 
     // ut-docs#1541: compress libgojni.so inside the APK (74.5 MB -> ~35 MB per
@@ -294,9 +322,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     // ut-docs#412: BuildConfig generation is opt-in as of AGP 8.0 — without
     // this, MainActivity's BuildConfig.DEBUG check (gating the debug-only
     // status bar) fails to compile with "unresolved reference: BuildConfig"
@@ -304,6 +329,14 @@ android {
     // review before merge, 2026-08-07).
     buildFeatures {
         buildConfig = true
+    }
+}
+
+// #3048: the compilerOptions DSL (kotlinOptions.jvmTarget is a hard error from Kotlin 2.2+,
+// which the -PtapToPay=true build uses; the same JVM 17 target as before).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -475,6 +508,14 @@ dependencies {
     // ut-docs#1541/#4312: JVM unit tests for the pure update decisions
     // (UpdateLogic, UpdateSourceBuildConfigTest) — `./gradlew testArm64DebugUnitTest`, no device needed.
     testImplementation("junit:junit:4.13.2")
+    // #3048: the Android org.json is a stub on the JVM; the tap bridge's JSON tests need a real one.
+    testImplementation("org.json:json:20240303")
+
+    // #3048: Stripe Terminal, arm64 + -PtapToPay=true ONLY. Exact versions, no ranges.
+    if (tapToPay) {
+        add("arm64Implementation", "com.stripe:stripeterminal-taptopay:$stripeTerminalVersion")
+        add("arm64Implementation", "com.stripe:stripeterminal-core:$stripeTerminalVersion")
+    }
 
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
