@@ -92,14 +92,14 @@ func TestCloudSetTillSetting_AdditionalTillRefusesShopWideKeys(t *testing.T) {
 		if data.SettingScope(key) == data.SettingPerTill {
 			continue
 		}
-		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x"); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x", nil); err == nil {
 			t.Fatalf("set_till_setting %s on an additional till: want a refusal, got nil", key)
 		}
 		if v, _, _ := dp.Settings.Get(ctx, key); v == "x" {
 			t.Fatalf("set_till_setting %s refused but still wrote locally", key)
 		}
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask"); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask", nil); err != nil {
 		t.Fatalf("set_till_setting %s (per-till) on an additional till: %v", keyPrinterReceiptPolicy, err)
 	}
 	if v, _, _ := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); v != "ask" {

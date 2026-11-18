@@ -181,3 +181,31 @@ func TestListBackupsTieBreaksByName(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5066: the off-site upload's working files (the plaintext stripped
+// copy offsite-*.part, the sealed offsite-*.utbk, the restore download) sit in
+// the backups directory. They must never be listed, so the "copy a backup off
+// this till" list and its download/delete handlers (all built on ListBackups
+// and ValidBackupName) can never serve them.
+func TestOffsiteWorkingFilesAreNeverListedOrServedAsBackups(t *testing.T) {
+	path := testDBPath(t)
+	now := time.Now()
+	putBackup(t, path, "unitill-pos-20260101-000001.db", now, time.Hour)
+	dir, err := BackupDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := []string{"offsite-abc123.part", "offsite-0b2f6c1e-aaaa-4bbb-8ccc-123456789012.utbk", "restore-0b2f6c1e.utbk.part"}
+	for _, n := range extra {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if ValidBackupName(n) {
+			t.Errorf("%s accepted as a servable backup name", n)
+		}
+	}
+	list, _ := ListBackups(path)
+	if len(list) != 1 || list[0].Name != "unitill-pos-20260101-000001.db" {
+		t.Fatalf("listed %+v, want only the real snapshot", list)
+	}
+}

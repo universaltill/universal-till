@@ -163,7 +163,7 @@ func TestRegisterSecondKeyRequiredIsRefusedAndQuietsTheLazyPath(t *testing.T) {
 	if cloud.calls() != 2 {
 		t.Fatalf("lazy path called the cloud %d more times after a key refusal", cloud.calls()-2)
 	}
-	// A deliberate Register now still tries, and a 200 clears the mark.
+	// An explicit operator registration still tries, and a 200 clears the mark.
 	mode = "ok"
 	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestStartAsNewStoreFailureLeavesAnOrdinaryUnregisteredTill(t *testing.T) {
 	if CurrentStatus().Registered || kv.get(keyToken) != "" || kv.get(keyStoreID) != "" || kv.get(keyDeviceID) == "till-dev-1" || kv.get(keyDeviceID) == "" {
 		t.Fatalf("state: registered=%v token=%q store=%q device=%q", CurrentStatus().Registered, kv.get(keyToken), kv.get(keyStoreID), kv.get(keyDeviceID))
 	}
-	// Ordinary not-registered: the Register now path works afterwards.
+	// Ordinary not-registered: the explicit operator registration path works afterwards.
 	if _, err := RegisterNow(context.Background(), cfg, kv); err == nil || cloud.calls() != 2 {
 		t.Fatalf("follow-up register err=%v calls=%d", err, cloud.calls())
 	}
@@ -415,5 +415,33 @@ func TestReconnectDoesNotNameAnUnnamedShopAfterItsID(t *testing.T) {
 		if got := cloud.req(i).StoreName; got != "" {
 			t.Fatalf("call %d store_name = %q, want blank", i, got)
 		}
+	}
+}
+
+// ut-docs#6612: "Register as a new shop" leaves the old shop for good, so the
+// old shop's off-site backup key file goes (ADR-0199 D2), even when the register
+// itself then fails.
+func TestStartAsNewStoreReportsTheLeftShop(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		h    func(int, regReq, http.ResponseWriter)
+	}{
+		{"register ok", func(_ int, _ regReq, w http.ResponseWriter) { writeOK(w, "tok-fresh") }},
+		{"register fails", func(_ int, _ regReq, w http.ResponseWriter) { http.Error(w, "boom", 500) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetState()
+			var left []string
+			OnStoreLeft = func(old string) { left = append(left, old) }
+			t.Cleanup(func() { OnStoreLeft = nil })
+			cloud := newScriptedCloud(t, tc.h)
+			kv := newFakeKV()
+			cfg := registeredTill(t, cloud.srv.URL, kv)
+			kv.m[keyStoreID] = "st_old"
+			_, _ = StartAsNewStore(context.Background(), cfg, kv)
+			if len(left) != 1 || left[0] != "st_old" {
+				t.Fatalf("left shops = %v, want [st_old]", left)
+			}
+		})
 	}
 }

@@ -1048,6 +1048,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
 			// ut-docs#4720: the cloud-terms accept step / accepted line.
 			"terms": termsView(r.Context(), d, locale),
+			// ADR-0200: the Cloud record card (status, notice, Stop sending).
+			"registrationCard": registrationCardView(r, d, isManager),
 			// ut-docs#5145: the cloud will not re-register this till yet.
 			"registerBlocked": registerBlockedView(r, d, locale),
 			"registerFacts":   registerFactsView(r, d, locale),
@@ -1241,7 +1243,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Immediate marketplace registration attempt (the Settings card's
-	// "Register now" button). Registration also runs automatically in the
+	// the (removed) registration button). Registration also runs automatically in the
 	// background; this just gives the operator a button and instant feedback.
 	// "Claim this store" (ADR-0013 layer 2): mint a short-lived claim code
 	// on the marketplace and show it with the redemption link. The owner
@@ -1262,7 +1264,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		info, err := enroll.ClaimCode(r.Context(), d.Cfg)
 		if err != nil {
-			// Same rule as "Register now" (ut-docs#3861, #3990): the raw
+			// Same rule as an explicit operator registration (ut-docs#3861, #3990): the raw
 			// reason — the cloud's English JSON, which can name why the shop
 			// is refused — is logged, never rendered.
 			logging.L().Warnf("claim code failed: %v", err)
@@ -1277,9 +1279,26 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", "-", "claim_code_generated", nil)
+		// ADR-0200: the operator is claiming this shop, so it is no longer a
+		// merely auto-registered till (its check-ins may carry the names).
+		enroll.MarkOperatorClaimed(r.Context(), d.Settings)
 		// ADR-0148 §2: check in for the code's lifetime, so a claim (and a
 		// paid plan behind it) reaches this till without a background poll.
 		requestOperatorCheckin(d, claimCheckinWindow)
+		// ADR-0194 §2.3 (ut-docs#6401): on Google Play and App Store builds the
+		// claim URL leads to an account area with checkout, so it is never
+		// rendered: the code shows as plain text with instructions for
+		// another device. No link, no QR. info.ClaimURL is dropped here.
+		if !accountLinkOutAllowed() {
+			fmt.Fprintf(w,
+				`<div class="claim-code-box" data-testid="claim-code-text-only"><p>%s <strong class="claim-code">%s</strong></p>`+
+					`<p>%s</p><div class="muted">%s</div></div>`,
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_store_code")),
+				html.EscapeString(info.Code),
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_store_how")),
+				html.EscapeString(httpx.T(locale, "settings.enrol.claim_expires")))
+			return
+		}
 		// QR of the claim URL: the owner scans it and claims FROM THEIR
 		// PHONE — the only escape hatch on shells that can't open an
 		// external browser (Pi kiosk, windows/linux webview).
@@ -1302,100 +1321,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			qrHTML)
 	})
 
-	mux.HandleFunc("POST /api/enrol/now", func(w http.ResponseWriter, r *http.Request) {
-		locale := httpx.ResolveLocale(w, r)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		// Always answer 200: this is an hx-swap target, and HTMX silently drops
-		// non-2xx responses — a 403/502 here is exactly why the button looked
-		// dead. The message carries the outcome (and the reason on failure).
-		// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796) in
-		// place of the flat forbidden span. No other form fields, so
-		// ParseForm only reads override_pin.
-		_ = r.ParseForm()
-		// ut-docs#4720: the cloud terms must be accepted (once per version)
-		// before anything is sent. Validated BEFORE checkOrElevate - a
-		// request that would be refused must not burn an approver's PIN.
-		accepted := termsAlreadyAccepted(r.Context(), d)
-		if !accepted && !termsTicked(r) {
-			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.enrol.terms_required")))
-			return
-		}
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/enrol/now", "#enrol-msg",
-				httpx.T(locale, "elevation.summary.enrol_now"),
-				[]elevationHiddenField{{Name: "accept_terms", Value: r.Form.Get("accept_terms")}}, elev)
-			return
-		}
-		if !accepted {
-			if err := enroll.RecordTermsAcceptance(r.Context(), d.Settings, locale); err != nil {
-				// Without a stored acceptance register() would send none:
-				// do not register, tell the operator to retry.
-				logging.L().Errorf("enrol now: record terms acceptance: %v", err)
-				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.error.save_failed")))
-				return
-			}
-		}
-		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
-		if err != nil || !(status.Registered || status.ViaMainTill) {
-			// The raw reason (e.g. the cloud's JSON body, English-only) is
-			// logged, never rendered: it is not translated, not escaped
-			// HTML, and can name why the shop was refused (ut-docs#3861).
-			// The operator sees a translated message instead; only the
-			// endpoint we tried is shown on a generic failure, so an
-			// unreachable/misconfigured marketplace is still visible.
-			if err != nil {
-				logging.L().Warnf("enrol now failed: %v", err)
-			}
-			if errors.Is(err, enroll.ErrStoreUnnamed) {
-				// ut-docs#4272: nothing was sent; point the owner at the
-				// Shop name card (a /settings#<card-id> link the page's
-				// hash routing opens), so naming the shop is one tap away.
-				fmt.Fprintf(w, `<span class="error">❌ %s <a href="/settings#settings-store-name">%s</a></span>`,
-					html.EscapeString(httpx.T(locale, "settings.enrol.name_required")),
-					html.EscapeString(httpx.T(locale, "settings.store_name.title")))
-				return
-			}
-			// ut-docs#5145: device_live is a standing state (selling is not
-			// affected), not a failure: neutral styling, no cross.
-			if usable, live := enroll.IsDeviceLive(err); live {
-				fmt.Fprintf(w, `<span class="muted">%s</span>`, deviceLiveText(locale, usable))
-				return
-			}
-			if msg := enrolFailureHTML(locale, err); msg != "" {
-				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, msg)
-				return
-			}
-			endpoint := html.EscapeString(enroll.Effective(d.Cfg).Marketplace.EndpointURL)
-			if err == nil {
-				fmt.Fprintf(w, `<span class="error">❌ %s %s (%s)</span>`,
-					httpx.T(locale, "settings.enrol.failed"),
-					httpx.T(locale, "settings.enrol.not_registered"), endpoint)
-				return
-			}
-			if endpoint == "" {
-				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, httpx.T(locale, "settings.enrol.failed"))
-				return
-			}
-			fmt.Fprintf(w, `<span class="error">❌ %s (%s)</span>`, httpx.T(locale, "settings.enrol.failed"), endpoint)
-			return
-		}
-		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID, "terms_version": enroll.TermsVersion})
-		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
-		if !status.Registered {
-			// ut-docs#2753: a replica its main till registered — no store
-			// token of its own, but registered.
-			fmt.Fprintf(w, `<span>✅ %s</span>`, httpx.T(locale, "settings.enrol.registered_via_main"))
-			return
-		}
-		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
-			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
-	})
-
 	// "Reconnect this till" (ADR-0116 D6, ut-docs#5145): a registered till of an
 	// ownerless shop whose cloud sign-in was refused proves its approval key and
 	// gets a new credential in the SAME shop. An operator action (a locked-out
-	// till never re-registers on its own); elevation-wired like Register now.
+	// till never re-registers on its own); elevation-wired like an explicit operator registration.
 	// Always-200 HTMX shape; the raw cloud text is logged, never rendered, and a
 	// refusal leaves the till exactly as it was.
 	mux.HandleFunc("POST /api/enrol/reconnect", func(w http.ResponseWriter, r *http.Request) {
@@ -1435,7 +1364,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// pairing (new device id, token and store cleared), then a first-time
 	// register. Not undoable, so it asks first (confirm, then elevate, as
 	// POST /api/enrol/pair). The wipe is not undone when the register fails: the
-	// till is then in the ordinary not-registered state (Register now works).
+	// till is then in the ordinary not-registered state (an explicit operator registration works).
 	mux.HandleFunc("POST /api/enrol/new-shop", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1737,79 +1666,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		b.WriteString(`</ul>`)
 		_, _ = w.Write([]byte(b.String()))
-	})
-
-	// Eager-registration opt-in toggle (ADR-0071, ut-docs#879): the same
-	// choice the setup wizard's last screen asks, changeable afterwards.
-	// Elevation-gated like POST /api/enrol/now above; audited like the
-	// telemetry toggle. Toggling ON also fires ONE best-effort, time-boxed
-	// EnsureRegistered attempt (register now, not just "arm a future
-	// trigger"); toggling OFF only stops future eager triggers — it never
-	// deregisters an identity already minted (no such flow exists).
-	mux.HandleFunc("POST /api/settings/auto-register", func(w http.ResponseWriter, r *http.Request) {
-		locale := httpx.ResolveLocale(w, r)
-		_ = r.ParseForm()
-		optIn := "false"
-		if r.Form.Get("optIn") == "on" || r.Form.Get("optIn") == "1" {
-			optIn = "true"
-		}
-		// ut-docs#4720: turning registration ON needs the cloud terms
-		// accepted (once per version); turning it OFF never does. Refused
-		// before checkOrElevate, like a bad value: nothing is saved and no
-		// approver PIN is spent. The form's `fail save-error` path shows
-		// the (marked, translated) reason.
-		// A till already registered (itself or through its main till) can't
-		// register again from here, so it isn't asked (review: re-saving an
-		// unchanged opt-in was refused).
-		st := enroll.CurrentStatus()
-		accepted := termsAlreadyAccepted(r.Context(), d)
-		if optIn == "true" && !st.Registered && !st.ViaMainTill && !accepted && !termsTicked(r) {
-			httpx.RefuseText(w, httpx.T(locale, "settings.enrol.terms_required"), http.StatusBadRequest)
-			return
-		}
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			summaryKey := "elevation.summary.auto_register_off"
-			if optIn == "true" {
-				summaryKey = "elevation.summary.auto_register_on"
-			}
-			renderElevationPrompt(w, r, "/api/settings/auto-register", "#auto-register-msg",
-				httpx.T(locale, summaryKey),
-				[]elevationHiddenField{
-					{Name: "optIn", Value: r.Form.Get("optIn")},
-					{Name: "accept_terms", Value: r.Form.Get("accept_terms")},
-				}, elev)
-			return
-		}
-		if optIn == "true" && !accepted && termsTicked(r) {
-			if err := enroll.RecordTermsAcceptance(r.Context(), d.Settings, locale); err != nil {
-				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_auto_register_terms", err)
-				return
-			}
-		}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyAutoRegisterOptIn: optIn}); err != nil {
-			if respondSettingsSyncError(w, r, err) {
-				return
-			}
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_auto_register", err)
-			return
-		}
-		auditPayload := map[string]any{"opt_in": optIn}
-		if optIn == "true" && termsAlreadyAccepted(r.Context(), d) {
-			auditPayload["terms_version"] = enroll.TermsVersion
-		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyAutoRegisterOptIn, "auto_register_opt_in_changed", auditPayload)
-		if optIn == "true" {
-			// Best-effort and bounded, exactly like the wizard's own opt-in
-			// attempt (autoRegisterForSetup): EnsureRegistered logs and
-			// swallows its own failure, and the response below reports the
-			// SETTING saved — registration status stays this page's
-			// enrolment card's job, refreshed by the success reload.
-			attemptCtx, cancel := context.WithTimeout(r.Context(), autoRegisterAttemptTimeout)
-			checkinAfterRegistration(d, enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)) // ADR-0148 §2
-			cancel()
-		}
-		settingsRespondSaved(w, r, elev)
 	})
 
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
@@ -2446,6 +2302,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// ADR-0200: the Cloud record card's Stop sending switch.
+	registerRegistrationStop(mux, d, posRepo)
 	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 
 	// ADR-0119: this till's visual effects level, beside the interface scale.
@@ -4259,7 +4117,7 @@ func pairReplacesWorkingConnection(r *http.Request, d *common.Deps) bool {
 	return true
 }
 
-// enrolFailureKey names the message for a "Register now", "Claim this
+// enrolFailureKey names the message for an explicit operator registration, "Claim this
 // store" or "Pair with a shop" failure that is not a network problem
 // (ut-docs#3861, #3990, #4058), or "" for the generic text. A replica's refusal arrives typed
 // from its main till, so IsServiceRefused covers both.

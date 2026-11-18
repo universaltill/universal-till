@@ -121,7 +121,14 @@ Owners manage the shop from any browser at
 
 ### Optional Cloud Services
 *(paid plans — see [Pricing](#-pricing) for which plan each starts from; the core till never needs them. Tills in one shop sync over the shop's own network on every plan.)*
-- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up)
+- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up). The main
+  till copies its newest daily backup to the cloud in the background, encrypted on the
+  till with a per-shop key the till generates and keeps outside the database; a
+  Key-Vault-wrapped copy in the cloud is the owner's choice (on or off, switchable;
+  released only through the owner's approval on my.), and the owner can print or
+  save the key as a `UTK1-` recovery string (`internal/offsitebackup`, ADR-0199). Restoring onto a
+  replacement till needs the shop owner's approval on my. (Settings → Backups → Cloud
+  backups; manager PIN on the till)
 - Manage from a browser (my.) and a cloud-held catalogue every till follows (basic on Local Plus, full from Shop)
 - Mobile tills syncing over the internet (Pro and up)
 - Managed fiscal device where a market requires one (e.g. German TSE; Shop and up)
@@ -279,6 +286,14 @@ make run          # or: ./bin/unitill-pos
 
 Open http://localhost:8080
 
+**Till settings registry.** `internal/data/agent_settings.go` is the one typed
+list of till settings (type, bounds, risk tier, stored spelling, whether the
+cloud may write it). The cloud's `set_till_setting` whitelist and the
+heartbeat report derive from it, and `docs/till-settings-registry.json` is
+generated from it for ut-cloud: after changing an entry run
+`make gen-settings-registry` and commit the result (a test fails when stale).
+A new Settings card needs an entry with a tier.
+
 ### Option 3: Docker
 
 ```bash
@@ -338,6 +353,12 @@ till; no setting turns that on in a normal build.
 installs a release only if its `checksums.txt.sig` verifies; with none (source
 builds, or release signing not yet armed) it checks SHA-256 only. See
 `RELEASING.md`.
+
+**Release assets also carry build provenance** (ADR-0181): a signed record of
+which commit and workflow built each file, checked with
+`gh attestation verify --repo universaltill/universal-till`. It does not prove
+the commit is safe. The command and the limits are in `RELEASING.md`
+("Build provenance").
 
 ---
 

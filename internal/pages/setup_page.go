@@ -22,56 +22,21 @@ import (
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
-// autoRegisterAttemptTimeout bounds the ONE synchronous store-registration
-// attempt an explicit opt-in triggers (ADR-0071, ut-docs#879) — the wizard's
-// "yes" on its last screen, and Settings toggling the same choice on later.
-// A sibling of setupBasePluginAttemptTimeout rather than a reuse of it: the
-// same 5s offline-first bound, but named for what it actually times, so the
-// two can drift independently if either ever needs to.
-const autoRegisterAttemptTimeout = 5 * time.Second
-
-// autoRegisterForSetup is POST /api/setup's ADR-0071 hook: persist the
-// operator's explicit opt-in answer FIRST (before any network attempt, same
-// mid-request-crash reasoning installBasePluginsForSetup documents for its
-// own pending-list persistence), then — on an explicit yes only — make one
-// best-effort, time-boxed EnsureRegistered call. Never blocks or fails the
-// wizard's own response: the persist error is logged and swallowed, and
-// EnsureRegistered already logs-and-swallows its own registration failure.
-// A failed attempt is NOT retried in the background: enroll.Init's loop
-// deliberately never registers a store (see its own comment — it only fetches
-// the signing key and registers a device under an ALREADY-registered store),
-// so an opted-in till that was offline at wizard completion simply falls back
-// to ADR-0015's lazy triggers — the next plugin-store visit/install, or
-// Settings → "Register now". Settings' enrolment card shows the till as not
-// registered until then, which is the operator's signal. On no/absent, no
-// call at all — ADR-0015's lazy registration stays exactly as it is.
-func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn, acceptedTerms bool, locale string) {
-	// ut-docs#4720: registering sends the cloud-terms acceptance, so an
-	// opt-in without it (neither ticked now nor accepted before) is not a
-	// valid opt-in: it is saved as "false", logged, and nothing is sent.
-	// A tick records the acceptance first, then registers as before.
-	if optIn && !acceptedTerms && !termsAlreadyAccepted(ctx, d) {
-		logging.L().Infof("setup wizard: auto-register opted in without accepting the cloud terms; not registering")
-		optIn = false
-	} else if optIn && !termsAlreadyAccepted(ctx, d) {
-		if err := enroll.RecordTermsAcceptance(ctx, d.Settings, locale); err != nil {
-			logging.L().Errorf("setup wizard: record terms acceptance: %v", err)
-			optIn = false
-		}
-	}
-	val := "false"
-	if optIn {
-		val = "true"
-	}
-	if err := d.Settings.Set(ctx, common.KeyAutoRegisterOptIn, val); err != nil {
-		logging.L().Errorf("setup wizard: persist auto-register opt-in: %v", err)
-	}
-	if !optIn {
+// registrationAfterSetup is POST /api/setup's ADR-0200 (ut-docs#6559) hook.
+// The wizard's last screen shows the "what this till tells us" notice and
+// this request is its Finish button, so the notice has been shown: remember
+// when (before anything is sent), then wake the background registration loop
+// (enroll.autoRegisterLoop). It never calls the cloud itself, so the wizard
+// finishes with no network and no delay; the loop registers in the
+// background, retrying with capped backoff until it succeeds. A failure to
+// store the notice is logged and swallowed: the loop then simply keeps
+// waiting, and nothing is sent.
+func registrationAfterSetup(ctx context.Context, d *common.Deps) {
+	if err := enroll.MarkNoticeShown(ctx, d.Settings, time.Now()); err != nil {
+		logging.L().Errorf("setup wizard: remember that the registration notice was shown: %v", err)
 		return
 	}
-	attemptCtx, cancel := context.WithTimeout(ctx, autoRegisterAttemptTimeout)
-	defer cancel()
-	checkinAfterRegistration(d, enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)) // ADR-0148 §2
+	enroll.KickAutoRegister()
 }
 
 // setupCountry prefills currency + tax for the wizard's country step (docs
@@ -488,8 +453,6 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
 		// parallel within the 2 s slot budget; "" when none answers.
 		data["pluginSlot"] = renderSetupSlot(r, d, httpx.RequestLocale(r))
-		// ut-docs#4720: the cloud-terms accept step under the opt-in.
-		data["terms"] = termsView(r.Context(), d, httpx.RequestLocale(r))
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
@@ -890,14 +853,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				requestOperatorCheckin(d, operatorCheckinWindow)
 				cloudSyncing = true
 			}
-		} else {
-			autoRegisterForSetup(r.Context(), d,
-				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1",
-				// The language the terms were shown in (termsView renders from the
-				// request locale), not st.Locale, which is the shop country's
-				// default by now (ut-docs#4720 review).
-				termsTicked(r), httpx.RequestLocale(r))
 		}
+		// The notice is on the last screen of both paths; a till that just
+		// paired already holds an identity, so its loop ends at once.
+		registrationAfterSetup(r.Context(), d)
 		cloud.finish()
 		if cloudSyncing {
 			// ut-docs#5127: registration was held until the pairing was

@@ -222,6 +222,7 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
     UT_OPEN_BROWSER: process.env.UT_OPEN_BROWSER ?? '0',
     UT_LAN_DISCOVERY: process.env.UT_LAN_DISCOVERY ?? '0', // ut-docs#3814
     UT_UPDATE_CHECK: process.env.UT_UPDATE_CHECK ?? '0', // ut-docs#5237
+    UT_NEVER_REGISTER: '1', // ADR-0200: a throwaway till never registers itself in the cloud
     UT_DATA_DIR: dataDir,
     UT_AUTH: 'off',
     UT_LISTEN_ADDR: `127.0.0.1:${port}`,
