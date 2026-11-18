@@ -66,7 +66,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: play-publish
+  group: play-publish-${{ inputs.dry_run }}
   cancel-in-progress: false
 jobs:
   build:
@@ -111,7 +111,15 @@ jobs:
             exit 1
           fi
           IFS=. read -r MA MI PA <<<"$version"
+          if [ "$MI" -gt 999 ] || [ "$PA" -gt 999 ]; then
+            echo "::error::minor/patch above 999 would collide in versionCode (release.yml formula)"
+            exit 1
+          fi
           base=$((MA * 1000000 + MI * 1000 + PA))
+          if [ "$base" -ge 210000000 ]; then
+            echo "::error::versionCode would exceed Play's maximum 2100000000"
+            exit 1
+          fi
           code=$((base * 10 + 5)) # ADR-0194: Play flavor suffix 5 (Gradle derives this from the base)
           {
             echo "version=$version"

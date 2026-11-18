@@ -62,10 +62,43 @@ code | grep -qE 'ref: \$\{\{ steps\.v\.outputs\.source_sha' && ok "tag checked o
 sign_up="$(code | awk '/^  sign:/{f=1} f')"
 echo "$sign_up" | grep -qE 'source_sha|refs/tags' && bad "sign/upload jobs check out the tag" || ok "sign/upload jobs only run main code"
 # release.yml dispatches from main with the version input (never --ref "$TAG")
-REL="$ROOT/.github/workflows/release.yml"
+REL="${REL:-$ROOT/.github/workflows/release.yml}"
 if [ -f "$REL" ]; then
   d="$(grep -E 'gh workflow run play-publish\.yml' "$REL" || true)"
   echo "$d" | grep -q -- '--ref main' && echo "$d" | grep -q -- '-f version=' && ! echo "$d" | grep -q -- '--ref "\$TAG"' && ok "release.yml dispatches play-publish from main with a version" || bad "release.yml dispatch: $d"
+fi
+
+# --- F11 (hardening): structural allow-lists, per job ------------------------
+job_names="$(code | awk '/^jobs:/{f=1;next} f&&/^  [a-z_-]+:/{gsub(":","",$1);print $1}' | tr '\n' ' ')"
+[ "$job_names" = "build sign upload cleanup " ] && ok "jobs are exactly build sign upload cleanup" || bad "jobs: $job_names"
+job_text() { code | awk -v j="  $1:" '/^jobs:/{f=1;next} f&&$0==j{g=1;next} f&&g&&/^  [a-z_-]+:/{exit} g'; }
+for j in build sign upload cleanup; do
+  ro="$(job_text "$j" | grep -E '^    runs-on:' | sed -E 's/^    runs-on:[[:space:]]*//')"
+  [ "$ro" = "ubuntu-latest" ] && ok "$j runs on ubuntu-latest" || bad "$j runs-on is '$ro'"
+  envs="$(job_text "$j" | grep -cE '^[[:space:]]*environment:' || true)"
+  idt="$(job_text "$j" | grep -c 'id-token:' || true)"
+  case "$j" in
+    sign|upload)
+      job_text "$j" | grep -qE '^    environment: play-internal$' && [ "$envs" = 1 ] && ok "$j: environment play-internal (string form)" || bad "$j: environment not exactly 'play-internal'"
+      [ "$idt" = 1 ] && ok "$j: id-token once" || bad "$j: id-token count $idt" ;;
+    *)
+      [ "$envs" = 0 ] && ok "$j: no environment" || bad "$j has an environment"
+      [ "$idt" = 0 ] && ok "$j: no id-token" || bad "$j has id-token" ;;
+  esac
+done
+co="$(code | grep -c 'actions/checkout@')"; pc="$(code | grep -c 'persist-credentials: false')"
+[ "$co" -ge 3 ] && [ "$co" = "$pc" ] && ok "every checkout has persist-credentials: false ($co)" || bad "checkouts $co vs persist-credentials false $pc"
+code | awk '/^concurrency:/{f=1;next} f&&/^[^[:space:]]/{exit} f' | grep -q 'group:.*inputs.dry_run' && ok "concurrency group includes dry_run" || bad "concurrency group lacks dry_run"
+# the tag verification lives in the script, which must keep both halves
+VT="${VT:-$ROOT/scripts/ci/verify-release-tag.sh}"
+grep -q '\^\[0-9\]+\\.\[0-9\]+\\.\[0-9\]+\$' "$VT" && ok "verify-release-tag.sh: X.Y.Z regex" || bad "verify-release-tag.sh lost the semver regex"
+grep -q 'merge-base --is-ancestor' "$VT" && ok "verify-release-tag.sh: ancestor-of-main check" || bad "verify-release-tag.sh lost the ancestor check"
+# versionCode bounds (Play max 2100000000; minor/patch <= 999)
+has 'MI" -gt 999' && has 'PA" -gt 999' && has '2100000000' && ok "version bounds checked" || bad "version bounds missing"
+# release.yml: dispatch gated by the repository variable set only after the apply
+if [ -f "$REL" ]; then
+  code_rel() { sed -E 's/(^|[[:space:]])#.*$//' "$REL"; }
+  code_rel | grep -B12 'gh workflow run play-publish' | grep -q "vars.PLAY_PUBLISH_ENABLED == 'true'" && ok "release.yml dispatch gated by vars.PLAY_PUBLISH_ENABLED" || bad "release.yml dispatch not gated"
 fi
 # the bundle artifacts are deleted again by a cleanup job holding only GITHUB_TOKEN
 code | grep -q '^  cleanup:' && code | grep -q 'actions: write' && ok "cleanup job removes the signed bundle artifacts" || bad "no artifact cleanup job"

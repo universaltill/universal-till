@@ -128,6 +128,7 @@ jobs:
         run: |
           bash scripts/ci/play-publish-workflow_test.sh
           bash scripts/ci/play-upload_test.sh
+          bash scripts/ci/play-publish-workflow_mutation_test.sh
           bash scripts/ci/verify-release-tag_test.sh
       - name: App stores stay private until launch — no public release path (ut-docs#3052)
         run: bash scripts/ci/guard-store-private.sh

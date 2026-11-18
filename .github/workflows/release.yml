@@ -1437,6 +1437,10 @@ jobs:
           gh workflow run ios-testflight.yml --ref "$TAG" -f version="${TAG#v}" \
             || echo "::warning::could not dispatch ios-testflight.yml for $TAG; run it by hand"
       - name: Start the Google Play internal-testing upload for this release (ut-docs#6410)
+        # Off until the owner has applied the ut-infra Terraform roots and sets the
+        # repository variable PLAY_PUBLISH_ENABLED=true: before that the first run
+        # would auto-create the play-internal environment with no protection.
+        if: ${{ vars.PLAY_PUBLISH_ENABLED == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}

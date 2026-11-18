@@ -26,11 +26,11 @@ set -euo pipefail
 
 API="${PLAY_API_BASE:-https://androidpublisher.googleapis.com}"
 if [ "$API" = "https://androidpublisher.googleapis.com" ]; then :
-elif [ "${PLAY_API_TEST_SERVER:-}" = "1" ] && [[ "$API" == http://127.0.0.1:* ]]; then :
+elif [ "${PLAY_API_TEST_SERVER:-}" = "1" ] && [[ "$API" =~ ^http://127\.0\.0\.1:[0-9]+$ ]]; then :
 else echo "::error::PLAY_API_BASE must be the Play API host (a 127.0.0.1 server only for the self-test)" >&2; exit 1; fi
 
 : "${PLAY_ACCESS_TOKEN:?}" "${PLAY_PACKAGE_NAME:?}" "${AAB:?}" "${VERSION_CODE:?}" "${VERSION_NAME:?}"
-[[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::VERSION_CODE '$VERSION_CODE' is not a positive integer" >&2; exit 1; }
+[[ "$VERSION_CODE" =~ ^[1-9][0-9]{0,9}$ ]] && [ "$VERSION_CODE" -le 2100000000 ] || { echo "::error::VERSION_CODE '$VERSION_CODE' is not a positive integer" >&2; exit 1; }
 [[ "$PLAY_PACKAGE_NAME" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || { echo "::error::bad PLAY_PACKAGE_NAME" >&2; exit 1; }
 [ -f "$AAB" ] || { echo "::error::$AAB not found" >&2; exit 1; }
 
