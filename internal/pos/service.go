@@ -150,6 +150,11 @@ type Service struct {
 	pendingTender  PendingTender
 	abandonHandler AbandonedTenderHandler
 	abandonNotice  *AbandonResult
+	// handedOff holds the authorize request ids of captured legs a reset
+	// passed to the abandon handler (ut-docs#6602 review M1): a tender still
+	// in flight on the old basket must not reverse them a second time.
+	// Request ids embed the attempt uuid, so they are never reused; guarded by mu.
+	handedOff map[string]bool
 	// ageChecks (ut-docs#3340) holds the ID-check outcome the cashier
 	// recorded for each age-restricted ITEM in the current sale, keyed by
 	// ItemID — per item, not per LineKey, so a line that later merges,
@@ -1748,6 +1753,45 @@ func (s *Service) RotateTenderAttemptID() {
 	s.pendingTender = PendingTender{}
 }
 
+// TenderAttemptIs reports whether id is still the live tender attempt of this
+// basket. False once a reset (clear, park, resume, completed sale) or a
+// rotation dropped it, so a tender still in flight learns that its basket was
+// abandoned under it (ut-docs#6602 review M1). Never mints an id.
+func (s *Service) TenderAttemptIs(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return id != "" && s.tenderAttemptID == id
+}
+
+// RotateTenderAttemptIDIf is RotateTenderAttemptID, but only while id is
+// still the live attempt: a tender whose basket was abandoned must not
+// clear the lock of whatever basket came next. Reports whether it rotated.
+func (s *Service) RotateTenderAttemptIDIf(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" || s.tenderAttemptID != id {
+		return false
+	}
+	s.tenderAttemptID = ""
+	s.tenderLock = ""
+	s.pendingTender = PendingTender{}
+	return true
+}
+
+// NotHandedOff returns the legs whose request id no reset has already handed
+// to the abandon handler (which reverses them itself).
+func (s *Service) NotHandedOff(legs []CapturedLeg) []CapturedLeg {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []CapturedLeg
+	for _, l := range legs {
+		if !s.handedOff[l.RequestID] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // LockTender records sig as the only tender this basket may attempt next
 // (ut-docs#6600) plus what it leaves behind (ut-docs#6602); TenderLock
 // returns the signature ("" = unlocked); SettleTender clears both once the
@@ -1806,6 +1850,12 @@ func (s *Service) resetLocked() PendingTender {
 	s.tenderLock = ""
 	dropped := s.pendingTender
 	s.pendingTender = PendingTender{}
+	for _, l := range dropped.Captured {
+		if s.handedOff == nil || len(s.handedOff) > 4096 {
+			s.handedOff = map[string]bool{}
+		}
+		s.handedOff[l.RequestID] = true
+	}
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""

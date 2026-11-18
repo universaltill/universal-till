@@ -107,6 +107,15 @@ func (e *fiscalDeviceRequiredError) Error() string {
 	return "fiscal gate: system-of-record sale declared no fiscal-device payment leg"
 }
 
+// tenderAbandonedError (ut-docs#6602 review M1): the basket was cleared,
+// parked or replaced while this tender was still waiting on a payment
+// plugin. The sale is not completed; legs this tender captured are sent back.
+type tenderAbandonedError struct{}
+
+func (e *tenderAbandonedError) Error() string {
+	return "tender abandoned: the basket was cleared, parked or replaced while the payment was in progress"
+}
+
 // fiscalCannotSignError signals ADR-0136 (ut-docs#3309): the installed
 // fiscal signer answered fiscal.sign.ask with "cannot-sign" — THIS sale's
 // own data (an unreconciled tip, discount or rate) admits no correct Beleg
@@ -433,10 +442,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	why := "tender refused (the sale could not be completed)"
 	defer func() {
 		if ownCaptured && len(capturedLegs) > 0 {
-			reversePaymentLegs(ctx, d, capturedLegs, why)
-			engine.RotateTenderAttemptID()
+			// Legs a concurrent reset already handed to the abandon handler
+			// are reversed there; never send one back twice (review M1).
+			reversePaymentLegs(ctx, d, engine.NotHandedOff(capturedLegs), why)
+			engine.RotateTenderAttemptIDIf(attemptID)
 		}
 	}()
+	// abandonedUnder: a clear/park/resume replaced this basket while a plugin
+	// call was in flight. The sale must not complete (review M1).
+	abandonedUnder := func() bool { return !engine.TenderAttemptIs(attemptID) }
 	// legRequestIDs[i] is leg i's authorize event id when that authorize was
 	// dispatched to a plugin, "" otherwise; the settle event carries it so a
 	// plugin can match its own approval exactly (ut-docs#6438).
@@ -502,6 +516,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			// nothing about the money, so the lock and request id stay.
 			if !isUnknown && engine.TenderLock() == tenderSig && exitErr == nil {
 				isUnknown = true
+			}
+			if abandonedUnder() {
+				// The basket was abandoned while this leg was in flight: do
+				// not re-lock or settle the basket that replaced it.
+				if isUnknown {
+					warnUnknownLegs([]pos.UnknownLeg{{MethodID: p.MethodID, Currency: payCurrency, RequestID: requestID, Amount: amount}}, "tender abandoned during authorize")
+				}
+				why = "tender refused (the basket was abandoned during authorize)"
+				return "", &tenderAbandonedError{}
 			}
 			if isUnknown {
 				// The card may have been charged. Earlier legs stay captured
@@ -587,11 +610,19 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			legRequestIDs[i] = requestID
 			capturedLegs = append(capturedLegs, pos.CapturedLeg{MethodID: p.MethodID, Currency: legCurrency(payments[i], saleInput.Currency), RequestID: requestID, Amount: captured, TransactionRef: payments[i].TraceID, TipAmount: payments[i].TipAmount})
 		}
+		if abandonedUnder() {
+			why = "tender refused (the basket was abandoned during authorize)"
+			return "", &tenderAbandonedError{}
+		}
 	}
 
 	// All legs approved: settle the lock. A retry whose request ids changed
 	// (changed reference/currency) leaves an earlier capture superseded:
 	// reverse it, or it would stand beside the new one (ut-docs#6602).
+	if abandonedUnder() {
+		why = "tender refused (the basket was abandoned during authorize)"
+		return "", &tenderAbandonedError{}
+	}
 	{
 		stash := engine.SettleTender()
 		if stale := minusCaptured(stash.Captured, capturedLegs); len(stale) > 0 {
@@ -654,8 +685,8 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// The reversed authorizes are spent: the kept basket's next tender
 		// must mint fresh idempotency keys, or a provider deduping on the
 		// old key could replay an approval whose money was just returned.
-		engine.RotateTenderAttemptID()
-		log.Printf("tender refused: fiscal signer answered cannot-sign (%s) — %d captured leg(s) reversed (ADR-0136)", signRes.Reason, len(capturedLegs))
+		engine.RotateTenderAttemptIDIf(attemptID)
+		log.Printf("tender refused: fiscal signer answered cannot-sign (%s) — %d captured leg(s) being reversed (ADR-0136)", signRes.Reason, len(capturedLegs))
 		return "", &fiscalCannotSignError{}
 	}
 
@@ -708,6 +739,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if saleInput.SaleID == "" {
 		saleInput.SaleID = uuid.NewString()
 	}
+	if abandonedUnder() {
+		why = "tender refused (the basket was abandoned during authorize)"
+		return "", &tenderAbandonedError{}
+	}
 	var reservedVoucherIDs []string
 	for i := range saleInput.Payments {
 		if saleInput.Payments[i].VoucherID == "" {
@@ -733,6 +768,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 	}
 
+	if abandonedUnder() {
+		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
+		why = "tender refused (the basket was abandoned during authorize)"
+		return "", &tenderAbandonedError{}
+	}
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
@@ -943,7 +983,11 @@ func markAgeRestrictedFromDB(ctx context.Context, d *common.Deps, repo *data.POS
 // failure mode nobody has named yet still renders as a localized message,
 // never raw Go error text (ut-docs#921).
 func classifyTenderError(err error) string {
+	var abandoned *tenderAbandonedError
 	switch {
+	case errors.As(err, &abandoned):
+		// Captured legs are being sent back; a failed reversal is in Problems.
+		return "pos.toast.tender_abandoned_check_provider"
 	case strings.Contains(err.Error(), "insufficient stock"):
 		return "pos.toast.insufficient_stock"
 	case strings.Contains(err.Error(), "do not cover total"):

@@ -565,3 +565,72 @@ func TestAbandon_ResumeOverReversalFailureStillRestoresOtherOrder(t *testing.T) 
 		t.Fatalf("want the check-provider toast: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#6602 review M1: a cashier abandons the basket while a locked retry
+// is still waiting on the reader. The retry must not complete the sale, and
+// no leg may be sent back twice.
+func runAbandonDuringRetry(t *testing.T, bAnswer string) (refunds func() []map[string]any, authIDs func() []string, dp *common.Deps, retry *httptest.ResponseRecorder) {
+	t.Helper()
+	mux, dp := newFiscalSignDeps(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	refunds, authIDs = seedCardPluginWithAnswerFunc(t, dp, nil, func(n int) string {
+		switch n {
+		case 2:
+			return "UNKNOWN"
+		case 4: // the retry's leg B: waits on the reader
+			close(started)
+			<-release
+			return bAnswer
+		}
+		return `{"provider":"demopay","outcome":"approved","transaction_ref":"ch_TESTREF9876"}`
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postTender(t, mux, twoLegTender); !strings.Contains(rec.Body.String(), unknownOutcomeToast) {
+		t.Fatalf("setup: %s", rec.Body.String())
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- postTender(t, mux, twoLegTender) }()
+	<-started
+	abandonPost(t, mux, "/api/pos/reset", nil)
+	close(release)
+	retry = <-done
+	return refunds, authIDs, dp, retry
+}
+
+func refundCounts(refunds func() []map[string]any) map[any]int {
+	c := map[any]int{}
+	for _, r := range refunds() {
+		c[r["authorize_request_id"]]++
+	}
+	return c
+}
+
+func TestTender_AbandonedDuringRetry_DeclineReversesLegOnce(t *testing.T) {
+	refunds, authIDs, dp, retry := runAbandonDuringRetry(t, "REALDECLINE")
+	ids := authIDs()
+	if c := refundCounts(refunds); len(c) != 1 || c[ids[0]] != 1 {
+		t.Fatalf("leg A must be reversed exactly once, got %v (%+v)", c, refunds())
+	}
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
+		t.Fatalf("no sale may be recorded, got %d", n)
+	}
+	_ = retry
+}
+
+func TestTender_AbandonedDuringRetry_ApprovalDoesNotCompleteSale(t *testing.T) {
+	refunds, authIDs, dp, retry := runAbandonDuringRetry(t, `{"provider":"demopay","outcome":"approved"}`)
+	ids := authIDs()
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
+		t.Fatalf("no sale may be recorded for an abandoned tender, got %d", n)
+	}
+	c := refundCounts(refunds)
+	if len(c) != 2 || c[ids[0]] != 1 || c[ids[1]] != 1 {
+		t.Fatalf("leg A (hand-off) and leg B (late approval) must each be reversed exactly once, got %v", c)
+	}
+	if !strings.Contains(retry.Body.String(), toastCheckText) {
+		t.Fatalf("the cashier must be told the payment was not completed: %s", retry.Body.String())
+	}
+}

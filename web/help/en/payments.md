@@ -93,7 +93,7 @@ Sometimes a card reader can't tell the till whether a payment went through. The 
 - **What to do next:** check the payment with your payment provider, and refund it there if the customer was charged. Do not charge the customer again until you have checked.
 - **Where to find the details:** each payment (method, amount and request reference) is listed under **Recent problems** on the Back office page. Your provider's dashboard shows the final state of each payment.
 
-The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: the sale is cleared or parked straight away, and sending a payment back only waits on the card provider.
+The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: clearing or parking works offline, but the screen may take a moment to update while the till waits for the card provider to confirm each payment it sends back. If a payment was still being taken when you cleared or parked the sale, the till does not complete that sale and sends the payment back too.
 
 ## Gift vouchers
 
