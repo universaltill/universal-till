@@ -3726,7 +3726,6 @@
   "setup.cloud.error.replace_unsupported": "Bulut henüz bir kasayı değiştiremiyor, bu yüzden hiçbir şey değişmedi. Şimdilik eski kasayı my.universaltill.com üzerinde (Kasalar) kaldırın ve bu kasayı yeni bir Kasa ekle koduyla eşleştirin.",
   "channel_orders.title": "Çevrimiçi siparişler",
   "page.title.channel_orders": "Çevrimiçi siparişler",
-  "channel_orders.intro": "Web mağazanızdan veya pazaryerlerinden gelen siparişler. Stokunuzu düşürürler ama kasa satışı değildirler: çekmecede, Z raporunda ve mali günlükte yer almazlar. Ana kasa bunları kabul edebilir, gönderebilir veya iptal edebilir; siz de my.universaltill.com üzerinden yapabilirsiniz.",
   "channel_orders.empty": "Henüz çevrimiçi sipariş yok. Bağlı bir web mağazasından veya pazaryerinden gelen siparişler burada görünür.",
   "channel_orders.col.number": "Sipariş",
   "channel_orders.col.placed": "Verildi",

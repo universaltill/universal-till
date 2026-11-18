@@ -467,7 +467,7 @@
   "selforder.counter.title": {"description": "Heading of the self-order kiosk's checkout dialog when the customer pays at the counter instead of at the kiosk: the pay-at-counter confirm screen, and the payment picker when the basket holds an age-restricted item.", "review": "standard", "max_length": 40},
   "channel_orders.title": {"description": "The page and menu title for orders taken on a web shop or marketplace and recorded on this till.", "review": "standard"},
   "page.title.channel_orders": {"description": "Browser tab title of the Online orders page.", "review": "standard"},
-  "channel_orders.intro": {"description": "Intro line above the Online orders list. Explains these are not till sales and that the main till (or my.universaltill.com) can accept, ship or cancel them. my.universaltill.com is a web address; keep it.", "review": "standard"},
+  "channel_orders.intro_actions": {"description": "Intro line above the Online orders list. Explains these are not till sales and that the main till (or my.universaltill.com) can accept, ship or cancel them. my.universaltill.com is a web address; keep it.", "review": "standard"},
   "channel_orders.empty": {"description": "Empty state of the Online orders list.", "review": "standard"},
   "channel_orders.col.number": {"description": "Column heading: the shop-facing order number such as #1001.", "review": "standard"},
   "channel_orders.col.placed": {"description": "Column heading: when the customer placed the order.", "review": "standard"},

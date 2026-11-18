@@ -3946,7 +3946,7 @@
   "setup.cloud.error.replace_unsupported": "The cloud cannot replace a till yet, so nothing was changed. For now, remove the old till on my.universaltill.com (Tills) and pair this till with a new Add a till code.",
   "channel_orders.title": "Online orders",
   "page.title.channel_orders": "Online orders",
-  "channel_orders.intro": "Orders taken on your web shop or marketplaces. They lower your stock but are not till sales: they are not in the drawer, the Z report or the fiscal journal. The main till can accept, ship or cancel them, and so can you in my.universaltill.com.",
+  "channel_orders.intro_actions": "Orders taken on your web shop or marketplaces. They lower your stock but are not till sales: they are not in the drawer, the Z report or the fiscal journal. The main till can accept, ship or cancel them, and so can you in my.universaltill.com.",
   "channel_orders.empty": "No online orders yet. Orders from a connected web shop or marketplace appear here.",
   "channel_orders.col.number": "Order",
   "channel_orders.col.placed": "Placed",
