@@ -372,6 +372,12 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusPreconditionRequired, "settings.enrol.terms_required")
 			return
 		}
+		// ADR-0194: a code listing is never downloaded on the App Store build.
+		listingType, codeErr := refuseCodeInstall(d, listingID)
+		if codeErr != nil {
+			respond(w, http.StatusForbidden, plugins.CodeInstallRefusedMsgID)
+			return
+		}
 		// Store registration is lazy — a download is the first interaction
 		// that needs a store identity, so enrol before building the request.
 		checkinAfterRegistration(d, enroll.EnsureRegistered(r.Context(), d.Cfg, d.Settings)) // ADR-0148 §2
@@ -381,10 +387,11 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		sd, err := installer.DownloadToStore(r.Context(), plugins.MarketplaceInstallRequest{
-			ListingID:  listingID,
-			MerchantID: effCfg.Marketplace.ClientID,
-			StoreID:    effCfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+			ListingID:     listingID,
+			CanonicalType: listingType,
+			MerchantID:    effCfg.Marketplace.ClientID,
+			StoreID:       effCfg.Marketplace.StoreID,
+			DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
 			// ut-docs#673/#703/#704/#3541/#6548: one classification path —

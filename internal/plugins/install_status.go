@@ -203,6 +203,11 @@ func ClassifyInstallError(err error, hasOwner bool) InstallFailure {
 		return f
 	}
 
+	// ADR-0194: the App Store build never installs code plugins.
+	if errors.Is(err, ErrCodePluginRefused) {
+		return InstallFailure{MessageKey: CodeInstallRefusedMsgID, Message: "This build of the app cannot install this plugin.", Retryable: false, Status: http.StatusForbidden}
+	}
+
 	// ADR-0169: a cloud-hosted plugin (type `channel`) can never run on a
 	// till, so a retry can never succeed.
 	if errors.Is(err, ErrCloudHostedPlugin) {

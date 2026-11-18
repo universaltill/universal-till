@@ -103,3 +103,21 @@ func resetChannelForTest() {
 	chSet, chExplicit, chValue, Channel = false, false, "", "sideload"
 	chMu.Unlock()
 }
+
+// ADR-0194 / Apple 2.5.2: the App Store build never downloads marketplace
+// code (wasm/go) plugins; every other channel does.
+func TestCodePluginInstallAllowed_Table(t *testing.T) {
+	for ch, want := range map[InstallChannel]bool{
+		ChannelSideload: true,
+		ChannelPlay:     true,
+		ChannelAppStore: false,
+		ChannelDirect:   true,
+	} {
+		if got := ch.CodePluginInstallAllowed(); got != want {
+			t.Errorf("%s CodePluginInstallAllowed = %v, want %v", ch, got, want)
+		}
+	}
+	if ParseChannel("bogus").CodePluginInstallAllowed() {
+		t.Error("an unknown channel must fail closed to no code plugin install")
+	}
+}

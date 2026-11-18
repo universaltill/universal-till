@@ -1520,6 +1520,21 @@ jobs:
         run: |
           gh workflow run ios-testflight.yml --ref "$TAG" -f version="${TAG#v}" \
             || echo "::warning::could not dispatch ios-testflight.yml for $TAG; run it by hand"
+      - name: Start the Google Play internal-testing upload for this release (ut-docs#6410)
+        # Off until the owner has applied the ut-infra Terraform roots and sets the
+        # repository variable PLAY_PUBLISH_ENABLED=true: before that the first run
+        # would auto-create the play-internal environment with no protection.
+        if: ${{ vars.PLAY_PUBLISH_ENABLED == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        # Internal track only (play-publish.yml has no other); a Play problem
+        # never fails or rolls back a published release. Dispatched from MAIN (the
+        # environments and the Google WIF rule admit refs/heads/main only); the
+        # workflow checks the tag out itself, after proving it is on main.
+        run: |
+          gh workflow run play-publish.yml --ref main -f version="${TAG#v}" -f dry_run=false \
+            || echo "::warning::could not dispatch play-publish.yml for $TAG; run it by hand"
 
   # ut-docs#6407: a stable, direct download URL for Microsoft Partner Center.
   # Not gating: a failure here never blocks or un-publishes the release; fix
