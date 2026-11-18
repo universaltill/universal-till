@@ -163,7 +163,7 @@ func TestRegisterSecondKeyRequiredIsRefusedAndQuietsTheLazyPath(t *testing.T) {
 	if cloud.calls() != 2 {
 		t.Fatalf("lazy path called the cloud %d more times after a key refusal", cloud.calls()-2)
 	}
-	// A deliberate Register now still tries, and a 200 clears the mark.
+	// An explicit operator registration still tries, and a 200 clears the mark.
 	mode = "ok"
 	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestStartAsNewStoreFailureLeavesAnOrdinaryUnregisteredTill(t *testing.T) {
 	if CurrentStatus().Registered || kv.get(keyToken) != "" || kv.get(keyStoreID) != "" || kv.get(keyDeviceID) == "till-dev-1" || kv.get(keyDeviceID) == "" {
 		t.Fatalf("state: registered=%v token=%q store=%q device=%q", CurrentStatus().Registered, kv.get(keyToken), kv.get(keyStoreID), kv.get(keyDeviceID))
 	}
-	// Ordinary not-registered: the Register now path works afterwards.
+	// Ordinary not-registered: the explicit operator registration path works afterwards.
 	if _, err := RegisterNow(context.Background(), cfg, kv); err == nil || cloud.calls() != 2 {
 		t.Fatalf("follow-up register err=%v calls=%d", err, cloud.calls())
 	}

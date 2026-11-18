@@ -60,7 +60,7 @@
       "remote_writable": true
     },
     {
-      "key": "marketplace.auto_register_opt_in",
+      "key": "registration.stopped",
       "type": "bool",
       "tier": "sensitive",
       "secret": false,
@@ -70,8 +70,8 @@
       "min": null,
       "max": null,
       "options": null,
-      "label_key": "settings.enrol.auto_register.label",
-      "description_key": "settings.enrol.auto_register.help",
+      "label_key": "settings.registration.title",
+      "description_key": "settings.registration.stop_help",
       "region": "registration",
       "min_till_version": "",
       "audit": "",

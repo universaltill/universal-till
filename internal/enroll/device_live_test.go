@@ -86,10 +86,10 @@ func TestDeviceLiveBlocksTheLazyRetryUntilUsableFromButNotRegisterNow(t *testing
 	if hits.Load() != 1 {
 		t.Fatalf("lazy retries hit the cloud %d times while blocked", hits.Load()-1)
 	}
-	// A deliberate "Register now" always tries (staff may have lifted it).
+	// An explicit operator registration always tries (staff may have lifted it).
 	_, _ = RegisterNow(context.Background(), cfg, kv)
 	if hits.Load() != 2 {
-		t.Fatalf("Register now hits = %d, want 2", hits.Load())
+		t.Fatalf("explicit registration hits = %d, want 2", hits.Load())
 	}
 
 	// Past usable_from the lazy path retries by itself.

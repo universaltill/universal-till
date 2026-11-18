@@ -30,7 +30,7 @@ func TestAgentSettingsCatalogue_CoversEverySettingsRegion_4129(t *testing.T) {
 	// cloud may write whose cards are not shop-wide-lock fieldsets.
 	registryOnly := map[string]bool{
 		"printer.receipt_policy": true, "receipt.header1": true, "receipt.header2": true, "receipt.header3": true,
-		"receipt.footer": true, "notices.enabled": true, "invoice.seller_address": true, "invoice.seller_vat_no": true,
+		"receipt.footer": true, "notices.enabled": true, "invoice.seller_address": true, "invoice.seller_vat_no": true, "registration.stopped": true,
 	}
 	for _, s := range data.AgentSettings {
 		if !covered[s.Key] && !registryOnly[s.Key] {
