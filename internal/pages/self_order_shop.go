@@ -585,7 +585,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if !methodValid {
 			// Never fall back to EnsurePaymentMethod here (as the cashier
 			// tender handler does for its free-text quick-tender buttons):
-			// that would silently create a new type='cash' payment_methods
+			// that would silently create a new placeholder payment_methods
 			// row for any string a client sends. This surface is anonymous,
 			// so the method MUST already be one of the shop's own active
 			// non-cash methods.
