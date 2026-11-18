@@ -5,11 +5,13 @@ section: Running the business
 order: 250
 public: true
 summary: Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe.
-keywords: [backup, restore, download, copy, uninstall, remove, replace, new till, broken, cloud, off-site, encrypted]
+keywords: [backup, restore, restore backup, download, copy, uninstall, remove, replace, new till, broken, gdpr, cloud, off-site, encrypted]
 routes: [/backups/cloud-restore, /backups/cloud-key]
 ---
 
 # Backups
+
+![Backups card](img/backups-card.png)
 
 Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe. Each backup also holds the photos you uploaded for items and categories, and your receipt logo, so the one file you download brings them back too.
 
@@ -31,6 +33,8 @@ instead.
 A restore keeps this till's own connection to your shop's cloud account, also when the backup was made on another till. If the file turns out not to be a backup this till can use, it keeps your current data, and Settings → Backups says the restore was not applied.
 
 After a restore, receipt numbers and Z numbers jump ahead, so a number the till issued after the backup was made is never used twice. The first day-close report afterwards says that the till was restored from a backup and which numbers it continues from.
+
+A backup replaces everything, which is different from undoing Clear transaction history: to bring back a cleared batch of sales without touching the rest, use Reset archives (see [Data management](/help/data-management)). Also, a backup made before you erased a customer still holds that customer until it is deleted, and restoring it brings them back (see [Erase a customer](/help/data-management)).
 
 ## Restoring from a file
 

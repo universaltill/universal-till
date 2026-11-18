@@ -1329,7 +1329,7 @@
      elevation-wired sub-features actually has something to show". -->
 {{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins }}
 <div class="card" id="settings-data">
-  <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "display" }}</h2>
+  <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "data-management" }}</h2>
   <!-- ut-docs#867: the elevation-wired actions in this card
        (remove-demo-catalogue, dismiss-pending-base-plugin) render
        unconditionally, each behind its
@@ -2437,7 +2437,7 @@
   </fieldset>
 </div>
 <div class="card" id="settings-telemetry">
-  <h2>{{ T "settings.telemetry.title" }}</h2>
+  <h2>{{ T "settings.telemetry.title" }} {{ helpLink "telemetry" }}</h2>
   <p class="muted">{{ T "settings.telemetry.help" }}</p>
   <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
        unconditional reload previously here would destroy an elevation

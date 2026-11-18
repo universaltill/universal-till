@@ -24,18 +24,19 @@ Cash is built in; card and other payment methods come as plugins from the store 
 
 Stripe and SumUp card payments are plugins from the Plugin Store. A manager installs them on the **main till** (**Plugins** → **Store**, open the plugin, accept the terms if asked, **Download**, then **Install**); joined tills receive them within about half a minute. The steps are the same in the Windows and Android store apps as in the direct download. Selling is never affected by any of this.
 
-Then open the plugin's **Settings** on the **Plugins** page. The settings show each field under its setting name (for example `sumup_api_key`). Keys you paste there are secret: the till shows them hidden, and they stay on this shop's tills.
+Then open the plugin's **Settings** on the **Plugins** page. Each field shows its name and a short help line (support may ask for a field's setting key, for example `sumup_api_key`; it shows when you point at the field name). Keys you paste there are secret: the till shows them hidden, and they stay on this shop's tills.
 
 **Stripe**
-- `stripe_secret_key` — your own key from the Stripe dashboard. A key starting `sk_test_` is test mode: nothing real is charged, and on a reader the till presents Stripe's simulated card for you. A key starting `sk_live_` charges real cards.
-- `currency` — leave the default unless you sell in another currency.
-- `stripe_reader_id` — the id of your Stripe card reader (a WisePOS E or a Stripe Reader S700), set on each till that has one. Without a reader id the plugin makes a test-card demo charge that only works with a `sk_test_` key and never charges a real card; with a `sk_live_` key and no reader id every payment is declined. Set the reader id to take real cards.
+- **Secret key** — your own key from the Stripe dashboard. A key starting `sk_test_` is test mode: nothing real is charged, and on a reader the till presents Stripe's simulated card for you. A key starting `sk_live_` charges real cards.
+- **Currency** — leave the default unless you sell in another currency.
+- **Card reader ID** — the id of your Stripe card reader (a WisePOS E or a Stripe Reader S700), set on each till that has one (this field is per till). Without a reader id the plugin makes a test-card demo charge that only works with a `sk_test_` key and never charges a real card; with a `sk_live_` key and no reader id every payment is declined. Set the reader id to take real cards.
+- A wrong or revoked secret key declines every payment and refund; the till's log file names the reason `invalid_secret_key` (see [Where the till's log is](/help/recovery)). The cashier sees only the general **Payment declined** message, so check the key in the settings if every card is declined.
 
 **SumUp**
-- `sumup_api_key` and `sumup_merchant_code` — your own, from your SumUp account.
-- `sumup_affiliate_key` and `sumup_app_id` — the application keys for card readers. Enter the affiliate key given to you; leave `sumup_app_id` at its default unless you are told to change it. Without the affiliate key a reader payment is declined with `no_affiliate_key` and nothing is sent to SumUp.
+- **API key** and **Merchant code** — your own, from your SumUp account.
+- **Affiliate key** and **Affiliate app ID** — the application keys for card readers. Enter the affiliate key given to you; leave the app ID at its default unless you are told to change it. Without the affiliate key a reader payment is declined; the till's log file names the reason `no_affiliate_key`, and nothing is sent to SumUp.
 - **Card payment currency** — **Automatic** uses your shop's currency.
-- `sumup_reader_id` — the paired SumUp Solo reader for this till. With no reader id set, the plugin is in demo mode: it approves without charging a card (an amount ending in .13 is declined, .99 times out). Use it for training only and never for real sales.
+- **Card reader ID** — the paired SumUp Solo reader for this till (this field is per till). With no reader id set, the plugin is in demo mode: it approves without charging a card (an amount ending in .13 is declined, .99 times out). Use it for training only and never for real sales.
 
 A plugin added with **Import from file** starts with none of its permissions granted, and its payments are declined until a manager grants them on its settings page; a store install grants them for you.
 
