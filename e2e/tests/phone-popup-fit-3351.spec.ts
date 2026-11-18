@@ -350,6 +350,11 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
     test(`server-filled popups (modifier picker, table picker) fit at ${w}px with their real content (ut-docs#3411)`, async ({ page }) => {
       test.setTimeout(120_000);
       const tableLabel = `E2E Pf3411 Table ${w}`;
+      // This test measures settled boxes, not animations. With motion on, a
+      // cross-document view transition can stall the page's frames after a
+      // navigation or reload (every later tap and `load` wait then hangs, CI
+      // only: ut-docs#3411), so turn it off for this test.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       const item = await test.step('seed a modifier item', () => seedModifierItem(page), { timeout: 45_000 });
       try {
         const failures: string[] = [];
