@@ -130,10 +130,14 @@ func storeListings(r *http.Request, d *common.Deps) ([]storeItem, error) {
 }
 
 // Marketplace publisher terms and content guidelines live on the website, in
-// English (the operative text). Microsoft Store policy 11.13, ut-docs#6400.
+// English (the operative text), in the chrome-less in-app legal view
+// (/app/legal/, no Pricing or sign-up menu: ADR-0194 §3, like the About page),
+// so a Play or App Store till never lands on a purchase surface.
+// Microsoft Store policy 11.13, ut-docs#6400. The pages themselves are
+// published by ut-website (owner-gated, ut-docs#6400).
 const (
-	storeTermsHref      = "https://www.universaltill.com/en-gb/legal/marketplace-terms/"
-	storeGuidelinesHref = "https://www.universaltill.com/en-gb/legal/marketplace-content-guidelines/"
+	storeTermsHref      = "https://universaltill.com/en-gb/app/legal/marketplace-terms/"
+	storeGuidelinesHref = "https://universaltill.com/en-gb/app/legal/marketplace-content-guidelines/"
 	storeDefaultCloud   = "https://cloud.universaltill.com"
 )
 

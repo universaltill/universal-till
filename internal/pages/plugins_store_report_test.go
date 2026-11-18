@@ -42,8 +42,8 @@ func TestStoreDetailPageHasReportLinkAndMarketplaceTerms(t *testing.T) {
 		body := rec.Body.String()
 		for _, want := range []string{
 			`data-testid="store-report-link"`, `/ui/en-gb/plugins/` + id + `/report"`, "Report this listing",
-			`href="https://www.universaltill.com/en-gb/legal/marketplace-terms/"`,
-			`href="https://www.universaltill.com/en-gb/legal/marketplace-content-guidelines/"`,
+			`href="https://universaltill.com/en-gb/app/legal/marketplace-terms/"`,
+			`href="https://universaltill.com/en-gb/app/legal/marketplace-content-guidelines/"`,
 			"Marketplace publisher terms", "Marketplace content guidelines",
 		} {
 			if !strings.Contains(body, want) {
@@ -66,8 +66,8 @@ func TestStoreGridFooterLinksMarketplaceTerms(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`href="https://www.universaltill.com/en-gb/legal/marketplace-terms/"`,
-		`href="https://www.universaltill.com/en-gb/legal/marketplace-content-guidelines/"`,
+		`href="https://universaltill.com/en-gb/app/legal/marketplace-terms/"`,
+		`href="https://universaltill.com/en-gb/app/legal/marketplace-content-guidelines/"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("store grid missing %q", want)
