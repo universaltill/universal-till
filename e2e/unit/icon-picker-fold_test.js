@@ -38,3 +38,8 @@ test('wordMatches: other languages do not match English', () => {
 test('wordMatches: plain substring', () => {
   assert.ok(wordMatches('coffee latte', 'latt'));
 });
+
+test('wordMatches: default-ignorables are dropped from the query (ut-docs#6057)', () => {
+  assert.ok(wordMatches(fold('kaffee'), fold('Kaf\u00adfee')));
+  assert.ok(wordMatches(fold('\u0642\u0647\u0648\u0647'), fold('\u200E\u0642\u0647\u0648\u0647')));
+});

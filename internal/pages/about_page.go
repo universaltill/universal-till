@@ -23,9 +23,9 @@ const (
 	aboutTermsURL   = "https://universaltill.com/en-gb/app/legal/terms/"
 	// PLACEHOLDER (ut-docs#6402): the self-service Universal Till ID deletion
 	// page does not exist yet. Card #6399 delivers it and sets the final URL;
-	// replace this constant (and nothing else) when it lands. Until then this
-	// path must not be shipped to a store build.
-	aboutDeleteAccountURL = "https://universaltill.com/en-gb/account/delete/"
+	// set this constant when it lands. While it is empty the About row is not
+	// rendered on any channel (early review F3: the old address was a 404).
+	aboutDeleteAccountURL = ""
 	// aboutLicencesPath is an in-app page (inside the till layout, with a back
 	// link): a raw .txt in a new window would be a dead end on a kiosk or the
 	// desktop webview. The text is generated at build time (tools/gen-licenses,
@@ -38,7 +38,7 @@ func registerAbout(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		text, err := web.FS.ReadFile("public/licenses.txt")
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "about_licences", err)
+			httpx.RenderError(w, r, http.StatusInternalServerError, "sync.error.server", err)
 			return
 		}
 		data := map[string]any{

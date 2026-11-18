@@ -13,7 +13,7 @@ import (
 
 // Cloud-terms acceptance on operator-initiated registration
 // (ut-docs#4717, ut-docs#4720). Every UI path that registers this till with
-// the cloud (Settings -> Register now, the auto-register opt-in toggle, the
+// the cloud (Settings -> claim code, pairing, the
 // setup wizard's opt-in) needs the operator to tick "accept_terms" once per
 // terms version; enroll.RecordTermsAcceptance then stores it per till and
 // enroll's register() sends it. The plugin store's first Download and the
@@ -38,7 +38,9 @@ func termsAlreadyAccepted(ctx context.Context, d *common.Deps) bool {
 // line.
 func termsView(ctx context.Context, d *common.Deps, locale string) map[string]any {
 	v := map[string]any{
-		"url":     enroll.TermsURL(locale),
+		// F2 (early review): play/appstore builds link the chrome-less view of
+		// the same cloud terms (no Pricing menu); the page is published by #4670.
+		"url":     termsLinkURL(locale),
 		"label":   fmt.Sprintf(httpx.T(locale, "settings.enrol.terms.label"), enroll.TermsVersion),
 		"version": enroll.TermsVersion,
 		// ut-docs#4792: false when the acceptance is stored on this till but
@@ -81,4 +83,11 @@ func termsGateLazyRegistration(ctx context.Context, d *common.Deps, ticked bool,
 		return false, err
 	}
 	return false, nil
+}
+
+func termsLinkURL(locale string) string {
+	if !accountLinkOutAllowed() {
+		return enroll.TermsURLChromeless(locale)
+	}
+	return enroll.TermsURL(locale)
 }

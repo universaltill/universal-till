@@ -218,7 +218,7 @@ func TestNewer(t *testing.T) {
 
 // ADR-0194 §2.3 / ut-docs#6388: store channels never contact GitHub.
 func TestCheckNow_NoRequestOnStoreChannels(t *testing.T) {
-	for _, c := range []buildinfo.Channel{buildinfo.ChannelPlay, buildinfo.ChannelAppStore} {
+	for _, c := range []buildinfo.InstallChannel{buildinfo.ChannelPlay, buildinfo.ChannelAppStore} {
 		t.Run(string(c), func(t *testing.T) {
 			resetState(t)
 			t.Cleanup(buildinfo.OverrideChannelForTest(c))
@@ -238,7 +238,7 @@ func TestCheckNow_NoRequestOnStoreChannels(t *testing.T) {
 			}
 		})
 	}
-	for _, c := range []buildinfo.Channel{buildinfo.ChannelSideload, buildinfo.ChannelDirect} {
+	for _, c := range []buildinfo.InstallChannel{buildinfo.ChannelSideload, buildinfo.ChannelDirect} {
 		t.Run(string(c)+"_checks", func(t *testing.T) {
 			resetState(t)
 			t.Cleanup(buildinfo.OverrideChannelForTest(c))

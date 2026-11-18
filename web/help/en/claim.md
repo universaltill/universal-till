@@ -15,8 +15,8 @@ Registering connects your till to the Universal Till marketplace; claiming links
 
 ## How to use it
 
-1. Settings → Till registration shows the store identity; Register now connects it if needed. On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
-2. Tick the box "I accept the Universal Till cloud service terms (version v0.1-draft)" before registering; "Read the terms" opens them in a new tab. Without the tick, Register now does nothing and tells you so. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box, and the till sends your acceptance (the version and your language) with the registration. A till that was registered before this step existed (or through a plugin install) shows the same box under Till registration with an **Accept terms** button: tick the box and press it. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
+1. Settings → Till registration shows the store identity. There is no Register button: once setup is finished the till registers itself in the background (see below). On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
+2. The cloud service terms are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till cloud service terms (version v0.1-draft)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
 3. Click Claim this store to get a short code (valid 15 minutes).
 4. Sign in to your Universal Till account on another device and enter the code there.
 
@@ -28,12 +28,15 @@ Alongside the code, the till shows a QR code and a link to the claim page: scan 
 
 The Google Play and App Store versions of the app show the code as text only: type it in on another device.
 
-## Automatic registration — your choice at setup
+## Automatic registration and the Cloud record
 
-The setup wizard's last screen asks once whether to register the till right away — not ticked unless you tick it (a till that joined a shop with a pairing code is not asked: pairing already registered it). The same choice lives in Settings → Till registration as "Register this till with the marketplace automatically":
+Every till registers itself once setup is finished, with no question to answer and no button to press. It does this in the background, never during a sale, and keeps trying (waiting longer between tries, up to ten minutes) until the cloud answers; a till that is offline at the end of setup carries on selling and registers when it is back online. The setup wizard's last screen, and Settings → Till registration → **Cloud record**, say exactly what the till tells Universal Till:
 
-1. Turn it on and the till sends its device ID, store name, shop country, region and software version to the Universal Till cloud marketplace (used for support, updates and licensing) and registers straight away. Your address is not sent. Offline just then? Nothing is held up and setup still finishes — but the till stays unregistered until you open the plugin store or press Register now, so check Settings → Till registration once you are back online. The terms box appears under the choice while it is ticked; if you tick the choice but not the terms, the choice is saved as off and nothing is sent. In Settings, turning it on needs the same tick (unless you already accepted or the till is already registered); turning it off never does.
-2. Turn it off and the till goes back to registering only when you first use the plugin store or press Register now. Turning it off never removes a registration that already happened.
+- Each time the till starts: its software version, system type, country, language, the shop name you chose, a random till code and when it last started. Your address is not sent.
+- When the till updates itself, or a plugin is installed, updated or removed: which version or plugin changed, and when. The till keeps these in a short queue and sends them with its next check-in; it never sends anything when it is switched off.
+- Never your sales, customers, staff or items.
+
+A till set up before this existed shows the same notice once, in Settings → Till registration → Cloud record; a link in the status bar points there, and the till registers only after the notice was shown. A manager can press **Stop sending** there: the till then registers nothing and reports nothing about itself (cloud features you use still connect), and the card says **Paused** until you press **Resume sending**. Stopping does not delete what the cloud already holds; ask us to delete it. The card also shows whether the till is registered and when the cloud last answered it. The notice wording is awaiting final approval.
 
 ## Subscription
 
@@ -70,17 +73,16 @@ If the cloud refuses this till's credential three times in a row, or this till's
 
 A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud. The restored chip goes away once the till is paired or registered again.
 
-## When Register now or Claim this store fails
+## When Claim this store or Accept terms fails
 
 The card says what went wrong in one line; selling is never affected:
 
-- **Accept the Universal Till cloud service terms to register this till**: the terms box was not ticked, so nothing was sent. Tick it (or turn on automatic registration with the box ticked) and try again.
+- **Accept the Universal Till cloud service terms to register this till**: the terms box on the plugin's page was not ticked, so nothing was sent. Tick it and try again.
 - **Tick the box to accept the Universal Till cloud service terms**: on an already registered till, Accept terms was pressed without ticking the box, so nothing was recorded or sent. Tick it and press Accept terms again.
 - **Couldn't reach the cloud. Your acceptance is saved on this till**: the acceptance is kept on the till; check the internet connection and press Send to the cloud again.
 - **The Universal Till cloud is not available for this shop**: the cloud does not serve this shop. On a joined till this comes from the main till. The till keeps working offline.
 - **No cloud address is set up on this till**: the till was installed without a cloud address, so it can't register. Ask whoever installed it to set one up.
 - **Another registration attempt is still running**: the till is already registering in the background. Wait a moment and try again.
-- **Name your shop first**: the shop has no real name yet (it is blank or a default such as "My Store"), so the till has not registered it with the cloud. Follow the **Shop name** link in the message, save the shop's name, then press Register now again.
 - **Registration failed** or **Could not get a claim code**: the till could not reach the cloud. Check the internet connection and try again.
 
 ## Pair with a shop (and re-pairing)
@@ -115,11 +117,11 @@ A shop with no owner account has no pairing code, so the cloud decides by the ti
 
 - **Cloud sign-in lost** (status bar): the till's cloud sign-in was refused three times. A manager opens Settings → Till registration. The device ID and the **key fingerprint** (32 characters in groups of four) are shown there, always, to managers only. Tap **Reconnect this till**: the till proves its key and gets a new sign-in in the same shop. If that is refused, the card says why (never the cloud's raw text).
 - **The cloud knows a different key for this till**: the key on this till is not the one the cloud holds (for example after restoring the data onto new hardware, or a damaged key file). Ask support to allow it. Read them the device ID and the key fingerprint from Settings; support matches both against the shop's fleet row (shop name, till name, version) and lets in one reconnect for 24 hours, once, only for a till holding that key. If they cannot match it, or you would rather not wait, use **Register as a new shop**.
-- **This till was in use recently** (**Cloud reconnect paused**): for a till on an older version that never reported a key, the cloud refuses a re-registration while the till was in use in the last 72 hours. This is a weaker check: an unpaid till often contacts the cloud rarely, so it can be past 72 hours while still selling. The till tries again by itself after the date shown (Register now tries at once). Support can allow one reconnect sooner, the same way.
+- **This till was in use recently** (**Cloud reconnect paused**): for a till on an older version that never reported a key, the cloud refuses a re-registration while the till was in use in the last 72 hours. This is a weaker check: an unpaid till often contacts the cloud rarely, so it can be past 72 hours while still selling. The till tries again by itself after the date shown. Support can allow one reconnect sooner, the same way.
 - **This till's software is too old to prove its identity**: update this till, then try again.
 - **Too many tries**: wait a few minutes.
 
-**Register as a new shop** (below Reconnect, with a confirmation) leaves the old shop behind in the cloud with this till's earlier cloud history, gives the till a new device ID and registers it as a new shop. Sales on the till stay on the till. It cannot be undone. If the new registration fails, the till is simply not registered yet and **Register now** tries again. A till whose database was wiped already has a new device ID and registers as a new shop by itself. A shop that has an owner re-pairs the till instead (Pair with a shop).
+**Register as a new shop** (below Reconnect, with a confirmation) leaves the old shop behind in the cloud with this till's earlier cloud history, gives the till a new device ID and registers it as a new shop. Sales on the till stay on the till. It cannot be undone. If the new registration fails, the till is simply not registered yet and registers itself again in the background. A till whose database was wiped already has a new device ID and registers as a new shop by itself. A shop that has an owner re-pairs the till instead (Pair with a shop).
 
 ## The shop's currency
 

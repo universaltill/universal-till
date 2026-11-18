@@ -148,7 +148,7 @@ func TestVoucherSlipFor_IssuedAndReprinted(t *testing.T) {
 	setSettings(t, dp, map[string]string{keyReceiptVoucherSlipText: "Valid in store."})
 	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
 	v := data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, Currency: "GBP", Status: "active", IssuedSaleID: "sale1", CreatedAt: slip6179Issued}
-	s := voucherSlipFor(ctx, dp, v, printerConfig(ctx, dp), now)
+	s := voucherSlipFor(ctx, dp, v, slipBalance{}, printerConfig(ctx, dp), now)
 	if want := slip6179Date(t, "receipt.vouchers.issued_on", slip6179Issued); s.Date != want {
 		t.Errorf("Date = %q, want %q", s.Date, want)
 	}
@@ -164,7 +164,7 @@ func TestVoucherSlipFor_ImportedNoIssuedLine(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	ctx := context.Background()
 	v := data.Voucher{ID: "GV-IMP", OriginalAmountMinor: 2500, Currency: "GBP", Status: "active", CreatedAt: slip6179Issued} // no issuing sale
-	s := voucherSlipFor(ctx, dp, v, printerConfig(ctx, dp), time.Now())
+	s := voucherSlipFor(ctx, dp, v, slipBalance{}, printerConfig(ctx, dp), time.Now())
 	if s.Date != "" {
 		t.Errorf("imported voucher printed %q", s.Date)
 	}
@@ -178,12 +178,12 @@ func TestVoucherSlipFor_BadCreatedAtNoLine(t *testing.T) {
 	ctx := context.Background()
 	for _, bad := range []string{"", "garbage", "0001-01-01T00:00:00Z"} {
 		v := data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, Currency: "GBP", IssuedSaleID: "sale1", CreatedAt: bad}
-		if s := voucherSlipFor(ctx, dp, v, printerConfig(ctx, dp), time.Now()); s.Date != "" {
+		if s := voucherSlipFor(ctx, dp, v, slipBalance{}, printerConfig(ctx, dp), time.Now()); s.Date != "" {
 			t.Errorf("created_at %q printed %q", bad, s.Date)
 		}
 	}
 	v := data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, Currency: "GBP", IssuedSaleID: "sale1", CreatedAt: "2025-03-01 12:00:00"} // legacy layout
-	if s := voucherSlipFor(ctx, dp, v, printerConfig(ctx, dp), time.Now()); !strings.Contains(s.Date, "2025") {
+	if s := voucherSlipFor(ctx, dp, v, slipBalance{}, printerConfig(ctx, dp), time.Now()); !strings.Contains(s.Date, "2025") {
 		t.Errorf("legacy layout gave %q", s.Date)
 	}
 }

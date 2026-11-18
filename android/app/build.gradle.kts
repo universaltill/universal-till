@@ -108,11 +108,12 @@ val installChannelProp = (project.findProperty("installChannel") as String?) ?: 
 val installChannel = if (installChannelProp in listOf("sideload", "play", "appstore", "direct")) installChannelProp else "appstore"
 
 // Review S7: a Play build (any assemble/bundle/publish task naming "Play", e.g.
-// bundlePlayRelease) must carry -PinstallChannel=play, otherwise it would ship
+// bundlePlayRelease) and ANY bundle* task (an AAB only goes to a store; early
+// review F4: bundleUniversalRelease would ship "sideload") must carry -PinstallChannel=play, otherwise it would ship
 // with plan purchase and self-update switched ON. Refuse at graph time.
 gradle.taskGraph.whenReady {
     val playTask = allTasks.firstOrNull {
-        it.project == project && Regex("^(assemble|bundle|publish|package).*Play", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
+        it.project == project && Regex("^(assemble|bundle|publish|package).*Play|^bundle[A-Z]\\w*(Release|Debug)$", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
     }
     // Review F16: the reverse. An .aab is a Play artefact only; a bundle task of
     // any other flavor (bundleUniversalRelease, ...) would be an upload candidate
@@ -484,7 +485,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )

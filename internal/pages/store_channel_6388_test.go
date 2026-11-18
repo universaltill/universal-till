@@ -10,7 +10,9 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/manual"
+	"github.com/universaltill/universal-till/internal/pages/settingsnav"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/web"
 )
@@ -19,17 +21,17 @@ import (
 // purchase surface exists. Hide AND refuse. These tests flip the process-wide
 // channel, so none may run in parallel.
 
-var allChannels = []buildinfo.Channel{
+var allChannels = []buildinfo.InstallChannel{
 	buildinfo.ChannelSideload, buildinfo.ChannelPlay, buildinfo.ChannelAppStore, buildinfo.ChannelDirect,
 }
 
-func withChannel(t *testing.T, c buildinfo.Channel) {
+func withChannel(t *testing.T, c buildinfo.InstallChannel) {
 	t.Helper()
 	t.Cleanup(buildinfo.OverrideChannelForTest(c))
 }
 
 func TestPlanPurchaseAllowed_ByChannel(t *testing.T) {
-	want := map[buildinfo.Channel]bool{
+	want := map[buildinfo.InstallChannel]bool{
 		buildinfo.ChannelSideload: true, buildinfo.ChannelPlay: false,
 		buildinfo.ChannelAppStore: false, buildinfo.ChannelDirect: true,
 	}
@@ -81,7 +83,7 @@ func TestStoreChannel_PurchaseRoutesAndSurfaces(t *testing.T) {
 
 func TestStoreChannel_UpdateRoutesAndCard(t *testing.T) {
 	// Hard-coded on purpose: never derive this from InAppUpdateAllowed().
-	wantOpen := map[buildinfo.Channel]bool{
+	wantOpen := map[buildinfo.InstallChannel]bool{
 		buildinfo.ChannelDirect: true, buildinfo.ChannelSideload: true,
 		buildinfo.ChannelPlay: false, buildinfo.ChannelAppStore: false,
 	}
@@ -310,5 +312,114 @@ func TestStoreChannel_HelpUpdatesTopic(t *testing.T) {
 				t.Errorf("%s: Settings links to the updates topic present=%v, want %v", c, has, !store)
 			}
 		})
+	}
+}
+
+// Early review F1/F2/F3: content from the cloud and the terms link must not
+// re-open a purchase surface on a store build.
+func TestStoreChannel_NoticeLinksAndTermsURL(t *testing.T) {
+	n := data.CloudNotice{
+		Title: "Upgrade", Body: "Upgrade to Pro for £9.99. [Choose a plan](https://my.universaltill.com/billing/checkout)",
+		LinkJSON: `{"kind":"https","target":"https://universaltill.com/en-gb/pricing/","label":"Buy now"}`,
+	}
+	for _, c := range allChannels {
+		t.Run(string(c), func(t *testing.T) {
+			withChannel(t, c)
+			row := newNoticeRow(n, true, false, "all")
+			hasLink := row.Link != nil
+			bodyLink := strings.Contains(string(row.Body), "<a ") || strings.Contains(string(row.Body), "billing/checkout")
+			if open := c.AccountLinkOutAllowed(); hasLink != open || bodyLink != open {
+				t.Errorf("%s: link=%v bodyLink=%v, want both %v", c, hasLink, bodyLink, open)
+			}
+		})
+	}
+	for _, c := range allChannels {
+		withChannel(t, c)
+		if got, chromeless := termsLinkURL("en"), strings.Contains(termsLinkURL("en"), "/app/legal/"); chromeless == c.AccountLinkOutAllowed() {
+			t.Errorf("%s terms link %s: chrome-less=%v", c, got, chromeless)
+		}
+	}
+	// route links stay on store builds (only https is dropped)
+	withChannel(t, buildinfo.ChannelPlay)
+	rn := data.CloudNotice{Title: "t", Body: "b", LinkJSON: `{"kind":"route","target":"/settings","label":"Open"}`}
+	if row := newNoticeRow(rn, true, false, "all"); row.Link == nil || row.LinkExternal {
+		t.Errorf("route link lost on play: %+v", row.Link)
+	}
+}
+
+// ut-docs#6622: a notice is free text from the cloud and its price/purchase
+// pitch cannot be filtered on the till, so on a store channel the inbox stays
+// off whatever notices.enabled says (ADR-0194 §3). Hide AND refuse.
+func TestStoreChannel_NoticesStayOff(t *testing.T) {
+	for _, c := range allChannels {
+		t.Run(string(c), func(t *testing.T) {
+			withChannel(t, c)
+			open := c.AccountLinkOutAllowed()
+			r := newNoticesRig(t, true) // notices.enabled = true
+			r.seed(t, r.n("c", "critical"), r.n("i", "important"))
+
+			rec := r.do("GET", "/notices", nMgr, nil)
+			if got404 := rec.Code == http.StatusNotFound; got404 == open {
+				t.Errorf("GET /notices on %s = %d, 404 expected=%v", c, rec.Code, !open)
+			}
+			for _, p := range []string{"/notices/bell", "/notices/strip", "/notices/toast"} {
+				rec := r.do("GET", p, nMgr, nil)
+				if rec.Code != 200 {
+					t.Fatalf("%s on %s = %d", p, c, rec.Code)
+				}
+				if empty := strings.TrimSpace(rec.Body.String()) == ""; empty == open {
+					t.Errorf("%s on %s: empty=%v, want %v", p, c, empty, !open)
+				}
+			}
+			// turning it on is refused on a store channel; off still works
+			rec = r.do("POST", "/api/settings/notices", nMgr, url.Values{"enabled": {"on"}})
+			if got404 := rec.Code == http.StatusNotFound; got404 == open {
+				t.Errorf("POST enable on %s = %d, 404 expected=%v", c, rec.Code, !open)
+			}
+			if !open {
+				if rec := r.do("POST", "/api/settings/notices", nMgr, url.Values{}); rec.Code != http.StatusNoContent {
+					t.Errorf("POST disable on %s = %d, want 204", c, rec.Code)
+				}
+				// the turn-off path still erases the held rows and clears the flag
+				if p, err := r.repo.Pairs(t.Context()); err != nil || len(p) != 0 {
+					t.Errorf("disable on %s: held notices = %v (err %v), want none", c, p, err)
+				}
+				if v, _, _ := data.NewSettingsRepo(r.db).Get(t.Context(), "notices.enabled"); v != "false" {
+					t.Errorf("disable on %s: notices.enabled = %q, want false", c, v)
+				}
+			}
+		})
+	}
+}
+
+func TestStoreChannel_NoticesSettingsCard(t *testing.T) {
+	for _, c := range allChannels {
+		t.Run(string(c), func(t *testing.T) {
+			withChannel(t, c)
+			open := c.AccountLinkOutAllowed()
+			mux, d := checkNowMux(t)
+			if err := d.Settings.SetMany(t.Context(), map[string]string{"notices.enabled": "true"}); err != nil {
+				t.Fatal(err)
+			}
+			_, body := ppGet(mux, "/settings", mgrUser)
+			for _, marker := range []string{`id="settings-notices"`, `/api/settings/notices`} {
+				if has := strings.Contains(body, marker); has != open {
+					t.Errorf("%s Settings has %q = %v, want %v", c, marker, has, open)
+				}
+			}
+		})
+	}
+}
+
+func TestStoreChannel_NoticesNavRowHidden(t *testing.T) {
+	for _, c := range allChannels {
+		withChannel(t, c)
+		has := false
+		for _, r := range filterSettingsNavForRender(settingsnav.Resolve("en", nil), true, true, true, true, true) {
+			has = has || r.Key == "settings-notices"
+		}
+		if want := c.AccountLinkOutAllowed(); has != want {
+			t.Errorf("%s: settings-notices nav row present=%v, want %v", c, has, want)
+		}
 	}
 }

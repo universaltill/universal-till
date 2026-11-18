@@ -287,11 +287,35 @@ export async function setBrowsingMode(page: Page, mode: BrowsingMode) {
 
 // ut-docs#4272: a till registers with the cloud only once its shop has a real
 // name (a fresh till is still on migration 001's "My Store"), so a spec that
-// presses Register now names the shop first. Plain API call, same as
+// needs a registered till names the shop first. Plain API call, same as
 // setBrowsingMode: UT_AUTH=off, so no elevation prompt.
 export async function nameShop(page: Page, name = 'E2E Test Shop') {
   const resp = await page.request.post('/api/settings/store-name', { form: { store_name: name } });
   expect(resp.ok(), `name the shop (status ${resp.status()})`).toBe(true);
+}
+
+// ADR-0200 (ut-docs#6559): there is no Register button; a named till registers
+// itself in the background. Names the shop, opens the Cloud record card (that
+// shows the notice and wakes the registration loop) and waits until the card
+// says registered. ONLY the diagnostics till (run-till-diagnostics.sh) can do
+// this: it sets UT_E2E_AUTO_REGISTER=1, a test-only seam the till honours on a
+// source build whose marketplace endpoint is loopback (its fake cloud); every
+// other e2e till keeps UT_NEVER_REGISTER=1 and never registers.
+export async function ensureRegisteredAutomatically(page: Page) {
+  // A till registers only once its setup is finished (ADR-0200 guard), so the
+  // helper finishes the wizard through the same POST the Finish button sends.
+  const setup = await page.request.post('/api/setup', {
+    form: { store_name: 'E2E Test Shop', till_name: 'Till 1', country: 'GB', pin: '482913', pin_confirm: '482913' },
+    maxRedirects: 0,
+  });
+  expect([200, 204, 302, 303], `finish setup (status ${setup.status()})`).toContain(setup.status());
+  await nameShop(page);
+  const card = page.locator('#registration');
+  await expect(async () => {
+    await page.goto('/settings#registration');
+    await page.reload();
+    await expect(card).toContainText('This till is registered', { timeout: 1000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 // Same PIN tests-docs/docs-shots.spec.ts sets during its own first-boot
