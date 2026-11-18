@@ -88,4 +88,6 @@ done
 if PLAY_API_BASE="http://127.0.0.1:1" PLAY_ACCESS_TOKEN=t PLAY_PACKAGE_NAME=com.example.app AAB="$tmp/a.aab" VERSION_CODE=7770005 VERSION_NAME=7.77.0 \
   bash "$ROOT/scripts/ci/play-upload.sh" >"$tmp/out" 2>&1; then bad "local server accepted without the test flag"; else ok "local server refused without the test flag"; fi
 if grep -qE 'tracks/(production|beta|alpha)' "$ROOT/scripts/ci/play-upload.sh"; then bad "script names a non-internal track"; else ok "script names no non-internal track"; fi
+# TLS verification stays on and redirects are never followed (the token must not leave the API host)
+if grep -qE -- '(^|[[:space:]])(-k|--insecure|-L|--location|--location-trusted)([[:space:]]|$)' "$S"; then bad "curl insecure/redirect flag"; else ok "curl verifies TLS and does not follow redirects"; fi
 [ "$fails" = 0 ]

@@ -36,6 +36,9 @@ name: play-publish
 #          jarsigns, uploads the signed AAB as an artifact. No Google identity.
 #   upload environment play-internal + Google WIF as service account
 #          play-releaser (Play: internal testing only). No signing key.
+# The owner approves twice per release (sign, then upload: both run in the
+# reviewed environment play-internal); artifacts live 7 days so a late approval
+# still finds them.
 # No stored credential anywhere: Azure and Google both take GitHub's OIDC token.
 #
 # Interface with the flavor card (#6409, android/app/build.gradle.kts and
@@ -193,7 +196,7 @@ jobs:
           name: play-aab-unsigned
           path: ${{ runner.temp }}/unsigned.aab
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   sign:
     needs: build
@@ -290,7 +293,7 @@ jobs:
           name: play-aab-signed
           path: ${{ runner.temp }}/signed.aab
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   upload:
     needs: [build, sign]
@@ -327,7 +330,7 @@ jobs:
 
   # The signed bundle is a pre-release artifact of a public repo: remove both
   # artifacts as soon as the upload job ended, whatever its result (retention is
-  # 1 day as a backstop). Only GITHUB_TOKEN, actions: write, no cloud identity.
+  # 7 days as a backstop, long enough for a late owner approval). Only GITHUB_TOKEN, actions: write, no cloud identity.
   cleanup:
     needs: [build, sign, upload]
     if: ${{ always() && !inputs.dry_run && github.repository == 'universaltill/universal-till' }}

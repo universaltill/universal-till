@@ -106,7 +106,7 @@ code | grep -q '^  cleanup:' && code | grep -q 'actions: write' && ok "cleanup j
 has 'play-upload-cert-sha256\.txt' && ok "upload cert pin file used" || bad "no upload-cert pin"
 has 'apk-signer-sha256\.txt' && ok "release cert list compared" || bad "release cert not compared"
 # --- low: artifact retention, gomobile pin ---------------------------------
-[ "$(code | grep -c 'retention-days: 1$')" = 2 ] && ok "artifacts kept 1 day" || bad "retention-days not 1"
+[ "$(code | grep -c 'retention-days: 7$')" = 2 ] && ok "artifacts kept 7 days (an owner approval may come days later; cleanup deletes them after the upload)" || bad "retention-days not 7"
 code | grep -qE '(gomobile|gobind)@latest' && bad "gomobile/gobind unpinned" || ok "gomobile/gobind pinned"
 # --- N5: the pins are checked BEFORE the key is fetched; missing list fails closed
 code | grep -q 'Check the pins before any key is touched' && ok "pin pre-check step exists" || bad "no pin pre-check step"
@@ -116,4 +116,21 @@ login="$(code | grep -n 'Azure login' | head -1 | cut -d: -f1)"
 has '\[ -s android/app/apk-signer-sha256\.txt \]' && ok "missing/empty apk-signer-sha256.txt fails closed" || bad "no -s check on apk-signer-sha256.txt"
 code | grep -qE 'AZURE_SIGNING_VAULT_NAME' && bad "old shared vault variable still used" || ok "no shared-vault variable"
 has 'AZURE_PLAY_UPLOAD_VAULT_NAME' && ok "upload vault variable used" || bad "no AZURE_PLAY_UPLOAD_VAULT_NAME"
+
+# --- review fix round 2 (findings 4, 5) ---------------------------------------
+# top-level permissions are exactly contents: read (the build job runs the tag's Gradle build)
+tp="$(code | awk '/^permissions:/{f=1;next} f&&/^[^[:space:]]/{exit} f{print}' | sed -E 's/^[[:space:]]+//' | tr '\n' '|')"
+[ "$tp" = "contents: read|" ] && ok "top-level permissions are exactly contents: read" || bad "top-level permissions: $tp"
+# sign and upload never choose a ref (default = the dispatched main), and run no code from the artifact
+for j in sign upload; do
+  job_text "$j" | grep -qE '^[[:space:]]+ref:' && bad "$j job sets a checkout ref" || ok "$j: no checkout ref (main code only)"
+  job_text "$j" | grep -qE '(^|[[:space:];&|(])(bash|sh|source|\.)[[:space:]]+"?\$?\{?(RUNNER_TEMP|AAB|\{\{)' && bad "$j runs a script out of RUNNER_TEMP/artifact" || ok "$j: no script run from RUNNER_TEMP/artifact"
+  job_text "$j" | grep -qE '&&[[:space:]]*(true|false)\b|(^|[[:space:]])(if|while)[[:space:]]+(true|false)\b|(^|[[:space:]])(true|false)[[:space:]]*(\|\||&&)' && bad "$j has a neutered condition (true/false short-circuit)" || ok "$j: no true/false short-circuit"
+done
+job_text upload | grep -qE '^        run: bash scripts/ci/play-upload\.sh$' && ok "upload runs exactly scripts/ci/play-upload.sh from the checkout" || bad "upload run line changed"
+# the sign job's cert checks are live, unconditional lines
+job_text sign | grep -qF -- '--expect-version-code "$VERSION_CODE" --expect-cert-sha256 "$pin")"' && ok "sign: check-aab pins version code and upload cert" || bad "sign: check-aab pin line changed"
+job_text sign | grep -qF 'grep -E '"'"'^[0-9a-f]{64}$'"'"' android/app/apk-signer-sha256.txt | grep -qx "$signer"' && ok "sign: signer compared against the release certs" || bad "sign: release-cert comparison missing"
+job_text sign | grep -qE '^          if grep -E .*apk-signer-sha256|^          if \[ -n "\$signer" \] && grep' && ok "sign: release-cert comparison is a plain if" || bad "sign: release-cert comparison not a plain if"
+job_text sign | grep -qF 'Check the pins before any key is touched' && ok "sign: pin pre-check step present" || bad "sign: pin pre-check step missing"
 [ "$fails" = 0 ]
