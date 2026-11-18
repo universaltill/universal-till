@@ -244,16 +244,6 @@ func (r *Restorer) Cancel() {
 	}
 }
 
-// Wait blocks until the running restore ends (tests).
-func (r *Restorer) Wait() {
-	r.mu.Lock()
-	d := r.done
-	r.mu.Unlock()
-	if d != nil {
-		<-d
-	}
-}
-
 // WaitTimeout is Wait with a deadline: it reports whether the restore ended
 // within d. An HTTP handler uses it so a Cancel during a long import cannot
 // hold the request for minutes.
