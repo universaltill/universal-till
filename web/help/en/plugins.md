@@ -6,7 +6,7 @@ order: 330
 public: true
 summary: "Add features without changing the core app: payments, themes, language packs, integrations, AI tools and more. Every plugin is signed and checked before it runs."
 routes: [/plugins, /plugins/store, /plugins/store/{listing_id}, /plugins/{section}/{listing_id}, /plugins/{id}/settings]
-keywords: [plugin, marketplace, store, install, extension, theme, language pack, permissions, trust, signature, update, rollback, import, export]
+keywords: [built in, plugin, marketplace, store, install, extension, theme, language pack, permissions, trust, signature, update, rollback, import, export]
 ---
 
 # Plugins & the marketplace
@@ -114,6 +114,22 @@ A tax plugin that supports takeaway rate overrides shows a dedicated editor on i
 - Only the models birefnet-general-lite and u2netp are allowed. Any other model shows a hint above the field, and the till keeps using its built-in background removal.
 - An image_endpoint that isn't a web address starting with http:// or https:// (for example `192.168.1.20:7000`, typed without http://) also shows a hint above the field, and the till keeps using its built-in background removal until you correct it.
 
+## Built-in card payments on the iPhone and iPad app
+
+On the iPhone and iPad app, plugins that run code can't be downloaded or imported: the store and **Import from file** refuse them. The Stripe and SumUp card payment plugins and the UK VAT plugin are built into the app instead, so you don't install them. Their permissions (for example, reaching Stripe or SumUp to take a payment) are already granted; there is nothing to approve.
+
+1. Open **Plugins**. The built-in plugins sit first, under **Built in**. Stripe and SumUp start switched off.
+2. Press **Settings** on the one you use, enter your keys and save. The settings stay editable while the plugin is off.
+3. Press **Enable**. Its card button now appears on the payment screen. **Disable** takes it away again.
+
+The UK VAT plugin is switched on for you when the shop's country is the United Kingdom, because UK tax is not optional. If you switch it off yourself, the till keeps it off.
+
+A plugin that runs code and reached the iPhone or iPad app another way, for example from a restored backup, shows as **Broken** for a moment: the app replaces it with its own built-in version of the same plugin, keeping your settings and whether it was on. Any other plugin that runs code from another source never runs there. Items whose tax comes from a broken tax plugin can't be sold on that device until it is replaced.
+
+On an iPad that follows a main till (see [Several tills](#several-tills)), a built-in plugin's card shows **Set by the main till**: the main till's on or off choice reaches the iPad within about half a minute, and Enable and Disable are not offered there.
+
+Only a manager or an admin can switch a built-in plugin on or off. A built-in plugin can't be uninstalled and shows no "update available": it updates when the app does. Themes and language packs still install from the store as usual.
+
 ## Updates and rolling back
 
 - The till checks for plugin updates in the background. You don't need to open this page for an update to be found.
@@ -186,6 +202,8 @@ When you finish first-time setup, the till installs your country's free tax plug
 | "Accept the Universal Till cloud service terms to register this till." | The terms box on the plugin's page is not ticked. | Tick the terms box, then press **Download** again. |
 | "This till follows a main till — install plugins on the main till; they arrive on every till automatically within about half a minute." (also on manage and uninstall) | You used a joined till. | Do it on the main till. |
 | "The marketplace has withdrawn this plugin version, so it can't be installed. Install another version." (and "…so it can't be turned on. Update the plugin to another version.") | The marketplace withdrew that version. | Update to another version. Use **Uninstall** to remove the plugin. |
+| "This app can't install plugins that run code. Stripe and SumUp card payments are built in: turn them on under Plugins and enter your keys." | You tried to install, import or update a plugin that runs code on the iPhone and iPad app. | Use the built-in Stripe or SumUp plugin under **Built in**, or use a different till for other plugins. |
+| "Built-in plugins can't be uninstalled. Turn this one off instead." | You pressed uninstall on a built-in plugin. | Use **Disable**. |
 | "This plugin is not compatible with this till." | The plugin needs a newer Universal Till or another kind of device. | Update the till, or pick another plugin. |
 | "The plugin package failed verification." | The download did not pass the till's signature check. | Download it again. If it keeps failing, do not install it. |
 | "This plugin can only be installed on a till paired with your shop. Pair this till first (Settings → Till registration → Pair with a shop), then try again." or "This till's connection to your shop is no longer valid. Pair it with your shop again …" | The till is not paired with your shop, or its pairing has lapsed. | Pair the till as the message says. |

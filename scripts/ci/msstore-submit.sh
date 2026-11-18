@@ -16,6 +16,7 @@
 # the Entra access token, written by the workflow; never an argument, never
 # printed), COMMIT=true to commit the submission (default: leave it as a draft
 # in Partner Center), REPO (default universaltill/universal-till).
+# MSSTORE_ROOT is a test override, honoured only with UT_MSSTORE_TEST=1.
 #
 # Fails closed:
 #   - (writes only) until store-release/microsoft.opened exists and names its owner-approved
@@ -28,11 +29,16 @@
 #     printed beyond the status).
 set -euo pipefail
 
-ROOT_DIR="${MSSTORE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 tag_in=${1:?usage: msstore-submit.sh <tag> [package-url]}
 REPO="${REPO:-universaltill/universal-till}"
 DRY_RUN="${DRY_RUN:-true}"
 fail() { echo "::error::msstore-submit: $1" >&2; exit 1; }
+# MSSTORE_ROOT relocates the opening file: a test override, honoured only with
+# UT_MSSTORE_TEST=1 and never ignored silently (ut-docs#6636).
+if [ -n "${MSSTORE_ROOT+x}" ] && [ "${UT_MSSTORE_TEST:-}" != 1 ]; then
+  fail "MSSTORE_ROOT is a test override and is honoured only with UT_MSSTORE_TEST=1 (ut-docs#6636)"
+fi
+ROOT_DIR="${MSSTORE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 [ "$DRY_RUN" = true ] || [ "$DRY_RUN" = false ] || fail "DRY_RUN must be true or false"
 
 if [ "$DRY_RUN" = false ]; then

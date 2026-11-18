@@ -10,10 +10,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/bundled"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/updates"
 )
@@ -199,6 +202,12 @@ func countryTaxListings(ctx context.Context, d *common.Deps, country string) ([]
 // a Prompted one stays pending (errBasePluginNotPublished, ut-docs#3210).
 func resolveAndInstallTaxForMarket(ctx context.Context, d *common.Deps, spec basePluginSpec) (err error) {
 	country := strings.ToUpper(strings.TrimSpace(spec.Market))
+	// App Store build (ADR-0194): no code is ever fetched, so the marketplace
+	// path below cannot serve any market. The bundled UK tax plugin is
+	// enabled for a UK shop; every other market is done at once, silently.
+	if !buildinfo.CurrentChannel().CodePluginInstallAllowed() {
+		return resolveBundledTaxForMarket(ctx, d, spec, country)
+	}
 	auto := !spec.Prompted
 	if auto {
 		// An operator who dismissed or uninstalled it keeps it declined, whatever
@@ -358,6 +367,57 @@ func validTaxAskAnswer(raw json.RawMessage) error {
 	}
 	if bp < 0 || bp > taxAskMaxRateBP {
 		return fmt.Errorf("rate_bp %d is outside 0..%d", bp, taxAskMaxRateBP)
+	}
+	return nil
+}
+
+// bundledTaxForShop is the bundled tax plugin the App Store build enables for
+// a shop in country (the lock's enable_for_countries; ut-docs#6626). Only the
+// appstore channel with the embedded set takes this path.
+func bundledTaxForShop(country string) (string, bool) {
+	if buildinfo.CurrentChannel().CodePluginInstallAllowed() || !bundled.Available() {
+		return "", false
+	}
+	return bundled.EnabledByDefaultFor(country)
+}
+
+// resolveBundledTaxForMarket is resolveAndInstallTaxForMarket on the App
+// Store build. VAT is a legal necessity, not a payment switch, so the
+// bundled plugin the lock names for the shop's country is switched ON by this
+// setup path (the boot sync installs it disabled, with no country in sight);
+// a shop that declined it keeps it off (ADR-0172 §5). Other countries have no
+// bundled tax plugin and no marketplace to fetch one from: done, no chip, no
+// network. A bundled plugin not installed yet (boot sync failed) stays
+// pending and is retried.
+func resolveBundledTaxForMarket(ctx context.Context, d *common.Deps, spec basePluginSpec, country string) error {
+	id, ok := bundledTaxForShop(country)
+	if !ok {
+		saveTaxAutoInstallStatus(ctx, d, nil)
+		return nil
+	}
+	if declined := taxAutoInstallDeclined(ctx, d); declined != "" {
+		return nil
+	}
+	repo := data.NewPluginRepo(d.Db)
+	trust, found, err := repo.PluginTrustLevel(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found || trust != "system" {
+		return fmt.Errorf("bundled tax plugin %s is not installed yet", id)
+	}
+	if on, err := repo.PluginActive(ctx, id); err != nil {
+		return err
+	} else if !on {
+		if err := repo.SetPluginActive(ctx, nil, id, true); err != nil {
+			return fmt.Errorf("enable bundled tax plugin %s: %w", id, err)
+		}
+		if err := d.ReloadPlugins(ctx); err != nil {
+			logging.L().Warnf("tax: reload after enabling the bundled %s: %v", id, err)
+		}
+	}
+	if !spec.Prompted {
+		saveTaxAutoInstallStatus(ctx, d, nil) // no marketplace install happened: nothing to chip
 	}
 	return nil
 }
