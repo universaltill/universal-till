@@ -114,6 +114,15 @@ gradle.taskGraph.whenReady {
     val playTask = allTasks.firstOrNull {
         it.project == project && Regex("^(assemble|bundle|publish|package).*Play", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
     }
+    // Review F16: the reverse. An .aab is a Play artefact only; a bundle task of
+    // any other flavor (bundleUniversalRelease, ...) would be an upload candidate
+    // stamped as sideload, so refuse it by task name too.
+    val strayBundle = allTasks.firstOrNull {
+        it.project == project && Regex("^bundle.*Release$").matches(it.name) && !it.name.contains("Play", ignoreCase = true)
+    }
+    if (strayBundle != null) {
+        throw GradleException("Task ${strayBundle.name} builds an .aab outside the play flavor; only bundlePlayRelease is allowed (ADR-0194 §2.4).")
+    }
     if (playTask != null && installChannel != "play") {
         throw GradleException("Task ${playTask.name} builds for Google Play but installChannel is '$installChannel' (from -PinstallChannel). Pass -PinstallChannel=play (ADR-0194 §2.3).")
     }
