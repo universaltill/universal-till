@@ -42,7 +42,7 @@ python3 "$W/srv.py" "$W" & SRV=$!
 for _ in $(seq 1 50); do [ -s "$W/port" ] && break; sleep 0.1; done
 URL="http://127.0.0.1:$(cat "$W/port")/dl/x.exe"
 SHA="$(shasum -a 256 "$W/a.bin" | awk '{print $1}')"
-export MSSTORE_SOAK_ALLOW_HTTP=1
+export MSSTORE_SOAK_ALLOW_HTTP=1 UT_MSSTORE_TEST=1
 fails=0
 t() { # t <want-rc> <name> <mode> [args...]
   local want=$1 name=$2; echo "$3" >"$W/mode"; echo 0 >"$W/n"; shift 3
@@ -56,5 +56,12 @@ t 1 "wrong expected sha fails" a "$(printf '0%.0s' $(seq 1 64))" 5000 2 0
 t 1 "wrong expected size fails" a "$SHA" 4999 2 0
 t 1 "no range support fails" norange "$SHA" 5000 2 0
 t 2 "bad checks arg is a usage error" a "$SHA" 5000 0 0
+# ut-docs#6636: the http override needs UT_MSSTORE_TEST=1; otherwise config error.
+echo a >"$W/mode"; echo 0 >"$W/n"; rc=0
+env -u UT_MSSTORE_TEST bash "$S" "$URL" "$SHA" 5000 1 0 >"$W/out" 2>&1 || rc=$?
+if [ "$rc" = 2 ] && grep -q 'MSSTORE_SOAK_ALLOW_HTTP' "$W/out"; then echo "ok   - ALLOW_HTTP without UT_MSSTORE_TEST is refused, named"
+else echo "FAIL - ALLOW_HTTP without the flag (rc $rc)" >&2; cat "$W/out" >&2; fails=$((fails+1)); fi
+rc=0; UT_MSSTORE_TEST=yes bash "$S" "$URL" "$SHA" 5000 1 0 >"$W/out" 2>&1 || rc=$?
+if [ "$rc" = 2 ]; then echo "ok   - a flag value other than 1 is refused"; else echo "FAIL - flag=yes (rc $rc)" >&2; fails=$((fails+1)); fi
 [ "$fails" = 0 ] || exit 1
 echo "✓ msstore-soak_test: all cases passed"
