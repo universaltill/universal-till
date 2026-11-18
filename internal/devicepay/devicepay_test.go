@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -323,5 +325,137 @@ func TestCollect_EndedContextNeverReachesTheBridge(t *testing.T) {
 	time.Sleep(20 * time.Millisecond) // a goroutine started in error would have run by now
 	if n := fb.collectCount(); n != 0 {
 		t.Fatalf("the bridge was asked to collect %d times on an ended context", n)
+	}
+}
+
+// fakeResolver is a scripted native resolve_unknown side.
+type fakeResolver struct {
+	mu    sync.Mutex
+	reply string
+	keys  []string
+}
+
+func (f *fakeResolver) ResolveUnknown(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keys = append(f.keys, key)
+	return f.reply
+}
+
+type actor bool
+
+func (a actor) IsManager() bool { return bool(a) }
+
+func registerResolver(t *testing.T, r Resolver) {
+	t.Helper()
+	SetResolver(r)
+	t.Cleanup(func() { SetResolver(nil) })
+}
+
+// ut-docs#6533: resolve_unknown says "the earlier payment was NOT charged";
+// only a manager may say it. A cashier is refused in Go, before the native
+// side is reached, whatever the native side would do.
+func TestResolveUnknown_CashierRefusedBeforeTheNativeSide(t *testing.T) {
+	fr := &fakeResolver{reply: `{"ok":true}`}
+	registerResolver(t, fr)
+	got := ResolveUnknown(deadlineCtx(t, time.Second), actor(false), "stripe", "k1")
+	if got.OK || got.Reason != ReasonForbidden {
+		t.Fatalf("cashier ResolveUnknown = %+v, want forbidden", got)
+	}
+	if got := ResolveUnknown(deadlineCtx(t, time.Second), nil, "stripe", "k1"); got.OK || got.Reason != ReasonForbidden {
+		t.Fatalf("anonymous ResolveUnknown = %+v, want forbidden", got)
+	}
+	if len(fr.keys) != 0 {
+		t.Fatalf("the native side was reached %d times for a refused caller", len(fr.keys))
+	}
+}
+
+func TestResolveUnknown_ManagerReachesTheNativeSide(t *testing.T) {
+	fr := &fakeResolver{reply: `{"ok":true}`}
+	registerResolver(t, fr)
+	got := ResolveUnknown(deadlineCtx(t, time.Second), actor(true), "stripe", "k1")
+	if !got.OK || len(fr.keys) != 1 || fr.keys[0] != "k1" {
+		t.Fatalf("manager ResolveUnknown = %+v keys %v", got, fr.keys)
+	}
+}
+
+func TestResolveUnknown_Validation(t *testing.T) {
+	ctx := deadlineCtx(t, time.Second)
+	if got := ResolveUnknown(ctx, actor(true), "stripe", "k1"); got.OK || got.Reason != ReasonNotForeground {
+		t.Fatalf("no resolver = %+v, want not_foreground", got)
+	}
+	fr := &fakeResolver{reply: `{"ok":true}`}
+	registerResolver(t, fr)
+	if got := ResolveUnknown(ctx, actor(true), "sumup", "k1"); got.OK || got.Reason != ReasonBadRequest {
+		t.Fatalf("unknown provider = %+v, want bad_request", got)
+	}
+	if got := ResolveUnknown(ctx, actor(true), "stripe", ""); got.OK || got.Reason != ReasonBadRequest {
+		t.Fatalf("empty key = %+v, want bad_request", got)
+	}
+	fr.reply = `{"ok":true,"extra":1}`
+	if got := ResolveUnknown(ctx, actor(true), "stripe", "k1"); got.OK || got.Reason != ReasonBadNativeResult {
+		t.Fatalf("unreadable native reply = %+v, want bad_native_result", got)
+	}
+	if len(fr.keys) != 1 {
+		t.Fatalf("validation failures reached the native side: %v", fr.keys)
+	}
+}
+
+func TestResolveUnknown_ContextEnds(t *testing.T) {
+	release := make(chan struct{})
+	registerResolver(t, resolverFunc(func(string) string { <-release; return `{"ok":true}` }))
+	t.Cleanup(func() { close(release) })
+	got := ResolveUnknown(deadlineCtx(t, 30*time.Millisecond), actor(true), "stripe", "k1")
+	if got.OK || got.Reason != ReasonTimeout {
+		t.Fatalf("ResolveUnknown after the deadline = %+v, want timeout", got)
+	}
+}
+
+type resolverFunc func(string) string
+
+func (f resolverFunc) ResolveUnknown(k string) string { return f(k) }
+
+// TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne documents the
+// open review item A3 (ut-docs#6533/#3048): the only legitimate caller is the
+// plugin host fn of #6455 (it holds the signed-in auth.User, which is what
+// satisfies Actor). Until that lands there is deliberately NO production caller:
+// a mobile.* method or an HTTP route cannot know who is asking, and a wrong
+// "not charged" answer can double-charge a customer. Whoever adds the caller
+// updates `allowed` below with the file and confirms it passes a real auth.User.
+func TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne(t *testing.T) {
+	allowed := map[string]bool{} // slash-separated repo-relative paths of the #6455 host fn
+	root := filepath.Join("..", "..")
+	var found []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "build", "vendor", "devicepay":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		if strings.Contains(string(b), "devicepay.ResolveUnknown(") {
+			rel, _ := filepath.Rel(root, p)
+			if rel = filepath.ToSlash(rel); !allowed[rel] {
+				found = append(found, rel)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) > 0 {
+		t.Fatalf("devicepay.ResolveUnknown is called from %v: add it to `allowed` only once the caller passes the signed-in auth.User (manager-gated, never an HTTP route)", found)
 	}
 }
