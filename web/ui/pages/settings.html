@@ -176,7 +176,7 @@
     </div>
     {{ end }}
     {{/* ADR-0148 §5 (ut-docs#3615): only a paid store checks in with the
-         cloud. Elevation-wired like Register now (ut-docs#867). */}}
+         cloud. Elevation-wired like an explicit operator registration (ut-docs#867). */}}
     {{ if .cloudSyncOff }}
     <div class="set-divider">
       <p class="muted">{{ if planpurchaseallowed }}{{ T "settings.enrol.cloud_sync_off" }}{{ else }}{{ T "settings.enrol.cloud_sync_off_store" }}{{ end }}</p>
@@ -199,7 +199,7 @@
     </div>
   {{ else if enrolledviamain }}
     {{/* ut-docs#2753: a replica its main till registered. No fleet, claim or
-         Register now here — those need the store token only the main till
+         an explicit operator registration here — those need the store token only the main till
          holds. */}}
     <p>✅ {{ T "settings.enrol.registered_via_main" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
@@ -208,17 +208,12 @@
          registered through its main till never checks in itself, so its
          own entitlement cache stays empty whatever the shop pays. */}}
   {{ else }}
+    {{/* ADR-0200 (ut-docs#6559): no Register button and no terms step here: the
+         till registers itself in the background once it is set up, and the
+         Cloud record card below says where it stands. The cloud terms are
+         accepted at claim, on a paid feature and at a plugin download. */}}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
-    <!-- ut-docs#867: unconditional — elevation-wired (see claim-code above). -->
-    {{/* ut-docs#4720: the cloud-terms accept step. Not a form (no native
-         submit): the button's hx-include carries the tick. Once the current
-         version is accepted only the muted line shows. */}}
-    {{ template "enrol_terms.html" (dict "terms" .terms "id" "enrol-accept-terms") }}
-    <div class="set-row">
-      <button class="btn btn-touch" hx-post="/api/enrol/now" hx-target="#enrol-msg" hx-swap="innerHTML" hx-include="#enrol-accept-terms">{{ T "settings.enrol.retry" }}</button>
-      <span id="enrol-msg" aria-live="polite"></span>
-    </div>
   {{ end }}
   <!-- ADR-0116 D5/D6 (ut-docs#3523): "Pair with a shop". Unconditional: it is
        the way back for an unpaired, revoked or retired till whatever its
@@ -244,32 +239,42 @@
     </form>
     <div id="pair-msg" aria-live="polite" class="set-gap-s"></div>
   </div>
-  <!-- ADR-0071 (ut-docs#879): the setup wizard's eager-registration opt-in,
-       changeable afterwards. Elevation-wired endpoint, so the card renders
-       for every session (ut-docs#867 convention). Same Content-Type reload
-       guard as the telemetry form — a 200 elevation prompt (text/html) must
-       not trigger the success reload. Toggling ON also registers now,
-       best-effort; toggling OFF never deregisters anything. It keeps the
-       full reload (ut-docs#2902 review): registering changes the shell's
-       status bar too (the "Register till" chip, base.html .sb-enrol). -->
-  <div class="set-divider">
-    <fieldset class="set-lock" data-lock-region="settings-auto-register"{{ if index $.lockedRegions "settings-auto-register" }} disabled{{ end }}>
-    {{ if index $.lockedRegions "settings-auto-register" }}{{ template "set-lock-note" }}{{ end }}
-    <form hx-post="/api/settings/auto-register" hx-swap="none" data-after-request="ok not-html reload:settings-auto-register; fail save-error:settings-save-error">
-      <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
-      <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
-      {{/* ut-docs#4720: turning registration ON needs the cloud terms
-           accepted (once per version); OFF never does. A registered till
-           can't register again from here, so it isn't asked (and the
-           accepted line already shows at the top of the card). */}}
-      {{ if not (or enrolled enrolledviamain) }}{{ template "enrol_terms.html" (dict "terms" .terms "id" "auto-register-accept-terms") }}{{ end }}
+  {{/* ADR-0200 (ut-docs#6559): the Cloud record. Status only: where this till
+       stands (an icon AND words, never colour alone), when the cloud last
+       answered, the notice, and one Stop sending switch. Managers only (the
+       caller passes nil otherwise). Rendering it is what "the notice was
+       shown" means for a till set up before the notice existed. The notice
+       wording is a DRAFT pending owner approval. */}}
+  {{ with .registrationCard }}
+  <div class="set-divider" id="cloud-record" data-testid="cloud-record">
+    <h3 style="margin:0 0 .3rem">{{ T "settings.registration.title" }}</h3>
+    <p data-testid="cloud-record-status">
+      {{ if eq .state "registered" }}✅ {{ T "settings.registration.status.registered" }}
+      {{ else if eq .state "paused" }}⏸ {{ T "settings.registration.status.paused" }}
+      {{ else }}⚠️ {{ T "settings.registration.status.not_registered" }}{{ end }}
+    </p>
+    <p class="muted" data-testid="cloud-record-last-checkin">{{ if .lastCheckin }}{{ printf (T "settings.registration.last_checkin") (datetime .lastCheckin) }}{{ else }}{{ T "settings.registration.no_checkin" }}{{ end }}</p>
+    <div class="registration-notice" data-testid="registration-notice">
+      <h4 style="margin:.6rem 0 .2rem">{{ T "registration.notice.title" }}</h4>
+      <p>{{ T "registration.notice.body" }}</p>
+      <p>{{ T "registration.notice.fields" }}</p>
+      <p>{{ T "registration.notice.purpose" }}</p>
+      <p>{{ T "registration.notice.retention" }}</p>
+      <p>{{ T "registration.notice.availability" }}</p>
+      <p>{{ T "registration.notice.stop_hint" }}</p>
+      <p>{{ T "registration.notice.controller" }}</p>
+    </div>
+    <form hx-post="/api/settings/registration-stop" hx-swap="none" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
+          data-after-request="ok not-html reload:settings-registration; fail save-error:settings-save-error">
+      <input type="hidden" name="stop" value="{{ if .paused }}0{{ else }}1{{ end }}">
+      <p class="muted">{{ if .paused }}{{ T "settings.registration.resume_help" }}{{ else }}{{ T "settings.registration.stop_help" }}{{ end }}</p>
       <div class="set-gap-s">
-        <button class="btn" type="submit">{{ T "common.save" }}</button>
-        <span id="auto-register-msg" aria-live="polite"></span>
+        <button class="btn btn-touch" type="submit" data-testid="registration-stop-btn">{{ if .paused }}{{ T "settings.registration.resume" }}{{ else }}{{ T "settings.registration.stop" }}{{ end }}</button>
+        <span id="registration-msg" aria-live="polite"></span>
       </div>
     </form>
-    </fieldset>
   </div>
+  {{ end }}
 </div>
 {{/* ut-docs#2569 (ADR-0060 §6): Settings → Subscription — plan, status and
      the paused-features banner (web/ui/partials/subscription_block.html).

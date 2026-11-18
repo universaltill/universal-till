@@ -139,13 +139,13 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 	// in to auto-register registers now, which drops the status bar's
 	// "Register till" chip.
 	kept := map[string]string{
-		"/api/settings/auto-register":   "reload:settings-auto-register",
-		"/api/settings/theme":           "reload:settings-theme",
-		"/api/settings/ui-scale":        "reload:settings-ui-scale",
-		"/api/settings/effects-level":   "reload:settings-effects-level",
-		"/api/settings/osk":             "reload:settings-osk",
-		"/api/settings/idle-lock":       "reload:settings-idle-lock",
-		"/api/settings/staff-languages": "reload:settings-save",
+		"/api/settings/registration-stop": "reload:settings-registration",
+		"/api/settings/theme":             "reload:settings-theme",
+		"/api/settings/ui-scale":          "reload:settings-ui-scale",
+		"/api/settings/effects-level":     "reload:settings-effects-level",
+		"/api/settings/osk":               "reload:settings-osk",
+		"/api/settings/idle-lock":         "reload:settings-idle-lock",
+		"/api/settings/staff-languages":   "reload:settings-save",
 	}
 	for post, want := range kept {
 		if form := formTag(t, s, post); !strings.Contains(form, want) {
