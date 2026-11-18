@@ -820,7 +820,7 @@ var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders", "/notices",
-	"/shifts", "/reports", "/backups",
+	"/shifts", "/reports", "/backups", "/about",
 }
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under

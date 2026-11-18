@@ -38,7 +38,9 @@ func termsAlreadyAccepted(ctx context.Context, d *common.Deps) bool {
 // line.
 func termsView(ctx context.Context, d *common.Deps, locale string) map[string]any {
 	v := map[string]any{
-		"url":     enroll.TermsURL(locale),
+		// F2 (early review): play/appstore builds link the chrome-less view of
+		// the same cloud terms (no Pricing menu); the page is published by #4670.
+		"url":     termsLinkURL(locale),
 		"label":   fmt.Sprintf(httpx.T(locale, "settings.enrol.terms.label"), enroll.TermsVersion),
 		"version": enroll.TermsVersion,
 		// ut-docs#4792: false when the acceptance is stored on this till but
@@ -81,4 +83,11 @@ func termsGateLazyRegistration(ctx context.Context, d *common.Deps, ticked bool,
 		return false, err
 	}
 	return false, nil
+}
+
+func termsLinkURL(locale string) string {
+	if !accountLinkOutAllowed() {
+		return enroll.TermsURLChromeless(locale)
+	}
+	return enroll.TermsURL(locale)
 }

@@ -4,21 +4,29 @@ title: Store registration & claiming
 section: Connecting & extending
 order: 320
 public: false
-summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
+summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view).
 keywords: [register, claim, cloud, marketplace, store, subscription, plan, pair, pairing code, re-pair]
 routes: [/settings/cloud/move/{id}]
 ---
 
 # Store registration & claiming
 
-Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
+Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view).
 
 ## How to use it
 
 1. Settings → Till registration shows the store identity. There is no Register button: once setup is finished the till registers itself in the background (see below). On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
 2. The cloud service terms are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till cloud service terms (version v0.1-draft)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
-3. Click Claim this store to get a short code (valid 15 minutes) and a QR — scan it with your phone to claim from there.
-4. Sign in to the marketplace with your Universal Till ID, open the claim page and enter the code.
+3. Click Claim this store to get a short code (valid 15 minutes).
+4. Sign in to your Universal Till account on another device and enter the code there.
+
+<!-- plan-purchase -->
+
+Alongside the code, the till shows a QR code and a link to the claim page: scan the QR with your phone, or open the link, and claim from there. This is the only way to claim on a shell that cannot open a browser.
+
+<!-- /plan-purchase -->
+
+The Google Play and App Store versions of the app show the code as text only: type it in on another device.
 
 ## Automatic registration and the Cloud record
 

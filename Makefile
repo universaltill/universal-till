@@ -33,7 +33,7 @@ ifneq ($(UT_MARKETPLACE_KEY_HEX),)
 LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX) -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$(UT_RELEASE_KEYS_HEX)
 endif
 
-.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees gen-settings-registry
+.PHONY: licenses licenses-check build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees gen-settings-registry
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -168,3 +168,11 @@ e2e:
 		if [ $$i -eq 30 ]; then echo \"App did not start in time\" >&2; exit 1; fi; \
 	done; \
 	(cd tests/e2e && BASE_URL=http://127.0.0.1:8080 npm run test:e2e)
+
+# Open-source licences page for Settings -> About (ut-docs#6402), generated
+# from go.mod and the module cache (no network when the build already ran).
+licenses:
+	go run ./tools/gen-licenses
+
+licenses-check:
+	go run ./tools/gen-licenses -check

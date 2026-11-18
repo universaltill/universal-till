@@ -807,7 +807,9 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/till-register":                  true,
 	"POST /api/settings/ui-scale":                       true,
 	"POST /api/settings/effects-level":                  true,
-	// Help.
+	// Help and About (read-only links, ut-docs#6402).
+	"GET /about":                    true,
+	"GET /about/licences":           true,
 	"/help":                         true,
 	"GET /help/img/{locale}/{file}": true,
 	"GET /help/search":              true,

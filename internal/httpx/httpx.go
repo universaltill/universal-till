@@ -73,6 +73,12 @@ var UpdateAvailable = func() bool { return updates.Current().Available }
 // unchanged.
 var PlanPurchaseAllowed = func() bool { return true }
 
+// AccountLinkOutAllowed is the seam behind the accountlinkoutallowed template
+// func (ut-docs#6401). One definition of the rule (platform AND channel, incl.
+// the iOS rule) lives in internal/pages and is set at init, like
+// PlanPurchaseAllowed above.
+var AccountLinkOutAllowed = func() bool { return true }
+
 var baseFuncs = template.FuncMap{
 	// maxStoreNameRunes is the shop-name input cap (ut-docs#5774).
 	"maxStoreNameRunes": func() int { return config.MaxStoreNameRunes },
@@ -94,8 +100,17 @@ var baseFuncs = template.FuncMap{
 	"bpPercent":       func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 	"appversion":      func() string { return buildinfo.Version },
 	"updateavailable": func() bool { return UpdateAvailable() },
-	"latestversion":   func() string { return updates.Current().Latest },
-	"canselfupdate":   func() bool { return selfupdate.Supported() },
+	// inappupdateallowed is false on the Google Play and App Store channels
+	// (ADR-0194 §2.3, ut-docs#6388): the store updates the app, so no update
+	// card, check button or install control is rendered.
+	"inappupdateallowed": func() bool { return buildinfo.CurrentChannel().InAppUpdateAllowed() },
+	// accountlinkoutallowed is false on those channels too: the claim code is
+	// text only, never a link or QR (ut-docs#6401).
+	"accountlinkoutallowed": func() bool { return AccountLinkOutAllowed() },
+	// storechannel is the install channel name (build constant, ADR-0194).
+	"storechannel":  func() string { return string(buildinfo.CurrentChannel()) },
+	"latestversion": func() string { return updates.Current().Latest },
+	"canselfupdate": func() bool { return selfupdate.Supported() },
 	// autoupdatestuck: auto-update is on and an update is waiting, but this
 	// linux install can't apply it itself (ut-docs#2733) — the chip then says
 	// so and links to what to do instead of the generic unavailable_here.
