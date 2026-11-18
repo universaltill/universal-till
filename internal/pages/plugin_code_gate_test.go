@@ -30,7 +30,7 @@ import (
 
 // codeGateEnv: a marketplace server that counts every hit, a deps whose local
 // catalog lists a payment and a theme listing, and the given channel.
-func codeGateEnv(t *testing.T, ch buildinfo.Channel) (*http.ServeMux, *common.Deps, *atomic.Int32) {
+func codeGateEnv(t *testing.T, ch buildinfo.InstallChannel) (*http.ServeMux, *common.Deps, *atomic.Int32) {
 	t.Helper()
 	t.Setenv("UT_AUTH", "off")
 	t.Cleanup(buildinfo.OverrideChannelForTest(ch))
@@ -89,7 +89,7 @@ func TestAppStore_StoreDownloadOfThemeStillReachesMarketplace(t *testing.T) {
 }
 
 func TestSideloadPlayDirect_CodeListingStillReachesMarketplace(t *testing.T) {
-	for _, ch := range []buildinfo.Channel{buildinfo.ChannelSideload, buildinfo.ChannelPlay, buildinfo.ChannelDirect} {
+	for _, ch := range []buildinfo.InstallChannel{buildinfo.ChannelSideload, buildinfo.ChannelPlay, buildinfo.ChannelDirect} {
 		mux, _, hits := codeGateEnv(t, ch)
 		rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-pay"}, "accept_terms": {"on"}}, nil)
 		if k := storeErrKey(t, rec); k == plugins.CodeInstallRefusedMsgID {

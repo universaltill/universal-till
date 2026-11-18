@@ -107,7 +107,7 @@ func resetChannelForTest() {
 // ADR-0194 / Apple 2.5.2: the App Store build never downloads marketplace
 // code (wasm/go) plugins; every other channel does.
 func TestCodePluginInstallAllowed_Table(t *testing.T) {
-	for ch, want := range map[Channel]bool{
+	for ch, want := range map[InstallChannel]bool{
 		ChannelSideload: true,
 		ChannelPlay:     true,
 		ChannelAppStore: false,

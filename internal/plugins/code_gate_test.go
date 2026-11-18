@@ -22,14 +22,14 @@ import (
 // Apple 2.5.2 / ADR-0194: on the App Store channel no marketplace code
 // plugin (runtime wasm or go) is ever fetched, imported, persisted or loaded.
 
-func codeGateChannel(t *testing.T, c buildinfo.Channel) {
+func codeGateChannel(t *testing.T, c buildinfo.InstallChannel) {
 	t.Helper()
 	t.Cleanup(buildinfo.OverrideChannelForTest(c))
 }
 
 func TestRefuseCodeRuntime_ByChannel(t *testing.T) {
 	cases := []struct {
-		ch      buildinfo.Channel
+		ch      buildinfo.InstallChannel
 		runtime string
 		refused bool
 	}{
@@ -153,7 +153,7 @@ func TestAppStore_InstallBundleBackstopRefusesWasmManifest(t *testing.T) {
 	artifact := signedMarketplaceArtifactWithManifest(t, priv, m)
 	sum := checksumSHA256Hex(t, artifact)
 
-	run := func(t *testing.T, ch buildinfo.Channel) error {
+	run := func(t *testing.T, ch buildinfo.InstallChannel) error {
 		codeGateChannel(t, ch)
 		inst := gateInstaller(t, "http://127.0.0.1:1", pub)
 		bundle := filepath.Join(t.TempDir(), "b.tar.gz")
@@ -180,7 +180,7 @@ func TestAppStore_InstallBundleBackstopRefusesWasmManifest(t *testing.T) {
 func TestAppStore_ImportRefusesCodePlugin(t *testing.T) {
 	m := []byte(`{"id":"com.test.impgate","name":"I","version":"1.0.0","entrypoint":"./p.wasm","runtime":"wasm","canonical_type":"page","device_arch":"any"}`)
 	for _, c := range []struct {
-		ch      buildinfo.Channel
+		ch      buildinfo.InstallChannel
 		refused bool
 	}{{buildinfo.ChannelAppStore, true}, {buildinfo.ChannelSideload, false}, {buildinfo.ChannelPlay, false}, {buildinfo.ChannelDirect, false}} {
 		codeGateChannel(t, c.ch)
@@ -219,7 +219,7 @@ func TestAppStore_PersistManifestRefusesCodeUnlessBundledVerified(t *testing.T) 
 }
 
 func TestSideloadPersistManifestStillAcceptsCode(t *testing.T) {
-	for _, ch := range []buildinfo.Channel{buildinfo.ChannelSideload, buildinfo.ChannelPlay, buildinfo.ChannelDirect} {
+	for _, ch := range []buildinfo.InstallChannel{buildinfo.ChannelSideload, buildinfo.ChannelPlay, buildinfo.ChannelDirect} {
 		codeGateChannel(t, ch)
 		db := managerTestDB(t)
 		m := &Manifest{ID: "com.test.persist2", Name: "P", Version: "1.0.0", Entrypoint: "./p.wasm",
@@ -247,7 +247,7 @@ func TestAppStore_UpdateCheckerSkipsCodePlugins(t *testing.T) {
 		{DeveloperID: "dev-1", Name: "Themed", Version: "2.0.0"},
 	})
 	for _, c := range []struct {
-		ch   buildinfo.Channel
+		ch   buildinfo.InstallChannel
 		want []string
 	}{
 		{buildinfo.ChannelAppStore, []string{"com.test.theme"}},

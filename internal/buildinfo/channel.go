@@ -93,7 +93,7 @@ func (c InstallChannel) InAppUpdateAllowed() bool { return c == ChannelSideload 
 // (Apple guideline 2.5.2, ADR-0194): there the first-party payment plugins ship
 // inside the app (internal/plugins/bundled) and are switched on and off, never
 // fetched. Asset-only plugins (runtime "none") are unaffected.
-func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }
+func (c InstallChannel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }
 
 // OverrideChannelForTest swaps the channel for a test and returns the restore
 // func. Test-only: no production code path calls it.
