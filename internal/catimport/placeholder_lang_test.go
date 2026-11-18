@@ -173,3 +173,28 @@ func TestIconMatcher_IconPath(t *testing.T) {
 		t.Errorf("IconPath = %q", got)
 	}
 }
+
+// ut-docs#6057: bidi marks and ZWSP in the name do not defeat the match.
+func TestIconMatcher_Ignorables(t *testing.T) {
+	cases := []struct{ lang, name, want string }{
+		{"fa", "قهوه\u200f", "coffee"}, {"fa", "\u200eقهوه", "coffee"}, {"fa", "\u2067چای\u2069", "tea"},
+		{"ar", "\u061cشاي", "tea"}, {"fa", "\ufeffکیک", "cake"},
+		{"de", "Kaf\u00adfee", "coffee"}, {"de", "Kaffee\u200b", "coffee"},
+		{"tr", "\u2060Kahve", "coffee"},
+		// mid-word bidi mark: only the joined view matches (generic on main).
+		{"fa", "\u0642\u0647\u200e\u0648\u0647", "coffee"}, {"de", "Kaf\u200efee", "coffee"},
+		// bidi marks/isolates between words still split (as on main).
+		{"de", "Milch\u200eKaffee", "coffee"}, {"de", "\u2068Milch\u2069\u2068Kaffee\u2069", "coffee"},
+	}
+	for _, c := range cases {
+		m := NewIconMatcher([]string{c.lang, "en"}, fixtureLookup)
+		if got := m.Icon(c.name, ""); got != c.want {
+			t.Errorf("[%s] Icon(%q) = %q, want %q", c.lang, c.name, got, c.want)
+		}
+	}
+	// ZWSP is a word boundary: the split view hits "Kaffee" in "Milch<ZWSP>Kaffee".
+	m := NewIconMatcher([]string{"de", "en"}, fixtureLookup)
+	if got := m.Icon("Milch\u200bKaffee", ""); got != "coffee" {
+		t.Errorf("ZWSP split = %q", got)
+	}
+}

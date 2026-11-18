@@ -239,7 +239,8 @@ func TestFollowErrorCode(t *testing.T) {
 		want string
 	}{
 		{selfupdate.ErrUnsupported, "unsupported"},
-		{errors.New("an update is already being applied"), "busy"},
+		{selfupdate.ErrApplyInProgress, "busy"},
+		{fmt.Errorf("x: %w", selfupdate.ErrApplyInProgress), "busy"},
 		{errors.New("releases API: HTTP 404"), "release"},
 		{errors.New("download: HTTP 503"), "download"},
 		{errors.New("checksum mismatch: got a want b"), "checksum"},
@@ -314,6 +315,15 @@ func TestFollowLine(t *testing.T) {
 		{"level: Supported is never probed, so no manual line", with(func(in *followInputs) { in.Supported, in.Target = false, "1.3.0" }), "follows"},
 		{"this target failed", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "failed:download" }), "failed"},
 		{"this target applied without effect", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "" }), "failed"},
+		{"nightly: this target failed, retried next night", with(func(in *followInputs) {
+			in.Policy, in.LastAttempted, in.LastError = followPolicyNightly, "1.4.0", "failed:download"
+		}), "failed_nightly"},
+		{"nightly: applied without effect stays failed", with(func(in *followInputs) {
+			in.Policy, in.LastAttempted, in.LastError = followPolicyNightly, "1.4.0", ""
+		}), "failed"},
+		{"next_idle: failed stays failed", with(func(in *followInputs) {
+			in.Policy, in.LastAttempted, in.LastError = followPolicyNextIdle, "1.4.0", "failed:download"
+		}), "failed"},
 		{"an older target failed: the new one follows", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.3.5", "failed:download" }), "follows"},
 		{"arrived on the attempted target", with(func(in *followInputs) { in.This, in.LastAttempted, in.LastError = "1.4.0", "1.4.0", "" }), "follows"},
 	} {
@@ -698,5 +708,192 @@ func TestFollowSignatureFailureNotRetriedUnlessForced(t *testing.T) {
 	in.Forced = true
 	if act, _ := followDecision(in); !act {
 		t.Error("Update now must retry a failed:signature target")
+	}
+}
+
+// ut-docs#6552: the window this till's nightly install starts in, shown on
+// its Settings page.
+func TestFollowNightlyWindow(t *testing.T) {
+	for _, c := range []struct {
+		hhmm     string
+		offset   time.Duration
+		from, to string
+		ok       bool
+	}{
+		{"03:00", 7 * time.Minute, "03:07", "03:37", true},
+		{"02:15", 7 * time.Minute, "02:22", "02:52", true},
+		{"23:50", 15 * time.Minute, "00:05", "00:35", true},
+		{"23:40", 0, "23:40", "00:10", true},
+		{"bad", 0, "", "", false},
+		{"25:99", 0, "", "", false},
+	} {
+		from, to, ok := followNightlyWindow(c.hhmm, c.offset)
+		if from != c.from || to != c.to || ok != c.ok {
+			t.Errorf("followNightlyWindow(%q, %v) = %q, %q, %v; want %q, %q, %v", c.hhmm, c.offset, from, to, ok, c.from, c.to, c.ok)
+		}
+	}
+}
+
+// ut-docs#6552: under nightly the once-per-slot-date guard replaces the
+// once-per-run one, so a failed target is retried at the next night's slot.
+func TestFollowDecision_NightlyRetriesAFailedTargetNextSlot(t *testing.T) {
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true,
+		Policy: followPolicyNightly, InNightlySlot: true, SlotDate: "2026-09-26", LastNightlySlot: "2026-09-25",
+		AttemptedThisRun: "1.4.0", LastAttempted: "1.4.0", LastError: "failed:download"}
+	if act, why := followDecision(base); !act || why != "follow" {
+		t.Fatalf("new night, failed target: act=%v why=%q, want act, follow", act, why)
+	}
+	same := base
+	same.LastNightlySlot, same.AttemptedThisRun = "2026-09-26", ""
+	if act, why := followDecision(same); act || why != "attempted" {
+		t.Fatalf("slot already spent: act=%v why=%q, want !act, attempted", act, why)
+	}
+	// A busy window does not spend the slot: only acting writes the date.
+	busy := base
+	busy.Busy = true
+	if act, why := followDecision(busy); act || why != "busy" {
+		t.Fatalf("busy: act=%v why=%q, want !act, busy", act, why)
+	}
+}
+
+// nightlyFailingFixture: a nightly replica at 03:00 with a 7 min offset whose
+// apply always fails; the stub asserts the slot date is stored before it runs.
+// The returned *string is the slot date the next apply must find stored; the
+// test sets it before each tick.
+func nightlyFailingFixture(t *testing.T, applyErr error) (*common.Deps, *int, *string) {
+	t.Helper()
+	return nightlyFixtureAt(t, applyErr, "03:00", 7*time.Minute)
+}
+
+func nightlyFixtureAt(t *testing.T, applyErr error, autoTime string, offset time.Duration) (*common.Deps, *int, *string) {
+	t.Helper()
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	ctx := t.Context()
+	_ = dp.Settings.Set(ctx, keyFleetFollow, "nightly")
+	_ = dp.Settings.Set(ctx, keyAutoUpdateTime, autoTime)
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return offset }
+	n := 0
+	want := ""
+	autoUpdateApplyVersion = func(ctx context.Context, _ string, _ func() bool) error {
+		n++
+		if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got == "" || (want != "" && got != want) {
+			t.Errorf("%s = %q before the apply ran, want %q stored first", keyAutoUpdateLastAttempt, got, want)
+		}
+		return applyErr
+	}
+	return dp, &n, &want
+}
+
+func TestFollowTick_NightlyFailureRetriedNextNightOnly(t *testing.T) {
+	dp, n, want := nightlyFailingFixture(t, errors.New("download: boom"))
+	ctx := t.Context()
+	night1 := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	night2 := night1.AddDate(0, 0, 1)
+	*want = "2026-09-25"
+	autoUpdateTick(ctx, dp, night1.Add(3*time.Hour+7*time.Minute))
+	if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got != "2026-09-25" {
+		t.Fatalf("%s = %q, want 2026-09-25", keyAutoUpdateLastAttempt, got)
+	}
+	if got := settingOf(t, dp, keyFollowError); got != "failed:download" {
+		t.Fatalf("%s = %q, want failed:download", keyFollowError, got)
+	}
+	for _, at := range []time.Duration{3*time.Hour + 7*time.Minute + 30*time.Second, 3*time.Hour + 30*time.Minute, 10 * time.Hour} {
+		autoUpdateTick(ctx, dp, night1.Add(at))
+	}
+	if *n != 1 {
+		t.Fatalf("%d applies on night 1, want exactly 1", *n)
+	}
+	*want = "2026-09-26"
+	autoUpdateTick(ctx, dp, night2.Add(3*time.Hour+7*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies after night 2's slot opened, want 2 (retry without a restart)", *n)
+	}
+	if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got != "2026-09-26" {
+		t.Fatalf("%s = %q after night 2, want 2026-09-26", keyAutoUpdateLastAttempt, got)
+	}
+	autoUpdateTick(ctx, dp, night2.Add(3*time.Hour+8*time.Minute))
+	autoUpdateTick(ctx, dp, night2.Add(3*time.Hour+30*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies after more ticks inside night 2, want still 2", *n)
+	}
+}
+
+// A window that crosses midnight (23:50 + 7 min = 23:57 to 00:27) is one slot,
+// dated by the night it opened: ticks either side of 00:00 apply once, the
+// next night retries.
+func TestFollowTick_NightlyWindowCrossingMidnightAppliesOnce(t *testing.T) {
+	dp, n, want := nightlyFixtureAt(t, errors.New("download: boom"), "23:50", 7*time.Minute)
+	ctx := t.Context()
+	d := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	*want = "2026-09-25"
+	autoUpdateTick(ctx, dp, d.Add(23*time.Hour+58*time.Minute))
+	autoUpdateTick(ctx, dp, d.Add(24*time.Hour+10*time.Minute)) // 00:10 on D+1
+	autoUpdateTick(ctx, dp, d.Add(24*time.Hour+26*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies across midnight, want exactly 1", *n)
+	}
+	*want = "2026-09-26"
+	autoUpdateTick(ctx, dp, d.Add(24*time.Hour+23*time.Hour+58*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies after the next night opened, want 2", *n)
+	}
+}
+
+func TestFollowTick_NightlyRestartInSameWindowDoesNotRetry(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, errors.New("download: boom"))
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+7*time.Minute))
+	followRun.reset() // the till restarted
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+10*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies, want 1: a restart in the same window must not retry", *n)
+	}
+}
+
+func TestFollowTick_NightlyNoEffectNeverRetried(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, nil) // staged, version never moves
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+7*time.Minute))
+	autoUpdateTick(t.Context(), dp, night.AddDate(0, 0, 1).Add(3*time.Hour+7*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies, want 1: a no-effect target is never retried automatically", *n)
+	}
+}
+
+func TestFollowTick_NightlyUpdateNowInSlotSpendsTheSlot(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, errors.New("download: boom"))
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	drainFollowKick(t)
+	onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+8*time.Minute))
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+9*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies in the slot, want 1 (the press spent it)", *n)
+	}
+	autoUpdateTick(t.Context(), dp, night.AddDate(0, 0, 1).Add(3*time.Hour+7*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies next night, want 2", *n)
+	}
+}
+
+// A press outside the slot leaves the next slot free.
+func TestFollowTick_NightlyUpdateNowOutsideSlotLeavesTheSlot(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, errors.New("download: boom"))
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	drainFollowKick(t)
+	onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+	// The fixture's stub wants the date set; outside the slot it is not, so
+	// use a counting stub here.
+	autoUpdateApplyVersion = func(context.Context, string, func() bool) error { *n++; return errors.New("download: boom") }
+	autoUpdateTick(t.Context(), dp, night.Add(14*time.Hour))
+	if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got != "" {
+		t.Fatalf("%s = %q after a press outside the slot, want unset", keyAutoUpdateLastAttempt, got)
+	}
+	autoUpdateTick(t.Context(), dp, night.AddDate(0, 0, 1).Add(3*time.Hour+7*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies, want 2 (the press, then the night's slot)", *n)
 	}
 }

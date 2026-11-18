@@ -672,8 +672,6 @@ elevation.submit
 elevation.summary.allow_negative_inventory_off
 elevation.summary.allow_negative_inventory_on
 elevation.summary.archive_export
-elevation.summary.auto_register_off
-elevation.summary.auto_register_on
 elevation.summary.backup_now
 elevation.summary.backup_restore
 elevation.summary.barcode_symbology_off
@@ -702,7 +700,6 @@ elevation.summary.dismiss_pending_base_plugin
 elevation.summary.display_mode
 elevation.summary.enrol_check_plan
 elevation.summary.enrol_claim_code
-elevation.summary.enrol_now
 elevation.summary.enrol_pair
 elevation.summary.eod_range_export
 elevation.summary.eod_reprint
@@ -2371,8 +2368,6 @@ settings.display.window_mode_no_shell
 settings.display.window_mode_normal
 settings.display.window_mode_pending_note
 settings.display.window_mode_shell_attached
-settings.enrol.auto_register.help
-settings.enrol.auto_register.label
 settings.enrol.benefits
 settings.enrol.busy
 settings.enrol.check_plan_btn
@@ -2404,7 +2399,6 @@ settings.enrol.pair_success
 settings.enrol.pair_title
 settings.enrol.registered
 settings.enrol.registered_via_main
-settings.enrol.retry
 settings.enrol.service_unavailable
 settings.enrol.store
 settings.enrol.title
@@ -2553,7 +2547,6 @@ settings.tax_rate_switcher.missing.install_btn
 settings.tax_rate_switcher.missing.message
 settings.tax_rate_switcher.missing.title
 settings.telemetry.enable
-settings.telemetry.help
 settings.telemetry.save
 settings.telemetry.title
 settings.theme.apply
@@ -2609,8 +2602,6 @@ settings.update.title
 settings.update.unavailable_here
 settings.update.up_to_date
 settings.value
-setup.auto_register.hint
-setup.auto_register.label
 setup.back
 setup.base_plugins.dismiss_btn
 setup.base_plugins.not_published_tax

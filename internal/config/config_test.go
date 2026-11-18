@@ -19,7 +19,7 @@ var configEnvKeys = []string{
 	"UT_TAX_RATE", "UT_TAX_INCLUSIVE", "UT_CURRENCY",
 	"UT_DEFAULT_LOCALE", "UT_MARKETPLACE_LOCALE",
 	"UT_DEMO", "UT_DEMO_TOKEN",
-	"UT_CSP_REPORT_ONLY", "UT_LAN_DISCOVERY",
+	"UT_CSP_REPORT_ONLY", "UT_LAN_DISCOVERY", "UT_NEVER_REGISTER", "UT_E2E_AUTO_REGISTER",
 }
 
 // unsetForTest clears every key in configEnvKeys for the duration of the
@@ -315,5 +315,43 @@ func TestInitTaxRateEnvFractional(t *testing.T) {
 		if cfg.Locales.TaxRateBP != want {
 			t.Errorf("UT_TAX_RATE=%q: TaxRateBP = %d, want %d", in, cfg.Locales.TaxRateBP, want)
 		}
+	}
+}
+
+// ADR-0200 (ut-docs#6559): UT_E2E_AUTO_REGISTER is a test-only seam that lets
+// an e2e till register against its in-process fake cloud. It is honoured only
+// when the marketplace endpoint is a loopback address; anything else (the
+// real cloud, a LAN host, a typo) leaves it off.
+func TestInitE2EAutoRegisterOnlyWithLoopbackCloud(t *testing.T) {
+	cases := []struct {
+		name, flag, endpoint string
+		want                 bool
+	}{
+		{"loopback ip", "1", "http://127.0.0.1:8096", true},
+		{"localhost", "true", "http://localhost:8096/api", true},
+		{"ipv6 loopback", "1", "http://[::1]:8096", true},
+		{"flag off", "0", "http://127.0.0.1:8096", false},
+		{"flag unset", "", "http://127.0.0.1:8096", false},
+		{"real cloud", "1", "https://cloud.universaltill.com/api", false},
+		{"lan host", "1", "http://192.168.1.20:8096", false},
+		{"lookalike host", "1", "http://127.0.0.1.evil.example:8096", false},
+		{"garbage flag", "maybe", "http://127.0.0.1:8096", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unsetForTest(t, configEnvKeys)
+			t.Setenv("UT_DATA_DIR", t.TempDir())
+			t.Setenv("UT_MARKETPLACE_ENDPOINT_URL", tc.endpoint)
+			if tc.flag != "" {
+				t.Setenv("UT_E2E_AUTO_REGISTER", tc.flag)
+			}
+			cfg, err := Init()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.E2EAutoRegister != tc.want {
+				t.Fatalf("E2EAutoRegister = %v, want %v", cfg.E2EAutoRegister, tc.want)
+			}
+		})
 	}
 }

@@ -540,6 +540,16 @@
         // delays or re-targets the press the ADR-0122 listeners above see.
         var PRESS_SLOP = 10, pressEl = null, pressX = 0, pressY = 0, pressTimer = 0;
         function pressTarget(t) {
+          // ut-docs#6055: a row-tap list row ([data-record-open]) opens its
+          // dialog on tap; mark it pressed so it is discoverable on touch
+          // (no hover there). Pressed exactly when record-dialog.js's click
+          // handler would open the row: the row's own [data-record-edit]
+          // control, or no other control/form around the target (mirror
+          // that selector). Not inside a dialog. Anything else (a link in
+          // the row) falls through to the navigation checks below unchanged.
+          var row = t && t.closest ? t.closest('[data-record-open]') : null;
+          if (row && !row.closest('dialog') &&
+              (t.closest('[data-record-edit]') || !t.closest('button, a, input, select, textarea, label, form'))) return row;
           var el = t && t.closest ? t.closest('a[href], .nav-toggle') : null;
           if (!el) return null;
           if (el.classList.contains('nav-toggle')) return el;
@@ -1162,6 +1172,14 @@
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
                 data-uptodate="{{ T "settings.update.up_to_date" }}"
         ><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
+        {{ else if updateinstallbridge }}
+        <!-- ut-docs#6551: Android, viewer WITHOUT "settings" (the sale-only
+             cashier, #3079). An update IS available and a manager can install
+             it, so say that: the generic "not available for this install"
+             fall-through below is wrong here. Non-interactive on purpose (a
+             span, no link, no 403 path); the amber is-info look (--warning) keeps it
+             from reading as a tappable button. Meaning is icon + text. -->
+        <span class="sb-item sb-update is-info" role="status" data-testid="sb-android-update-ask"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "status.update_available_ask_manager" }}</span>
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
            rel="noopener" target="_blank" hx-boost="false"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
@@ -1231,6 +1249,12 @@
            specifically the language pack, not some other plugin type. -->
       <a class="sb-item sb-language-pack-update" href="/plugins" data-testid="sb-language-pack-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.language_pack_update_available" }}</a>
       {{ end }}
+      {{ if registrationnoticepending }}{{ if allowed "settings" }}
+      <!-- ADR-0200 (ut-docs#6559): a till set up before the notice existed
+           shows it once, in Settings, Cloud record. A link, never a modal;
+           the till registers only after the notice was shown. -->
+      <a class="sb-item sb-registration-notice" href="/settings#registration" data-testid="sb-registration-notice"><span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span> {{ T "registration.notice.prompt" }}</a>
+      {{ end }}{{ end }}
       {{ with releasenoticeversion }}{{ if allowed "settings" }}
       <!-- ut-docs#3091: once after an update — a non-blocking notice, never a
            modal. The customer-facing self-order kiosk pages never include this
@@ -1470,6 +1494,22 @@
           document.addEventListener('ut:android-update', function (e) {
             var s = e.detail || {};
             clearTimeout(aTimer); aArmed = false;
+            // ut-docs#6551: Android has not allowed this app to install apps.
+            // The guidance (and the button that opens Android's screen) is in
+            // Settings -> Software update; nothing opens without a tap there.
+            if (s.state === 'needs_permission' || s.state === 'permission_granted') {
+              aReset();
+              if (window.location.pathname === '/settings') {
+                var pf = document.getElementById('android-update-form');
+                // Open the Software update section first (the two-pane
+                // shell hides it while another section is selected).
+                if (window.location.hash !== '#android-update') { window.location.hash = 'android-update'; }
+                if (pf) { pf.scrollIntoView({ block: 'center' }); }
+              } else if (s.state === 'needs_permission') {
+                window.location.href = '/settings#android-update';
+              }
+              return;
+            }
             abtn.textContent = window.utAndroidUpdater.text(abtn, s);
             abtn.disabled = s.state === 'downloading';
             // ut-docs#4495: 'closed' — Android's installer went away or never
@@ -1532,7 +1572,21 @@
               // A failed apply never left the server mid-restart — nothing to
               // poll for, and polling anyway just leaves the failure message
               // sitting there for 3 minutes before silently going stale.
-              if (failed) { btn.disabled = false; return; }
+              if (failed) {
+                btn.disabled = false;
+                // ut-docs#5274: the server already translated the reason
+                // (never raw error text); show it in the shared, non-modal
+                // #pos-alert banner. textContent only.
+                if (typeof res.error === 'string') {
+                  var pa = document.getElementById('pos-alert');
+                  if (pa) {
+                    pa.hidden = false;
+                    var pt = pa.querySelector('.notice-text');
+                    if (pt) pt.textContent = res.error;
+                  }
+                }
+                return;
+              }
               // Archive installs re-exec in place (reconnect + reload). The mac
               // .app quits and relaunches itself, so the window just closes and
               // reopens on the new version.

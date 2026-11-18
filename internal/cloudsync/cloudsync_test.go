@@ -53,6 +53,10 @@ func testDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`CREATE TABLE directive_results (directive_id TEXT PRIMARY KEY, directive_type TEXT NOT NULL, status TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', posted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`); err != nil {
 		t.Fatalf("create directive_results: %v", err)
 	}
+	// ADR-0200: the change-event outbox (migration 105).
+	if _, err := db.Exec(`CREATE TABLE till_change_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, plugin_id TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', from_version TEXT NOT NULL DEFAULT '', to_version TEXT NOT NULL DEFAULT '', at TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create till_change_events: %v", err)
+	}
 	return db
 }
 
@@ -479,7 +483,7 @@ func TestApplySetTillSetting(t *testing.T) {
 
 	var gotKey, gotValue string
 	hooks := Hooks{
-		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
+		SetTillSetting: func(ctx context.Context, key, value string, expect *string) (string, error) {
 			gotKey, gotValue = key, value
 			return key + " = " + value, nil
 		},
@@ -501,7 +505,7 @@ func TestApplySetTillSetting(t *testing.T) {
 	}
 
 	// A hook error is the directive's failure message, same as every type.
-	hooks.SetTillSetting = func(context.Context, string, string) (string, error) {
+	hooks.SetTillSetting = func(context.Context, string, string, *string) (string, error) {
 		return "", errors.New("printer.address is not a remote-configurable till setting")
 	}
 	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "printer.address", "value": "x"}}, hooks)
@@ -1892,5 +1896,40 @@ func TestTickNeverSendsTSECredential(t *testing.T) {
 	}
 	if len(cloud.syncBodies) == 0 || len(cloud.snapshots) == 0 {
 		t.Fatal("test did not exercise the outbound payloads it claims to check")
+	}
+}
+
+// ut-docs#5349: set_till_setting carries an optional `expect` (the stored
+// value the proposer saw). Absent reaches the hook as nil; present, even as
+// the empty string (= unset), as a pointer.
+func TestApplySetTillSetting_ExpectReachesHook_5349(t *testing.T) {
+	var got *string
+	hooks := Hooks{SetTillSetting: func(_ context.Context, key, value string, expect *string) (string, error) {
+		got = expect
+		return key + " = " + value, nil
+	}}
+	run := func(p map[string]any) {
+		got = nil
+		if status, msg := apply(context.Background(), directive{Type: "set_till_setting", Payload: p}, hooks); status != "applied" {
+			t.Fatalf("status=%q msg=%q", status, msg)
+		}
+	}
+	run(map[string]any{"key": "receipt.footer", "value": "v"})
+	if got != nil {
+		t.Fatalf("no expect field: hook got %q, want nil", *got)
+	}
+	run(map[string]any{"key": "receipt.footer", "value": "v", "expect": "old"})
+	if got == nil || *got != "old" {
+		t.Fatalf("expect old: hook got %v", got)
+	}
+	run(map[string]any{"key": "receipt.footer", "value": "v", "expect": ""})
+	if got == nil || *got != "" {
+		t.Fatalf("expect empty string (unset) must reach the hook as a non-nil pointer, got %v", got)
+	}
+	// A wrongly typed expect is a malformed directive, never a silent
+	// unconditional write.
+	status, msg := apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "receipt.footer", "value": "v", "expect": 5.0}}, hooks)
+	if status != "failed" || msg != "expect must be a string" {
+		t.Fatalf("typed expect: status=%q msg=%q", status, msg)
 	}
 }

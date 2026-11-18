@@ -170,8 +170,12 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /csp-report":  true,
 	// Online orders (ADR-0169 §9, ut-docs#4768): a demo till has no sales
 	// channel; the pages are shop data a public visitor has no use for.
-	"GET /channel-orders":      true,
-	"GET /channel-orders/{id}": true,
+	// Slice D (accept/pick/pack/ship/cancel): also writes to a cloud sales channel.
+	"GET /channel-orders":                                   true,
+	"GET /channel-orders/{id}":                              true,
+	"POST /channel-orders/{id}/actions":                     true,
+	"POST /channel-orders/{id}/actions/{action_id}/dismiss": true,
+	"POST /channel-orders/blocked/dismiss":                  true,
 	// Notices from Universal Till and partners (ADR-0176, ut-docs#5366): a
 	// demo till is not registered with the cloud and has nothing to receive;
 	// the switch and every route stay out of a public demo.
@@ -246,6 +250,20 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/backup/retention":        true,
 	"POST /api/backup/save-copy/{name}": true,
 	"POST /api/backup/upload":           true,
+	// ut-docs#5066: the cloud copy and cloud restore are never for a demo
+	// database: the actions and the restore page are denied.
+	"POST /api/offsite/now":            true,
+	"POST /api/offsite/recover/start":  true,
+	"POST /api/offsite/recover/cancel": true,
+	"GET /backups/cloud-restore":       true,
+	"GET /backups/cloud-key":           true,
+	"POST /api/offsite/link/start":     true,
+	"POST /api/offsite/recover/key":    true,
+	"POST /api/offsite/key/choice":     true,
+	"POST /api/offsite/key/new":        true,
+	"POST /api/offsite/key/enter":      true,
+	"POST /api/offsite/key/show":       true,
+	"POST /api/offsite/key/print":      true,
 	// Uploads with their own endpoint (item/variant photos, receipt logo) —
 	// the multipart file filter also covers them; denied outright here.
 	"POST /api/catalog/item/image":    true,
@@ -305,7 +323,6 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/subscription/panel/handoff": true, // ut-docs#4286: a QR to the real plans page
 	"POST /api/subscription/panel/poll":    true, // ut-docs#4286: an operator check-in
 	"POST /api/enrol/claim-code":           true,
-	"POST /api/enrol/now":                  true,
 	"POST /api/enrol/pair":                 true,
 	"POST /api/enrol/reconnect":            true, // ut-docs#5145: a demo till never contacts the cloud
 	"POST /api/enrol/new-shop":             true, // ut-docs#5145: same
@@ -314,8 +331,9 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /settings/cloud/move/{id}":             true,
 	"POST /api/cloud/move/{id}":                 true,
 	"POST /api/enrol/terms":                     true, // ut-docs#4792: a demo till never contacts the cloud
-	"POST /api/settings/auto-register":          true,
+	"POST /api/settings/registration-stop":      true, // ADR-0200: a demo till never registers or reports
 	"POST /api/settings/telemetry":              true,
+	"POST /api/settings/cloud-staff-breakdown":  true, // ut-docs#2557
 	"POST /api/setup/join":                      true,
 	"POST /api/setup/language":                  true,
 	"POST /api/setup/pair-start":                true,
@@ -533,12 +551,17 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /open-orders/counter/open":    true,
 	// Status chips every page loads (local reads only; denying them would
 	// stamp the demo message into the nav).
-	"GET /ui/bugreport-chip":               true,
-	"GET /ui/cloud-auth-chip":              true,
-	"GET /ui/tax-autoinstall-chip":         true, // ADR-0172 §5; local settings read only
-	"GET /ui/move-pending-chip":            true, // ut-docs#5287: read-only chip, empty unless a move waits
-	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
-	"GET /ui/backup-copy-chip":             true, // ut-docs#5071; reads two settings
+	"GET /ui/bugreport-chip":       true,
+	"GET /ui/cloud-auth-chip":      true,
+	"GET /ui/tax-autoinstall-chip": true, // ADR-0172 §5; local settings read only
+	"GET /ui/move-pending-chip":    true, // ut-docs#5287: read-only chip, empty unless a move waits
+	"GET /ui/disk-space-chip":      true, // ut-docs#3121; local statfs only
+	"GET /ui/backup-copy-chip":     true, // ut-docs#5071; reads two settings
+	// ut-docs#5066: read-only partials of the cloud backup (local settings
+	// only; empty on an unpaired demo till).
+	"GET /ui/backup-cloud-card":            true,
+	"GET /ui/backup-cloud-restore/status":  true,
+	"GET /ui/offsite-nextstep":             true,
 	"GET /ui/settings/language-install":    true, // ut-docs#4477; reads local settings only
 	"GET /ui/shop-currency-chip":           true, // ut-docs#4539; local settings read only
 	"GET /ui/diagnostics-chip":             true,
@@ -759,6 +782,9 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/barcode-symbology":              true,
 	"POST /api/settings/basket-panel-width":             true,
 	"POST /api/settings/browsing-mode":                  true,
+	"GET /my-display":                                   true, // ut-docs#3440: per-operator cosmetic preference, same class as browsing-mode above
+	"POST /api/my-display/theme":                        true,
+	"POST /api/my-display/browsing-mode":                true,
 	"POST /api/settings/catalog-import-barcode-default": true,
 	"POST /api/settings/catalog-pre-pack-unit-price":    true,
 	"POST /api/settings/demo-item/{id}/keep":            true,
@@ -781,7 +807,9 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/till-register":                  true,
 	"POST /api/settings/ui-scale":                       true,
 	"POST /api/settings/effects-level":                  true,
-	// Help.
+	// Help and About (read-only links, ut-docs#6402).
+	"GET /about":                    true,
+	"GET /about/licences":           true,
 	"/help":                         true,
 	"GET /help/img/{locale}/{file}": true,
 	"GET /help/search":              true,

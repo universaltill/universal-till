@@ -83,7 +83,7 @@ type fakeMarketplace struct {
 	// registerHits counts POST /v1/stores/register — proves a code path that
 	// only BROWSES the catalog never enrols the shop's cloud store identity
 	// (ADR-0015 lazy registration; only a download/install or an explicit
-	// "Register now" may do that).
+	// an explicit operator registration may do that).
 	registerHits int
 	// registerNames records each register request's store_name — the name
 	// the cloud would give the shop (ut-docs#2776).

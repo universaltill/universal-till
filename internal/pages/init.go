@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
@@ -533,6 +534,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPrintAPI(mux, dp)
 	registerKitchenPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)
+	registerOffsiteBackup(mux, dp)  // off-site encrypted backup: card + restore page (ut-docs#5066)
 	registerEntitlementAPI(mux, dp) // ADR-0060 read surface: cached plan + effective plan (ut-docs#2547)
 	registerSubscriptionUI(mux, dp) // status-bar subscription chip (ut-docs#2569)
 	registerDataAPI(mux, dp)
@@ -576,6 +578,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	dp.MainTillUnreachable = func(ctx context.Context) bool {
 		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).mainTillGone()
 	}
+	wireThemeAvailable(dp)       // personal theme validity for ResolvedTheme (ut-docs#3440)
 	registerSyncCatalog(mux, dp) // additional-till catalogue write-through, main-till side (ut-docs#2817); dispatches into the catalogue handlers on this same mux
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
@@ -633,6 +636,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ADR-0117 (ut-docs#2824): the main till's cloud link. Set before the
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
+	// ADR-0200 (ut-docs#6559): once the background loop has registered this
+	// till, open the operator check-in window so the cloud sees its device
+	// report at once (ADR-0148 section 2), like every other registration.
+	enroll.SetRegisteredHook(func() { requestOperatorCheckin(dp, operatorCheckinWindow) })
 	dp.CloudLink = newCloudLinkClient(dp)
 	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
 	// host fn #6455) reaches the cloud with the live enrolment.
@@ -696,11 +703,13 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerAuditPage(mux, dp)           // manager-only audit-trail browse/filter page
 	registerChannelOrdersPage(mux, dp)   // manager-only read-only Online orders list (ADR-0169 §9, ut-docs#4768)
 	registerNoticesPages(mux, dp)        // notices from Universal Till/partners: bell, inbox, toast, critical strip (ADR-0176, ut-docs#5366)
+	registerMyDisplayPage(mux, dp)       // per-operator theme + browsing mode (ut-docs#3440)
 	registerIssueReportPage(mux, dp)     // manager-only "report an issue" capture (ADR-0022)
 	registerMyReportsPage(mux, dp)       // manager-only sent-report tracking list (ut-docs#348)
 	registerDiagnosticsSettings(mux, dp) // diagnostic mode: nav chip, code redemption, local stop (ADR-0092, ut-docs#2169)
 	emitDiagnosticsInventory(ctx, dp)    // no-op unless a session was restored above
 	registerHelp(mux, dp)
+	registerAbout(mux, dp) // About screen: privacy, terms, licences, delete-account links on every channel (ut-docs#6402)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
 	registerMenuLayoutSettings(mux, dp) // ADR-0088 Decision D: the hidden-tiles findability surface

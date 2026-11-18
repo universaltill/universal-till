@@ -187,3 +187,22 @@ func TestBuiltin_SellBrowseShots(t *testing.T) {
 		}
 	}
 }
+
+// A route-less topic may show inline shots (ut-docs#337): each recipe carries
+// its own route, so the topic needs none. Regression pin of the contract.
+func TestInlineShot_RouteLessTopicRenders(t *testing.T) {
+	noRoute := &fstest.MapFile{Data: []byte("---\nid: t\ntitle: T\n---\n\n# T\n\n" + inlineBody)}
+	fsys := fstest.MapFS{"help/en/t.md": noRoute, "help/img/en/t-a.png": tinyPNG}
+	lib, err := Load(fsys, "help")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tp, ok := lib.Topic("en", "t")
+	if !ok {
+		t.Fatal("en/t not found")
+	}
+	html := string(tp.HTML)
+	if !strings.Contains(html, `src="/help/img/en/t-a.png"`) || !strings.Contains(html, `loading="lazy"`) {
+		t.Errorf("route-less topic did not render its inline shot: %s", html)
+	}
+}
