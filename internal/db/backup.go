@@ -619,7 +619,17 @@ var RestoreKeepsLivePrefixes = append(append([]string(nil), TillCloudIdentityPre
 // so the main till mints a new epoch on its next feed request or
 // maintenance tick and every additional till re-syncs by state.
 var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
-	"backup.last_copied_at", "backup.copy_reminder_since", "sales_mirror.epoch"}
+	"backup.last_copied_at", "backup.copy_reminder_since", "sales_mirror.epoch",
+	// ut-docs#5066: the off-site backup's per-till state (data.OffsiteBackup*
+	// keys, spelled out: this package cannot import data). Dropped like the
+	// copy reminder: an old backup's dates and a pending upload id mean
+	// nothing on the restored till.
+	"backup.offsite.last_success_at", "backup.offsite.last_snapshot", "backup.offsite.last_error",
+	"backup.offsite.last_error_at", "backup.offsite.failing_since", "backup.offsite.next_attempt_at",
+	"backup.offsite.attempts", "backup.offsite.refused_reason", "backup.offsite.pending_id",
+	"backup.offsite.pending_file", "backup.offsite.pending_meta",
+	"backup.offsite.key_in_cloud", "backup.offsite.escrow_blocked", "backup.offsite.key_exported_at",
+	"backup.offsite.link_copy"}
 
 // keepLiveCloudIdentity rewrites the staged restore so its
 // RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are

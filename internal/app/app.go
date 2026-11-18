@@ -449,6 +449,14 @@ func Run(ctx context.Context) error {
 
 	netaccess.StartService("cloud enrolment", func() { enroll.Init(bgCtx, cfg, settingsStore, &wg) })
 
+	// ADR-0200 (ut-docs#6559): change events (plugin install/update/remove and
+	// software-version changes) are recorded only while the registration
+	// guards allow, and the version change is compared once per start. Both
+	// are local; nothing here touches the network or blocks the start.
+	data.SetChangeEventPolicy(enroll.ReportingPolicy(cfg))
+	enroll.PublishNoticePending(ctx, settingsStore)
+	enroll.ReportVersionChange(ctx, cfg, settingsStore, data.NewChangeEventsRepo(database.DB).RecordVersionChangeNow)
+
 	// The one line that makes a field report diagnosable (ut-docs#2720):
 	// version, OS, data dir, pos.env used, cloud host, enrolment, role.
 	startupInfo := pages.TillStartupInfo(ctx, cfg, settingsStore, envFileUsed)

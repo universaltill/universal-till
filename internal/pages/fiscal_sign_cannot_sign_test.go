@@ -69,12 +69,15 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 	if _, err := bus.SubscribeWithHandler(context.Background(), pluginID,
 		[]string{"payment.demopay.authorize", "payment.demopay.refund"},
 		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
-			mu.Lock()
-			defer mu.Unlock()
 			switch ev.Type {
 			case "payment.demopay.authorize":
+				mu.Lock()
 				gotAuthIDs = append(gotAuthIDs, ev.ID)
-				a := answer(len(gotAuthIDs))
+				n := len(gotAuthIDs)
+				mu.Unlock()
+				// answer runs outside mu so a test's answer may block (a
+				// reader waiting on the customer) without stalling refunds.
+				a := answer(n)
 				// Test markers: a plain decline, or a plugin that exited
 				// non-zero printing decline_code outcome_unknown (#6600).
 				if a == "DECLINE" {
@@ -93,7 +96,9 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 			case "payment.demopay.refund":
 				var p map[string]any
 				_ = json.Unmarshal(ev.Payload, &p)
+				mu.Lock()
 				gotRefunds = append(gotRefunds, p)
+				mu.Unlock()
 				if refundErr != nil {
 					return nil, refundErr
 				}

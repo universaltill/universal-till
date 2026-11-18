@@ -95,11 +95,13 @@
         "nav",
         "menu",
         "page",
+        "backup",
         "locations",
         "registers",
         "countrysettings",
         "translations",
-        "subscription"
+        "subscription",
+        "registration"
       ]
     },
     "tills": {

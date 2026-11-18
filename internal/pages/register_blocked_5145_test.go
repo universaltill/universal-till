@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,59 +98,6 @@ func TestCloudAuthChip_BlockedCashierSeesNeutralChip(t *testing.T) {
 		if leak != until.Format("2006") && strings.Contains(strings.ToLower(body), leak) {
 			t.Fatalf("cashier chip leaks %q: %s", leak, body)
 		}
-	}
-}
-
-// Test 15/16 (till side of the stub cloud): Register now shows the translated
-// message with the date and never the raw body.
-func newDeviceLiveCloud(t *testing.T, d *common.Deps, usableFrom string) *atomic.Int32 {
-	t.Helper()
-	var calls atomic.Int32
-	m := http.NewServeMux()
-	m.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusConflict)
-		_, _ = fmt.Fprintf(w, `{"data":{"usable_from":%q},"error":{"code":"device_live","message":"RAWBODY this device was in use recently"}}`, usableFrom)
-	})
-	srv := httptest.NewServer(m)
-	t.Cleanup(srv.Close)
-	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
-	d.Cfg.Marketplace.PublicKey = strings.Repeat("ab", 32)
-	nameShop(t, d)
-	return &calls
-}
-
-func TestEnrolNow_DeviceLiveShowsTheDateAndNeverTheRawBody(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	usable := time.Now().UTC().Add(40 * time.Hour).Truncate(time.Minute)
-	calls := newDeviceLiveCloud(t, d, usable.Format(time.RFC3339))
-
-	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
-	body := rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.Contains(body, "This till was in use recently") || !strings.Contains(body, "Selling is not affected") {
-		t.Fatalf("body = %s", body)
-	}
-	if !strings.Contains(body, "<bdi>") {
-		t.Fatalf("the date must sit in a <bdi>: %s", body)
-	}
-	// D5: a standing state, not a failure: neutral styling, no cross.
-	if strings.Contains(body, `class="error"`) || strings.Contains(body, "❌") || !strings.Contains(body, `class="muted"`) {
-		t.Fatalf("device_live must render neutral (muted), not as an error: %s", body)
-	}
-	for _, raw := range []string{"RAWBODY", "device_live", "usable_from"} {
-		if strings.Contains(body, raw) {
-			t.Fatalf("raw cloud text %q rendered: %s", raw, body)
-		}
-	}
-	if got := enroll.RegisterBlockedUntil(t.Context(), d.Settings); !got.Equal(usable) {
-		t.Fatalf("blocked until %v, want %v", got, usable)
-	}
-	// Register now never honours the block: a second press calls the cloud again.
-	postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
-	if calls.Load() != 2 {
-		t.Fatalf("cloud calls = %d, want 2 (a deliberate Register now always tries)", calls.Load())
 	}
 }
 

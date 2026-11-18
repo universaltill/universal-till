@@ -821,6 +821,9 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	// Host functions ("ut" module) resolve the caller through this state.
 	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient, hop: ev.Hop, publishRate: w.publishRate}
+	if isPaymentGateClassEvent(ev.Type) {
+		hs.gateDeadline = time.Now().Add(timeout)
+	}
 	if isJob {
 		hs.jobProgress = job.Progress
 	}

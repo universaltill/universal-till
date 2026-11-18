@@ -110,6 +110,8 @@ jobs:
         run: bash scripts/ci/make-dmg-notarized_test.sh
       - name: Every release job is time-bounded — wiring test (ut-docs#4059)
         run: bash scripts/ci/release-job-timeouts_test.sh
+      - name: Release assets carry verified build provenance, and only the attesting jobs hold the OIDC token — wiring + behaviour test (ADR-0181, ut-docs#5437)
+        run: bash scripts/ci/release-provenance_test.sh
       - name: A macOS release job starved of a runner is re-run (at most once in practice) — behaviour test (ut-docs#5175)
         run: bash scripts/ci/release-runner-retry_test.sh
       - name: A starved ios-ci / desktop-darwin macOS job is re-run (at most once in practice) — behaviour + wiring test (ut-docs#5490)
@@ -128,12 +130,26 @@ jobs:
         run: bash scripts/ci/guard-store-private.sh
       - name: Store-private guard regression test (ut-docs#3052)
         run: bash scripts/ci/guard-store-private_test.sh
+<<<<<<< HEAD
       - name: App Store build never downloads or imports code — every install path gated, bundled set has no network, lock well-formed (ADR-0194, ut-docs#6565)
         run: bash scripts/ci/guard-appstore-no-code-fetch.sh
       - name: App Store no-code-fetch guard regression test (ADR-0194, ut-docs#6565)
         run: bash scripts/ci/guard-appstore-no-code-fetch_test.sh
       - name: Bundled first-party plugin fetch fails closed on any hash mismatch — offline behaviour test (ADR-0194, ut-docs#6565)
         run: bash scripts/ci/fetch-bundled-plugins_test.sh
+=======
+      - name: Every build stamps its own install channel (ADR-0194, ut-docs#6405)
+        run: bash scripts/ci/guard-channel-stamped.sh && bash scripts/ci/guard-channel-stamped_test.sh
+      - name: A published release asset is never overwritten — upload helper test (ut-docs#6405)
+        run: bash scripts/ci/release-upload_test.sh
+      - name: Microsoft Store submission scripts and workflow (ut-docs#6407)
+        run: |
+          bash scripts/ci/check-installer-silent_test.sh
+          bash scripts/ci/msstore-soak_test.sh
+          bash scripts/ci/msstore-verify_test.sh
+          bash scripts/ci/msstore-submit_test.sh
+          bash scripts/ci/msstore-workflow_test.sh
+>>>>>>> origin/main
       - name: Every Version stamp also stamps BuildDate (ADR-0160 §6, ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)

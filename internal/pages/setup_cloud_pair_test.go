@@ -351,7 +351,8 @@ func TestCloudSetupPersistsCredentialAfterSeedAndIgnoresTamperedFields(t *testin
 	if get("marketplace.store_id") != pairPageStore {
 		t.Errorf("marketplace.store_id = %q", get("marketplace.store_id"))
 	}
-	// A check-in was requested, and no ADR-0071 question was asked.
+	// A check-in was requested; no opt-in is asked any more (ADR-0200), and the
+	// notice on the last screen counts as shown.
 	if len(windows) != 1 {
 		t.Errorf("operator check-in windows opened = %v, want exactly one", windows)
 	}
@@ -360,8 +361,11 @@ func TestCloudSetupPersistsCredentialAfterSeedAndIgnoresTamperedFields(t *testin
 	default:
 		t.Error("no check-in kick sent")
 	}
-	if get(common.KeyAutoRegisterOptIn) != "" {
-		t.Error("the cloud path recorded an ADR-0071 answer")
+	if get("marketplace.auto_register_opt_in") != "" {
+		t.Error("the cloud path recorded the retired ADR-0071 opt-in")
+	}
+	if !enroll.NoticeShown(t.Context(), d.Settings) {
+		t.Error("the cloud path did not record that the registration notice was shown")
 	}
 	// The pairing is spent: a second final post cannot reuse it.
 	if second := finalCloudPost(mux, nonce, nil); second.Header().Get("Location") != "/login" {
@@ -526,22 +530,23 @@ func TestImportWelcomeShowsPairingIncompleteNoteNotSyncing(t *testing.T) {
 	}
 }
 
-// ut-docs#4803: a till that joined a my. shop is already registered, so the
-// last step must not ask the ADR-0071 opt-in or the terms; a fresh wizard still does.
-func TestSetupDoneStepAsksRegistrationOnlyOffThePairedPath(t *testing.T) {
+// ut-docs#4803, ADR-0200: no opt-in or terms checkbox on the last step, on
+// either path; both show the notice, and a paired till also shows its shop.
+func TestSetupDoneStepShowsTheNoticeOnBothPaths(t *testing.T) {
 	mux, _, _, nonce := cloudWizard(t)
 	fresh := getSetup(mux, "?lang=en", "en").Body.String()
-	for _, want := range []string{`name="auto_register"`, `name="accept_terms"`} {
-		if !strings.Contains(fresh, want) {
-			t.Errorf("unpaired wizard lacks %q", want)
-		}
+	if !strings.Contains(fresh, `data-testid="registration-notice"`) {
+		t.Error("unpaired wizard lacks the registration notice")
 	}
 	doCloudPair(mux, nonce, nil)
 	paired := getSetup(mux, "?lang=en", "en").Body.String()
 	for _, bad := range []string{`name="auto_register"`, `name="accept_terms"`} {
-		if strings.Contains(paired, bad) {
-			t.Errorf("paired wizard still renders %q", bad)
+		if strings.Contains(fresh, bad) || strings.Contains(paired, bad) {
+			t.Errorf("wizard still renders %q", bad)
 		}
+	}
+	if !strings.Contains(paired, `data-testid="registration-notice"`) {
+		t.Error("paired wizard lacks the registration notice")
 	}
 	if !strings.Contains(paired, `data-testid="setup-joined-shop"`) || !strings.Contains(paired, "Cloud Cafe") {
 		t.Error("paired wizard does not show the joined shop on the last step")

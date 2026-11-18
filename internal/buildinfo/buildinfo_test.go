@@ -23,3 +23,15 @@ func TestNewerThan(t *testing.T) {
 		}
 	}
 }
+
+func TestChannelDefaultsToSideloadAndStampsMustAgree(t *testing.T) {
+	if Channel != "sideload" {
+		t.Fatalf("source build channel = %q, want sideload", Channel)
+	}
+	if channelMismatch("direct", "") || channelMismatch("direct", "ut-channel:direct") {
+		t.Fatal("matching or absent stamp must not mismatch")
+	}
+	if !channelMismatch("direct", "ut-channel:play") {
+		t.Fatal("a different stamp must mismatch")
+	}
+}
