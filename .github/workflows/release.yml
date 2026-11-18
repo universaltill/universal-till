@@ -1104,8 +1104,11 @@ jobs:
           rm -rf extracted && mkdir extracted
 
           unzip -qo "unitill-pos_${VERSION}_windows_amd64.zip" -d extracted
-          CHANNEL=direct check extracted/unitill-pos.exe "windows unitill-pos.exe" key
-          CHANNEL=direct check extracted/unitill-desktop.exe "windows unitill-desktop.exe (the omission that caused the real bug)"
+          # Windows binaries are the `direct` channel (ADR-0194), the rest default to sideload.
+          CHANNEL=direct
+          check extracted/unitill-pos.exe "windows unitill-pos.exe" key
+          check extracted/unitill-desktop.exe "windows unitill-desktop.exe (the omission that caused the real bug)"
+          unset CHANNEL
           rm -rf extracted && mkdir extracted
 
           tar xzf "unitill-pos_${VERSION}_darwin_arm64.tar.gz" -C extracted
