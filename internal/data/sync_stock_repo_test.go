@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -61,7 +62,7 @@ func TestStockLevelSyncConverges(t *testing.T) {
 	}
 
 	rSync := NewSyncStockRepo(rRepo)
-	n, err := rSync.ApplyStockLevels(ctx, bundle, rLoc)
+	n, err := rSync.ApplyStockLevels(ctx, bundle, rLoc, "")
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestStockLevelSyncConverges(t *testing.T) {
 	}
 
 	// Idempotent: same bundle again = zero corrections.
-	n2, err := rSync.ApplyStockLevels(ctx, bundle, rLoc)
+	n2, err := rSync.ApplyStockLevels(ctx, bundle, rLoc, "")
 	if err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}
@@ -99,5 +100,66 @@ func TestStockLevelSyncConverges(t *testing.T) {
 	_ = replica.QueryRow(`SELECT COUNT(*) FROM stock_movements WHERE type = 'adjust'`).Scan(&adjustCount)
 	if adjustCount != 4 {
 		t.Fatalf("adjust movements = %d, want 4", adjustCount)
+	}
+}
+
+// ut-docs#5903: the stock correction pass re-checks sync.primary_url inside
+// its own transaction, so a promote that commits while /api/sync/stock is in
+// flight leaves the promoted till's inventory alone.
+func TestApplyStockLevels_RefusesWhenNotReplica_5903(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "stock-not-replica.db") // no sync.primary_url
+	repo := NewPOSRepo(d.DB)
+	loc, err := repo.EnsureStockLocation(ctx)
+	if err != nil {
+		t.Fatalf("location: %v", err)
+	}
+	mustExec(t, d, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola', 120)`)
+	if _, err := repo.RecordStockMovement(ctx, nil, StockMovementInput{
+		ItemID: "itm1", LocationID: loc, Type: "receive", Quantity: 2,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var before int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM stock_movements`).Scan(&before)
+
+	sync := NewSyncStockRepo(repo)
+	n, err := sync.ApplyStockLevels(ctx, StockBundle{Rows: []StockLevelRow{{ItemID: "itm1", Quantity: 5}}}, loc, "v9")
+	if !errors.Is(err, ErrNotReplica) {
+		t.Fatalf("err = %v, want ErrNotReplica", err)
+	}
+	if n != 0 {
+		t.Fatalf("corrections = %d, want 0", n)
+	}
+	var after int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM stock_movements`).Scan(&after)
+	if after != before {
+		t.Fatalf("stock_movements %d -> %d, refused apply wrote movements", before, after)
+	}
+	var v string
+	if err := d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.stock_version'`).Scan(&v); err == nil {
+		t.Fatalf("sync.stock_version = %q written by a refused apply", v)
+	}
+}
+
+func TestApplyStockLevels_CommitsVersionWithCorrections_5903(t *testing.T) {
+	ctx := context.Background()
+	d := openReplicaDB(t, "stock-replica-version.db")
+	repo := NewPOSRepo(d.DB)
+	loc, err := repo.EnsureStockLocation(ctx)
+	if err != nil {
+		t.Fatalf("location: %v", err)
+	}
+	mustExec(t, d, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola', 120)`)
+	n, err := NewSyncStockRepo(repo).ApplyStockLevels(ctx, StockBundle{Rows: []StockLevelRow{{ItemID: "itm1", Quantity: 5}}}, loc, "v9")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("corrections = %d, want 1", n)
+	}
+	var v string
+	if err := d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.stock_version'`).Scan(&v); err != nil || v != "v9" {
+		t.Fatalf("sync.stock_version = %q, %v; want v9", v, err)
 	}
 }
