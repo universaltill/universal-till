@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/manual"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/web"
@@ -310,5 +311,37 @@ func TestStoreChannel_HelpUpdatesTopic(t *testing.T) {
 				t.Errorf("%s: Settings links to the updates topic present=%v, want %v", c, has, !store)
 			}
 		})
+	}
+}
+
+// Early review F1/F2/F3: content from the cloud and the terms link must not
+// re-open a purchase surface on a store build.
+func TestStoreChannel_NoticeLinksAndTermsURL(t *testing.T) {
+	n := data.CloudNotice{
+		Title: "Upgrade", Body: "Upgrade to Pro for £9.99. [Choose a plan](https://my.universaltill.com/billing/checkout)",
+		LinkJSON: `{"kind":"https","target":"https://universaltill.com/en-gb/pricing/","label":"Buy now"}`,
+	}
+	for _, c := range allChannels {
+		t.Run(string(c), func(t *testing.T) {
+			withChannel(t, c)
+			row := newNoticeRow(n, true, false, "all")
+			hasLink := row.Link != nil
+			bodyLink := strings.Contains(string(row.Body), "<a ") || strings.Contains(string(row.Body), "billing/checkout")
+			if open := c.AccountLinkOutAllowed(); hasLink != open || bodyLink != open {
+				t.Errorf("%s: link=%v bodyLink=%v, want both %v", c, hasLink, bodyLink, open)
+			}
+		})
+	}
+	for _, c := range allChannels {
+		withChannel(t, c)
+		if got, chromeless := termsLinkURL("en"), strings.Contains(termsLinkURL("en"), "/app/legal/"); chromeless == c.AccountLinkOutAllowed() {
+			t.Errorf("%s terms link %s: chrome-less=%v", c, got, chromeless)
+		}
+	}
+	// route links stay on store builds (only https is dropped)
+	withChannel(t, buildinfo.ChannelPlay)
+	rn := data.CloudNotice{Title: "t", Body: "b", LinkJSON: `{"kind":"route","target":"/settings","label":"Open"}`}
+	if row := newNoticeRow(rn, true, false, "all"); row.Link == nil || row.LinkExternal {
+		t.Errorf("route link lost on play: %+v", row.Link)
 	}
 }

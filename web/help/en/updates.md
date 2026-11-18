@@ -10,6 +10,8 @@ keywords: [update, version, upgrade, schedule]
 
 # Software updates
 
+![Software update card](img/updates-card.png)
+
 The till checks for new versions and tells you when one is available; on most platforms it updates itself with one click.
 
 ## How to use it
@@ -19,7 +21,7 @@ The till checks for new versions and tells you when one is available; on most pl
 ## Update from the till
 
 1. Settings → Software update → Check now shows whether you are up to date.
-2. When an update is offered, click Update now — the app restarts on the new version. On a Linux computer, the desktop app also restarts itself within about a minute when a system upgrade (apt) installs a new version, and if the till's page stops showing in its window, the app reloads it by itself until the till answers again.
+2. When an update is offered, click Update now — the app restarts on the new version. On a Linux computer, the desktop app also restarts itself within about a minute when a system upgrade (apt) installs a new version, and if the till's page stops showing in its window, the app reloads it by itself until the till answers again. If the update can't be installed, the button says so and a message at the top of the screen says why; try again later.
 3. The status bar's update chip mirrors this. Where the till can't install an update itself — a portable Windows zip, or an Intel Mac — it links to the download page instead. On a kiosk without in-app update it's just plain text with nothing to tap. On a Linux till that updates automatically but can't write to its own install folder, the chip says the till can't install the update by itself and links to this page: reinstall the latest .deb package — that makes the folder writable again (for any other kind of install, give the till's user write access to its folder) — and the next night's update runs as usual.
 
 <!-- /plan-purchase -->
@@ -40,6 +42,8 @@ The till updates itself overnight unless you switch it off.
 6. On Windows the till downloads the signed installer and checks it. Then the till closes, installs the update and opens again by itself, which takes about a minute. Android tills can't install updates by themselves yet. Update them by hand as described above. If you run the Windows installer yourself, it closes Universal Till first if it is still open, so finish any sale in progress before you start it.
 
 <!-- /plan-purchase -->
+
+In a shop with several tills, each till updates on its own and a till can be updated from the main till; see [Multiple tills](/help/multitill).
 
 ## What's new in each version
 

@@ -99,6 +99,9 @@ func SetBeforeRestart(fn func(context.Context)) {
 	beforeRestart = fn
 }
 
+// ErrApplyInProgress means another update is already being applied (ut-docs#5274).
+var ErrApplyInProgress = errors.New("an update is already being applied")
+
 // ErrUnsupported means this install type updates via a native mechanism.
 var ErrUnsupported = errors.New("in-app update isn't available for this install; run the installer (a portable Windows zip) or reinstall (this install's directory isn't self-update-writable)")
 
@@ -351,7 +354,7 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	// windowsHandover: a Windows update already handed to the installer
 	// helper outlives applyMu (wininstaller.go).
 	if windowsHandover.Load() || !applyMu.TryLock() {
-		return errors.New("an update is already being applied")
+		return ErrApplyInProgress
 	}
 	defer applyMu.Unlock()
 

@@ -65,6 +65,7 @@ import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.universaltill.pos.tap.TapToPayShell
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -158,6 +159,10 @@ class MainActivity : AppCompatActivity() {
     // shouldOverrideUrlLoading refuses everything, which is correct: no
     // page has loaded yet for anything to navigate away from.
     private var allowedHost: String? = null
+
+    // #3048: Stripe Terminal Tap to Pay. null in every build made without
+    // -PtapToPay=true (all shipped builds): no listener, no engine, no code runs.
+    private var tapShell: TapToPayShell? = null
 
     private val listener: (String?, String?) -> Unit = { address, error ->
         runOnUiThread {
@@ -2204,6 +2209,8 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "reload: activity recreated (savedInstanceState present)")
         }
         setContentView(R.layout.activity_main)
+        // #3048: must be created here (it registers an activity-result launcher).
+        tapShell = TapToPayShell.create(this)
         pruneStaleUpdateCopy()
 
         webView = findViewById(R.id.webview)
@@ -2828,8 +2835,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // #3048: onStart/onStop, not onResume/onPause: Stripe's tap screen pauses this Activity mid-payment.
+    override fun onStart() {
+        super.onStart()
+        tapShell?.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        tapShell?.onStop()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        tapShell?.onDestroy(isFinishing)
         // ut-docs#2788: pairs with onCreate's "activity recreated" line.
         Log.i(TAG, "reload: activity destroyed (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)")
         // ut-docs#1639: drop any pending delayed pin-verification callback —
