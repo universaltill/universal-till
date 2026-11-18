@@ -112,4 +112,70 @@ default (harmless); the "exactly one signer_info" check has no test because
 osslsigncode cannot produce a two-signer PKCS#7 (it nests signatures).
 
 ## Review
-(To be filled by the Reviewer.)
+Independent reviewer: Opus 5.5 (author: Sonnet). Scope: the universal-till
+diff `origin/main...fix/msstore-hardening-6636` and the ut-docs diff
+`origin/main...docs/6636-msstore-hardening` (two reference pages, both match
+the code).
+
+Pre-flight: `shellcheck scripts/ci/*.sh packaging/windows/sign-exe.sh` 0
+issues; the six touched tests (`release-upload`, `msstore-verify`,
+`msstore-soak`, `msstore-submit`, `msstore-workflow`, `windows-signing`) all
+pass after the fixes below (windows-signing part 2 ran for real with
+osslsigncode 2.14 / OpenSSL 3.0.13, the same OpenSSL as the ubuntu runners
+that call sign-exe.sh; the installer.nsi part skips locally, no makensis, CI
+step `UT_REQUIRE_SIGNING_TOOLS=1` covers it); guards `guard-store-private`,
+`guard-pipefail-grep-q`, `guard-ci-tests-sandboxed`, `guard-mail-addresses`,
+`guard-fixed-dates` pass. No Go changed, so no go build/test/lint rerun.
+
+### Findings
+1. **Major, fixed.** `release-upload.sh` duplicate-name check bypass: the
+   appended-line regex `^[0-9a-f]{64}  [^ ]+$` let a CR or a tab through, so
+   `<sha>  <published-name>\r` (CRLF) or `<sha>  <name>\tx` was not seen as
+   the published name and a second hash for a published asset was accepted
+   (both probed: rc 0, upload done). The till's `parseSums` uses
+   `strings.Fields`, which drops the CR and reads the same name. The name is
+   now `[^[:space:][:cntrl:]]+`. New cases (d3) CRLF and (d4) tab, red before
+   the fix, green after (also under `LC_ALL=C`).
+2. **Minor, fixed (hardening).** `sign-exe.sh` took the signer serial from
+   the first line matching `/issuer_and_serial:/` and then `/serial:/`
+   anywhere in `openssl pkcs7 -print`. The certificate bag (unauthenticated,
+   attacker-addable) is printed before `signer_info:`, and a subject is
+   printed on one line, so a bag cert whose subject contains that text could
+   steer the lookup. Probed on OpenSSL 3.0.13: newlines are escaped
+   (`\x0A`) and the following `$2` cannot be a valid serial, so it fails
+   closed today, but it rested on print-format details. The awk is now
+   anchored and scoped to after the (counted, unique) `^ *signer_info:` line;
+   the PEM split matches `^-----BEGIN/END CERTIFICATE-----$` only. No test
+   (no input reaches a different result on this OpenSSL); the real v0.36.2
+   exe is still accepted with `TASK RUNNER TECHNOLOGY LTD` and refused with
+   the substring.
+3. Checked, no finding: trailing-newline handling (awk records and `read ||
+   [ -n ]` count the same lines); CRLF in a published line is refused by the
+   byte-for-byte prefix; an empty published file makes the `NR==FNR` idiom
+   misfire, but K=0 means every file is a valid extension, so the result is
+   the same; `.sig` prefix-only is consistent with `appendPruned`
+   (Split/Join keeps old lines byte for byte); a second `extend_only` for the
+   same name in one call fails closed (download into an occupied dir).
+   Override gate: every test override in the three scripts is gated (all
+   other `${X:-}` are production config); unset/empty/`yes` behave as
+   recorded; verify `die` exits 1 and soak's exit 2 surfaces as verify's
+   "soak check failed" (exit 1); `msstore-submit.yml` treats any non-zero as
+   not ready and sets none of the variables. `dec2hex`/`norm_serial`
+   compared with Python on 212 values up to 160 bits (0 mismatches;
+   negatives and bare `0x` refused). Multi-valued RDNs print as one
+   `    CN=a + O=b` line, which never equals the publisher (fail closed);
+   `esc_ctrl` keeps CN on one line. `set -e` is off inside `leaf_cn_is`
+   (called under `if !`) and every path returns explicitly. release.yml:
+   the checksums job runs on a draft (unchanged path); macos-dmg-attach's
+   first run passes (Tester's end-to-end), re-runs were already refused at
+   the .dmg upload (deferred, epic #6380).
+
+### TDD re-verified (reviewer, inline; each file restored and `cmp`-checked)
+- Item 1: prefix check disabled (`bad=""`) gives 15 FAIL lines; restored.
+- Item 1 (my fix): regex reverted gives (d3)/(d4) red; restored.
+- Item 2: the verify per-variable `die` neutralised gives the five
+  "without the flag" cases red; restored.
+- Item 5: `grep -qiF` back gives evil, orgonly, slash, two-CN, forged,
+  issuer, case red; restored.
+
+Verdict: **APPROVE** (with findings 1 and 2 fixed in the working tree).

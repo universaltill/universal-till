@@ -118,13 +118,15 @@ leaf_cn_is() { # leaf_cn_is <file> <expected-cn>
     echo "::error::$f: expected exactly one signer, found ${n}" >&2
     rm -rf -- "${tmp:?}"; return 1
   fi
-  sig_serial="$(awk '/issuer_and_serial:/{on=1; next} on && /serial:/{print $2; exit}' "$tmp/print.txt")"
+  # Anchored and scoped to the one signer_info: a certificate's subject in the
+  # bag is printed earlier on one line and may carry the text "serial:".
+  sig_serial="$(awk '/^ *signer_info:/{si=1} si && /^ *issuer_and_serial:/{on=1; next} on && /^ *serial:/{print $2; exit}' "$tmp/print.txt")"
   if ! sig_serial="$(norm_serial "$sig_serial")" \
     || ! openssl pkcs7 -inform DER -in "$tmp/sig.der" -print_certs >"$tmp/certs.pem" 2>/dev/null; then
     echo "::error::$f: cannot read the Authenticode signature (ut-docs#6636)" >&2
     rm -rf -- "${tmp:?}"; return 1
   fi
-  awk -v d="$tmp" '/-----BEGIN CERTIFICATE-----/{k++; on=1} on{print > (d "/cert-" k ".pem")} /-----END CERTIFICATE-----/{on=0}' "$tmp/certs.pem"
+  awk -v d="$tmp" '/^-----BEGIN CERTIFICATE-----$/{k++; on=1} on{print > (d "/cert-" k ".pem")} /^-----END CERTIFICATE-----$/{on=0}' "$tmp/certs.pem"
   for c in "$tmp"/cert-*.pem; do
     [ -f "$c" ] || continue
     cs="$(openssl x509 -noout -serial -in "$c" 2>/dev/null | sed -n 's/^serial=//p')"

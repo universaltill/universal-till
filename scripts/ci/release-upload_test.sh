@@ -94,6 +94,12 @@ newf checksums.txt '%s\n%s\n%s\n%s\n' "$SA" "$SB" "$SC" "$(printf 'e%.0s' {1..64
 check 1 "(d1) second hash inside the appended block" false "$CK" "$CS"; nolog "(d1)"
 newf checksums.txt '%s\n%s\njunk\n' "$SA" "$SB"
 check 1 "(d2) malformed appended line" false "$CK" "$CS"; nolog "(d2)"
+# A CR or tab after the name hid a second hash from the duplicate check
+# (strings.Fields on the till drops the CR and reads the same asset name).
+newf checksums.txt '%s\n%s\n%s\r\n' "$SA" "$SB" "$SDUP"
+check 1 "(d3) CRLF-terminated second hash for a published asset" false "$CK" "$CS"; nolog "(d3)"
+newf checksums.txt '%s\n%s\n%s\tx\n' "$SA" "$SB" "$SDUP"
+check 1 "(d4) tab after a published asset name" false "$CK" "$CS"; nolog "(d4)"
 MOCK_DL_FAIL=1 check 1 "(e) published copy cannot be downloaded" false "$CK" "$CS" ; 
 newf checksums.txt '%s\n%s\n%s\n' "$SA" "$SB" "$SC"
 rm -f "$WORK/pub/checksums.txt"

@@ -63,7 +63,9 @@ extend_only() {
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
       [ "$n" -le "$k" ] && continue
-      if ! [[ "$line" =~ ^[0-9a-f]{64}\ \ [^\ ]+$ ]]; then
+      # The name is one run of printable, non-space characters: a CR or tab
+      # would hide a second hash for a published name from the check below.
+      if ! [[ "$line" =~ ^[0-9a-f]{64}\ \ [^[:space:][:cntrl:]]+$ ]]; then
         echo "::error::release-upload: appended line $((n - k)) of ${name} is not '<sha256>  <file>' (ut-docs#6636)" >&2
         exit 1
       fi
