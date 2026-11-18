@@ -7,7 +7,7 @@ import (
 )
 
 // The fields the cloud's change upload accepts (contract
-// cloud-catalog-changes.md 1.2.0 "Accepted fields", ut-docs#6088).
+// cloud-catalog-changes.md 1.3.0 "Accepted fields", ut-docs#6088).
 //
 // A cloud rejects a whole upload call (400 invalid_request, nothing
 // recorded) when one change names a field outside its list, so a till that

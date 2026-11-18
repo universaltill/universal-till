@@ -1026,7 +1026,7 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   (ut-docs#4623).
   A 410 resync forgets every `echo_version`.
 - **Fields the cloud does not accept yet (migration 102, ut-docs#6088;
-  contract 1.2.0 "Accepted fields").** A cloud refuses a whole upload call
+  contract 1.3.0 "Accepted fields").** A cloud refuses a whole upload call
   (`400`, nothing recorded) when one change names a field outside its list,
   so the till sends only `fields100` (the frozen 1.0.0 lists,
   `internal/catalogpull/accepted.go`) plus the fields the cloud advertises

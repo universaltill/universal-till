@@ -16,7 +16,7 @@ import (
 )
 
 // Edits a cloud cannot take yet (ut-docs#6088, contract cloud-catalog-changes
-// 1.2.0 "Accepted fields"). A field the till knows but the cloud does not
+// 1.3.0 "Accepted fields"). A field the till knows but the cloud does not
 // advertise is withheld: left out of the change, kept on the till as a
 // pending edit. A pending edit is a field whose local value differs from its
 // base on a row with an outbox mark - and a withheld one has no mark once its

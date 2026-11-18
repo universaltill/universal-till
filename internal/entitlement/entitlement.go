@@ -96,7 +96,7 @@ const (
 	// sale gate (package doc).
 	KeyStoreClaimed = "entitlement.claimed"
 	// KeyCatalogChangesFields: the catalogue fields the cloud's change upload
-	// accepts per kind (cloud-catalog-changes contract 1.2.0, ut-docs#6088),
+	// accepts per kind (cloud-catalog-changes contract 1.3.0, ut-docs#6088),
 	// as canonical JSON {"item":["name",...],...}; "" when the block carries
 	// none or a malformed one (contract 1.0.0). Always rewritten with the
 	// block, so a cloud rolled back to one without the key clears it. Per-till
@@ -438,7 +438,7 @@ type Block struct {
 	Claimed json.RawMessage `json:"claimed"`
 	// CatalogChanges is the cloud's advertisement of the fields its catalogue
 	// change upload accepts, {"fields": {kind: [field, ...]}} (contract
-	// cloud-catalog-changes 1.2.0, ut-docs#6088). Raw like CatalogMaster:
+	// cloud-catalog-changes 1.3.0, ut-docs#6088). Raw like CatalogMaster:
 	// absent, null, a wrong shape or an oversized one caches "" (the 1.0.0
 	// list) and never rejects the block.
 	CatalogChanges json.RawMessage `json:"catalog_changes"`
