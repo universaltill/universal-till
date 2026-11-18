@@ -143,6 +143,11 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 	if err := manifest.RefuseOnTill(); err != nil {
 		return nil, err
 	}
+	// App Store channel (ADR-0194, Apple 2.5.2): no imported code plugin.
+	// Refused here, before the live dir is touched.
+	if err := RefuseCodeRuntime(manifest.Runtime); err != nil {
+		return nil, err
+	}
 
 	// Verify manifest (signature check skippable only in a devplugins build). The
 	// manifest was already parsed above; VerifyManifest re-reads the file
