@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/releasesource"
 )
 
 // Only applyMacApp's early, purely-local branches are unit-tested (release has
@@ -119,7 +120,7 @@ func TestApplyMacAppRejectsIntelMac(t *testing.T) {
 	oldArch := goarch
 	goarch = "amd64"
 	t.Cleanup(func() { goarch = oldArch })
-	// Deliberately no newReleaseServer: releasesLatest still points at the
+	// Deliberately no newReleaseServer: releaseSource still points at the
 	// real GitHub API. If applyMacApp attempted a fetch before the arch
 	// check, this test would hit the network (and likely hang/fail) instead
 	// of returning immediately.
@@ -228,6 +229,38 @@ func TestApplyVersionMacAppUsesTheTag(t *testing.T) {
 	}
 	if got := rs.requested(); len(got) != 1 || got[0] != "/tags/v0.2.0" {
 		t.Fatalf("release metadata asked for %v, want exactly [/tags/v0.2.0]", got)
+	}
+}
+
+// ut-docs#4080: a dmg or checksums.txt off the trusted release host is refused
+// before anything is downloaded.
+func TestApplyMacAppRefusesUntrustedAssets(t *testing.T) {
+	oldVer := buildinfo.Version
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { buildinfo.Version = oldVer })
+	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
+	const gh = "https://github.com/universaltill/universal-till/releases/download/v0.2.0/"
+	for label, urls := range map[string]map[string]string{
+		"dmg":       {dmgName: gh + dmgName},
+		"checksums": {"checksums.txt": "https://evil.example/checksums.txt"},
+	} {
+		t.Run(label, func(t *testing.T) {
+			before := countLeakedWorkDirs(t)
+			rs := newReleaseServer(t, "v0.2.0", map[string][]byte{dmgName: []byte("dmg"), "checksums.txt": []byte(sha256hex([]byte("dmg")) + "  " + dmgName + "\n")})
+			rs.urls = urls
+			rec := useReleaseSource(t, rs.srv, rs.srv.URL)
+			err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
+			if !errors.Is(err, releasesource.ErrUntrustedAsset) {
+				t.Fatalf("err = %v, want ErrUntrustedAsset", err)
+			}
+			requireOnlyMetadata(t, rec)
+			if rs.assetHits != 0 {
+				t.Errorf("asset requests = %d, want 0", rs.assetHits)
+			}
+			if after := countLeakedWorkDirs(t); after != before {
+				t.Errorf("a work dir was created: %d (was %d)", after, before)
+			}
+		})
 	}
 }
 
