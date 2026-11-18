@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -486,5 +487,124 @@ func TestShiftsPage_OpenShiftPickerBootstrapsAndPreselectsOnZeroRegisters(t *tes
 	}
 	if !strings.Contains(body, "Default Register") {
 		t.Fatalf("expected EnsureRegister's real register name (not just the template's locale-text fallback), got:\n%s", body)
+	}
+}
+
+// ut-docs#5755: the Current Shift card shows the open shift's no-sale drawer
+// opens. Times derive from time.Now() (guard-fixed-dates).
+
+// seedNoSaleShift opens a shift on reg1 an hour ago, with users ns-a/ns-b.
+func seedNoSaleShift(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	ctx := t.Context()
+	for _, q := range []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`,
+		`INSERT INTO registers(id,name,is_active) VALUES('reg2','Back Till',1)`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('ns-a','alice','Alice','','cashier')`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('ns-b','bob','Bob','','cashier')`,
+	} {
+		if _, err := dp.Db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opened := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('shiftns','reg1','ns-a',?,5000)`, opened); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func addNoSale(t *testing.T, dp *common.Deps, id, reg, actor string) {
+	t.Helper()
+	at := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	if _, err := data.NewPOSRepo(dp.Db).InsertNoSaleEvent(t.Context(), nil, data.NoSaleEvent{ID: id, CreatedAt: at, RegisterID: reg, ActorID: actor}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func getShiftsBody(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+func TestShiftsPage_CurrentShiftListsNoSaleOpensPerCashier(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	seedNoSaleShift(t, dp)
+	addNoSale(t, dp, "n1", "reg1", "ns-a")
+	addNoSale(t, dp, "n2", "reg1", "ns-a")
+	addNoSale(t, dp, "n3", "reg1", "")
+	addNoSale(t, dp, "n4", "reg2", "ns-a") // other register: not counted
+
+	body := getShiftsBody(t, mux)
+	if !strings.Contains(body, "<tr><td>No sale (drawer opens)</td><td>3</td></tr>") {
+		t.Fatalf("expected the total row with 3, got: %s", body)
+	}
+	if !strings.Contains(body, "<td>Alice</td><td style=\"text-align:end\">2</td>") {
+		t.Fatalf("expected Alice=2, got: %s", body)
+	}
+	if !strings.Contains(body, "<td>Unattributed</td><td style=\"text-align:end\">1</td>") {
+		t.Fatalf("expected Unattributed=1, got: %s", body)
+	}
+	if strings.Contains(body, "Operator") {
+		t.Fatalf("breakdown must use the card's own Cashier label, not Operator")
+	}
+}
+
+func TestShiftsPage_NoSaleRowShowsZeroWithoutBreakdown(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	seedNoSaleShift(t, dp)
+	addNoSale(t, dp, "n4", "reg2", "ns-a")
+
+	body := getShiftsBody(t, mux)
+	if !strings.Contains(body, "<tr><td>No sale (drawer opens)</td><td>0</td></tr>") {
+		t.Fatalf("expected the row to show 0, got: %s", body)
+	}
+	if strings.Contains(body, ">Opens<") {
+		t.Fatalf("expected no per-cashier breakdown when 0, got: %s", body)
+	}
+}
+
+func TestShiftsPage_NoSaleQueryErrorStillRenders(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	seedNoSaleShift(t, dp)
+	if _, err := dp.Db.ExecContext(t.Context(), `DROP TABLE no_sale_events`); err != nil {
+		t.Fatal(err)
+	}
+	body := getShiftsBody(t, mux)
+	if !strings.Contains(body, "Current Shift") {
+		t.Fatalf("expected the Current Shift card, got: %s", body)
+	}
+	if strings.Contains(body, "No sale (drawer opens)") {
+		t.Fatalf("expected the no-sale row omitted on a query error (never a false 0), got: %s", body)
+	}
+}
+
+// ut-docs#5755 review: the no-sale counts use the locale's digit shape, like
+// the money and dates on the same card ({{ qty }}).
+func TestShiftsPage_NoSaleCountsUseLocaleDigits(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	seedNoSaleShift(t, dp)
+	addNoSale(t, dp, "n1", "reg1", "ns-a")
+	addNoSale(t, dp, "n2", "reg1", "ns-a")
+	addNoSale(t, dp, "n3", "reg1", "ns-b")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts?lang=ar", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "</td><td>٣</td></tr>") {
+		t.Fatalf("expected the total as Arabic-Indic ٣, got: %s", body)
+	}
+	if !strings.Contains(body, "<td>Alice</td><td style=\"text-align:end\">٢</td>") {
+		t.Fatalf("expected Alice=٢, got: %s", body)
+	}
+	if strings.Contains(body, "<td>3</td>") || strings.Contains(body, "\">2</td>") {
+		t.Fatalf("expected no Latin no-sale counts in ar, got: %s", body)
 	}
 }

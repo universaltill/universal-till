@@ -149,7 +149,7 @@ func TestUpdatePromotion_ChangesFieldsNotCode(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if err := repo.UpdatePromotion(ctx, "EDITME", PromotionInput{
+	if _, err := repo.UpdatePromotion(ctx, "EDITME", PromotionInput{
 		Type:        "percent",
 		Value:       500,
 		Description: "updated",
@@ -182,7 +182,7 @@ func TestUpdatePromotion_UnknownCode(t *testing.T) {
 	_, repo := openPromoTestDB(t)
 	ctx := context.Background()
 
-	if err := repo.UpdatePromotion(ctx, "GHOST", PromotionInput{Type: "amount", Value: 100}); err == nil {
+	if _, err := repo.UpdatePromotion(ctx, "GHOST", PromotionInput{Type: "amount", Value: 100}); err == nil {
 		t.Fatal("UpdatePromotion(unknown) must error")
 	}
 }

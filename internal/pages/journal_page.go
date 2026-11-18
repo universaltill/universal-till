@@ -19,7 +19,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		_, invoicingOn := sellerConfig(r.Context(), d)
 		httpx.Render("ui/pages/journal.html", map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.journal"),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"InvoicingOn": invoicingOn && canPerform(d, r, "reports"),
 		})(w, r)
@@ -80,7 +80,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
 			"title":       fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "page.title.receipt_detail"), sale.ReceiptNo),
-			"theme":       d.CurrentState().Theme,
+			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
 			"Sale":        sale,
 			"Returns":     returns,

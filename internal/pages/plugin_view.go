@@ -374,7 +374,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	}
 	page := map[string]any{
 		"title":     title,
-		"theme":     d.CurrentState().Theme,
+		"theme":     d.ResolvedTheme(r),
 		"menuItems": d.MenuSnapshot(),
 		"pv":        body,
 		"alert":     alert,

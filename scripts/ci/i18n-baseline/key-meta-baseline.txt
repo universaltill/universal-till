@@ -967,7 +967,6 @@ inventory.cost_optional
 inventory.days_left
 inventory.days_left_hint
 inventory.dialog_context
-inventory.empty
 inventory.item_placeholder
 inventory.location
 inventory.low_stock
@@ -1192,9 +1191,7 @@ kitchenstations.items.remove
 kitchenstations.items.search
 kitchenstations.items.set
 kitchenstations.items.title
-kitchenstations.new.submit
 kitchenstations.new.title
-kitchenstations.none
 kitchenstations.save
 kitchenstations.title
 kitchenstations.view_display
@@ -1944,7 +1941,6 @@ reports.eod.fiscal_device.iade_fisi
 reports.eod.fiscal_device.maker
 reports.eod.fiscal_device.mali_fis
 reports.eod.fiscal_device.match
-reports.eod.fiscal_device.mismatch
 reports.eod.fiscal_device.none
 reports.eod.fiscal_device.other
 reports.eod.fiscal_device.serial
@@ -2557,7 +2553,6 @@ settings.tax_rate_switcher.missing.install_btn
 settings.tax_rate_switcher.missing.message
 settings.tax_rate_switcher.missing.title
 settings.telemetry.enable
-settings.telemetry.help
 settings.telemetry.save
 settings.telemetry.title
 settings.theme.apply
@@ -2698,7 +2693,6 @@ shadow_documents.sale_recorded
 shifts.adjust
 shifts.adjust_type
 shifts.adjustment
-shifts.adjustment_success
 shifts.amount
 shifts.amount_hint
 shifts.cashier
@@ -2725,7 +2719,6 @@ shifts.note_hint
 shifts.open
 shifts.open_new
 shifts.open_since
-shifts.open_success
 shifts.opened_at
 shifts.opening_carried
 shifts.opening_cash
@@ -2748,7 +2741,6 @@ shrinkage.reason.void
 shrinkage.reason.waste
 status.cloud_auth.hint
 status.cloud_auth.needs_pairing
-status.cloud_auth.register_new
 status.cloud_auth.revoked
 status.disk_low.hint
 status.disk_low.label
@@ -3048,7 +3040,6 @@ tills.discovery.find_button
 tills.discovery.help
 tills.discovery.none_found
 tills.discovery.result_address
-tills.discovery.result_name
 tills.discovery.searching
 tills.discovery.title
 tills.enrolled

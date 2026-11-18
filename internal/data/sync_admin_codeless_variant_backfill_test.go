@@ -26,7 +26,7 @@ var generatedSyncSKUPattern = regexp.MustCompile(`^VAR-[0-9A-F]{8}$`)
 func TestApplyAdmin_BackfillsCodelessSyncedVariant(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary-codeless.db")
-	replica := openMigratedDB(t, "replica-codeless.db")
+	replica := openReplicaDB(t, "replica-codeless.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'ITEM-1', 'Coffee', 300)`)
 	// Written directly, bypassing CatalogRepo.CreateVariant entirely — the
@@ -113,7 +113,7 @@ func TestApplyAdmin_BackfillsCodelessSyncedVariant(t *testing.T) {
 func TestApplyAdmin_RealSKUStillOverwritesBackfilledOne(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary-codeless-catchup.db")
-	replica := openMigratedDB(t, "replica-codeless-catchup.db")
+	replica := openReplicaDB(t, "replica-codeless-catchup.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'ITEM-1', 'Coffee', 300)`)
 	mustExec(t, primary, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-codeless', 'itm1', NULL, 'Small', 250, 1)`)
@@ -168,7 +168,7 @@ func TestApplyAdmin_RealSKUStillOverwritesBackfilledOne(t *testing.T) {
 func TestApplyAdmin_BackfillsRevivedRetireMangledVariant(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary-revived-mangled.db")
-	replica := openMigratedDB(t, "replica-revived-mangled.db")
+	replica := openReplicaDB(t, "replica-revived-mangled.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'ITEM-1', 'Coffee', 300)`)
 	// The primary is still behind on ut-docs#1900/#2230, so the revived row

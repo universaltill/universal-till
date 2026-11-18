@@ -22,7 +22,7 @@ VERSION?=0.1.0-dev
 # ADR-0160 §6: the source commit's time, so a first-party language bundle
 # generated after it beats this build's built-in strings (internal/buildinfo).
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null)
-LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION) -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$(BUILD_DATE)
+LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION) -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$(BUILD_DATE)
 # ADR-0158: `UT_MARKETPLACE_KEY_HEX=<hex> make build` compiles the marketplace
 # plugin-signing key in, as release builds do; unset = a source build.
 # ADR-0178: UT_RELEASE_KEYS_HEX (comma list of release public keys) arms the
@@ -33,7 +33,7 @@ ifneq ($(UT_MARKETPLACE_KEY_HEX),)
 LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX) -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$(UT_RELEASE_KEYS_HEX)
 endif
 
-.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees
+.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees gen-settings-registry
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -43,6 +43,11 @@ run: build
 
 test:
 	go test ./...
+
+# The till settings registry artefact ut-cloud pins (ut-docs#5349). A data
+# test fails when the committed file is stale.
+gen-settings-registry:
+	go run ./cmd/gen-settings-registry
 
 # internal/pages' own -race runtime sits with no margin against (or past)
 # the plain `go test` 600s per-package default (ut-docs#648) — this package

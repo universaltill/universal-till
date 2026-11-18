@@ -14,8 +14,7 @@
 # bullets, top-level bullets, bold-lead-in list items) and fails on any
 # mismatch not recorded in scripts/ci/i18n-baseline/help-drift-baseline.json
 # — that baseline file is where already-known drift is tracked and burned
-# down over time, mirroring the ut-plugin-language-*/i18n-baseline/
-# convention for already-known untranslated keys.
+# down over time.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

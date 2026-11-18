@@ -38,6 +38,43 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Lock, status and exit-to-OS stay reachable from the full-screen
+  Inventory and catalogue dialogs (ut-docs#6125).** The item editor, Import,
+  Tax codes and the stock dialog now sit beside the nav rail and above the
+  status bar, and carry a compact Lock and exit-to-OS in their title line at
+  every width. Import and Tax codes scroll as one box with their head pinned.
+
+- **Card refunds no longer stop working after about 1,000 card sales
+  (ut-docs#6438).** A card plugin's approved answer may now carry
+  `transaction_ref` (the provider's charge id). The till stores it on the
+  sale's payment row and hands it back to the plugin on the refund as
+  `original_payments`, so a refund finds the original payment from the sale
+  itself: on any till, after a plugin reinstall, with no per-sale plugin
+  storage (which the host caps at 1,024 keys). Needs Stripe / SumUp plugin
+  1.4.0 or newer for the full effect; plugins never auto-update, so update
+  each till by hand. A card sale the till never linked must be refunded in
+  the provider's dashboard. The settle event also gains
+  `authorize_request_id` and `transaction_ref`. The SDK fake host now enforces
+  the 1,024-key cap like the real host.
+- **Import and Tax codes dialogs scroll on touch screens (ut-docs#6553).**
+  On the tablet and the phone the Import catalog and Tax codes dialogs could
+  not be scrolled, so the lower part (the import steps, the New tax code
+  form) was out of reach, and their content sat against the screen edge. The
+  dialogs now scroll, have normal margins, keep the Catalog back button in
+  view while you scroll, and the last field stays above the on-screen
+  keyboard.
+
+- **Promoting a till counts its own late sales once (ut-docs#5777, #5807).**
+  When an additional till is promoted to main till, its own sales that the
+  old main till recorded only after its last day close are now counted in
+  the promoted till's next Z report, exactly once. The till learns when the
+  main till recorded each of its sales from the sales copy, both the regular
+  feed and a full re-sync. Upgrade the main till first: a till that re-syncs
+  its copy from a main till older than this release, or copies from one
+  older than the release that introduced the sales copy's arrival times,
+  keeps no recording time for those sales, and after a promote they still
+  appear in no Z. A gift-voucher sold in such a sale still shows only in the
+  old main till's voucher totals.
 - **Opening another order no longer loses an "add by hand" counter order
   (ut-docs#3586).** A pay-at-the-counter order with no items the till could
   price (only lines listed to add by hand) counted as an empty basket. If the

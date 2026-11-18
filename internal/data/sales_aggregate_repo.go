@@ -31,12 +31,20 @@ import (
 //     mirrors EODMethod In − Out).
 //   - no-sale drawer opens (ut-docs#2558) come from no_sale_events, keyed
 //     by the same business-date and till rules (noSaleTillKeyExpr).
+//   - baskets cleared before payment (ut-docs#4721) come from cleared_baskets
+//     under the same rules (clearedBasketTillKeyExpr); they are never part
+//     of net sales.
+
+// CloudStaffBreakdownKey is the shop-wide setting (ADR-0111 §4, ut-docs#2557)
+// that adds the per-staff-ID by_cashier breakdown to the sales aggregates a
+// till uploads. Default off: only the exact value "true" enables it.
+const CloudStaffBreakdownKey = "reports.cloud_staff_breakdown"
 
 // tillKeyExpr resolves a sale's rollup till key; its one '?' is selfTill.
 const tillKeyExpr = `COALESCE(NULLIF(s.till_id, ''), NULLIF(s.register_id, ''), ?)`
 
 // SalesAggregateKey is one (business date, till) that has sales (or no-sale
-// drawer opens) to roll up.
+// drawer opens, or cleared baskets) to roll up.
 type SalesAggregateKey struct {
 	BusinessDate string
 	TillID       string
@@ -52,8 +60,10 @@ type SalesAggregateHour struct {
 // SalesAggregatePayment is one payment method's net takings for the day,
 // mirroring EODMethod (In − Out: amount − change_given, sales minus
 // returns — so it INCLUDES tips, exactly like EODMethod.In) plus the
-// method's tips (EODTip). ExpectedCash is the cash method's net cash taken
-// (cash tendered − change given − cash refunded), zero for any other method.
+// method's tips (EODTip). ExpectedCash is the cash method's takings net of
+// change and refunds, MINUS cash tips — the Z-report's CashSales, not
+// expected drawer cash (no float, no adjustments, no tips); the wire name
+// expected_cash_minor is a shipped contract. Zero for any other method.
 type SalesAggregatePayment struct {
 	Method       string
 	Amount       money.Money
@@ -101,6 +111,10 @@ type SalesAggregate struct {
 	VoidCount     int
 	DiscountCount int
 	NoSaleCount   int
+	// ClearedBasketCount / ClearedBasketTotal: baskets cleared with New sale
+	// before payment on this (day, till), and their summed totals.
+	ClearedBasketCount int
+	ClearedBasketTotal money.Money
 }
 
 // discountedSaleExpr is true for a sale carrying any discount: a whole-sale
@@ -112,8 +126,8 @@ const discountedSaleExpr = `(s.discount_total > 0 OR EXISTS (SELECT 1 FROM sale_
 const voidDayExpr = `COALESCE(s.voided_local_date, s.local_date)`
 
 // SalesAggregateKeys lists every (business date, till) in [from, to]
-// (YYYY-MM-DD, inclusive) that has a completed sale, a void or a no-sale
-// drawer open, ordered by date then till.
+// (YYYY-MM-DD, inclusive) that has a completed sale, a void, a no-sale
+// drawer open or a cleared basket, ordered by date then till.
 func (r *POSRepo) SalesAggregateKeys(ctx context.Context, from, to, selfTill string) ([]SalesAggregateKey, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT d, t FROM (
@@ -128,8 +142,12 @@ SELECT d, t FROM (
   SELECT e.local_date AS d, `+noSaleTillKeyExpr+` AS t
   FROM no_sale_events e
   WHERE e.local_date BETWEEN date(?) AND date(?)
+  UNION
+  SELECT c.local_date AS d, `+clearedBasketTillKeyExpr+` AS t
+  FROM cleared_baskets c
+  WHERE c.local_date BETWEEN date(?) AND date(?)
 )
-ORDER BY d, t`, selfTill, from, to, selfTill, from, to, selfTill, from, to)
+ORDER BY d, t`, selfTill, from, to, selfTill, from, to, selfTill, from, to, selfTill, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("sales aggregate keys: %w", err)
 	}
@@ -155,9 +173,10 @@ type SalesAggregateFingerprint struct {
 // SalesAggregateFingerprints lists the same (business date, till) keys as
 // SalesAggregateKeys, in the same order, each with a fingerprint of its
 // source rows, in one query: completed sales (count, Σ total, latest
-// created_at, returns), voids on their void day (count, latest voided_at)
-// and no-sale drawer opens (count, latest created_at). A late-journaled
-// sale, a void, a late no-sale open or a deleted sale moves it. Payments,
+// created_at, returns), voids on their void day (count, latest voided_at),
+// no-sale drawer opens (count, latest created_at) and cleared baskets (count,
+// Σ total, latest created_at; ut-docs#4721). A late-journaled sale, a void,
+// a late no-sale open, a late cleared basket or a deleted sale moves it. Payments,
 // lines, modifiers and discounts are written only together with their sale,
 // so the sale count covers them; the uploader's once-a-day salt bounds
 // anything this misses to a day.
@@ -180,8 +199,13 @@ SELECT d, t, kind, n, amount, latest, returns FROM (
   FROM no_sale_events e
   WHERE e.local_date BETWEEN date(?) AND date(?)
   GROUP BY d, t
+  UNION ALL
+  SELECT c.local_date AS d, `+clearedBasketTillKeyExpr+` AS t, 'k', COUNT(*), COALESCE(SUM(c.total_minor), 0), COALESCE(MAX(c.created_at), ''), 0
+  FROM cleared_baskets c
+  WHERE c.local_date BETWEEN date(?) AND date(?)
+  GROUP BY d, t
 )
-ORDER BY d, t, kind`, selfTill, from, to, selfTill, from, to, selfTill, from, to)
+ORDER BY d, t, kind`, selfTill, from, to, selfTill, from, to, selfTill, from, to, selfTill, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("sales aggregate fingerprints: %w", err)
 	}
@@ -241,8 +265,8 @@ GROUP BY h ORDER BY h`, args...)
 	// Payment methods: EODMethod's In − Out and EODTip's tip sum, one pass.
 	rows, err = r.db.QueryContext(ctx, `
 SELECT p.method_id,
-  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0)
-  - COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0),
+  `+tenderInSQL+`
+  - `+tenderOutSQL+`,
   COALESCE(SUM(p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
@@ -351,6 +375,10 @@ WHERE s.status = 'voided' AND `+voidDayExpr+` = date(?) AND `+tillKeyExpr+` = ?`
 		return agg, err
 	}
 	agg.NoSaleCount = noSale.Total
+	agg.ClearedBasketCount, agg.ClearedBasketTotal, err = r.ClearedBasketsForTill(ctx, day, tillID, selfTill)
+	if err != nil {
+		return agg, err
+	}
 
 	if withCashiers {
 		cashiers, err := r.salesAggregateCashiers(ctx, day, tillID, selfTill)

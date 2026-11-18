@@ -98,6 +98,9 @@ func applyWindowsInstaller(ctx context.Context, exe, version string, idle func()
 	}
 	// Integrity root (ADR-0178), fail closed as on every other platform:
 	// the signed checksums, before any download.
+	if err := rel.requireTrustedRelease(setupURL); err != nil {
+		return err
+	}
 	checksums, err := verifiedChecksums(ctx, rel)
 	if err != nil {
 		return err
