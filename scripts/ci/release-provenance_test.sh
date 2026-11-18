@@ -13,7 +13,10 @@
 #     a timeout, only full-SHA-pinned `uses:`, an actions/attest-build-provenance
 #     step, and call scripts/ci/verify-release-provenance.sh;
 #   - `attestations: write` is in no other job; `id-token: write` only in
-#     goreleaser, windows-installer, provenance and provenance-dmg; the
+#     goreleaser, windows-installer, publish-installer (ut-docs#6407: the
+#     federated Azure login that copies the already-published installer to the
+#     public installers container; it holds no attestation permission and
+#     never builds or signs), provenance and provenance-dmg; the
 #     workflow-level permissions have neither.
 # The verify script must carry (in executable lines, not comments) the --repo/
 # --signer-workflow/--source-digest/--deny-self-hosted-runners flags and the negative drill.
@@ -201,10 +204,10 @@ check_wiring() { # reads $WF
   else
     fail "attestations: write is in: ${att:-none} (want exactly provenance, provenance-dmg)"
   fi
-  if [ "$idt" = "goreleaser provenance provenance-dmg windows-installer " ]; then
-    pass "id-token: write only in goreleaser, windows-installer, provenance, provenance-dmg"
+  if [ "$idt" = "goreleaser provenance provenance-dmg publish-installer windows-installer " ]; then
+    pass "id-token: write only in goreleaser, windows-installer, publish-installer, provenance, provenance-dmg"
   else
-    fail "id-token: write is in: ${idt:-none} (want exactly goreleaser, provenance, provenance-dmg, windows-installer)"
+    fail "id-token: write is in: ${idt:-none} (want exactly goreleaser, provenance, provenance-dmg, publish-installer, windows-installer)"
   fi
   top="$(awk '/^jobs:/{exit} {print}' "$WF" | sed 's/^[[:space:]]*#.*$//')"
   if grep -qE 'id-token|attestations' <<<"$top"; then
