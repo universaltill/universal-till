@@ -280,6 +280,9 @@ func stateHash(devices []map[string]any) ([sha256.Size]byte, error) {
 	for i, d := range devices {
 		c := make(map[string]any, len(d))
 		for k, v := range d {
+			if k == changeEventsField {
+				continue // ADR-0200: events never move the hash (a waiting one forces the POST itself)
+			}
 			c[k] = v
 		}
 		if h, ok := d["health"].(map[string]any); ok {

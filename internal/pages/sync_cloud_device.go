@@ -41,7 +41,7 @@ import (
 // with its own token, so this bounds what a replica can make it do
 // (reviewer finding, ut-docs#2730). The replica's own loop asks once per
 // boot, then every 6 h, with a 30 s..30 min backoff on failure — a handful
-// per window even with a few "Register now" presses on top.
+// per window even with a few the (removed) registration button on top.
 const (
 	cloudDeviceVouchMax    = 10
 	cloudDeviceVouchWindow = 10 * time.Minute
@@ -82,13 +82,16 @@ func registerSyncCloudDevice(mux *http.ServeMux, d *common.Deps) {
 			fail(w, http.StatusBadRequest, "invalid_request")
 			return
 		}
-		vouch, err := enroll.VouchForReplica(r.Context(), d.Cfg, enroll.ReplicaRequest{
+		vouch, err := enroll.VouchForReplica(r.Context(), d.Cfg, d.Settings, enroll.ReplicaRequest{
 			TillID: till.ID, DeviceID: in.DeviceID, DeviceName: till.Name, Version: in.Version,
 		})
 		switch {
 		case err == nil:
 		case errors.Is(err, enroll.ErrBadDeviceRequest):
 			fail(w, http.StatusBadRequest, "invalid_device")
+			return
+		case errors.Is(err, enroll.ErrRegistrationStopped):
+			fail(w, http.StatusConflict, "registration_stopped")
 			return
 		case errors.Is(err, enroll.ErrNotRegistered):
 			fail(w, http.StatusConflict, "main_till_not_registered")

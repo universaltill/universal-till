@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, nameShop } from './helpers';
+import { watchConsole, ensureRegisteredAutomatically } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -85,13 +85,8 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
     // Get the till onto a paid plan through the real cloudsync path:
     // registering checks in at once; an already-registered till (the
     // diagnostics spec ran first) asks via "Check for a paid plan".
-    const registerBtn = card.locator('button[hx-post="/api/enrol/now"]');
-    if (await registerBtn.count()) {
-      await nameShop(page); // ut-docs#4272: registration waits for a real shop name
-      await page.locator('#enrol-accept-terms').check(); // ut-docs#4720: the cloud terms are accepted first
-      await registerBtn.click();
-      await expect(page.locator('#enrol-msg')).toContainText('✅');
-    } else {
+    await ensureRegisteredAutomatically(page);
+    {
       const checkPlan = card.locator('button[hx-post="/api/enrol/check-plan"]');
       if (await checkPlan.count()) {
         await checkPlan.click();

@@ -111,10 +111,10 @@ var AgentSettings = []AgentSetting{
 	// cloud's set_till_setting set (ut-docs#2289, #3390); the rest are
 	// read-only to every remote caller until a later slice gives them a
 	// validation rule.
-	{Key: "marketplace.auto_register_opt_in", Region: "registration",
-		LabelKey: "settings.enrol.auto_register.label", HintKey: "settings.enrol.auto_register.help",
-		Kind: AgentSettingBool, ReadValue: true, On: "true", Off: "false",
-		Type: SettingTypeBool, Tier: SettingTierSensitive}, // cloud registration: a destination decision
+	{Key: "registration.stopped", Region: "registration",
+		LabelKey: "settings.registration.title", HintKey: "settings.registration.stop_help",
+		Kind: AgentSettingBool, On: "true", Off: "false",
+		Type: SettingTypeBool, Tier: SettingTierSensitive}, // cloud usage facts: a destination decision, shop-wide (ADR-0200 decision 6)
 	{Key: "update.auto_enabled", Region: "settings-update",
 		LabelKey: "settings.update.auto_enable", Kind: AgentSettingBool, On: "true", Off: "false", // no value: unset means ON on a main till, which only the screen's own reader knows
 		Type: SettingTypeBool, Tier: SettingTierSensitive}, // changes what code the till runs
