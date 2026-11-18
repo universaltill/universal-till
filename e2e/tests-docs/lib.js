@@ -128,8 +128,12 @@ function routedTopics() {
 // guard-docs-shots.sh's extra_shots(): a reference is exactly
 // `img/<stem>.png`, <stem> = `<topicId>-<part>`, <part> =
 // [a-z0-9]+(-[a-z0-9]+)* (so `<id>.png` itself, another topic's stem, absolute
-// URLs and /help/img/... paths are refused), and only a topic that declares
-// routes: can have extras. Throws on a violation so no run or manifest is
+// URLs and /help/img/... paths are refused). Any topic, routed or not, may have
+// extras (ut-docs#337): each recipe carries its own route. A route-less topic
+// has no topic hash in the manifest, so its extras' freshness rides on the
+// surface hash alone (the picture shows app UI, not markdown), which covers
+// a page only if the recipe's route is some routed topic's routes[0]
+// (not checked yet). Throws on a violation so no run or manifest is
 // produced from a bad reference. (A reference inside a fenced code block
 // would count here; none exists.)
 const IMG_REF_RE = /!\[[^\]]*\]\(\s*([^)\s]*)[^)]*\)/g;
@@ -137,7 +141,6 @@ const SHOT_DEST_RE = /^img\/([a-z0-9]+(?:-[a-z0-9]+)*)\.png$/;
 
 function extraShotsByTopic() {
   const dir = path.join(repoRoot, 'web', 'help', 'en');
-  const routed = new Set(routedTopics().map((t) => t.id));
   const out = {};
   for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.md')).sort()) {
     const id = name.slice(0, -'.md'.length);
@@ -153,9 +156,6 @@ function extraShotsByTopic() {
       stems.add(dm[1]);
     }
     if (!stems.size) continue;
-    if (!routed.has(id)) {
-      throw new Error(`web/help/en/${name}: extra shots need a routed topic (declare routes:), found ${[...stems].join(', ')}`);
-    }
     out[id] = [...stems].sort();
   }
   return out;

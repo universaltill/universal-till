@@ -24,10 +24,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+# #3048: second argument "shipped" additionally checks a MERGED manifest of a
+# build that must not carry Tap to Pay (armv7, universal, arm64 without
+# -PtapToPay): no NFC, no TillApplication, no location permission without
+# maxSdkVersion, no READ_PHONE_STATE. (BLUETOOTH_CONNECT is NOT checked: the main
+# manifest declares it legitimately for the printers.)
+PROFILE="${2:-}"
+
 MANIFEST="${1:-android/app/src/main/AndroidManifest.xml}"
 [ -f "${MANIFEST}" ] || { echo "guard-android-manifest-features: ${MANIFEST} missing" >&2; exit 1; }
 
-MANIFEST="${MANIFEST}" python3 - <<'PY'
+MANIFEST="${MANIFEST}" PROFILE="${PROFILE}" python3 - <<'PY'
 import os
 import sys
 import xml.etree.ElementTree as ET
@@ -49,6 +56,9 @@ IMPLIED_FEATURES = {
     ],
     "android.permission.BLUETOOTH": ["android.hardware.bluetooth"],
     "android.permission.BLUETOOTH_ADMIN": ["android.hardware.bluetooth"],
+    # #3048: Stripe Terminal's SDK manifests add these.
+    "android.permission.NFC": ["android.hardware.nfc"],
+    "android.permission.READ_PHONE_STATE": ["android.hardware.telephony"],
     "android.permission.CALL_PHONE": ["android.hardware.telephony"],
     "android.permission.CALL_PRIVILEGED": ["android.hardware.telephony"],
     "android.permission.PROCESS_OUTGOING_CALLS": ["android.hardware.telephony"],
@@ -95,6 +105,20 @@ for permission in sorted(declared_permissions):
                 f"the app uninstallable on hardware without it.",
                 file=sys.stderr,
             )
+
+if os.environ.get("PROFILE") == "shipped":
+    for el in root.findall("uses-permission"):
+        name = el.get(f"{ANDROID_NS}name")
+        if name in ("android.permission.NFC", "android.permission.READ_PHONE_STATE"):
+            fail = True
+            print(f"guard-android-manifest-features: shipped build declares {name} (Tap to Pay leaked into a build that must not carry it, #3048)", file=sys.stderr)
+        if name in ("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION") and not el.get(f"{ANDROID_NS}maxSdkVersion"):
+            fail = True
+            print(f"guard-android-manifest-features: shipped build declares {name} without maxSdkVersion (#3048)", file=sys.stderr)
+    app = root.find("application")
+    if app is not None and app.get(f"{ANDROID_NS}name"):
+        fail = True
+        print("guard-android-manifest-features: shipped build declares an Application class (TillApplication is Tap-to-Pay only, #3048)", file=sys.stderr)
 
 if fail:
     sys.exit(1)
