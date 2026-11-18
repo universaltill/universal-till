@@ -3,6 +3,7 @@ id: kitchen-stations
 title: Mutfak istasyonları
 section: İşi yürütme
 order: 235
+public: true
 summary: "Her yiyecek kategorisini — veya tek bir ürünü — kendi mutfak yazıcısına veya mutfak ekranına yönlendirin; ızgara siparişi ızgarada, içecek siparişi barda yazdırılsın."
 routes: [/kitchen-stations, /kitchen-display/{station_id}]
 ---

@@ -171,6 +171,20 @@ func autoUpdateSlot(now time.Time, hhmm string, offset time.Duration) (inWindow 
 	return true, now.Add(-time.Duration(elapsed) * time.Minute).Format("2006-01-02")
 }
 
+// followNightlyWindow is the window autoUpdateSlot opens for hhmm+offset, as
+// HH:MM start and end (modulo 24h), for the Settings page. ok is false when
+// hhmm is not a valid time. It shares autoUpdateWindow with autoUpdateSlot.
+func followNightlyWindow(hhmm string, offset time.Duration) (from, to string, ok bool) {
+	sched, err := time.Parse("15:04", hhmm)
+	if err != nil {
+		return "", "", false
+	}
+	const day = 24 * 60
+	start := (sched.Hour()*60 + sched.Minute() + int(offset/time.Minute)) % day
+	end := (start + int(autoUpdateWindow/time.Minute)) % day
+	return fmt.Sprintf("%02d:%02d", start/60, start%60), fmt.Sprintf("%02d:%02d", end/60, end%60), true
+}
+
 // autoUpdateDue is the pure schedule decision: enabled, a valid HH:MM whose
 // window [hhmm+offset, hhmm+offset+autoUpdateWindow) now falls in, and that
 // slot not already attempted (success or failure — at most once per day,
@@ -203,7 +217,7 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	// A replica follows its main till's exact version instead (ut-docs#2738):
 	// the nightly "latest" could run it ahead of its main till.
 	if get("sync.primary_url") != "" {
-		followTick(ctx, d)
+		followTick(ctx, d, now)
 		return
 	}
 	enabled, hhmm := autoUpdateSchedule(get)
@@ -741,9 +755,10 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			updates.SetAutoUpdateStuck(false) // ut-docs#2733: fixed since the last tick
 			// The status-bar update button also appears on the next page
 			// load; this inline one applies immediately.
-			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s">%s</button>`,
+			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s">%s</button>`,
 				html.EscapeString(st.Latest),
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
+				html.EscapeString(httpx.T(locale, "status.update_now")),
 				html.EscapeString(httpx.T(locale, "status.update_now")))
 		default:
 			get := func(key string) string {
@@ -794,8 +809,23 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		if !enabled {
 			val = "false"
 		}
+		kv := map[string]string{keyAutoUpdateEnabled: val, keyAutoUpdateTime: hhmm}
+		// update.fleet_follow (ADR-0114 §5, ut-docs#2739): absent leaves the
+		// key alone; next_idle is the default and stays unset; anything but
+		// the two known values is refused before anything is written.
+		if _, sent := r.Form["fleet_follow"]; sent {
+			switch strings.TrimSpace(r.Form.Get("fleet_follow")) {
+			case "", followPolicyNextIdle:
+				kv[keyFleetFollow] = ""
+			case followPolicyNightly:
+				kv[keyFleetFollow] = followPolicyNightly
+			default:
+				http.Error(w, "fleet_follow must be next_idle or nightly", http.StatusBadRequest)
+				return
+			}
+		}
 		if err := saveShopSettings(r.Context(), d, elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)},
-			map[string]string{keyAutoUpdateEnabled: val, keyAutoUpdateTime: hhmm}); err != nil {
+			kv); err != nil {
 			if respondSettingsSyncError(w, r, err) {
 				return
 			}

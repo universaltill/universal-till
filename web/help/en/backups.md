@@ -3,11 +3,14 @@ id: backups
 title: Backups
 section: Running the business
 order: 250
+public: true
 summary: Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe.
-keywords: [backup, restore, download, copy, uninstall, remove, replace, new till, broken]
+keywords: [backup, restore, restore backup, download, copy, uninstall, remove, replace, new till, broken, gdpr]
 ---
 
 # Backups
+
+![Backups card](img/backups-card.png)
 
 Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe. Each backup also holds the photos you uploaded for items and categories, and your receipt logo, so the one file you download brings them back too.
 
@@ -28,6 +31,10 @@ instead.
 
 A restore keeps this till's own connection to your shop's cloud account, also when the backup was made on another till. If the file turns out not to be a backup this till can use, it keeps your current data, and Settings → Backups says the restore was not applied.
 
+After a restore, receipt numbers and Z numbers jump ahead, so a number the till issued after the backup was made is never used twice. The first day-close report afterwards says that the till was restored from a backup and which numbers it continues from.
+
+A backup replaces everything, which is different from undoing Clear transaction history: to bring back a cleared batch of sales without touching the rest, use Reset archives (see [Data management](/help/data-management)). Also, a backup made before you erased a customer still holds that customer until it is deleted, and restoring it brings them back (see [Erase a customer](/help/data-management)).
+
 ## Restoring from a file
 
 Use this on a new till, or on one that replaces a broken till, with a backup file you copied off the old till (a USB stick, another computer, the Downloads folder).
@@ -44,14 +51,14 @@ A restored backup brings back products, sales, receipts, staff with their PINs, 
 
 ## Replacing a till
 
-A backup is the only way to bring sales, receipts, customers and staff PINs back on a new till: the cloud does not keep them on any plan. Keep a recent copy off the till. Managers see **No backup copied off this till in 7 days** in the status bar until a backup has been saved off it.
+A backup is the only way to bring sales, receipts, customers and staff PINs back on a new till: the cloud does not keep them on any plan. Keep a recent copy off the till. Managers see **No backup copied off this till in 7 days** in the status bar until a backup has been saved off it; the reminder disappears as soon as a copy is saved.
 
-Where the till keeps its backups (the newest 14):
+Where the till keeps its backups (the last 7 days by default):
 
 - macOS: `~/Library/Application Support/UniversalTill/backups`
 - Windows: `%LOCALAPPDATA%\UniversalTill\backups`
 - Linux: `~/.local/share/universal-till/backups` by default (installed from the `.deb` package: `/opt/unitill/data/backups`)
-- Android and iOS: inside the app, out of reach — use **Save to Downloads**.
+- Android and iOS: inside the app, out of reach — use **Save to Downloads**. On Android this opens the device's save screen: choose Downloads, or a USB drive if that is where your storage is.
 
 1. If the old till still starts: Settings → Backups → **Back up now**, then **Save to Downloads** next to the new backup, and copy the file to a USB stick or another computer.
 2. If it does not start but its disk can be read, take the newest file from its `backups` folder.
@@ -60,11 +67,17 @@ Where the till keeps its backups (the newest 14):
 
 Sales made on the old till after the backup was taken are not in it.
 
+## Deleting a backup and choosing how long backups are kept
+
+In Settings → Backups, a manager or admin sees **Delete** on every backup except the newest one. The till asks you to confirm, then removes that file for good. The newest backup has no Delete button and is never deleted, by hand or automatically. A cashier cannot delete backups.
+
+Under the list, **Keep backups for (days)** sets how many days of backups this till keeps (1 to 365, 7 by default). Each till has its own number, because each till has its own disk. A smaller number takes effect at the next backup, or the next daily clean-up; saving it never deletes anything by itself. Restoring a backup also brings back the number that was saved in it.
+
 ## Automatic clean-up
 
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:
 
-- Backups: the newest 14 are kept. Together they never take more than a quarter of the free disk space: the oldest go first, but the newest 3 are always kept.
+- Backups: the last 7 days are kept (you can change the number of days, see below). Older ones are deleted whenever a new backup is made and again once a day. The newest backup is always kept. Together they never take more than a quarter of the free disk space: the oldest go first, but the newest 3 are always kept.
 - The copy of your data set aside when you restore a backup: kept for as long as the law requires you to keep sales records; after that, only the newest 3 are kept, and none older than 30 days.
 - Issue reports that couldn't be sent: removed after 7 days.
 - Downloaded updates: removed after 7 days.

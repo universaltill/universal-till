@@ -68,16 +68,22 @@ async function holdRetry(page: Page, mode: Mode) {
   return { release, inFlight, posts: () => posts };
 }
 
-async function startCall(page: Page) {
-  await page.evaluate(() => {
-    (window as any).__r = { done: null, cancelled: 0 };
-    (window as any).utPostWithElevation('/api/buttons/recategorize', { item_id: 'x', category_id: '' },
-      (r: Response) => { r.text().then((t) => { (window as any).__r.done = r.status + ':' + t; }); },
-      () => { (window as any).__r.cancelled++; });
-  });
+async function startCall(page: Page, onDoneThrows = false) {
+  await page.evaluate((throws) => {
+    const w = window as any;
+    w.__r = { done: null, cancelled: 0, net: null, text: null, rejected: false };
+    w.utPostWithElevation('/api/buttons/recategorize', { item_id: 'x', category_id: '' },
+      (r: Response) => {
+        if (throws) throw new Error('boom-5298');
+        r.text().then((t) => { w.__r.done = r.status + ':' + t; });
+      },
+      () => { w.__r.cancelled++; })
+      // ut-docs#5298: a network failure rejects, tagged, and is never a cancel.
+      .catch((e: any) => { w.__r.rejected = true; w.__r.net = !!e.utNetworkError; w.__r.text = w.utElevationErrorText(e); });
+  }, onDoneThrows);
 }
 
-const rec = (page: Page) => page.evaluate(() => (window as any).__r as { done: string | null; cancelled: number });
+const rec = (page: Page) => page.evaluate(() => (window as any).__r as { done: string | null; cancelled: number; net: boolean | null; text: unknown; rejected: boolean });
 
 async function setup(page: Page) {
   await ensureOperator(page);
@@ -165,7 +171,7 @@ test.describe('utPostWithElevation retry in flight (ut-docs#5291)', () => {
     expect((await rec(page)).done).toBeNull();
   });
 
-  test('a network error clears the busy state, closes the dialog and calls onCancel', async ({ page }) => {
+  test('a retry network error rejects as outcome-unknown, never onCancel (ut-docs#5298)', async ({ page }) => {
     await setup(page);
     const h = await holdRetry(page, 'abort');
     await startCall(page);
@@ -173,8 +179,85 @@ test.describe('utPostWithElevation retry in flight (ut-docs#5291)', () => {
     await h.inFlight;
     h.release();
     await expect(dlg).toHaveJSProperty('open', false);
-    await expect.poll(async () => (await rec(page)).cancelled).toBe(1);
-    expect((await rec(page)).done).toBeNull();
+    await expect.poll(async () => (await rec(page)).rejected).toBe(true);
+    const r = await rec(page);
+    expect(r.cancelled).toBe(0);
+    expect(r.done).toBeNull();
+    expect(r.net).toBe(true);
+    expect(r.text).toBe('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
     await expect(page.locator('#elevation-modal form.htmx-request')).toHaveCount(0);
+    expect(h.posts()).toBe(2); // no replay
+  });
+
+  test('a network error on the first POST rejects tagged; no dialog opens (ut-docs#5298)', async ({ page }) => {
+    await setup(page);
+    let posts = 0;
+    await page.route(URL_GLOB, (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts++;
+      return route.abort();
+    });
+    await startCall(page);
+    await expect.poll(async () => (await rec(page)).rejected).toBe(true);
+    const r = await rec(page);
+    expect(r.net).toBe(true);
+    expect(r.cancelled).toBe(0);
+    expect(r.done).toBeNull();
+    await expect(page.locator('#elevation-modal')).not.toHaveJSProperty('open', true);
+    expect(posts).toBe(1);
+  });
+
+  test('an onDone that throws on the retry leg rejects untagged (ut-docs#5298)', async ({ page }) => {
+    await setup(page);
+    const h = await holdRetry(page, 'ok');
+    await startCall(page, true);
+    await submitPin(page);
+    await h.inFlight;
+    h.release();
+    await expect.poll(async () => (await rec(page)).rejected).toBe(true);
+    const r = await rec(page);
+    expect(r.net).toBe(false);
+    expect(r.text).not.toBe('The connection dropped before the till replied, so this may or may not have been done. Check before you try again.');
+    expect(r.cancelled).toBe(0);
+  });
+});
+
+// ut-docs#5300: the hand-inserted PIN dialog never gets an htmx:load, so its
+// OSK toggle stayed hidden. hasTouch enables osk.js `auto` mode at parse time.
+test.describe('utPostWithElevation OSK toggle (ut-docs#5300)', () => {
+  test.use({ hasTouch: true });
+
+  test('the PIN dialog shows a working OSK toggle', async ({ page }) => {
+    await setup(page);
+    await expect(page.locator('body')).toHaveAttribute('data-osk', /auto|on/);
+    await startCall(page);
+    const dlg = page.locator('#elevation-modal');
+    await expect(dlg).toHaveJSProperty('open', true);
+    await expect(dlg).toHaveAttribute('hx-disable', ''); // the fetch path, not an htmx swap
+    const toggle = dlg.locator('[data-osk-toggle]');
+    await expect(toggle).toBeVisible({ timeout: 1000 }); // short: a later htmx swap must not mask a regression
+    await toggle.click();
+    await expect(page.locator('#osk')).toBeVisible();
+    await expect(dlg.locator('input[name="override_pin"]')).toBeFocused();
+    await page.locator('#osk button[data-k="1"]').click();
+    await expect(dlg.locator('input[name="override_pin"]')).toHaveValue('1');
+    await toggle.click();
+    await expect(page.locator('#osk')).toBeHidden();
+    await dlg.locator('[data-action="close-closest"]').click();
+    await expect.poll(async () => (await rec(page)).cancelled).toBe(1);
+  });
+
+  test('a wrong-PIN re-prompt shows the toggle too', async ({ page }) => {
+    await setup(page);
+    const h = await holdRetry(page, 'reprompt');
+    await startCall(page);
+    await submitPin(page);
+    await h.inFlight;
+    h.release();
+    const dlg = page.locator('#elevation-modal');
+    await expect(dlg.locator('.login-error')).toBeVisible();
+    await expect(dlg.locator('[data-osk-toggle]')).toBeVisible({ timeout: 1000 });
+    await dlg.locator('[data-action="close-closest"]').click();
+    await expect.poll(async () => (await rec(page)).cancelled).toBe(1);
   });
 });

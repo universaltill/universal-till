@@ -33,6 +33,14 @@ func seedCannotSignCardPlugin(t *testing.T, dp *common.Deps, refundErr error) (r
 // reports a customer-selected tip_amount, ut-docs#2571).
 func seedCannotSignCardPluginAnswering(t *testing.T, dp *common.Deps, refundErr error, authorizeResp string) (refunds func() []map[string]any, authorizeIDs func() []string) {
 	t.Helper()
+	return seedCardPluginWithAnswerFunc(t, dp, refundErr, func(int) string { return authorizeResp })
+}
+
+// seedCardPluginWithAnswerFunc is the shared seeder: answer(n) is the
+// authorize answer for the n-th (1-based) authorize the plugin receives, so a
+// test can hand every sale its own provider reference (ut-docs#6438).
+func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error, answer func(n int) string) (refunds func() []map[string]any, authorizeIDs func() []string) {
+	t.Helper()
 	const pluginID = "com.universaltill.payment-demo"
 	mustExec := func(q string) {
 		t.Helper()
@@ -66,7 +74,7 @@ func seedCannotSignCardPluginAnswering(t *testing.T, dp *common.Deps, refundErr 
 			switch ev.Type {
 			case "payment.demopay.authorize":
 				gotAuthIDs = append(gotAuthIDs, ev.ID)
-				return json.RawMessage(authorizeResp), nil
+				return json.RawMessage(answer(len(gotAuthIDs))), nil
 			case "payment.demopay.refund":
 				var p map[string]any
 				_ = json.Unmarshal(ev.Payload, &p)

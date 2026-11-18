@@ -25,6 +25,9 @@ type ClearedBasket struct {
 	ActorID    string
 	LineCount  int
 	Total      money.Money
+	// ReceivedAt (migration 098, ut-docs#5769): see NoSaleEvent.ReceivedAt. Never set from a journal payload: the
+	// arrival time must be this till's own clock.
+	ReceivedAt string
 }
 
 // InsertClearedBasket writes one cleared_baskets row and returns its id.
@@ -95,11 +98,11 @@ func (r *POSRepo) ApplyJournaledClearedBasket(ctx context.Context, e ClearedBask
 		return false, errors.New("apply journaled cleared basket: TillID is required")
 	}
 	res, err := r.db.ExecContext(ctx, `
-INSERT INTO cleared_baskets (id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor)
-VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?)
+INSERT INTO cleared_baskets (id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor, received_at)
+VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))
 ON CONFLICT(id) DO NOTHING`,
 		e.ID, e.CreatedAt, e.CreatedAt, nullIfEmpty(e.RegisterID), e.TillID,
-		nullIfEmpty(e.ActorID), e.LineCount, e.Total.Minor())
+		nullIfEmpty(e.ActorID), e.LineCount, e.Total.Minor(), e.ReceivedAt)
 	if err != nil {
 		return false, fmt.Errorf("apply journaled cleared basket: %w", err)
 	}
@@ -108,4 +111,24 @@ ON CONFLICT(id) DO NOTHING`,
 		return false, fmt.Errorf("apply journaled cleared basket: %w", err)
 	}
 	return n == 1, nil
+}
+
+// clearedBasketTillKeyExpr is tillKeyExpr's rule over cleared_baskets (alias
+// c): till_id, else register_id, else the caller's own identity; its one '?'
+// is selfTill.
+const clearedBasketTillKeyExpr = `COALESCE(NULLIF(c.till_id, ''), NULLIF(c.register_id, ''), ?)`
+
+// ClearedBasketsForTill counts the baskets cleared before payment on one
+// (business date, till) and sums their totals (ut-docs#4721).
+func (r *POSRepo) ClearedBasketsForTill(ctx context.Context, day, tillID, selfTill string) (count int, total money.Money, err error) {
+	var minor int64
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(c.total_minor), 0)
+FROM cleared_baskets c
+WHERE c.local_date = date(?) AND `+clearedBasketTillKeyExpr+` = ?`,
+		day, selfTill, tillID).Scan(&count, &minor)
+	if err != nil {
+		return 0, money.FromMinor(0), fmt.Errorf("cleared baskets for till: %w", err)
+	}
+	return count, money.FromMinor(minor), nil
 }

@@ -117,6 +117,17 @@ else
   fail "(e) phantom checksums entry failed but didn't name it: $OUT"
 fi
 
+# (e2) ADR-0178: checksums.txt.sig is the signature OVER checksums.txt, so it
+# is never listed in it (like checksums.txt itself).
+d="$T/withsig"
+build_good_fixture "$d"
+printf 'ed25519 0123456789abcdef AAAA\n' > "$d/checksums.txt.sig"
+if run_check "$d/checksums.txt" "$d"; then
+  pass "(e2) checksums.txt.sig needs no checksums line"
+else
+  fail "(e2) checksums.txt.sig should be exempt: $OUT"
+fi
+
 # (f) no assets besides an (empty) checksums.txt -> non-zero. The empty
 # checksums.txt matters: without it the checker already fails on "checksums
 # file not found" and (f) would pass without exercising the empty-dir check.

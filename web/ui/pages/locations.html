@@ -9,7 +9,7 @@
   <h1>{{ T "locations.title" }}</h1>
 </div>
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 
 {{ template "list_header" (dict
      "searchID"       "locations-search"
@@ -24,13 +24,14 @@
   {{ if not .locations }}
   <p class="muted">{{ T "locations.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="locations-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <div class="list-scroll">
   <table class="table" id="locations-table">
     <thead>
       <tr>
         <th>{{ T "locations.col.name" }}</th>
         <th>{{ T "locations.col.status" }}</th>
-        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -41,18 +42,12 @@
           data-record-destructive-action="/api/locations/{{ .ID }}/active"
           data-field-name="{{ .Name }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td>{{ .Name }}</td>
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="locations-row-edit-hint"><span class="record-row-name">{{ .Name }}</span></button></td>
         <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
-        <td class="list-actions">
-          <button type="button" class="btn secondary btn-icon" data-record-edit
-                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-          </button>
-        </td>
       </tr>
       {{ end }}
       <tr id="locations-no-results" class="list-empty-row" hidden>
-        <td colspan="3">{{ T "common.no_results" }}</td>
+        <td colspan="2">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>
@@ -91,7 +86,7 @@
      any request is sent). */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "locations.deactivate_confirm" }}"
+      hx-confirm="{{ T "locations.deactivate_confirm" }}" data-confirm-ok="{{ T "locations.deactivate" }}"
       hx-boost="true" hx-target="#location-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"

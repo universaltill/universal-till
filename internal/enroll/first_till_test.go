@@ -241,6 +241,37 @@ func TestPairFirstTillParsesShopType(t *testing.T) {
 	}
 }
 
+// ut-docs#5332 (ADR-0166 amendment 2026-11-04): store.had_main_till counts
+// only as a JSON true; absent (older cloud) or any other type is false and
+// never fails the decode.
+func TestPairProfileHadMainTill(t *testing.T) {
+	cases := []struct {
+		name, store string
+		want        bool
+	}{
+		{"true", `{"name":"A","had_main_till":true}`, true},
+		{"false", `{"name":"A","had_main_till":false}`, false},
+		{"absent (old cloud)", `{"name":"A"}`, false},
+		{"string true", `{"name":"A","had_main_till":"true"}`, false},
+		{"number one", `{"name":"A","had_main_till":1}`, false},
+		{"null", `{"name":"A","had_main_till":null}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p PairProfile
+			if err := json.Unmarshal([]byte(tc.store), &p); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if p.HadMainTill != tc.want {
+				t.Fatalf("HadMainTill = %v, want %v", p.HadMainTill, tc.want)
+			}
+			if p.Name != "A" {
+				t.Fatalf("Name = %q, other fields must still parse", p.Name)
+			}
+		})
+	}
+}
+
 // ut-docs#5058 (ADR-0166 §3 amendment 2026-10-26): replace codes. A replace
 // code without replace_device_id answers 409 replace_confirm_required with
 // the old till and the store block; the wizard confirms by sending the same

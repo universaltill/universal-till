@@ -68,6 +68,18 @@ func pairDeps(t *testing.T, d *common.Deps) *atomic.Int32 {
 	return calls
 }
 
+// setenvPinnedStore pins this till's store id through the environment for
+// one test. Its enroll reset is registered before t.Setenv, so it runs after
+// the variable is restored: pairDeps' own reset runs first (cleanups are
+// LIFO) while the variable is still set, which re-pinned enroll's
+// process-wide store id for whichever test ran next (pages-shuffle seed
+// 1791386291628608919, ut-docs#5305).
+func setenvPinnedStore(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+}
+
 func TestEnrolPair_DeniedSessionGetsPromptCarryingCode(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	calls := pairDeps(t, d)
@@ -112,6 +124,49 @@ func TestEnrolPair_ElevatedPairsAndAuditsStoreOnly(t *testing.T) {
 	}
 	if !strings.Contains(payload, pairPageStore) || strings.Contains(payload, pairPageCode) || strings.Contains(payload, pairPageToken) {
 		t.Fatalf("audit payload = %q, want the store id only", payload)
+	}
+}
+
+// ut-docs#5333 (design-5058 N5): a Settings pair keeps the till's staff/PINs,
+// devices, stock and products, so it never creates the Next steps card and
+// never resets a "done". The one exception: a card the wizard deferred
+// ("deferred:<master>", its cloud commit failed on a brand-new till) is
+// promoted to "pending:<master>" by the pair the failure message asks for.
+// (Settings Pair ignores the answer's data.store block today, so the shop's
+// catalog_master plays no part here.)
+func TestEnrolPair_NextStepsOnlyPromotesDeferred(t *testing.T) {
+	for pre, want := range map[string]string{
+		"":              "", // absent stays absent
+		"done":          "done",
+		"pending:cloud": "pending:cloud",
+		"deferred:till": "pending:till",
+		"deferred:":     "pending:",
+	} {
+		t.Run("pre="+pre, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			_, cashierID := seedElevationUsers(t, d)
+			calls := pairDeps(t, d)
+			if pre != "" {
+				if err := d.Settings.Set(t.Context(), nextStepsKey, pre); err != nil { // settings-write:allow test
+					t.Fatal(err)
+				}
+			}
+			cashier := auth.User{ID: cashierID, Role: "cashier"}
+			rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}, "override_pin": {"555222"}}, &cashier)
+			if !strings.Contains(rec.Body.String(), "✅") || calls.Load() != 1 {
+				t.Fatalf("pair did not succeed: %d %s (cloud calls %d)", rec.Code, rec.Body.String(), calls.Load())
+			}
+			got, ok, err := d.Settings.Get(t.Context(), nextStepsKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want == "" && ok {
+				t.Fatalf("%s = %q after a Settings pair, want absent", nextStepsKey, got)
+			}
+			if want != "" && (!ok || got != want) {
+				t.Fatalf("%s = %q (present %v) after a Settings pair, want %q", nextStepsKey, got, ok, want)
+			}
+		})
 	}
 }
 
@@ -182,7 +237,7 @@ func TestEnrolPair_ReplicaWithoutStoreHasOwnMessage(t *testing.T) {
 // not spent and a new one will never work), not the generic failure
 // (ut-docs#4062).
 func TestEnrolPair_PinnedIdentityHasOwnMessage(t *testing.T) {
-	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+	setenvPinnedStore(t)
 	mux, _, d := newFullAuthDeps(t)
 	calls := pairDeps(t, d)
 
@@ -827,7 +882,7 @@ func TestEnrolPair_RefusalsComeBeforeConfirm(t *testing.T) {
 }
 
 func TestEnrolPair_PinnedRefusalComesBeforeConfirm(t *testing.T) {
-	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+	setenvPinnedStore(t)
 	mux, _, d := newFullAuthDeps(t)
 	calls := pairDeps(t, d)
 	if err := d.Settings.Set(t.Context(), "marketplace.token", pairOldToken); err != nil {
@@ -841,6 +896,25 @@ func TestEnrolPair_PinnedRefusalComesBeforeConfirm(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("cloud calls = %d, want 0", calls.Load())
+	}
+}
+
+// The pinned-refusal tests set UT_MARKETPLACE_STORE_ID; once each is done,
+// enroll must not still treat the store id as pinned, or the next test's
+// pairing is refused before its gate (pages-shuffle seed
+// 1791386291628608919 hit TestSettingsEndpoints_RoleMatrix, ut-docs#5305).
+func TestEnrolPair_PinnedRefusalLeavesNoPin(t *testing.T) {
+	for _, run := range []func(*testing.T){TestEnrolPair_PinnedRefusalComesBeforeConfirm, TestEnrolPair_PinnedIdentityHasOwnMessage} {
+		t.Run("", run)
+		assertNoEnrolPin(t)
+	}
+}
+
+func assertNoEnrolPin(t *testing.T) {
+	t.Helper()
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1/api"}}
+	if err := enroll.PairPrecheck(t.Context(), cfg, newMemKV(), pairPageCode); errors.Is(err, enroll.ErrPairIdentityPinned) {
+		t.Fatalf("store id still pinned after the pinned-refusal test: %v", err)
 	}
 }
 
@@ -865,5 +939,24 @@ func TestPairConfirmDisplayHelpers(t *testing.T) {
 	}
 	if got := unbreakableCode("K7QXM2RP"); got != "K7QXM2RP" {
 		t.Fatalf("unbreakableCode changed a code without hyphens: %q", got)
+	}
+}
+
+// ut-docs#5489: the Pair with a shop explanation names the buttons the
+// shop's cloud account really shows ("Pair a till", or "Pair again" for a
+// till that is already listed), never the retired "Add or re-pair a till".
+func TestSettingsPage_PairHelpNamesCloudButtons(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{"Pair a till", "Pair again"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings page lacks %q in the pair help", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(body), "add or re-pair a till") {
+		t.Error("settings page still names the retired \"Add or re-pair a till\" button")
 	}
 }

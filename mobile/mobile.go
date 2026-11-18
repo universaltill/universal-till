@@ -26,10 +26,11 @@
 // types (strings, ints, bools, []byte, error, and a few others — no generics,
 // no complex struct fields crossing directly) — this package's exported
 // surface is deliberately minimal for that reason: three lifecycle
-// functions plus a few setters; SetBluetoothBridge, SetDiscoveryBridge and
+// functions plus a few setters and reporters (SetKioskPinned,
+// ReportAndroidUpdateRefused/Accepted); SetBluetoothBridge, SetDiscoveryBridge and
 // SetKioskBridge take the exported interface types declared IN this package,
-// BluetoothBridge (ADR-0080), DiscoveryBridge (ut-docs#3218) and KioskBridge
-// (ut-docs#3466). Each must
+// BluetoothBridge (ADR-0080), DiscoveryBridge (ut-docs#3218), KioskBridge
+// (ut-docs#3466) and TapToPayBridge (ut-docs#3049, with TapToPayCloud). Each must
 // be declared here rather than merely referenced from its internal
 // package (internal/bluetooth, internal/discovery): gobind only binds
 // types from the package named on its command line, so a type from an unbound package compiles and builds a
@@ -68,13 +69,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/androidupdate"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 	"github.com/universaltill/universal-till/internal/server"
@@ -591,6 +595,110 @@ func SetKioskBridge(b KioskBridge) {
 // the check-in reports it as DeviceExtra's kiosk_pinned.
 func SetKioskPinned(pinned bool) {
 	kiosk.SetKioskPinned(pinned)
+}
+
+// ReportAndroidUpdateRefused tells the fleet roster that MainActivity refused
+// a downloaded update APK (ut-docs#5446, ADR-0179). Kotlin passes only the
+// closed reason class (UpdateLogic.RefuseClass.wire), never the detailed
+// reason; internal/androidupdate validates it and raises the keyed problem
+// that rides the heartbeat. It needs no running server.
+func ReportAndroidUpdateRefused(reasonClass string) {
+	androidupdate.ReportRefused(reasonClass)
+}
+
+// ReportAndroidUpdateAccepted resolves an earlier ReportAndroidUpdateRefused:
+// a later update APK passed the signer check.
+func ReportAndroidUpdateAccepted() {
+	androidupdate.ReportAccepted()
+}
+
+// TapToPayBridge is the gomobile-bind-visible mirror of devicepay.Bridge
+// (ut-docs#3049, ADR-0125 §3): the iOS shell's Tap to Pay on iPhone side,
+// implemented in Swift (ios/UniversalTill/TapToPay/TapToPayBridge.swift).
+// Declared here, not referenced from internal/devicepay, for the reason
+// BluetoothBridge documents — gobind binds only this package's types — and
+// kept structurally identical to devicepay.Bridge (mobile_test.go asserts
+// both directions) so SetTapToPayBridge passes it straight through. Every
+// method takes and returns strings only (JSON across the boundary).
+//
+// The web page never starts a payment or sees a result through this: the
+// chain is plugin → host fn (#6455) → devicepay → this bridge → Swift, so
+// the approval verdict never lives in JS (ADR-0125's rejected alternative).
+type TapToPayBridge interface {
+	Capabilities() string
+	Collect(requestJSON string) string
+	Cancel(idempotencyKey string)
+	Setup(provider string) string
+	ShowEducation(provider string) string
+}
+
+// SetTapToPayBridge registers the Swift Tap to Pay bridge with
+// internal/devicepay; nil un-registers it. The shell calls it only when the
+// build's UT_TAP_TO_PAY flag is on: with the scene .active, and nil on
+// .background (ADR-0125 §3e) — never on .inactive, which Apple's own
+// sheets cause mid-payment.
+func SetTapToPayBridge(b TapToPayBridge) {
+	devicepay.SetBridge(b) // a nil TapToPayBridge converts to a nil devicepay.Bridge
+}
+
+// TapToPayResolver is the gomobile-bind-visible mirror of
+// devicepay.Resolver (ut-docs#6533): the Android shell's "the operator says
+// the earlier payment was not charged". Separate from TapToPayBridge so the
+// iOS protocol is unchanged. One string in, a JSON SetupResult out.
+type TapToPayResolver interface {
+	ResolveUnknown(idempotencyKey string) string
+}
+
+// SetTapToPayResolver registers the Android resolver with internal/devicepay;
+// nil un-registers it. Registered and cleared together with the bridge.
+func SetTapToPayResolver(r TapToPayResolver) {
+	devicepay.SetResolver(r) // a nil TapToPayResolver converts to a nil devicepay.Resolver
+}
+
+// TapToPayCloud forwards one payment-broker call to ut-cloud
+// (internal/paybroker.Call: fixed op allow-list, this till's ADR-0116
+// device credential, 15 s bound) and returns the response body. It is an
+// in-process call from Swift only, never an HTTP route, so the
+// 0.0.0.0-bound server exposes nothing new; the credential never leaves Go.
+//
+// A failure's error text is a stable code Swift maps to a capability or
+// decline reason: the cloud's own error code (e.g. not_onboarded,
+// invalid_request, provider_unavailable), else http_<status>, or one of
+// op_not_allowed, not_enrolled, offline, response_too_large,
+// request_too_large, insecure_endpoint, failed.
+func TapToPayCloud(provider, op, bodyJSON string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), paybroker.Timeout)
+	defer cancel()
+	out, err := paybroker.Call(ctx, provider, op, []byte(bodyJSON))
+	if err != nil {
+		return "", errors.New(tapToPayErrorCode(err))
+	}
+	return string(out), nil
+}
+
+func tapToPayErrorCode(err error) string {
+	var he *paybroker.HTTPError
+	switch {
+	case errors.As(err, &he):
+		if he.Code != "" {
+			return he.Code
+		}
+		return "http_" + strconv.Itoa(he.Status)
+	case errors.Is(err, paybroker.ErrNotAllowed):
+		return "op_not_allowed"
+	case errors.Is(err, paybroker.ErrNotEnrolled):
+		return "not_enrolled"
+	case errors.Is(err, paybroker.ErrOffline):
+		return "offline"
+	case errors.Is(err, paybroker.ErrResponseTooLarge):
+		return "response_too_large"
+	case errors.Is(err, paybroker.ErrRequestTooLarge):
+		return "request_too_large"
+	case errors.Is(err, paybroker.ErrInsecureEndpoint):
+		return "insecure_endpoint"
+	default:
+		return "failed"
+	}
 }
 
 // defaultListenPort is the port a till with nothing persisted asks for

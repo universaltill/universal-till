@@ -3,6 +3,7 @@ id: translate-mode
 title: Übersetzungsmodus
 section: Ihr Geschäft einrichten
 order: 151
+public: false
 summary: Manager sehen, aus welchem Textschlüssel jede Beschriftung stammt, öffnen sie in Weblate und ändern die Formulierung für dieses Geschäft.
 keywords: [übersetzungsmodus, übersetzung, weblate, sprache, formulierung]
 ---

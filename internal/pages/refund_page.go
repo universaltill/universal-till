@@ -630,7 +630,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		needsManagerPIN := !authOff && !canPerform(d, r, "refund")
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
-			"theme":                d.CurrentState().Theme,
+			"theme":                d.ResolvedTheme(r),
 			"menuItems":            d.MenuSnapshot(),
 			"Sale":                 detail,
 			"Lines":                refundableLines(detail, returned, returnedByLine),
@@ -935,6 +935,22 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
 		}
+		// ut-docs#6438: hand the plugin the original sale's own provider
+		// reference(s) for this method, in payment order, so the refund never
+		// depends on per-sale plugin storage.
+		var originalPayments []map[string]any
+		for _, op := range detail.Payments {
+			if op.Method == method && op.TraceID != "" {
+				originalPayments = append(originalPayments, map[string]any{
+					"transaction_ref": op.TraceID,
+					"amount":          op.Amount,
+					"tip_amount":      op.TipAmount,
+				})
+			}
+		}
+		if len(originalPayments) > 0 {
+			refundPayload["original_payments"] = originalPayments
+		}
 		var requestID string
 		if refundAttemptID != "" {
 			// json.Marshal sorts map keys, so this hash is stable regardless
@@ -1000,6 +1016,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.fiscal_device_no_receipt", "refund", errors.New("fiscal device approved refund with no receipt evidence"))
 			return
 		}
+		// ut-docs#5803: record THIS till's register on the return exactly as the
+		// sale path does (pos_api.go completeTender: this till's identity, then
+		// EnsureRegister for the ambiguous case; "" stays NULL), otherwise the
+		// shift's expected-cash window (sales.register_id = shift register)
+		// never sees the cash refund.
+		refundRegisterID := tillRegisterIDBestEffort(r.Context(), d)
+		if refundRegisterID == "" {
+			if regID, rerr := repo.EnsureRegister(r.Context()); rerr == nil {
+				refundRegisterID = regID
+			}
+		}
 		saleInput := pos.SaleInput{
 			// SaleID carries forward whatever fiscalStartCarrier minted
 			// above (empty if fiscal.sign.start has no subscriber) — ADR-0077
@@ -1008,6 +1035,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			SaleID:                 fiscalStartCarrier.SaleID,
 			SaleType:               "return",
 			CashierID:              actorID,
+			RegisterID:             refundRegisterID,
 			ActorID:                actorID,
 			Currency:               detail.Currency,
 			TaxInclusive:           inclusive,
