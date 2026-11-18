@@ -183,9 +183,12 @@ if [ -f "${ROOT}/go.mod" ] && [ -d "${ROOT}/internal/buildinfo" ]; then
     fi
     rm -f -- "${TMPDIR:-/tmp}/appstore-guard-go.$$"
     # The plugins package is too heavy for the fixture copies; the real tree
-    # runs it.
+    # runs it. Every TestAppStore_ test, not a hand-picked list: the release
+    # workflow runs this guard, not the whole suite, so the loader, supervisor,
+    # update-checker and pre-network gates must be exercised here too (a
+    # loader gate neutralised with `if false &&` kept the short list green).
     if [ "${ROOT}" = "${ROOT_DIR}" ]; then
-      if ! (cd "${ROOT}" && go test ./internal/plugins -run 'TestRefuseCodeRuntime_ByChannel|TestRefuseCodeCanonicalType|TestAppStore_PersistManifestRefusesCodeUnlessBundledVerified|TestAppStore_InstallBundleBackstopRefusesWasmManifest|TestAppStore_ImportRefusesCodePlugin|TestAppStore_RollbackRefusesCodeTargetKeepsRow' -count=1 >"${TMPDIR:-/tmp}/appstore-guard-go.$$" 2>&1); then
+      if ! (cd "${ROOT}" && go test ./internal/plugins -run 'TestRefuseCodeRuntime_ByChannel|TestRefuseCodeCanonicalType|TestAppStore_' -count=1 >"${TMPDIR:-/tmp}/appstore-guard-go.$$" 2>&1); then
         report behaviour "go test ./internal/plugins (the App Store gate tests) fails:"
         sed 's/^/     /' "${TMPDIR:-/tmp}/appstore-guard-go.$$" >&2
       fi

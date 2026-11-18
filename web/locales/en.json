@@ -1718,6 +1718,7 @@
   "plugins.manage.enabled": "Enabled",
   "plugins.manage.error.bundled_main_till_controls": "This till follows a main till. The main till switches built-in plugins on and off; change it there.",
   "plugins.manage.error.bundled_no_uninstall": "Built-in plugins can't be uninstalled. Turn this one off instead.",
+  "plugins.manage.error.bundled_trust_fixed": "A built-in plugin's trust level can't be changed.",
   "plugins.manage.error.replica_use_primary": "This till follows a main till — manage plugins on the main till.",
   "plugins.manage.error.revoked": "The marketplace has withdrawn this plugin version, so it can't be turned on. Update the plugin to another version.",
   "plugins.manage.group.built_in": "Built in",

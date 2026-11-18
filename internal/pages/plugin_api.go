@@ -127,6 +127,14 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ADR-0194: "system" is what marks a plugin that ships inside the app
+		// (the Built in group, the uninstall refusal, the set a main till
+		// serves to its satellites). It is not a level a manager changes.
+		if isBundledInstalled(r.Context(), d, pluginID) {
+			common.LocalizedError(w, r, http.StatusConflict, "plugins.manage.error.bundled_trust_fixed")
+			return
+		}
+
 		if err := plugins.UpdatePluginTrustLevel(r.Context(), d.Db, pluginID, trustLevel); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.trust_update_failed", "plugin_trust_update", err)
 			return
