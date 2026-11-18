@@ -221,3 +221,11 @@ SR span without a reload, and `lastElementChild` went back to `.tile-price`.
 Real touch or long-press, WebKit lane, German or longest-locale tile names with a badge, light or
 dark at 360 (only 390 for themes), kiosk self-order surface (it does not use `.pos-container`
 tiles).
+
+### Dev round 2 (2026-11-18)
+
+Fixes for the four "To do before merge" items:
+1. `web/public/app.js`: the badge IIFE now exposes `window.UT.applyTileBadges` (merging into the existing `window.UT`), and `submitPayments` calls it (guarded) right after its raw `basket.outerHTML = text`, so badges clear after a split-tender sale.
+2. `e2e/tests/phone-sell-3059.spec.ts`: the 768/1024/1280 cases assert `toHaveCount(1)` on `.tile-qty-badge` and `.tile-qty-sr` before the `toBeHidden()` checks.
+3. `basket.tile_in_basket` is now `", %d in basket"` (en.json); the en.meta.json description says the string starts with a comma and space separator and is read right after the price. No punctuation in JS.
+4. The "remove clears" test now removes the line on the live page (basket sheet, line void), closes the sheet, and asserts both `.tile-qty-badge` and `.tile-qty-sr` have count 0 with no reload. Mutation proof: deleting the `badge.remove(); sr.remove();` else-branch in app.js turns this test red (25 pass, 1 fail); restored, 26/26 pass.

@@ -753,6 +753,8 @@ window.utCurrency = (function(){
         var basket = document.getElementById('basket');
         if (basket) {
           basket.outerHTML = text;
+          // Raw swap, not htmx: no afterSettle, so re-apply the tile badges (ut-docs#3241).
+          if (window.UT && typeof window.UT.applyTileBadges === 'function') window.UT.applyTileBadges();
         }
         // ut-docs#921 review finding: a rejected tender (underpayment,
         // insufficient stock, the fiscal hard gate, ...) renders as a 200
@@ -1389,6 +1391,8 @@ document.addEventListener('ut-basket-resync', function(){
     queued = true;
     setTimeout(function(){ queued = false; apply(); }, 0);
   }
+  window.UT = window.UT || {};
+  window.UT.applyTileBadges = schedule;
   document.addEventListener('htmx:afterSettle', schedule);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', schedule);
   else schedule();

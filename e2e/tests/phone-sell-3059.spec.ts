@@ -344,7 +344,8 @@ test.describe('in-basket tile badge (ut-docs#3241)', () => {
     const id = (await firstTile(page).getAttribute('data-item-id'))!;
     const counts = JSON.parse((await page.locator('#basket').getAttribute('data-item-counts'))!);
     expect(counts).toEqual({ [id]: 2 });
-    await expect(firstTile(page).getByText('2 in basket')).toHaveCount(1);
+    // Exact text pins the translatable separator (", %d in basket").
+    await expect(firstTile(page).locator('.tile-qty-sr')).toHaveText(', 2 in basket');
     expect(await firstTile(page).evaluate((b) => b.lastElementChild!.className)).toContain('tile-qty-sr');
     // a tap on the badge's corner is still a tap on the tile
     expect(await badge.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none');
@@ -365,6 +366,22 @@ test.describe('in-basket tile badge (ut-docs#3241)', () => {
     ]);
     await page.locator('.basket-sheet-close').click();
     await expect(badge).toHaveText('2');
+
+    // Remove the line on the live page (no reload): count drops to 0, so the
+    // badge and the screen-reader span must both be removed from the tile.
+    await page.locator('.basket-phonebar').click();
+    // The line's remove control (a void, via the shrinkage sheet) drops the item's count to 0.
+    await page.locator('#basket tbody tr').first().locator('.shrinkage-remove-toggle').click();
+    await Promise.all([
+      page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/api/pos/remove')),
+      page.getByRole('button', { name: 'Void', exact: true }).click(),
+    ]);
+    await expect(page.locator('#basket')).toHaveAttribute('data-item-counts', '{}');
+    await page.locator('.basket-sheet-close').click();
+    await expect(firstTile(page).locator('.tile-qty-badge')).toHaveCount(0);
+    await expect(firstTile(page).locator('.tile-qty-sr')).toHaveCount(0);
+    await expect(page.locator('.tile-qty-badge')).toHaveCount(0);
+    expect(await firstTile(page).evaluate((b) => b.lastElementChild!.className)).not.toContain('tile-qty-sr');
 
     await page.request.post('/api/pos/reset');
     await page.goto('/');
@@ -436,6 +453,11 @@ test.describe('in-basket tile badge (ut-docs#3241)', () => {
       await page.goto('/');
       await tapFirst(page);
       await expect(page.locator('#basket')).toHaveAttribute('data-item-counts', /\{"/);
+      // The elements exist (so the test proves CSS hides them, not that JS never ran).
+      await expect(firstTile(page).locator('.tile-qty-badge')).toHaveCount(1);
+      await expect(firstTile(page).locator('.tile-qty-sr')).toHaveCount(1);
+      await expect(page.locator('.tile-qty-badge')).toHaveCount(1);
+      await expect(page.locator('.tile-qty-sr')).toHaveCount(1);
       await expect(page.locator('.tile-qty-badge').first()).toBeHidden();
       await expect(page.locator('.tile-qty-sr').first()).toBeHidden();
     });
