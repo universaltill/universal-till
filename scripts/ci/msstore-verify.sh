@@ -21,8 +21,10 @@
 #
 # Env: REPO (default universaltill/universal-till), SIGN_PUBLISHER and
 # SIGN_CA_BUNDLE (sign-exe.sh), UT_RELEASE_KEYS_HEX, SOAK_CHECKS (3),
-# SOAK_INTERVAL seconds (60). Overrides for tests: SIGN_EXE, SOAK_CMD,
-# SILENT_CMD, SIG_VERIFY_CMD, INSTALLER_NSI.
+# SOAK_INTERVAL seconds (60). Overrides for tests, honoured only with
+# UT_MSSTORE_TEST=1 (set one without it and the run fails closed, naming the
+# variable, ut-docs#6636): SIGN_EXE, SOAK_CMD, SILENT_CMD, SIG_VERIFY_CMD,
+# INSTALLER_NSI.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,9 +32,6 @@ tag_in=${1:?usage: msstore-verify.sh <tag> <outdir>}
 out=${2:?usage: msstore-verify.sh <tag> <outdir>}
 REPO="${REPO:-universaltill/universal-till}"
 EXPECT_SIGNER="TASK RUNNER TECHNOLOGY LTD"
-SIGN_EXE="${SIGN_EXE:-${ROOT_DIR}/packaging/windows/sign-exe.sh}"
-SOAK_CMD="${SOAK_CMD:-${ROOT_DIR}/scripts/ci/msstore-soak.sh}"
-SILENT_CMD="${SILENT_CMD:-${ROOT_DIR}/scripts/ci/check-installer-silent.sh}"
 
 url="" sha="" size="" signer="" silent=false verdict=false reason="not finished"
 write_result() {
@@ -55,6 +54,19 @@ write_result() {
 }
 die() { reason="$1"; echo "::error::msstore-verify: $1" >&2; write_result; exit 1; }
 tag=""
+
+# Test overrides: honoured only with UT_MSSTORE_TEST=1, never silently ignored.
+if [ -n "${UT_MSSTORE_TEST:-}" ] && [ "$UT_MSSTORE_TEST" != 1 ]; then
+  die "UT_MSSTORE_TEST must be 1 or unset"
+fi
+for v in SIGN_EXE SOAK_CMD SILENT_CMD SIG_VERIFY_CMD INSTALLER_NSI; do
+  if [ -n "${!v+x}" ] && [ "${UT_MSSTORE_TEST:-}" != 1 ]; then
+    die "${v} is a test override and is honoured only with UT_MSSTORE_TEST=1 (ut-docs#6636)"
+  fi
+done
+SIGN_EXE="${SIGN_EXE:-${ROOT_DIR}/packaging/windows/sign-exe.sh}"
+SOAK_CMD="${SOAK_CMD:-${ROOT_DIR}/scripts/ci/msstore-soak.sh}"
+SILENT_CMD="${SILENT_CMD:-${ROOT_DIR}/scripts/ci/check-installer-silent.sh}"
 
 [[ "$tag_in" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]] || die "tag '${tag_in}' is not vX.Y.Z"
 version="${BASH_REMATCH[1]}"

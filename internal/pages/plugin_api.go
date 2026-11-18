@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -126,6 +127,14 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ADR-0194: "system" is what marks a plugin that ships inside the app
+		// (the Built in group, the uninstall refusal, the set a main till
+		// serves to its satellites). It is not a level a manager changes.
+		if isBundledInstalled(r.Context(), d, pluginID) {
+			common.LocalizedError(w, r, http.StatusConflict, "plugins.manage.error.bundled_trust_fixed")
+			return
+		}
+
 		if err := plugins.UpdatePluginTrustLevel(r.Context(), d.Db, pluginID, trustLevel); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.trust_update_failed", "plugin_trust_update", err)
 			return
@@ -180,6 +189,16 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		if req.ListingID == "" {
 			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
+			return
+		}
+
+		// ADR-0194 (Apple 2.5.2): the App Store build never installs a code
+		// plugin from the marketplace; the first-party payment plugins are
+		// bundled and switched on instead. Before any status record, terms
+		// gate or network use.
+		listingType, codeErr := refuseCodeInstall(d, req.ListingID)
+		if codeErr != nil {
+			writeInstallResponse(w, http.StatusForbidden, false, "", plugins.CodeInstallRefusedMsgID)
 			return
 		}
 
@@ -242,11 +261,12 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
-			ListingID:  req.ListingID,
-			MerchantID: effCfg.Marketplace.ClientID,
-			StoreID:    effCfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
-			DeviceArch: systemArch,
+			ListingID:     req.ListingID,
+			CanonicalType: listingType,
+			MerchantID:    effCfg.Marketplace.ClientID,
+			StoreID:       effCfg.Marketplace.StoreID,
+			DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+			DeviceArch:    systemArch,
 			OnStateChange: func(state plugins.InstallLifecycleState) {
 				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 					ListingID: req.ListingID,
@@ -381,11 +401,17 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// primary-authoritative. Nothing in the sync pull reconciles a
 		// locally flipped is_active back, so a replica-local toggle would
 		// be permanent silent drift from the shop's set — reject it.
+		pluginID := r.PathValue("id")
 		if d.SyncPrimaryURL(ctx) != "" {
+			// A bundled plugin's switch is the main till's: it travels to this
+			// satellite with the plugin set (convergePluginSet). Say so.
+			if isBundledInstalled(ctx, d, pluginID) {
+				writeReplicaGuard(w, "plugins.manage.error.bundled_main_till_controls")
+				return
+			}
 			writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
 			return
 		}
-		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
@@ -618,6 +644,14 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// ADR-0194: a plugin that ships inside the app is switched off, never
+		// uninstalled (its keys and settings would be deleted with the rows
+		// and the next boot would only reinstall it, disabled).
+		if isBundledInstalled(ctx, d, pluginID) {
+			writeReplicaGuard(w, "plugins.manage.error.bundled_no_uninstall")
+			return
+		}
+
 		// Remove DB rows (FK cascade removes entries/settings/hooks/permissions),
 		// record the uninstall audit event and remove the installed files
 		// (best-effort; the DB is the source of truth) — under the per-plugin
@@ -718,6 +752,14 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 		return "", "", ErrPluginUpdateNoListing
 	}
 
+	// ADR-0194: a bundled code plugin moves only with an app release; no
+	// update ever reaches the marketplace on the App Store channel. Refused
+	// before the rollback snapshot below, so a refusal stages nothing.
+	listingType, codeErr := refuseCodeInstall(d, listingID)
+	if codeErr != nil {
+		return "", "", codeErr
+	}
+
 	// Keep the current version available for rollback.
 	rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 	sourcePath := filepath.Join(paths.Plugins(), pluginID, currentPlugin.Version)
@@ -742,11 +784,12 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 		return "", "", ErrPluginUpdateNoMarketplace
 	}
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
-		ListingID:  listingID,
-		MerchantID: effCfg.Marketplace.ClientID,
-		StoreID:    effCfg.Marketplace.StoreID,
-		DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
-		DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		ListingID:     listingID,
+		CanonicalType: listingType,
+		MerchantID:    effCfg.Marketplace.ClientID,
+		StoreID:       effCfg.Marketplace.StoreID,
+		DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+		DeviceArch:    fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		OnStateChange: func(state plugins.InstallLifecycleState) {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 				ListingID: listingID,
@@ -920,6 +963,11 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 				writeReplicaGuard(w, "plugins.manage.error.revoked")
 				return
 			}
+			if errors.Is(err, plugins.ErrCodePluginRefused) {
+				// ADR-0194: no code plugin is rolled back on the App Store build.
+				writeReplicaGuard(w, plugins.CodeInstallRefusedMsgID)
+				return
+			}
 			http.Error(w, fmt.Sprintf("Rollback failed: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -1060,6 +1108,13 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 		if trustLevel == "" {
 			trustLevel = "untrusted"
 		}
+		// "system" is the bundled first-party level only bundled.Sync sets
+		// (it drives the Built in group and the uninstall refusal); an
+		// import never gets it, nor any value outside the known levels.
+		if !slices.Contains([]string{"untrusted", "verified", "trusted"}, trustLevel) {
+			http.Error(w, "invalid trust_level", http.StatusBadRequest)
+			return
+		}
 
 		// Get uploader (TODO: extract from session)
 		uploader := r.FormValue("uploader")
@@ -1132,7 +1187,10 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			// gets a translated message, just without that specific detail.
 			// ADR-0158: a till with no marketplace key refuses every
 			// bundle; say so rather than blaming the file.
-			if errors.Is(err, plugins.ErrNoMarketplaceKey) {
+			if errors.Is(err, plugins.ErrCodePluginRefused) {
+				// ADR-0194: no imported code plugin on the App Store build.
+				common.LogAndLocalizedError(w, r, http.StatusForbidden, plugins.CodeInstallRefusedMsgID, "plugin_import_code_refused", err)
+			} else if errors.Is(err, plugins.ErrNoMarketplaceKey) {
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_no_key", "plugin_import_no_key", err)
 			} else if errors.Is(err, plugins.ErrManifestUnsigned) {
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_unsigned", "plugin_import_unsigned", err)

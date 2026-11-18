@@ -1634,6 +1634,13 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 // Ed25519 verification, same persist; the gate only adds a refusal before
 // anything is persisted.
 func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck) (string, error) {
+	// ADR-0194 (Apple 2.5.2): a cloud directive, a replica convergence or an
+	// auto-install never fetches a code plugin on the App Store build. Before
+	// any status write or network use; the bundled set is the only code there.
+	listingType, codeErr := refuseCodeInstall(d, listingID)
+	if codeErr != nil {
+		return "", codeErr
+	}
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 
 	// One read of the listing's existing record feeds two protections below:
@@ -1732,13 +1739,14 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 		return "", err
 	}
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
-		ListingID:  listingID,
-		Version:    version,
-		MerchantID: effCfg.Marketplace.ClientID,
-		StoreID:    effCfg.Marketplace.StoreID,
-		DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
-		DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-		PreInstall: pre,
+		ListingID:     listingID,
+		CanonicalType: listingType,
+		Version:       version,
+		MerchantID:    effCfg.Marketplace.ClientID,
+		StoreID:       effCfg.Marketplace.StoreID,
+		DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+		DeviceArch:    fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		PreInstall:    pre,
 		OnStateChange: func(state plugins.InstallLifecycleState) {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{ListingID: listingID, State: state})
 		},
@@ -1874,6 +1882,23 @@ func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (st
 	// not a "/, \ or .." check.
 	if err := plugins.ValidatePluginID(pluginID); err != nil {
 		return "", fmt.Errorf("invalid plugin id: %w", err)
+	}
+	// ADR-0194: a plugin that ships inside the app is switched off, never
+	// uninstalled, by a cloud directive or a satellite's prune loop as by the
+	// uninstall API: an uninstall would delete the shop's keys and settings,
+	// and the next boot would only reinstall it, disabled (a UK shop would
+	// then have no VAT plugin switched on).
+	if isBundledInstalled(ctx, d, pluginID) {
+		if err := data.NewPluginRepo(d.Db).SetPluginActive(ctx, nil, pluginID, false); err != nil {
+			return "", fmt.Errorf("switch off built-in plugin %s: %w", pluginID, err)
+		}
+		if err := plugins.NewInstallStatusStore(d.Db).ClearForPlugin(ctx, pluginID); err != nil {
+			log.Printf("warning: failed to clear install status for %s: %v", pluginID, err)
+		}
+		if err := d.ReloadPlugins(ctx); err != nil {
+			log.Printf("warning: failed to reload plugin manager after switching off %s: %v", pluginID, err)
+		}
+		return "switched off built-in " + pluginID, nil
 	}
 	// DB rows and files under the per-plugin lock (ut-docs#3082).
 	if err := plugins.UninstallPluginTree(ctx, d.Db, paths.Plugins(), pluginID); err != nil {
