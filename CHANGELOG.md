@@ -13,14 +13,16 @@ Release notes for the till. Versions come from the release tag
   capped backoff while offline) and refreshes its record on every start. It
   also reports which software version or plugin changed and when (a small
   local queue, 200 events at most, sent with the next check-in; there is no
-  shutdown signal). The setup wizard's last screen and Settings → Till
-  registration → Cloud record tell the owner exactly what is sent, show
-  whether the till is registered and when the cloud last answered, and have
-  a **Stop sending** switch. The "Register this till" opt-in, the Register
+  shutdown signal). The setup wizard's last screen and Settings → Privacy
+  tell the owner exactly what is sent, show whether the till is registered
+  and when the cloud last answered, and have a **Send usage facts** switch
+  (the control moved from "Till registration → Cloud record" so the notice's
+  "Settings > Privacy, switch off Send usage facts" is literally true; the
+  check-in now also sends the build's release channel, which the notice
+  always listed). The "Register this till" opt-in, the Register
   now button and the terms box in the wizard are gone. A source build, a
   demo, a test till (`UT_NEVER_REGISTER=1`, set by every CI and e2e
-  launcher) and a shop in a refused country never register. The notice
-  wording is a draft awaiting owner approval.
+  launcher) and a shop in a refused country never register.
 
 - **Camera barcode scan on iPhone and iPad (ut-docs#696).** The sale
   screen's camera-scan button now shows on every device. Where the browser

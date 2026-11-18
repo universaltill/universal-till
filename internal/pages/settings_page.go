@@ -440,6 +440,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
 		"subscription":         !isManager,      // ut-docs#2569, ADR-0060 §6
+		"settings-privacy":     !isManager,      // ADR-0200: the Privacy card is managers-only
 		"settings-diagnostics": !isManager,      // ADR-0092 §7, ut-docs#2169
 		"settings-menulayout":  !isManager,
 		"settings-payments":    !hasPayMethods,
@@ -996,7 +997,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
 			// ut-docs#4720: the cloud-terms accept step / accepted line.
 			"terms": termsView(r.Context(), d, locale),
-			// ADR-0200: the Cloud record card (status, notice, Stop sending).
+			// ADR-0200: the Privacy card (status, notice, Send usage facts switch).
 			"registrationCard": registrationCardView(r, d, isManager),
 			// ut-docs#5145: the cloud will not re-register this till yet.
 			"registerBlocked": registerBlockedView(r, d, locale),
@@ -2250,7 +2251,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// ADR-0200: the Cloud record card's Stop sending switch.
+	// ADR-0200: the Privacy card's Send usage facts switch.
 	registerRegistrationStop(mux, d, posRepo)
 	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 

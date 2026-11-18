@@ -1251,9 +1251,9 @@
       {{ end }}
       {{ if registrationnoticepending }}{{ if allowed "settings" }}
       <!-- ADR-0200 (ut-docs#6559): a till set up before the notice existed
-           shows it once, in Settings, Cloud record. A link, never a modal;
+           shows it once, in Settings > Privacy. A link, never a modal;
            the till registers only after the notice was shown. -->
-      <a class="sb-item sb-registration-notice" href="/settings#registration" data-testid="sb-registration-notice"><span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span> {{ T "registration.notice.prompt" }}</a>
+      <a class="sb-item sb-registration-notice" href="/settings#settings-privacy" data-testid="sb-registration-notice"><span class="btn-ico" aria-hidden="true">{{ icon "notice-info" }}</span> {{ T "registration.notice.prompt" }}</a>
       {{ end }}{{ end }}
       {{ with releasenoticeversion }}{{ if allowed "settings" }}
       <!-- ut-docs#3091: once after an update — a non-blocking notice, never a

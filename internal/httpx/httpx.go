@@ -124,7 +124,7 @@ var baseFuncs = template.FuncMap{
 	"releasenoticeversion": releasenotes.NoticeVersion,
 	// registrationnoticepending: a set-up till has not shown the "what this
 	// till tells us" notice yet (ADR-0200, ut-docs#6559): the status bar
-	// offers a link to Settings, Cloud record, where it is shown. Cleared the
+	// offers a link to Settings > Privacy, where it is shown. Cleared the
 	// moment the notice is shown.
 	"registrationnoticepending": enroll.NoticePending,
 	// updatedownloadlink: whether the status-bar chip's fallback (when

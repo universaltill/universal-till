@@ -1581,8 +1581,13 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		"name":      name,
 		"version":   buildinfo.Version,
 		"platform":  runtime.GOOS + "/" + runtime.GOARCH,
-		"role":      role,
-		"health":    health,
+		// The release channel the notice lists (checkin-notice-v2): the
+		// build-time install channel of ADR-0194 (sideload/play/appstore/
+		// direct), a build constant, never shop data. Set here, before
+		// DeviceExtra, so a hook value cannot override it.
+		"channel": string(buildinfo.CurrentChannel()),
+		"role":    role,
+		"health":  health,
 	}
 	// The cloud merges/retires this machine's older device rows by it
 	// (ut-docs#2802), and a main till's row needs one too (ut-docs#3307):
@@ -1608,7 +1613,7 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// the shop name nor the till name. A paid till, or one the operator
 	// claimed or paired (which clears the mark), keeps today's behaviour.
 	// ut-docs#6613/#6618: such a till (and an auto-registered one whose shop
-	// pressed "Stop sending", whatever opened the check-in window) sends an
+	// switched off "Send usage facts", whatever opened the check-in window) sends an
 	// ALLOW-LIST, never "everything the pages hook knows": the notice says
 	// no staff, settings, items or LAN address leave the till. Applied after
 	// the isReplica/diagnostics steps below so nothing later can add a key.
