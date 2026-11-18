@@ -950,5 +950,7 @@
   "elevation.summary.backup_cloud_key_enter": {"description": "Sentence in the manager-PIN prompt before the saved key is used.", "review": "standard"},
   "setup.cloud.restore_hint": {"description": "Hint on the setup step that shows the connected shop, after this till replaced another main till.", "review": "standard"},
   "setup.cloud.restore_link": {"description": "Link in that hint to the cloud restore page.", "review": "standard"},
-  "setup.next_steps.cloud_restore": {"description": "Next-steps line on the home screen of an empty main till whose plan includes cloud backups.", "review": "standard"}
+  "setup.next_steps.cloud_restore": {"description": "Next-steps line on the home screen of an empty main till whose plan includes cloud backups.", "review": "standard"},
+  "pos.toast.payment_outcome_unknown": {"description": "Error toast on the till when a card payment may have been charged but the reader could not confirm it: tells the cashier to tap Pay again to settle it and not to take another payment.", "review": "standard"},
+  "selforder.checkout.outcome_unknown": {"description": "Message on the self-order kiosk when the customer's card payment could not be confirmed: sends them to the cashier and tells them not to pay again.", "review": "standard"}
 }

@@ -700,6 +700,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		saleID, err := completeTender(r.Context(), d, eng, repo, saleInput, saleInput.Payments, "kiosk", kitchenDeltaFilter(lines))
 		if err != nil {
 			var declined *paymentDeclinedError
+			var unknown *paymentOutcomeUnknownError
 			var noReceipt *fiscalDeviceNoReceiptError
 			var deviceRequired *fiscalDeviceRequiredError
 			var fiscalNC *fiscalNeverConfiguredError
@@ -711,6 +712,11 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
+			case errors.As(err, &unknown):
+				// ut-docs#6600: the card may have been charged; an anonymous
+				// customer is sent to the counter, never invited to pay again.
+				status = http.StatusConflict
+				msgKey = "selforder.checkout.outcome_unknown"
 			case errors.As(err, &noReceipt), errors.As(err, &deviceRequired):
 				// ut-docs#1779/#1768: the device may already have taken the
 				// customer's money before answering with no receipt (or, for
