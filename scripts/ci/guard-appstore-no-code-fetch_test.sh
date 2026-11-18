@@ -131,9 +131,9 @@ python3 -I - "${REPO}/internal/buildinfo/channel.go" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-old = "func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }"
+old = "func (c InstallChannel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }"
 assert old in s
-open(p, "w").write(s.replace(old, "func (c Channel) CodePluginInstallAllowed() bool { return true }"))
+open(p, "w").write(s.replace(old, "func (c InstallChannel) CodePluginInstallAllowed() bool { return true }"))
 PY
 expect_fail behaviour "CodePluginInstallAllowed forced to return true"
 reset_tree
@@ -141,8 +141,9 @@ python3 -I - "${REPO}/internal/buildinfo/channel.go" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-old = "func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }"
-open(p, "w").write(s.replace(old, "func (c Channel) CodePluginInstallAllowed() bool { return c != ChannelAppStore && c != ChannelDirect }"))
+old = "func (c InstallChannel) CodePluginInstallAllowed() bool { return c != ChannelAppStore }"
+assert old in s
+open(p, "w").write(s.replace(old, "func (c InstallChannel) CodePluginInstallAllowed() bool { return c != ChannelAppStore && c != ChannelDirect }"))
 PY
 expect_fail behaviour "CodePluginInstallAllowed refusing another channel"
 
