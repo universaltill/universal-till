@@ -494,3 +494,21 @@ func TestVoucherSlipFor_BalanceWithIssuedAndBrowser(t *testing.T) {
 		t.Errorf("unknown balance printed %q", b.Balance)
 	}
 }
+
+// ut-docs#6044 × ut-docs#6152: the browser-print slip carries the same
+// "Balance on <date>" row as the paper slip, and none when unknown/equal.
+func TestBrowserVoucherSlipFor_BalanceRow(t *testing.T) {
+	_, dp := newVoucherImportTestMux(t)
+	now := time.Now()
+	v := data.Voucher{ID: "GV-A", OriginalAmountMinor: 2500, BalanceMinor: 2500}
+	ctx := context.Background()
+	got := browserVoucherSlipFor(ctx, dp, v, slipBalance{Minor: 1000, Known: true}, now)
+	if want := httpx.FormatMoneyDisplay(1000, httpx.DefaultLocale()); !strings.Contains(got.Balance, want) || !strings.Contains(got.Balance, httpx.FormatDateLatin(now.Local(), httpx.DefaultLocale())) {
+		t.Errorf("browser slip balance = %q, want the date and %q", got.Balance, want)
+	}
+	for name, b := range map[string]slipBalance{"unknown": {Minor: 1000}, "equal": {Minor: 2500, Known: true}} {
+		if s := browserVoucherSlipFor(ctx, dp, v, b, now); s.Balance != "" {
+			t.Errorf("%s: browser slip balance = %q, want empty", name, s.Balance)
+		}
+	}
+}
