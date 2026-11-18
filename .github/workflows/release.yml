@@ -1521,6 +1521,20 @@ jobs:
           gh workflow run ios-testflight.yml --ref "$TAG" -f version="${TAG#v}" \
             || echo "::warning::could not dispatch ios-testflight.yml for $TAG; run it by hand"
 
+  # ut-docs#6407: a stable, direct download URL for Microsoft Partner Center.
+  # Not gating: a failure here never blocks or un-publishes the release; fix
+  # and re-run Publish installer for the tag.
+  publish-installer:
+    needs: [prepare, windows-installer, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && needs.windows-installer.result == 'success' }}
+    uses: ./.github/workflows/publish-installer.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      expected_sha256: ${{ needs.windows-installer.outputs.exe_sha256 }}
+
   # Attaches the notarized .dmg to the already-published release (ut-docs#2917)
   # and folds its line into checksums.txt — internal/selfupdate's mac update
   # path (macapp_darwin.go) verifies the .dmg against it before mounting and
