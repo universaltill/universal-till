@@ -1634,9 +1634,9 @@ class MainActivity : SelfUpdateActivity() {
             Log.i(TAG, "reload: activity recreated (savedInstanceState present)")
         }
         setContentView(R.layout.activity_main)
-        selfUpdateOnCreate()
         // #3048: must be created here (it registers an activity-result launcher).
         tapShell = TapToPayShell.create(this)
+        selfUpdateOnCreate()
 
         webView = findViewById(R.id.webview)
         statusView = findViewById(R.id.status)
