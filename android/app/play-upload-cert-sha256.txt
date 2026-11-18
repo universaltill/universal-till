@@ -1,0 +1,6 @@
+# ut-docs#6410 / #6395: SHA-256 of the DER signing certificate of the Play UPLOAD
+# key (keytool -list -v -keystore <upload.keystore>, "SHA256:" fingerprint, 64
+# lowercase hex, colons removed). Public, not a secret. play-publish.yml signs
+# with the vault's upload key, then refuses unless the bundle's signer equals
+# this pin AND this pin is not in apk-signer-sha256.txt (the release cert).
+# EMPTY until the owner creates the upload key: a real upload fails closed.

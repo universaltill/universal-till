@@ -51,7 +51,7 @@ jobs:
             changed="ios/unknown-cannot-diff"
           fi
           echo "$changed"
-          if grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^web/public/assets/logo/unitill-logo\.svg$' <<<"$changed"; then
+          if grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^scripts/ci/fetch-bundled-plugins\.sh$|^internal/plugins/bundled/|^web/public/assets/logo/unitill-logo\.svg$' <<<"$changed"; then
             echo "match=true" >> "$GITHUB_OUTPUT"
           else
             echo "match=false" >> "$GITHUB_OUTPUT"
@@ -90,12 +90,17 @@ jobs:
           xcodebuild test -project UniversalTill.xcodeproj -scheme UniversalTillTapToPayTests \
             -destination "id=$UDID" -derivedDataPath build/dd-tests \
             -onlyUsePackageVersionsFromResolvedFile
+      # ADR-0194 (ut-docs#6565): bind exactly what the App Store build binds,
+      # with the pinned first-party plugin bundles embedded.
+      - name: Fetch the pinned first-party plugin bundles (lock-verified)
+        if: steps.filter.outputs.match == 'true'
+        run: bash scripts/ci/fetch-bundled-plugins.sh
       - name: Bind the Go till server (gomobile bind -target=ios,iossimulator)
         if: steps.filter.outputs.match == 'true'
         run: |
           set -euo pipefail
           xcodebuild -version
-          gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+          gomobile bind -target=ios,iossimulator -tags bundledplugins -o ios/build/Mobile.xcframework ./mobile
       - name: App icon regression test (1024x1024, no alpha — ut-docs#3069)
         if: steps.filter.outputs.match == 'true'
         env:

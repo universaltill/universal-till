@@ -76,5 +76,9 @@ if awk '/^ *(- )?run:/{ind=match($0,/[^ ]/); if ($0 ~ /\$\{\{ *(inputs|github\.e
 # The CA root pin is the same one release signing uses.
 a="$(grep -E '^MS_ROOT_SHA256=' packaging/windows/setup-signing.sh)"; b="$(grep -E '^MS_ROOT_SHA256=' packaging/windows/setup-verify.sh)"
 [ -n "$a" ] && [ "$a" = "$b" ] && ok "setup-verify.sh pins the same Microsoft root" || bad "root pin differs"
+# ut-docs#6636: test overrides are never set by the workflow (word-bounded).
+for v in UT_MSSTORE_TEST SIGN_EXE SOAK_CMD SILENT_CMD SIG_VERIFY_CMD INSTALLER_NSI MSSTORE_SOAK_ALLOW_HTTP MSSTORE_ROOT; do
+  ! grep -qwF -- "$v" "$WF" && ok "msstore-submit.yml never sets $v" || bad "msstore-submit.yml names the test override $v"
+done
 [ "$fails" = 0 ] || { echo "msstore-workflow_test: $fails failure(s)" >&2; exit 1; }
 echo "✓ msstore-workflow_test: all cases passed"

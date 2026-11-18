@@ -17,8 +17,13 @@ zooms in when a field takes focus (ut-docs#3350); Safari keeps pinch.
 go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest
 brew install xcodegen
 
-# from the repo root: the Go server as an iOS framework
-gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+# from the repo root: the pinned first-party Stripe + SumUp plugin bundles
+# (hash-verified against internal/plugins/bundled/bundled.lock.json), then the
+# Go server as an iOS framework with them embedded (ADR-0194, Apple 2.5.2:
+# the App Store build never downloads code). CI does this on a GitHub-hosted
+# runner; locally set UT_FETCH_ALLOW_LOCAL=1.
+UT_FETCH_ALLOW_LOCAL=1 bash scripts/ci/fetch-bundled-plugins.sh
+gomobile bind -target=ios,iossimulator -tags bundledplugins -o ios/build/Mobile.xcframework ./mobile
 # the app icon asset catalog, from the canonical brand mark
 bash ios/scripts/make-app-icon.sh
 
