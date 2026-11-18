@@ -713,6 +713,7 @@
   "page.title.notices": {"description": "Browser tab title of the Notices inbox page.", "review": "standard"},
   "permissions.action.notices.view": {"description": "Name of the permission that lets a role see the Notices bell and inbox, and mark notices read or acknowledged.", "review": "standard"},
   "permissions.action_desc.notices.view": {"description": "One-line description of the Notices permission on the Permissions page.", "review": "standard"},
+  "settings.telemetry.help": {"description": "Help text of the Plugin telemetry settings card: what the periodic report contains (active plugins, versions, shop and device IDs), that no sales or customer data is sent, and that it is off by default.", "review": "standard"},
   "settings.notices.title": {"description": "Heading of the Settings card that switches Notices on or off for this till.", "review": "standard"},
   "settings.notices.help": {"description": "Help text of the Notices settings card: what it shows, that a notice never blocks a sale, off by default, and that turning it off removes held notices.", "review": "standard"},
   "settings.notices.enable": {"description": "Checkbox label that switches Notices on for this till.", "review": "standard"},
