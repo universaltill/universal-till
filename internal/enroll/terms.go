@@ -40,7 +40,14 @@ var ErrNoTermsAcceptance = errors.New("no cloud-terms acceptance recorded on thi
 // Paths are region-tagged (ADR-0038); the interim page is published by
 // ut-docs#4670. English is the operative text, so every locale other than
 // German and Turkish links the English page.
-func TermsURL(locale string) string {
+func TermsURL(locale string) string { return termsURL(locale, "") }
+
+// TermsURLChromeless is the same page in the website's chrome-less in-app
+// view (/app/legal/, no Pricing or sign-up menu), used on play/appstore builds
+// (ADR-0194 §3). Same document as TermsURL, so the consent matches the link.
+func TermsURLChromeless(locale string) string { return termsURL(locale, "app/") }
+
+func termsURL(locale, app string) string {
 	site := "en-gb"
 	switch termsLang(locale) {
 	case "de":
@@ -48,7 +55,7 @@ func TermsURL(locale string) string {
 	case "tr":
 		site = "tr-tr"
 	}
-	return "https://universaltill.com/" + site + "/legal/cloud-terms/"
+	return "https://universaltill.com/" + site + "/" + app + "legal/cloud-terms/"
 }
 
 // termsLang is the lowercased primary language subtag ("de-AT" -> "de").

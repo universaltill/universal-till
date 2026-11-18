@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { drainParkedOrders, watchConsole } from './helpers';
+import { drainParkedOrders, watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#3582 (review): the explicit Cancel order action, driven in a real
 // browser on both surfaces. The Go handler tests cover the gate, the audit
@@ -50,25 +50,23 @@ test('Cancel order on the popup asks first, then drops the row and says so', asy
   expect(box.height).toBeGreaterThanOrEqual(46);
 
   // Dismissing the confirm cancels nothing.
-  page.once('dialog', async (d) => {
-    expect(d.type()).toBe('confirm');
-    expect(d.message()).toContain('Cancel me');
-    expect(d.message()).toContain('cannot be undone');
-    await d.dismiss();
-  });
+  const noNative = noNativeDialogs(page);
   await cancel.click();
+  const asked = await answerTillConfirm(page, 'cancel', 'Cancel me');
+  expect(asked).toContain('cannot be undone');
   await expect(modal.locator('.parked-order')).toHaveCount(2);
 
   // Accepting it removes exactly that order, the popup re-renders in place
   // with the toast (not the hint), and the other order is untouched.
-  page.once('dialog', (d) => d.accept());
   await cancel.click();
+  await answerTillConfirm(page, 'confirm', 'Cancel me');
   await expect(modal.locator('.parked-order', { hasText: 'Cancel me' })).toHaveCount(0);
   await expect(modal.locator('.parked-order', { hasText: 'Keep me' })).toHaveCount(1);
   await expect(modal.locator('#parked-orders-toast')).toContainText('Order cancelled');
   await expect(modal.locator('#parked-orders-hint')).toBeEmpty();
   // The Open orders badge follows (held-changed).
   await expect(page.getByTestId('open-orders-badge')).toHaveAttribute('data-count', '1');
+  noNative();
   assertClean();
 });
 
@@ -85,8 +83,10 @@ test('Cancel order on /open-orders redirects back to the tab with a one-shot ban
   const cancel = page.locator('#open-orders-table tbody .open-order-cancel');
   await expect(cancel).toHaveAttribute('aria-label', 'Cancel order — Page cancel');
 
-  page.once('dialog', (d) => d.accept());
-  await cancel.click();
+  await Promise.all([page.waitForURL(/\/open-orders\?tab=hold/), (async () => {
+    await cancel.click();
+    await answerTillConfirm(page, 'confirm');
+  })()]);
 
   await expect(page).toHaveURL(/\/open-orders\?tab=hold&msg=open_orders\.cancel\.done/);
   await expect(page.getByTestId('open-orders-notice')).toContainText('Order cancelled');

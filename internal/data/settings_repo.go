@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,6 +128,62 @@ ON CONFLICT(key) DO UPDATE SET
 		return settingsObs.wrapf("set_tx", "set setting %s", err, key)
 	}
 	invalidateCachedSetting(r.db, key)
+	return nil
+}
+
+// SetIfReplica upserts values in one transaction, only while this till still
+// has a sync.primary_url (read in the same tx; the DB is _txlock=immediate so
+// a concurrent ClearReplicaIdentity is serialised). ErrNotReplica, nothing
+// written, otherwise (ut-docs#5903). Keys must not be the sync bearer
+// (file-backed, not part of the tx).
+func (r *SettingsRepo) SetIfReplica(ctx context.Context, values map[string]string) error {
+	var err error
+	done := settingsObs.trace("set_if_replica")
+	defer func() {
+		// A refusal is the expected promote race, not a failure (no ERROR line).
+		if errors.Is(err, ErrNotReplica) {
+			done(nil)
+			return
+		}
+		done(err)
+	}()
+
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		if _, ok := r.bearerFile(k); ok {
+			err = fmt.Errorf("set if replica: %s is file-backed", k)
+			return err
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return settingsObs.wrap("set_if_replica", err)
+	}
+	defer tx.Rollback()
+	if err = requireReplica(ctx, tx); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, k := range keys {
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, k, values[k], now); err != nil {
+			return settingsObs.wrapf("set_if_replica", "set setting %s", err, k)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return settingsObs.wrap("set_if_replica", err)
+	}
+	for _, k := range keys {
+		invalidateCachedSetting(r.db, k)
+	}
 	return nil
 }
 
@@ -311,7 +369,9 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// ClearReplicaIdentity promotes a replica (ADR-0011 D4): every sync.* key
+// ClearReplicaIdentity clears a replica's identity, settings only; the
+// promotion entry point is PromoteReplica, which also queues the unsent
+// promoted fields (ut-docs#6240). ADR-0011 D4: every sync.* key
 // goes EXCEPT the receipt prefix — the till keeps stamping T<n>- receipts
 // so its numbering never collides with the old primary's.
 //
@@ -352,8 +412,16 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // An admin pull that is in flight when this commits is refused by
 // ApplyAdminWithResult's in-tx sync.primary_url check (ErrNotReplica), so it
 // cannot write the old main's lan_discovery.till_id or till.name back
-// (ut-docs#5896).
+// (ut-docs#5896); the rest of that tick's writes (SetIfReplica's sync.*
+// bookkeeping and till role, SyncStockRepo.ApplyStockLevels) re-check it the
+// same way (ut-docs#5903).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
+	return r.clearReplicaIdentity(ctx, nil)
+}
+
+// clearReplicaIdentity is ClearReplicaIdentity; a non-nil inTx runs after the
+// sync.% delete and before the commit, in the same transaction.
+func (r *SettingsRepo) clearReplicaIdentity(ctx context.Context, inTx func(context.Context, SyncQuerier) error) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
 	defer func() { done(err) }()
@@ -413,6 +481,11 @@ ON CONFLICT(key) DO UPDATE SET
 	if _, err = tx.ExecContext(ctx,
 		`DELETE FROM settings WHERE key LIKE 'sync.%' AND key != 'sync.receipt_prefix'`); err != nil {
 		return settingsObs.wrapf("clear_replica_identity", "clear replica identity", err)
+	}
+	if inTx != nil {
+		if err = inTx(ctx, tx); err != nil {
+			return settingsObs.wrapf("clear_replica_identity", "mark unsent promoted fields", err)
+		}
 	}
 
 	if err = tx.Commit(); err != nil {

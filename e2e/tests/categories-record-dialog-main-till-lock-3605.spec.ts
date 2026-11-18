@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#3605: on an additional till the Categories record dialog's form
 // sits in a fieldset[data-main-till-lock] that base.html's chip follower
@@ -35,8 +35,7 @@ async function openFirstRow(page: Page) {
 test.describe('categories dialog discard guard vs the main-till lock (ut-docs#3605)', () => {
   test('a lock flip while the dialog is open is not an unsaved edit', async ({ page }) => {
     const assertClean = watchConsole(page);
-    const confirms: string[] = [];
-    page.on('dialog', (d) => { confirms.push(d.message()); void d.dismiss(); });
+    const none = noNativeDialogs(page);
     await openFirstRow(page);
 
     await flipChip(page, 'unreachable');
@@ -45,7 +44,7 @@ test.describe('categories dialog discard guard vs the main-till lock (ut-docs#36
 
     await page.locator(`${DIALOG} .record-dialog-close`).click();
     await expect(page.locator(DIALOG)).toBeHidden();
-    expect(confirms, 'nothing was typed: Close must not ask to discard').toEqual([]);
+    await expect(page.getByTestId('till-confirm'), 'nothing was typed: Close must not ask to discard').toBeHidden();
 
     // And back: reopened while locked, the lock lifting is not an edit either.
     await page.locator('#categories-table .category-row-open').first().click();
@@ -54,13 +53,13 @@ test.describe('categories dialog discard guard vs the main-till lock (ut-docs#36
     await expect(page.locator(NAME)).toBeEnabled();
     await page.keyboard.press('Escape');
     await expect(page.locator(DIALOG)).toBeHidden();
-    expect(confirms).toEqual([]);
+    await expect(page.getByTestId('till-confirm')).toBeHidden();
+    none();
     assertClean();
   });
 
   test('a real edit made before the lock still asks first', async ({ page }) => {
-    const confirms: string[] = [];
-    page.on('dialog', (d) => { confirms.push(d.message()); void d.dismiss(); });
+    const none = noNativeDialogs(page);
     await openFirstRow(page);
     await page.locator(NAME).fill('Edited before the lock 3605');
 
@@ -68,16 +67,16 @@ test.describe('categories dialog discard guard vs the main-till lock (ut-docs#36
     await expect(page.locator(NAME)).toBeDisabled();
 
     await page.locator(`${DIALOG} .record-dialog-close`).click();
-    expect(confirms).toHaveLength(1);
-    // Dismissed: the dialog stays, with the typed text still there.
+    await answerTillConfirm(page, 'cancel');
+    // Cancelled: the dialog stays, with the typed text still there.
     await expect(page.locator(DIALOG)).toBeVisible();
     await expect(page.locator(NAME)).toHaveValue('Edited before the lock 3605');
     // Nothing is left changed: the lock is lifted and the dialog closed
-    // without saving (accept the discard).
-    page.removeAllListeners('dialog');
-    page.on('dialog', (d) => void d.accept());
+    // without saving (confirm the discard).
     await flipChip(page, 'linked');
     await page.locator(`${DIALOG} .record-dialog-close`).click();
+    await answerTillConfirm(page, 'confirm');
     await expect(page.locator(DIALOG)).toBeHidden();
+    none();
   });
 });

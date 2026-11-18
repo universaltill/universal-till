@@ -79,6 +79,15 @@ func main() {
 		}
 	}
 
+	// Inline screenshots (ut-docs#2615): Load drops a reference no image backs
+	// (so `make docs-shots` can bootstrap), which only this check surfaces.
+	if lines := missingImageLines(lib); len(lines) > 0 {
+		fail = true
+		for _, line := range lines {
+			fmt.Fprintln(os.Stderr, line)
+		}
+	}
+
 	if fail {
 		os.Exit(1)
 	}
@@ -87,11 +96,9 @@ func main() {
 
 // manualOnlyLocales are locales whose USER MANUAL (web/help/<locale>) is
 // owned and shipped by this repo even though their day-to-day UI strings are
-// NOT — a manual-only locale ships its web/locales/<code>.json from an
-// external ut-plugin-language-<code> pack instead (see universal-till/
-// CLAUDE.md's i18n section, and scripts/ci/check-lang-pack-drift.sh's own
-// PACKS list for the same de/es split). shippedLocales() below derives its
-// set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
+// NOT — a manual-only locale's UI strings come from its Weblate bundle
+// (com.universaltill.language-<code>, ADR-0160) instead.
+// shippedLocales() below derives its set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
 // as core JSON, so a missing locale directory there IS a fully-deleted
 // locale worth failing loudly on) but blind to de/es, which never have a
 // core web/locales/<code>.json to glob — so without this list, adding
@@ -136,6 +143,17 @@ func translationWarnings(lib *manual.Library, locales []string) []string {
 		if missing := lib.MissingTranslations(locale); len(missing) > 0 {
 			out = append(out, fmt.Sprintf("guard-help-topics: warning (non-blocking): locale %q is missing manual topics: %v", locale, missing))
 		}
+	}
+	return out
+}
+
+// missingImageLines reports every inline screenshot reference
+// (img/<id>-<name>.png in a topic) that no committed image backs, in any
+// locale or the en fallback. Run `make docs-shots` and commit the PNGs.
+func missingImageLines(lib *manual.Library) []string {
+	var out []string
+	for _, m := range lib.MissingImages() {
+		out = append(out, "guard-help-topics: topic screenshot not committed ("+m+") - run `make docs-shots` and commit web/help/img")
 	}
 	return out
 }

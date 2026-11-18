@@ -14,8 +14,8 @@ trap remove_guard_test_sandbox EXIT
 
 GUARD="scripts/ci/guard-help-breadcrumbs.sh"
 BASELINE="scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt"
-# A language pack outside the sandbox must not change the outcome.
-unset UT_DE_PACK_DIR
+# A locale overlay outside the sandbox must not change the outcome.
+unset UT_TEST_I18N_OVERLAY_DIR
 
 fails=0
 pass() { echo "ok   - $1"; }
@@ -74,20 +74,22 @@ if [ "${RC}" -eq 0 ]; then pass "tree passes again after removing the plants"; e
   echo "${OUT}" >&2
 fi
 
-# Plant: tr Updates topic, item 1, uses a different section name.
-TOPIC="web/help/tr/updates.md"
+# Plant: tr Backups topic, item 1, uses a different section name. The
+# topic must stay aligned with English item-for-item (translations lag via
+# Weblate, ADR-0160): an unaligned topic is skipped, and the plant would not fire.
+TOPIC="web/help/tr/backups.md"
 # The line is computed, not pinned: front-matter keys (e.g. `public:`) shift it (ut-docs#5351).
-PLANT_LINE="$(awk -v p='Ayarlar → Yazılım güncellemesi →' 'index($0, p) { print NR; exit }' "${TOPIC}")"
-sed -i '0,/Ayarlar → Yazılım güncellemesi →/s//Ayarlar → Yazılım güncelleme →/' "${TOPIC}"
+PLANT_LINE="$(awk -v p='Ayarlar → Yedekler' 'index($0, p) { print NR; exit }' "${TOPIC}")"
+sed -i '0,/Ayarlar → Yedekler/s//Ayarlar → Yedek dosyaları/' "${TOPIC}"
 run
-if [ "${RC}" -ne 0 ] && has "${OUT}" "${TOPIC}:${PLANT_LINE}:" && has "${OUT}" 'expected "Yazılım güncellemesi"'; then
+if [ "${RC}" -ne 0 ] && has "${OUT}" "${TOPIC}:${PLANT_LINE}:" && has "${OUT}" 'expected "Yedekler"'; then
   pass "planted mismatch fails with file:line and the expected label"
 else
   fail "planted mismatch: rc=${RC} out=${OUT}"
 fi
 
 # Baseline entry makes it pass.
-printf 'tr/updates.md:1:settings.update.title planted by the self-test\n' >>"${BASELINE}"
+printf 'tr/backups.md:1:settings.backup.title planted by the self-test\n' >>"${BASELINE}"
 run
 if [ "${RC}" -eq 0 ] && has "${OUT}" "known:"; then
   pass "baseline entry accepts the mismatch"
@@ -96,9 +98,9 @@ else
 fi
 
 # Fixing the prose leaves the entry stale.
-sed -i '0,/Ayarlar → Yazılım güncelleme →/s//Ayarlar → Yazılım güncellemesi →/' "${TOPIC}"
+sed -i '0,/Ayarlar → Yedek dosyaları/s//Ayarlar → Yedekler/' "${TOPIC}"
 run
-if [ "${RC}" -ne 0 ] && has "${OUT}" "stale baseline entry tr/updates.md:1:settings.update.title"; then
+if [ "${RC}" -ne 0 ] && has "${OUT}" "stale baseline entry tr/backups.md:1:settings.backup.title"; then
   pass "stale baseline entry fails"
 else
   fail "stale entry: rc=${RC} out=${OUT}"

@@ -116,17 +116,27 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			} else {
 				versionUnknown = true
 			}
+			// ADR-0172 §5: the tax plugin the till installed by itself says so,
+			// and its uninstall confirm says what changes.
+			autoNote, uninstallConfirm := "", ""
+			if market, auto := taxAutoInstalledPlugin(ctx, d, row.ID); auto {
+				loc := httpx.RequestLocale(r)
+				autoNote = sprintfKey(loc, "settings.plugins.auto_installed_for", countryDisplayName(ctx, d, loc, market))
+				uninstallConfirm = sprintfKey(loc, "settings.plugins.uninstall_tax_confirm", row.Name)
+			}
 			items = append(items, map[string]any{
-				"id":             row.ID,
-				"name":           row.Name,
-				"version":        row.Version,
-				"enabled":        row.IsActive,
-				"trust":          row.TrustLevel,
-				"state":          row.InstallState,
-				"hasUpdate":      hasUpdate,
-				"latest":         latest,
-				"versionUnknown": versionUnknown,
-				"docsRoute":      docsRouteByPlugin[row.ID],
+				"autoNote":         autoNote,
+				"uninstallConfirm": uninstallConfirm,
+				"id":               row.ID,
+				"name":             row.Name,
+				"version":          row.Version,
+				"enabled":          row.IsActive,
+				"trust":            row.TrustLevel,
+				"state":            row.InstallState,
+				"hasUpdate":        hasUpdate,
+				"latest":           latest,
+				"versionUnknown":   versionUnknown,
+				"docsRoute":        docsRouteByPlugin[row.ID],
 			})
 		}
 
