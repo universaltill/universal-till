@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015
 # Self-test for verify-release-tag.sh (ut-docs#6410): the tag must be a plain
 # vX.Y.Z that exists and whose commit is on main; prints the commit SHA.
 set -euo pipefail

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015,SC2016
 # Wiring guard for .github/workflows/play-publish.yml (ut-docs#6410): pins the
 # properties its safety rests on.
 set -euo pipefail

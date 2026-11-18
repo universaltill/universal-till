@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2181
 # Proves play-publish-workflow_test.sh has teeth (review F11): each mutation
 # removes one protection from a COPY of the workflow / release.yml /
 # verify-release-tag.sh; the wiring test must then fail. Any mutant that still

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015,SC2016
 # Self-test for play-upload.sh (ut-docs#6410, #6405) against a local fake Play
 # API: a fresh versionCode uploads and commits to `internal` only; the same
 # bytes already on Play are a green no-op; different bytes under an existing
