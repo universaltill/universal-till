@@ -63,16 +63,6 @@ func (s *Service) TakeAbandonNotice() (AbandonResult, bool) {
 	return r, true
 }
 
-// PendingTender returns a deep copy of the current stash.
-func (s *Service) PendingTender() PendingTender {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return PendingTender{
-		Captured: append([]CapturedLeg(nil), s.pendingTender.Captured...),
-		Unknown:  append([]UnknownLeg(nil), s.pendingTender.Unknown...),
-	}
-}
-
 // handOffAbandoned runs the registered handler. Caller must NOT hold s.mu.
 func (s *Service) handOffAbandoned(r AbandonReason, p PendingTender) {
 	if p.IsZero() {
