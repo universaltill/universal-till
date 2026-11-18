@@ -7,7 +7,8 @@
 #                                [--expect-cert-sha256 HEX] [--allow-unsigned]
 #
 # Checks (exit 1 on any failure, every failure printed):
-#   - the manifest declares NO REQUEST_INSTALL_PACKAGES and no update FileProvider
+#   - the manifest declares NO REQUEST_INSTALL_PACKAGES and no update FileProvider,
+#     and is stamped install_channel=play (a sideload bundle is refused)
 #   - targetSdkVersion >= 36 (TARGET_SDK_MIN) and minSdk 24
 #   - native libs: arm64-v8a present, and no 32-bit ABI without its 64-bit twin
 #   - versionCode ends in 5 (base*10+5), or equals --expect-version-code
@@ -79,6 +80,11 @@ else ok "no REQUEST_INSTALL_PACKAGES"; fi
 if grep -Eq '\.updates"|\.updates\b.*authorities|androidx.core.content.FileProvider' "$work/manifest.txt"; then
   fail "manifest carries the update FileProvider"
 else ok "no update FileProvider"; fi
+# Stamped channel (review F16): the play flavor's manifest carries
+# meta-data com.universaltill.pos.install_channel=play; a sideload build
+# uploaded by mistake has none (or another value).
+chan="$(grep -A2 'com.universaltill.pos.install_channel' "$work/manifest.txt" | grep -oE '(value(\(0x[0-9a-f]+\))?|android:value)=\"[^\"]*\"' | head -1 | sed 's/.*=\"//; s/\"$//' || true)"
+if [ "$chan" = "play" ]; then ok "install channel stamped: play"; else fail "install channel is '${chan:-absent}', expected 'play' (not a play-flavor bundle)"; fi
 echo "-- uses-permission:"
 grep -oE 'name[=)"]*[^ ]*android\.permission\.[A-Z_]+|android:name="android\.permission\.[A-Z_]+"' "$work/manifest.txt" |
   grep -oE 'android\.permission\.[A-Z_]+' | sort -u | sed 's/^/     /'
