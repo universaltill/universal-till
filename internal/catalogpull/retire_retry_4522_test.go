@@ -51,6 +51,9 @@ func TestPullRetiredOptionSetFreesItsName_4522(t *testing.T) {
 }
 
 func TestPullRetiredOptionSetDeletedOnceUnused_4522(t *testing.T) {
+	// The cloud masters links once it has a write path (ADR-0162 §2); until
+	// then tillOwnedFields keeps them (ut-docs#6072).
+	allFieldsPulled(t)
 	h := newHarness(t)
 	h.feed.add(setRow(cSet, 1, "Size", val(1, "S")))
 	h.feed.add(shirtUsing(2, cSet))
@@ -83,6 +86,9 @@ func TestPullRetiredOptionSetDeletedOnceUnused_4522(t *testing.T) {
 // in one transaction. The set's tombstone applies after the item, so the
 // set is deleted outright — never deactivated and renamed first.
 func TestPullOptionSetTombstoneWithItsLastUserInOneVersion_4522(t *testing.T) {
+	// The cloud masters links once it has a write path (ADR-0162 §2); until
+	// then tillOwnedFields keeps them (ut-docs#6072).
+	allFieldsPulled(t)
 	h := newHarness(t)
 	h.feed.add(setRow(cSet, 1, "Size", val(1, "S")))
 	h.feed.add(shirtUsing(2, cSet))

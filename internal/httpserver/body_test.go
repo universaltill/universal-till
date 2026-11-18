@@ -218,13 +218,13 @@ func TestSlowHandlerBeforeFirstReadKeepsGrace(t *testing.T) {
 // R4: degenerate rates and huge counts must not panic or overflow.
 func TestRateBodyDeadlineArithmetic(t *testing.T) {
 	now := time.Now()
-	if d := bodyDeadline(now, time.Second, 0, 100); !d.After(now) {
+	if d := rateDeadline(now, time.Second, 0, 100); !d.After(now) {
 		t.Fatal("rate 0 gave a past deadline")
 	}
-	if d := bodyDeadline(now, time.Second, 1, 1<<62); !d.After(now) {
+	if d := rateDeadline(now, time.Second, 1, 1<<62); !d.After(now) {
 		t.Fatalf("overflow: %v", d)
 	}
-	if d := bodyDeadline(now, time.Second, 1<<10, 2<<10); d != now.Add(3*time.Second) {
+	if d := rateDeadline(now, time.Second, 1<<10, 2<<10); d != now.Add(3*time.Second) {
 		t.Fatalf("got %v", d.Sub(now))
 	}
 }

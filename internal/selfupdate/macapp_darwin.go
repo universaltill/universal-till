@@ -52,7 +52,11 @@ func applyMacApp(ctx context.Context, appPath, version string, idle func() bool)
 	if dmgURL == "" {
 		return fmt.Errorf("no macOS .dmg in release v%s", version)
 	}
-	// Integrity root (ADR-0178): the signed checksums, before any download.
+	// Trusted release host first (ut-docs#4080), then the integrity root
+	// (ADR-0178): the signed checksums, before any download.
+	if err := rel.requireTrustedRelease(dmgURL); err != nil {
+		return err
+	}
 	checksums, err := verifiedChecksums(ctx, rel)
 	if err != nil {
 		return err

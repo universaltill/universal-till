@@ -3,6 +3,7 @@ id: translate-mode
 title: Translate mode
 section: Setting up your shop
 order: 151
+public: false
 summary: Managers can see which text key each label comes from, open it in Weblate, and change the wording for this shop.
 keywords: [translate mode, translation, weblate, language, wording]
 ---

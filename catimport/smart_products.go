@@ -142,11 +142,18 @@ func dupHeader(headers []string, col int) bool {
 // ";"-joined barcodes.
 func readExportExtras(buf []byte, headers []string, source string, o Options, res *Result) {
 	active := colFor(headers, aliases("active"))
-	barcodes := -1
+	barcodes, idCol := -1, -1
 	if source == SourceMyExport {
 		barcodes = colFor(headers, aliases("barcodes"))
+		// the my. export writes a lowercase "id" (ADR-0168 §3); match it exactly
+		for i, h := range headers {
+			if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))) == "id" {
+				idCol = i
+				break
+			}
+		}
 	}
-	if active < 0 && barcodes < 0 {
+	if active < 0 && barcodes < 0 && idCol < 0 {
 		return
 	}
 	cr := csv.NewReader(bytes.NewReader(buf))
@@ -171,6 +178,15 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 				it.Active, it.HasActive = v.val, true
 			}
 		}
+		if idCol >= 0 && idCol < len(rec) {
+			// kept only when it fits maxItemIDLen and holds no control
+			// character or whitespace; anything else is no id at all
+			id := StripCSVDefuse(strings.TrimSpace(rec[idCol]))
+			if len(id) > maxItemIDLen || strings.ContainsFunc(id, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
+				id = ""
+			}
+			it.ItemID = id
+		}
 		if barcodes >= 0 && barcodes < len(rec) {
 			first, _, _ := strings.Cut(rec[barcodes], ";")
 			first = StripCSVDefuse(strings.TrimSpace(first))
@@ -185,6 +201,9 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 		}
 	}
 }
+
+// maxItemIDLen bounds the my. export id carried in ImportItem.ItemID.
+const maxItemIDLen = 64
 
 // boolGuess is a parsed yes/no cell: exact when the cell is a recognised
 // yes/no word, otherwise a best guess from its first letter.
