@@ -302,6 +302,13 @@ export async function nameShop(page: Page, name = 'E2E Test Shop') {
 // source build whose marketplace endpoint is loopback (its fake cloud); every
 // other e2e till keeps UT_NEVER_REGISTER=1 and never registers.
 export async function ensureRegisteredAutomatically(page: Page) {
+  // A till registers only once its setup is finished (ADR-0200 guard), so the
+  // helper finishes the wizard through the same POST the Finish button sends.
+  const setup = await page.request.post('/api/setup', {
+    form: { store_name: 'E2E Test Shop', till_name: 'Till 1', country: 'GB', pin: '482913', pin_confirm: '482913' },
+    maxRedirects: 0,
+  });
+  expect([200, 204, 302, 303], `finish setup (status ${setup.status()})`).toContain(setup.status());
   await nameShop(page);
   const card = page.locator('#registration');
   await expect(async () => {
