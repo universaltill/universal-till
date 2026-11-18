@@ -184,6 +184,8 @@ type followInputs struct {
 	Forced           bool   // an "Update now" press names Target (followForced)
 	Policy           string // update.fleet_follow, normalised: followPolicyNextIdle or followPolicyNightly
 	InNightlySlot    bool   // now is in the main till's update.auto_time window plus THIS till's offset
+	SlotDate         string // the autoUpdateSlot opening date while InNightlySlot, else ""
+	LastNightlySlot  string // update.auto_last_attempt: the slot date last acted in
 	JitterDue        bool   // the next_idle random wait for Target has been armed and has passed
 }
 
@@ -206,7 +208,10 @@ func followSettled(in followInputs) (failed, noEffect bool) {
 // newer release than this one (never a downgrade, never past it), the shop
 // hasn't switched updates off, this install can replace itself, no sale is
 // open, and this target hasn't already been tried — once per run, and not
-// again after an attempt that took effect without moving the version.
+// again after an attempt that took effect without moving the version. Under
+// the nightly policy the once-per-run guard is replaced by once per slot date
+// (update.auto_last_attempt, written before the apply), so a failed target is
+// retried at the next night's slot; a no-effect target is still never retried.
 //
 // An operator's "Update now" (Forced, ut-docs#2945) overrides only the
 // shop's automatic-updates switch and the once-per-run / no-effect guards —
@@ -231,7 +236,7 @@ func followDecision(in followInputs) (act bool, why string) {
 		return false, "off"
 	case !in.Supported:
 		return false, "unsupported"
-	case !in.Forced && normVersion(in.AttemptedThisRun) == normVersion(in.Target):
+	case !in.Forced && in.Policy != followPolicyNightly && normVersion(in.AttemptedThisRun) == normVersion(in.Target):
 		return false, "attempted"
 	}
 	if _, noEffect := followSettled(in); noEffect && !in.Forced {
@@ -241,6 +246,13 @@ func followDecision(in followInputs) (act bool, why string) {
 		if in.Policy == followPolicyNightly {
 			if !in.InNightlySlot {
 				return false, "nightly_wait"
+			}
+			// One automatic attempt per slot date, success or failure
+			// (ut-docs#6552): a failed target is retried at the next
+			// night's slot, never in a loop. A busy window is checked below
+			// and does not spend the slot; only acting writes the date.
+			if in.SlotDate != "" && in.SlotDate == in.LastNightlySlot {
+				return false, "attempted"
 			}
 		} else if !in.JitterDue {
 			return false, "jitter_wait"
@@ -315,7 +327,9 @@ func followCanInstall(in followInputs) bool {
 // followDecision's order: "main_off" (automatic updates off on the main
 // till), "checks_off" (UT_UPDATE_CHECK switched off on this till),
 // "manual" (behind, and this install can't replace itself) or "failed"
-// (behind, and the last attempt at this target failed or didn't take).
+// (behind, and the last attempt at this target failed or didn't take), or
+// "failed_nightly" (nightly policy, the last attempt failed and is retried
+// by itself at the next nightly slot).
 func followLine(in followInputs) string {
 	switch {
 	case in.AutoEnabled == "false":
@@ -328,6 +342,9 @@ func followLine(in followInputs) string {
 		return "manual"
 	}
 	if failed, noEffect := followSettled(in); failed || noEffect {
+		if failed && !noEffect && in.Policy == followPolicyNightly {
+			return "failed_nightly" // retried by itself at the next nightly slot (ut-docs#6552)
+		}
 		return "failed"
 	}
 	return "follows"
@@ -402,7 +419,8 @@ func followInputsAt(ctx context.Context, d *common.Deps, now time.Time) followIn
 	}
 	if in.Policy == followPolicyNightly {
 		_, hhmm := autoUpdateSchedule(get)
-		in.InNightlySlot, _ = autoUpdateSlot(now, hhmm, autoUpdateJitter(ctx, d))
+		in.InNightlySlot, in.SlotDate = autoUpdateSlot(now, hhmm, autoUpdateJitter(ctx, d))
+		in.LastNightlySlot = get(keyAutoUpdateLastAttempt)
 	} else if at, ok := followJitterWait.deadline(normVersion(in.Target)); ok {
 		in.JitterDue = !now.Before(at)
 	}
@@ -446,6 +464,11 @@ func followTick(ctx context.Context, d *common.Deps, now time.Time) {
 		followForced.set("") // one attempt per press
 	}
 	followRun.set(target)
+	if in.SlotDate != "" {
+		// Same per-till key and BEFORE-apply order as the main till's
+		// nightly path: one attempt per slot, even across a restart.
+		_ = d.Settings.Set(ctx, keyAutoUpdateLastAttempt, in.SlotDate)
+	}
 	_ = d.Settings.Set(ctx, keyFollowAttempted, target)
 	_ = d.Settings.Set(ctx, keyFollowError, followApplying)
 	logging.L().Infof("auto-update: following the main till to v%s", target)
@@ -472,7 +495,7 @@ func followErrorCode(err error) string {
 	switch {
 	case errors.As(err, &netErr):
 		return "network"
-	case strings.Contains(msg, "already being applied"):
+	case errors.Is(err, selfupdate.ErrApplyInProgress):
 		return "busy"
 	case strings.Contains(msg, "checksum"):
 		return "checksum"

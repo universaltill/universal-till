@@ -16,6 +16,24 @@ PRISTINE="$(mktemp -d)"
 trap 'rm -rf "${PRISTINE}"; remove_guard_test_sandbox' EXIT
 cp -r "${RES}" "${PRISTINE}/res"
 
+# English-only code PRs (ADR-0160) leave base keys that no locale has yet
+# (Weblate adds them). The cases below assert exact warning counts against a
+# fully translated tree, so drop from the throwaway baseline every base
+# <string>/<plurals>/<string-array> that any locale lacks.
+python3 -I - "${PRISTINE}/res" <<'PY'
+import re, sys, glob, os
+res = sys.argv[1]
+base_p = os.path.join(res, "values", "strings.xml")
+base = open(base_p, encoding="utf-8").read()
+pat = re.compile(r'[ \t]*<(string|plurals|string-array)\s+name="([^"]+)"[^>]*>.*?</\1>[ \t]*\n?', re.S)
+locs = {}
+for f in glob.glob(os.path.join(res, "values-*", "strings.xml")):
+    locs[f] = set(m.group(2) for m in pat.finditer(open(f, encoding="utf-8").read()))
+def keep(m):
+    return all(m.group(2) in k for k in locs.values())
+open(base_p, "w", encoding="utf-8").write(pat.sub(lambda m: m.group(0) if keep(m) else "", base))
+PY
+
 FAIL_COUNT=0
 OUT=""
 RC=0
