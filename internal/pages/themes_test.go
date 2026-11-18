@@ -571,6 +571,97 @@ func TestWarningTextContrastOnWarningTint(t *testing.T) {
 	}
 }
 
+// ut-docs#6050: the basket's item-count badge (.basket-count) drew
+// --accent-contrast (white) on --accent, about 2.5-2.8:1 in the amber, fresh
+// and monarch themes. This reads the colour and background tokens the rule
+// actually uses and checks them in every built-in theme (app.css :root
+// overridden by the theme file's :root), so a new theme or a token change
+// that breaks the badge fails here.
+func TestBasketCountBadgeContrast(t *testing.T) {
+	mux := http.NewServeMux()
+	registerStatic(mux)
+	registerThemes(mux, &common.Deps{})
+	get := func(path string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	appCSS := get("/public/app.css")
+	rule := regexp.MustCompile(`(?s)(?:^|\})\s*\.basket-count\s*\{([^{}]*)\}`).
+		FindAllStringSubmatch(cssCommentRe.ReplaceAllString(appCSS, ""), -1)
+	if len(rule) != 1 {
+		t.Fatalf("app.css: found %d bare .basket-count rules, want 1", len(rule))
+	}
+	// Only that one rule may style the badge (review finding): a compound,
+	// descendant or @media override would escape the token check below.
+	anyRef := regexp.MustCompile(`\.basket-count\b`)
+	if n := len(anyRef.FindAllString(cssCommentRe.ReplaceAllString(appCSS, ""), -1)); n != 1 {
+		t.Fatalf("app.css: .basket-count appears in %d selectors, want only its own rule; check the new one's colours here", n)
+	}
+	decl := func(prop string) string {
+		m := regexp.MustCompile(`(?:^|[;\s])` + prop + `:\s*var\((--[a-z0-9-]+)\s*(?:,[^;()]*)?\)\s*(?:;|$)`).FindStringSubmatch(rule[0][1])
+		if m == nil {
+			t.Fatalf(".basket-count: %s must be a single var(--token), got rule %q", prop, rule[0][1])
+		}
+		return m[1]
+	}
+	fgTok, bgTok := decl("color"), decl("background")
+
+	themes := map[string]string{"default": ""}
+	entries, err := fs.ReadDir(uiassets.FS, "public/themes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".css") {
+			themes[strings.TrimSuffix(n, ".css")] = get("/themes/" + n)
+		}
+	}
+	if len(themes) < 7 {
+		t.Fatalf("found %d themes (default + web/public/themes/*.css), want at least 7", len(themes))
+	}
+	for _, name := range slices.Sorted(maps.Keys(themes)) {
+		if anyRef.MatchString(cssCommentRe.ReplaceAllString(themes[name], "")) {
+			t.Errorf("%s: theme overrides .basket-count; extend this test to check its colours", name)
+		}
+		tokens := cssRootTokens(appCSS)
+		for k, v := range cssRootTokens(themes[name]) {
+			tokens[k] = v
+		}
+		resolve := func(tok string) ([4]float64, bool) {
+			v, ok := tokens[tok]
+			for depth := 0; ok && depth < 8 && strings.HasPrefix(v, "var("); depth++ {
+				v, ok = tokens[strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(v, "var("), ")"))]
+			}
+			if !ok {
+				t.Errorf("%s: token %s cannot be resolved", name, tok)
+				return [4]float64{}, false
+			}
+			c, err := parseCSSColour(v)
+			if err != nil || c[3] != 1 {
+				t.Errorf("%s: token %s = %q must be an opaque colour (err %v)", name, tok, v, err)
+				return c, false
+			}
+			return c, true
+		}
+		fg, ok1 := resolve(fgTok)
+		bg, ok2 := resolve(bgTok)
+		if !ok1 || !ok2 {
+			continue
+		}
+		if ratio := wcagContrast(fg, bg); ratio < 4.5 {
+			t.Errorf("%s: .basket-count %s on %s = %.2f:1, want >= 4.5:1 (WCAG 1.4.3)", name, fgTok, bgTok, ratio)
+		} else {
+			t.Logf("%s: .basket-count %s on %s = %.2f:1", name, fgTok, bgTok, ratio)
+		}
+	}
+}
+
 // ut-docs#5228: --warning (#d97706) is ~3.2:1 on a plain white surface, below
 // WCAG AA's 4.5:1 for normal text, so warning TEXT uses --warning-text. Only
 // non-text marks (an svg dot, an aria-hidden glyph) may still take
