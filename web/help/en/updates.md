@@ -10,6 +10,8 @@ keywords: [update, version, upgrade, schedule]
 
 # Software updates
 
+![Software update card](img/updates-card.png)
+
 The till checks for new versions and tells you when one is available; on most platforms it updates itself with one click.
 
 ## How to use it
@@ -28,6 +30,8 @@ The till updates itself overnight unless you switch it off.
 4. An additional till follows the main till: when the main till runs a newer version, the additional till installs exactly that version at the next moment with no open sale. Android additional tills, and Windows ones installed from the portable zip, show a 'needed' note instead, until they can install by themselves. The additional till also says when it won't follow by itself: update checks are switched off on that till, it can't install updates by itself, or its last try at the main till's version didn't work. Then install the main till's version on that till by hand, or press Update now for it on the main till's Tills page while the two are connected. (With “Only at the nightly update time” (step 5), a failed try is also repeated by itself the next night.)
 5. On the main till, Settings → Software update → When additional tills update chooses when an additional till installs the main till's version. “As soon as no sale is open (recommended)” is the default: the additional till waits a random moment of up to two minutes, so several tills don't download at once, and then installs at the first moment with no open sale. “Only at the nightly update time” holds it until the main till's update time (03:00 unless you changed it) plus the additional till's own offset of up to half an hour, and still never during a sale. The additional till's Settings → Software update shows the exact times. An additional till shows this choice but can't change it; pressing Update now for it on the main till's Tills page skips the wait. An additional till always installs the main till's version and never runs ahead of it. With “Only at the nightly update time”, if an install fails the additional till tries again the next night, and Update now on the Tills page tries at once; with the default it waits for you to install by hand or press Update now. The restart is also held while a shift is being closed.
 6. On Windows the till downloads the signed installer and checks it. Then the till closes, installs the update and opens again by itself, which takes about a minute. Android tills can't install updates by themselves yet. Update them by hand as described above. If you run the Windows installer yourself, it closes Universal Till first if it is still open, so finish any sale in progress before you start it.
+
+In a shop with several tills, each till updates on its own and a till can be updated from the main till; see [Multiple tills](/help/multitill).
 
 ## What's new in each version
 
