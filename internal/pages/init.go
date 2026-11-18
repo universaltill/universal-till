@@ -533,6 +533,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPrintAPI(mux, dp)
 	registerKitchenPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)
+	registerOffsiteBackup(mux, dp)  // off-site encrypted backup: card + restore page (ut-docs#5066)
 	registerEntitlementAPI(mux, dp) // ADR-0060 read surface: cached plan + effective plan (ut-docs#2547)
 	registerSubscriptionUI(mux, dp) // status-bar subscription chip (ut-docs#2569)
 	registerDataAPI(mux, dp)

@@ -467,6 +467,7 @@
                gone, so "This is not my shop" is not offered (ADR-0166 §4
                amendment); the step names the till this one replaced. */}}
           {{ if .cloudShop.Replaced }}<p data-testid="setup-cloud-replaced">{{ printf (T "setup.cloud.replaced_note") (or .cloudShop.ReplacedName (T "setup.cloud.error.unnamed_till")) }}</p>{{ end }}
+          {{ if .cloudShop.Replaced }}<p class="muted" data-testid="setup-cloud-restore-hint">{{ T "setup.cloud.restore_hint" }} <a href="/backups/cloud-restore">{{ T "setup.cloud.restore_link" }}</a></p>{{ end }}
           <div class="setup-nav">
             {{ if not .cloudShop.Replaced }}<button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
                     hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>{{ end }}
