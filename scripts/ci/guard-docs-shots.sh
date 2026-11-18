@@ -16,8 +16,11 @@
 # internal/manual read the same references). This guard checks, en only:
 # every declared shot has img/en/<stem>.png, manifest.json "shots" records
 # exactly the declared set (an entry no markdown references is an orphan, a
-# declared shot not recorded was never captured), and a bad reference or one
-# in a route-less topic fails. A manifest without a "shots" key (older) counts
+# declared shot not recorded was never captured), and a bad reference fails.
+# A route-less topic may have extras (ut-docs#337); it has no topic hash, so
+# its extras ride on the surface hash, which covers a page only if its route
+# is some routed topic's routes[0] (not checked yet: some recipes, e.g.
+# self-order and plugins store, visit other routes). A manifest without a "shots" key (older) counts
 # as none recorded. Their content freshness rides on the topic and surface
 # hashes: the shots are regenerated in the same run from the same inputs.
 #
@@ -172,11 +175,12 @@ def routed_topics_with_routes():
 # --- extra shots (ut-docs#2615) -------------------------------------------
 # Must mirror e2e/tests-docs/lib.js extraShotsByTopic and internal/manual's
 # inlineShotRe: a reference is exactly img/<stem>.png with <stem> =
-# <topicId>-<part>, <part> = [a-z0-9]+(-[a-z0-9]+)*; only routed topics.
+# <topicId>-<part>, <part> = [a-z0-9]+(-[a-z0-9]+)*. Any topic, routed or
+# not, may have extras (ut-docs#337): each recipe carries its own route.
 IMG_REF_RE = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]*)[^)]*\)")
 SHOT_DEST_RE = re.compile(r"^img/([a-z0-9]+(?:-[a-z0-9]+)*)\.png$")
 
-def extra_shots(routed_ids):
+def extra_shots():
     """Returns ({topic: [stems]}, [error messages])."""
     out, errors = {}, []
     for path in sorted(glob.glob("web/help/en/*.md")):
@@ -190,9 +194,6 @@ def extra_shots(routed_ids):
                 continue
             stems.add(m.group(1))
         if not stems:
-            continue
-        if tid not in routed_ids:
-            errors.append(f"{path}: extra shots need a routed topic (declare routes:): {sorted(stems)}")
             continue
         out[tid] = sorted(stems)
     return out, errors
@@ -263,7 +264,7 @@ def topic_hash(locale, tid):
 topic_routes = routed_topics_with_routes()
 topics = [tid for tid, _ in topic_routes]
 screenshotted_routes = {route for _, route in topic_routes}
-shots, shot_errors = extra_shots(set(topics))
+shots, shot_errors = extra_shots()
 
 # See GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY above the bash gate.
 if os.environ.get("GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY"):
