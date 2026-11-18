@@ -145,6 +145,19 @@ jobs:
         run: bash scripts/ci/guard-builddate-stamped.sh
       - name: BuildDate stamp guard regression test (ut-docs#4369)
         run: bash scripts/ci/guard-builddate-stamped_test.sh
+      - name: Store-build strings — no checkout/plans URL, price or buy/subscribe/upgrade wording (ADR-0194, ut-docs#6401)
+        run: bash scripts/ci/guard-store-strings.sh
+      - name: Store-build strings guard regression test (ut-docs#6401)
+        run: bash scripts/ci/guard-store-strings_test.sh
+      - name: Android Play build must be stamped installChannel=play (ADR-0194, ut-docs#6388)
+        run: bash scripts/ci/guard-android-play-channel.sh
+      - name: Android Play channel guard regression test (ut-docs#6388)
+        run: bash scripts/ci/guard-android-play-channel_test.sh
+      - name: Open-source licences page is up to date with go.mod (ut-docs#6402)
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go run ./tools/gen-licenses -check
       - name: Fixed-date fixture guard (ut-docs#5467)
         run: bash scripts/ci/guard-fixed-dates.sh
       - name: Fixed-date fixture guard regression test (ut-docs#5467)

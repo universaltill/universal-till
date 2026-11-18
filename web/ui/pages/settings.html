@@ -179,7 +179,7 @@
          cloud. Elevation-wired like Register now (ut-docs#867). */}}
     {{ if .cloudSyncOff }}
     <div class="set-divider">
-      <p class="muted">{{ T "settings.enrol.cloud_sync_off" }}</p>
+      <p class="muted">{{ if planpurchaseallowed }}{{ T "settings.enrol.cloud_sync_off" }}{{ else }}{{ T "settings.enrol.cloud_sync_off_store" }}{{ end }}</p>
       <div class="set-row">
         {{/* ut-docs#4285: a lapsed store gets the banner's Check now above;
              one action, not two near-identical buttons. */}}
@@ -193,7 +193,7 @@
     <!-- ut-docs#867: unconditional — the POST is elevation-wired (checkOrElevate),
          so a denied session gets the in-place PIN dialog, not a hidden form. -->
     <div class="set-divider">
-      <p class="muted">{{ T "settings.enrol.claim_help" }}</p>
+      <p class="muted">{{ if accountlinkoutallowed }}{{ T "settings.enrol.claim_help" }}{{ else }}{{ T "settings.enrol.claim_help_store" }}{{ end }}</p>
       <button class="btn btn-touch" hx-post="/api/enrol/claim-code" hx-target="#claim-code-msg" hx-swap="innerHTML">{{ T "settings.enrol.claim_btn" }}</button>
       <div id="claim-code-msg" aria-live="polite" class="set-gap-s"></div>
     </div>
@@ -314,8 +314,10 @@
 </div>
 {{ end }}
 <div class="card" id="settings-update">
-  <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
+  <h2>{{ T "settings.update.title" }}{{ if inappupdateallowed }} {{ helpLink "updates" }}{{ end }}</h2>
   <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
+  {{/* ADR-0194 §2.3 (ut-docs#6388): Google Play / App Store builds are updated by the store, so nothing below (check, install, schedule) exists there. */}}
+  {{ if inappupdateallowed }}
   {{/* ut-docs#3940: the incoming version's release notes, ABOVE the install
        controls, so a manager reads what changes before installing. Loaded
        lazily (the till downloads the release's notes only now); GET
@@ -572,13 +574,16 @@
   </fieldset>
   {{ end }}
   {{ end }}
+  {{ end }}
 </div>
 <!-- ut-docs#3091: Settings → About — the running version, when this till
      first ran it, and the embedded "What's new" (internal/releasenotes),
      newest first. The whole page is manager-gated (#3079), so the card is not wrapped in an isManager check. -->
 <div class="card" id="settings-about">
-  <h2>{{ T "settings.about.title" }} {{ helpLink "updates" }}</h2>
+  <h2>{{ T "settings.about.title" }}{{ if inappupdateallowed }} {{ helpLink "updates" }}{{ end }}</h2>
   <p>{{ T "settings.about.installed_version" }} <strong><bdi dir="ltr" data-testid="about-version">v{{ appversion }}</bdi></strong></p>
+  {{/* ut-docs#6402: privacy notice, terms, licences, account deletion; every role can open it from the manual too. */}}
+  <p><a href="/about" data-testid="settings-about-more-link">{{ T "about.more_link" }}</a></p>
   {{ with .about.FirstRunAt }}<p class="muted">{{ T "settings.about.first_run" }} <bdi>{{ datetime . }}</bdi></p>{{ end }}
   <h3>{{ T "settings.about.whats_new" }}</h3>
   {{ range .about.Notes }}

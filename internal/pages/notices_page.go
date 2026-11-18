@@ -76,13 +76,22 @@ func noticesCanAcknowledge(d *common.Deps, r *http.Request) bool {
 	return ok && u.IsManager() && canPerform(d, r, noticesViewAction)
 }
 
+// noticeBody renders a notice body. On play/appstore builds (ADR-0194 §3) no
+// link may come out of a synced notice, so links become plain text.
+func noticeBody(body string) template.HTML {
+	if !accountLinkOutAllowed() {
+		return cloudnotice.RenderBodyNoLinks(body)
+	}
+	return cloudnotice.RenderBody(body)
+}
+
 func newNoticeRow(n data.CloudNotice, open bool, canAck bool, tab string) noticeRowView {
 	v := noticeRowView{
-		N: n, Body: cloudnotice.RenderBody(n.Body), Open: open, Unread: n.Unread(),
+		N: n, Body: noticeBody(n.Body), Open: open, Unread: n.Unread(),
 		Partner: n.SenderKind == cloudnotice.SenderPartner, CanAck: canAck && n.Severity == cloudnotice.Critical && n.AckedAt == nil,
 		Acked: n.AckedAt != nil, Tab: tab,
 	}
-	if l := cloudnotice.ParseLink(n.LinkJSON); l != nil {
+	if l := cloudnotice.ParseLink(n.LinkJSON); l != nil && !(l.Kind == "https" && !accountLinkOutAllowed()) {
 		v.Link = l
 		v.LinkExternal = l.Kind == "https"
 		v.LinkLabelKey = strings.TrimSpace(l.Label) == ""
