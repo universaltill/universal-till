@@ -10,7 +10,8 @@
 # Each check: HEAD (follow redirects; the signed query string of GitHub's
 # object-store redirect changes every time, so only its host + path count),
 # a ranged GET (bytes=0-1023) that must answer 206 with 1024 bytes, and a full
-# download whose sha256 and size must match. Only https is followed.
+# download whose sha256 and size must match. Only https is followed; the
+# test-only MSSTORE_SOAK_ALLOW_HTTP=1 needs UT_MSSTORE_TEST=1 (else exit 2).
 set -euo pipefail
 
 url=${1:?usage: msstore-soak.sh <url> <sha256> <size> [checks] [interval]}
@@ -23,7 +24,14 @@ interval=${5:-60}
 [[ "$interval" =~ ^[0-9]+$ ]] || { echo "::error::msstore-soak: bad interval" >&2; exit 2; }
 
 proto='=https'
-[ "${MSSTORE_SOAK_ALLOW_HTTP:-}" = 1 ] && proto='=http,https' # tests only
+if [ -n "${MSSTORE_SOAK_ALLOW_HTTP+x}" ]; then
+  # Test override: only with UT_MSSTORE_TEST=1 (ut-docs#6636); never ignored silently.
+  if [ "${UT_MSSTORE_TEST:-}" != 1 ]; then
+    echo "::error::msstore-soak: MSSTORE_SOAK_ALLOW_HTTP is a test override and is honoured only with UT_MSSTORE_TEST=1 (ut-docs#6636)" >&2
+    exit 2
+  fi
+  [ "$MSSTORE_SOAK_ALLOW_HTTP" = 1 ] && proto='=http,https'
+fi
 
 tmp="$(mktemp -d)"
 # shellcheck disable=SC2317

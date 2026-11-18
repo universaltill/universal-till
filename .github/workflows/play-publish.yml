@@ -1,0 +1,350 @@
+name: play-publish
+# ut-docs#6410 (epic #6380, ADR-0194 s7): builds the Google Play App Bundle
+# (`play` flavor), signs it with the UPLOAD key and uploads it to the Play
+# INTERNAL testing track. Nothing here can reach any other track.
+#
+# Trigger: workflow_dispatch only, like ios-testflight.yml, ALWAYS dispatched
+# from `--ref main` with a `version` input. release.yml's publish-release job
+# dispatches it (`--ref main -f version=X.Y.Z -f dry_run=false`) once the release
+# is published (a `push: tags` trigger would race the release, and a tag pushed
+# with GITHUB_TOKEN starts no workflow anyway). The workflow FILE therefore always
+# comes from the PR-protected main branch, never from a tag a writer could create
+# (security review H1): the environments play-internal / play-production and the
+# Google WIF rule admit refs/heads/main only. The release tag is only CHECKED OUT
+# as data (by the SHA that scripts/ci/verify-release-tag.sh, run from main,
+# proved to be on main) and built in the credential-free build job.
+# NEVER push / pull_request / pull_request_target: a fork PR must not reach the
+# signing identity or the Play token.
+#   - dry_run=true (the DEFAULT for a manual run): builds the AAB from the dispatched
+#     ref and runs android/scripts/check-aab.sh, then stops. No environment, no
+#     signing, no Google or Azure identity, no upload; runs from any ref.
+#   - dry_run=false: ref must be main, `version` X.Y.Z names a tag vX.Y.Z that is on
+#     main (ADR-0180).
+#
+# Production / staged rollout is deliberately NOT here. The card that opens
+# Google Play (#6411, owner sign-off) adds a `production` job in the GitHub
+# environment `play-production` (owner = required reviewer, admin bypass off,
+# ut-infra unitill-infra/github-universal-till) together with its
+# `store-release:allow ut-docs#6411` marker for scripts/ci/guard-store-private.sh.
+# The Play service account bound to that environment is separate from the one
+# this workflow uses (ut-infra unitill-infra/google-play).
+#
+# Three jobs, so no job holds more than one credential:
+#   build  no environment, no identity, no secret. Unsigned AAB -> check -> artifact.
+#   sign   environment play-internal + Azure OIDC: reads ONLY the upload-key
+#          secrets from the signing vault (identity unitill-play-upload-signer),
+#          jarsigns, uploads the signed AAB as an artifact. No Google identity.
+#   upload environment play-internal + Google WIF as service account
+#          play-releaser (Play: internal testing only). No signing key.
+# The owner approves twice per release (sign, then upload: both run in the
+# reviewed environment play-internal); artifacts live 7 days so a late approval
+# still finds them.
+# No stored credential anywhere: Azure and Google both take GitHub's OIDC token.
+#
+# Interface with the flavor card (#6409, android/app/build.gradle.kts and
+# android/scripts/check-aab.sh): the Play bundle task (flags
+# -PinstallChannel=play -PversionCode=<BASE>; exact line further down) writes an UNSIGNED bundle to
+# android/app/build/outputs/bundle/playRelease/app-play-release.aab (the build
+# never sees a key). Gradle multiplies the BASE itself: versionCode = base*10+5,
+# base = MA*1000000+MI*1000+PA (release.yml's formula). check-aab.sh takes
+# FLAGS: <aab> --allow-unsigned (unsigned build only) --expect-version-code N
+# --expect-cert-sha256 HEX (signed bundle: must be the committed upload cert).
+#
+# Variables (not secrets): GOOGLE_PLAY_WIF_PROVIDER, GOOGLE_PLAY_RELEASER_SA
+# (play-internal env), AZURE_PLAY_UPLOAD_CLIENT_ID, AZURE_TENANT_ID,
+# AZURE_PLAY_UPLOAD_VAULT_NAME (play-internal env). Terraform outputs of
+# ut-infra; secret VALUES never appear in a repo, only names in the vault.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version X.Y.Z (required when dry_run=false: tag vX.Y.Z, on main, is built)"
+        required: false
+        default: ""
+      dry_run:
+        description: "true = build + check only, never sign or upload"
+        type: boolean
+        required: false
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: play-publish-${{ inputs.dry_run }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'universaltill/universal-till'
+    runs-on: ubuntu-latest # public repo: GitHub-hosted only
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      version_base: ${{ steps.v.outputs.version_base }}
+      version_code: ${{ steps.v.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve version; an upload needs main + a release tag that is on main
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          # This step and the script it calls come from the dispatched ref. For an
+          # upload that ref must be main (the environments enforce it as well).
+          if [ "$DRY_RUN" != "true" ]; then
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::an upload must be dispatched from main (got $REF); use dry_run=true to test a branch"
+              exit 1
+            fi
+            [ -n "$INPUT_VERSION" ] || { echo "::error::an upload needs the version input (X.Y.Z)"; exit 1; }
+            git fetch --no-tags origin main '+refs/tags/v*:refs/tags/v*'
+            version="${INPUT_VERSION#v}"
+            source_sha="$(bash scripts/ci/verify-release-tag.sh "$version")"
+          else
+            version="${INPUT_VERSION:-$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' 2>/dev/null || true)}"
+            version="${version#v}"
+            source_sha="$GITHUB_SHA"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$version' is not X.Y.Z"
+            exit 1
+          fi
+          IFS=. read -r MA MI PA <<<"$version"
+          if [ "$MI" -gt 999 ] || [ "$PA" -gt 999 ]; then
+            echo "::error::minor/patch above 999 would collide in versionCode (release.yml formula)"
+            exit 1
+          fi
+          base=$((MA * 1000000 + MI * 1000 + PA))
+          if [ "$base" -ge 210000000 ]; then
+            echo "::error::versionCode would exceed Play's maximum 2100000000"
+            exit 1
+          fi
+          code=$((base * 10 + 5)) # ADR-0194: Play flavor suffix 5 (Gradle derives this from the base)
+          {
+            echo "version=$version"
+            echo "version_base=$base"
+            echo "version_code=$code"
+            echo "source_sha=$source_sha"
+          } >>"$GITHUB_OUTPUT"
+          echo "### Play bundle $version (versionCode $code) from $source_sha, dry_run=$DRY_RUN" >>"$GITHUB_STEP_SUMMARY"
+      # The tree that is built: the verified release commit (data only; this job
+      # holds no credential). Scripts that run with credentials (sign, upload)
+      # always come from main, never from this checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.v.outputs.source_sha }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: "platform-tools"
+      - name: Install NDK + platform + build-tools (same versions as release.yml)
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.1.0"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/28.2.13676358" >>"$GITHUB_ENV"
+      - name: Install gomobile/gobind
+        run: |
+          set -euo pipefail
+          # Pinned (same module version as go.mod): unpinned code would run in the
+          # build of the bundle that gets signed.
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260709172247-6129f5bee9d5
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260709172247-6129f5bee9d5
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: cd src && bash scripts/ci/resolve-marketplace-key.sh
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: cd src && bash scripts/ci/resolve-release-keys.sh
+      - name: Build the unsigned play App Bundle
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          VERSION_BASE: ${{ steps.v.outputs.version_base }}
+        run: |
+          set -euo pipefail
+          cd src/android
+          # BASE versionCode: the play flavor multiplies it (base*10+5).
+          ./gradlew :app:bundlePlayRelease --no-daemon -PinstallChannel=play \
+            -PversionName="$VERSION" -PversionCode="$VERSION_BASE"
+          cp app/build/outputs/bundle/playRelease/app-play-release.aab "$RUNNER_TEMP/unsigned.aab"
+      - name: Check the bundle (permissions, targetSdk, ABIs, versionCode)
+        env:
+          VERSION_CODE: ${{ steps.v.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          bash src/android/scripts/check-aab.sh "$RUNNER_TEMP/unsigned.aab" \
+            --allow-unsigned --expect-version-code "$VERSION_CODE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !inputs.dry_run }}
+        with:
+          name: play-aab-unsigned
+          path: ${{ runner.temp }}/unsigned.aab
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: build
+    if: ${{ !inputs.dry_run && github.repository == 'universaltill/universal-till' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: play-internal
+    permissions:
+      contents: read
+      id-token: write # OIDC to Azure only; this job has no Google identity
+    steps:
+      # main (the dispatched ref, enforced by the environment), NOT the tag: the
+      # scripts that run next to the key are reviewed code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: play-aab-unsigned
+          path: ${{ runner.temp }}/in
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: "platform-tools"
+      - name: Install build-tools (aapt2 for check-aab.sh)
+        run: sdkmanager --install "build-tools;36.1.0"
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Fail closed BEFORE the key is fetched or used (review N5): the upload-cert
+      # pin must exist and differ from every release cert, and the release-cert
+      # list must be present, or the "never the release cert" check is vacuous.
+      - name: Check the pins before any key is touched
+        run: |
+          set -euo pipefail
+          pin_file=android/app/play-upload-cert-sha256.txt
+          rel_file=android/app/apk-signer-sha256.txt
+          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::$rel_file is missing or empty; cannot prove the upload key differs from the release key"; exit 1; }
+          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+          [ -n "$pin" ] || { echo "::error::$pin_file holds no upload-cert SHA-256 pin; commit it (README, owner action) before the first upload"; exit 1; }
+          if grep -E '^[0-9a-f]{64}$' "$rel_file" | grep -qx "$pin"; then  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+            echo "::error::the upload-cert pin equals a release signer in apk-signer-sha256.txt; the upload key must be a different key"
+            exit 1
+          fi
+      - name: Azure login (OIDC; identity unitill-play-upload-signer, upload-key secrets only)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_PLAY_UPLOAD_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Sign the bundle with the upload key
+        env:
+          VAULT: ${{ vars.AZURE_PLAY_UPLOAD_VAULT_NAME }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ks="$RUNNER_TEMP/upload.keystore"
+          trap 'rm -f "$ks"' EXIT
+          get() { az keyvault secret show --vault-name "$VAULT" --name "$1" --query value -o tsv; }
+          # Secret NAMES only (ut-infra README, signing vault); values stay in the vault.
+          get play-upload-keystore-b64 | base64 --decode >"$ks"
+          alias_name="$(get play-upload-key-alias)"
+          pass="$(get play-upload-keystore-password)"
+          echo "::add-mask::$pass"
+          cp "$RUNNER_TEMP/in/unsigned.aab" "$RUNNER_TEMP/signed.aab"
+          # keystore password on stdin-free env form; key password = store password (PKCS12)
+          STOREPASS="$pass" jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
+            -keystore "$ks" -storepass:env STOREPASS "$RUNNER_TEMP/signed.aab" "$alias_name"
+          jarsigner -verify "$RUNNER_TEMP/signed.aab" >"$RUNNER_TEMP/verify.txt"
+          grep -q "jar verified" "$RUNNER_TEMP/verify.txt"
+      # The signer must be the committed UPLOAD cert and must NOT be the release
+      # cert: a release keystore loaded under the play-upload-* names would
+      # otherwise be signed with and used silently (security review M3).
+      - name: Verify the signer is the pinned upload cert, never the release cert
+        env:
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          pin_file=android/app/play-upload-cert-sha256.txt
+          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::apk-signer-sha256.txt missing"; exit 1; }
+          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+          [ -n "$pin" ] || { echo "::error::no upload-cert pin"; exit 1; }
+          out="$(bash android/scripts/check-aab.sh "$RUNNER_TEMP/signed.aab" \
+            --expect-version-code "$VERSION_CODE" --expect-cert-sha256 "$pin")"
+          printf '%s\n' "$out"
+          # Belt and braces: whatever signer check-aab printed must not be a release cert.
+          signer="$(printf '%s\n' "$out" | grep -oE '[0-9a-f]{64}' | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+          if [ -n "$signer" ] && grep -E '^[0-9a-f]{64}$' android/app/apk-signer-sha256.txt | grep -qx "$signer"; then  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+            echo "::error::the bundle is signed with a RELEASE cert, not the upload key"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: play-aab-signed
+          path: ${{ runner.temp }}/signed.aab
+          if-no-files-found: error
+          retention-days: 7
+
+  upload:
+    needs: [build, sign]
+    if: ${{ !inputs.dry_run && github.repository == 'universaltill/universal-till' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: play-internal
+    permissions:
+      contents: read
+      id-token: write # OIDC to Google only; this job has no signing key
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: play-aab-signed
+          path: ${{ runner.temp }}/in
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GOOGLE_PLAY_WIF_PROVIDER }}
+          service_account: ${{ vars.GOOGLE_PLAY_RELEASER_SA }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+      - name: Upload to the internal testing track
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          PLAY_PACKAGE_NAME: com.universaltill.pos
+          AAB: ${{ runner.temp }}/in/signed.aab
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+          VERSION_NAME: ${{ needs.build.outputs.version }}
+        run: bash scripts/ci/play-upload.sh
+
+  # The signed bundle is a pre-release artifact of a public repo: remove both
+  # artifacts as soon as the upload job ended, whatever its result (retention is
+  # 7 days as a backstop, long enough for a late owner approval). Only GITHUB_TOKEN, actions: write, no cloud identity.
+  cleanup:
+    needs: [build, sign, upload]
+    if: ${{ always() && !inputs.dry_run && github.repository == 'universaltill/universal-till' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Delete the play bundle artifacts of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name|startswith("play-aab-")) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$REPO/actions/artifacts/$id" || echo "::warning::could not delete artifact $id"; done

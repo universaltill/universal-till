@@ -52,6 +52,10 @@ check_jobs() { # prints pass/fail for every job; fails when none found
     block="$(job_block "$j")"
     if grep -qE '^    timeout-minutes: [0-9]+' <<<"$block"; then
       pass "${j} has a job-level timeout-minutes"
+    elif grep -qE '^    uses: \./\.github/workflows/publish-installer\.yml' <<<"$block" && grep -qE '^    timeout-minutes: [0-9]+' "${WF%/*}/publish-installer.yml"; then
+      # A reusable-workflow call job cannot carry timeout-minutes (ut-docs#6407);
+      # the callee's own job must.
+      pass "${j} calls publish-installer.yml, whose job has timeout-minutes"
     else
       fail "${j} has no job-level timeout-minutes (GitHub's default is 6 h)"
     fi

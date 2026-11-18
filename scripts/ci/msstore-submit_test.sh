@@ -28,7 +28,7 @@ if [ -n "${MOCK_FAIL_ON:-}" ] && [[ "$args" == *"$MOCK_FAIL_ON"* ]]; then printf
 C
 chmod +x "$W/bin/"*
 D=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-export PATH="$W/bin:$PATH" MOCK_LOG="$W/log" MSSTORE_ROOT="$T" REPO=o/r MSSTORE_APP_ID=XP9ABCDEF123 MSSTORE_SELLER_ID=1234567 MSSTORE_TOKEN_FILE="$W/tok" MOCK_RELSTATE="false false" MOCK_DIGEST=$D EXPECT_SHA256=$D MSSTORE_POLL_SECONDS=0
+export PATH="$W/bin:$PATH" MOCK_LOG="$W/log" UT_MSSTORE_TEST=1 MSSTORE_ROOT="$T" REPO=o/r MSSTORE_APP_ID=XP9ABCDEF123 MSSTORE_SELLER_ID=1234567 MSSTORE_TOKEN_FILE="$W/tok" MOCK_RELSTATE="false false" MOCK_DIGEST=$D EXPECT_SHA256=$D MSSTORE_POLL_SECONDS=0
 S="$T/scripts/ci/msstore-submit.sh"
 fails=0
 t() { # t <want-rc> <name> [args]
@@ -37,6 +37,10 @@ t() { # t <want-rc> <name> [args]
   if [ "$rc" = "$want" ]; then echo "ok   - $name"; else echo "FAIL - $name (rc $rc)" >&2; cat "$W/out" >&2; fails=$((fails+1)); fi
 }
 export DRY_RUN=true
+UT_MSSTORE_TEST='' t 1 "MSSTORE_ROOT without UT_MSSTORE_TEST fails closed"
+! grep -q . "$W/log" && grep -q 'MSSTORE_ROOT' "$W/out" && echo "ok   - refused before any API call, variable named" || { echo "FAIL - MSSTORE_ROOT gate" >&2; fails=$((fails+1)); }
+UT_MSSTORE_TEST=yes t 1 "MSSTORE_ROOT with UT_MSSTORE_TEST=yes (not 1) fails closed"
+! grep -q . "$W/log" && grep -q 'MSSTORE_ROOT' "$W/out" && echo "ok   - flag=yes refused before any API call, variable named" || { echo "FAIL - flag=yes gate" >&2; fails=$((fails+1)); }
 t 0 "dry run probes without an opening file"
 grep -q -- '-X GET' "$W/log" && echo "ok   - probe reads" || { echo "FAIL - no probe" >&2; fails=$((fails+1)); }
 ! grep -qE -- '-X (PUT|POST|PATCH)|--data-binary' "$W/log" && echo "ok   - dry run never writes" || { echo "FAIL - dry run wrote" >&2; fails=$((fails+1)); }

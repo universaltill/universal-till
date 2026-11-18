@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,6 +89,10 @@ func (i *MarketplaceInstaller) sweepStoreDownloads() {
 func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req MarketplaceInstallRequest) (*StoreDownload, error) {
 	if i == nil || i.client == nil {
 		return nil, fmt.Errorf("marketplace installer not configured")
+	}
+	// Before any network use or staging (ADR-0194, App Store channel).
+	if err := RefuseCodeCanonicalType(req.CanonicalType); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.ListingID) == "" {
 		return nil, fmt.Errorf("listing_id is required")
@@ -197,6 +202,11 @@ func (i *MarketplaceInstaller) InstallFromStore(ctx context.Context, listingID, 
 		DeviceArch: runtime.GOOS + "/" + runtime.GOARCH,
 	})
 	if err != nil {
+		if errors.Is(err, ErrCodePluginRefused) {
+			// App Store channel: the catalogue called it asset-only but the
+			// verified manifest runs code. Leave no staged wasm on disk.
+			_ = i.DeleteStoreDownload(listingID)
+		}
 		return nil, err
 	}
 	// The staged bundle served its purpose.

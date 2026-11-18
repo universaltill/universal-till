@@ -43,6 +43,7 @@ type storeItem struct {
 	StatusState      string // requested|downloading|installing|failed ("" otherwise)
 	StatusMessageKey string // operator-visible failure reason (locale key)
 	Retryable        bool
+	ReportHref       string // marketplace "Report this listing" page for this listing (ut-docs#6400)
 }
 
 // trustTierOf maps a plugin to its visible trust badge: first-party
@@ -112,6 +113,7 @@ func storeListings(r *http.Request, d *common.Deps) ([]storeItem, error) {
 	}
 	statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
+	reportBase := strings.TrimSuffix(strings.TrimRight(enroll.Effective(d.Cfg).Marketplace.EndpointURL, "/"), "/api")
 	items := []storeItem{}
 	if err == nil && snapshot != nil {
 		// Browse shows the whole public catalog — an anonymous till sees
@@ -119,10 +121,36 @@ func storeListings(r *http.Request, d *common.Deps) ([]storeItem, error) {
 		// plugins self-serve; registered/paid need a claimed store), not by
 		// hiding listings here.
 		for _, p := range snapshot.Plugins {
-			items = append(items, storeItemFrom(d, p, webBase, downloads, statuses))
+			it := storeItemFrom(d, p, webBase, downloads, statuses)
+			it.ReportHref = storeReportHref(reportBase, it.ListingID)
+			items = append(items, it)
 		}
 	}
 	return items, err
+}
+
+// Marketplace publisher terms and content guidelines live on the website, in
+// English (the operative text), in the chrome-less in-app legal view
+// (/app/legal/, no Pricing or sign-up menu: ADR-0194 §3, like the About page),
+// so a Play or App Store till never lands on a purchase surface.
+// Microsoft Store policy 11.13, ut-docs#6400. The pages themselves are
+// published by ut-website (owner-gated, ut-docs#6400).
+const (
+	storeTermsHref      = "https://universaltill.com/en-gb/app/legal/marketplace-terms/"
+	storeGuidelinesHref = "https://universaltill.com/en-gb/app/legal/marketplace-content-guidelines/"
+	storeDefaultCloud   = "https://cloud.universaltill.com"
+)
+
+// storeReportHref is the marketplace's public report page for one listing,
+// opened in the browser: nothing is fetched while the till renders. base is
+// the marketplace web base (endpoint minus /api); empty falls back to the
+// public cloud host.
+func storeReportHref(base, listingID string) string {
+	base = strings.TrimRight(base, "/")
+	if base == "" {
+		base = storeDefaultCloud
+	}
+	return base + "/ui/en-gb/plugins/" + url.PathEscape(listingID) + "/report"
 }
 
 // storeItemFrom maps one catalog listing plus the till's local download and
@@ -199,6 +227,8 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			"ActiveCat":        storeActiveCategory(r.URL.Query().Get("type"), cats),
 			"EntitledFiltered": false,
 			"CatalogError":     err != nil,
+			"TermsHref":        storeTermsHref,
+			"GuidelinesHref":   storeGuidelinesHref,
 		})(w, r)
 	}
 }
@@ -230,8 +260,10 @@ func PluginStoreDetailHandler(d *common.Deps) http.HandlerFunc {
 					"Item":      it,
 					// ut-docs#4791: the first Download registers an
 					// unregistered till, so ask for the cloud terms there.
-					"TermsGate": termsGate,
-					"terms":     termsView(r.Context(), d, locale),
+					"TermsGate":      termsGate,
+					"TermsHref":      storeTermsHref,
+					"GuidelinesHref": storeGuidelinesHref,
+					"terms":          termsView(r.Context(), d, locale),
 				})(w, r)
 				return
 			}
@@ -340,6 +372,12 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusPreconditionRequired, "settings.enrol.terms_required")
 			return
 		}
+		// ADR-0194: a code listing is never downloaded on the App Store build.
+		listingType, codeErr := refuseCodeInstall(d, listingID)
+		if codeErr != nil {
+			respond(w, http.StatusForbidden, plugins.CodeInstallRefusedMsgID)
+			return
+		}
 		// Store registration is lazy — a download is the first interaction
 		// that needs a store identity, so enrol before building the request.
 		checkinAfterRegistration(d, enroll.EnsureRegistered(r.Context(), d.Cfg, d.Settings)) // ADR-0148 §2
@@ -349,10 +387,11 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		sd, err := installer.DownloadToStore(r.Context(), plugins.MarketplaceInstallRequest{
-			ListingID:  listingID,
-			MerchantID: effCfg.Marketplace.ClientID,
-			StoreID:    effCfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+			ListingID:     listingID,
+			CanonicalType: listingType,
+			MerchantID:    effCfg.Marketplace.ClientID,
+			StoreID:       effCfg.Marketplace.StoreID,
+			DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
 			// ut-docs#673/#703/#704/#3541/#6548: one classification path —
