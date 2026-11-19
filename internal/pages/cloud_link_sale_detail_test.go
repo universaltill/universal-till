@@ -40,7 +40,7 @@ var (
 		"Method": "method", "Amount": "amount_minor", "ChangeGiven": "change_given_minor", "TipAmount": "tip_minor",
 	}
 	saleDetailPaymentNever = []string{
-		"Reference", "MaskedPAN", "AuthCode", "TerminalID", "TraceID", "VoucherID", "PaidAt", "TipRecipient",
+		"ID", "Reference", "MaskedPAN", "AuthCode", "TerminalID", "TraceID", "VoucherID", "PaidAt", "TipRecipient",
 	}
 )
 

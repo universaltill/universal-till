@@ -8027,6 +8027,9 @@ type SaleDetailLine struct {
 }
 
 type SaleDetailPayment struct {
+	// ID is the payments row id (ut-docs#6649: per-leg refund netting). Never
+	// on the journal wire.
+	ID          string `json:"-"`
 	Method      string `json:"method"`
 	Amount      int64  `json:"amount"`
 	ChangeGiven int64  `json:"change_given"`
@@ -8178,17 +8181,17 @@ ORDER BY sl.line_no, slm.rowid`, d.ID)
 	}
 
 	payRows, err := r.db.QueryContext(ctx, `
-SELECT method_id, amount, change_given, tip_amount, COALESCE(tip_recipient, 'employee'), COALESCE(reference, ''),
+SELECT id, method_id, amount, change_given, tip_amount, COALESCE(tip_recipient, 'employee'), COALESCE(reference, ''),
        COALESCE(masked_pan, ''), COALESCE(auth_code, ''), COALESCE(terminal_id, ''), COALESCE(trace_id, ''),
        COALESCE(voucher_id, ''), paid_at
-FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
+FROM payments WHERE sale_id = ? ORDER BY paid_at, rowid`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale payments: %w", err)
 	}
 	defer payRows.Close()
 	for payRows.Next() {
 		var p SaleDetailPayment
-		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.TipRecipient, &p.Reference,
+		if err := payRows.Scan(&p.ID, &p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.TipRecipient, &p.Reference,
 			&p.MaskedPAN, &p.AuthCode, &p.TerminalID, &p.TraceID, &p.VoucherID, &p.PaidAt); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
 		}
@@ -9114,4 +9117,73 @@ func (r *POSRepo) exec(tx *sql.Tx) dbExecutor {
 		return tx
 	}
 	return r.db
+}
+
+// RefundLegRefund is what one completed refund sent back to one original
+// payment leg (ut-docs#6649).
+type RefundLegRefund struct {
+	OriginalPaymentID string
+	Amount            int64
+}
+
+// RefundedByLeg sums, per original payment id, what completed refunds already
+// sent back to that leg (rows written when the refund was recorded).
+func (r *POSRepo) RefundedByLeg(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT original_payment_id, SUM(amount) FROM refund_leg_refunds WHERE original_sale_id = ? GROUP BY original_payment_id`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("refunded by leg: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var sum int64
+		if err := rows.Scan(&id, &sum); err != nil {
+			return nil, fmt.Errorf("scan refunded by leg: %w", err)
+		}
+		out[id] = sum
+	}
+	return out, rows.Err()
+}
+
+// RefundedByMethod sums what completed returns linked to originalSaleID paid
+// back through one payment method (all legs together, recorded or not).
+func (r *POSRepo) RefundedByMethod(ctx context.Context, originalSaleID, methodID string) (int64, error) {
+	var total int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(ABS(p.amount)), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+JOIN sale_links k ON k.sale_id = s.id
+WHERE k.original_sale_id = ? AND p.method_id = ?`, originalSaleID, methodID).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("refunded by method: %w", err)
+	}
+	return total, nil
+}
+
+// InsertRefundLegRefunds records the per-leg allocation an approved refund
+// used, against the return sale that recorded it. One transaction: all legs
+// or none.
+func (r *POSRepo) InsertRefundLegRefunds(ctx context.Context, originalSaleID, returnSaleID string, legs []RefundLegRefund) error {
+	if len(legs) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("record refund legs: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, l := range legs {
+		if l.Amount <= 0 || l.OriginalPaymentID == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO refund_leg_refunds (id, original_sale_id, original_payment_id, return_sale_id, amount)
+VALUES (?, ?, ?, ?, ?)`, uuid.NewString(), originalSaleID, l.OriginalPaymentID, returnSaleID, l.Amount); err != nil {
+			return fmt.Errorf("record refund legs: %w", err)
+		}
+	}
+	return tx.Commit()
 }
