@@ -119,6 +119,7 @@ type parkedMoveTarget struct {
 // to share the word "Orders"; ut-docs#1918 renamed the other's display
 // string rather than its route or key namespace.
 func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
+	wireAbandonedTenderReversal(d)
 	repo := data.NewHeldSalesRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -134,7 +135,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
 		httpx.Render("ui/pages/open_orders.html", map[string]any{
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.open_orders"),
-			"theme":         d.CurrentState().Theme,
+			"theme":         d.ResolvedTheme(r),
 			"menuItems":     d.MenuSnapshot(),
 			"view":          view,
 			"backToSaleURL": saleScreenReturnURL(mode),
@@ -187,8 +188,16 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			// one-shot banner does -- saleScreenReturnURLWithMsg keeps the
 			// notice from being dropped by a backoffice-mode till's own
 			// "?stay=1" target (ut-docs#2347).
+			if key, ok := abandonToastKey(d.Engine); ok {
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
+				return
+			}
 			http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, "hold.toast.parked_and_resumed"), http.StatusSeeOther)
 		default:
+			if key, ok := abandonToastKey(d.Engine); ok {
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
+				return
+			}
 			http.Redirect(w, r, saleScreenReturnURL(mode), http.StatusSeeOther)
 		}
 	})
@@ -250,8 +259,16 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		case resumeFailed:
 			back("hold.error.failed")
 		case resumeOKParkedPrior:
+			if key, ok := abandonToastKey(d.Engine); ok {
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
+				return
+			}
 			http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, "hold.toast.parked_and_resumed"), http.StatusSeeOther)
 		default:
+			if key, ok := abandonToastKey(d.Engine); ok {
+				http.Redirect(w, r, saleScreenReturnURLWithWarn(mode, key), http.StatusSeeOther)
+				return
+			}
 			http.Redirect(w, r, saleScreenReturnURL(mode), http.StatusSeeOther)
 		}
 	})

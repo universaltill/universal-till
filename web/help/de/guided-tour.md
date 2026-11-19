@@ -3,6 +3,7 @@ id: guided-tour
 title: Geführte Tour durch den Verkaufsbildschirm
 section: Täglicher Verkauf
 order: 6
+public: true
 summary: Ein einminütiger Rundgang über den Verkaufsbildschirm, der bei der ersten Anmeldung von selbst startet und sich über die Hilfe jederzeit wiederholen lässt.
 keywords: [tour, geführte tour, rundgang, einführung, erstes mal, einarbeitung, neues personal, tipps]
 ---

@@ -89,6 +89,24 @@ export default defineConfig({
       reuseExistingServer: false,
       env: DOCS_SHOTS_ENV,
     },
+    {
+      // ut-docs#5366: the Notices topic is captured on a till that pulls a
+      // fixed set from a fake cloud (fake-notices-cloud.mjs "docs" fixture).
+      command: 'bash ./run-till-notices.sh',
+      url: 'http://127.0.0.1:8105/healthz',
+      timeout: 120_000,
+      reuseExistingServer: false,
+      env: { ...DOCS_SHOTS_ENV, NOTICES_TILL_PORT: '8105', NOTICES_FAKE_PORT: '8106', NOTICES_FIXTURE: 'docs' },
+    },
+    {
+      // ut-docs#335: the plugins topic's Plugin Store shots need a populated
+      // store: a docs-only till with a fixed offline catalogue snapshot.
+      command: 'bash ./run-till-plugins.sh',
+      url: 'http://127.0.0.1:8107/healthz',
+      timeout: 120_000,
+      reuseExistingServer: false,
+      env: DOCS_SHOTS_ENV,
+    },
   ],
   projects: [
     {

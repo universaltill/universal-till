@@ -202,7 +202,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// an unrecognised value falls back to the generic key rather
 			// than rendering verbatim.
 			"msgKey":               httpx.QueryMsgKey(r),
-			"theme":                d.CurrentState().Theme,
+			"warnKey":              httpx.QueryWarnKey(r), // ut-docs#6602: error-level twin of msgKey
+			"nextSteps":            nextStepsView(r, d),   // ut-docs#5058 UT-3: nil unless a manager's till was just set up from the cloud
+			"theme":                d.ResolvedTheme(r),
 			"menuItems":            d.MenuSnapshot(),
 			"currency":             d.CurrentState().Currency,
 			"paymentMethods":       methods,
@@ -286,6 +288,17 @@ func saleScreenReturnURL(mode string) string {
 // mode's own target already carries "?stay=1", which a bare "?msg=" append
 // would silently clobber.
 func saleScreenReturnURLWithMsg(mode, msgKey string) string {
+	return saleScreenReturnURLWithParam(mode, "msg", msgKey)
+}
+
+// saleScreenReturnURLWithWarn is saleScreenReturnURLWithMsg at error level:
+// "?warn=<key>" renders as a persistent role=alert notice (ut-docs#6602, an
+// abandoned card payment that may still stand must not look like success).
+func saleScreenReturnURLWithWarn(mode, warnKey string) string {
+	return saleScreenReturnURLWithParam(mode, "warn", warnKey)
+}
+
+func saleScreenReturnURLWithParam(mode, param, msgKey string) string {
 	target := saleScreenReturnURL(mode)
 	if msgKey == "" {
 		return target
@@ -294,7 +307,7 @@ func saleScreenReturnURLWithMsg(mode, msgKey string) string {
 	if strings.Contains(target, "?") {
 		sep = "&"
 	}
-	return target + sep + "msg=" + msgKey
+	return target + sep + param + "=" + msgKey
 }
 
 // saleGridFirstPaint renders the sale screen's grid for GET /'s first paint

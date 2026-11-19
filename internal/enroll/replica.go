@@ -274,7 +274,14 @@ func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Ca
 			return
 		}
 	}
-	for _, k := range []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt, entitlement.KeyLastConfirmedAt} {
+	// KeyStoreClaimed (ut-docs#3532) is written only when relayed: an absent
+	// value leaves the replica's own row alone.
+	keys := []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt}
+	if _, ok := vals[entitlement.KeyStoreClaimed]; ok {
+		keys = append(keys, entitlement.KeyStoreClaimed)
+	}
+	keys = append(keys, entitlement.KeyLastConfirmedAt)
+	for _, k := range keys {
 		if err := kv.Set(ctx, k, vals[k]); err != nil {
 			logging.L().Warnf("enrolment: persist relayed %s: %v (will retry on the next vouch)", k, err)
 			return
@@ -453,12 +460,23 @@ func (p primarySource) RequestVouch(ctx context.Context, deviceID, version strin
 	return env.Data, nil
 }
 
+// ErrRegistrationStopped: the shop switched "Send usage facts" off, so the main
+// till does not register another till in the cloud (ut-docs#6618).
+var ErrRegistrationStopped = errors.New("enrolment: registration stopped for this shop")
+
 // VouchForReplica is the main till's side of POST /api/sync/cloud-device:
 // with its own store token it registers the replica's device under the store
 // and says so. The caller has already authenticated the replica (sync
 // bearer) and supplies TillID/DeviceName from its own records. The store
 // token is used here and never returned.
-func VouchForReplica(ctx context.Context, cfg *config.Config, req ReplicaRequest) (Vouch, error) {
+func VouchForReplica(ctx context.Context, cfg *config.Config, kv Settings, req ReplicaRequest) (Vouch, error) {
+	// ut-docs#6618 (ADR-0200 decision 6): "Stop sending" is shop-wide. A
+	// stopped shop whose cloud identity was made automatically does not get
+	// new tills registered in the cloud behind its back. An operator-claimed
+	// shop uses the cloud on purpose and is not affected.
+	if kv != nil && Stopped(ctx, kv) && AutoRegistered(ctx, kv) {
+		return Vouch{}, ErrRegistrationStopped
+	}
 	eff := Effective(cfg)
 	m := eff.Marketplace
 	storeID, token := currentStoreAuth(m)

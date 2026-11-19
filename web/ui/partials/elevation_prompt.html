@@ -119,7 +119,7 @@
          (web/ui/pages/index.html's own .scan-row). */}}
     <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
             title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
-    {{ if .ErrKey }}<div class="login-error">{{ T .ErrKey }}</div>{{ end }}
+    {{ if .ErrKey }}<div class="login-error" role="alert">{{ T .ErrKey }}</div>{{ end }}
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
               data-action="close-closest">

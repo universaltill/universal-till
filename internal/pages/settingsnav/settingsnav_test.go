@@ -63,6 +63,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-tills", Label: "🔗 Tills", Group: devices, Cat: "devices"},
 		{Key: "settings-kiosk-idle-reset", Label: "Kiosk idle reset", Group: devices, Cat: "devices"},
 		{Key: "settings-kiosk-payment-mode", Label: "Kiosk payment mode", Group: devices, Cat: "devices"},
+		{Key: "settings-notices", Label: "Notices", Group: devices, Cat: "devices"},
 		{Key: "settings-menulayout", Label: "Hidden menu tiles", Group: look, Cat: "look"},
 		{Key: "settings-theme", Label: "Theme", Group: look, Cat: "look"},
 		{Key: "settings-display", Label: "Display", Group: look, Cat: "look"},
@@ -76,6 +77,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-catalog-pre-pack-unit-price", Label: "Unit price on pre-packed labels", Group: advanced, Cat: "advanced"},
 		{Key: "settings-data", Label: "🧹 Data management", Group: advanced, Cat: "advanced"},
 		{Key: "settings-retention", Label: "🗄️ Report retention", Group: advanced, Cat: "advanced"},
+		{Key: "settings-cloud-staff", Label: "Staff sales in cloud reports", Group: advanced, Cat: "advanced"},
 		{Key: "settings-telemetry", Label: "Plugin telemetry", Group: advanced, Cat: "advanced"},
 		{Key: "settings-all", Label: "All Settings", Group: advanced, Cat: "advanced"},
 	}

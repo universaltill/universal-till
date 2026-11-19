@@ -1,0 +1,51 @@
+# Cuts the catimport/vX.Y.Z tag when a catimport change merges (ut-docs#5882;
+# ADR-0164 §1). A cloud lane's own tag push was refused by its session's
+# permission classifier (ut-docs#4735), so CI tags it instead, from
+# catimport/VERSION. The PR guard
+# scripts/ci/guard-catimport-version.sh already made sure VERSION was bumped.
+#
+# Decision table (scripts/ci/catimport-tag.sh; L = highest catimport/v* tag,
+# V = catimport/VERSION):
+#   V > L ........................... annotated tag catimport/vV on this commit
+#   V == L, nothing to tag .......... green no-op (re-run, README-only push)
+#   V == L, catimport source changed  red: bump catimport/VERSION
+#   V < L, or VERSION missing/bad ... red
+# A red run on main IS the alert. "Re-run failed jobs" and "Run workflow" are
+# safe: the script is idempotent and never moves or deletes a tag. A re-run
+# of an old run after a newer tag exists goes red ("below the latest tag"),
+# changing nothing: retry with "Run workflow" on main instead. Tags pushed
+# with GITHUB_TOKEN trigger no other workflow (release.yml's v* never matches
+# catimport/v* anyway).
+name: catimport tag
+
+on:
+  push:
+    branches: [main]
+    paths: ["catimport/**"]
+  workflow_dispatch: {}
+
+permissions: {}
+
+# Queue, never cancel mid-push (same rationale as nightly.yml).
+concurrency:
+  group: catimport-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse a ref other than main
+        run: |
+          if [ "${GITHUB_REF}" != refs/heads/main ]; then
+            echo "::error::catimport tags are cut from main only (got ${GITHUB_REF})"
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history and tags; origin/main present
+      - name: Tag catimport/vX.Y.Z from catimport/VERSION
+        run: bash scripts/ci/catimport-tag.sh

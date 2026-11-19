@@ -3,6 +3,7 @@ id: open-orders
 title: Açık siparişler
 section: Günlük satış
 order: 15
+public: true
 summary: "Bu kasada hâlâ ödenmeyi bekleyen her sipariş, iki sekmede: bekletilen satışlar ve kasada ödenecek self servis kiosk siparişleri."
 routes: [/open-orders]
 keywords: [açık siparişler, siparişi iptal et, iptal, sipariş sil, bekletilen, beklet, beklemede, park, hesap, sürdür, geri çağır, masa, bekleme, kasada öde, kasada ödenecek, kiosk, self servis, C-numarası]

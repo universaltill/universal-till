@@ -3,6 +3,7 @@ id: display
 title: Sprachen & Anzeige
 section: Ihr Geschäft einrichten
 order: 140
+public: true
 summary: Die gesamte Kasse spricht Englisch, Türkçe, فارسی und العربية — einschließlich Rechts-nach-links-Layout — und passt sich mit einer Bildschirmtastatur und einstellbarer Textgröße an Touchscreens an.
 routes: [/settings]
 keywords: [theme, skalierung, kiosk, bildschirm, osk, tastatur]

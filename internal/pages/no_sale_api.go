@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
@@ -42,6 +43,7 @@ type noSaleRequest struct {
 //     drawer did not open.
 //  3. record — the no_sale_events row and its audit_log row in one
 //     transaction (InsertAuditElevated when a PIN elevated the request).
+//  4. publish till.drawer.no_sale (best-effort, after commit and response).
 //
 // Not a customer document: no receipt is printed, so the ADR-0124
 // customer-document suppression does not apply.
@@ -117,9 +119,10 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		id, err := recordNoSale(ctx, d, repo, data.NoSaleEvent{
+		ev := data.NoSaleEvent{
 			CreatedAt: now, RegisterID: registerID, ActorID: actorID, ApproverID: approverID, Reason: reason,
-		}, elev.Outcome == elevated)
+		}
+		id, err := recordNoSale(ctx, d, repo, ev, elev.Outcome == elevated)
 		if err != nil {
 			// The drawer is already open; say so rather than pretend.
 			logging.L().Errorf("no-sale: drawer opened but not recorded: %v", err)
@@ -127,6 +130,9 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"id": id}, "error": nil})
+		// Best-effort, after commit and after the response: the drawer
+		// never waits on a plugin (ut-docs#5758).
+		dispatchTillDrawerNoSale(ctx, d, id, ev)
 	})
 }
 
@@ -161,4 +167,37 @@ func recordNoSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, e dat
 // writeNoSaleError writes the repo's JSON error envelope.
 func writeNoSaleError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"data": nil, "error": map[string]string{"code": code, "message": msg}})
+}
+
+const tillDrawerNoSaleEvent = plugins.TillDrawerNoSaleEvent
+
+// publishTillDrawerNoSale is a test seam.
+var publishTillDrawerNoSale = func(ctx context.Context, bus *plugins.EventBus, ev plugins.TillDrawerNoSalePayload) (string, error) {
+	return bus.PublishTillDrawerNoSale(ctx, ev)
+}
+
+// dispatchTillDrawerNoSale publishes till.drawer.no_sale (ut-docs#5758).
+// HasSubscribers first: zero subscribers = one map lookup under RLock, no
+// payload, no Publish, no event_published audit row, no DB read.
+func dispatchTillDrawerNoSale(ctx context.Context, d *common.Deps, id string, e data.NoSaleEvent) {
+	bus := plugins.SharedBus(d.Db)
+	if !bus.HasSubscribers(tillDrawerNoSaleEvent) {
+		return
+	}
+	sendTillDrawerNoSale(ctx, bus, plugins.TillDrawerNoSalePayload{
+		NoSaleID: id, RegisterID: e.RegisterID, TillID: e.TillID,
+		ActorID: e.ActorID, ApproverID: e.ApproverID, CreatedAt: e.CreatedAt,
+	})
+}
+
+// sendTillDrawerNoSale is split out so its defer/recover never touches the
+// zero-plugin path.
+func sendTillDrawerNoSale(ctx context.Context, bus *plugins.EventBus, ev plugins.TillDrawerNoSalePayload) {
+	defer logging.RecoverAndLog("pages.tillDrawerNoSale")
+	// The row is committed and the drawer open: a client that hangs up
+	// after the 200 must not cancel the permission check / enqueue.
+	ctx = context.WithoutCancel(ctx)
+	if _, err := publishTillDrawerNoSale(ctx, bus, ev); err != nil {
+		logging.L().Warnf("no-sale: publish %s for %s: %v", tillDrawerNoSaleEvent, ev.NoSaleID, err) // id only: no reason, no payload
+	}
 }

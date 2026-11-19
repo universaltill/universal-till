@@ -20,7 +20,7 @@ import (
 // block) stays silent.
 
 const lapsedBlock = `{"plan":"shop","subscription_status":"lapsed","expires_at":null,"refreshed_at":"2026-10-14T10:00:00Z","cloud_link":"periodic"}`
-const activeShopBlock = `{"plan":"shop","subscription_status":"active","expires_at":"2026-11-14T00:00:00Z","refreshed_at":"2026-10-14T10:00:00Z","cloud_link":"periodic"}`
+const activeShopBlock = `{"plan":"shop","subscription_status":"active","expires_at":"2026-11-14T00:00:00Z","refreshed_at":"2026-10-14T10:00:00Z","cloud_link":"periodic"}` // fixed-date:ok display-only expires_at (ADR-0060 §5), never compared to the clock; renewal keys on last_confirmed_at
 
 // watchCloud counts sync POSTs and answers each with a 402 carrying block,
 // or (active = true) a 200 with the active shop block.

@@ -35,6 +35,8 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
+	"github.com/universaltill/universal-till/internal/releasesig"
+	"github.com/universaltill/universal-till/internal/releasesource"
 	"github.com/universaltill/universal-till/internal/updates"
 )
 
@@ -48,9 +50,11 @@ import (
 // moments later for no benefit.
 var applyMu sync.Mutex
 
-// releasesLatest is a var (not const) purely as a test seam: tests point it at
-// a local httptest server so no test ever talks to the real GitHub API.
-var releasesLatest = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+// releaseSource is where this build downloads updates from: the build-time
+// buildinfo.ReleasesBaseURL (ut-docs#4080), never UT_UPDATE_RELEASES_URL. It
+// is a var purely as a test seam: tests point it at a local httptest server so
+// no test ever talks to the real GitHub API.
+var releaseSource = releasesource.Build
 
 // Test seams. Production code never changes these; tests do, so that the full
 // Apply flow can run hermetically against a temp-dir "install" without ever
@@ -98,6 +102,9 @@ func SetBeforeRestart(fn func(context.Context)) {
 	}
 	beforeRestart = fn
 }
+
+// ErrApplyInProgress means another update is already being applied (ut-docs#5274).
+var ErrApplyInProgress = errors.New("an update is already being applied")
 
 // ErrUnsupported means this install type updates via a native mechanism.
 var ErrUnsupported = errors.New("in-app update isn't available for this install; run the installer (a portable Windows zip) or reinstall (this install's directory isn't self-update-writable)")
@@ -291,6 +298,40 @@ type ghAsset struct {
 type ghRelease struct {
 	TagName string    `json:"tag_name"`
 	Assets  []ghAsset `json:"assets"`
+
+	// src is the release source the metadata was fetched from; its trusted
+	// asset host gates every download (requireTrusted).
+	src releasesource.Source
+}
+
+// requireTrusted refuses any listed asset URL off the build's trusted
+// release host (ut-docs#4080). "" is skipped: the callers' existing
+// fail-closed "no checksums.txt" checks handle a missing one.
+func (r *ghRelease) requireTrusted(urls ...string) error {
+	for _, u := range urls {
+		if u != "" && !r.src.AssetTrusted(u) {
+			return fmt.Errorf("%w: %s", releasesource.ErrUntrustedAsset, u)
+		}
+	}
+	return nil
+}
+
+// integrityAssetURLs are the listed URLs verifiedChecksums will fetch
+// (checksums.txt and its signature); they are host-checked like the artifact.
+func (r *ghRelease) integrityAssetURLs() []string {
+	var out []string
+	for _, a := range r.Assets {
+		if a.Name == "checksums.txt" || a.Name == releasesig.SigAsset {
+			out = append(out, a.URL)
+		}
+	}
+	return out
+}
+
+// requireTrustedRelease refuses the artifact and the integrity assets when any
+// is off the trusted release host, before anything is downloaded (ut-docs#4080).
+func (r *ghRelease) requireTrustedRelease(artifactURL string) error {
+	return r.requireTrusted(append([]string{artifactURL}, r.integrityAssetURLs()...)...)
 }
 
 // Apply downloads the latest release, verifies it, swaps the binary + web/, and
@@ -351,7 +392,7 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	// windowsHandover: a Windows update already handed to the installer
 	// helper outlives applyMu (wininstaller.go).
 	if windowsHandover.Load() || !applyMu.TryLock() {
-		return errors.New("an update is already being applied")
+		return ErrApplyInProgress
 	}
 	defer applyMu.Unlock()
 
@@ -395,17 +436,22 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	version = strings.TrimPrefix(rel.TagName, "v")
 
 	archiveName := fmt.Sprintf("unitill-pos_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
-	archiveURL, checksumsURL := "", ""
+	archiveURL := ""
 	for _, a := range rel.Assets {
-		switch {
-		case a.Name == archiveName:
+		if a.Name == archiveName {
 			archiveURL = a.URL
-		case a.Name == "checksums.txt":
-			checksumsURL = a.URL
 		}
 	}
 	if archiveURL == "" {
 		return fmt.Errorf("no release archive for %s/%s (%s)", runtime.GOOS, runtime.GOARCH, archiveName)
+	}
+	// Trusted release host first (ut-docs#4080), then the integrity root (ADR-0178): the signed checksums, before any download.
+	if err := rel.requireTrustedRelease(archiveURL); err != nil {
+		return err
+	}
+	checksums, err := verifiedChecksums(ctx, rel)
+	if err != nil {
+		return err
 	}
 
 	// Download + verify the archive.
@@ -419,13 +465,7 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	if err := download(ctx, archiveURL, archivePath); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
-	// Fail closed: every real release ships checksums.txt (.goreleaser.yaml
-	// name_template), so a release without one only ever means a broken or
-	// tampered release — never install unverified.
-	if checksumsURL == "" {
-		return fmt.Errorf("release v%s has no checksums.txt — refusing to install an unverified update", version)
-	}
-	want, err := checksumFor(ctx, checksumsURL, archiveName)
+	want, err := checksums.lookup(archiveName)
 	if err != nil {
 		return err
 	}
@@ -533,9 +573,13 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 // fetchRelease reads one release's metadata: /releases/tags/v<version>, or
 // /releases/latest when version is "" (ut-docs#2738).
 func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
-	url := releasesLatest
+	src, err := releaseSource()
+	if err != nil {
+		return nil, fmt.Errorf("self-update: %w", err)
+	}
+	url := src.LatestURL()
 	if version != "" {
-		url = strings.TrimSuffix(releasesLatest, "/latest") + "/tags/v" + version
+		url = src.TagURL(version)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -553,9 +597,28 @@ func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return nil, err
 	}
-	if strings.TrimPrefix(rel.TagName, "v") == buildinfo.Version {
-		return nil, errors.New("already on the latest version")
+	// On "latest", never move to an older release (a rolled-back or
+	// replayed "latest" must not downgrade a till; ADR-0178 section 8).
+	if version == "" {
+		tag := strings.TrimPrefix(rel.TagName, "v")
+		if tag == buildinfo.Version {
+			return nil, errors.New("already on the latest version")
+		}
+		if !updates.Newer(tag, buildinfo.Version) {
+			return nil, fmt.Errorf("v%s is not newer than this build (v%s)", tag, buildinfo.Version)
+		}
+	} else {
+		// The asset names and checksum lines are all derived from the
+		// response's tag, so it must be the one asked for (ADR-0178 s1).
+		// Classified "release" by followErrorCode (the "releases API" prefix).
+		if rel.TagName != "v"+version {
+			return nil, fmt.Errorf("releases API answered tag %q for v%s", rel.TagName, version)
+		}
+		if version == buildinfo.Version {
+			return nil, errors.New("already on the latest version")
+		}
 	}
+	rel.src = src
 	return &rel, nil
 }
 
@@ -578,28 +641,6 @@ func download(ctx context.Context, url, dst string) error {
 	defer f.Close()
 	_, err = io.Copy(f, resp.Body)
 	return err
-}
-
-func checksumFor(ctx context.Context, url, name string) (string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	resp, err := outboundClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(string(body), "\n") {
-		f := strings.Fields(line)
-		if len(f) == 2 && f[1] == name {
-			return strings.ToLower(f[0]), nil
-		}
-	}
-	return "", fmt.Errorf("checksum not found for %s", name)
 }
 
 func verifySHA256(path, want string) error {

@@ -169,6 +169,14 @@ type FleetPayload struct {
 	Now    bool   `json:"now"`
 }
 
+// PairingPayload is the one frame a pending link carries (main → joining
+// till, ADR-0114 amendment 2026-11-03, ut-docs#5297): the request's outcome,
+// never the token — the joining till fetches that over the per-id GET. A
+// paired till's Client never sees it (it does not travel on a bearer link).
+type PairingPayload struct {
+	Status string `json:"status"` // PairingApproved | PairingDenied | PairingExpired
+}
+
 // ByePayload says why a side is closing (ADR-0114 §2).
 type ByePayload struct {
 	Reason string `json:"reason"` // shutdown | updating | restarting
