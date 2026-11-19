@@ -69,3 +69,70 @@ VALUES ('sale-5831', 'R5831', '1', 'completed', 'sale', 'GBP', 100, 100, ?)`, bo
 		t.Fatalf("sale stamped at the close bound is after the close: NextDisplayNo = (%q,%v), want 2", got, err)
 	}
 }
+
+// ut-docs#5831 review B1: a writer that stamps its own row must take the stamp
+// AFTER it holds the write lock, else a row that waited behind a Z carries a
+// stamp from before the Z's bound but commits after it and lands in no Z.
+// holdThenWrite holds the lock ~1.2 s, starts write() while it is held, and
+// returns the instant the lock was released.
+func holdThenWrite(t *testing.T, repo *POSRepo, write func() error) time.Time {
+	t.Helper()
+	ctx := context.Background()
+	release, err := repo.HoldWriteLock(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- write() }()
+	time.Sleep(1200 * time.Millisecond)
+	released := time.Now()
+	release()
+	if err := <-errc; err != nil {
+		t.Fatalf("write behind the held lock: %v", err)
+	}
+	return released
+}
+
+func assertStampedAfter(t *testing.T, stamp string, released time.Time) {
+	t.Helper()
+	got, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		t.Fatalf("stamp %q: %v", stamp, err)
+	}
+	if got.Before(released.Truncate(time.Second)) {
+		t.Fatalf("row stamped %s, before the lock was released at %s: it would fall in no Z", stamp, released.UTC().Format(time.RFC3339))
+	}
+}
+
+func TestInsertClearedBasket_StampedUnderWriteLock(t *testing.T) {
+	d := b8OpenDB(t, "cleared-stamp-5831.db")
+	repo := NewPOSRepo(d.DB)
+	released := holdThenWrite(t, repo, func() error {
+		_, err := repo.InsertClearedBasket(context.Background(), ClearedBasket{ID: "cb-5831", LineCount: 1})
+		return err
+	})
+	var at string
+	if err := d.DB.QueryRow(`SELECT created_at FROM cleared_baskets WHERE id='cb-5831'`).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	assertStampedAfter(t, at, released)
+}
+
+func TestAdjustVoucherBalance_StampedUnderWriteLock(t *testing.T) {
+	d := b8OpenDB(t, "voucher-stamp-5831.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	adjSeedUser(t, repo)
+	vSeedVoucher(t, ctx, repo, "GS-5831", 1000)
+	released := holdThenWrite(t, repo, func() error {
+		in := adjIn("adj-5831", "GS-5831", 1000, 900, "count")
+		in.Now = ""
+		_, _, err := repo.AdjustVoucherBalance(ctx, nil, in)
+		return err
+	})
+	var at string
+	if err := d.DB.QueryRow(`SELECT created_at FROM voucher_transactions WHERE id='adj-5831'`).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	assertStampedAfter(t, at, released)
+}

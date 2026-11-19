@@ -221,6 +221,25 @@ func TestGenerateEOD_WaitsForBoundBeforeRelease(t *testing.T) {
 	}
 }
 
+// Review M1: a Z refused as "already done today" must not hold the write lock
+// for the whole-second wait: nothing is archived, so there is nothing to wait for.
+func TestGenerateEOD_AlreadyDoneTodaySkipsWait(t *testing.T) {
+	dp := newEODTestDeps(t)
+	base := w5831Base()
+	c := setW5831Clock(t, base)
+	if _, created, err := generateEOD(t.Context(), dp, "system", "", ""); err != nil || !created {
+		t.Fatalf("first Z: created=%v err=%v", created, err)
+	}
+	c.waited = nil
+	c.now = base.Add(2 * time.Second)
+	if _, created, err := generateEOD(t.Context(), dp, "system", "", ""); err != nil || created {
+		t.Fatalf("second Z same day must be refused: created=%v err=%v", created, err)
+	}
+	if len(c.waited) != 0 {
+		t.Fatalf("a refused Z waited for the bound (holding the lock): %v", c.waited)
+	}
+}
+
 func TestEODDoneToday_MidnightCloseCountsForPreviousDay(t *testing.T) {
 	loc := time.FixedZone("test", 0)
 	old := time.Local

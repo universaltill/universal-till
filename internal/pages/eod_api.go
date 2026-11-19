@@ -919,8 +919,16 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// release is then stamped >= to (next Z), never inside [from, to) unseen.
 	// Overlaps the read time above, so at most one second. A ctx error (hold
 	// deadline) fails the Z itself; nothing is archived and the scheduler retries.
-	if werr := eodClock.waitUntil(hctx, to); werr != nil {
-		return rep, false, werr
+	// M1: skipped when the latest close already covers this day: the archive
+	// below refuses it, nothing is written, so the lock need not be held on.
+	latest, lerr2 := repo.LatestArchivedAt(hctx, "eod")
+	if lerr2 != nil {
+		return rep, false, lerr2
+	}
+	if !eodDoneToday(latest, to.Add(-time.Second)) {
+		if werr := eodClock.waitUntil(hctx, to); werr != nil {
+			return rep, false, werr
+		}
 	}
 	releaseHeld() // every window read is done (idempotent)
 	// Who generated it, plus the annotation (ut-docs#1012). GeneratedBy
