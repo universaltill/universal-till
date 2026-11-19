@@ -33,6 +33,14 @@ func seedCannotSignCardPlugin(t *testing.T, dp *common.Deps, refundErr error) (r
 // reports a customer-selected tip_amount, ut-docs#2571).
 func seedCannotSignCardPluginAnswering(t *testing.T, dp *common.Deps, refundErr error, authorizeResp string) (refunds func() []map[string]any, authorizeIDs func() []string) {
 	t.Helper()
+	return seedCardPluginWithAnswerFunc(t, dp, refundErr, func(int) string { return authorizeResp })
+}
+
+// seedCardPluginWithAnswerFunc is the shared seeder: answer(n) is the
+// authorize answer for the n-th (1-based) authorize the plugin receives, so a
+// test can hand every sale its own provider reference (ut-docs#6438).
+func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error, answer func(n int) string) (refunds func() []map[string]any, authorizeIDs func() []string) {
+	t.Helper()
 	const pluginID = "com.universaltill.payment-demo"
 	mustExec := func(q string) {
 		t.Helper()
@@ -61,16 +69,37 @@ func seedCannotSignCardPluginAnswering(t *testing.T, dp *common.Deps, refundErr 
 	if _, err := bus.SubscribeWithHandler(context.Background(), pluginID,
 		[]string{"payment.demopay.authorize", "payment.demopay.refund"},
 		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
-			mu.Lock()
-			defer mu.Unlock()
 			switch ev.Type {
 			case "payment.demopay.authorize":
+				mu.Lock()
 				gotAuthIDs = append(gotAuthIDs, ev.ID)
-				return json.RawMessage(authorizeResp), nil
+				n := len(gotAuthIDs)
+				mu.Unlock()
+				// answer runs outside mu so a test's answer may block (a
+				// reader waiting on the customer) without stalling refunds.
+				a := answer(n)
+				// Test markers: a plain decline, or a plugin that exited
+				// non-zero printing decline_code outcome_unknown (#6600).
+				if a == "DECLINE" {
+					return nil, errors.New("declined")
+				}
+				if a == "REALDECLINE" {
+					return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"card_declined"}`)}
+				}
+				if a == "TIMEOUT" {
+					return nil, errors.New("context deadline exceeded")
+				}
+				if a == "UNKNOWN" {
+					return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"outcome_unknown"}`)}
+				}
+				return json.RawMessage(a), nil
 			case "payment.demopay.refund":
 				var p map[string]any
 				_ = json.Unmarshal(ev.Payload, &p)
+				p["_event_id"] = ev.ID // test-only: the refund request id (ut-docs#6601)
+				mu.Lock()
 				gotRefunds = append(gotRefunds, p)
+				mu.Unlock()
 				if refundErr != nil {
 					return nil, refundErr
 				}

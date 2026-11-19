@@ -50,7 +50,7 @@ func TestCloudAuthChip_RendersEachVariantVerbatim(t *testing.T) {
 	const (
 		revoked  = "Removed from the shop&#39;s cloud account"
 		repair   = "This till needs pairing again"
-		register = "Register as a new store"
+		register = "Cloud sign-in lost"
 	)
 	all := []string{revoked, repair, register}
 	for _, c := range []struct {

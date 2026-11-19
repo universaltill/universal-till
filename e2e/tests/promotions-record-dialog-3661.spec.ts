@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { execFileSync } from 'child_process';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 import { REPO_ROOT } from './worker-till';
 
 // ut-docs#3661: /promotions adopts the ut-docs#2010 list + record dialog
@@ -83,7 +83,7 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
   });
 
   // AC1: the table card does not scroll sideways at the tablet floor / desktop,
-  // in English and German, windowed and kiosk; Status + pencil stay in view.
+  // in English and German, windowed and kiosk; Status + name button stay in view.
   for (const vp of [{ width: 1024, height: 600 }, { width: 1920, height: 1080 }]) {
     for (const lang of ['en', 'de']) {
       for (const kiosk of [false, true]) {
@@ -121,8 +121,8 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(page.locator(`${FORM} input[name="code"]`)).toHaveValue(code);
   });
 
-  // AC2: pencil and row tap both prefill, in the locale's decimal separator.
-  test('pencil and row tap open edit prefilled (de uses decimal comma); saving keeps the customer', async ({ page }) => {
+  // AC2: name button and row tap both prefill, in the locale's decimal separator.
+  test('name button and row tap open edit prefilled (de uses decimal comma); saving keeps the customer', async ({ page }) => {
     const assertClean = watchConsole(page);
     const cust = customerId();
     const amount = 'P3661A', pct = 'P3661P';
@@ -223,8 +223,10 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await page.goto('/promotions');
     await row(page, code).click();
     await expect(page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`)).toBeVisible();
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(row(page, code)).toContainText(/inactive/i);
 
     await row(page, code).click();
@@ -249,8 +251,10 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(row(page, code)).toContainText('Escaped 3661');
 
     await row(page, code).locator('[data-record-edit]').click();
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
     await expect(row(page, code)).toContainText(/inactive/i);
     assertClean();
   });
@@ -278,8 +282,8 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     const code = 'K3661';
     await seed(page, code);
     await page.goto('/promotions');
-    const pencil = row(page, code).locator('[data-record-edit]');
-    await pencil.focus();
+    const nameBtn = row(page, code).locator('[data-record-edit]');
+    await nameBtn.focus();
     await page.keyboard.press('Enter');
     await expect(page.locator(DIALOG)).toBeVisible();
     await expect(page.locator('#ut-scrim')).toBeVisible();
@@ -289,7 +293,16 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     }
     await page.keyboard.press('Escape');
     await expect(page.locator(DIALOG)).toBeHidden();
-    await expect(pencil).toBeFocused();
+    await expect(nameBtn).toBeFocused();
+    // ut-docs#6046: Space opens it too, and a non-name cell tap returns focus to the name.
+    await page.keyboard.press(' ');
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await row(page, code).locator('td').nth(2).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(nameBtn).toBeFocused();
   });
 
   // ut-docs#5574: change the customer, then clear it, from the edit dialog.
@@ -330,6 +343,7 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
 
   // ut-docs#5574: typed text with nothing picked is refused, never a silent clear.
   test('typed but unpicked customer text is refused and nothing changes', async ({ page }) => {
+    noNativeDialogs(page);
     const assertClean = watchConsole(page);
     const code = 'UP5574';
     const cust = customerId();
@@ -343,8 +357,8 @@ test.describe('promotions list + record dialog (ut-docs#3661)', () => {
     await expect(page.locator('#promo-cust-q')).toHaveAttribute('aria-invalid', 'true');
     // A re-open does not carry the stale refusal (Escape on a dirty form asks
     // to discard first).
-    page.once('dialog', (d) => d.accept());
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'confirm');
     await expect(page.locator(DIALOG)).toBeHidden();
     await row(page, code).locator('[data-record-edit]').click();
     await expect(page.locator('#promotion-dialog-msg')).not.toContainText('Choose a customer');

@@ -1311,3 +1311,30 @@ func TestCleanupCatalog_ElevationPromptCarriesIncludeActiveAndWidenedSummary(t *
 		t.Fatalf("plain mode must render the inactive-only summary, got: %s", body)
 	}
 }
+
+// ut-docs#5863: the erasure picker's rows use snake_case JSON keys.
+func TestGetCustomers_SnakeCaseKeys_5863(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO customers(id,name,phone,email) VALUES('cust1','Jane Doe','555','jane@example.com')`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/data/customers?q=Jane", nil))
+	body := dataAPIJSONBody(t, rec)
+	data, _ := body["data"].(map[string]any)
+	list, _ := data["customers"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want 1 customer, got %s", rec.Body.String())
+	}
+	row, _ := list[0].(map[string]any)
+	want := map[string]string{"id": "cust1", "name": "Jane Doe", "phone": "555", "email": "jane@example.com"}
+	if len(row) != len(want) {
+		t.Fatalf("unexpected keys: %+v", row)
+	}
+	for k, v := range want {
+		if row[k] != v {
+			t.Fatalf("key %q: want %q, got %+v", k, v, row)
+		}
+	}
+}

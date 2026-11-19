@@ -1,0 +1,35 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Sideload / website APK ONLY (ADR-0194 §2.4, ut-docs#6409). Merged into
+         the arm64, armv7 and universal flavors, never into `play`. -->
+
+    <!-- ut-docs#1246: in-app update. The Go core ships as a native library
+         inside this APK, so it can never self-swap the way the desktop/Pi
+         builds do — only the package installer may replace an app's own code.
+         This permission lets MainActivity hand a downloaded release APK to
+         that installer, turning "go and download a new APK by hand for every
+         build" into one tap. Android still enforces that the new APK carries
+         the SAME signing key, so this cannot be used to install a substituted
+         package over this one. NOTE for the Play build: Play restricts
+         REQUEST_INSTALL_PACKAGES and does its own updating, so a Play-targeted
+         variant should drop this permission and the bridge behind it. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application>
+        <!-- ut-docs#1246: grants the system installer read access to the
+             downloaded APK. A file:// URI is rejected outright from API 24
+             (FileUriExposedException) — this app's own minSdk — so the
+             content:// grant is the only route, not a modern-Android nicety.
+             Scoped to the app-private filesDir/updates (res/xml/file_paths.xml),
+             never the shared Downloads collection. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
