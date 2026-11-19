@@ -873,7 +873,7 @@ this is its summary.
 | Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Cloud archive of receipts and reports | local only | 1 year | 2 years | legal retention: UK 7, Germany 10, elsewhere 10 years | legal retention: UK 7, Germany 10, elsewhere 10 years |
-| Team members on my., besides the owner | owner only | owner only | 2 | 5 | 50 |
+| Team members on my., besides the owner | owner only | owner only | 2 | 5 | 20 (more: talk to us) |
 | Central catalog & consolidated reporting | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Proactive health check | ❌ | ❌ | ❌ | quarterly | quarterly + annual review |
 | Migration from your old system | guides | guides | guides | ✅ done for you | ✅ done for you |

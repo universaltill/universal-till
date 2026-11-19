@@ -43,6 +43,9 @@ var eventDataClasses = map[string][]string{
 	"customer.erased": {data.DataClassCustomers},
 	// actor/approver staff ids; a cash-drawer journal entry
 	"till.drawer.no_sale": {data.DataClassSales, data.DataClassStaff},
+	// cashier staff id; shift cash totals (the shift views are class sales)
+	"shift.opened": {data.DataClassSales, data.DataClassStaff},
+	"shift.closed": {data.DataClassSales, data.DataClassStaff},
 	// the item photo and the catalog item it was matched to
 	"catalog.identify":           {data.DataClassCatalog},
 	"catalog.identify.confirmed": {data.DataClassCatalog},

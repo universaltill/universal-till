@@ -2675,7 +2675,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 //
 // The enrollment card's enrolled branch (claim-code) can't be exercised
 // here — "enrolled" reads package-global enroll.CurrentStatus() — so the
-// card is covered by the Cloud record card's Stop sending form
+// card is covered by the Privacy card's Send usage facts switch
 // (/api/settings/registration-stop), the same un-gating (ADR-0200).
 func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
@@ -2713,7 +2713,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 
 	// One marker per elevation-wired site, unique to that form/button.
 	elevationWired := []string{
-		`hx-post="/api/settings/registration-stop"`,  // cloud record card: Stop sending (ADR-0200)
+		`hx-post="/api/settings/registration-stop"`,  // privacy card: Send usage facts (ADR-0200)
 		`hx-post="/api/settings/display-mode"`,       // display-advanced: mode form
 		`id="window-mode-form"`,                      // display-advanced: window mode
 		`id="launch-on-startup-cb"`,                  // display-advanced: autostart checkbox

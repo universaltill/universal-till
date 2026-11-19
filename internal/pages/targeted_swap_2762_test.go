@@ -172,14 +172,15 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 	}
 }
 
-// formTag returns the opening <form …> tag that posts to path.
+// formTag returns the opening <form …> tag that posts to path (or the
+// <input …> tag, for a switch that posts on change, e.g. Send usage facts).
 func formTag(t *testing.T, s, path string) string {
 	t.Helper()
 	i := strings.Index(s, `hx-post="`+path+`"`)
 	if i < 0 {
 		t.Fatalf("settings.html: no form posts to %s", path)
 	}
-	start := strings.LastIndex(s[:i], "<form")
+	start := max(strings.LastIndex(s[:i], "<form"), strings.LastIndex(s[:i], "<input"))
 	end := strings.Index(s[i:], ">")
 	if start < 0 || end < 0 {
 		t.Fatalf("settings.html: malformed form for %s", path)
