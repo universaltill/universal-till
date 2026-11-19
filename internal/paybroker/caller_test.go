@@ -44,7 +44,7 @@ func TestOpMatrixPerCaller(t *testing.T) {
 	want := map[Caller]map[string]bool{
 		CallerNative: {"connection_token": true, "onboarding_status": true, "session_create": true, "session_status": true, "session_cancel": true},
 		CallerHostFn: {"onboarding_status": true, "session_status": true, "session_cancel": true, "refund": true},
-		CallerCore:   {"connection_token": true, "onboarding_status": true, "session_create": true, "session_status": true},
+		CallerCore:   {"connection_token": true, "onboarding_status": true, "session_create": true, "session_status": true, "session_cancel": true},
 	}
 	for c, row := range want {
 		for _, op := range ops {
