@@ -3,6 +3,7 @@ id: my-reports
 title: Raporlarım
 section: Bağlantı ve eklentiler
 order: 361
+public: true
 summary: "Bu kasanın kaydettiği sorun raporlarını — gönderilmiş ya da gönderim bekleyen (en son 100 tanesi) — bilinen son durumlarıyla görün. Çevrimdışı da çalışır."
 routes: [/my-reports]
 keywords: [bug, issue, report, status, sent, pending, github, tracking]

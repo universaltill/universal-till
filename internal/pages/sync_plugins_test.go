@@ -83,7 +83,7 @@ type fakeMarketplace struct {
 	// registerHits counts POST /v1/stores/register — proves a code path that
 	// only BROWSES the catalog never enrols the shop's cloud store identity
 	// (ADR-0015 lazy registration; only a download/install or an explicit
-	// "Register now" may do that).
+	// an explicit operator registration may do that).
 	registerHits int
 	// registerNames records each register request's store_name — the name
 	// the cloud would give the shop (ut-docs#2776).
@@ -223,6 +223,34 @@ func (m *fakeMarketplace) publishWasmTaxVersion(t *testing.T, listingID, pluginI
 	}
 	l.releases[version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
 	l.latest = version
+}
+
+// publishCustomTaxManifest publishes a signed release of an arbitrary tax
+// manifest with a real wasm module (ADR-0172 tests: a manifest that
+// subscribes fiscal.sign.ask, asks for net:, and so on).
+func (m *fakeMarketplace) publishCustomTaxManifest(t *testing.T, listingID string, manifest *plugins.Manifest, wasmBin []byte) {
+	t.Helper()
+	if manifest.Entrypoint == "" {
+		manifest.Entrypoint = "./plugin.wasm"
+		manifest.Executable = "plugin.wasm"
+		manifest.Runtime = "wasm"
+	}
+	if manifest.CanonicalType == "" {
+		manifest.CanonicalType = "tax"
+	}
+	if manifest.DeviceArch == "" {
+		manifest.DeviceArch = "any"
+	}
+	artifact := signedFakeMktArtifactWithBinary(t, m.privateKey, manifest, "plugin.wasm", wasmBin)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.listings[listingID]
+	if l == nil {
+		l = &fakeMktListing{releases: map[string]fakeMktRelease{}}
+		m.listings[listingID] = l
+	}
+	l.releases[manifest.Version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
+	l.latest = manifest.Version
 }
 
 // publishLanguageVersion publishes a signed, asset-only (runtime "none")
@@ -368,14 +396,32 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			// wrong (snake_case) key.
 			wire := make([]map[string]any, 0, len(page))
 			for _, e := range page {
-				wire = append(wire, map[string]any{
+				entry := map[string]any{
 					"id":               e.ID,
 					"listing_id":       e.ListingID,
 					"name":             e.Name,
 					"version":          e.Version,
 					"type":             e.CanonicalType,
 					"availableLocales": e.AvailableLocales,
-				})
+				}
+				// ADR-0172: the catalogue's own wire keys, sent only when a test set
+				// them (every pre-existing test leaves them unset).
+				if len(e.Markets) > 0 {
+					entry["markets"] = e.Markets
+				}
+				if e.TrustTier != "" {
+					entry["trustLevel"] = e.TrustTier
+				}
+				if e.PaidListing {
+					entry["paidListing"] = true
+				}
+				if len(e.Permissions) > 0 {
+					entry["permissions"] = e.Permissions
+				}
+				if len(e.Architectures) > 0 {
+					entry["architectures"] = e.Architectures
+				}
+				wire = append(wire, entry)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"plugins": wire, "nextPageToken": nextToken})
@@ -521,7 +567,7 @@ func signedFakeMktArtifactWithBinary(t *testing.T, privateKey ed25519.PrivateKey
 // signedFakeMktArtifactWithLocale is signedFakeMktArtifactWithBinary's
 // counterpart for an asset-only (runtime "none") language-pack manifest: it
 // packs manifest.json plus a single locales/<locale>.json overlay — no
-// executable at all, matching a real ut-plugin-language-* pack — into a
+// executable at all, matching a real com.universaltill.language-* bundle — into a
 // signed .tar.gz. localeJSON must be valid JSON in config.I18n's overlay
 // shape (a flat map[string]string).
 func signedFakeMktArtifactWithLocale(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, locale string, localeJSON []byte) []byte {

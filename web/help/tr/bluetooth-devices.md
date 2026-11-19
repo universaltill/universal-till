@@ -3,6 +3,7 @@ id: bluetooth-devices
 title: Bluetooth cihazları
 section: Bağlantı ve eklentiler
 order: 236
+public: true
 summary: "Bluetooth barkod okuyucuyu veya teraziyi kasayla POS'un içinden eşleştirin — tara, Eşleştir'e dokun, bitti — işletim sisteminin ayarlarını hiç açmadan."
 routes: [/bluetooth-devices]
 ---

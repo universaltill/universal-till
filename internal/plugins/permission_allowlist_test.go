@@ -30,7 +30,7 @@ func TestIsKnownPermission(t *testing.T) {
 		// grandfathered legacy storage quota
 		"storage.local.1MB", "storage.local.10MB", "storage.local.512KB", "storage.local.2GB",
 		// grandfathered legacy dotted names declared by published plugin
-		// repos (ut-plugin-language-*, -themes, -faq, -integration-ai,
+		// repos and bundles (com.universaltill.language-*, -themes, -faq, -integration-ai,
 		// -payment-*); core checks none of them
 		"ui.locale", "ui.theme", "ui.page", "ai.configure", "pos.tender",
 		// ADR-0121 §2
@@ -107,9 +107,9 @@ func TestPublishedPluginRepoPermissionsStillParse(t *testing.T) {
 	const head = `{"id":"com.test.published","name":"t","version":"1.0.0","entrypoint":"./plugin.wasm","runtime":"wasm",
 	"settings":[{"key":"endpoint_url"}],"permissions":`
 	lists := map[string]string{
-		"ut-plugin-tax-de":              `["events:receive","sales:read","fiscal_register_de:read","net:kassensichv-middleware.fiskaly.com","storage"]`,
-		"ut-plugin-tax-uk":              `["events:receive","sales:read","net:test-api.service.hmrc.gov.uk","storage"]`,
-		"ut-plugin-language-*":          `["ui.locale"]`,
+		"ut-plugin-tax-de": `["events:receive","sales:read","fiscal_register_de:read","net:kassensichv-middleware.fiskaly.com","storage"]`,
+		"ut-plugin-tax-uk": `["events:receive","sales:read","net:test-api.service.hmrc.gov.uk","storage"]`,
+		"com.universaltill.language-* (Weblate bundle)": `["ui.locale"]`,
 		"ut-plugin-theme*":              `["ui.theme"]`,
 		"ut-plugin-faq":                 `["ui.page"]`,
 		"ut-plugin-integration-ai":      `["ai.configure"]`,

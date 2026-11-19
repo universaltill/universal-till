@@ -98,7 +98,7 @@ func TestBrowserPrint_RTLPickSetsDir(t *testing.T) {
 func TestBrowserPrint_NoDuplicateIDs(t *testing.T) {
 	funcs := httpx.FuncsFor("en")
 	html, err := renderReceipt(funcs, "R-4730", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store",
-		receiptDesign{ShowTax: true, ShowBarcode: true}, "", []receiptVoucherIssue{{Code: "GS-4730", Amount: 500}}, "ask", nil, nil, "tr", "en")
+		receiptDesign{ShowTax: true, ShowBarcode: true}, "", []receiptVoucherIssue{{Code: "GS-4730", Amount: 500}}, "ask", nil, nil, "tr", "en", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestBrowserPrint_NoDuplicateIDs(t *testing.T) {
 // renders no copy.
 func TestBrowserPrint_ScreenLocaleParamControlsCopy(t *testing.T) {
 	funcs := httpx.FuncsFor("tr")
-	html, err := renderReceipt(funcs, "R-1", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "", nil, "", nil, nil, "tr", "tr")
+	html, err := renderReceipt(funcs, "R-1", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "", nil, "", nil, nil, "tr", "tr", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestBrowserPrint_TrackingQRFollowsPick(t *testing.T) {
 		URL:          "https://example.test/o/tok?lang=en",
 		CustomerCopy: &receiptTrackingView{QRDataURI: "data:image/png;base64,Q1VTVE9NRVI=", URL: "https://example.test/o/tok?lang=tr"},
 	}
-	html, err := renderReceipt(httpx.FuncsFor("en"), "R-1", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "", nil, "", nil, tracking, "tr", "en")
+	html, err := renderReceipt(httpx.FuncsFor("en"), "R-1", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "", nil, "", nil, tracking, "tr", "en", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

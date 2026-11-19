@@ -24,7 +24,8 @@
        ut-docs#4285: with "check" (the registration card's banner) a
        manager gets Check now right here; it re-renders the banner's
        wrapper, #subscription-check-banner. */}}
-  <p>{{ if enrolledviamain }}{{ T "subscription.banner.lapsed.fix_via_main" }}{{ else }}{{ T "subscription.banner.lapsed.fix" }}{{ end }}</p>
+  {{/* ut-docs#3434: on iOS (.sub.NoPlanPurchase) the wording sends nobody to buy or renew. */}}
+  <p>{{ if .sub.NoPlanPurchase }}{{ if enrolledviamain }}{{ T "subscription.banner.lapsed.fix_via_main_ios" }}{{ else }}{{ T "subscription.banner.lapsed.fix_ios" }}{{ end }}{{ else if enrolledviamain }}{{ T "subscription.banner.lapsed.fix_via_main" }}{{ else }}{{ T "subscription.banner.lapsed.fix" }}{{ end }}</p>
   {{ if and .check .sub.CanCheck }}
   <p><button type="button" class="btn btn-touch" data-testid="subscription-check-now-banner"
      hx-post="/api/subscription/check-now" hx-target="#subscription-check-banner" hx-swap="innerHTML"

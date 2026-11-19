@@ -33,6 +33,7 @@ var unboundedRoutes = []struct{ pattern, why string }{
 	{"POST /api/import/sample-data", "seeds a whole sample catalogue"},
 	{"POST /api/import/from-file", "catalogue import of an arbitrary size"},
 	{"POST /api/import/from-system", "catalogue import from another POS, arbitrary size"},
+	{"POST /api/import/photos", "bulk photo import: hundreds of images read or downloaded one by one (ut-docs#6527)"},
 	{"POST /api/catalog/export-save", "writes the whole catalogue to disk"},
 	{"POST /api/update/apply", "downloads, verifies and applies a self-update, then restarts"},
 	{"POST /api/setup/update-apply", "same as /api/update/apply, from the setup wizard"},
@@ -83,7 +84,10 @@ var timedOnPurpose = map[string]string{
 // effect although they are not long-running (check c2). Keep it tiny; a new
 // entry means the JS prefix is broader than it should be.
 var alsoExempted = map[string]string{
-	"POST /api/refund/preview": "read-only total recompute on qty input; harmless untimed (BA, ut-docs#5456)",
+	"POST /api/refund/preview":       "read-only total recompute on qty input; harmless untimed (BA, ut-docs#5456)",
+	"POST /api/backup/delete":        "removes one file; instant, harmless untimed (ut-docs#3092)",
+	"POST /api/backup/retention":     "saves one setting and deletes old files; instant, harmless untimed (ut-docs#3092)",
+	"POST /api/backup/copied/{name}": "records that a backup was copied out to the device; one small write, instant, harmless untimed (ut-docs#5619)",
 }
 
 var (

@@ -3,6 +3,7 @@ id: bug-reporting
 title: Reporting a problem
 section: Connecting & extending
 order: 360
+public: true
 summary: "Something wrong with the till? Send a report — typed, spoken, or with a screen recording — from any screen with the Report an issue button."
 routes: [/report-issue]
 keywords: [bug, issue, problem, report, support, recording, voice]

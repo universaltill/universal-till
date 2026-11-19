@@ -3,6 +3,7 @@ id: age-restricted-sales
 title: Age-restricted sales
 section: Everyday selling
 order: 27
+public: true
 summary: Flag items that need an ID check (alcohol, tobacco, vapes and similar). The till then asks the cashier to record an ID check before payment, and the self-order kiosk sends the customer to the counter.
 keywords: [age, age restricted, id check, identification, alcohol, tobacco, vape, challenge, refusal, proof of age]
 ---

@@ -336,7 +336,7 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 	// rather than re-claiming from scratch; the held/move handler
 	// (below) is the one place that must move the claim explicitly,
 	// since that changes WHICH table is occupied.
-	d.Engine.Reset()
+	d.Engine.ResetBecause(pos.AbandonParked)
 	return nil
 }
 
@@ -662,6 +662,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 // customer can be served, then bring it back. Held sales are persisted
 // (held_sales table) so they survive a till restart — offline-first.
 func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
+	wireAbandonedTenderReversal(d)
 	repo := data.NewHeldSalesRepo(d.Db)
 	// posRepo backs table-assignment reads (ut-docs#820): resolving a held
 	// sale's table_id to its current display label for the strip, and the
@@ -844,6 +845,10 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		w.Header().Set("HX-Trigger", "held-changed")
+		if key, ok := abandonToastKey(d.Engine); ok {
+			renderBasket(w, r, httpx.T(locale, key), "error")
+			return
+		}
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
 	})
 
@@ -863,9 +868,17 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			// otherwise switching orders looks identical to a plain resume,
 			// and their own prior sale went somewhere with no on-screen cue.
 			w.Header().Set("HX-Trigger", "held-changed")
+			if key, ok := abandonToastKey(d.Engine); ok {
+				renderBasket(w, r, httpx.T(locale, key), "error")
+				return
+			}
 			renderBasket(w, r, httpx.T(locale, "hold.toast.parked_and_resumed"), "success")
 		default:
 			w.Header().Set("HX-Trigger", "held-changed")
+			if key, ok := abandonToastKey(d.Engine); ok {
+				renderBasket(w, r, httpx.T(locale, key), "error")
+				return
+			}
 			renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"), "success")
 		}
 	})

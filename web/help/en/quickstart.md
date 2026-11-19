@@ -3,6 +3,7 @@ id: quickstart
 title: How to use the till
 section: Everyday selling
 order: 5
+public: true
 summary: Everything you need for a normal day, in small steps.
 keywords: [start, first day, basics, quick, how to, staff]
 ---

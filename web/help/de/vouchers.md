@@ -3,6 +3,7 @@ id: vouchers
 title: Gutscheine
 section: Täglicher Verkauf
 order: 25
+public: true
 summary: Verkaufen Sie Gutscheine über einen Gutschein-Artikel — Karte scannen oder die Kasse eine Nummer erzeugen lassen — und nehmen Sie sie als Zahlung an, per Scan im Verkaufsbildschirm oder im Reiter „Aufteilen“ des Zahlungsfeldes.
 keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp, korrigieren, Korrektur, Guthaben korrigieren, aufladen, Aufladung, Guthaben aufladen]
 routes: [/vouchers, /vouchers/{id}]

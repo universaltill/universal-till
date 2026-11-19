@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -611,21 +612,36 @@ type pullTestPrimary struct {
 	dp      *common.Deps
 	server  *httptest.Server
 	visited []string
+	tillID  string // the enrolled replica's roster id
+	// onStock, when set, runs when /api/sync/stock is requested, before it
+	// is served (a promote landing while the stock answer is in flight,
+	// ut-docs#5903).
+	onStock func()
+	// onAdmin, when set, runs when /api/sync/admin is requested, before it
+	// is served (simulates a promote landing mid-pull, ut-docs#5896).
+	onAdmin func()
 }
 
 func newPullTestPrimary(t *testing.T) *pullTestPrimary {
 	t.Helper()
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	if err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
-	p := &pullTestPrimary{dp: dp}
+	p := &pullTestPrimary{dp: dp, tillID: tillID}
 	mux := http.NewServeMux()
 	registerSyncAdmin(mux, dp)
 	wrapped := http.NewServeMux()
 	wrapped.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		p.visited = append(p.visited, r.URL.Path)
+		if p.onAdmin != nil && r.URL.Path == "/api/sync/admin" {
+			p.onAdmin()
+		}
+		if p.onStock != nil && r.URL.Path == "/api/sync/stock" {
+			p.onStock()
+		}
 		mux.ServeHTTP(w, r)
 	})
 	p.server = httptest.NewServer(wrapped)
@@ -633,14 +649,32 @@ func newPullTestPrimary(t *testing.T) *pullTestPrimary {
 	return p
 }
 
-func (p *pullTestPrimary) hitStock() bool {
+func (p *pullTestPrimary) hitPath(path string) bool {
 	for _, v := range p.visited {
-		if v == "/api/sync/stock" {
+		if v == path {
 			return true
 		}
 	}
 	return false
 }
+
+// promoteKeepingRole promotes d (ClearReplicaIdentity) and then puts back
+// the role the main till reports for it, so the tick's role write is a no-op
+// and the first guarded write reached is the one a test targets. A real
+// promote wipes sync.till_role, which would otherwise trip the role guard
+// first (ut-docs#5903; the role refusal has its own test).
+func promoteKeepingRole(t *testing.T, d *common.Deps, role string) {
+	t.Helper()
+	ctx := t.Context()
+	if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(ctx); err != nil {
+		t.Errorf("promote: %v", err)
+	}
+	if err := d.Settings.Set(ctx, "sync.till_role", role); err != nil {
+		t.Errorf("restore role: %v", err)
+	}
+}
+
+func (p *pullTestPrimary) hitStock() bool { return p.hitPath("/api/sync/stock") }
 
 func newPullTestReplica(t *testing.T, primaryURL string) *common.Deps {
 	t.Helper()
@@ -799,5 +833,235 @@ func TestSyncPullTick_StockCorrectionsRunWhenQueueEmpty(t *testing.T) {
 	}
 	if v, _, _ := replica.Settings.Get(ctx, "sync.stock_version"); v == "" {
 		t.Fatalf("expected sync.stock_version set after a stock poll")
+	}
+}
+
+// ut-docs#5896: a promote (ClearReplicaIdentity) that commits after the pull
+// tick read sync.primary_url, but before it applies the bundle, must win. The
+// bundle carries the old main's shop-wide lan_discovery.till_id and till.name;
+// applying it would write them back onto the new main till.
+func TestSyncPullTick_PromotedMidPullIsSkipped_5896(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	if _, err := data.NewCatalogRepo(primary.dp.Db).CreateItem(ctx, catalogtypes.ItemInput{
+		Name: "Pulled Widget", BasePrice: 750, IsActive: true,
+	}); err != nil {
+		t.Fatalf("seed primary item: %v", err)
+	}
+	if err := primary.dp.Settings.Set(ctx, "lan_discovery.till_id", "OLD-MAIN-ID"); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.dp.Settings.Set(ctx, "till.name", "Old Main"); err != nil {
+		t.Fatal(err)
+	}
+
+	replica := newPullTestReplica(t, primary.server.URL)
+	for k, v := range map[string]string{
+		"sync.till_name":        "Till 2",
+		"sync.till_id":          "t2",
+		"lan_discovery.till_id": "OLD-MAIN-ID",
+	} {
+		if err := replica.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Promote while the pull is in flight: the tick has already read
+	// primary_url/bearer, and the answer still carries the old main's bundle.
+	// The role write is made a no-op so the admin apply's in-tx check is the
+	// first guarded write reached (the role refusal has its own test below).
+	primary.onAdmin = func() { promoteKeepingRole(t, replica, data.TillRoleAdditional) }
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	refreshCalls := 0
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) { refreshCalls++ })
+	restoreLog()
+
+	// The not-replica branch must be the one that returned: its INFO line is
+	// logged and the generic apply-error branch ("apply failed", ERROR) is not.
+	// Without this, stubbing the branch out still passes via the generic return.
+	if out := logs.String(); !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Fatalf("missing not-replica skip INFO line; log:\n%s", out)
+	} else if strings.Contains(out, "sync pull: apply failed") {
+		t.Fatalf("promote race logged as an apply failure; log:\n%s", out)
+	}
+	if refreshCalls != 0 {
+		t.Fatalf("refresh called %d times, want 0", refreshCalls)
+	}
+	id, _, _ := replica.Settings.Get(ctx, "lan_discovery.till_id")
+	if id == "OLD-MAIN-ID" || strings.TrimSpace(id) == "" {
+		t.Fatalf("lan_discovery.till_id = %q, want a freshly minted id (old main's id written back?)", id)
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "till.name"); v != "Till 2" {
+		t.Fatalf("till.name = %q, want Till 2", v)
+	}
+	for _, k := range []string{"sync.pull_version", "sync.last_pull_at", "sync.last_pull_ok_at", "sync.last_contact_at"} {
+		if v, _, _ := replica.Settings.Get(ctx, k); v != "" {
+			t.Fatalf("%s re-created after promote: %q", k, v)
+		}
+	}
+	var n int
+	if err := replica.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action = 'admin_pulled'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("admin_pulled audit rows = %d, want 0", n)
+	}
+	if err := replica.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE name = 'Pulled Widget'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("pulled item present after promote: %d", n)
+	}
+	if primary.hitStock() {
+		t.Fatal("stock pulled from the old main after promote")
+	}
+}
+
+// ut-docs#5903: an UNCHANGED answer skips the guarded admin apply, so the
+// bookkeeping after it (contact stamps, plugin pull, stock pull) must carry
+// its own replica check.
+func TestSyncPullTick_PromotedMidPullUnchanged_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	syncPullTick(ctx, replica, client, func(context.Context) {}) // tick 1: catches up
+	if v, _, _ := replica.Settings.Get(ctx, "sync.last_pull_ok_at"); v == "" {
+		t.Fatal("precondition: tick 1 should have recorded last_pull_ok_at")
+	}
+
+	// Tick 2 answers Unchanged; promote lands while it is in flight. The role
+	// stays set so the first guarded write reached is recordMainContactIfReplica's.
+	primary.visited = nil
+	primary.onAdmin = func() { promoteKeepingRole(t, replica, data.TillRoleAdditional) }
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	restoreLog()
+
+	if out := logs.String(); !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Fatalf("missing not-replica skip INFO line; log:\n%s", out)
+	} else if strings.Contains(out, "[ERROR]") {
+		t.Fatalf("promote race logged an error; log:\n%s", out)
+	}
+	for _, k := range []string{"sync.last_contact_at", "sync.last_pull_ok_at", "sync.plugins_version", "sync.plugins_bundle", "sync.stock_version"} {
+		if v, _, _ := replica.Settings.Get(ctx, k); v != "" {
+			t.Fatalf("%s re-created after promote: %q", k, v)
+		}
+	}
+	if primary.hitPath("/api/sync/plugins") || primary.hitStock() {
+		t.Fatalf("plugins/stock pulled from the old main after promote; visited %v", primary.visited)
+	}
+}
+
+// ut-docs#5903: the role the old main reports must not be remembered by a
+// till promoted while the answer was in flight.
+func TestSyncPullTick_PromotedMidPullRoleRefused_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	if _, _, err := data.NewTillsRepo(primary.dp.Db).SetRole(ctx, primary.tillID, data.TillRoleSatellite); err != nil {
+		t.Fatalf("set role on primary: %v", err)
+	}
+	replica := newPullTestReplica(t, primary.server.URL)
+	primary.onAdmin = func() {
+		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(ctx); err != nil {
+			t.Errorf("promote: %v", err)
+		}
+	}
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, &http.Client{Timeout: 5 * time.Second}, func(context.Context) {})
+	restoreLog()
+
+	if out := logs.String(); !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Fatalf("missing not-replica skip INFO line; log:\n%s", out)
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "sync.till_role"); v != "" {
+		t.Fatalf("sync.till_role re-created after promote: %q", v)
+	}
+}
+
+// ut-docs#5903: a promote that lands while /api/sync/stock is in flight must
+// leave the promoted till's inventory alone.
+func TestSyncPullTick_PromotedDuringStockPull_5903(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	itemID, err := data.NewCatalogRepo(primary.dp.Db).CreateItem(ctx, catalogtypes.ItemInput{
+		Name: "Stocked Widget", BasePrice: 750, IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("seed primary item: %v", err)
+	}
+	pPOS := data.NewPOSRepo(primary.dp.Db)
+	pLoc, err := pPOS.EnsureStockLocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	move := func(repo *data.POSRepo, loc string, qty float64) {
+		t.Helper()
+		if _, err := repo.RecordStockMovement(ctx, nil, data.StockMovementInput{
+			ItemID: itemID, LocationID: loc, Type: "receive", Quantity: qty,
+		}); err != nil {
+			t.Fatalf("movement: %v", err)
+		}
+	}
+	move(pPOS, pLoc, 5)
+
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	syncPullTick(ctx, replica, client, func(context.Context) {}) // tick 1: item + stock sync
+	rPOS := data.NewPOSRepo(replica.Db)
+	rLoc, err := rPOS.EnsureStockLocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drift the replica, make the primary's stock answer change again.
+	move(rPOS, rLoc, -3)
+	move(pPOS, pLoc, 1)
+	if err := data.NewSettingsRepo(replica.Db).Delete(ctx, "sync.stock_version"); err != nil {
+		t.Fatal(err)
+	}
+	invQty := func() float64 {
+		var q float64
+		if err := replica.Db.QueryRowContext(ctx, `SELECT COALESCE(SUM(quantity),0) FROM inventory WHERE item_id = ?`, itemID).Scan(&q); err != nil {
+			t.Fatal(err)
+		}
+		return q
+	}
+	adjusts := func() int {
+		var n int
+		if err := replica.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM stock_movements WHERE type = 'adjust'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	qtyBefore, adjBefore := invQty(), adjusts()
+
+	primary.onStock = func() {
+		if err := data.NewSettingsRepo(replica.Db).ClearReplicaIdentity(ctx); err != nil {
+			t.Errorf("promote: %v", err)
+		}
+	}
+	logs := &syncBuffer{}
+	restoreLog := logging.CaptureForTest(logs)
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	restoreLog()
+
+	if !primary.hitStock() {
+		t.Fatal("precondition: stock was never requested")
+	}
+	if out := logs.String(); !strings.Contains(out, "[INFO] sync pull: skipped, this till was promoted to main till during the pull") {
+		t.Fatalf("missing not-replica skip INFO line; log:\n%s", out)
+	}
+	if got := invQty(); got != qtyBefore {
+		t.Fatalf("inventory %v -> %v after promote, want unchanged", qtyBefore, got)
+	}
+	if got := adjusts(); got != adjBefore {
+		t.Fatalf("sync adjust movements %d -> %d after promote", adjBefore, got)
+	}
+	if v, _, _ := replica.Settings.Get(ctx, "sync.stock_version"); v != "" {
+		t.Fatalf("sync.stock_version re-created after promote: %q", v)
 	}
 }

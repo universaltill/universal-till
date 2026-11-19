@@ -3,6 +3,7 @@ id: voucher-import
 title: Gutschein-Guthaben importieren
 section: Ihr Geschäft einrichten
 order: 148
+public: true
 summary: Wechseln Sie von einer anderen Kasse? Übertragen Sie die offenen Guthaben auf physischen Gutscheinkarten, die Ihre Kunden bereits besitzen, als Anfangssaldo — nicht als neuen Verkauf.
 keywords: [gutschein, geschenkgutschein, geschenkkarte, import, migration, guthaben, anfangssaldo, csv]
 ---

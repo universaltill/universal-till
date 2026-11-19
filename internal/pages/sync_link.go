@@ -67,7 +67,7 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 			if fp, err := adminRepo.AdminFingerprint(ctx); err == nil {
 				h.Cursors.Admin = fp
 			}
-			if b, err := pluginsRepo.DumpActivePlugins(ctx); err == nil {
+			if b, err := dumpPluginSet(ctx, pluginsRepo); err == nil {
 				h.Cursors.Plugins = b.Fingerprint()
 			}
 			if b, err := stockRepo.DumpStock(ctx); err == nil {

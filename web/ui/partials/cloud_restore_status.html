@@ -1,0 +1,62 @@
+{{/* ut-docs#5066: the cloud-restore status region, drawn from the in-memory
+     restore state (offsitebackup.Restorer) by GET /ui/backup-cloud-restore/status
+     and by the start/cancel answers. It polls only while a restore is in
+     progress; the final states stop the poll. The code and QR are how the shop
+     owner approves on my.universaltill.com. No modal, no autofocus. */}}
+<div id="cloud-restore-region" data-testid="cloud-restore-region" data-phase="{{ .phase }}"
+     {{ if .polling }}hx-get="/ui/backup-cloud-restore/status" hx-trigger="every 3s" hx-swap="outerHTML"{{ end }}>
+  {{ if eq .phase "requesting" }}
+  <p aria-live="polite">{{ T "backup.cloud.restore.requesting" }}</p>
+  {{ else if eq .phase "waiting" }}
+  <div class="cloud-restore-approve" data-testid="cloud-restore-approve">
+    <h2>{{ T "backup.cloud.restore.approve_title" }}</h2>
+    <p>{{ if eq .kind "key" }}{{ printf (T "backup.cloud.link.approve_hint") .code }}{{ else }}{{ printf (T "backup.cloud.restore.approve_hint") .code }}{{ end }}</p>
+    <p class="cloud-restore-code" data-testid="cloud-restore-code" dir="ltr" translate="no"><strong>{{ .code }}</strong></p>
+    {{ if .qr }}<img class="cloud-restore-qr" src="{{ .qr }}" width="200" height="200" alt="{{ T "backup.cloud.restore.qr_alt" }}">{{ end }}
+    <p class="muted" aria-live="polite">{{ T "backup.cloud.restore.waiting" }}</p>
+  </div>
+  {{ else if eq .phase "downloading" }}
+  <p aria-live="polite" data-testid="cloud-restore-progress">{{ printf (T "backup.cloud.restore.downloading") .done .total }}</p>
+  <progress max="{{ .total }}" value="{{ .done }}" aria-hidden="true"></progress>
+  {{ else if eq .phase "checking" }}
+  <p aria-live="polite">{{ T "backup.cloud.restore.checking" }}</p>
+  {{ else if eq .phase "ready" }}
+  <div data-testid="cloud-restore-ready">
+    <p><span aria-hidden="true">✓</span> {{ T "backup.cloud.restore.ready" }}</p>
+    {{ if .restartSupported }}
+    <p id="backup-restart-msg" class="muted" style="min-height:1.2rem" hidden>{{ T "settings.backup.restarting" }}</p>
+    <button type="button" id="backup-restart-btn" class="btn primary" hx-post="/api/backup/restart-now" hx-swap="none" hx-disabled-elt="this">{{ T "settings.backup.restart_now" }}</button>
+    {{ else }}
+    <p class="muted">{{ T "backup.cloud.restore.restart_manually" }}</p>
+    {{ end }}
+  </div>
+  {{ else if eq .phase "needkey" }}
+  <form class="cloud-key-entry" data-testid="cloud-restore-needkey" hx-post="/api/offsite/recover/key" hx-encoding="multipart/form-data" hx-target="#cloud-restore-region" hx-swap="outerHTML">
+    <h2>{{ T "backup.cloud.restore.needkey_title" }}</h2>
+    <p>{{ T "backup.cloud.restore.needkey_hint" }}</p>
+    {{ if .msg }}<p role="alert" data-testid="cloud-key-error"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ .msg }}</p>{{ end }}
+    <label for="saved-key-restore">{{ T "backup.cloud.key.enter_label" }}</label>
+    <input id="saved-key-restore" name="saved_key" type="text" dir="ltr" translate="no" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="UTK1-XXXX-XXXX-…" data-testid="cloud-key-input">
+    <label for="saved-key-file">{{ T "backup.cloud.restore.needkey_file" }}</label>
+    <input id="saved-key-file" name="key_file" type="file" accept=".txt,text/plain">
+    <button type="submit" class="btn primary" data-testid="cloud-key-submit">{{ T "backup.cloud.key.enter_submit" }}</button>
+  </form>
+  {{ else if eq .phase "linked" }}
+  <p role="status" data-testid="cloud-link-done"><span aria-hidden="true">✓</span> {{ T "backup.cloud.link.done" }}</p>
+  {{ else if eq .phase "denied" }}
+  <p role="alert"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ if eq .kind "key" }}{{ T "backup.cloud.link.denied" }}{{ else }}{{ T "backup.cloud.restore.denied" }}{{ end }}</p>
+  <a class="btn secondary" href="{{ if eq .kind "key" }}/settings#settings-backup{{ else }}/backups/cloud-restore{{ end }}">{{ if eq .kind "key" }}{{ T "backup.cloud.restore.back_settings" }}{{ else }}{{ T "backup.cloud.restore.back" }}{{ end }}</a>
+  {{ else if eq .phase "expired" }}
+  <p role="alert"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ T "backup.cloud.restore.expired" }}</p>
+  <a class="btn secondary" href="{{ if eq .kind "key" }}/settings#settings-backup{{ else }}/backups/cloud-restore{{ end }}">{{ if eq .kind "key" }}{{ T "backup.cloud.restore.back_settings" }}{{ else }}{{ T "backup.cloud.restore.back" }}{{ end }}</a>
+  {{ else if eq .phase "failed" }}
+  <p role="alert" data-testid="cloud-restore-failed"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ .errText }}</p>
+  <a class="btn secondary" href="{{ if eq .kind "key" }}/settings#settings-backup{{ else }}/backups/cloud-restore{{ end }}">{{ if eq .kind "key" }}{{ T "backup.cloud.restore.back_settings" }}{{ else }}{{ T "backup.cloud.restore.back" }}{{ end }}</a>
+  {{ else if eq .phase "cancelled" }}
+  <p class="muted">{{ T "backup.cloud.restore.cancelled" }}</p>
+  <a class="btn secondary" href="{{ if eq .kind "key" }}/settings#settings-backup{{ else }}/backups/cloud-restore{{ end }}">{{ if eq .kind "key" }}{{ T "backup.cloud.restore.back_settings" }}{{ else }}{{ T "backup.cloud.restore.back" }}{{ end }}</a>
+  {{ end }}
+  {{ if or .polling (eq .phase "needkey") }}
+  <button type="button" class="btn secondary" data-testid="cloud-restore-cancel" hx-post="/api/offsite/recover/cancel" hx-target="#cloud-restore-region" hx-swap="outerHTML">{{ T "backup.cloud.restore.cancel" }}</button>
+  {{ end }}
+</div>
