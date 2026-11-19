@@ -1,7 +1,7 @@
 # Review: a shop switch never swaps the database under a running till (ut-docs#6672)
 
 Date: 2026-11-19. Branch `test/6672-shop-switch-db-guard`. Author: Sonnet (Dev). Reviewer: Opus 5.5 (independent, fresh context).
-Tester: <pending>
+Tester: PASS (Sonnet, independent of the author). Own mutations (file replaced by a fresh sqlite, watch disabled; `settings` dropped; `users` dropped) each turn the switch tests red, also on the committed 5-test version. `go test ./internal/enroll -race` ok, `go test ./internal/db` ok, gofmt/vet/golangci-lint clean, ci.yml guards pass bar four env-only failures (catimport tags not fetched, go1.27 toolchain, shellcheck binary, qemu-arm) that CI runs. No driven app run: test-only change, no UI.
 Pre-flight: review record — this file · help topic / docs-shots n/a (test-only, no user-visible change) · `reference/` n/a (no behaviour change; the "a shop switch only writes settings rows, a file swap happens only at boot" note goes on the #6672 close comment, BA AC 5) · README n/a · en.json/i18n n/a (no strings) · ADR n/a (no new decision; pair clears identity before the call per ADR-0116 D5, unchanged) · migrations n/a.
 
 ## What shipped
