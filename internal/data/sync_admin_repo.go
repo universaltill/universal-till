@@ -401,10 +401,11 @@ var adminTables = []adminTable{
 // reviewer of a future migration, and several tables share one.
 var nonAdminTables = map[string]string{
 	// Already named in this var's own top comment above.
-	"cloud_notices": "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
-	"sessions":      "till-local login sessions — meaningless off the issuing till",
-	"item_images":   "item photos — files don't travel over this bundle (D2 limit)",
-	"card_readers":  "this till's own card reader registry (ut-docs#6566): provider reader ids are device specific, so it never leaves the till — no journal, snapshot, bundle or roster; it travels in a full backup only",
+	"cloud_notices":      "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
+	"sessions":           "till-local login sessions — meaningless off the issuing till",
+	"item_images":        "item photos — files don't travel over this bundle (D2 limit)",
+	"card_readers":       "this till's own card reader registry (ut-docs#6566): provider reader ids are device specific, so it never leaves the till — no journal, snapshot, bundle or roster; it travels in a full backup only",
+	"refund_leg_refunds": "what each refund sent back to each original payment leg (ut-docs#6649): till-local netting state, written after the provider approved; a sale without rows falls back to netting the method's earlier refunds, so nothing needs to leave the till",
 
 	// Migration runner's own bookkeeping (created by internal/db's migrator,
 	// not a numbered migration file itself) — which migrations have applied
