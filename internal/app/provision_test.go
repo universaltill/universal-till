@@ -22,11 +22,12 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openProvisionTestDB(t *testing.T) *db.DB {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "unitill-pos.db"))
+	database, err := db.Open(testsupport.MigratedDBFile(t, "unitill-pos.db"))
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}

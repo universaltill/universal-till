@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2727: the Modifiers tab's Remove / Attach / Skip / Use again
 // outerHTML-swap #item-modifiers-list. Before, the buttons had no stable
@@ -79,7 +79,7 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     const { gInh, gA, gB } = await setup(page);
-    page.on('dialog', (d) => d.accept());
+    const noNative = noNativeDialogs(page);
 
     // Open the tab by keyboard: focus stays on the tab, never the heading.
     await page.locator('#item-form-tab-modifiers').focus();
@@ -110,10 +110,12 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
     // Detach: the row (and its button) is removed, so the heading takes focus.
     await page.locator(`#modifier-detach-${gA}`).focus();
     await page.keyboard.press('Enter');
+    await answerTillConfirm(page, 'confirm'); // focus returns to the opener before the request is issued
     await expect(page.locator(`${PANEL} #modifier-detach-${gA}`)).toHaveCount(0);
     await expect.poll(() => activeId(page)).toBe('item-modifiers-heading');
     expect(gB).toBeTruthy();
 
+    noNative();
     if (process.env.UT_2727_SHOT_DIR) await page.screenshot({ path: `${process.env.UT_2727_SHOT_DIR}/2727-after-detach-1024x600.png` });
     assertClean();
   });
@@ -122,7 +124,7 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 360, height: 700 });
     const { gA, gB } = await setup(page);
-    page.on('dialog', (d) => d.accept());
+    const noNative = noNativeDialogs(page);
     await page.locator('#item-form-tab-modifiers').focus();
     await page.keyboard.press('Enter');
     await expect(page.locator('#modifier-attach-submit')).toBeVisible();
@@ -143,9 +145,11 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
 
     await page.locator(`#modifier-detach-${gB}`).focus();
     await page.keyboard.press('Enter');
+    await answerTillConfirm(page, 'confirm');
     await expect(page.locator(`#modifier-detach-${gB}`)).toHaveCount(0);
     await expect.poll(() => activeId(page)).toBe('item-modifiers-heading');
     expect(gA).toBeTruthy();
+    noNative();
     if (process.env.UT_2727_SHOT_DIR) await page.screenshot({ path: `${process.env.UT_2727_SHOT_DIR}/2727-after-detach-360.png` });
     assertClean();
   });
@@ -155,7 +159,7 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
   test('slow detach: an unrelated htmx settle mid-flight does not drop focus; moved focus is kept', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 600 });
     const { gA, gB } = await setup(page);
-    page.on('dialog', (d) => d.accept());
+    const noNative = noNativeDialogs(page);
     await page.route('**/api/catalog/modifier-group/detach', async (route) => {
       await new Promise((r) => setTimeout(r, 1500));
       await route.continue();
@@ -171,6 +175,7 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
     // 1) Unrelated request settles during the slow detach.
     await page.locator(`#modifier-detach-${gA}`).focus();
     await page.keyboard.press('Enter');
+    await answerTillConfirm(page, 'confirm');
     await page.evaluate(() => {
       const d = document.createElement('div');
       d.id = 'probe-2727';
@@ -184,9 +189,11 @@ test.describe('ut-docs#2727 Modifiers tab keeps keyboard focus across swaps', ()
     // 2) Focus moved to Close while the detach is in flight: it stays there.
     await page.locator(`#modifier-detach-${gB}`).focus();
     await page.keyboard.press('Enter');
+    await answerTillConfirm(page, 'confirm');
     await page.locator('#item-form-close-btn').focus();
     await expect(page.locator(`#modifier-detach-${gB}`)).toHaveCount(0);
     await page.waitForTimeout(300);
     expect(await activeId(page)).toBe('item-form-close-btn');
+    noNative();
   });
 });

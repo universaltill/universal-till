@@ -25,19 +25,25 @@ func TestSnapshotItemIcon(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"it-icon", "it-tile", "it-photo", "it-none"} {
+	for _, id := range []string{"it-icon", "it-tile", "it-photo", "it-photo-icon", "it-none"} {
 		testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: id, SKU: id, Name: id, BasePrice: 100, IsActive: true})
 	}
 	if _, err := db.Exec(`UPDATE items SET icon = 'lucide:beer' WHERE id = 'it-icon'`); err != nil {
 		t.Fatal(err)
 	}
 	testsupport.SeedImage(t, db, "img-1", "it-tile", "/public/assets/category-icons/coffee.svg")
+	// ut-docs#3601: a photo that keeps a stored icon reports "" (the photo shows).
+	if _, err := db.Exec(`UPDATE items SET icon = 'lucide:beer' WHERE id = 'it-photo-icon'`); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.SeedImage(t, db, "img-3", "it-photo-icon", "/public/assets/items/it-photo-icon/thumb.png")
 	testsupport.SeedImage(t, db, "img-2", "it-photo", "/public/assets/items/it-photo/thumb.png")
 
 	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]any{}
+	stored := map[string]any{}
 	for _, it := range cloud.snapshots[0]["items"].([]any) {
 		m := it.(map[string]any)
 		v, ok := m["icon"]
@@ -45,11 +51,25 @@ func TestSnapshotItemIcon(t *testing.T) {
 			t.Fatalf("item %v has no icon field", m["id"])
 		}
 		got[m["id"].(string)] = v
+		// ut-docs#6028: the raw stored icon, present on every item row.
+		sv, ok := m["icon_stored"]
+		if !ok {
+			t.Fatalf("item %v has no icon_stored field", m["id"])
+		}
+		stored[m["id"].(string)] = sv
 	}
-	want := map[string]any{"it-icon": "lucide:beer", "it-tile": "lucide:coffee", "it-photo": "", "it-none": ""}
+	want := map[string]any{"it-icon": "lucide:beer", "it-tile": "lucide:coffee", "it-photo": "", "it-photo-icon": "", "it-none": ""}
 	for id, w := range want {
 		if got[id] != w {
 			t.Errorf("%s icon = %v, want %q", id, got[id], w)
+		}
+	}
+	// icon_stored is the raw items.icon even while a photo hides it; a lone
+	// library tile reports its id in icon and "" here.
+	wantStored := map[string]any{"it-icon": "lucide:beer", "it-tile": "", "it-photo": "", "it-photo-icon": "lucide:beer", "it-none": ""}
+	for id, w := range wantStored {
+		if stored[id] != w {
+			t.Errorf("%s icon_stored = %v, want %q", id, stored[id], w)
 		}
 	}
 }

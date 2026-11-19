@@ -254,6 +254,12 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	if err := manifest.RefuseOnTill(); err != nil {
 		return err
 	}
+	// App Store channel (ADR-0194): rollback moves the row to another version
+	// without PersistManifest, so it is gated here, before the live dir or the
+	// DB is touched. Code there changes only with an app release.
+	if err := RefuseCodeRuntime(manifest.Runtime); err != nil {
+		return err
+	}
 
 	// Begin transaction
 	tx, err := rm.db.BeginTx(ctx, nil)
@@ -325,6 +331,12 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	// manifest may hide a protected key or restructure a key another
 	// plugin has since taken; a fresh install would refuse it, so must this.
 	if err := validateLayoutEntries(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
+	// A revoked release is never restored (ut-docs#5658): the record
+	// outlives the version switch that disabled it.
+	if err := CheckNotRevoked(ctx, repo, tx, pluginID, targetVersion); err != nil {
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 

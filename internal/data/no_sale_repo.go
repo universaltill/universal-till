@@ -25,6 +25,13 @@ type NoSaleEvent struct {
 	ActorID    string
 	ApproverID string
 	Reason     string
+	// ReceivedAt (migration 098, ut-docs#5769) is when THIS till recorded a
+	// journaled row; ApplyJournaledNoSaleEvent defaults it to the SQL clock
+	// at execution, under the write lock (EOD atomicity). Empty on
+	// a local insert (stored NULL: the row counts by CreatedAt).
+	// Never set from a journal payload: the arrival time must be this
+	// till's own clock, or a remote till could place a row in any Z.
+	ReceivedAt string
 }
 
 // InsertNoSaleEvent writes one no_sale_events row and returns its id.
@@ -132,11 +139,11 @@ func (r *POSRepo) ApplyJournaledNoSaleEvent(ctx context.Context, e NoSaleEvent) 
 		return false, errors.New("apply journaled no-sale event: TillID is required")
 	}
 	res, err := r.db.ExecContext(ctx, `
-INSERT INTO no_sale_events (id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason)
-VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?)
+INSERT INTO no_sale_events (id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason, received_at)
+VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))
 ON CONFLICT(id) DO NOTHING`,
 		e.ID, e.CreatedAt, e.CreatedAt, nullIfEmpty(e.RegisterID), e.TillID,
-		nullIfEmpty(e.ActorID), nullIfEmpty(e.ApproverID), nullIfEmpty(e.Reason))
+		nullIfEmpty(e.ActorID), nullIfEmpty(e.ApproverID), nullIfEmpty(e.Reason), e.ReceivedAt)
 	if err != nil {
 		return false, fmt.Errorf("apply journaled no-sale event: %w", err)
 	}
@@ -193,7 +200,7 @@ WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&n)
 // NoSaleCountForInstantWindow is NoSaleCountForDateRange over the
 // close-to-close instant window [from, to) (zero from = unbounded).
 func (r *POSRepo) NoSaleCountForInstantWindow(ctx context.Context, from, to time.Time) (int, error) {
-	win, args := instantWindow("created_at", from, to)
+	win, args := instantWindow(eventArrivalCol(""), from, to)
 	var n int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM no_sale_events WHERE `+win, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("no-sale count for instant window: %w", err)
@@ -239,6 +246,42 @@ func (r *POSRepo) NoSaleOperatorsForDay(ctx context.Context, day string) ([]NoSa
 
 // NoSaleOperatorsForInstantWindow is the close-to-close sibling.
 func (r *POSRepo) NoSaleOperatorsForInstantWindow(ctx context.Context, from, to time.Time) ([]NoSaleOperator, error) {
-	win, args := instantWindow("e.created_at", from, to)
+	win, args := instantWindow(eventArrivalCol("e"), from, to)
 	return r.noSaleOperators(ctx, win, args)
+}
+
+// noSaleShiftWhere attributes a no-sale open to ONE shift (ut-docs#5755)
+// with SumCashPaymentsForShift's rule: same register, created_at at or after
+// opened_at and, once the shift is closed, at or before closed_at (inclusive,
+// as the cash takings are) — an open shift is unbounded above. Both sides go
+// through datetime(...) (instantWindow's normalisation, ADR-0066): opened_at
+// may be the 001 schema default's 'YYYY-MM-DD HH:MM:SS' form while
+// created_at is RFC 3339, and a text compare would misorder them. till_id is
+// not filtered (cash takings aren't either). An event with no register_id
+// (EnsureRegister failed when it was recorded) matches no shift; it still
+// counts on the EOD. Its one '?' is the shift id; an unknown id matches
+// nothing.
+const noSaleShiftWhere = `EXISTS (
+  SELECT 1 FROM shifts sh
+  WHERE sh.id = ?
+    AND e.register_id = sh.register_id
+    AND datetime(e.created_at) >= datetime(sh.opened_at)
+    AND (sh.closed_at IS NULL OR sh.closed_at = ''
+         OR datetime(e.created_at) <= datetime(sh.closed_at)))`
+
+// NoSaleForShift returns one shift's no-sale drawer opens (ut-docs#5755): the
+// total and the per-cashier breakdown (noSaleOperators' grouping, order and
+// name fallback, #5753). Informational only — callers never fold it into
+// expected cash, variance, skim or float. An unknown shift id, or a shift with
+// no opens, returns (0, nil, nil).
+func (r *POSRepo) NoSaleForShift(ctx context.Context, shiftID string) (int, []NoSaleOperator, error) {
+	ops, err := r.noSaleOperators(ctx, noSaleShiftWhere, []any{shiftID})
+	if err != nil {
+		return 0, nil, fmt.Errorf("no-sale for shift: %w", err)
+	}
+	total := 0
+	for _, o := range ops {
+		total += o.Count
+	}
+	return total, ops, nil
 }

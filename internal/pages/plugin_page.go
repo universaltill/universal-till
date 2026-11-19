@@ -262,7 +262,7 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 		// Entry labels are translator keys (plugins ship locales/ overlays);
 		// plain-text labels pass through T unchanged.
 		"title":     httpx.T(locale, entry.Label),
-		"theme":     d.CurrentState().Theme,
+		"theme":     d.ResolvedTheme(r),
 		"menuItems": d.MenuSnapshot(),
 	}
 
@@ -281,7 +281,7 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 		// (no scripts, opaque origin, no forms/popups/top navigation), its
 		// document carried in srcdoc as a plain string so html/template
 		// attribute-escapes it -- never as template.HTML in the host page.
-		frameDoc, err := pluginFrameDocument(locale, d.CurrentState().Theme, raw)
+		frameDoc, err := pluginFrameDocument(locale, d.ResolvedTheme(r), raw)
 		if err != nil {
 			http.Error(w, "failed to render plugin page", http.StatusInternalServerError)
 			return

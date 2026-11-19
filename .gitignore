@@ -103,3 +103,7 @@ test-results/
 # Windows icon/VERSIONINFO objects, generated at release time by
 # packaging/windows/winres.sh (ut-docs#2786)
 rsrc_windows_*.syso
+
+# Real first-party plugin bundles, fetched at build time by scripts/ci/fetch-bundled-plugins.sh (ADR-0194); never committed.
+/internal/plugins/bundled/embedded/*
+!/internal/plugins/bundled/embedded/.gitkeep

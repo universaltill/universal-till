@@ -129,7 +129,7 @@ func TestSalesMirrorStateReadUsesIndexOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	rows, err := d.DB.Query(`EXPLAIN QUERY PLAN `+mirrorStateSalesSQL, "2026-01-01", "2026-01-01", -1, "t", 200)
+	rows, err := d.DB.Query(`EXPLAIN QUERY PLAN `+mirrorStateSalesSQL, "t", "2026-01-01", "2026-01-01", -1, 200)
 	if err != nil {
 		t.Fatal(err)
 	}
