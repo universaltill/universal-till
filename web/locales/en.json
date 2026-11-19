@@ -3030,6 +3030,7 @@
   "settings.update.android.allow_open": "Open Android settings",
   "settings.update.android.allow_later": "Not now",
   "settings.update.android.allow_granted": "Permission granted. Tap 'Download' to continue.",
+  "settings.update.android.download_window": "Each night between %s and %s this till downloads the update — keep the app open on screen then. It doesn't install by itself: a manager taps to install it when no sale or order is open.",
   "settings.update.android.allow_still_denied": "Still not allowed. Switch on 'Allow from this source', then come back.",
   "settings.update.apply_confirm": "Download and install the update now? The till restarts when done.",
   "settings.update.auto_blocked": "Automatic updates are on, but this till can't install them by itself: its install folder isn't writable by the till. If it was installed from the .deb package, reinstall the latest one — that fixes the folder; otherwise give the till's user write access to that folder. Then check again.",
