@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 	_ "modernc.org/sqlite"
 )
@@ -234,7 +235,7 @@ VALUES ('pay1', ?, 'cash', 150, 'GBP', 30, ?)
 	}
 
 	// Compute expected cash
-	expectedCash, err := ComputeExpectedCash(ctx, db, shiftID, 10000)
+	expectedCash, err := data.NewPOSRepo(db).ComputeExpectedCash(ctx, shiftID, 10000)
 	if err != nil {
 		t.Fatalf("ComputeExpectedCash failed: %v", err)
 	}
