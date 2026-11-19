@@ -35,7 +35,7 @@ const PACK_COMPACT: Record<string, string> = {
   ar: 'تحرير الأصناف — اختر فئة لإعادة الترتيب',
   de: 'Artikel — Kategorie zum Sortieren wählen',
   es: 'Editando artículos — elige una categoría para ordenar',
-  pt: 'Editando itens — escolha uma categoria para ordenar',
+  pt: 'Itens — escolha uma categoria para ordenar',
 };
 // Each pack's own Done label (common.done), set before measuring the title so
 // a longer label that narrows the title column is part of the fit check.

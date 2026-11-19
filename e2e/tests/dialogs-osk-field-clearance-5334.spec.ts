@@ -74,11 +74,12 @@ test.describe('OSK-padded dialogs: fields clear of the sticky action row (ut-doc
       await ensureOperator(page);
       await markTourDone(page);
       await setOskMode(page, 'on');
-      // The suite runs as a reduced-motion user (fixtures.ts), which zeroes every
-      // animation-duration, so the scroll-driven cue is off. Opt back in.
-      await page.emulateMedia({ reducedMotion: 'no-preference' });
       const d = DIALOGS.find((x) => x.id === id)!;
       await d.open(page);
+      // The suite runs as a reduced-motion user (fixtures.ts), which zeroes every
+      // animation-duration, so the scroll-driven cue is off. Opt back in only after
+      // open(): with motion on, the /tables opener never reaches a stable element.
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
       await openOsk(page, d);
       const dlg = page.locator(`#${id}`);
       // Visible = a non-'none' shadow whose colour alpha is > 0 (the keyframes end on a fully transparent shadow).
