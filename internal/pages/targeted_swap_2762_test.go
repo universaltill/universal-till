@@ -113,6 +113,7 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 		{"/api/settings/invoice", "settings-invoice-region"},
 		{"/api/settings/telemetry", "settings-telemetry-region"},
 		{"/api/settings/store-name", "settings-store-name-region"},
+		{"/api/settings/cloud-staff-breakdown", "settings-cloud-staff-region"}, // ut-docs#2557
 	}
 	for _, c := range swapped {
 		anchor := `id="` + c.region + `" data-ut-refresh="#` + c.region + `" data-ut-saved-msg="#`
@@ -138,21 +139,21 @@ func TestSettingsSwapRegionNotReload(t *testing.T) {
 	// in to auto-register registers now, which drops the status bar's
 	// "Register till" chip.
 	kept := map[string]string{
-		"/api/settings/auto-register":   "reload:settings-auto-register",
-		"/api/settings/theme":           "reload:settings-theme",
-		"/api/settings/ui-scale":        "reload:settings-ui-scale",
-		"/api/settings/effects-level":   "reload:settings-effects-level",
-		"/api/settings/osk":             "reload:settings-osk",
-		"/api/settings/idle-lock":       "reload:settings-idle-lock",
-		"/api/settings/staff-languages": "reload:settings-save",
+		"/api/settings/registration-stop": "reload:settings-registration",
+		"/api/settings/theme":             "reload:settings-theme",
+		"/api/settings/ui-scale":          "reload:settings-ui-scale",
+		"/api/settings/effects-level":     "reload:settings-effects-level",
+		"/api/settings/osk":               "reload:settings-osk",
+		"/api/settings/idle-lock":         "reload:settings-idle-lock",
+		"/api/settings/staff-languages":   "reload:settings-save",
 	}
 	for post, want := range kept {
 		if form := formTag(t, s, post); !strings.Contains(form, want) {
 			t.Errorf("settings.html: %s must keep %q: %s", post, want, form)
 		}
 	}
-	if n := strings.Count(s, `hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save;`); n != 2 {
-		t.Errorf("settings.html: currency and language must both keep reload:settings-save, found %d", n)
+	if n := strings.Count(s, `hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save;`); n != 3 {
+		t.Errorf("settings.html: currency, currency display (ut-docs#5410) and language must all keep reload:settings-save, found %d", n)
 	}
 	if strings.Contains(s, `class="card" data-ut-refresh`) || strings.Contains(s, `class="card settings-wide" data-ut-refresh`) {
 		t.Error("settings.html: a .card must never be a refresh region (the section switcher holds card references)")

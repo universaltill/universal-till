@@ -3,6 +3,7 @@ id: inventory
 title: المخزون والجرد
 section: إعداد متجرك
 order: 120
+public: true
 summary: يتتبع الكمية المتوفرة لكل منتج وصنف فرعي.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 ---

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -142,6 +143,11 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 	if err := manifest.RefuseOnTill(); err != nil {
 		return nil, err
 	}
+	// App Store channel (ADR-0194, Apple 2.5.2): no imported code plugin.
+	// Refused here, before the live dir is touched.
+	if err := RefuseCodeRuntime(manifest.Runtime); err != nil {
+		return nil, err
+	}
 
 	// Verify manifest (signature check skippable only in a devplugins build). The
 	// manifest was already parsed above; VerifyManifest re-reads the file
@@ -183,6 +189,13 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 	// Check disk budget (prevent excessive plugin storage)
 	if err := imp.checkDiskBudget(manifest.ID, manifest.Version, tempDir); err != nil {
 		return nil, fmt.Errorf("disk budget check failed: %w", err)
+	}
+
+	// Refuse a revoked release before the live dir is touched, so a refused
+	// re-import of an installed version keeps its files (ut-docs#5658).
+	// PersistManifest re-checks as the backstop.
+	if err := CheckNotRevoked(ctx, data.NewPluginRepo(imp.db), nil, manifest.ID, manifest.Version); err != nil {
+		return nil, err
 	}
 
 	// Move to permanent location

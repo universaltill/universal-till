@@ -2818,3 +2818,46 @@ func TestPostRefund_RegisterPinnedToLocationRestocksThatLocation(t *testing.T) {
 		t.Fatalf("expected Main untouched at 50, got %v", got)
 	}
 }
+
+// ut-docs#6601: a client-supplied refund_attempt_id must never start with the
+// reversal prefix, or a refund could share an idempotency key with a reversal.
+func TestRefund_ReversalPrefixedAttemptIDNotHonoured(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	for _, q := range []string{
+		`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demopay', 'wasm', 'plugin.wasm', 'https://example.test/demopay.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`,
+		`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'plugin.wasm', 'wasm', 1)`,
+		`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-demopay', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`,
+		`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-demopay', 'com.universaltill.payment-demo', 'payment.demopay.refund', 'handle_refund', 1)`,
+		`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-demopay', 'com.universaltill.payment-demo', 'events:receive', 1)`,
+	} {
+		if _, err := dp.Db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.refund", plugins.Blocking)
+	var seenIDs []string
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			seenIDs = append(seenIDs, ev.ID)
+			return nil, errors.New("demopay: provider declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body := "receipt=" + receiptNo + "&qty_0=2&method=demopay&refund_attempt_id=reversal:x"
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+	if len(seenIDs) != 1 || seenIDs[0] == "" || strings.HasPrefix(seenIDs[0], reversalRequestIDPrefix) {
+		t.Fatalf("refund event ids = %v, want one non-empty id without the reversal prefix", seenIDs)
+	}
+}

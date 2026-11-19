@@ -581,6 +581,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
 	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300, Group: "settings.cat.advanced.label"},
 	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
+	{Key: "settings-cloud-staff", Href: "#settings-cloud-staff", LabelKey: "settings.cloud_staff.title", Order: 1450, Group: "settings.cat.advanced.label"},
 	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},
 	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
 	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
@@ -590,6 +591,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
 	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
 	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
+	{Key: "settings-notices", Href: "#settings-notices", LabelKey: "settings.notices.title", Order: 2125, Group: "settings.cat.devices.label"},
 	// ut-docs#3115: Shop name, first in My shop (the template declares it
 	// right before the Currency card).
 	{Key: "settings-store-name", Href: "#settings-store-name", LabelKey: "settings.store_name.title", Order: 2150, Group: "settings.cat.shop.label"},

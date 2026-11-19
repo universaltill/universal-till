@@ -61,8 +61,7 @@ test.describe('wrapped-control labels stack above their inputs (ut-docs#300)', (
   // exactly what a naive one-line layout re-breaks on.
   //
   // German is NOT driven via ?lang=de here, deliberately: it ships as a
-  // language-pack PLUGIN (ut-plugin-language-de/locales/de.json, ut-docs#292),
-  // not a core locale — the shipped core locales are en/ar/fa/tr. A till
+  // Weblate language bundle (ut-docs#292), not a core locale — the shipped core locales are en/ar/fa/tr. A till
   // without that plugin resolves de → en and renders English, so `?lang=de`
   // against this suite's till would assert nothing at all while looking like
   // a German check. (The first draft of this spec did exactly that and passed
@@ -167,7 +166,12 @@ test.describe('wrapped-control labels stack above their inputs (ut-docs#300)', (
     // fourth `select name="mode"` (the printer mode, settings.html:390) which
     // is a plain label in a .field-pair and SHOULD stack. Filtering by name
     // caught that one too and failed for the right-looking wrong reason.
-    const inline = rows.filter((r) => r.labelClass.split(/\s+/).includes('set-row'));
+    // A row that is not rendered here measures as zero-size and says nothing
+    // about layout: the screen-awake setting is `hidden` outside the Android
+    // shell (ut-docs#5620), so it is skipped in this browser.
+    const inline = rows.filter(
+      (r) => r.labelClass.split(/\s+/).includes('set-row') && r.label.width > 0,
+    );
     expect(inline.length, 'expected the osk / display-mode / payment-default set-rows').toBeGreaterThanOrEqual(3);
     for (const r of inline) {
       expect(

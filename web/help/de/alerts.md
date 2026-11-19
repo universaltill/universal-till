@@ -3,6 +3,7 @@ id: alerts
 title: Warnungen & Benachrichtigungen
 section: Ihr Geschäft einrichten
 order: 130
+public: true
 summary: "Die Kasse beobachtet Ihr Geschäft und warnt frühzeitig: Artikel, die bald ausgehen, verbleibende Bestandstage, Bestellvorschläge und ungewöhnlich hohe oder niedrige Umsatztage."
 routes: [/backoffice]
 keywords: [niedriger bestand, benachrichtigungen, digest, warnungen]

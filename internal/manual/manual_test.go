@@ -1,6 +1,7 @@
 package manual
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -197,7 +198,7 @@ func TestTopicForRoute(t *testing.T) {
 
 func TestSearchRanksTitleAboveBody(t *testing.T) {
 	lib := load(t)
-	res := lib.Search("en", "catalog")
+	res := lib.SearchFor("en", "catalog", true)
 	if len(res) == 0 {
 		t.Fatal("no results for 'catalog'")
 	}
@@ -208,31 +209,31 @@ func TestSearchRanksTitleAboveBody(t *testing.T) {
 
 func TestSearchMatchesKeywordsAndBody(t *testing.T) {
 	lib := load(t)
-	if res := lib.Search("en", "tender"); len(res) == 0 || res[0].Topic.ID != "sell" {
+	if res := lib.SearchFor("en", "tender", true); len(res) == 0 || res[0].Topic.ID != "sell" {
 		t.Errorf("keyword search failed: %+v", res)
 	}
-	if res := lib.Search("en", "basket"); len(res) == 0 {
+	if res := lib.SearchFor("en", "basket", true); len(res) == 0 {
 		t.Error("body/keyword search found nothing for 'basket'")
 	}
 }
 
 func TestSearchIsCaseAndAccentInsensitiveEnough(t *testing.T) {
 	lib := load(t)
-	if res := lib.Search("en", "SELLING"); len(res) == 0 {
+	if res := lib.SearchFor("en", "SELLING", true); len(res) == 0 {
 		t.Error("uppercase query found nothing")
 	}
 }
 
 func TestSearchEmptyQueryReturnsNothing(t *testing.T) {
 	lib := load(t)
-	if res := lib.Search("en", "   "); len(res) != 0 {
+	if res := lib.SearchFor("en", "   ", true); len(res) != 0 {
 		t.Errorf("blank query returned %d results", len(res))
 	}
 }
 
 func TestSearchSnippetHasNoHTML(t *testing.T) {
 	lib := load(t)
-	res := lib.Search("en", "button")
+	res := lib.SearchFor("en", "button", true)
 	if len(res) == 0 {
 		t.Fatal("no results")
 	}
@@ -623,11 +624,153 @@ func TestRouteCovered(t *testing.T) {
 // "catalog, variants & barcodes your products: names…" in flat lowercase.)
 func TestSearchSnippetKeepsOriginalCase(t *testing.T) {
 	lib := load(t)
-	res := lib.Search("en", "tap")
+	res := lib.SearchFor("en", "tap", true)
 	if len(res) == 0 {
 		t.Fatal("no results")
 	}
 	if !strings.Contains(res[0].Snippet, "Tap") {
 		t.Errorf("snippet lost its casing: %q", res[0].Snippet)
+	}
+}
+
+func TestParsePublicFlag(t *testing.T) {
+	for val, want := range map[string]bool{"true": true, "false": false} {
+		tp, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: "+val+"\n---\nbody\n"), nil, false)
+		if err != nil || tp.Public != want || !tp.PublicSet {
+			t.Errorf("public: %s -> %+v, %v", val, tp, err)
+		}
+	}
+	if tp, err := parseTopic([]byte("---\nid: a\ntitle: A\n---\nbody\n"), nil, false); err != nil || tp.PublicSet {
+		t.Errorf("absent flag: %+v, %v", tp, err)
+	}
+	if _, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: yes\n---\nbody\n"), nil, false); err == nil {
+		t.Error("public: yes accepted")
+	}
+}
+
+// Every shipped help page declares whether it is publishable documentation
+// (ut-docs#5351): the public help site and the assistant connector's index
+// serve only `public: true` pages, and a new page must be classified on
+// purpose, in every language the same way as English.
+func TestShippedHelpDeclaresPublicAndLocalesAgree(t *testing.T) {
+	lib, err := Load(os.DirFS("../../web"), "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	en := lib.byLocale[FallbackLocale]
+	if len(en) == 0 {
+		t.Fatal("no English help topics loaded")
+	}
+	for loc, topics := range lib.byLocale {
+		for id, tp := range topics {
+			if !tp.PublicSet {
+				t.Errorf("%s/%s.md: add `public: true` (publishable documentation) or `public: false` (internal) to the front matter", loc, id)
+			}
+			if e, ok := en[id]; ok && e.Public != tp.Public {
+				t.Errorf("%s/%s.md: public=%v but English says %v", loc, id, tp.Public, e.Public)
+			}
+		}
+	}
+}
+
+// The owner excluded these topics from the public website and the assistant
+// connector's help index (pairing, transfer and approval-key internals, plus
+// translation and fiscal internals; ut-website help-public-allowlist). None
+// may be `public: true`, in any language.
+func TestOwnerExcludedHelpTopicsNotPublic(t *testing.T) {
+	lib, err := Load(os.DirFS("../../web"), "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"claim", "support-partner", "translate-mode", "translations", "fiscal-device", "fiscal-register"} {
+		if _, ok := lib.byLocale[FallbackLocale][id]; !ok {
+			t.Errorf("excluded topic %q not found in English help", id)
+		}
+		for loc, topics := range lib.byLocale {
+			if tp, ok := topics[id]; ok && tp.Public {
+				t.Errorf("%s/%s.md is public: true, but the owner excluded it from the public site", loc, id)
+			}
+		}
+	}
+}
+
+// ut-docs#3434: <!-- plan-purchase --> blocks are dropped for a host that
+// may not offer plan purchase (the iOS app).
+const planPurchaseTopic = `---
+id: plans
+title: Plans
+section: Setting up
+---
+
+# Plans
+
+Before text.
+
+<!-- plan-purchase -->
+
+Pay on your phone with the QR code.
+
+<!-- /plan-purchase -->
+
+After text.
+`
+
+func TestPlanPurchaseBlock_Dropped(t *testing.T) {
+	tp, err := parseTopic([]byte(planPurchaseTopic), nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tp.HTML), "Pay on your phone") || strings.Contains(string(tp.HTML), "raw HTML omitted") {
+		t.Fatalf("full HTML wrong: %s", tp.HTML)
+	}
+	if !strings.Contains(tp.Markdown, "<!-- plan-purchase -->") {
+		t.Error("Markdown must stay the raw body, markers included")
+	}
+	np := tp.WithoutPlanPurchase()
+	h := string(np.HTML)
+	if strings.Contains(h, "Pay on your phone") || !strings.Contains(h, "Before text.") || !strings.Contains(h, "After text.") {
+		t.Fatalf("no-purchase HTML wrong: %s", h)
+	}
+	if strings.Contains(string(tp.HTML), "After text.") == false {
+		t.Error("the original topic was mutated")
+	}
+	plain := &Topic{HTML: "x"}
+	if plain.WithoutPlanPurchase().HTML != "x" {
+		t.Error("a topic without markers must be unchanged")
+	}
+}
+
+func TestPlanPurchaseBlock_Unbalanced(t *testing.T) {
+	head := "---\nid: p\ntitle: P\n---\n\n"
+	for name, body := range map[string]string{
+		"opener only":  "<!-- plan-purchase -->\n\nx\n",
+		"closer only":  "x\n\n<!-- /plan-purchase -->\n",
+		"nested":       "<!-- plan-purchase -->\n\n<!-- plan-purchase -->\n\nx\n\n<!-- /plan-purchase -->\n\n<!-- /plan-purchase -->\n",
+		"closer first": "<!-- /plan-purchase -->\n\nx\n\n<!-- plan-purchase -->\n",
+		// A near-miss pair would otherwise render as plain comments and
+		// leave the paragraph showing on iOS.
+		"misspelt pair": "<!--plan-purchase-->\n\nx\n\n<!--/plan-purchase-->\n",
+		"with text":     "<!-- plan-purchase: iOS -->\n\nx\n\n<!-- /plan-purchase: iOS -->\n",
+	} {
+		if _, err := parseTopic([]byte(head+body), nil, false); err == nil {
+			t.Errorf("%s: want a parse error", name)
+		}
+	}
+}
+
+func TestSearchFor_NoPurchase(t *testing.T) {
+	fsys := fstest.MapFS{"help/en/plans.md": &fstest.MapFile{Data: []byte(planPurchaseTopic)}}
+	lib, err := Load(fsys, "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lib.SearchFor("en", "qr", true); len(got) != 1 || !strings.Contains(got[0].Snippet, "QR") {
+		t.Fatalf("full search = %+v", got)
+	}
+	if got := lib.SearchFor("en", "qr", false); len(got) != 0 {
+		t.Fatalf("no-purchase search still hits the dropped block: %+v", got)
+	}
+	if got := lib.SearchFor("en", "qr", true); len(got) != 1 {
+		t.Fatalf("Search must equal SearchFor(true): %+v", got)
 	}
 }

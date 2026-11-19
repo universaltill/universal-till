@@ -1,0 +1,41 @@
+# Re-runs an ios-ci / desktop-darwin run whose macOS job GitHub never gave a
+# runner (ut-docs#5490): "The job was not acquired by Runner of type hosted
+# even after multiple attempts" (hosted macOS arm64 capacity starvation, not a
+# config or billing problem). Same idea as release-runner-retry.yml (#5175).
+#
+# scripts/ci/ci-runner-retry.sh decides (behaviour test:
+# ci-runner-retry_test.sh): a real failure is never retried, nothing past
+# MAX_ATTEMPTS (default 3), and a fork PR's run is skipped. workflow_run runs
+# in the base repo with actions: write, so this workflow never checks out or
+# executes the triggering run's code: the checkout below is the default branch.
+#
+# Honest limit: a re-run started with GITHUB_TOKEN may not itself fire another
+# workflow_run, so: at most once in practice.
+name: CI runner retry
+
+on:
+  workflow_run:
+    workflows: [ios-ci, desktop-darwin]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  retry:
+    if: github.event.workflow_run.conclusion != 'success' && github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # actions/checkout of the default branch (explicit, so a private repo still works)
+      actions: write # POST rerun-failed-jobs
+      checks: read # job check-run annotations tell starvation from a real failure
+    steps:
+      - uses: actions/checkout@v7
+      - name: Re-run runner-starved jobs
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/ci-runner-retry.sh

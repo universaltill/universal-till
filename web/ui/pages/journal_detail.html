@@ -11,6 +11,9 @@
     {{ end }}
     <button class="btn" hx-post="/api/print/receipt/{{ .Sale.ReceiptNo }}"
             hx-target="#reprint-msg" hx-swap="innerHTML">🖨 {{ T "journal.reprint" }}</button>
+    {{ if .ReprintNoSlips }}<button class="btn secondary" hx-post="/api/print/receipt/{{ .Sale.ReceiptNo }}"
+            hx-vals='{{ jsonVals "no_slips" "1" }}' hx-target="#reprint-msg"
+            hx-swap="innerHTML" data-testid="reprint-no-slips">🖨 {{ T "journal.reprint_no_slips" }}</button>{{ end }}
     <span id="reprint-msg" aria-live="polite"></span>
     <a class="btn secondary" href="/journal"><span class="back-arrow" aria-hidden="true">←</span> {{ T "journal.title" }}</a>
   </div>

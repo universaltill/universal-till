@@ -56,6 +56,10 @@ type Note struct {
 	Markdown   string
 	HTML       template.HTML
 
+	// htmlNoPurchase is the render with the <!-- plan-purchase --> blocks
+	// removed, for Google Play and App Store builds (ADR-0194 §2.3).
+	htmlNoPurchase template.HTML
+
 	semver [3]int
 }
 
@@ -260,18 +264,78 @@ func parseNote(raw []byte) (*Note, error) {
 		return nil, fmt.Errorf("front-matter date %q must be YYYY-MM-DD", date)
 	}
 	n.Date = d
-	n.Markdown = strings.TrimSpace(body)
+	full, noPurchase, err := splitPlanPurchase(strings.TrimSpace(body))
+	if err != nil {
+		return nil, err
+	}
+	n.Markdown = strings.TrimSpace(full)
 	if n.Markdown == "" {
 		return nil, fmt.Errorf("empty note")
 	}
+	// goldmark's default renderer drops raw HTML ("<!-- raw HTML omitted -->"),
+	// so the output is safe to mark as trusted.
 	var buf bytes.Buffer
 	if err := md.Convert([]byte(n.Markdown), &buf); err != nil {
 		return nil, fmt.Errorf("render: %w", err)
 	}
-	// goldmark's default renderer drops raw HTML ("<!-- raw HTML omitted -->"),
-	// so the output is safe to mark as trusted.
 	n.HTML = template.HTML(buf.String())
+	buf.Reset()
+	if err := md.Convert([]byte(noPurchase), &buf); err != nil {
+		return nil, fmt.Errorf("render: %w", err)
+	}
+	n.htmlNoPurchase = template.HTML(buf.String())
 	return n, nil
+}
+
+// ForPlanPurchase returns the note's HTML; when the host may not offer plan
+// purchase (Google Play and App Store builds) the text between
+// <!-- plan-purchase --> and <!-- /plan-purchase --> is left out.
+func (n *Note) ForPlanPurchase(allowed bool) template.HTML {
+	if allowed {
+		return n.HTML
+	}
+	return n.htmlNoPurchase
+}
+
+const (
+	planPurchaseOpen  = "<!-- plan-purchase -->"
+	planPurchaseClose = "<!-- /plan-purchase -->"
+)
+
+// splitPlanPurchase returns the body with the marker lines removed (full) and
+// with each marked block removed (noPurchase). Markers sit on their own line;
+// an unbalanced, nested or malformed marker is an error so a typo can't
+// silently publish a purchase paragraph (same rule as internal/manual).
+func splitPlanPurchase(body string) (full, noPurchase string, err error) {
+	var f, n []string
+	in := false
+	for i, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		switch t {
+		case planPurchaseOpen:
+			if in {
+				return "", "", fmt.Errorf("line %d: nested %s", i+1, planPurchaseOpen)
+			}
+			in = true
+		case planPurchaseClose:
+			if !in {
+				return "", "", fmt.Errorf("line %d: %s without an opener", i+1, planPurchaseClose)
+			}
+			in = false
+		default:
+			if strings.HasPrefix(t, "<!--") && strings.Contains(t, "plan-purchase") {
+				return "", "", fmt.Errorf("line %d: malformed plan-purchase marker %q", i+1, t)
+			}
+			f = append(f, line)
+			if !in {
+				n = append(n, line)
+			}
+		}
+	}
+	if in {
+		return "", "", fmt.Errorf("%s is never closed", planPurchaseOpen)
+	}
+	return strings.Join(f, "\n"), strings.Join(n, "\n"), nil
 }
 
 // Has reports whether version (with or without the "v") has an English note.
