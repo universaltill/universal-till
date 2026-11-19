@@ -8352,3 +8352,5 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .tracking-order-no { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .tracking-order-no .order-no-label { color: var(--muted); font-size: .85rem; }
 .tracking-order-no .order-no-value { font-size: 3rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }
+/* ut-docs#5989: stand-alone link rows meet the 44px touch floor. */
+.manual-about-link a, a[data-testid="photo-import-link"] { display: inline-flex; align-items: center; min-block-size: 44px; }
