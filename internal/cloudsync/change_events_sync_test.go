@@ -239,7 +239,7 @@ func TestChangeEvents_LastCheckinRecordedOnAnswer(t *testing.T) {
 	}
 }
 
-// "Stop sending" halts the start-up refresh of an unpaid till (ADR-0200).
+// Switching off "Send usage facts" halts the start-up refresh of an unpaid till (ADR-0200).
 func TestStoppedTillMakesNoStartupCheckin(t *testing.T) {
 	cloud, srv, db, _ := startupFixture(t, 0)
 	_ = data.NewSettingsRepo(db).Set(context.Background(), enroll.KeyStopped, "true")

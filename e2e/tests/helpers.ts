@@ -295,8 +295,8 @@ export async function nameShop(page: Page, name = 'E2E Test Shop') {
 }
 
 // ADR-0200 (ut-docs#6559): there is no Register button; a named till registers
-// itself in the background. Names the shop, opens the Cloud record card (that
-// shows the notice and wakes the registration loop) and waits until the card
+// itself in the background. Names the shop, opens Settings (rendering the
+// Privacy card shows the notice and wakes the registration loop) and waits until the card
 // says registered. ONLY the diagnostics till (run-till-diagnostics.sh) can do
 // this: it sets UT_E2E_AUTO_REGISTER=1, a test-only seam the till honours on a
 // source build whose marketplace endpoint is loopback (its fake cloud); every
