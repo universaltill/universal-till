@@ -114,6 +114,78 @@ write_fixture <<'XML'
 XML
 assert_passes "INTERNET (no implied feature) with no uses-feature element"
 
+# 6b. #3048: NFC and READ_PHONE_STATE (Stripe Terminal's manifests) imply
+#     nfc/telephony features, so they too need required="false".
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.NFC" />
+</manifest>
+XML
+assert_fails "NFC with no matching uses-feature"
+
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-permission android:name="android.permission.NFC" />
+</manifest>
+XML
+assert_passes "NFC with uses-feature required=false"
+
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+</manifest>
+XML
+assert_fails "READ_PHONE_STATE with no telephony uses-feature"
+
+# 6c. #3048: the "shipped" profile (merged manifest of armv7, universal and
+#     arm64 without -PtapToPay) must carry no Tap to Pay residue.
+assert_shipped() {
+  local want="$1" label="$2" rc=0
+  bash "${GUARD}" "${FIXTURE}" shipped >/dev/null 2>&1 || rc=$?
+  if { [ "${want}" = pass ] && [ "${rc}" = 0 ]; } || { [ "${want}" = fail ] && [ "${rc}" != 0 ]; }; then
+    echo "PASS (shipped profile, ${want}): ${label}"
+  else
+    echo "FAIL (shipped profile, wanted ${want}): ${label}"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+}
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <application android:label="x" />
+</manifest>
+XML
+assert_shipped pass "location capped at API 30, no Application class"
+
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <application android:label="x" />
+</manifest>
+XML
+assert_shipped fail "location without maxSdkVersion"
+
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-permission android:name="android.permission.NFC" />
+    <application android:label="x" />
+</manifest>
+XML
+assert_shipped fail "NFC permission present"
+
+write_fixture <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:name="com.universaltill.pos.TillApplication" />
+</manifest>
+XML
+assert_shipped fail "TillApplication declared"
+
 # 7. The real, current manifest must itself pass -- proves the guard is
 #    actually wired to today's fix, not just to synthetic fixtures.
 if bash "${GUARD}" "android/app/src/main/AndroidManifest.xml" >/tmp/guard-out.$$ 2>&1; then

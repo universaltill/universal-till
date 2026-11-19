@@ -20,8 +20,7 @@
 //
 // A locale/topic pair whose structure doesn't match English is not
 // automatically a failure: scripts/ci/i18n-baseline/help-drift-baseline.json
-// records already-known drift (mirrors the ut-plugin-language-*
-// i18n-baseline/ convention for already-known untranslated keys), so
+// records already-known drift, so
 // existing gaps can be burned down over time instead of blocking every PR
 // from day one. But a baseline entry is a live claim about the *current*
 // mismatch, not a permanent exemption: if the real drift no longer matches

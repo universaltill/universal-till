@@ -2405,14 +2405,15 @@ type EODMethod struct {
 // PayOuts are stored as the (negative) amounts recorded — cash that left the
 // drawer.
 //
-// CashSales is taken from EODMethod{Method:"cash"}.In (see dateRangeSummary)
+// CashSales is taken from the EODMethod rows of every cash-type method
+// (payment_methods.type = 'cash', ut-docs#5804; see applyCashSales)
 // MINUS any cash tip_amount for the day (ut-docs#1046) — EODTip's own doc
 // comment below explains why EODMethod.In on its own is the full tendered
 // amount and so would otherwise include a CASH tip, commingling it into the
 // drawer's expected cash exactly the way ut-docs#1007 already prevents for
 // revenue. The subtracted amount is surfaced separately as TipsHeldOut so
-// the two figures reconcile: CashSales + TipsHeldOut == EODMethod{cash}.In -
-// EODMethod{cash}.Out. Cash tipping is off in the German pilot today (no
+// the two figures reconcile: CashSales + TipsHeldOut == Σ(In - Out) over the
+// cash-type methods. Cash tipping is off in the German pilot today (no
 // current path writes tip_amount on a cash payment via the till UI), but
 // nothing at the API layer rejects one, so this holds correct as soon as it
 // is ever turned on rather than waiting to be noticed then.
@@ -2626,6 +2627,10 @@ type EODReport struct {
 	// Departments/Tills): nil on range reports, and nil when no shift was
 	// closed that day — a day-close still completes without one.
 	CashReconciliation *CashReconciliation `json:"cash_reconciliation,omitempty"`
+	// RestoredFromBackup (ut-docs#5068) is set on the first Z report after
+	// a backup restore: where the receipt and Z numbers continue and what
+	// the backup's last ones were. Later reports omit it.
+	RestoredFromBackup *RestoreMarker `json:"restored_from_backup,omitempty"`
 }
 
 // CashReconciliationForLocalDay aggregates the cash-drawer reconciliation
@@ -3064,28 +3069,11 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 		// completes; the section is simply absent, same as a day with no
 		// closed shift).
 		if rc, rcErr := r.CashReconciliationForLocalDay(ctx, from); rcErr == nil && rc != nil {
-			// CashSales comes from the report's own payment-method
-			// breakdown (net cash: sales in minus refunds out), so the two
-			// figures on one report can never disagree.
-			for _, m := range rep.Methods {
-				if m.Method == "cash" {
-					rc.CashSales = m.In - m.Out
-					break
-				}
+			// CashSales / TipsHeldOut come from the report's own method and
+			// tip breakdowns, over every cash-type method (ut-docs#5804).
+			if err := r.applyCashSales(ctx, rc, rep.Methods, rep.Tips); err == nil {
+				rep.CashReconciliation = rc
 			}
-			// Hold cash tips out of CashSales (ut-docs#1046), same as #1007
-			// already holds every method's tips out of revenue — rep.Tips
-			// is populated above from the same tip_amount query, keyed by
-			// method_id, so this is the report's own cash-tip figure, not a
-			// separate lookup that could disagree with it.
-			for _, tp := range rep.Tips {
-				if tp.Method == "cash" {
-					rc.TipsHeldOut = tp.Amount
-					rc.CashSales -= tp.Amount
-					break
-				}
-			}
-			rep.CashReconciliation = rc
 		}
 	}
 
@@ -3311,25 +3299,11 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 		rep.OrderTypes = orderTypes
 	}
 	if rc, rcErr := r.CashReconciliationForInstantWindow(ctx, from, to); rcErr == nil && rc != nil {
-		// CashSales comes from the report's own payment-method breakdown
-		// (net cash: sales in minus refunds out), so the two figures on one
-		// report can never disagree.
-		for _, m := range rep.Methods {
-			if m.Method == "cash" {
-				rc.CashSales = m.In - m.Out
-				break
-			}
+		// CashSales / TipsHeldOut over every cash-type method, from the
+		// report's own breakdowns — same as dateRangeSummary (ut-docs#5804).
+		if err := r.applyCashSales(ctx, rc, rep.Methods, rep.Tips); err == nil {
+			rep.CashReconciliation = rc
 		}
-		// Hold cash tips out of CashSales (ut-docs#1046), from the report's
-		// own Tips figure — same as dateRangeSummary.
-		for _, tp := range rep.Tips {
-			if tp.Method == "cash" {
-				rc.TipsHeldOut = tp.Amount
-				rc.CashSales -= tp.Amount
-				break
-			}
-		}
-		rep.CashReconciliation = rc
 	}
 
 	// Per-till (register) breakdown — always computed for the "eod" kind
@@ -3727,8 +3701,15 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, sargs...)
 // pre-migration legacy row (never numbered) can't be picked up as the
 // "previous close" while prev_z_number stays NULL.
 //
+// A backup restore is the one place the sequence deliberately jumps
+// (ut-docs#5068): the restored database lacks the Zs the lost till issued
+// after the backup, so JumpNumbersAfterRestore records a per-kind floor
+// (settings restore.z_floor.<kind>) and z_number = max(MAX(z_number),
+// floor)+1, the floor being the last Z plus the days since last activity. prev_z_number stays the real MAX(z_number), so the gap is
+// visible on the report.
+//
 // "Gapless" describes allocation: no number is ever skipped or handed out
-// twice while the rows exist. Age-based retention still applies on top --
+// twice while the rows exist, except across a recorded restore jump. Age-based retention still applies on top --
 // PruneReportArchiveOlderThan (ADR-0040 §2) and the cloud-ack prunes delete
 // old rows, so the surviving sequence can start above 1. Every prune keeps
 // each kind's highest-Z and newest row (ADR-0147 §4,
@@ -3785,7 +3766,8 @@ func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, conten
 	query := `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt)
 SELECT ?, ?, ?, ?,
-  COALESCE(MAX(z_number), 0) + 1,
+  MAX(COALESCE(MAX(z_number), 0),
+      COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'restore.z_floor.' || ?), 0)) + 1,
   MAX(z_number),
   (SELECT created_at FROM report_archive
      WHERE kind = ? AND z_number IS NOT NULL
@@ -3793,13 +3775,14 @@ SELECT ?, ?, ?, ?,
   ?, ?
 FROM report_archive WHERE kind = ?
 ON CONFLICT (kind, period) DO NOTHING`
-	args := []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt, kind}
+	args := []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt, kind}
 	if !closedAt.IsZero() {
 		closedAtStr := closedAt.UTC().Format(archiveTimestampFmt)
 		query = `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt, created_at)
 SELECT ?, ?, ?, ?,
-  COALESCE(MAX(z_number), 0) + 1,
+  MAX(COALESCE(MAX(z_number), 0),
+      COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'restore.z_floor.' || ?), 0)) + 1,
   MAX(z_number),
   (SELECT created_at FROM report_archive
      WHERE kind = ? AND z_number IS NOT NULL
@@ -3811,7 +3794,7 @@ HAVING (? != 'eod' OR NOT EXISTS (
   WHERE ra2.kind = 'eod'
     AND date(ra2.created_at, '-1 second', 'localtime') = date(?, '-1 second', 'localtime')))
 ON CONFLICT (kind, period) DO NOTHING`
-		args = []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt,
+		args = []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt,
 			closedAtStr, kind, kind, closedAtStr}
 	}
 	var lastErr error
@@ -4640,7 +4623,19 @@ func (r *POSRepo) ListRegisters(ctx context.Context) ([]Register, error) {
 // CreateRegister adds a new, active register (a till/checkout station).
 // The schema's UNIQUE constraint on name rejects duplicates. locationID is
 // optional (nil leaves the register unassigned to any stock location).
+//
+// Admin-screen entry point: refuses control/invisible characters in name
+// (ErrNameInvalidCharacters, ut-docs#5858) and stores it trimmed.
+// CreateRegisterForEnrolment checks too and refuses (ut-docs#5862).
 func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *string) (string, error) {
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
+	return r.createRegister(ctx, name, locationID)
+}
+
+func (r *POSRepo) createRegister(ctx context.Context, name string, locationID *string) (string, error) {
 	id := uuid.NewString()
 	if _, err := r.db.ExecContext(ctx,
 		`INSERT INTO registers (id, name, location_id, is_active) VALUES (?, ?, ?, 1)`, id, name, locationID); err != nil {
@@ -4658,14 +4653,22 @@ func (r *POSRepo) CreateRegister(ctx context.Context, name string, locationID *s
 // UNIQUE violation this retries with "<baseName> (2)", "<baseName> (3)", …
 // up to a bounded number of attempts. Returns the id and the (possibly
 // suffixed) name actually used.
+//
+// A baseName with control or invisible characters is refused with
+// ErrNameInvalidCharacters (ut-docs#5862); the enroll handler fails open on
+// any error here and enrols the till without a register.
 func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName string) (string, string, error) {
 	const maxAttempts = 50
+	baseName, err := CheckSingleLineName(baseName)
+	if err != nil {
+		return "", "", err
+	}
 	name := baseName
 	for i := 1; i <= maxAttempts; i++ {
 		if i > 1 {
 			name = fmt.Sprintf("%s (%d)", baseName, i)
 		}
-		id, err := r.CreateRegister(ctx, name, nil)
+		id, err := r.createRegister(ctx, name, nil)
 		if err == nil {
 			return id, name, nil
 		}
@@ -4679,6 +4682,10 @@ func (r *POSRepo) CreateRegisterForEnrolment(ctx context.Context, baseName strin
 // RenameRegister changes a register's display name; the id (and every
 // shift/sale row keyed by it) is unaffected.
 func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error {
+	newName, err := CheckSingleLineName(newName)
+	if err != nil {
+		return err
+	}
 	res, err := r.db.ExecContext(ctx, `UPDATE registers SET name = ? WHERE id = ?`, newName, id)
 	if err != nil {
 		return fmt.Errorf("rename register: %w", err)
@@ -4693,8 +4700,13 @@ func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error 
 // register keeps its till's name when the till is renamed (ut-docs#4022).
 // Best-effort by design: a name another register already holds is left
 // alone (renamed=false, no error) — the till rename itself must never fail
-// over its register — and so is an unknown id or an unchanged name.
+// over its register — and so is an unknown id, an unchanged name, or a name
+// CheckSingleLineName refuses (ut-docs#5862; renamed=false, no error).
 func (r *POSRepo) RenameRegisterToFollowTill(ctx context.Context, id, newName string) (bool, error) {
+	newName, err := CheckSingleLineName(newName)
+	if err != nil {
+		return false, nil
+	}
 	res, err := r.db.ExecContext(ctx, `
 UPDATE registers SET name = ?
 WHERE id = ? AND name IS NOT ?
@@ -5252,7 +5264,21 @@ FROM sales WHERE receipt_no LIKE ? || '%'`,
 		len(prefix)+1, prefix).Scan(&maxVal); err != nil {
 		return "", fmt.Errorf("next receipt no: %w", err)
 	}
-	next := maxVal.Int64 + 1
+	top := maxVal.Int64
+	// A restore jump (restore_numbers.go) reserves a block of numbers the
+	// lost till may have issued after the backup; its floor only applies to
+	// the prefix it was computed for.
+	var floorPrefix, floorVal string
+	if err := exec.QueryRowContext(ctx,
+		`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorPrefixKey).Scan(&floorPrefix); err == nil && floorPrefix == prefix {
+		if err := exec.QueryRowContext(ctx,
+			`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorKey).Scan(&floorVal); err == nil {
+			if f, perr := strconv.ParseInt(floorVal, 10, 64); perr == nil && f > top {
+				top = f
+			}
+		}
+	}
+	next := top + 1
 	if next < 1 {
 		next = 1
 	}
@@ -6622,24 +6648,25 @@ func (r *POSRepo) DistinctAuditEntityTypes(ctx context.Context) ([]string, error
 
 // CustomerSummary is a row in the customer picker for data management.
 type CustomerSummary struct {
-	ID    string
-	Name  string
-	Phone string
-	Email string
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+	Email string `json:"email"`
 }
 
 // SearchCustomers finds customers by name/phone/email for the erasure picker.
 // The name matches on SearchFold (ut-docs#4650), so "MÜLLER" finds "Müller";
-// phone and email keep their LIKE substring match.
+// phone and email keep their LIKE substring match, with %, _ and \ in q
+// matching literally (likeLiteral, ut-docs#5863).
 func (r *POSRepo) SearchCustomers(ctx context.Context, q string, limit int) ([]CustomerSummary, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	like := "%" + strings.TrimSpace(q) + "%"
+	like := "%" + likeLiteral.Replace(strings.TrimSpace(q)) + "%"
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(phone,''), COALESCE(email,'')
 FROM customers
-WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? OR email LIKE ?)
+WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? ESCAPE '\' OR email LIKE ? ESCAPE '\')
 ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search customers: %w", err)
@@ -6649,6 +6676,53 @@ ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 	for rows.Next() {
 		var c CustomerSummary
 		if err := rows.Scan(&c.ID, &c.Name, &c.Phone, &c.Email); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// likeLiteral escapes LIKE's wildcards (and the escape char itself) for a
+// `LIKE ? ESCAPE '\'` pattern, so user input matches literally.
+var likeLiteral = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// CustomerPick is a promotion-dialog picker row (ut-docs#5589): only what the
+// picker renders. No email by construction.
+type CustomerPick struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
+// SearchCustomersForPicker finds customers by name (SearchFold) or phone for
+// the promotion dialog's customer picker (ut-docs#5589). Unlike
+// SearchCustomers (the GDPR erasure picker) it neither selects nor matches
+// email, so a role holding only "settings" cannot probe whether an email
+// belongs to a customer. A blank query returns an empty, non-nil slice, and
+// LIKE wildcards in q match themselves (likeLiteral), so q="%" or "_" cannot
+// slip past that guard and list every customer with a phone.
+func (r *POSRepo) SearchCustomersForPicker(ctx context.Context, q string, limit int) ([]CustomerPick, error) {
+	out := make([]CustomerPick, 0)
+	trimmed := strings.TrimSpace(q)
+	if trimmed == "" {
+		return out, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(phone,'')
+FROM customers
+WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? ESCAPE '\')
+ORDER BY name LIMIT ?`, SearchFold(q), "%"+likeLiteral.Replace(trimmed)+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("search customers for picker: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c CustomerPick
+		if err := rows.Scan(&c.ID, &c.Name, &c.Phone); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -7205,16 +7279,31 @@ const (
 	tenderOutSQL = `COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)`
 )
 
-// shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
-// sums of a shift window on a register, so cash takings and cash tips can
-// never use different windows (ut-docs#5801).
-func shiftCashWindow(registerID string, openedAt, closedAt sql.NullString) (string, []any) {
-	timeFilter := `s.completed_at >= ?`
-	args := []any{registerID, openedAt.String}
-	if closedAt.Valid {
-		timeFilter += ` AND s.completed_at <= ?`
+// shiftWindow is the one shift-window predicate (ut-docs#5796): col at or after
+// opened_at and, once closed, at or before closed_at (inclusive both ends, as
+// noSaleShiftWhere). Both sides go through datetime() so a legacy
+// 'YYYY-MM-DD HH:MM:SS' opened_at orders correctly against RFC 3339 columns
+// (a text compare puts '...T08' after '... 10' on the same day). An open
+// shift (closed_at NULL or ”) is unbounded above. col must be spelled as the
+// index expression expects, e.g. "s.completed_at" -> idx_sales_register_completed_dt.
+// A value datetime() cannot parse is NULL, so that row falls outside the window.
+func shiftWindow(col string, openedAt, closedAt sql.NullString) (string, []any) {
+	w := "datetime(" + col + ") >= datetime(?)"
+	args := []any{openedAt.String}
+	if closedAt.Valid && closedAt.String != "" {
+		w += " AND datetime(" + col + ") <= datetime(?)"
 		args = append(args, closedAt.String)
 	}
+	return "(" + w + ")", args
+}
+
+// shiftCashWindow is the shared FROM/WHERE (and args) for the cash-payment
+// sums of a shift window on a register, so cash takings and cash tips can
+// never use different windows (ut-docs#5801). The window goes through
+// shiftWindow (datetime() on both sides, as noSaleShiftWhere).
+func shiftCashWindow(registerID string, openedAt, closedAt sql.NullString) (string, []any) {
+	win, wargs := shiftWindow("s.completed_at", openedAt, closedAt)
+	args := append([]any{registerID}, wargs...)
 	return `
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
@@ -7222,7 +7311,7 @@ JOIN payment_methods pm ON pm.id = p.method_id
 WHERE pm.type = 'cash'
   AND s.status = 'completed'
   AND s.register_id = ?
-  AND ` + timeFilter + "\n", args
+  AND ` + win + "\n", args
 }
 
 // SumCashPaymentsForShift sums cash payments in shift window for a register:
@@ -7772,7 +7861,14 @@ func (r *POSRepo) EnsurePaymentMethod(ctx context.Context, id string) error {
 	if err := r.db.QueryRowContext(ctx, `SELECT 1 FROM payment_methods WHERE id = ? AND is_active = 1`, id).Scan(&exists); err == nil {
 		return nil
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES (?, ?, 'cash', 1)`, id, id)
+	// An unknown id is a placeholder that keeps payments.method_id's FK
+	// satisfied; it is never drawer cash (ut-docs#5804). Only the built-in
+	// cash tender, if its row is ever missing, is recreated as cash.
+	typ := paymentTypeUnknown
+	if id == paymentTypeCash {
+		typ = paymentTypeCash
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES (?, ?, ?, 1)`, id, id, typ)
 	return err
 }
 
@@ -8448,12 +8544,13 @@ FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
 }
 
 // ListActiveNonCashPaymentMethods returns active tender methods excluding
-// type='cash', for surfaces with no cash drawer (self-order kiosk, ADR-0020
-// v1: card/contactless only).
+// type='cash' (no drawer) and type='unknown' (placeholder rows made by
+// EnsurePaymentMethod, ut-docs#5804), for surfaces with no cash drawer
+// (self-order kiosk, ADR-0020 v1: card/contactless only).
 func (r *POSRepo) ListActiveNonCashPaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, type, COALESCE(plugin_id, '')
-FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order, id`)
+FROM payment_methods WHERE is_active = 1 AND type NOT IN ('cash', 'unknown') ORDER BY sort_order, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list non-cash payment methods: %w", err)
 	}

@@ -2,63 +2,53 @@ name: locale-render-audit
 
 # German (de) render audit (ut-docs#2300): renders every admin/help-topic
 # page route in German via the real e2e Playwright harness, against a till
-# with the ut-plugin-language-de pack loaded through the test-only
-# UT_TEST_I18N_OVERLAY_DIR escape hatch (internal/pages/init.go), and fails
-# on visible English text outside e2e/tests-i18n-audit/allowlist.json.
-# Today this replaces a manual crawl.
+# with German loaded through the test-only UT_TEST_I18N_OVERLAY_DIR escape
+# hatch (internal/pages/init.go), and fails on visible English text outside
+# e2e/tests-i18n-audit/allowlist.json. Replaces a manual crawl.
 #
-# `de` is NOT a core-shipped locale (web/locales/ only has en/ar/fa/tr); it
-# lives in the external ut-plugin-language-de repo, outside this repo's
-# control — same class of cross-repo dependency lang-pack-drift.yml already
-# solves for, and this workflow deliberately mirrors that file's shape:
-# its own separate workflow (never a step in ci.yml's build job), paths:-
-# scoped PR trigger, checks the pack repo's own main out directly
-# (persist-credentials: false, contents: read only — least privilege, since
-# it runs against a repo we don't push-control).
+# `de` is NOT a core-shipped locale (web/locales/ only has en/ar/fa/tr); its
+# strings live in ut-translations (Weblate's git backing, ADR-0160). The
+# audit clones that public repo anonymously (main) and
+# scripts/ci/audit-locale-render.sh merges its German strings into the overlay
+# (scripts/ci/build-locale-overlay.sh). Own separate workflow (never a step in
+# ci.yml's build job), paths:-scoped PR trigger, contents: read only and no
+# persisted credential (least privilege, a repo we don't push-control).
 #
-# IMPORTANT DIFFERENCE from lang-pack-drift.yml's own advisory-only PR
-# design: that workflow forces exit 0 on PRs because pack DRIFT (a
-# translation the pack hasn't caught up on yet) is not necessarily this
-# repo's fault. That reasoning does NOT apply here. A genuine finding from
-# this workflow — a rendered page showing English text that also exists as
-# a real web/locales/en.json value — is 100% a universal-till-side bug: both
-# the offending Go/template code and en.json itself live in THIS repo; only
-# the German *translation value* comes from the external pack. So this
-# workflow is meant to fail for real on a genuine finding, on both PR and
-# push — do not "fix" it to force-green on PRs the way lang-pack-drift.yml
-# does; that would defeat the point of the card.
+# A genuine finding -- a rendered page showing English text that also exists
+# as a real web/locales/en.json value -- is a universal-till-side bug: both
+# the offending Go/template code and en.json live in THIS repo; only the
+# German *translation value* comes from ut-translations. So this workflow
+# fails for real on a genuine finding on PRs; do not force it green on PRs.
 #
 # TWO carve-outs, pull_request only, each printed as a ::notice::, not failed:
 #  1. (ut-docs#2805) a finding whose text is the en.json value of a key NEW in
-#     this PR (absent from the base branch's en.json). The de pack can't lead —
-#     its check-key-drift.sh fails a key core doesn't have yet (orphan) —
-#     so without this, every PR adding a visible key deadlocked. The pack PR
-#     follows right after merge (ut-docs#1857).
+#     this PR (absent from the base branch's en.json). Weblate cannot have
+#     translated a key that does not exist yet, so without this every PR
+#     adding a visible key would deadlock.
 #  2. (ut-docs#5583) a finding from a PRE-EXISTING key (same English value as
-#     base) that the de pack merely lags on (value missing/blank). Translation
-#     lag is the accepted price of ADR-0160 section 2, so an unrelated PR no
-#     longer goes red for it. The pack catalog is read from the checkout below.
+#     base) that the German overlay merely lags on (value missing/blank).
+#     Translation lag is the accepted price of ADR-0160 section 2, so an
+#     unrelated PR no longer goes red for it. The overlay is the one built
+#     from the clone below.
 # Push to main stays report-only (ADR-0160 section 2). Hardcoded English, a
 # key whose English value changed in the PR, and text shared with a translated
 # key still fail on PRs. Rule + reasons:
 # e2e/tests-i18n-audit/lib/new-keys.js.
 #
-# Note (reviewer, 2026-09-18) that this job is therefore hard-failing end to
-# end, including on the pack checkout: UT_LOCALE_AUDIT_STRICT=1 below turns
-# audit-locale-render.sh's dev-machine-friendly "pack not on disk, skip"
-# path into an error, and the checkout step itself has no
-# continue-on-error. So a transiently unreachable pack repo reds this job
-# too. That is deliberate here (a silent skip is what ut-docs#2152 got
-# burned by), but it is NOT the "soft, non-blocking" handling an earlier
-# draft of this comment described — there is none.
+# The job is hard-failing end to end on the clone: UT_LOCALE_AUDIT_STRICT=1
+# below turns audit-locale-render.sh's dev-machine-friendly "translations not
+# on disk, skip" path into an error, and the clone step has no
+# continue-on-error, so a transiently unreachable GitHub reds this job too.
+# That is deliberate (a silent skip is what ut-docs#2152 got burned by).
 #
-# push: branches: [main] for the same reason lang-pack-drift.yml gives:
-# universal-till gets pushed to constantly, so this trigger can never go
-# 60-day-stale the way a lone `schedule:` cron in a quiet repo can.
+# push: branches: [main] so this trigger can never go 60-day-stale the way a
+# lone `schedule:` cron in a quiet repo can: universal-till gets pushed to
+# constantly.
 on:
   pull_request:
     paths:
       - 'scripts/ci/audit-locale-render.sh'
+      - 'scripts/ci/build-locale-overlay.sh'
       - 'e2e/tests-i18n-audit/**'
       - 'e2e/playwright.locale-audit.config.ts'
       - 'internal/pages/init.go'
@@ -73,12 +63,16 @@ on:
 
 # WARNING: never add this job as a required status check in branch
 # protection in THIS PR — that is a separate, human-owned settings decision.
-# Same reasoning as lang-pack-drift.yml/adr-taxonomy-guard: `paths:` above
+# Same reasoning as adr-taxonomy-guard: `paths:` above
 # means most PRs get NO check run at all for this job, which a required-
 # status-check gate reads as "waiting forever", making those PRs
 # permanently unmergeable.
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   locale-render-audit:
@@ -89,23 +83,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # Least-privilege, same shape as lang-pack-drift.yml's own pack
-      # fetch: contents: read only, no push-capable credential persisted —
-      # this checks out a repo we don't push-control.
-      #
-      # Checked out INSIDE the workspace (and handed to the script via
-      # UT_DE_PACK_DIR below), not as a real sibling: actions/checkout
-      # rejects any `path:` that resolves outside $GITHUB_WORKSPACE, so
-      # `path: ../ut-plugin-language-de` fails the step outright. Same
-      # in-workspace-checkout + env-var convention ci.yml's taxonomy guards
-      # already use for their own ut-docs checkout (DOCS_DIR).
-      - name: Checkout ut-plugin-language-de
-        uses: actions/checkout@v7
-        with:
-          repository: universaltill/ut-plugin-language-de
-          ref: main
-          path: ut-plugin-language-de
-          persist-credentials: false
+      # Least-privilege: a plain anonymous clone of the public repo, so no
+      # token is sent and nothing is persisted. Cloned INSIDE the workspace
+      # and handed to the script via UT_TRANSLATIONS_DIR below, not as a real
+      # sibling directory.
+      - name: Clone ut-translations (main)
+        run: git clone --depth 1 --branch main https://github.com/universaltill/ut-translations.git .ut-translations
 
       # pull_request only (ut-docs#2805): the base branch's en.json, so the
       # audit can tell which keys this PR adds. A sparse checkout of that
@@ -151,25 +134,24 @@ jobs:
 
       - name: German (de) render audit
         # ADR-0160 section 2: code merges with English only, so after merge the
-        # de pack lags until Weblate catches up. Push/dispatch runs report
-        # findings but never red main; PRs defer only new keys and keys the pack
-        # merely lags on (#2805, #5583) — hardcoded English still fails there.
+        # German lags until Weblate catches up. Push/dispatch runs report
+        # findings but never red main; PRs defer only new keys and keys the
+        # overlay merely lags on (#2805, #5583) — hardcoded English still fails there.
         continue-on-error: ${{ github.event_name != 'pull_request' }}
         env:
           # Set on pull_request only (empty otherwise => strict): the base
           # branch's en.json checked out above, read by
           # audit-locale-render.spec.ts to defer findings for keys this PR
-          # adds (ut-docs#2805), and (with the pack's de.json) keys it only lags on
+          # adds (ut-docs#2805), and (with the German overlay) keys it only lags on
           # (ut-docs#5583).
           AUDIT_BASE_EN_JSON: ${{ github.event_name == 'pull_request' && format('{0}/.locale-audit-base/web/locales/en.json', github.workspace) || '' }}
-          # Where the step above put the pack: workspace-relative, resolved
+          # Where the step above put the clone: workspace-relative, resolved
           # against the repo root by the script.
-          UT_DE_PACK_DIR: ut-plugin-language-de
-          # The dedicated CI workflow always checks the pack out first (the
-          # step above), so a missing pack at this point is a real
-          # precondition failure, not a dev-machine-friendly skip — see
-          # scripts/ci/audit-locale-render.sh's own UT_LOCALE_AUDIT_STRICT
-          # branch.
+          UT_TRANSLATIONS_DIR: .ut-translations
+          # The dedicated CI workflow always clones ut-translations first (the
+          # step above), so a missing clone at this point is a real
+          # precondition failure, not a dev-machine-friendly skip -- see
+          # scripts/ci/audit-locale-render.sh's UT_LOCALE_AUDIT_STRICT branch.
           UT_LOCALE_AUDIT_STRICT: "1"
         run: bash scripts/ci/audit-locale-render.sh
 

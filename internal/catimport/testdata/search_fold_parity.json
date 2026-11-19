@@ -1,0 +1,206 @@
+[
+  {
+    "in": "KAHVE",
+    "out": "kahve"
+  },
+  {
+    "in": "İÇECEK",
+    "out": "icecek"
+  },
+  {
+    "in": "Içecek",
+    "out": "icecek"
+  },
+  {
+    "in": "BALIK",
+    "out": "balik"
+  },
+  {
+    "in": "Balık",
+    "out": "balik"
+  },
+  {
+    "in": "ÇAY",
+    "out": "cay"
+  },
+  {
+    "in": "Yumurta / kahvaltı",
+    "out": "yumurta / kahvalti"
+  },
+  {
+    "in": "Sıcak içecek",
+    "out": "sicak icecek"
+  },
+  {
+    "in": "SICAK",
+    "out": "sicak"
+  },
+  {
+    "in": "Straße",
+    "out": "strasse"
+  },
+  {
+    "in": "GROẞ",
+    "out": "gross"
+  },
+  {
+    "in": "Café crème",
+    "out": "cafe creme"
+  },
+  {
+    "in": "Ñandú",
+    "out": "nandu"
+  },
+  {
+    "in": "قهوة",
+    "out": "قهوه"
+  },
+  {
+    "in": "قَهْوَة",
+    "out": "قهوه"
+  },
+  {
+    "in": "قهـــوة",
+    "out": "قهوه"
+  },
+  {
+    "in": "ي",
+    "out": "ي"
+  },
+  {
+    "in": "ى",
+    "out": "ي"
+  },
+  {
+    "in": "ی",
+    "out": "ي"
+  },
+  {
+    "in": "ك",
+    "out": "ك"
+  },
+  {
+    "in": "ک",
+    "out": "ك"
+  },
+  {
+    "in": "ۀ",
+    "out": "ه"
+  },
+  {
+    "in": "ة",
+    "out": "ه"
+  },
+  {
+    "in": "أإآٱ",
+    "out": "اااا"
+  },
+  {
+    "in": "أ",
+    "out": "ا"
+  },
+  {
+    "in": "أ",
+    "out": "ا"
+  },
+  {
+    "in": "القهوة",
+    "out": "القهوه"
+  },
+  {
+    "in": "ΟΔΟΣ",
+    "out": "οδοσ"
+  },
+  {
+    "in": "پنیر\u200cخامه",
+    "out": "پنيرخامه"
+  },
+  {
+    "in": "coffee-to-go",
+    "out": "coffee-to-go"
+  },
+  {
+    "in": "",
+    "out": ""
+  },
+  {
+    "in": "7UP",
+    "out": "7up"
+  },
+  {
+    "in": "Mixed CASE Word",
+    "out": "mixed case word"
+  },
+  {
+    "in": "Ǆ",
+    "out": "ǆ"
+  },
+  {
+    "in": "ﷲ",
+    "out": "ﷲ"
+  },
+  {
+    "in": "هات\u200cداگ",
+    "out": "هاتداگ"
+  },
+  {
+    "in": "هاتداگ",
+    "out": "هاتداگ"
+  },
+  {
+    "in": "تخم\u200cمرغ",
+    "out": "تخممرغ"
+  },
+  {
+    "in": "a\u200db",
+    "out": "ab"
+  },
+  {
+    "in": "a\u200c\u200db",
+    "out": "ab"
+  },
+  {
+    "in": "کیک\u200cها",
+    "out": "كيكها"
+  },
+  {
+    "in": "Kaf\u00adfee",
+    "out": "kaffee"
+  },
+  {
+    "in": "egg\u200bsalad",
+    "out": "eggsalad"
+  },
+  {
+    "in": "a\u2060b",
+    "out": "ab"
+  },
+  {
+    "in": "\ufeffKAHVE",
+    "out": "kahve"
+  },
+  {
+    "in": "\u0642\u0647\u0648\u0647\u200e",
+    "out": "\u0642\u0647\u0648\u0647"
+  },
+  {
+    "in": "\u200f\u0686\u0627\u06cc",
+    "out": "\u0686\u0627\u064a"
+  },
+  {
+    "in": "a\u061cb",
+    "out": "ab"
+  },
+  {
+    "in": "\u2066Tee\u2069",
+    "out": "tee"
+  },
+  {
+    "in": "\u2067a\u2068b",
+    "out": "ab"
+  },
+  {
+    "in": "a\u00ad\u200b\u2060\ufeffb",
+    "out": "ab"
+  }
+]

@@ -2,18 +2,18 @@ package settings_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func newStore3259(t *testing.T) *settings.Store {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "settings.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "settings.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
