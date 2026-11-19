@@ -566,16 +566,35 @@
                preferred method -- marked .pay-default so it reads as the
                default at a glance and spans the grid's first row. -->
           <div class="pay-grid">
+            <!-- ut-docs#6566: when the till has registry card readers (a plugin
+                 that declares payment.<key>.readers), ONE "Card" button replaces
+                 those methods' own buttons: the cashier picks a reader, not a
+                 provider (card_reader_picker.html, card-reader-picker.js). A
+                 till with no readers renders exactly the buttons it always did. -->
+            {{ if and .cardReaders.Show .cardReaders.First }}
+            <button class="btn pay-btn pay-default" type="button" id="pay-card-readers" data-testid="pay-card-readers"
+                    hx-get="/api/pos/card-readers?source=pos" hx-target="#card-reader-mount" hx-swap="innerHTML" hx-sync="this:replace"
+                    data-checking="{{ T "card_reader.pick.checking" }}" data-back="{{ T "card_reader.pick.back" }}"
+                    aria-controls="card-reader-mount">{{ if .cardReaders.LegacyCard }}{{ T "tender.card_reader" }}{{ else }}{{ T "tender.card" }}{{ end }}{{ if .cardReaders.DefaultName }}<span class="pay-btn-sub muted" data-testid="pay-card-reader-default">{{ .cardReaders.DefaultName }}</span>{{ end }}</button>
+            {{ end }}
             {{ range $i, $m := .payMethods }}
-            <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}{{ if eq $i 0 }} pay-default{{ end }}"{{ if eq $i 0 }} data-testid="pay-default"{{ end }} data-method="{{ .ID }}" hx-post="/api/pos/tender"
+            <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}{{ if and (eq $i 0) (not $.cardReaders.First) }} pay-default{{ end }}"{{ if and (eq $i 0) (not $.cardReaders.First) }} data-testid="pay-default"{{ end }} data-method="{{ .ID }}" hx-post="/api/pos/tender"
                     hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
+            {{ if not .cardReaders.Show }}
             <button class="btn pay-btn pay-default" data-testid="pay-default" data-method="cash" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.cash" }}</button>
             <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.card" }}</button>
+            {{ end }}
+            {{ end }}
+            {{ if and .cardReaders.Show (not .cardReaders.First) }}
+            <button class="btn pay-btn" type="button" id="pay-card-readers" data-testid="pay-card-readers"
+                    hx-get="/api/pos/card-readers?source=pos" hx-target="#card-reader-mount" hx-swap="innerHTML" hx-sync="this:replace"
+                    data-checking="{{ T "card_reader.pick.checking" }}" data-back="{{ T "card_reader.pick.back" }}"
+                    aria-controls="card-reader-mount">{{ if .cardReaders.LegacyCard }}{{ T "tender.card_reader" }}{{ else }}{{ T "tender.card" }}{{ end }}{{ if .cardReaders.DefaultName }}<span class="pay-btn-sub muted" data-testid="pay-card-reader-default">{{ .cardReaders.DefaultName }}</span>{{ end }}</button>
             {{ end }}
             <!-- Pay with the scanned Gutschein (ut-docs#1833): this button is
                  static markup (present on every page load, like the pay
@@ -600,6 +619,7 @@
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     data-after-request="ok no-error-toast close:payment-overlay"></button>
           </div>
+          <div id="card-reader-mount" class="card-reader-mount" data-testid="card-reader-mount" hidden></div>
           <label class="offline-toggle">
             <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
           </label>
@@ -912,7 +932,8 @@
          data-msg-voucher-invalid="{{ T "pos.toast.voucher_invalid" }}"
          data-msg-voucher-check-unavailable="{{ T "tender.status.voucher_check_unavailable" }}"
          data-msg-voucher-single-purpose="{{ T "pos.gift_voucher.use_specific" }}"
-         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}">
+         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}"
+         data-msg-reader-required="{{ T "tap.reader.pick" }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
@@ -923,6 +944,15 @@
               {{ end }}
             </select>
           </label>
+          <!-- ut-docs#6566: shown by app.js only while the selected method has
+               several registry card readers (GET /api/pos/card-readers); the
+               value is a registry row id. A div, not the label: .split-tender-
+               form label carries display:flex, which would out-rank hidden. -->
+          <div id="split-tender-reader-field" class="split-reader-field" hidden>
+            <label>{{ T "card_reader.split.label" }}
+              <select name="reader" id="split-tender-reader" data-choose="{{ T "card_reader.split.choose" }}"></select>
+            </label>
+          </div>
           <label>{{ T "tender.amount" }}
             <!-- ut-docs#1284: type="number" silently corrupts a decimal typed
                  via the kiosk's on-screen keyboard (osk.js has no cursor-aware

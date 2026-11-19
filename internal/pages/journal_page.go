@@ -87,7 +87,20 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 				slipCount = slipBearingVouchers(vs, tops)
 			}
 		}
+		// ut-docs#6566: a payment taken on a registry card reader shows the
+		// reader's name while the row still exists; else the stored id as ever.
+		readerNames := map[string]string{}
+		readerRepo := data.NewCardReaderRepo(d.Db)
+		for _, p := range sale.Payments {
+			if p.TerminalID == "" || readerNames[p.TerminalID] != "" {
+				continue
+			}
+			if c, err := readerRepo.GetByRef(r.Context(), p.Method, p.TerminalID); err == nil && c.Name != "" {
+				readerNames[p.TerminalID] = c.Name
+			}
+		}
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
+			"ReaderNames": readerNames,
 			"title":       fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "page.title.receipt_detail"), sale.ReceiptNo),
 			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),

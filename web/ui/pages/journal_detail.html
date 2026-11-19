@@ -128,7 +128,7 @@
                 {{ else if .VoucherID }}<br><small class="muted" data-testid="journal-payment-voucher">{{ if $.CanViewVouchers }}<a href="{{ index $.VoucherHrefs .VoucherID }}"><code class="pill-code">{{ .VoucherID }}</code></a>{{ else }}<code class="pill-code">{{ .VoucherID }}</code>{{ end }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>
                 {{ else if .Reference }}<br><small class="muted">{{ .Reference }}</small>{{ end }}
                 {{ if or .TerminalID .TraceID }}
-                  <br><small class="muted">{{ if .TerminalID }}{{ T "journal.detail.terminal_id" }} {{ .TerminalID }}{{ end }}{{ if and .TerminalID .TraceID }} &middot; {{ end }}{{ if .TraceID }}{{ T "journal.detail.trace_id" }} {{ .TraceID }}{{ end }}</small>
+                  <br><small class="muted">{{ if .TerminalID }}{{ T "journal.detail.terminal_id" }} {{ with index $.ReaderNames .TerminalID }}{{ . }}{{ else }}{{ .TerminalID }}{{ end }}{{ end }}{{ if and .TerminalID .TraceID }} &middot; {{ end }}{{ if .TraceID }}{{ T "journal.detail.trace_id" }} {{ .TraceID }}{{ end }}</small>
                 {{ end }}
               </td>
               <td style="text-align:end">{{ money .Amount }}{{ if .ChangeGiven }}<br><small class="muted">{{ T "journal.detail.change" }} {{ money .ChangeGiven }}</small>{{ end }}</td>

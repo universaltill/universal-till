@@ -25,6 +25,8 @@
         "pfand",
         "open_orders",
         "tile_sheet",
+        "card_reader",
+        "tap",
         "buttons",
         "osk",
         "suggest",
