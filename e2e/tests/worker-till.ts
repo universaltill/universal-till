@@ -169,7 +169,7 @@ async function completeFirstBoot(baseURL: string): Promise<string> {
     method: 'POST',
     redirect: 'manual',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ pin: WORKER_TILL_ADMIN_PIN, pin_confirm: WORKER_TILL_ADMIN_PIN, store_name: 'E2E Agent Shop' }),
+    body: new URLSearchParams({ pin: WORKER_TILL_ADMIN_PIN, pin_confirm: WORKER_TILL_ADMIN_PIN, store_name: 'E2E Agent Shop', till_name: 'E2E Agent Till' }),
     signal: AbortSignal.timeout(10_000),
   });
   // 303 -> '/' is success; a refusal re-renders with 200 or redirects to /login.

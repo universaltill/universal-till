@@ -5053,6 +5053,12 @@ body.login-screen {
    reuses .pairing-notice's look; its inline name + Link form wraps under
    the text on a narrow screen, and pair-start's progress shows below. */
 .join-notice { flex-wrap: wrap; }
+/* ut-docs#4391: "Name your shop" banner. Its long CTA link (German at 360px)
+   left the flex:1 / min-width:0 text ~0 wide, so it broke one letter per
+   line. Wrap the link + dismiss under the text and give the text a real
+   basis. */
+.shop-name-notice { flex-wrap: wrap; }
+.shop-name-notice .pairing-notice-text { flex: 1 1 12rem; overflow-wrap: break-word; }
 .join-notice-form { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; }
 .join-notice-form input[type="text"] { width: auto; min-width: 8rem; margin: 0; }
 .join-notice-label { margin: 0; font-weight: 600; color: inherit; }
@@ -7948,6 +7954,15 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .move-approve input[type="text"] { flex: 1 1 12rem; margin: 0; }
 .move-decline { margin: 0; }
 #move-approval-notice-mount:empty { display: none; }
+
+/* ut-docs#4391: the "Name your shop" page (name_shop.html). Narrow like
+   .move-approval so a 1280px till or a desktop doesn't stretch two short
+   fields across the screen; the fields stack (the global wrapped-label rule)
+   at full card width, so a 360px phone needs nothing extra. */
+.name-shop-card { max-inline-size: 40rem; }
+.name-shop-form { display: flex; flex-direction: column; align-items: stretch; gap: .9rem; }
+.name-shop-form > .field-error-msg { margin-block-start: -.6rem; }
+.name-shop-form > button { align-self: flex-start; }
 
 /* ut-docs#5410: Currency display select (Settings -> Currency). */
 .currency-display-select { min-block-size: 44px; }
