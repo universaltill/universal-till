@@ -32,6 +32,9 @@ const PACK_COMPACT: Record<string, string> = {
   es: 'Editando artículos — elige una categoría para ordenar',
   pt: 'Editando itens — escolha uma categoria para ordenar',
 };
+// Each pack's own Done label (common.done), set before measuring the title so
+// a longer label that narrows the title column is part of the fit check.
+const PACK_DONE: Record<string, string> = { de: 'Fertig', es: 'Hecho', pt: 'Concluído' };
 const EN_FULL = 'Editing items — choose a category to drag its items into order; the pencil edits an item';
 const EN_COMPACT = 'Editing items — pick a category to reorder';
 const EN_QUICK = 'Editing quick buttons — drag a tile to reorder';
@@ -139,14 +142,14 @@ test.describe('Phone edit-mode Done bar vs category chips (ut-docs#3109)', () =>
     await page.goto('/?lang=en');
   });
 
-  for (const lang of ['en', 'fa']) {
+  for (const lang of ['en', 'fa', 'tr', 'ar']) {
     test(`360x740 ${lang}: chips stay reachable and Done stays on top while scrolling in edit mode`, async ({ page }, testInfo) => {
       test.setTimeout(60_000);
       const assertClean = watchConsole(page);
       await page.setViewportSize({ width: 360, height: 740 });
       await page.goto(`/?lang=${lang}`);
       await expect(page.locator('html')).toHaveAttribute('lang', lang);
-      if (lang === 'fa') await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+      if (lang === 'fa' || lang === 'ar') await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
       await expect(page.locator('#buttons-grid-all .btn-tile').first()).toBeVisible();
       await arm(page);
 
@@ -213,6 +216,10 @@ test.describe('Phone edit-mode Done bar vs category chips (ut-docs#3109)', () =>
         return true;
       }, txt);
       expect(applied, 'compact title span exists').toBe(true);
+      await page.evaluate((d) => {
+        const done = document.querySelector('[data-testid="jiggle-done"]');
+        if (done) done.textContent = d;
+      }, PACK_DONE[lang]);
       await titleFitsTwoLines(page, lang);
       await chipsReachable(page, lang);
       if (lang === 'de') {
