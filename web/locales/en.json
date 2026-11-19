@@ -241,6 +241,7 @@
   "card_reader.state.ready": "Ready",
   "card_reader.state.unchecked": "Not checked",
   "card_reader.state.unknown": "Unknown",
+  "buttons.edit_mode.title_all_grid_compact": "Editing items — pick a category to reorder",
   "catalog.active": "Active",
   "catalog.add_item_btn": "Add item",
   "catalog.attach_barcode": "Attach Barcode",
