@@ -51,7 +51,7 @@ class GoDevicepayBridge(private val core: DevicepayBridgeCore) : mobile.TapToPay
 
     override fun showEducation(provider: String?): String = core.showEducation(provider)
 
-    override fun resolveUnknown(idempotencyKey: String?): String = core.resolveUnknown(idempotencyKey)
+    override fun resolve(idempotencyKey: String?, outcome: String?): String = core.resolve(idempotencyKey, outcome)
 }
 
 /**
