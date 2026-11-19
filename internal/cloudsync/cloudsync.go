@@ -419,6 +419,13 @@ type Hooks struct {
 	// unpaid till's gated skip (ADR-0148) and for a failed POST — so only a real contact lifts the link's "wait for
 	// the next check-in". It must not block.
 	AfterTick func(ctx context.Context, contacted bool, err error)
+	// ReportPostFailed, when non-nil, runs on the check-in goroutine when a
+	// same-tick follow-up device-report POST (ut-docs#5614) failed. Such a
+	// tick still ends contacted=true, err=nil, so AfterTick alone cannot tell
+	// that the report the follow-up rebuilt never reached the cloud: a report
+	// gate uses this to not record that version as sent (ut-docs#2562). It
+	// must not block.
+	ReportPostFailed func()
 	// LinkVersion, when non-nil, returns the newest link_version the cloud
 	// link has seen in a hello or nudge (0 = none) — ADR-0117 §3,
 	// ut-docs#2827. A version newer than the one the last successful POST
@@ -789,6 +796,9 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		if err := pushDeviceReportIfChanged(ctx, cfg, settings, hooks, sum, hashErr == nil); err != nil {
 			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("device report after directives", err)
+			if hooks.ReportPostFailed != nil {
+				hooks.ReportPostFailed()
+			}
 		}
 	}
 	// Issue-reporter status pull (ADR-0022, spec 012, ut-docs#348): the
