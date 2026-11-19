@@ -626,3 +626,69 @@ func TestDownloadToStoreCleansUpOrphanBundleOnMetadataWriteFailure(t *testing.T)
 		t.Fatalf("orphaned bundle left behind after metadata write failure")
 	}
 }
+
+// TestMarketplaceTrustTier pins the catalogue-tier → local label mapping
+// (ut-docs#6549): official/verified/trusted/approved are "trusted"
+// (case-insensitive, trimmed); everything else is "untrusted"; never "system".
+func TestMarketplaceTrustTier(t *testing.T) {
+	for tier, want := range map[string]string{
+		"official": "trusted", "OFFICIAL": "trusted", " official ": "trusted",
+		"verified": "trusted", "Verified": "trusted", "trusted": "trusted", "approved": "trusted",
+		"unverified": "untrusted", "": "untrusted", "system": "untrusted",
+		"community": "untrusted", "officially": "untrusted",
+	} {
+		if got := marketplaceTrustTier(tier); got != want {
+			t.Errorf("marketplaceTrustTier(%q) = %q, want %q", tier, got, want)
+		}
+	}
+}
+
+// TestInstallFromStoreOfficialTierStoredTrusted: an official listing's
+// catalogue tier is recorded as "trusted" on the installed row, an
+// unverified one stays "untrusted" (ut-docs#6549).
+func TestInstallFromStoreOfficialTierStoredTrusted(t *testing.T) {
+	for tier, want := range map[string]string{"official": "trusted", "unverified": "untrusted", "": "untrusted"} {
+		t.Run("tier_"+tier, func(t *testing.T) {
+			publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatalf("generate keypair: %v", err)
+			}
+			manifest := &Manifest{
+				ID: "com.test.tier", Name: "Tier Plugin", Version: "1.0.0",
+				Entrypoint: "./plugin-bin", Executable: "plugin-bin", Runtime: "go",
+				CanonicalType: "page", DeviceArch: "any",
+			}
+			artifact := signedMarketplaceArtifactWithManifest(t, privateKey, manifest)
+			checksum := checksumSHA256Hex(t, artifact)
+			server := marketplaceInstallTestServer(t, artifact, map[string]any{
+				"data": map[string]any{
+					"token": "tok-1", "bundle_url": "", "release_id": "release-1",
+					"version": manifest.Version, "checksum_sha256": checksum,
+					"signature": manifest.Signature, "expires_at": "2026-03-16T16:00:00Z",
+					"resumable_supported": true,
+				},
+				"error": nil,
+			}, &ackCapture{})
+			defer server.Close()
+			db := openMarketplaceInstallerDB(t)
+			defer db.Close()
+			installer := newTestMarketplaceInstaller(t, storeTestConfig(server.URL, hex.EncodeToString(publicKey)), db)
+			if _, err := installer.DownloadToStore(context.Background(), MarketplaceInstallRequest{
+				ListingID: "listing-1", Version: manifest.Version, MerchantID: "merchant-1",
+				StoreID: "store-1", DeviceID: "device-1", DeviceArch: "linux/amd64",
+			}); err != nil {
+				t.Fatalf("DownloadToStore: %v", err)
+			}
+			if _, err := installer.InstallFromStore(context.Background(), "listing-1", tier); err != nil {
+				t.Fatalf("InstallFromStore: %v", err)
+			}
+			var trust string
+			if err := db.QueryRow(`SELECT trust_level FROM plugins WHERE id = ?`, manifest.ID).Scan(&trust); err != nil {
+				t.Fatalf("query plugin: %v", err)
+			}
+			if trust != want {
+				t.Fatalf("tier %q: trust_level = %q, want %q", tier, trust, want)
+			}
+		})
+	}
+}

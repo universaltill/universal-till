@@ -380,6 +380,7 @@ func remoteStaffLocales(raw string) (string, error) {
 // that republishes the default locale. The caller has already refused an
 // additional till (shop-wide key).
 func cloudSetShopLocale(ctx context.Context, d *common.Deps, rederive func(context.Context), locale string) (string, error) {
+	locale = resolveShopLocalePick(ctx, d, locale, d.CurrentState().Country) // ut-docs#5751: keep the shop's region
 	// settings-write:allow a cloud set_till_setting directive: shop-wide, so this runs only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998)
 	if err := d.Settings.SetMany(ctx, map[string]string{
 		common.KeyLocale:          locale,
@@ -1746,6 +1747,7 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
 		ListingID:     listingID,
 		CanonicalType: listingType,
+		TrustTier:     listingCatalogTier(d, listingID),
 		Version:       version,
 		MerchantID:    effCfg.Marketplace.ClientID,
 		StoreID:       effCfg.Marketplace.StoreID,
