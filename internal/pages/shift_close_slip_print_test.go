@@ -3,6 +3,7 @@ package pages
 import (
 	"database/sql"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -275,5 +276,147 @@ func TestShiftCloseSlipPrint_JSON(t *testing.T) {
 	rec := f.post(t, slipPrintPath, url.Values{}, jsonHdr, nil)
 	if rec.Code != 200 || strings.ReplaceAll(strings.TrimSpace(rec.Body.String()), " ", "") != `{"data":{"printed":true,"shift_id":"sh1"},"error":null}` {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#5877: reprint from a /shifts History row.
+
+func TestShiftCloseSlipPrint_ReprintPrintsMarkerAndAuditsReprint(t *testing.T) {
+	f, p := shiftSlipFx(t)
+	rec := f.post(t, slipPrintPath, url.Values{"reprint": {"1"}}, nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	jobs := p.Settle(1)
+	if len(jobs) != 1 || !strings.Contains(jobs[0], "Reprinted") {
+		t.Fatalf("job lacks marker: %v", jobs)
+	}
+	rows := shiftSlipAuditRows(t, f)
+	if len(rows) != 1 || !strings.Contains(rows[0][2].String, `"reprint":"true"`) {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestShiftCloseSlipPrint_NoReprintFieldNoMarker(t *testing.T) {
+	f, p := shiftSlipFx(t)
+	rec := f.post(t, slipPrintPath, url.Values{}, nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("got %d", rec.Code)
+	}
+	jobs := p.Settle(1)
+	if len(jobs) != 1 || strings.Contains(jobs[0], "Reprinted") {
+		t.Fatalf("close-button paper must carry no marker: %v", jobs)
+	}
+	rows := shiftSlipAuditRows(t, f)
+	if len(rows) != 1 || strings.Contains(rows[0][2].String, "reprint") {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestShiftCloseSlipPrint_ReprintElevationTargetsRowAndCarriesHidden(t *testing.T) {
+	f, _ := shiftSlipFx(t)
+	_, u := xpCashier(t, f)
+	rec := f.post(t, slipPrintPath, url.Values{"reprint": {"1"}}, nil, u)
+	body := rec.Body.String()
+	if rec.Header().Get("X-UT-Response") != "elevation-prompt" {
+		t.Fatalf("got %d %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `hx-target="#shift-slip-print-msg-sh1"`) {
+		t.Errorf("prompt lacks per-row target: %s", body)
+	}
+	if !regexp.MustCompile(`name="reprint"[^>]*value="1"|value="1"[^>]*name="reprint"`).MatchString(body) {
+		t.Errorf("prompt lacks hidden reprint=1: %s", body)
+	}
+	// The close-result button keeps the singleton target.
+	rec = f.post(t, slipPrintPath, url.Values{}, nil, u)
+	if b := rec.Body.String(); !strings.Contains(b, `hx-target="#shift-slip-print-msg"`) || strings.Contains(b, `name="reprint"`) {
+		t.Errorf("non-reprint prompt changed: %s", b)
+	}
+}
+
+func TestShiftCloseSlipPrint_ReprintManagerPINKeepsMarker(t *testing.T) {
+	f, p := shiftSlipFx(t)
+	mgr, u := xpCashier(t, f)
+	rec := f.post(t, slipPrintPath, url.Values{"override_pin": {"445566"}, "reprint": {"1"}}, nil, u)
+	if rec.Code != 200 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	jobs := p.Settle(1)
+	if len(jobs) != 1 || !strings.Contains(jobs[0], "Reprinted") {
+		t.Fatalf("marker missing: %v", jobs)
+	}
+	rows := shiftSlipAuditRows(t, f)
+	if len(rows) != 1 || rows[0][0].String != mgr || rows[0][1].String != u.ID || !strings.Contains(rows[0][2].String, `"reprint":"true"`) {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestShiftCloseSlipPrint_ReprintValueOtherThan1Ignored(t *testing.T) {
+	f, p := shiftSlipFx(t)
+	for _, v := range []string{"true", "0", "yes", ""} {
+		f.post(t, slipPrintPath, url.Values{"reprint": {v}}, nil, nil)
+	}
+	for _, j := range p.Settle(4) {
+		if strings.Contains(j, "Reprinted") {
+			t.Fatalf("marker printed for non-1 value:\n%s", j)
+		}
+	}
+	for _, r := range shiftSlipAuditRows(t, f) {
+		if strings.Contains(r[2].String, "reprint") {
+			t.Fatalf("audit has reprint: %v", r)
+		}
+	}
+}
+
+// Tester (ut-docs#5877): reprint is read from PostForm only, like the PIN;
+// a ?reprint=1 in the query string must not mark the slip.
+func TestShiftCloseSlipPrint_ReprintInQueryIgnored(t *testing.T) {
+	f, p := shiftSlipFx(t)
+	f.post(t, slipPrintPath+"?reprint=1", url.Values{}, nil, nil)
+	for _, j := range p.Settle(1) {
+		if strings.Contains(j, "Reprinted") {
+			t.Fatalf("marker printed for query-string reprint:\n%s", j)
+		}
+	}
+	for _, r := range shiftSlipAuditRows(t, f) {
+		if strings.Contains(r[2].String, "reprint") {
+			t.Fatalf("audit has reprint: %v", r)
+		}
+	}
+}
+
+func TestShiftCloseSlipPrint_RowTargetFromDBNotInput(t *testing.T) {
+	f, _ := shiftSlipFx(t)
+	const bad = `a"b<c`
+	f.exec(t, `PRAGMA foreign_keys=OFF`)
+	f.exec(t, `UPDATE shifts SET id=? WHERE id='sh1'`, bad)
+	_, u := xpCashier(t, f)
+	rec := f.post(t, "/api/shifts/"+url.PathEscape(bad)+"/close-slip/print", url.Values{"reprint": {"1"}}, nil, u)
+	body := rec.Body.String()
+	if rec.Header().Get("X-UT-Response") != "elevation-prompt" {
+		t.Fatalf("got %d %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `#shift-slip-print-msg-`+shiftSlipRowSuffix(bad)) || !regexp.MustCompile(`#shift-slip-print-msg-h[0-9a-f]{16}`).MatchString(body) {
+		t.Errorf("target not hashed: %s", body)
+	}
+	if strings.Contains(body, `-a"b<c`) || strings.Contains(body, `-a&#34;b`) {
+		t.Errorf("raw id leaked into target: %s", body)
+	}
+}
+
+func TestShiftSlipRowSuffix(t *testing.T) {
+	const uid = "3f0c6a52-1d2e-4b7a-9c11-0a1b2c3d4e5f"
+	if got := shiftSlipRowSuffix(uid); got != uid {
+		t.Errorf("uuid = %q", got)
+	}
+	h := regexp.MustCompile(`^h[0-9a-f]{16}$`)
+	for _, in := range []string{`a"b<c`, "", strings.Repeat("a", 65), "a b", "x/y"} {
+		got := shiftSlipRowSuffix(in)
+		if !h.MatchString(got) || got != shiftSlipRowSuffix(in) {
+			t.Errorf("%q -> %q", in, got)
+		}
+	}
+	if shiftSlipRowSuffix("a b") == shiftSlipRowSuffix("a  b") {
+		t.Error("distinct inputs collided")
 	}
 }
