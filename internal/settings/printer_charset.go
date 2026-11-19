@@ -40,7 +40,7 @@ const (
 //
 // ut-docs#1728. Resolving the default at READ time (see pages.printerConfig)
 // only helps a till with nothing stored, and almost no real till is in that
-// state: POST /api/settings/printer writes all seven printer keys on every
+// state: POST /api/settings/printer writes all eight printer keys on every
 // save, defaulting an absent charset field to "utf8", so any shop that ever
 // opened that page to enter its printer's address — which is the only way to
 // get printing working at all — has an explicit "utf8" row from then on.

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/bundled"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
@@ -237,6 +239,9 @@ func Run(ctx context.Context) error {
 	if restoreApplied {
 		rotateStockStreamAfterRestore(ctx, database.DB, log)
 	}
+	// Owed by every applied backup restore (a file, so a crash after the
+	// swap still jumps); a no-op on every other boot (ut-docs#5068).
+	jumpNumbersAfterRestore(ctx, database.DB, cfg.DBPath, time.Now(), log)
 
 	// Public-demo start gate (ADR-0113 §1.2, ut-docs#2687): after the
 	// database is open and migrated, before anything else touches it or
@@ -335,6 +340,11 @@ func Run(ctx context.Context) error {
 	// already a replica here and is skipped. Best-effort, never fatal.
 	backfillItemSKUsOnPrimary(ctx, database.DB, log)
 
+	// ut-docs#5897: a till promoted before #5893 still advertises its former
+	// main till's discovery id. Re-mint once, before the advertiser and the
+	// HTTP server start. Best-effort, never fatal.
+	repairInheritedDiscoveryIDOnPrimary(ctx, database.DB, log)
+
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
 	// (cloudsync, and since ut-docs#153 also StartSyncPush/StartSyncPull/
@@ -411,7 +421,41 @@ func Run(ctx context.Context) error {
 		pluginManager.Close(closeCtx)
 	}()
 
+	// ut-docs#5049: stop the server if the data folder is deleted or replaced
+	// under it (an uninstaller, a tester) instead of serving from an unlinked
+	// database while the data-dir lock guards nothing. Never fatal to build.
+	var (
+		fileLostMu  sync.Mutex
+		fileLostErr error
+	)
+	if !strings.Contains(cfg.DBPath, ":memory:") {
+		if fw, fwErr := db.NewFileWatch(cfg.DBPath); fwErr != nil {
+			log.Warnf("data-folder watchdog not started: %v", fwErr)
+		} else {
+			wg.Add(1)
+			go func() {
+				defer logging.RecoverAndLog("app.fileWatch")
+				defer wg.Done()
+				fw.Run(bgCtx, db.DefaultFileWatchInterval, func(lost error) {
+					log.Errorf("%v", lost)
+					fileLostMu.Lock()
+					fileLostErr = lost
+					fileLostMu.Unlock()
+					stopBg()
+				})
+			}()
+		}
+	}
+
 	netaccess.StartService("cloud enrolment", func() { enroll.Init(bgCtx, cfg, settingsStore, &wg) })
+
+	// ADR-0200 (ut-docs#6559): change events (plugin install/update/remove and
+	// software-version changes) are recorded only while the registration
+	// guards allow, and the version change is compared once per start. Both
+	// are local; nothing here touches the network or blocks the start.
+	data.SetChangeEventPolicy(enroll.ReportingPolicy(cfg))
+	enroll.PublishNoticePending(ctx, settingsStore)
+	enroll.ReportVersionChange(ctx, cfg, settingsStore, data.NewChangeEventsRepo(database.DB).RecordVersionChangeNow)
 
 	// The one line that makes a field report diagnosable (ut-docs#2720):
 	// version, OS, data dir, pos.env used, cloud host, enrolment, role.
@@ -429,6 +473,15 @@ func Run(ctx context.Context) error {
 	// generates; a replica fetches the primary's key once and persists it.
 	// paths.Data("secrets", ...) — never cwd-relative (ADR-0003).
 	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, lantls.NewPeerClient(15*time.Second))))
+
+	// ADR-0194: the App Store build ships the Stripe and SumUp plugins inside
+	// the app. Register the lock verifier the wasm loader consults, then put
+	// the verified bundle on disk (first install disabled) BEFORE plugins.Init
+	// loads the rows. Best-effort: a refused bundle is logged, never fatal.
+	bundled.Register()
+	if _, err := bundled.Sync(ctx, database.DB); err != nil {
+		log.Warnf("boot: bundled plugins: %v", err)
+	}
 
 	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
@@ -531,7 +584,23 @@ func Run(ctx context.Context) error {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	// A revocation disables rows in the DB; ReloadPlugins makes the WASM
+	// runtime drop them in the same pass (ut-docs#5653).
+	var onRevoked func(context.Context) error
+	if deps != nil {
+		onRevoked = deps.ReloadPlugins
+	}
+	startErr := server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, onRevoked, &wg)
+	fileLostMu.Lock()
+	lost := fileLostErr
+	fileLostMu.Unlock()
+	if lost != nil {
+		if startErr != nil {
+			return fmt.Errorf("%w (server: %v)", lost, startErr)
+		}
+		return lost
+	}
+	return startErr
 }
 
 // pluginShutdowner is the minimal internal/plugins.Supervisor surface

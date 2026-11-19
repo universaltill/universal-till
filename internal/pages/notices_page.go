@@ -58,7 +58,14 @@ type noticeRowView struct {
 	Tab          string
 }
 
+// noticesEnabled: the per-till flag, and never on a store channel (play,
+// appstore) or iOS: a notice is free text from the cloud whose price or
+// purchase pitch cannot be filtered here (ADR-0194 §3, ut-docs#6622). The flag
+// is ignored there, so a stored row is never shown either.
 func noticesEnabled(ctx context.Context, d *common.Deps) bool {
+	if !accountLinkOutAllowed() {
+		return false
+	}
 	if d == nil || d.Db == nil {
 		return false
 	}
@@ -76,13 +83,22 @@ func noticesCanAcknowledge(d *common.Deps, r *http.Request) bool {
 	return ok && u.IsManager() && canPerform(d, r, noticesViewAction)
 }
 
+// noticeBody renders a notice body. On play/appstore builds (ADR-0194 §3) no
+// link may come out of a synced notice, so links become plain text.
+func noticeBody(body string) template.HTML {
+	if !accountLinkOutAllowed() {
+		return cloudnotice.RenderBodyNoLinks(body)
+	}
+	return cloudnotice.RenderBody(body)
+}
+
 func newNoticeRow(n data.CloudNotice, open bool, canAck bool, tab string) noticeRowView {
 	v := noticeRowView{
-		N: n, Body: cloudnotice.RenderBody(n.Body), Open: open, Unread: n.Unread(),
+		N: n, Body: noticeBody(n.Body), Open: open, Unread: n.Unread(),
 		Partner: n.SenderKind == cloudnotice.SenderPartner, CanAck: canAck && n.Severity == cloudnotice.Critical && n.AckedAt == nil,
 		Acked: n.AckedAt != nil, Tab: tab,
 	}
-	if l := cloudnotice.ParseLink(n.LinkJSON); l != nil {
+	if l := cloudnotice.ParseLink(n.LinkJSON); l != nil && !(l.Kind == "https" && !accountLinkOutAllowed()) {
 		v.Link = l
 		v.LinkExternal = l.Kind == "https"
 		v.LinkLabelKey = strings.TrimSpace(l.Label) == ""
@@ -125,6 +141,12 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		on := r.Form.Get("enabled") == "on" || r.Form.Get("enabled") == "1"
+		// Store channels: the switch does not exist (404, like the purchase
+		// routes); turning it off stays possible and erases held notices.
+		if on && !accountLinkOutAllowed() {
+			http.NotFound(w, r)
+			return
+		}
 		val := "false"
 		if on {
 			val = "true"
@@ -176,7 +198,7 @@ func registerNoticesPages(mux *http.ServeMux, d *common.Deps) {
 		unread, _, _ := repo().UnreadCount(r.Context(), now)
 		httpx.Render("ui/pages/notices.html", map[string]any{
 			"title":     httpx.T(locale(r), "page.title.notices"),
-			"theme":     d.CurrentState().Theme,
+			"theme":     d.ResolvedTheme(r),
 			"menuItems": d.MenuSnapshot(),
 			"Rows":      rows,
 			"Tab":       tabName,

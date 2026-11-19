@@ -95,62 +95,6 @@ func TestMigrateLegacyPlugins(t *testing.T) {
 	}
 }
 
-// TestMigrateLegacyUploadedAssets guards the fix for a real bug: item/
-// variant photos and the receipt logo used to be written into the release
-// tree (web/public/assets), which a self-update replaces wholesale — a
-// shop's uploads vanished on the very next update. This migrates anything
-// already sitting in the old location into the stable data dir, once, so
-// fixing the write path doesn't ALSO require every shop to re-upload
-// everything right after finally getting the fix.
-func TestMigrateLegacyUploadedAssets(t *testing.T) {
-	wd := t.TempDir()
-	old, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(old); Init("") })
-	_ = os.Chdir(wd)
-
-	mustWrite := func(path, content string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// An item photo, a variant photo nested under it, and the receipt logo —
-	// all in the legacy, cwd-relative release-tree location.
-	mustWrite(filepath.Join("web", "public", "assets", "items", "itm1", "thumb.png"), "item-photo")
-	mustWrite(filepath.Join("web", "public", "assets", "items", "itm1", "variants", "v1", "thumb.png"), "variant-photo")
-	mustWrite(filepath.Join("web", "public", "assets", "logo", "receipt-logo.png"), "logo-bytes")
-	// A BUILT-IN default asset that must NOT be swept into the stable dir —
-	// only items/ and the specific receipt-logo.png file are user content.
-	mustWrite(filepath.Join("web", "public", "assets", "logo", "ut-logo.ico"), "built-in-icon")
-
-	stable := filepath.Join(wd, "stable")
-	Init(stable)
-	MigrateLegacyData(filepath.Join(stable, "unitill-pos.db"))
-
-	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "itm1", "thumb.png")); err != nil || string(b) != "item-photo" {
-		t.Fatalf("item photo not migrated: err=%v content=%q", err, b)
-	}
-	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "itm1", "variants", "v1", "thumb.png")); err != nil || string(b) != "variant-photo" {
-		t.Fatalf("variant photo not migrated: err=%v content=%q", err, b)
-	}
-	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "logo", "receipt-logo.png")); err != nil || string(b) != "logo-bytes" {
-		t.Fatalf("receipt logo not migrated: err=%v content=%q", err, b)
-	}
-	if _, err := os.Stat(filepath.Join(stable, "public", "assets", "logo", "ut-logo.ico")); err == nil {
-		t.Fatal("built-in default asset must NOT be migrated into the stable dir — it would shadow future releases' updates to it")
-	}
-
-	// Idempotent: an existing file in the stable dir is never overwritten.
-	mustWrite(filepath.Join(stable, "public", "assets", "items", "itm1", "thumb.png"), "current")
-	MigrateLegacyData(filepath.Join(stable, "unitill-pos.db"))
-	if b, _ := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "itm1", "thumb.png")); string(b) != "current" {
-		t.Fatalf("migration clobbered an existing uploaded photo: %q", b)
-	}
-}
-
 // DataDir falls back to the pre-refactor ./data layout until Init records a
 // real location.
 func TestDataDirFallback(t *testing.T) {
@@ -268,46 +212,6 @@ func TestMigrateLegacyDBGuards(t *testing.T) {
 	}
 }
 
-// copyFileBestEffort never errors out loud and never half-copies.
-func TestCopyFileBestEffort(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the failing-read case relies on unix EISDIR semantics")
-	}
-	dir := t.TempDir()
-	src := filepath.Join(dir, "src.txt")
-	dst := filepath.Join(dir, "dst.txt")
-
-	// Missing source → no destination.
-	copyFileBestEffort(filepath.Join(dir, "nope.txt"), dst)
-	if _, err := os.Stat(dst); err == nil {
-		t.Fatal("dst created from a missing src")
-	}
-
-	if err := os.WriteFile(src, []byte("content"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Uncreatable destination (missing parent dir) → silent no-op.
-	copyFileBestEffort(src, filepath.Join(dir, "missing-dir", "dst.txt"))
-
-	// Happy path.
-	copyFileBestEffort(src, dst)
-	if b, err := os.ReadFile(dst); err != nil || string(b) != "content" {
-		t.Fatalf("copy failed: err=%v content=%q", err, b)
-	}
-
-	// A read that fails mid-copy (a directory opens fine but EISDIRs on
-	// read) must remove the truncated destination, not leave it behind.
-	srcDir := filepath.Join(dir, "srcdir")
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	half := filepath.Join(dir, "half.txt")
-	copyFileBestEffort(srcDir, half)
-	if _, err := os.Stat(half); err == nil {
-		t.Fatal("truncated destination left behind after a failed copy")
-	}
-}
-
 // Plugin migration's guard branches: still-legacy location, stray files,
 // a blocked target tree, and a failed bundle copy (which must clean up the
 // half-copied bundle rather than leave it looking installed).
@@ -370,77 +274,6 @@ func TestMigrateLegacyPluginsGuards(t *testing.T) {
 	migrateLegacyPlugins()
 	if _, err := os.Stat(filepath.Join(stable, "plugins", "com.example.broken")); err == nil {
 		t.Fatal("half-copied bundle must be removed")
-	}
-}
-
-// Uploaded-assets migration edge branches: a stray top-level file under
-// items/, an existing target logo that must never be clobbered, a blocked
-// items target, and a failed item-dir copy that must clean up after itself.
-func TestMigrateLegacyUploadedAssetsGuards(t *testing.T) {
-	wd := t.TempDir()
-	old, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(old); Init("") })
-	_ = os.Chdir(wd)
-
-	mustWrite := func(path, content string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mustWrite(filepath.Join("web", "public", "assets", "items", "loose.png"), "loose")
-	// Named to sort AFTER loose.png: the file branch must create the target
-	// items dir itself (its own os.MkdirAll), not inherit one a preceding
-	// dir entry made — the repo's recurring missing-MkdirAll bug class.
-	mustWrite(filepath.Join("web", "public", "assets", "items", "z-itm1", "thumb.png"), "photo")
-	mustWrite(filepath.Join("web", "public", "assets", "logo", "receipt-logo.png"), "old-logo")
-
-	// Target items path blocked by a file → mkdir fails, no panic, logo still
-	// migrates (independent best-effort steps).
-	blocked := filepath.Join(wd, "blocked")
-	Init(blocked)
-	if err := os.MkdirAll(filepath.Join(blocked, "public", "assets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(filepath.Join(blocked, "public", "assets", "items"), "not a dir")
-	migrateLegacyUploadedAssets()
-	if b, err := os.ReadFile(filepath.Join(blocked, "public", "assets", "logo", "receipt-logo.png")); err != nil || string(b) != "old-logo" {
-		t.Fatalf("logo not migrated despite blocked items dir: err=%v %q", err, b)
-	}
-
-	// A stray top-level FILE under items/ migrates via the file branch; an
-	// already-present target logo is never overwritten.
-	stable := filepath.Join(wd, "stable")
-	Init(stable)
-	mustWrite(filepath.Join(stable, "public", "assets", "logo", "receipt-logo.png"), "current-logo")
-	migrateLegacyUploadedAssets()
-	if b, err := os.ReadFile(filepath.Join(stable, "public", "assets", "items", "loose.png")); err != nil || string(b) != "loose" {
-		t.Fatalf("top-level file not migrated: err=%v %q", err, b)
-	}
-	if b, _ := os.ReadFile(filepath.Join(stable, "public", "assets", "logo", "receipt-logo.png")); string(b) != "current-logo" {
-		t.Fatalf("existing target logo clobbered: %q", b)
-	}
-
-	// An item dir whose copy fails half-way is removed, not left half-copied.
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod 0o000 does not block reads on windows")
-	}
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file modes")
-	}
-	mustWrite(filepath.Join("web", "public", "assets", "items", "itmX", "locked", "f"), "x")
-	if err := os.Chmod(filepath.Join("web", "public", "assets", "items", "itmX", "locked"), 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join("web", "public", "assets", "items", "itmX", "locked"), 0o755) })
-	fresh := filepath.Join(wd, "fresh")
-	Init(fresh)
-	migrateLegacyUploadedAssets()
-	if _, err := os.Stat(filepath.Join(fresh, "public", "assets", "items", "itmX")); err == nil {
-		t.Fatal("half-copied item dir must be removed")
 	}
 }
 

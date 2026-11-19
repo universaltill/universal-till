@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, openNewItemForm, closeItemForm, clickThenReload } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2010: /categories is the reference implementation of the app-wide
 // list/edit standard (ut-docs/reference/list-and-dialog-pattern.md):
@@ -153,10 +153,14 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     const name = 'Deactivate Probe ' + Date.now();
     await createCategory(page, name);
     await row(page, name).locator('td').first().click();
+    const noNative = noNativeDialogs(page);
     let msg = '';
-    page.once('dialog', (d) => { msg = d.message(); d.accept(); });
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click());
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+      msg = await answerTillConfirm(page, 'confirm');
+    });
     expect(msg).toContain('Deactivate');
+    noNative();
     await expect(row(page, name)).toContainText('inactive');
 
     // Reopen: no trash icon that would quietly reactivate — Activate instead.
@@ -210,14 +214,18 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
       const renamedTo = catName + ' renamed but never saved';
       await page.locator(NAME).fill(renamedTo);
 
-      // The deactivate confirm() (categories.deactivate_confirm) — accept
+      // The deactivate confirm (categories.deactivate_confirm) — confirm
       // it, same as (b3)'s clean-deactivate case, so the actual refusal is
       // what's under test here, not the confirm step.
-      page.once('dialog', (d) => d.accept());
+      const noNative = noNativeDialogs(page);
       await Promise.all([
         page.waitForResponse((res) => res.url().includes('/active') && res.status() === 400),
-        page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click(),
+        (async () => {
+          await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+          await answerTillConfirm(page, 'confirm');
+        })(),
       ]);
+      noNative();
 
       // Refused: no navigation happened at all (unlike the success path,
       // which real dialog.close() would follow via a real page load), the
@@ -281,9 +289,10 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     page.on('request', (req) => {
       if (req.url().includes('/active')) sawActiveRequest = true;
     });
-    let dialogMsg = '';
-    page.once('dialog', (d) => { dialogMsg = d.message(); d.dismiss(); });
+    const noNative = noNativeDialogs(page);
     await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+    const dialogMsg = await answerTillConfirm(page, 'cancel');
+    noNative();
     // No response to wait for (nothing is sent) — settle on next tick
     // instead of a fixed sleep, then assert the negative directly.
     await page.waitForTimeout(300);
@@ -339,6 +348,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
   });
 
   test('(c) Escape closes a clean dialog silently and asks first when dirty', async ({ page }) => {
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page);
     await page.goto('/categories');
     const dlg = page.locator(DIALOG);
@@ -346,37 +356,35 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await expect(dlg).toBeVisible();
 
     // Clean: no confirm, just closes.
-    let prompts = 0;
-    page.on('dialog', (d) => { prompts++; d.dismiss(); });
     await page.locator(NAME).press('Escape');
     await expect(dlg).toBeHidden();
-    expect(prompts).toBe(0);
+    await expect(page.getByTestId('till-confirm')).toBeHidden();
 
     // Dirty + dismiss the confirm: stays open with the text intact.
     await page.locator('#categories-new').click();
     await expect(dlg).toBeVisible();
     await page.locator(NAME).fill('unsaved text');
     await page.locator(NAME).press('Escape');
+    await answerTillConfirm(page, 'cancel');
     await expect(dlg).toBeVisible();
-    expect(prompts).toBe(1);
     await expect(page.locator(NAME)).toHaveValue('unsaved text');
 
-    // Dirty + accept: closes. Same guard on the Close button.
-    page.removeAllListeners('dialog');
-    let msg = '';
-    page.once('dialog', (d) => { msg = d.message(); d.accept(); });
+    // Dirty + confirm: closes. Same guard on the Close button.
     await page.locator(`${DIALOG} .record-dialog-close`).click();
+    const msg = await answerTillConfirm(page, 'confirm');
     await expect(dlg).toBeHidden();
     // The resolved English value, not /discard/i — that regex also matched
     // the raw key name `common.discard_confirm`, so a missing translation
     // passed (review nit).
     expect(msg).toBe('Discard your unsaved changes?');
+    none();
     assertClean();
   });
 
   test('(c2) opening create over a dirty edit asks first — open() honours the same guard as close()', async ({ page }) => {
     // Review S1: open() used to skip the discard guard, so New over an
     // edit with unsaved text silently emptied the field and flipped mode.
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page);
     await page.goto('/categories');
     const name = 'Dirty Probe ' + Date.now();
@@ -389,18 +397,16 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     // dispatchEvent, not click(): the opaque full-bleed dialog covers New,
     // so no pointer reaches it — but before the focus trap the keyboard
     // could (Tab out, Enter), and the JS is shared by nine screens.
-    let prompts = 0;
-    page.on('dialog', (d) => { prompts++; d.dismiss(); });
     await page.locator('#categories-new').dispatchEvent('click');
-    expect(prompts, 'New over a dirty edit must ask').toBe(1);
+    await answerTillConfirm(page, 'cancel');
     await expect(dlg).toHaveAttribute('data-record-mode', 'edit');
     await expect(page.locator(NAME)).toHaveValue(name + ' edited');
 
-    page.removeAllListeners('dialog');
-    page.once('dialog', (d) => d.accept());
     await page.locator('#categories-new').dispatchEvent('click');
+    await answerTillConfirm(page, 'confirm');
     await expect(dlg).toHaveAttribute('data-record-mode', 'create');
     await expect(page.locator(NAME)).toHaveValue('');
+    none();
     assertClean();
   });
 

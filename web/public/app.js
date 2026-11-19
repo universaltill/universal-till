@@ -753,6 +753,8 @@ window.utCurrency = (function(){
         var basket = document.getElementById('basket');
         if (basket) {
           basket.outerHTML = text;
+          // Raw swap, not htmx: no afterSettle, so re-apply the tile badges (ut-docs#3241).
+          if (window.UT && typeof window.UT.applyTileBadges === 'function') window.UT.applyTileBadges();
         }
         // ut-docs#921 review finding: a rejected tender (underpayment,
         // insufficient stock, the fiscal hard gate, ...) renders as a 200
@@ -1042,6 +1044,9 @@ function renderNotice(el, level, text){
 function scheduleToastDismiss(){
   document.querySelectorAll('.pos-notice').forEach(function(toast){
     if (toast.dataset.dismissed === '1') return;
+    // ut-docs#6154: a reusable notice (shown again by later actions) is never
+    // auto-removed, hidden or not; only its own dismiss button hides it.
+    if (toast.hasAttribute('data-reusable') || toast.hidden) return;
     // errors persist until dismissed; a critical notice (ADR-0176) stays until
     // a manager acknowledges it -- it never auto-expires.
     if (toast.classList.contains('error') || toast.classList.contains('critical')) return;
@@ -1168,6 +1173,50 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   if (q) q.focus({ preventScroll: true });
 });
 
+// ut-docs#5749: hx-disabled-elt disables the control for the length of the
+// request, and a disabled element cannot hold focus, so a keyboard operator
+// who pressed Enter on a submit button was dropped onto <body> and lost their
+// place. When a request starts from (or inside) an hx-disabled-elt scope and
+// the focused control is within the requesting element, remember it per xhr.
+// htmx 1.9 re-enables the disabled elements just BEFORE htmx:afterRequest
+// (afterSwap still sees them disabled), so restore there: back to that
+// control, or -- if the swap removed it, or it sits in a dialog that just
+// closed -- to the result region (the target's live region, else the target;
+// an outerHTML swap that replaced the target is found again by id), so the
+// outcome is read out. Only when focus really fell to <body>: a deliberate
+// move (the chat refocus above, a dialog, the operator tabbing on
+// mid-request) is left alone. A swap delayed past afterRequest (swap:Nms,
+// view transitions -- unused today) would undo this restore.
+var disabledFocus = new WeakMap();
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  var a = document.activeElement;
+  if (!d.xhr || !d.elt || !d.elt.closest || !d.elt.closest('[hx-disabled-elt]')) return;
+  if (!a || a === document.body || !d.elt.contains(a)) return;
+  disabledFocus.set(d.xhr, { el: a, target: d.target, targetId: d.target && d.target.id });
+});
+document.addEventListener('htmx:afterRequest', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && disabledFocus.get(d.xhr);
+  if (!rec) return;
+  disabledFocus.delete(d.xhr);
+  var a = document.activeElement;
+  if (a && a !== document.body) return; // focus was moved on purpose
+  if (rec.el.isConnected && !rec.el.disabled) {
+    rec.el.focus({ preventScroll: true });
+    if (document.activeElement === rec.el) return;
+  }
+  var t = rec.target;
+  if ((!t || !t.isConnected) && rec.targetId) t = document.getElementById(rec.targetId);
+  if (!t || !t.isConnected) return;
+  t = t.closest('[aria-live],[role=status],[role=alert]') || t;
+  if (!t.hasAttribute('tabindex')) {
+    t.setAttribute('tabindex', '-1');
+    t.addEventListener('blur', function () { t.removeAttribute('tabindex'); }, { once: true });
+  }
+  t.focus({ preventScroll: true });
+});
+
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
 // on a full-page response — an in-panel swap (/items, /admin,
 // /help/{topic}) never touches document.title at all, so the browser tab
@@ -1267,11 +1316,139 @@ document.addEventListener('htmx:afterSettle', function (evt) {
 
 // ut-docs#5411: a quantity edit that needs a manager's PIN leaves the typed
 // number in the qty box while the basket still holds the old one. The server
-// sends HX-Trigger: ut-basket-resync with the prompt; re-render the live basket
+// sends HX-Trigger-After-Settle: ut-basket-resync with the prompt (ut-docs#5417); re-render the live basket
 // so the box shows the real quantity until the approver confirms.
 document.addEventListener('ut-basket-resync', function(){
-  if (window.htmx) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+  // ut-docs#5417: the resync replaces #basket, and the prompt's hint lives in
+  // it (#shrinkage-hint). Carry the same hint nodes across (not a copy, so the
+  // dialog's own reference to them stays valid for Cancel/Escape), but only
+  // while the dialog is still open: an approval that already cleared the slot
+  // must not get a stale hint back.
+  var old = document.getElementById('shrinkage-hint');
+  var kept = old ? Array.prototype.slice.call(old.childNodes) : [];
+  // ut-docs#5458: deferred, as after a timeout. This event fires while the
+  // triggering request still holds #basket's htmx request lock; a resync
+  // queued behind it resolves its promise before the swap, so the carry-over
+  // would run too early and the swap would then wipe the hint.
+  setTimeout(function(){
+    var p = window.utBasketResync();
+    if (!kept.length || !p || typeof p.then !== 'function') return;
+    p.then(function(){
+      var slot = document.getElementById('shrinkage-hint');
+      var dlg = document.getElementById('elevation-modal');
+      if (!slot || slot.childNodes.length || !dlg || !dlg.open) return;
+      kept.forEach(function(n){ slot.appendChild(n); });
+    });
+  }, 0);
 });
+
+// ut-docs#3241: phone item tiles show how many of that item are in the sale.
+// The counts are computed server-side (pos.Basket.ItemCountsByItem) and ride
+// every #basket render as data-item-counts; this only COPIES them onto the
+// tiles -- it never adds or subtracts on tap. afterSettle (not afterSwap): the
+// settle step restores attributes on an id-matched outerHTML swap. Covers
+// basket swaps and grid re-renders alike; coalesced because afterSettle fires
+// once per inserted element. The badge is display:none above the phone tier.
+(function utTileBasketBadges(){
+  var queued = false;
+  function apply(){
+    var b = document.getElementById('basket');
+    if (!b) return;
+    var counts = {};
+    try { counts = JSON.parse(b.dataset.itemCounts || '{}') || {}; } catch (e) { counts = {}; }
+    var fmt = b.dataset.inBasketLabel || '%d';
+    var tiles = document.querySelectorAll('.pos-container .tile-cell > .btn-tile[data-item-id]:not([data-testid="designer-tile"])');
+    for (var i = 0; i < tiles.length; i++) {
+      var tile = tiles[i];
+      var n = counts[tile.dataset.itemId] || 0;
+      var badge = tile.querySelector(':scope > .tile-qty-badge');
+      var sr = tile.querySelector(':scope > .tile-qty-sr');
+      if (n > 0) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'tile-qty-badge';
+          badge.setAttribute('aria-hidden', 'true');
+          tile.appendChild(badge);
+        }
+        if (!sr) {
+          sr = document.createElement('span');
+          sr.className = 'tile-qty-sr visually-hidden';
+        }
+        // Keep the screen-reader text the LAST child ("Latte, 2.50, 2 in basket").
+        if (tile.lastElementChild !== sr) tile.appendChild(sr);
+        var shown = n > 99 ? '99+' : String(n);
+        if (badge.textContent !== shown) badge.textContent = shown;
+        var text = fmt.replace('%d', String(n));
+        if (sr.textContent !== text) sr.textContent = text;
+      } else {
+        if (badge) badge.remove();
+        if (sr) sr.remove();
+      }
+    }
+  }
+  function schedule(){
+    if (queued) return;
+    queued = true;
+    setTimeout(function(){ queued = false; apply(); }, 0);
+  }
+  window.UT = window.UT || {};
+  window.UT.applyTileBadges = schedule;
+  document.addEventListener('htmx:afterSettle', schedule);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', schedule);
+  else schedule();
+})();
+
+// ut-docs#5458: re-render the live basket from the till's own state. source is
+// #basket so the xhr sits in the slot hx-sync="#basket:replace" aborts: a newer
+// tap always wins over this refresh. utBasketGen / utResyncGen are the belt for
+// a mutation that is not hx-synced (htmx:beforeRequest bumps the generation,
+// htmx:beforeSwap drops a resync that started before it).
+var utBasketGen = 0, utResyncGen = -1;
+function utIsResync(d) {
+  return !!(d && d.requestConfig && d.requestConfig.headers && d.requestConfig.headers['X-UT-Resync']);
+}
+// Returns htmx.ajax's promise (null when there is no #basket), so a caller can
+// act once the fresh basket has settled (ut-docs#5417's hint carry-over).
+window.utBasketResync = function () {
+  var b = document.getElementById('basket');
+  if (!b || !window.htmx) return null;
+  utResyncGen = utBasketGen;
+  return window.htmx.ajax('GET', '/ui/basket', { source: b, target: b, swap: 'outerHTML', headers: { 'X-UT-Resync': '1' } });
+};
+document.addEventListener('htmx:beforeRequest', function (ev) {
+  var d = ev.detail;
+  if (!d || utIsResync(d)) return;
+  if (d.target && d.target.id === 'basket') utBasketGen++;
+});
+document.addEventListener('htmx:beforeSwap', function (ev) {
+  var d = ev.detail;
+  if (utIsResync(d) && utResyncGen !== utBasketGen) d.shouldSwap = false;
+});
+
+// ut-docs#5458: a tapped tile whose request is still pending shows a busy
+// outline (CSS keys on aria-busy) after 300 ms, so a fast tap never flashes.
+// The delay lives here, not in CSS: fx-light / reduced motion zero transition
+// delays. The tile stays enabled: a second tap aborts the first (hx-sync).
+(function () {
+  function idle(ev) {
+    var el = ev.detail && ev.detail.elt;
+    if (!el || !el.removeAttribute || !el.matches || !el.matches('.btn-tile')) return;
+    if (el.__utBusyT) { clearTimeout(el.__utBusyT); el.__utBusyT = 0; }
+    el.removeAttribute('aria-busy');
+  }
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    var el = ev.detail && ev.detail.elt;
+    if (!el || !el.matches || !el.matches('.btn-tile')) return;
+    if (el.__utBusyT) clearTimeout(el.__utBusyT);
+    el.__utBusyT = setTimeout(function () {
+      el.__utBusyT = 0;
+      if (el.isConnected && el.classList.contains('htmx-request')) el.setAttribute('aria-busy', 'true');
+    }, 300);
+  });
+  ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:timeout', 'htmx:sendError'].forEach(function (n) {
+    document.body.addEventListener(n, idle);
+  });
+})();
 
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
@@ -1279,7 +1456,7 @@ document.addEventListener('click', function(e){
   if (!btn) return;
   var notice = btn.closest('.pos-notice');
   if (!notice) return;
-  if (notice.id === 'pos-alert') { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
+  if (notice.id === 'pos-alert' || notice.hasAttribute('data-reusable')) { notice.hidden = true; delete notice.dataset.sticky; return; } // reusable slot
   notice.classList.add('hide');
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
@@ -1483,13 +1660,15 @@ document.addEventListener('click', function(e){
   document.body.addEventListener('htmx:beforeSwap', function(ev){
     var d = ev.detail;
     if (!d || !d.xhr || d.xhr.status < 400) return;
+    if (utIsResync(d)) return; // #5458: never swap an error body over the basket
     var path = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
     if (path.indexOf('/api/pos/') === 0) {
-      // Sale-screen carve-out (ut-docs#213): only a 400 whose body is a
-      // rendered basket fragment (e.g. modifier validation) swaps in place
+      // Sale-screen carve-out (ut-docs#213): only a 400 or 409 whose body is a
+      // rendered basket fragment (e.g. modifier validation, or ut-docs#5417's
+      // "line changed" refusal) swaps in place
       // of the generic alert — anything else on this path falls through to
       // the #pos-alert banner via htmx:responseError below.
-      if (d.xhr.status === 400 && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
+      if ((d.xhr.status === 400 || d.xhr.status === 409) && typeof d.serverResponse === 'string' && d.serverResponse.indexOf('id="basket"') !== -1) {
         d.shouldSwap = true;
         d.isError = false;
       }
@@ -1513,7 +1692,10 @@ document.addEventListener('click', function(e){
     d.shouldSwap = true;
     d.isError = false;
   });
-  document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
+  document.body.addEventListener('htmx:responseError', function(ev){
+    if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
+    showAlert('server');
+  });
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
   // data-after-request="elevation-done") failing at network level means the
   // confirmed action may or may not have run (ut-docs#5298).
@@ -1584,6 +1766,7 @@ document.addEventListener('click', function(e){
     if (utIsPromptElt(el) || utIsTimedRequest(d, el)) d.timeout = window.utRequestTimeoutMs();
   });
   document.body.addEventListener('htmx:sendError', function(ev){
+    if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
     showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
   });
   // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)
@@ -1595,6 +1778,11 @@ document.addEventListener('click', function(e){
     var rc = d.requestConfig || {};
     var verb = String(rc.verb || '').toLowerCase();
     showAlert(utIsPromptElt(d.elt) || verb !== 'get' ? 'timeout' : 'network');
+    // ut-docs#5458: the action may have applied; show the till's real basket.
+    // Deferred so htmx's own request lock on #basket is released first.
+    var rpath = utPathOf(rc.path || (d.pathInfo && d.pathInfo.requestPath));
+    if (!utIsPromptElt(d.elt) && verb !== 'get' && rpath.indexOf('/api/pos/') === 0 &&
+        document.getElementById('basket')) setTimeout(window.utBasketResync, 0);
   });
   // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
@@ -2474,6 +2662,12 @@ utSellCamera(function(){
     // ut-docs#2534: and the all_filter_chips chip row -- switching the
     // category is how another category's order is reached.
     // ut-docs#2465: and the Move to category dialog.
+    // ut-docs#5524: and the till's confirm dialog (the remove badge's
+    // hx-confirm) -- a native confirm never delivered pointer events to the
+    // page, this one does, so answering it must not end the edit session;
+    // nor must a stray tap on the scrim behind it.
+    if (el.closest('#ut-confirm')) return true;
+    if (window.UT && window.UT.confirmOpen && window.UT.confirmOpen() && el.closest('#ut-scrim')) return true;
     return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, #tile-move-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
   }
   function visibleCells(gridEl) {
@@ -3071,8 +3265,8 @@ utSellCamera(function(){
 
   // ---- htmx interplay ----
   // The remove badge's own hx-confirm/hx-post: if a drag is still
-  // unsaved, confirm first (htmx's own question, so the operator sees the
-  // same dialog either way), then persist the order, THEN let htmx issue
+  // unsaved, confirm first (the same question, asked in the same till
+  // dialog -- till-confirm.js, ut-docs#5524 -- either way), then persist the order, THEN let htmx issue
   // the remove -- its buttons-changed refresh re-renders the grid from the
   // server, which would otherwise silently drop the unsaved reorder.
   document.body.addEventListener('htmx:confirm', function (e) {
@@ -3080,9 +3274,21 @@ utSellCamera(function(){
     if (!elt || !elt.classList || !elt.classList.contains('tile-badge-remove')) return;
     if (!dirty) return; // nothing pending: htmx's own confirm + request as usual
     e.preventDefault();
-    if (e.detail.question && !window.confirm(e.detail.question)) return;
-    dirty = false;
-    persistOrder().then(function () { e.detail.issueRequest(true); });
+    var q = e.detail.question;
+    var ask = (q && window.UT && window.UT.confirm && document.getElementById('ut-confirm'))
+      ? window.UT.confirm(q, {
+        opener: elt,
+        // Same labels as the till-confirm.js handler gives this opener (ut-docs#6117).
+        tone: (elt.closest('[data-confirm-tone]') || elt).getAttribute('data-confirm-tone') === 'neutral' ? 'neutral' : 'danger',
+        ok: (elt.closest('[data-confirm-ok]') || elt).getAttribute('data-confirm-ok') || '',
+        dismiss: (elt.closest('[data-confirm-dismiss]') || elt).getAttribute('data-confirm-dismiss') || ''
+      })
+      : Promise.resolve(!q || window.confirm(q)); // native-confirm:allow script/shell missing: native fallback (ut-docs#5524)
+    ask.then(function (ok) {
+      if (!ok) return; // Cancel: the reorder stays dirty, the tile stays
+      dirty = false;
+      persistOrder().then(function () { e.detail.issueRequest(true); });
+    });
   });
   // Any OTHER refetch of the grid root while a reorder is unsaved (a
   // modifiers-changed from elsewhere): persist first, then re-trigger it.
@@ -3157,7 +3363,11 @@ utSellCamera(function(){
 //    the fetch error tagged e.utNetworkError = true. The action may or may
 //    not have run, so it is never reported as a cancel; callers show
 //    window.utElevationErrorText(e) from their existing .catch. Nothing is
-//    retried or replayed.
+//    retried or replayed. When the leg's own timer fired, the error is also
+//    tagged e.utTimeout = true (ut-docs#5484) and utElevationErrorText
+//    returns the "did not reply in time" text (common.error.outcome_timeout,
+//    as the htmx path does, #5463); other network failures keep the
+//    outcome-unknown text.
 //
 // Detecting "this response IS the elevation prompt" (vs. a real
 // success/error): renderElevationPrompt explicitly sets Content-Type:
@@ -3264,9 +3474,10 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
     function stopTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
     function tagNet(e) {
       stopTimer();
-      if (e && typeof e === 'object') { e.utNetworkError = true; throw e; }
+      if (e && typeof e === 'object') { e.utNetworkError = true; if (timedOut) e.utTimeout = true; throw e; }
       var n = new Error(String(e));
       n.utNetworkError = true;
+      if (timedOut) n.utTimeout = true;
       throw n;
     }
     if (ctl && !window.utIsUnboundedPath(url)) timer = setTimeout(function () { timer = null; timedOut = true; ctl.abort(); }, window.utPromptTimeoutMs());
@@ -3280,7 +3491,7 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       // (an abort from the #5335 timer included).
       tagNet(e);
     }).then(function (r) {
-      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; throw t; }
+      if (timedOut) { var t = new Error('timeout'); t.utNetworkError = true; t.utTimeout = true; throw t; }
       // Clear the busy state before every outcome (close, re-prompt,
       // redirect) — on the re-prompt branch only once its body is read, so
       // a second tap can't start a parallel retry in the gap (#5291 review).
@@ -3343,9 +3554,17 @@ window.utOutcomeUnknownText = function () {
   var b = document.getElementById('pos-alert');
   return (b && b.dataset.msgOutcomeUnknown) || '';
 };
-// For a utPostWithElevation .catch: the outcome-unknown text for a network
+// ut-docs#5484: the translated "did not reply in time" text; falls back to
+// the outcome-unknown text, as the htmx path does (#5463).
+window.utOutcomeTimeoutText = function () {
+  var b = document.getElementById('pos-alert');
+  return (b && b.dataset.msgOutcomeTimeout) || window.utOutcomeUnknownText();
+};
+// For a utPostWithElevation .catch: the timeout text when the leg's timer
+// fired (e.utTimeout), the outcome-unknown text for any other network
 // failure, else e unchanged.
 window.utElevationErrorText = function (e) {
+  if (e && e.utTimeout) return window.utOutcomeTimeoutText() || e;
   return (e && e.utNetworkError && window.utOutcomeUnknownText()) || e;
 };
 
@@ -3411,7 +3630,7 @@ window.utTabBarFade = function (el) {
 // id, e.g. basket.html's `id="basket"`).
 (function () {
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
-  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // ADR-0119: UT.motionOff() (ut-motion.js) is reduced motion OR
   // the Light effects level; the bare media query is only the fallback for
   // a page outside base.html that loads this file without it.
   var PANES = ['items-panel', 'admin-panel', 'manual-panel'];
@@ -3505,7 +3724,7 @@ window.utTabBarFade = function (el) {
   // the same in WebView2, Android WebView and WebKitGTK. Uniform scale plus
   // translation (so RTL needs nothing), transform and opacity only, from
   // opacity 0.4, never blank. The transform is TRANSIENT (fill 'none') and
-  // registered with UT.trackZoom, so a tap, a popup opening (base.html's
+  // registered with UT.trackZoom, so a tap, a popup opening (ut-motion.js's
   // dialog wrapper) or the next pane swap finish() it: a position:fixed
   // dialog inside the pane is never shown inside a transformed ancestor
   // (the #2338 hazard). A pane that settles with a dialog already open
@@ -3517,16 +3736,13 @@ window.utTabBarFade = function (el) {
     var box = el.getBoundingClientRect();
     if (!box.width || !box.height) return;
     var vw = window.innerWidth, vh = window.innerHeight;
-    // ut-docs#2988: scale is still about the element's own centre (no
-    // inline transform-origin -- CSS default stays 50%/50% of `box`), but
-    // Catalog (a real item list) and Inventory (several cards) routinely
-    // make the pane far taller than the viewport, so `box`'s centre sits
-    // well below the fold. Anchoring the "grow from" maths to that centre
-    // made the visible top of the pane slide in from off-screen instead of
-    // reading as a zoom out of the tapped row. `vis` is `box` clipped to
-    // the viewport -- what a shop owner can actually see growing. (The
-    // window only: a pane inside its own clipping scroller would need that
-    // ancestor's box here too; none of the three panes is one today.)
+    // ut-docs#2988: Catalog (a real item list) and Inventory (several
+    // cards) routinely make the pane far taller than the viewport, so
+    // `box`'s centre sits below the fold. `vis` is `box` clipped to the
+    // viewport -- what a shop owner can actually see growing -- and the
+    // zoom is anchored on ITS centre V. (The window only: a pane inside
+    // its own clipping scroller would need that ancestor's box too; none
+    // of the three panes is one today.)
     var visLeft = Math.max(box.left, 0);
     var visTop = Math.max(box.top, 0);
     var visRight = Math.min(box.right, vw);
@@ -3541,25 +3757,34 @@ window.utTabBarFade = function (el) {
       r = { left: vw / 2, top: vh, width: 0, height: 0 };
     }
     var s = Math.min(1, Math.max(0.1, r.width / visW));
-    // With `transform: translate(dx,dy) scale(s)` about the element's
-    // centre C, a point P maps to C + d + s(P - C). Solving that for the
-    // ON-SCREEN centre V to land exactly on the origin's centre O gives
-    // dx/dy below (ut-docs#2988) -- for a pane that's fully on screen,
-    // V === C and this reduces to the plain "origin centre minus pane
-    // centre" this had before.
-    var Cx = box.left + box.width / 2, Cy = box.top + box.height / 2;
+    // ut-docs#3010: transform-origin is pinned inline, in px, at V (set
+    // once, static -- ADR-0122's transform+opacity rule holds), so a pane
+    // that grows or shrinks mid-zoom (Inventory's hx-trigger=load cards)
+    // cannot move the anchor, as the default 50%/50% origin would. With
+    // `translate(d) scale(s)` about V a point P maps to V + d + s(P - V),
+    // so V itself lands on the origin centre O when d = O - V.
     var Vx = visLeft + visW / 2, Vy = visTop + visH / 2;
     var Ox = r.left + r.width / 2, Oy = r.top + r.height / 2;
-    var dx = Ox - Cx - s * (Vx - Cx);
-    var dy = Oy - Cy - s * (Vy - Cy);
+    var dx = Ox - Vx;
+    var dy = Oy - Vy;
     var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms')) || 300;
+    var anim = null;
+    // Only the latest zoom on this pane clears the origin: an earlier zoom
+    // finished by htmx:beforeSwap dispatches its 'finish' event a frame
+    // later, after this call has set the new origin (ut-docs#3010 review).
+    var clear = function () { if (el.utZoomAnim === anim) { el.style.transformOrigin = ''; el.utZoomAnim = null; } };
     try {
-      var anim = el.animate([
+      el.style.transformOrigin = (Vx - box.left) + 'px ' + (Vy - box.top) + 'px';
+      anim = el.animate([
         { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')', opacity: 0.4 },
         { transform: 'none', opacity: 1 }
       ], { duration: ms, easing: 'cubic-bezier(.32, .72, 0, 1)', fill: 'none' });
+      // Cleared on finish AND cancel (finishZooms/cancel paths); nothing persists.
+      el.utZoomAnim = anim;
+      anim.addEventListener('finish', clear);
+      anim.addEventListener('cancel', clear);
       UT.trackZoom(anim);
-    } catch (e) { /* motion only -- the pane is already in place */ }
+    } catch (e) { el.utZoomAnim = null; el.style.transformOrigin = ''; /* motion only -- the pane is already in place */ }
   }
 })();
 
@@ -3689,7 +3914,7 @@ window.utTabBarFade = function (el) {
   }
 
   // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or Escape --
-  // base.html's shared data-ut-escape-close handler since ut-docs#2097)
+  // ut-motion.js's shared data-ut-escape-close handler since ut-docs#2097)
   // behaves like Cancel for the rest of THIS sale -- suppress the
   // sale-start nag, without touching the per-item/per-Pay gates. `close`
   // does not bubble, so this has to be a capturing document-level
@@ -3935,6 +4160,21 @@ window.utTabBarFade = function (el) {
   var body = document.body;
 
   function toggleBtn() { return document.querySelector('.nav-drawer-toggle'); }
+  // Scrim going on/off while the drawer is open re-evaluates the dead rows.
+  if (window.MutationObserver) {
+    new MutationObserver(function () {
+      if (body.classList.contains('nav-drawer-open')) syncDeadRows(true);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  }
+  // ut-docs#6118: over a popup every drawer row but Lock is dead (CSS) and
+  // must be dead for screen readers too; cleared on close and scrim-off.
+  function syncDeadRows(open) {
+    var dead = open && document.documentElement.classList.contains('ut-scrim-on');
+    document.querySelectorAll('#nav-drawer a, #nav-drawer button').forEach(function (el) {
+      if (dead && !el.closest('.session-lock')) el.setAttribute('aria-disabled', 'true');
+      else el.removeAttribute('aria-disabled');
+    });
+  }
   function setDrawer(open, restoreFocus) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
@@ -3944,9 +4184,21 @@ window.utTabBarFade = function (el) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
     }
+    syncDeadRows(open);
     if (open) {
-      var first = document.querySelector('#nav-drawer a, #nav-drawer button');
+      var scrimOn = document.documentElement.classList.contains('ut-scrim-on');
+      var lock = scrimOn && document.querySelector('#nav-drawer .session-lock button');
+      var first = lock || (scrimOn ? null : document.querySelector('#nav-drawer a, #nav-drawer button'));
       if (first) first.focus();
+      if (lock) {
+        // Lock is the last row and the status foot overlays the drawer's end:
+        // scroll to the end (the drawer's end padding reserves the foot) once
+        // measureBar has set that padding.
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          var dr = document.getElementById('nav-drawer');
+          if (dr && body.classList.contains('nav-drawer-open')) dr.scrollTop = dr.scrollHeight;
+        }); });
+      }
     } else if (restoreFocus && btn) {
       btn.focus();
     }
@@ -3988,6 +4240,16 @@ window.utTabBarFade = function (el) {
       if (bar) bar.focus();
     }
   }
+
+  // ut-docs#6118: a row dead over a popup stays dead for AT activation too.
+  // Capture phase: htmx's boosted-link listener sits on the anchor itself.
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t instanceof Element && t.closest('#nav-drawer [aria-disabled="true"]')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
 
   document.addEventListener('click', function (e) {
     var t = e.target;

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setOskMode, clickThenReload } from './helpers';
+import { watchConsole, setOskMode, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2187: /country-settings adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring locations-record-dialog-2124.spec.ts's shape (the
@@ -91,7 +91,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     await page.locator(CURRENCY).fill('EUR');
     await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
 
-    // Tap the row (not just the pencil button) to open edit mode, prefilled
+    // Tap the row (not just the name button) to open edit mode, prefilled
     // from the row's data-field-* attributes.
     await row(page, code).click();
     await expect(dlg).toBeVisible();
@@ -128,6 +128,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
   });
 
   test('closing with unsaved changes asks first (discard guard)', async ({ page }) => {
+    const none = noNativeDialogs(page);
     const assertClean = watchConsole(page);
     await page.goto('/country-settings?all=1');
     await page.locator('#country-settings-new').click();
@@ -135,19 +136,16 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     await expect(dlg).toBeVisible();
     await page.locator(CODE).fill(newCode());
 
-    let confirmed = false;
-    page.once('dialog', (d) => {
-      confirmed = true;
-      d.dismiss();
-    });
+    // Asked in the till's own dialog (ut-docs#6116), never the browser's.
     await page.locator(`${DIALOG} .record-dialog-close`).click();
-    expect(confirmed).toBe(true);
-    // Dismissed the confirm — the dialog must still be open, nothing lost.
+    await answerTillConfirm(page, 'cancel');
+    // Cancelled the question — the dialog must still be open, nothing lost.
     await expect(dlg).toBeVisible();
 
-    page.once('dialog', (d) => d.accept());
     await page.locator(`${DIALOG} .record-dialog-close`).click();
+    await answerTillConfirm(page, 'confirm');
     await expect(dlg).toBeHidden();
+    none();
     assertClean();
   });
 
@@ -199,10 +197,13 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
 
     await row(page, 'GB').click();
     await expect(dlg).toBeVisible();
-    // hx-confirm pops a real browser confirm() — accept it explicitly (same
-    // pattern as locations-record-dialog-2124.spec.ts's own deactivate case).
-    page.once('dialog', (d) => d.accept());
-    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="is_builtin=1"] button[type="submit"]`).click());
+    // hx-confirm opens the till's in-page confirm (ut-docs#5524) — confirm it.
+    const noNative = noNativeDialogs(page);
+    await clickThenReload(page, async () => {
+      await page.locator(`${DIALOG} form[data-record-when="is_builtin=1"] button[type="submit"]`).click();
+      await answerTillConfirm(page, 'confirm');
+    });
+    noNative();
     // Restored to its shipped default (20%), not removed — GB is still
     // listed, and still builtin.
     await expect(row(page, 'GB')).toHaveCount(1);
@@ -245,4 +246,29 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
       assertClean();
     });
   }
+
+  // ut-docs#6046: the name is the keyboard path; focus returns to it on close.
+  test('name button opens on Enter and Space; a non-name cell tap opens; focus returns to the name', async ({ page }) => {
+    await page.goto('/country-settings?all=1');
+    await page.locator('#country-settings-new').click();
+    const code = newCode();
+    await page.locator(CODE).fill(code);
+    await page.locator(CURRENCY).fill('EUR');
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
+    const nameBtn = row(page, code).locator('.record-row-open');
+    for (const key of ['Enter', ' ']) {
+      await nameBtn.focus();
+      await page.keyboard.press(key);
+      await expect(page.locator(DIALOG)).toBeVisible();
+      await expect(page.locator(CODE)).toHaveValue(code);
+      await page.keyboard.press('Escape');
+      await expect(page.locator(DIALOG)).toBeHidden();
+      await expect(nameBtn).toBeFocused();
+    }
+    await row(page, code).locator('td').nth(1).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(nameBtn).toBeFocused();
+  });
 });

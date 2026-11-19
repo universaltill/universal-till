@@ -1,0 +1,9 @@
+# Known-answer vector for the per-backup key (ut-docs#5066 design section 14, K3).
+# k = HKDF-SHA256(IKM = dek, salt = backup_id (16 raw bytes), info = "ut-till-backup/v1/" || store_id, L = 32)
+# fingerprint = hex(SHA-256("ut-till-backup/v1/fp" || dek))[0:32]
+# Computed independently (HMAC-SHA256 by hand), pinned by the till and the cloud.
+dek_hex=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+backup_id_hex=6f1c2d3e4a5b4c6d8e7f8091a2b3c4d5
+store_id=st_vector1
+derived_key_hex=beb0c2f99b73241108110b47036a0a629df1eaa805e01e3bb6fa69eb71bcd6c8
+fingerprint=d57b0e6a3000b6d7a7e000c9e6f9fb71

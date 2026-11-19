@@ -1,0 +1,47 @@
+{{ define "content" }}
+{{/* ut-docs#5066: Settings → Backups → Cloud backups → Restore. Manager/admin
+     only (the route refuses anyone else). Pick a backup, press Restore, enter
+     the manager PIN; the till then shows a code for the shop owner to approve
+     on my.universaltill.com, downloads, checks and stages it. Nothing changes
+     until the till restarts. No modal; the status is an inline region. */}}
+<div class="page-head">
+  <h1>{{ T "backup.cloud.restore.title" }} {{ helpLink "backups" }}</h1>
+</div>
+
+<div class="card cloud-restore" data-testid="cloud-restore-page">
+  {{ if not .gateOpen }}
+  <p data-testid="cloud-restore-unavailable">{{ T "backup.cloud.restore.unavailable" }}</p>
+  {{ else if .active }}
+  <div id="cloud-restore-msg"><div id="cloud-restore-region" hx-get="/ui/backup-cloud-restore/status" hx-trigger="load" hx-swap="outerHTML"></div></div>
+  {{ else }}
+  <p>{{ T "backup.cloud.restore.intro" }}</p>
+  {{ if .sales }}<p data-testid="cloud-restore-has-sales"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ printf (T "backup.cloud.restore.has_sales") .sales }}</p>{{ end }}
+  {{ if .listError }}
+  <p role="alert" data-testid="cloud-restore-list-error"><span class="row-warn-icon" aria-hidden="true">⚠</span> {{ T "backup.cloud.restore.list_failed" }}</p>
+  {{ else if not .backups }}
+  <p data-testid="cloud-restore-empty">{{ T "backup.cloud.restore.none" }}</p>
+  {{ else }}
+  <table class="table" data-testid="cloud-restore-list">
+    <thead><tr><th>{{ T "backup.cloud.restore.col_date" }}</th><th>{{ T "settings.backup.col_size" }}</th><th></th></tr></thead>
+    <tbody>
+      {{ range .backups }}
+      <tr>
+        <td>{{ .taken }}<div class="muted">{{ printf (T "backup.cloud.restore.cutoff") .taken }}</div></td>
+        <td>{{ .size }}</td>
+        <td>
+          <form hx-post="/api/offsite/recover/start" hx-target="#cloud-restore-msg" hx-swap="innerHTML">
+            <input type="hidden" name="backup_id" value="{{ .id }}">
+            <button class="btn primary" type="submit" data-testid="cloud-restore-pick">{{ T "backup.cloud.restore.pick" }}</button>
+          </form>
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <p class="muted">{{ T "backup.cloud.restore.replaces" }}</p>
+  {{ end }}
+  <div id="cloud-restore-msg" aria-live="polite"></div>
+  {{ end }}
+  <p><a href="/settings#settings-backup">{{ T "backup.cloud.restore.back_settings" }}</a></p>
+</div>
+{{ end }}

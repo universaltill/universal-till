@@ -98,3 +98,10 @@ replace github.com/universaltill/universal-till/sdk/plugin => ./sdk/plugin
 // replace is not transitive: a module importing this one's packages needs
 // the same replace (or a real catimport/vX.Y.Z here).
 replace github.com/universaltill/universal-till/catimport => ./catimport
+
+// ADR-0188 (ut-docs#6300): modernc.org/libc v1.75.6 plus one reviewed patch so
+// the armv7 Android build survives the Android 8-10 app seccomp filter (musl's
+// statx / clock_gettime64 first-then-fallback gets SIGSYS, not ENOSYS). The
+// -ut.N tag is upstream plus scripts/ci/libc-ut.patch and nothing else
+// (scripts/ci/guard-libc-fork.sh). A libc bump = re-fork, never edit the tag.
+replace modernc.org/libc => github.com/universaltill/modernc-libc v1.75.6-ut.2

@@ -71,5 +71,21 @@ test.describe('kitchen stations on a joined till (ut-docs#5607)', () => {
     await expect(page.locator('#kitchen-station-destination')).toBeDisabled();
     await expect(page.locator('#kitchen-station-destination')).toHaveValue('both');
     await expect(rowOf(b)).toHaveAttribute('data-field-destination_type', 'both');
+
+    // Review fix: open A, close, open B (both) -- the select shows B's own
+    // destination, and an address-only save of B succeeds (the hidden mirror
+    // carries 'both', not 'printer', so the main till's rule is not tripped).
+    await page.keyboard.press('Escape');
+    await rowOf(a).locator('[data-record-edit]').click();
+    await expect(page.locator('#kitchen-station-destination')).toHaveValue('printer');
+    await page.keyboard.press('Escape');
+    await rowOf(b).locator('[data-record-edit]').click();
+    await expect(page.locator('#kitchen-station-destination')).toHaveValue('both');
+    await expect(page.locator('#kitchen-station-name')).toHaveAttribute('aria-describedby', 'kitchen-station-joined-note');
+    await expect(page.locator('#kitchen-station-destination')).toHaveAttribute('aria-describedby', 'kitchen-station-joined-note');
+    await page.locator('#kitchen-station-address').fill('192.0.2.88:9100');
+    await page.locator(`${DIALOG} .record-dialog-save`).click();
+    await expect(rowOf(b)).toContainText('192.0.2.88:9100');
+    await expect(rowOf(b)).toHaveAttribute('data-field-destination_type', 'both');
   });
 });

@@ -155,7 +155,16 @@ func saveGroupTx(ctx context.Context, tx *sql.Tx, p ModifierGroupSave) (Modifier
 		res.Changed = append(res.Changed, "active")
 	}
 	if p.Name != nil {
-		name = *p.Name
+		var stored *string
+		if exists {
+			s := name
+			stored = &s
+		}
+		n, err := checkReceivedName(stored, *p.Name)
+		if err != nil {
+			return res, err
+		}
+		name = n
 		res.Changed = append(res.Changed, "name")
 	}
 	if (p.Name != nil || p.Active != nil) && active {
@@ -283,28 +292,45 @@ func validateOptions(opts []ModifierOption) error {
 
 // replaceOptionsTx makes opts the group's full ordered option set.
 func replaceOptionsTx(ctx context.Context, tx *sql.Tx, groupID string, opts []ModifierOption) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM item_modifier_options WHERE group_id = ?`, groupID)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM item_modifier_options WHERE group_id = ?`, groupID)
 	if err != nil {
 		return fmt.Errorf("save modifier group: read options: %w", err)
 	}
-	stored := map[string]bool{}
+	stored := map[string]string{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
 			rows.Close()
 			return fmt.Errorf("save modifier group: read options: %w", err)
 		}
-		stored[id] = true
+		stored[id] = name
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("save modifier group: read options: %w", err)
 	}
+	// ut-docs#5871: every option name passes the single-line rule before any
+	// write, so a refusal leaves the group's options untouched. An option
+	// whose name equals the stored one (by id) is tolerated.
+	checked := make(map[string]string, len(opts))
+	for _, o := range opts {
+		id := strings.TrimSpace(o.ID)
+		var sp *string
+		if prev, ok := stored[id]; ok {
+			sp = &prev
+		}
+		n, err := checkReceivedName(sp, o.Name)
+		if err != nil {
+			return fmt.Errorf("option %s: %w", id, err)
+		}
+		checked[id] = n
+	}
 	listed := map[string]bool{}
 	for i, o := range opts {
-		id, name := strings.TrimSpace(o.ID), strings.TrimSpace(o.Name)
+		id := strings.TrimSpace(o.ID)
+		name := checked[id]
 		listed[id] = true
-		if stored[id] {
+		if _, ok := stored[id]; ok {
 			if _, err := tx.ExecContext(ctx, `UPDATE item_modifier_options SET name = ?, price_delta_minor = ?, sort_order = ?, is_active = ? WHERE id = ?`,
 				name, o.PriceDeltaMinor, i, boolToInt(o.IsActive), id); err != nil {
 				return fmt.Errorf("save modifier group: update option: %w", err)
