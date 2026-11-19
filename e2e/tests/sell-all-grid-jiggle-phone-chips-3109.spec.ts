@@ -27,7 +27,12 @@ const ITEMS: Item[] = CATS.flatMap((cat, c) =>
 // (The design's first de wording, "Artikel bearbeiten — Kategorie zum Sortieren
 // wählen", wrapped to 3 lines at 360px -- the title column is only ~198px --
 // so the de pack gets the shorter text below. es/pt fit as designed.)
+// fa/tr/ar are in the same position until Weblate delivers the key (ADR-0160:
+// a code PR adds English only), so their candidate text is injected too.
 const PACK_COMPACT: Record<string, string> = {
+  fa: 'ویرایش کالاها — برای مرتب‌سازی دسته‌ای را انتخاب کنید',
+  tr: 'Ürünleri sıralamak için kategori seçin',
+  ar: 'تحرير الأصناف — اختر فئة لإعادة الترتيب',
   de: 'Artikel — Kategorie zum Sortieren wählen',
   es: 'Editando artículos — elige una categoría para ordenar',
   pt: 'Editando itens — escolha uma categoria para ordenar',
@@ -176,6 +181,13 @@ test.describe('Phone edit-mode Done bar vs category chips (ut-docs#3109)', () =>
       expect(doneHit.inView, 'Done in viewport at max scroll').toBe(true);
       expect(doneHit.ok, 'Done is the hit element at its centre').toBe(true);
 
+      // Non-English compact text is not in the repo (Weblate owns it): inject it.
+      if (PACK_COMPACT[lang]) {
+        await page.evaluate((t) => {
+          const el = document.querySelector('.jiggle-bar-title-compact');
+          if (el) el.textContent = t;
+        }, PACK_COMPACT[lang]);
+      }
       await titleFitsTwoLines(page, lang);
 
       // A real tap on a non-All chip at max scroll swaps the grid. Tester
@@ -202,13 +214,13 @@ test.describe('Phone edit-mode Done bar vs category chips (ut-docs#3109)', () =>
     });
   }
 
-  test('360x740 de/es/pt (pack strings injected): title still fits two lines beside Done', async ({ page }, testInfo) => {
+  test('360x740 de/es/pt/fa/tr/ar (pack strings injected): title still fits two lines beside Done', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 360, height: 740 });
     await page.goto('/');
     await expect(page.locator('#buttons-grid-all .btn-tile').first()).toBeVisible();
     await arm(page);
     await scrollProducts(page, 'mid');
-    for (const [lang, txt] of Object.entries(PACK_COMPACT)) {
+    for (const [lang, txt] of Object.entries(PACK_COMPACT).filter(([l]) => PACK_DONE[l])) {
       const applied = await page.evaluate((t) => {
         const el = document.querySelector('.jiggle-bar-title-compact');
         if (!el) return false;
