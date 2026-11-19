@@ -130,7 +130,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		}
 		fiscalDeviceData := map[string]any{
 			"title":        httpx.T(httpx.RequestLocale(r), "page.title.fiscal_device"),
-			"theme":        d.CurrentState().Theme,
+			"theme":        d.ResolvedTheme(r),
 			"menuItems":    d.MenuSnapshot(),
 			"pluginID":     fiscal.PluginIDTaxTR,
 			"pluginActive": fiscalDevicePluginActive(ctx, d),

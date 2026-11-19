@@ -93,11 +93,11 @@ async function seed(page: Page): Promise<Seeded> {
   // Create with a built-in icon.
   await page.locator('#categories-new').click();
   await expect(page.locator(DIALOG)).toBeVisible();
-  await expect(page.locator(`${ICONS} [data-icon="none"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`${ICONS} [data-icon="none"]`)).toHaveAttribute('aria-selected', 'true');
   await page.locator(NAME).fill(iconCat);
   await page.locator(`${ICONS} [data-icon="coffee"]`).click();
-  await expect(page.locator(`${ICONS} [data-icon="coffee"]`)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator(`${ICONS} [data-icon="none"]`)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator(`${ICONS} [data-icon="coffee"]`)).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator(`${ICONS} [data-icon="none"]`)).toHaveAttribute('aria-selected', 'false');
   await save(page);
 
   // Create with an uploaded photo (the hidden input behind Choose File).
@@ -105,7 +105,7 @@ async function seed(page: Page): Promise<Seeded> {
   await page.locator(NAME).fill(photoCat);
   await page.locator('#category-image-file').setInputFiles({ name: 'cat.png', mimeType: 'image/png', buffer: solidPNG(220, 60, 30) });
   await expect(page.locator('#category-image-file-name')).toHaveText('cat.png');
-  await expect(page.locator(`${ICONS} [aria-pressed="true"]`)).toHaveCount(0);
+  await expect(page.locator(`${ICONS} [aria-selected="true"]`)).toHaveCount(0);
   await save(page);
 
   const iconCatId = (await row(page, iconCat).getAttribute('data-id'))!;
@@ -165,12 +165,12 @@ test.describe('category image + compact tiles (ut-docs#2500)', () => {
     // (a) Reopen: the icon category shows coffee pressed; the photo
     // category shows its preview and no icon pressed.
     await row(page, s.iconCat).click();
-    await expect(page.locator(`${ICONS} [data-icon="coffee"]`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`${ICONS} [data-icon="coffee"]`)).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('#category-image-current')).toBeHidden();
     await page.locator(NAME).press('Escape');
     await expect(page.locator(DIALOG)).toBeHidden();
     await row(page, s.photoCat).click();
-    await expect(page.locator(`${ICONS} [aria-pressed="true"]`)).toHaveCount(0);
+    await expect(page.locator(`${ICONS} [aria-selected="true"]`)).toHaveCount(0);
     await expect(page.locator('#category-image-current')).toBeVisible();
     expect(await imgLoaded(page, '#category-image-preview')).toBe(true);
     await page.locator(NAME).press('Escape');

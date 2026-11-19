@@ -17,6 +17,13 @@ val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 val releaseSigningConfigured =
     !releaseKeystorePath.isNullOrBlank() && !releaseKeystorePassword.isNullOrBlank() && !releaseKeyAlias.isNullOrBlank()
 
+// ut-docs#6395: the Play upload key (separate from the release key above).
+val uploadKeystorePath = System.getenv("ANDROID_UPLOAD_KEYSTORE_PATH")
+val uploadKeystorePassword = System.getenv("ANDROID_UPLOAD_KEYSTORE_PASSWORD")
+val uploadKeyAlias = System.getenv("ANDROID_UPLOAD_KEY_ALIAS")
+val uploadSigningConfigured =
+    !uploadKeystorePath.isNullOrBlank() && !uploadKeystorePassword.isNullOrBlank() && !uploadKeyAlias.isNullOrBlank()
+
 // ut-docs#1541: one APK per device ABI. The universal APK (both ABIs) was
 // 150 MB because every device downloaded the other ABI's 73 MB libgojni.so
 // it can never load. Each flavor bakes its OWN update URL into BuildConfig
@@ -26,7 +33,40 @@ val releaseSigningConfigured =
 //
 // release.yml publishes these stable names on every release; the universal
 // one keeps the legacy name every v0.34.x till already has baked in.
-val updateApkUrlBase = "https://github.com/universaltill/universal-till/releases/latest/download/"
+//
+// ut-docs#5271: the base of those names is the Gradle property
+// updateApkUrlBase. An independent operator's build passes
+// -PupdateApkUrlBase=https://…/ (release.yml derives it from the repository it
+// releases to); unset = ours. Build-time only: nothing at runtime can move it
+// (ADR via ut-docs#1246). An empty or malformed value fails the build — never
+// a fallback to our releases.
+val defaultUpdateApkUrlBase = "https://github.com/universaltill/universal-till/releases/latest/download/"
+
+// ut-docs#5271: mirrors internal/releasesource's base rules (ut-docs#4080).
+// A strict allow-list also keeps the value safe inside BuildConfig's Java
+// string literal (no '"', '\\', '$', whitespace).
+fun isValidUpdateApkUrlBase(v: String): Boolean {
+    if (v.length > 512) return false
+    val m = Regex(
+        "^https://([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)" +
+            "(?::([0-9]{1,5}))?(/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*/)*)$",
+    ).matchEntire(v) ?: return false
+    val (host, port, path) = m.destructured
+    if (port.isNotEmpty() && port.toInt() !in 1..65535) return false
+    if (host == "github.com") {
+        return Regex("^/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/latest/download/$").matches(path) &&
+            port.isEmpty()
+    }
+    // Other GitHub hosts are not release-download bases (cf. #4080 Parse).
+    return !(host.endsWith(".github.com") || host.endsWith(".githubusercontent.com"))
+}
+
+val updateApkUrlBase = (project.findProperty("updateApkUrlBase") as String?) ?: defaultUpdateApkUrlBase
+require(isValidUpdateApkUrlBase(updateApkUrlBase)) {
+    "updateApkUrlBase must be an https URL ending in '/' (lower-case host, no userinfo, " +
+        "query, fragment, port 0 or dot segments; on github.com exactly " +
+        "/<owner>/<repo>/releases/latest/download/), got '$updateApkUrlBase' (ut-docs#5271)"
+}
 val updateApkUrlArm64 = updateApkUrlBase + "unitill-pos-android-arm64-latest.apk"
 val updateApkUrlArmv7 = updateApkUrlBase + "unitill-pos-android-armv7-latest.apk"
 val updateApkUrlUniversal = updateApkUrlBase + "unitill-pos-android-latest.apk"
@@ -38,6 +78,66 @@ val updateApkUrlUniversal = updateApkUrlBase + "unitill-pos-android-latest.apk"
 // 64-bit device that moves off the universal build never "downgrades" onto a
 // 32-bit package of the same release.
 val baseVersionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+
+// ut-docs#5436 / ADR-0179: the APK signer certificates the in-app updater
+// accepts. From the committed apk-signer-sha256.txt; a build may override
+// with -PutApkSignerPins=<comma list> (driven tests with a test key; an
+// EMPTY value builds dormant). release.yml never overrides and checks each
+// built APK against the file (scripts/ci/check-apk-signer-pin.sh).
+val apkSignerPinsOverride = project.findProperty("utApkSignerPins") as String?
+val apkSignerPins: List<String> =
+    (
+        apkSignerPinsOverride?.split(',')
+            ?: file("apk-signer-sha256.txt").readLines().map { it.substringBefore('#') }
+    ).map { it.trim() }
+        .filter { it.isNotEmpty() }
+require(
+    apkSignerPins.size <= 4 &&
+        apkSignerPins.all { Regex("^[0-9a-f]{64}$").matches(it) } &&
+        apkSignerPins.toSet().size == apkSignerPins.size,
+) {
+    "APK signer pins (apk-signer-sha256.txt or -PutApkSignerPins) must be 0-4 distinct 64-lowercase-hex digests"
+}
+require(apkSignerPinsOverride != null || apkSignerPins.isNotEmpty()) {
+    "apk-signer-sha256.txt must list at least one digest (an empty pin set needs an explicit -PutApkSignerPins=)"
+}
+
+// ADR-0194 §2.3 (ut-docs#6388): the install channel (see defaultConfig). Any
+// value outside the four names becomes "appstore" (fail closed).
+val installChannelProp = (project.findProperty("installChannel") as String?) ?: "sideload"
+val installChannel = if (installChannelProp in listOf("sideload", "play", "appstore", "direct")) installChannelProp else "appstore"
+
+// Review S7: a Play build (any assemble/bundle/publish task naming "Play", e.g.
+// bundlePlayRelease) and ANY bundle* task (an AAB only goes to a store; early
+// review F4: bundleUniversalRelease would ship "sideload") must carry -PinstallChannel=play, otherwise it would ship
+// with plan purchase and self-update switched ON. Refuse at graph time.
+gradle.taskGraph.whenReady {
+    val playTask = allTasks.firstOrNull {
+        it.project == project && Regex("^(assemble|bundle|publish|package).*Play|^bundle[A-Z]\\w*(Release|Debug)$", RegexOption.IGNORE_CASE).containsMatchIn(it.name)
+    }
+    // Review F16: the reverse. An .aab is a Play artefact only; a bundle task of
+    // any other flavor (bundleUniversalRelease, ...) would be an upload candidate
+    // stamped as sideload, so refuse it by task name too.
+    val strayBundle = allTasks.firstOrNull {
+        it.project == project && Regex("^bundle.*Release$").matches(it.name) && !it.name.contains("Play", ignoreCase = true)
+    }
+    if (strayBundle != null) {
+        throw GradleException("Task ${strayBundle.name} builds an .aab outside the play flavor; only bundlePlayRelease is allowed (ADR-0194 §2.4).")
+    }
+    if (playTask != null && installChannel != "play") {
+        throw GradleException("Task ${playTask.name} builds for Google Play but installChannel is '$installChannel' (from -PinstallChannel). Pass -PinstallChannel=play (ADR-0194 §2.3).")
+    }
+}
+
+// #3048 / ADR-0125 Amendment 1: Stripe Terminal Tap to Pay. COMPILE-TIME flag,
+// default OFF, honoured by the arm64 flavor ONLY (the SDK is arm-only and
+// Android 13+; universal carries armv7 and so is excluded on purpose). Off =
+// the SDK is not on the classpath, a no-op stub is compiled, the manifest
+// gains nothing and the bridge is never registered. release.yml never passes
+// it (scripts/ci/guard-android-tap-to-pay-flag.sh fails any workflow that
+// does, until a signed-off card adds android/tap-to-pay-release-approved.txt).
+val tapToPay = (project.findProperty("tapToPay") as String?) == "true"
+val stripeTerminalVersion = "6.0.0"
 
 android {
     namespace = "com.universaltill.pos"
@@ -61,36 +161,138 @@ android {
         // on a device or emulator — not part of android-ci.yml's compile-only
         // assemble gate).
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // ut-docs#1541: the fixed ABI -> package table a universal build
-        // picks from by Build.SUPPORTED_ABIS[0]. Compile-time, never page input.
-        buildConfigField("String", "UPDATE_APK_URL_ARM64", "\"$updateApkUrlArm64\"")
-        buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
+        // The self-update fields (UPDATE_APK_URL*, APK_SIGNER_SHA256S) are NOT
+        // here: only the sideload flavors define them (sideloadUpdateFields
+        // below), so the play flavor's BuildConfig carries no update URL or
+        // signer pin at all (ut-docs#6409).
+        // ADR-0194 §2.3 (ut-docs#6388): the install channel, passed to Go once
+        // before Mobile.start (TillService.kt). Build-time only. Today's three
+        // abi flavors are the GitHub-release (sideload) APK, so that is the
+        // default. A store flavor (e.g. a future "play" dimension) MUST set its
+        // own value in its flavor block; -PinstallChannel= overrides for a CI
+        // build. Any value outside the four names becomes "appstore" (fail
+        // closed: no purchase, no link-out, no self-update). Signing untouched.
+        buildConfigField("String", "INSTALL_CHANNEL", "\"$installChannel\"")
     }
+
+    signingConfigs {
+        // ut-docs#6395: the Play UPLOAD key, a different key from the release
+        // key above (Play App Signing holds the app key). Env var NAMES only.
+        if (uploadSigningConfigured) {
+            create("upload") {
+                storeFile = file(uploadKeystorePath!!)
+                storePassword = uploadKeystorePassword
+                keyAlias = uploadKeyAlias
+                keyPassword = uploadKeystorePassword
+            }
+        }
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeystorePassword
+            }
+        }
+    }
+
 
     // ut-docs#1541: tasks are assemble{Arm64,Armv7,Universal}{Debug,Release}.
     flavorDimensions += "abi"
+    // ut-docs#1541/#5436: the self-update BuildConfig fields, sideload flavors only.
+    fun com.android.build.api.dsl.ApplicationProductFlavor.sideloadUpdateFields() {
+        // the fixed ABI -> package table a universal build picks from by
+        // Build.SUPPORTED_ABIS[0]. Compile-time, never page input.
+        buildConfigField("String", "UPDATE_APK_URL_ARM64", "\"$updateApkUrlArm64\"")
+        buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
+        // ADR-0179: pinned APK signer certificate digests ("" = dormant).
+        buildConfigField("String", "APK_SIGNER_SHA256S", "\"${apkSignerPins.joinToString(",")}\"")
+        signingConfigs.findByName("release")?.let { signingConfig = it }
+    }
     productFlavors {
         create("arm64") {
             dimension = "abi"
+            sideloadUpdateFields()
             ndk { abiFilters += "arm64-v8a" }
             versionCode = baseVersionCode * 10 + 2
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArm64\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "$tapToPay")
         }
         create("armv7") {
             dimension = "abi"
+            sideloadUpdateFields()
             ndk { abiFilters += "armeabi-v7a" }
             versionCode = baseVersionCode * 10 + 1
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArmv7\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            // Hard-coded: -PtapToPay is ignored here (armv7 and Android < 13).
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
         }
         create("universal") {
             dimension = "abi"
+            sideloadUpdateFields()
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             versionCode = baseVersionCode * 10
             buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlUniversal\"")
             buildConfigField("boolean", "UPDATE_UNIVERSAL", "true")
+            // Hard-coded false on purpose: universal carries armv7 and cannot ship the arm-only SDK path.
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
         }
+        // ADR-0194 / ut-docs#6409: the Google Play bundle (bundlePlayRelease).
+        // versionCode base*10+5 (universal 0, armv7 1, arm64 2, play 5) keeps
+        // it monotonic with every sideload release. 64-bit is included: both
+        // ABIs ship in the one bundle and Play serves each device its own.
+        // The channel is hard-wired here, never taken from -PinstallChannel,
+        // so a Play bundle cannot be stamped as anything else. No update URL,
+        // no signer pin, no install permission (src/play has no update code,
+        // see AndroidManifest in src/sideload). Signed with the UPLOAD key
+        // only; Play App Signing re-signs with the app key (#6395).
+        create("play") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            versionCode = baseVersionCode * 10 + 5
+            buildConfigField("String", "INSTALL_CHANNEL", "\"play\"")
+            buildConfigField("String", "UPDATE_APK_URL", "\"\"")
+            buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+            // #3048: Tap to Pay is dark on Play too (the stub, no Stripe SDK).
+            buildConfigField("boolean", "TAP_TO_PAY_ENABLED", "false")
+            signingConfigs.findByName("upload")?.let { signingConfig = it }
+        }
+    }
+
+    // ut-docs#6409: the in-app updater (code, manifest permission, FileProvider,
+    // its unit tests) is a sideload-only source set. The play flavor compiles
+    // src/play instead, an inert stand-in.
+    sourceSets {
+        for (f in listOf("arm64", "armv7", "universal")) {
+            getByName(f) {
+                java.srcDir("src/sideload/java")
+                res.srcDir("src/sideload/res")
+                manifest.srcFile("src/sideload/AndroidManifest.xml")
+            }
+            getByName("test${f.replaceFirstChar { it.uppercase() }}") {
+                java.srcDir("src/testSideload/java")
+            }
+        }
+    }
+
+    // The app switches language in-app (AppCompatDelegate per-app locales), so
+    // the bundle must NOT split by language or a device would only get its OS
+    // language.
+    bundle {
+        language { enableSplit = false }
+    }
+
+    // #3048: one `abi` dimension, so flavor source sets only. The stub is what
+    // every shipped build compiles; the real Stripe adapter and its manifest
+    // overlay exist only for arm64 with -PtapToPay=true.
+    sourceSets {
+        getByName("armv7").java.srcDir("src/ttpStub/java")
+        getByName("universal").java.srcDir("src/ttpStub/java")
+        getByName("play").java.srcDir("src/ttpStub/java")
+        getByName("arm64").java.srcDir(if (tapToPay) "src/ttpReal/java" else "src/ttpStub/java")
+        if (tapToPay) getByName("arm64").manifest.srcFile("src/ttpReal/AndroidManifest.xml")
     }
 
     // ut-docs#1541: compress libgojni.so inside the APK (74.5 MB -> ~35 MB per
@@ -104,17 +306,6 @@ android {
         }
     }
 
-    signingConfigs {
-        if (releaseSigningConfigured) {
-            create("release") {
-                storeFile = file(releaseKeystorePath!!)
-                storePassword = releaseKeystorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeystorePassword
-            }
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -124,17 +315,13 @@ android {
             // machine can't produce something that LOOKS like a real signed
             // release build but isn't (an unsigned APK simply refuses to
             // install, a clear/loud failure instead of a quiet trust gap).
-            if (releaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            // Signing is per flavor (sideload: release key; play: upload key),
+            // set where each flavor is declared.
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     // ut-docs#412: BuildConfig generation is opt-in as of AGP 8.0 — without
     // this, MainActivity's BuildConfig.DEBUG check (gating the debug-only
@@ -143,6 +330,14 @@ android {
     // review before merge, 2026-08-07).
     buildFeatures {
         buildConfig = true
+    }
+}
+
+// #3048: the compilerOptions DSL (kotlinOptions.jvmTarget is a hard error from Kotlin 2.2+,
+// which the -PtapToPay=true build uses; the same JVM 17 target as before).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -172,11 +367,17 @@ val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0
 // build (env/lazy-fetch key). verify-versions in release.yml fails a release
 // whose .so lacks it.
 val marketplaceKeyHex = System.getenv("UT_MARKETPLACE_KEY_HEX").orEmpty()
+// ADR-0178: the release-signing public keys (comma list, scripts/ci/
+// resolve-release-keys.sh); empty keeps the SHA-256-only updater check.
+val releaseKeysHex = System.getenv("UT_RELEASE_KEYS_HEX").orEmpty()
+require(Regex("^([0-9a-f]{64}(,[0-9a-f]{64}){0,3})?$").matches(releaseKeysHex)) {
+    "UT_RELEASE_KEYS_HEX must be empty or 1-4 comma-separated 64-hex keys"
+}
 val marketplaceKeyLdflag = if (marketplaceKeyHex.isEmpty()) "" else {
     require(Regex("^[0-9a-f]{64}$").matches(marketplaceKeyHex)) {
         "UT_MARKETPLACE_KEY_HEX must be 64 lowercase hex characters"
     }
-    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex"
+    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$releaseKeysHex"
 }
 
 // ADR-0160 §6: internal/buildinfo.BuildDate is the source commit's time, so a
@@ -284,7 +485,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )
@@ -306,8 +507,16 @@ dependencies {
     // ut-docs#3466 (ADR-0142, #1508 AC3): the instrumented remote-unlock
     // regression test. Device/emulator only (connectedArm64DebugAndroidTest).
     // ut-docs#1541/#4312: JVM unit tests for the pure update decisions
-    // (UpdateLogic) — `./gradlew testArm64DebugUnitTest`, no device needed.
+    // (UpdateLogic, UpdateSourceBuildConfigTest) — `./gradlew testArm64DebugUnitTest`, no device needed.
     testImplementation("junit:junit:4.13.2")
+    // #3048: the Android org.json is a stub on the JVM; the tap bridge's JSON tests need a real one.
+    testImplementation("org.json:json:20240303")
+
+    // #3048: Stripe Terminal, arm64 + -PtapToPay=true ONLY. Exact versions, no ranges.
+    if (tapToPay) {
+        add("arm64Implementation", "com.stripe:stripeterminal-taptopay:$stripeTerminalVersion")
+        add("arm64Implementation", "com.stripe:stripeterminal-core:$stripeTerminalVersion")
+    }
 
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

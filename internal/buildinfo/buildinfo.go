@@ -3,12 +3,50 @@
 // goreleaser at release time via:
 //
 //	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=<tag>"
+//
+// The other -X values are MarketplacePublicKey, BuildDate and
+// ReleasesBaseURL.
 package buildinfo
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Version is the release version, e.g. "0.1.2". Overridden at build time.
 var Version = "dev"
+
+// Channel is how this build reaches a shop (ADR-0194): "sideload" (website,
+// GitHub release, source), "play", "appstore" or "direct" (the Microsoft Store
+// binary, which is the same signed installer as the website download).
+// Stamped per artifact by every build definition:
+//
+//	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=<channel>"
+//
+// A source build is "sideload". Predicates on it belong to ADR-0194 (never
+// read from settings, config, env or request input).
+var Channel = "sideload"
+
+// ChannelStamp is the CI-inspectable twin of Channel: the literal
+// "ut-channel:<channel>", stamped on the same line. Release builds use
+// -trimpath, so `go version -m` records no -ldflags and the short channel word
+// would be lost among other strings; this longer value is found by
+// scripts/ci/check-artifact-channel.sh with `strings`. Nothing reads it at
+// runtime. scripts/ci/guard-channel-stamped.sh keeps both stamped together.
+var ChannelStamp = ""
+
+// channelMismatch reports a build whose two channel stamps disagree. Referencing
+// ChannelStamp here also keeps the linker from dropping the stamped string,
+// which is what lets scripts/ci/check-artifact-channel.sh find it.
+func channelMismatch(channel, stamp string) bool {
+	return stamp != "" && strings.TrimPrefix(stamp, "ut-channel:") != channel
+}
+
+func init() {
+	if channelMismatch(Channel, ChannelStamp) {
+		panic("buildinfo: Channel " + Channel + " does not match ChannelStamp " + ChannelStamp)
+	}
+}
 
 // MarketplacePublicKey is the marketplace's Ed25519 plugin-signing public key
 // (64 hex characters), compiled into release builds (ADR-0158):
@@ -21,6 +59,32 @@ var Version = "dev"
 // key — unless built with -tags devplugins. CI resolves the value with
 // scripts/ci/resolve-marketplace-key.sh.
 var MarketplacePublicKey = ""
+
+// ReleasesBaseURL is the releases API collection this build's update check
+// polls and its self-updater downloads from (ut-docs#4080), without
+// "/latest": an independent operator's build stamps its own:
+//
+//	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.ReleasesBaseURL=https://api.github.com/repos/<owner>/<repo>/releases"
+//
+// Empty = our GitHub releases (releasesource.DefaultBase). Like
+// MarketplacePublicKey (ADR-0158) it is build-time only: UT_UPDATE_RELEASES_URL
+// redirects only the check, never the download or its trusted asset host.
+// Must be an absolute https URL; anything else disables self-update and the
+// default check (fail closed, never falls back to our GitHub).
+var ReleasesBaseURL = ""
+
+// ReleasePublicKeys is the comma list (1..4, lowercase 64-hex Ed25519 public
+// keys) the till trusts to sign a release's checksums.txt (ADR-0178 section
+// 5), compiled into release builds:
+//
+//	-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=<hex>[,<hex>]"
+//
+// When set, the self-updater refuses any release whose checksums.txt.sig is
+// missing or not signed by one of these keys. Empty (source builds, or CI
+// with no release key configured) keeps the SHA-256-only check. Nothing
+// reads the environment: only the build stamp can arm it. CI resolves the
+// value with scripts/ci/resolve-release-keys.sh.
+var ReleasePublicKeys = ""
 
 // BuildDate is when this binary's built-in strings were frozen: the source
 // commit's time in RFC 3339 (`git show -s --format=%cI HEAD`), so a rebuild

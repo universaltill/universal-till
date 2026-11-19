@@ -28,9 +28,12 @@ const (
 	moveID     = "0b1c7e52-6a58-4f0e-9d3e-2f5f1f6a7b01"
 	moveTarget = "store-target"
 	moveNonce  = "ZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4CBgoM"
-	moveExp    = "2026-11-03T09:30:00Z"
 	moveToken  = "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e"
 )
+
+// moveExp is the move offer's expiry, always in the future: a fixed date here
+// broke main once it passed (ut-docs#5471).
+var moveExp = time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 
 type fakeMoveCloud struct {
 	srv *httptest.Server
@@ -108,7 +111,7 @@ func newFakeMoveCloud(t *testing.T) *fakeMoveCloud {
 		defer c.mu.Unlock()
 		if c.approvalCode != http.StatusOK {
 			w.WriteHeader(c.approvalCode)
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"usable_from": "2026-11-05T10:00:00Z"}, "error": map[string]string{"code": c.approvalErr}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"usable_from": "2026-11-05T10:00:00Z"}, "error": map[string]string{"code": c.approvalErr}}) // fixed-date:ok usable_from echoed verbatim, never clock-compared
 			return
 		}
 		// Rebuild the bytes from the cloud's own record (design §3).
@@ -376,7 +379,7 @@ func TestDecisionRefusalsAreTyped(t *testing.T) {
 			if !errors.As(err, &ref) || ref.Code != tc.code {
 				t.Fatalf("err = %v", err)
 			}
-			if tc.code == "move_key_quarantined" && ref.UsableFrom != "2026-11-05T10:00:00Z" {
+			if tc.code == "move_key_quarantined" && ref.UsableFrom != "2026-11-05T10:00:00Z" { // fixed-date:ok usable_from echoed verbatim, never clock-compared
 				t.Fatalf("usable_from = %q", ref.UsableFrom)
 			}
 			if got := len(list()) == 0; got != tc.terminal {
@@ -534,7 +537,7 @@ func TestPendingMoveRecordIsImmutablePerID(t *testing.T) {
 	swapped := pendingBlock(pairOldStore)
 	swapped["target_store"] = "store-attacker"
 	swapped["nonce"] = "b3RoZXItbm9uY2U"
-	swapped["expires_at"] = "2026-11-09T09:30:00Z"
+	swapped["expires_at"] = time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second).Format(time.RFC3339)
 	swapped["target_name"] = "Totally Legit Shop"
 	ApplySyncMoves(raw([]any{swapped}), nil)
 	p, ok = PendingMoveByID(cfg, moveID)

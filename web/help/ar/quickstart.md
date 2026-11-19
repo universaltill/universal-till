@@ -3,6 +3,7 @@ id: quickstart
 title: كيفية استخدام الصندوق
 section: البيع اليومي
 order: 5
+public: true
 summary: كل ما تحتاجه ليوم عادي، بخطوات صغيرة.
 ---
 

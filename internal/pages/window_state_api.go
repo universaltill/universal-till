@@ -110,12 +110,15 @@ func isLoopbackAddr(remoteAddr string) bool {
 // AdoptIfUntouched refuses to escalate into a chrome-hiding mode, so it
 // cannot be used to lock the real shell down either.
 //
-// Long-poll safety: internal/server/server.go's http.Server sets no
-// WriteTimeout (only the control listener in the shell sets
-// ReadHeaderTimeout), so holding a request for up to ShellPollMaxWait
-// (25s) is safe. If a WriteTimeout is ever added there, it must exceed
-// ShellPollMaxWait or every shell poll will be severed mid-hold.
+// Long-poll safety: the till's http.Server (httpserver.New) sets
+// ReadHeaderTimeout and IdleTimeout but no flat WriteTimeout, and its
+// min-rate write bound (boundWrites, ut-docs#5429) arms only at the first
+// write, never at handler entry. Neither touches a request that is silent, so
+// holding one for up to ShellPollMaxWait (25s) before answering is safe. If a
+// flat WriteTimeout is ever added there, it must exceed ShellPollMaxWait or
+// every shell poll will be severed mid-hold.
 func registerWindowState(mux *http.ServeMux, d *common.Deps) {
+	registerWindowToggle(mux, d) // ut-docs#3735: F11 live toggle (session-gated)
 	// One counted semaphore per registration: how many polls are parked
 	// right now. Buffered-channel semaphore; try-acquire, never block.
 	parkSlots := make(chan struct{}, maxParkedShellPolls)

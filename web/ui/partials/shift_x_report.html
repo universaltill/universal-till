@@ -1,0 +1,89 @@
+{{/* ut-docs#5797: the X report fragment swapped into #x-report-body on /shifts
+     (data .R = data.XReport). A mid-shift read: no Z wording, no number. Print
+     button: ut-docs#5798. The heading and "nothing is closed" line live on the page. */}}
+<div class="x-report-result">
+  <div class="x-report-bar">
+    <p><strong>{{ T "shifts.x_report.generated_at" }}</strong> {{ datetime .R.GeneratedAt }}</p>
+    <div class="x-report-actions">
+      <button type="button" id="x-report-print" class="btn secondary"
+              hx-post="{{ .PrintURL }}" hx-target="#x-report-print-msg" hx-swap="innerHTML"
+              hx-indicator="#x-report-print-busy" hx-disabled-elt="this">{{ T "shifts.x_report.print" }}</button>
+      <span id="x-report-print-busy" class="htmx-indicator muted" role="status">{{ T "shifts.x_report.printing" }}</span>
+      <button type="button" class="btn secondary" data-action="empty:x-report-body focus:x-report-show">{{ T "shifts.x_report.hide" }}</button>
+    </div>
+    <span id="x-report-print-msg" class="x-report-print-msg" aria-live="polite"></span>
+  </div>
+
+  <table class="table">
+    <tbody>
+      <tr><td>{{ T "shifts.register" }}</td><td>{{ .R.RegisterName }}</td></tr>
+      <tr><td>{{ T "shifts.cashier" }}</td><td>{{ .R.CashierName }}</td></tr>
+      <tr><td>{{ T "shifts.opened_at" }}</td><td>{{ datetime .R.Shift.OpenedAt }}</td></tr>
+    </tbody>
+  </table>
+
+  <table class="table x-report-num" data-cards="off">
+    <thead><tr><th><span class="visually-hidden">{{ T "shifts.x_report.sales" }}</span></th><th>{{ T "shifts.x_report.count" }}</th><th>{{ T "shifts.amount" }}</th></tr></thead>
+    <tbody>
+      <tr><td>{{ T "shifts.x_report.sales" }}</td><td>{{ qty .R.SalesCount }}</td><td>{{ money .R.SalesGross }}</td></tr>
+      <tr><td>{{ T "shifts.x_report.returns" }}</td><td>{{ qty .R.ReturnsCount }}</td><td>{{ money .R.ReturnsTotal }}</td></tr>
+      <tr><td>{{ T "reports.eod.net" }}</td><td>—</td><td>{{ money .R.Net }}</td></tr>
+      <tr><td>{{ T "shifts.x_report.tax" }}</td><td>—</td><td>{{ money .R.Tax }}</td></tr>
+      <tr><td>{{ T "shifts.x_report.voids" }}</td><td>{{ qty .R.VoidsCount }}</td><td>{{ money .R.VoidsTotal }}</td></tr>
+      <tr><td>{{ T "shifts.x_report.cleared" }}</td><td>{{ qty .R.ClearedBasketsCount }}</td><td>{{ money .R.ClearedBasketsTotal }}</td></tr>
+    </tbody>
+  </table>
+
+  <h4>{{ T "shifts.x_report.section_tenders" }}</h4>
+  {{ if .R.Methods }}
+  <table class="table x-report-num x-report-tenders" data-cards-collapse="off">
+    <thead><tr><th>{{ T "shifts.x_report.method" }}</th><th>{{ T "shifts.x_report.received" }}</th><th>{{ T "shifts.x_report.refunded" }}</th><th>{{ T "reports.eod.net" }}</th><th>{{ T "reports.eod.tips" }}</th></tr></thead>
+    <tbody>
+      {{ range .R.Methods }}
+      <tr><td>{{ T .Name }}</td><td>{{ money .In }}</td><td>{{ money .Refunded }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}
+  <p class="muted">{{ T "shifts.x_report.no_payments" }}</p>
+  {{ end }}
+
+  <h4>{{ T "shifts.x_report.section_cash" }}</h4>
+  <table class="table x-report-num" data-cards="off">
+    <tbody>
+      <tr><td>{{ T "shifts.opening_cash" }}</td><td>{{ money .R.Cash.Opening }}</td></tr>
+      <tr><td>{{ T "shifts.x_report.cash_sales" }}</td><td>{{ money .R.Cash.CashSales }}</td></tr>
+      <tr><td>{{ T "reports.zpaper.cash.tips_held_out" }}</td><td>{{ money .R.Cash.TipsHeldOut }}</td></tr>
+      {{ range .R.Cash.Adjustments }}
+      <tr><td>{{ if eq .Type "payout" }}{{ T "shifts.payout" }}{{ else if eq .Type "skim" }}{{ T "shifts.skim" }}{{ else }}{{ T "shifts.adjust" }}{{ end }}{{ if .Reason }}: <span class="x-report-reason">{{ .Reason }}</span>{{ end }} <span class="muted">{{ datetime .At }}</span></td><td>{{ money .Amount }}</td></tr>
+      {{ end }}
+      <tr><td>{{ T "shifts.x_report.adjustments_total" }}</td><td>{{ money .R.Cash.AdjustmentsTotal }}</td></tr>
+      <tr><td><strong>{{ T "shifts.expected" }}</strong></td><td><strong>{{ money .R.Cash.Expected }}</strong></td></tr>
+    </tbody>
+  </table>
+
+  <table class="table x-report-num" data-cards="off">
+    <tbody>
+      <tr><td>{{ T "reports.eod.no_sale_title" }}</td><td>{{ qty .R.NoSale }}</td></tr>
+    </tbody>
+  </table>
+  {{ if .R.NoSaleOperators }}
+  <table class="table">
+    <thead><tr><th>{{ T "shifts.cashier" }}</th><th>{{ T "reports.eod.no_sale_opens" }}</th></tr></thead>
+    <tbody>
+      {{ range .R.NoSaleOperators }}
+      <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td>{{ qty .Count }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+
+  {{ if .R.FirstReceipt }}
+  <table class="table" data-cards="off">
+    <tbody>
+      <tr><td>{{ T "shifts.x_report.first_receipt" }}</td><td>{{ .R.FirstReceipt }}</td></tr>
+      <tr><td>{{ T "shifts.x_report.last_receipt" }}</td><td>{{ .R.LastReceipt }}</td></tr>
+    </tbody>
+  </table>
+  {{ end }}
+</div>

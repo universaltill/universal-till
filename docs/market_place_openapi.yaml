@@ -249,7 +249,7 @@ paths:
           description: Filter by pricing model
           schema:
             type: string
-            enum: [free, paid, freemium]
+            enum: [free, paid]
         - name: arch
           in: query
           description: Filter by architecture
@@ -636,7 +636,7 @@ components:
             type: string
         price_flag:
           type: string
-          enum: [free, paid, freemium]
+          enum: [free, paid]
         pricing:
           $ref: '#/components/schemas/Pricing'
         architectures:

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#2541: every active catalog item is a sell-screen quick button by
 // default (no manual "add button" step), and jiggle edit mode gives each
@@ -133,20 +133,22 @@ test.describe('every item is a quick button; hide / unhide / remove (ut-docs#254
     // changes nothing.
     await enterJiggle(page, tile(page, B.name));
     const delB = cellOf(page, B.name).getByTestId('tile-badge-remove');
-    let confirmText = '';
-    page.once('dialog', (d) => {
-      confirmText = d.message();
-      d.dismiss();
-    });
+    const noNative = noNativeDialogs(page);
     await delB.click();
-    expect(confirmText).toContain(B.name);
+    await answerTillConfirm(page, 'cancel', B.name);
     await page.waitForTimeout(300);
     await expect(tile(page, B.name)).toBeVisible();
 
     // Accepting it removes the tile -- gone from the grid even while editing
     // -- but NOT the item: its catalog row is still there (ut-docs#2698).
-    page.once('dialog', (d) => d.accept());
-    await Promise.all([page.waitForResponse((r) => r.url().includes('/api/buttons/remove-from-grid') && r.ok()), delB.click()]);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/buttons/remove-from-grid') && r.ok()),
+      (async () => {
+        await delB.click();
+        await answerTillConfirm(page, 'confirm', B.name);
+      })(),
+    ]);
+    noNative();
     await expect(tile(page, B.name)).toHaveCount(0);
     expect(await itemId(page, B.name)).not.toBeNull();
 

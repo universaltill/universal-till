@@ -3,8 +3,24 @@
      #sb-backup-copy-mount, only for a viewer who may manage backups. A
      status chip, never a modal: selling carries on. Words first, never
      colour alone; the explanation is in the title. */}}
+{{ if .cloud }}
+{{/* ut-docs#5066: the encrypted cloud copy has been failing for over 48 h. */}}
+<a href="/settings#settings-backup" class="sb-item sb-backup-copy" data-testid="sb-backup-cloud-failing"
+   title="{{ T "backup.cloud.state_failing" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "hard-drive" }}</span>
+  <span class="sb-backup-copy-text">{{ T "backup.cloud.chip_failing" }}</span>
+</a>
+{{ else if .keyAsk }}
+{{/* ut-docs#5066: the shop has not chosen whether a copy of its backup key is kept in the cloud. */}}
+<a href="/settings#settings-backup" class="sb-item sb-backup-copy" data-testid="sb-backup-key-ask"
+   title="{{ T "backup.cloud.key.chip_hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "hard-drive" }}</span>
+  <span class="sb-backup-copy-text">{{ T "backup.cloud.key.chip_ask" }}</span>
+</a>
+{{ else }}
 <a href="/settings#settings-backup" class="sb-item sb-backup-copy" data-testid="sb-backup-copy"
    title="{{ T "status.backup_copy.hint" }}">
   <span class="btn-ico" aria-hidden="true">{{ icon "hard-drive" }}</span>
   <span class="sb-backup-copy-text">{{ T "status.backup_copy.label" }}</span>
 </a>
+{{ end }}

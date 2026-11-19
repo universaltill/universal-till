@@ -99,6 +99,19 @@ git -C "${R}" add -A
 git -C "${R}" commit -qm "module docs only"
 check pass "a README-only change needs no bump" bash "${PIN}" v0.1.0 "${R}"
 
+# catimport/VERSION is not Go source: the pin check shares its pathspec with
+# the version guard and tagger (catimport-version-lib.sh, ut-docs#5882).
+printf '0.1.1\n' >"${R}/catimport/VERSION"
+git -C "${R}" add -A
+git -C "${R}" commit -qm "VERSION only"
+check pass "a VERSION-only change needs no bump" bash "${PIN}" v0.1.0 "${R}"
+printf 'h1:x\n' >"${R}/catimport/go.sum"
+git -C "${R}" add -A
+git -C "${R}" commit -qm "go.sum"
+check fail "a go.sum change since the pinned tag" bash "${PIN}" v0.1.0 "${R}"
+grep -q 'bump catimport/VERSION' "${TMP}/out" || { echo "FAIL: pin hint does not say to bump catimport/VERSION"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
+git -C "${R}" reset -q --hard HEAD~1
+
 mkdir -p "${R}/catimport/barcode"
 printf 'package barcode\n' >"${R}/catimport/barcode/b.go"
 git -C "${R}" add -A
