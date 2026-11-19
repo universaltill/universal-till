@@ -8117,3 +8117,5 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
 .about-addresses dt { font-weight: 600; margin-block-start: .5rem; }
 .about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
 .about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }
+/* ut-docs#5989: stand-alone link rows meet the 44px touch floor. */
+.manual-about-link a, a[data-testid="photo-import-link"] { display: inline-flex; align-items: center; min-block-size: 44px; }
