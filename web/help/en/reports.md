@@ -17,7 +17,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning. Choose the period with the chips above it — Today, Yesterday, This week or This month; Custom keeps the older controls for a rolling number of days, a whole year, or any other date. The chips follow your business-day start, so after a late close "Today" is still the shift you are trading in. Inside Custom, "Last 24 hours" is the rolling 24 hours up to now, not the business day — use the Today chip for that.
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), (for a manager/admin) Shrinkage & Loss, or Online channels (once this till has recorded an online order) — and that report loads when you open it.
-3. Want to see how the day stands before you close? Tap **Show day so far** in the same tab (see "Day so far" below). Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
+3. Want to see how the day stands before you close? Tap **Show day so far** in the same tab (see "Day so far" below). Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. The close ends on the next full second, so a sale or shift closed in the same second you start the close is still on it. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two moments side by side (from – to, date and time to the minute), in your own local time and your language's date format and digits. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
 
@@ -171,6 +171,25 @@ page. An optional note can currently be attached to a close by whatever
 sends the request an `annotation` value; there's no on-screen field for it
 yet, so this is mainly useful to an integration or a future till update —
 it prints as **Anmerkung** immediately under Erstellt von when present.
+
+## Rows recorded late from other tills
+
+On a shop with several tills, the main till's day-end (Z) report counts every
+till's sales, refunds, cleared baskets and drawer opens once they have synced.
+Sometimes a row is made on another till before the main till's previous close
+but only reaches the main till after it, for example when that till was
+offline. That earlier report is already closed and is never changed, so the
+row is counted in the next report instead. That report then shows a section
+headed **RECORDED LATE FROM OTHER TILLS**. For each till it lists how many
+rows came in late, the sales amount, any refunds and cleared baskets with
+their amounts, any drawer opens, and when the oldest of them was made. These
+figures are **already included in the report's totals**. The section explains
+them and adds nothing on top. A till that is no longer in this till's list of
+tills is shown as "Other till" followed by a short id. On a report closed
+before this section existed, the cleared baskets show as a number only and
+the time of the oldest row is shown once for all tills. The section is absent
+when nothing arrived late, and on a till's first close. The same figures appear
+in that report's detail on the **Day-end (EOD)** tab of Reports.
 
 ## Article group, article and operator breakdowns
 
