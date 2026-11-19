@@ -180,13 +180,13 @@ func (e *diskError) Error() string {
 var errNothingToDo = errors.New("nothing to upload")
 
 func (u *Uploader) startUpload(ctx context.Context, now time.Time, dir, lastSnapshot string) error {
-	list, err := db.ListBackups(u.DBPath)
+	list, err := db.ListBackupsAt(u.DBPath, now)
 	if err != nil {
 		return err
 	}
 	var snap *db.BackupInfo
 	for i := range list {
-		if !db.IsUploadedBackupName(list[i].Name) {
+		if list[i].AgeKnown && !db.IsUploadedBackupName(list[i].Name) {
 			snap = &list[i]
 			break
 		}
@@ -220,7 +220,7 @@ func (u *Uploader) startUpload(ctx context.Context, now time.Time, dir, lastSnap
 	if err != nil {
 		return err
 	}
-	takenAt := snap.ModTime.UTC().Format(time.RFC3339)
+	takenAt := snap.EffectiveTime.UTC().Format(time.RFC3339)
 	begin, err := u.Cloud.Begin(ctx, BeginRequest{
 		SnapshotBytes: cst.Size(), TakenAt: takenAt, AppVersion: u.AppVersion,
 		SchemaVersion: u.schemaVersion(), Format: formatV1,

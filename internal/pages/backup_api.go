@@ -61,11 +61,15 @@ func listBackupsForUI(d *common.Deps, locale string) []backupUIRow {
 	var out []backupUIRow
 	newest := db.NewestOwnBackup(list)
 	for _, b := range list {
+		shown := b.ModTime
+		if b.AgeKnown {
+			shown = b.EffectiveTime // not a future mtime (ut-docs#5523)
+		}
 		out = append(out, backupUIRow{
 			Newest: b.Name == newest,
 			Name:   b.Name,
 			Size:   fmt.Sprintf("%.1f MB", float64(b.Size)/(1<<20)),
-			Date:   httpx.FormatDateTime(b.ModTime.Local(), locale),
+			Date:   httpx.FormatDateTime(shown.Local(), locale),
 		})
 	}
 	return out
