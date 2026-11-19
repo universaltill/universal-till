@@ -4203,7 +4203,6 @@
   "settings.notices.help": "Show messages from Universal Till and your partners in a notice bell. A notice never blocks a sale. Off by default; turning it off removes the notices held on this till.",
   "settings.notices.enable": "Show notices on this till",
   "settings.notices.save": "Save",
-<<<<<<< HEAD
   "page.title.name_shop": "Name your shop",
   "name_shop.heading_both": "Name your shop and this till",
   "name_shop.heading_shop": "Name your shop",
@@ -4212,7 +4211,6 @@
   "name_shop.till_name_help": "Shown on reports and the Tills page so you can tell your tills apart, for example \"Front counter\".",
   "name_shop.save": "Save and continue",
   "name_shop.error.till_name_invalid": "Enter a name for this till: up to 60 characters, no line breaks or tabs.",
-=======
   "inventory.stocktake.start": "Stock-take",
   "inventory.stocktake.choose_location": "Location to count",
   "inventory.stocktake.begin": "Start counting",
@@ -4256,7 +4254,6 @@
   "inventory.stocktake.error.code.whole_number_required": "Whole numbers only for this item",
   "inventory.stocktake.load_failed": "Couldn't open the stock-take. Check the connection to the till and try again.",
   "inventory.stocktake.error.forbidden": "Only a manager can do a stock-take.",
->>>>>>> origin/main
   "settings.till_registration.blocked_help": "To reconnect sooner, ask support to allow it. Tell them this till's ID and key fingerprint below.",
   "settings.till_registration.blocked_soon": "This till can try to reconnect to the cloud again soon. Selling is not affected.",
   "settings.till_registration.blocked_until": "This till can reconnect to the cloud from %s. Selling is not affected.",
