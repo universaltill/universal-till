@@ -1094,17 +1094,17 @@ func TestSetTapToPayResolver_RegistersWithDevicepay(t *testing.T) {
 	SetTapToPayResolver(stub)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if got := devicepay.ResolveUnknown(ctx, managerActor(false), "stripe", "k1"); got.OK || len(stub.keys) != 0 {
+	if got := devicepay.Resolve(ctx, managerActor(false), "stripe", "k1", devicepay.OutcomeNotCharged); got.OK || len(stub.keys) != 0 {
 		t.Fatalf("cashier resolve = %+v, keys %v", got, stub.keys)
 	}
-	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); !got.OK || len(stub.keys) != 1 || stub.keys[0] != "k1" || stub.outcomes[0] != "not_charged" {
+	if got := devicepay.Resolve(ctx, managerActor(true), "stripe", "k1", devicepay.OutcomeNotCharged); !got.OK || len(stub.keys) != 1 || stub.keys[0] != "k1" || stub.outcomes[0] != "not_charged" {
 		t.Fatalf("manager resolve = %+v, keys %v outcomes %v", got, stub.keys, stub.outcomes)
 	}
 	if got := devicepay.Resolve(ctx, managerActor(true), "stripe", "k2", devicepay.OutcomeCharged); !got.OK || stub.outcomes[1] != "charged" {
 		t.Fatalf("manager charged resolve = %+v, outcomes %v", got, stub.outcomes)
 	}
 	SetTapToPayResolver(nil)
-	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); got.Reason != devicepay.ReasonNotForeground {
+	if got := devicepay.Resolve(ctx, managerActor(true), "stripe", "k1", devicepay.OutcomeNotCharged); got.Reason != devicepay.ReasonNotForeground {
 		t.Fatalf("after SetTapToPayResolver(nil): %+v, want not_foreground", got)
 	}
 }

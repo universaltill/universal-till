@@ -828,6 +828,10 @@ var PerTillSettingPrefixes = []string{
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
 	"marketplace.device_", "marketplace.token", "marketplace.enrolled_at",
 	"marketplace.public_key",
+	// ut-docs#6455: where this till's payment broker calls go (the cloud
+	// endpoint it enrolled against). Never rewritable by a synced bundle: a
+	// replica or a forged bundle must not redirect card-payment traffic.
+	"marketplace.endpoint",
 	// ut-docs#4836: when THIS till paired with a my. shop (the join banner's
 	// "set up as a main till" marker) — per till, never copied to a replica.
 	"marketplace.paired_at",

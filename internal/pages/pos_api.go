@@ -525,7 +525,25 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		payloadDigest := sha256.Sum256(payloadBytes)
 		requestID := fmt.Sprintf("%s:%d:%x", attemptID, i, payloadDigest[:8])
 		asked[requestID] = true
-		resp, dispatched, err := blockingPaymentEventDispatch(ctx, d, p.MethodID, "authorize", requestID, payload)
+		// ut-docs#6455: a tap entry's dispatch is bound by this gate and its
+		// "approved" confirmed with the broker; tapConf is non-nil only once
+		// core itself confirmed the payment.
+		resp, dispatched, tapConf, err := tapAuthorize(ctx, d, p.MethodID, requestID, amount, payCurrency, payload)
+		var tapStart *tapStartFailedError
+		var tapPending *pos.PaymentPendingError
+		if errors.As(err, &tapStart) {
+			if abandonedUnder() {
+				why = "tender refused (the basket was abandoned during authorize)"
+				return "", &tenderAbandonedError{}
+			}
+			// Nothing was charged and nothing is locked: the earlier legs are
+			// returned and the request id is spent, like a definitive decline.
+			stash := engine.SettleTender()
+			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
+			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tap payment could not start")
+			why = "tender refused (a tap payment could not start)"
+			return "", tapStart
+		}
 		if err != nil {
 			// ut-docs#2278 review finding: paymentDeclinedError carries no
 			// detail to the operator by design (a plugin-originated decline
@@ -538,6 +556,16 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			log.Printf("tender declined for method %q (attempt %s): %v", p.MethodID, requestID, err)
 			var exitErr *plugins.HandlerExitError
 			isUnknown := errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown
+			// ut-docs#6455: a tap payment the broker did not confirm is as
+			// unknown as the plugin saying so: the card may have been charged.
+			isTapPending := errors.As(err, &tapPending)
+			isTapLeg := isTapPending
+			if !isTapLeg {
+				_, isTapLeg = tapEntry(ctx, d, p.MethodID)
+			}
+			if isTapPending {
+				isUnknown = true
+			}
 			// While locked on this tender, only a real plugin decline (a
 			// plugin answer that is not outcome_unknown) settles the question.
 			// A timeout, an unloaded plugin, a DB or permission error says
@@ -560,7 +588,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				// the same request id, so providers dedupe and settle.
 				engine.LockTender(tenderSig, pos.PendingTender{
 					Captured: capturedLegs,
-					Unknown:  []pos.UnknownLeg{{MethodID: p.MethodID, Currency: payCurrency, RequestID: requestID, Amount: amount, ReaderRowID: p.ReaderRowID}},
+					Unknown:  []pos.UnknownLeg{{MethodID: p.MethodID, Currency: payCurrency, RequestID: requestID, Amount: amount, ReaderRowID: p.ReaderRowID, Tap: isTapLeg, TapReason: tapPendingReason(tapPending)}},
 				})
 				ownCaptured = false
 				logging.L().Warnf("payment outcome UNKNOWN — method %q, amount %d, authorize_request_id %s: the card may have been charged; the till is locked on this tender until it is retried and settled — check the provider before taking another payment", p.MethodID, amount.Minor(), requestID)
@@ -633,6 +661,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			payments[i].TraceID = ref
 		} else if len(resp) > 0 && strings.Contains(string(resp), `"transaction_ref"`) {
 			log.Printf("tender: ignoring malformed transaction_ref from method %q (attempt %s)", p.MethodID, requestID)
+		}
+		if tapConf != nil && tapConf.PIID != "" {
+			// ut-docs#6455: the PaymentIntent core confirmed with the broker
+			// is the leg's provider reference (a later refund is bound to it),
+			// whatever the plugin reported.
+			payments[i].TraceID = tapConf.PIID
 		}
 		if dispatched {
 			legRequestIDs[i] = requestID
@@ -2845,6 +2879,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				writeCardReaderError(w, r, readerErr)
 				return
 			}
+			// ut-docs#6455: a tap payment that never started. Nothing was
+			// charged and the basket is not locked; never worded "declined".
+			var tapStart *tapStartFailedError
+			if errors.As(err, &tapStart) {
+				log.Printf("tender: %v", err)
+				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Amount: d.Engine.Basket().Total}, http.StatusOK)
+				return
+			}
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {
 				// ut-docs#921 review finding (F2): the same raw-English leak
@@ -2874,8 +2916,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				log.Printf("tender held: %v", err)
 				locale := httpx.ResolveLocale(w, r)
 				b := d.Engine.Basket()
-				b.ToastMessage = httpx.T(locale, "pos.toast.payment_outcome_unknown")
-				b.ToastLevel = "error"
+				if b.TapPanel == nil {
+					// A locked tap payment shows its own pending screen
+					// (ut-docs#6455); every other card plugin keeps the toast.
+					b.ToastMessage = httpx.T(locale, "pos.toast.payment_outcome_unknown")
+					b.ToastLevel = "error"
+				}
 				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
 				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(http.StatusOK)
@@ -3895,7 +3941,10 @@ func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.Captured
 			}
 			payload["original_payments"] = []map[string]any{op}
 		}
-		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
+		// ut-docs#6455: a tap leg's reversal is bound to its PaymentIntent and
+		// to exactly the amount it captured.
+		refundCtx := tapRefundContext(ctx, d, leg.MethodID, leg.TransactionRef, amount.Minor(), leg.Currency, "refund:reversal:"+leg.RequestID+":1")
+		if _, err := blockingPaymentEventWithResponseAndID(refundCtx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
 			failed++
 			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
 		}

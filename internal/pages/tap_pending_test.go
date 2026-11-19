@@ -102,7 +102,7 @@ func newFakeBroker(t *testing.T) *fakeBroker {
 
 func piStatus(status string, received int64) string {
 	return `{"payment_intent_id":"pi_k1b","status":"` + status + `","amount_received_minor":` +
-		strconv.FormatInt(received, 10) + `,"currency":"eur","card":{"brand":"visa","last4":"4242"}}`
+		strconv.FormatInt(received, 10) + `,"currency":"gbp","card":{"brand":"visa","last4":"4242"}}`
 }
 
 type tapEnv struct {
@@ -131,6 +131,7 @@ func (e *tapEnv) lastBinding(t *testing.T) paybroker.Binding {
 func tapRig(t *testing.T) *tapEnv {
 	t.Helper()
 	mux, dp := authRig(t)
+	registerTapPay(mux, dp)
 	tapCheckInterval = 0
 	t.Cleanup(func() { tapCheckInterval = 2 * time.Second })
 	e := &tapEnv{mux: mux, dp: dp, broker: newFakeBroker(t)}
@@ -235,7 +236,7 @@ func TestTapGate_BindsDispatchAndConfirmsWithBroker(t *testing.T) {
 	}
 	b := e.lastBinding(t)
 	calls := e.plugin.authCalls()
-	if b.Kind != paybroker.BindAuthorize || b.AmountMinor != 120 || b.Provider != "stripe" || !strings.EqualFold(b.Currency, "EUR") || b.AttemptKey != calls[0].ID {
+	if b.Kind != paybroker.BindAuthorize || b.AmountMinor != 120 || b.Provider != "stripe" || !strings.EqualFold(b.Currency, "GBP") || b.AttemptKey != calls[0].ID {
 		t.Fatalf("binding must come from the gate (amount, currency, provider, request id): %+v want key %s", b, calls[0].ID)
 	}
 	if a := e.attempt(t); a.State != data.AttemptApproved || a.PIID != "pi_k1b" || a.CardBrand != "visa" || a.Last4 != "4242" {
@@ -284,6 +285,31 @@ func TestTapGate_StartFailureIsNotDeclinedAndUnlocks(t *testing.T) {
 	e.wantText(t, rec, "tap.start_failed")
 	if strings.Contains(strings.ToLower(rec.Body.String()), "declin") {
 		t.Fatalf("a start failure is never 'declined': %s", rec.Body.String())
+	}
+}
+
+// A tap entry that nobody answers for took no payment: the sale must not complete.
+func TestTapGate_EntryWithNoAuthorizeSubscriberNeverSells(t *testing.T) {
+	e := tapRig(t)
+	plugins.SharedBus(e.dp.Db).ResetSubscribers()
+	if _, err := e.dp.Db.Exec(`DELETE FROM plugin_hooks WHERE plugin_id = 'p.tap'`); err != nil {
+		t.Fatal(err)
+	}
+	e.tender(t)
+	if e.sales(t) != 0 {
+		t.Fatal("a tap entry with no authorize subscriber sold goods without taking a payment")
+	}
+}
+
+// A tap entry whose config names no provider cannot be confirmed: never asked, never sold.
+func TestTapGate_EntryWithoutProviderFailsClosed(t *testing.T) {
+	e := tapRig(t)
+	if _, err := e.dp.Db.Exec(`UPDATE plugin_entries SET config_json = '{"tap":true}' WHERE plugin_id = 'p.tap'`); err != nil {
+		t.Fatal(err)
+	}
+	e.tender(t)
+	if e.sales(t) != 0 || len(e.plugin.authCalls()) != 0 {
+		t.Fatalf("a tap entry with no provider must be refused before any plugin runs (sales=%d calls=%d)", e.sales(t), len(e.plugin.authCalls()))
 	}
 }
 
@@ -417,7 +443,7 @@ func TestTapResolve_BrokerSucceededBlocksNotChargedOffersApprove(t *testing.T) {
 	if rec.Code != http.StatusConflict || e.dp.Engine.TenderLock() == "" {
 		t.Fatalf("the payment succeeded: not-charged must be refused (%d), lock=%q", rec.Code, e.dp.Engine.TenderLock())
 	}
-	page := e.do(t, e.manager, http.MethodGet, "/manager/pay/tap/resolve", nil)
+	page := e.do(t, e.manager, http.MethodGet, "/ui/pay/tap/resolve", nil)
 	e.wantText(t, page, "tap.resolve.approve", "tap.resolve.status.succeeded")
 	if strings.Contains(bodyText(page), enText(t, "tap.resolve.not_charged")) {
 		t.Fatal("'Not charged' must not be offered when the broker says paid")
@@ -475,7 +501,7 @@ func TestTapResolve_AmountMismatchShowsBothAmountsAndOverrides(t *testing.T) {
 	e := tapRig(t)
 	e.broker.setStatus(piStatus("succeeded", 119))
 	e.tender(t)
-	page := e.do(t, e.manager, http.MethodGet, "/manager/pay/tap/resolve", nil)
+	page := e.do(t, e.manager, http.MethodGet, "/ui/pay/tap/resolve", nil)
 	e.wantText(t, page, "tap.amount_mismatch", "tap.amount.expected", "tap.amount.received", "tap.resolve.override")
 	for _, amt := range []string{"1.20", "1.19"} {
 		if !strings.Contains(page.Body.String(), amt) {
@@ -490,7 +516,7 @@ func TestTapResolve_AmountMismatchShowsBothAmountsAndOverrides(t *testing.T) {
 func TestTapResolve_CashierGetsAskManagerHint(t *testing.T) {
 	e := tapRig(t)
 	e.pending(t)
-	rec := e.do(t, e.cashier, http.MethodGet, "/manager/pay/tap/resolve", nil)
+	rec := e.do(t, e.cashier, http.MethodGet, "/ui/pay/tap/resolve", nil)
 	e.wantText(t, rec, "tap.ask_manager.hint")
 	if strings.Contains(bodyText(rec), enText(t, "tap.resolve.not_charged")) {
 		t.Fatal("the cashier is never shown the resolve choices")

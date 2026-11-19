@@ -1,0 +1,73 @@
+{{/* tap_resolve.html (ut-docs#6455, ux A5): the manager's step for settling an
+     unconfirmed tap payment. Rendered by GET /ui/pay/tap/resolve into
+     #tap-panel. A cashier gets only the "ask a manager" hint. A manager sees
+     what the payment service said (core asked it first) and ONLY the choices
+     that answer allows: a payment the service says went through can only be
+     approved (a wrong "not charged" double-charges); a different amount can
+     only be accepted by override. The PIN is typed here and verified again on
+     POST; the attempt key is never in this form. */}}
+<section id="tap-panel" class="tap-panel tap-resolve" aria-labelledby="tap-resolve-title" data-testid="tap-resolve">
+  {{ if .Ask }}
+  <div role="status" aria-live="assertive" aria-atomic="true">
+    <h3 id="tap-resolve-title" class="tap-title">{{ T "tap.ask_manager.hint" }}</h3>
+    <p class="tap-amount">{{ money .Amount }}</p>
+  </div>
+  <div class="tap-actions">
+    <button type="button" class="btn secondary tap-btn" hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "common.back" }}</button>
+  </div>
+  {{ else }}
+  <form hx-post="/manager/pay/tap/resolve" hx-target="#basket" hx-swap="outerHTML" hx-sync="this:drop"
+        hx-disabled-elt="#tap-panel button:not([data-osk-toggle])">
+    <h3 id="tap-resolve-title" class="tap-title">{{ T "tap.resolve.title" }}</h3>
+    <dl class="tap-facts">
+      <dt>{{ T "tap.resolve.sale_amount" }}</dt><dd>{{ money .Amount }}</dd>
+      <dt>{{ T "tap.resolve.broker_status" }}</dt>
+      <dd role="status" aria-live="assertive">
+        {{ if eq .Broker "succeeded" }}{{ T "tap.resolve.status.succeeded" }}{{ else if eq .Broker "not_paid" }}{{ T "tap.resolve.status.not_paid" }}{{ else }}{{ T "tap.resolve.status.unknown" }}{{ end }}
+      </dd>
+      <dt>{{ T "tap.resolve.attempt_time" }}</dt><dd>{{ .Started }}</dd>
+    </dl>
+    {{ if .Mismatch }}
+    <p class="tap-warning"><span aria-hidden="true">&#9888;</span> {{ T "tap.amount_mismatch" }}</p>
+    <dl class="tap-facts tap-amounts">
+      <dt>{{ T "tap.amount.expected" }}</dt><dd class="tap-amount">{{ money .Amount }}</dd>
+      <dt>{{ T "tap.amount.received" }}</dt><dd class="tap-amount">{{ money .Received }}</dd>
+      <dt>{{ T "tap.amount.difference" }}</dt><dd>{{ money .Diff }}</dd>
+    </dl>
+    {{ end }}
+    {{ if or .Mismatch .Unknown }}
+    <p class="tap-warning">{{ T "tap.resolve.confirm" }}</p>
+    <fieldset class="tap-reasons">
+      <legend>{{ T "tap.resolve.reason_label" }}</legend>
+      {{ if .Mismatch }}
+      <label class="tap-reason"><input type="radio" name="reason" value="mismatch_refund_later" required> {{ T "tap.resolve.reason.mismatch_refund_later" }}</label>
+      {{ else }}
+      <label class="tap-reason"><input type="radio" name="reason" value="customer_left" required> {{ T "tap.resolve.reason.customer_left" }}</label>
+      <label class="tap-reason"><input type="radio" name="reason" value="card_shown_charged"> {{ T "tap.resolve.reason.card_shown_charged" }}</label>
+      <label class="tap-reason"><input type="radio" name="reason" value="card_not_charged"> {{ T "tap.resolve.reason.card_not_charged" }}</label>
+      {{ end }}
+    </fieldset>
+    {{ end }}
+    <label>{{ T "elevation.pin_label" }}
+      <input type="password" name="override_pin" inputmode="numeric" pattern="[0-9]{4,8}"
+             minlength="4" maxlength="8" placeholder="{{ T "elevation.pin_placeholder" }}"
+             autocomplete="off" required>
+    </label>
+    <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
+            title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">&#9000;</button>
+    <div class="tap-actions">
+      {{ if and .Paid (not .Mismatch) }}
+      <button type="submit" name="decision" value="approve" class="btn primary tap-btn" data-testid="tap-approve">{{ T "tap.resolve.approve" }}</button>
+      {{ else if .Mismatch }}
+      <button type="submit" name="decision" value="override" class="btn primary tap-btn" data-testid="tap-override">{{ T "tap.resolve.override" }}</button>
+      {{ else if .NotPaid }}
+      <button type="submit" name="decision" value="not_charged" class="btn primary tap-btn" data-testid="tap-not-charged">{{ T "tap.resolve.not_charged" }}</button>
+      {{ else }}
+      <button type="submit" name="decision" value="not_charged" class="btn primary tap-btn" data-testid="tap-not-charged">{{ T "tap.resolve.not_charged" }}</button>
+      <button type="submit" name="decision" value="approve" class="btn secondary tap-btn" data-testid="tap-approve">{{ T "tap.resolve.approve" }}</button>
+      {{ end }}
+      <button type="button" class="btn secondary tap-btn" hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "common.back" }}</button>
+    </div>
+  </form>
+  {{ end }}
+</section>

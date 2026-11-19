@@ -8290,3 +8290,22 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .tracking-order-no { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .tracking-order-no .order-no-label { color: var(--muted); font-size: .85rem; }
 .tracking-order-no .order-no-value { font-size: 3rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }
+
+/* ut-docs#6455 (ux A1-A5): the tap-to-pay pending / result / manager resolve
+   panel. Tokens only, logical properties only; every button is 56 px high and
+   keeps its slot; never colour alone (an icon and words carry each state). */
+.tap-panel { margin-block: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-2); }
+.tap-panel.tap-pending, .tap-panel.tap-start_failed, .tap-panel.tap-resolve { border-color: var(--warning); background: var(--warning-tint); }
+.tap-panel.tap-paid_already { border-color: var(--success); background: var(--success-tint); }
+.tap-panel .tap-title { display: flex; align-items: center; gap: .5rem; margin: 0 0 .5rem; font-size: 1.15rem; }
+.tap-panel .tap-icon { font-size: 1.4rem; line-height: 1; }
+.tap-panel .tap-amount { font-size: 1.8rem; font-weight: 700; margin-block: .25rem; text-align: start; }
+.tap-panel .tap-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-block-start: .75rem; }
+.tap-panel .tap-btn { min-block-size: 56px; flex: 1 1 12rem; justify-content: center; }
+.tap-panel .tap-facts { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin-block: .5rem; }
+.tap-panel .tap-facts dt { color: var(--muted); }
+.tap-panel .tap-facts dd { margin: 0; text-align: start; overflow-wrap: anywhere; }
+.tap-panel .tap-warning { font-weight: 600; }
+.tap-panel .tap-reasons { border: 0; padding: 0; margin-block: .5rem; }
+.tap-panel .tap-reason { display: flex; align-items: center; gap: .6rem; min-block-size: 56px; }
+.tap-panel input[name="override_pin"] { min-block-size: 56px; inline-size: 100%; }

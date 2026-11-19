@@ -104,6 +104,8 @@ func seedReaderPlugin(t *testing.T, dp *common.Deps, pluginID, method string, ho
 			switch a {
 			case "DECLINE":
 				return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"card_declined"}`)}
+			case "START_FAILED":
+				return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"start_failed"}`)}
 			case "UNKNOWN":
 				return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"outcome_unknown"}`)}
 			case "":

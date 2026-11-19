@@ -109,6 +109,15 @@ Sometimes a card reader can't tell the till whether a payment went through. The 
 
 The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: clearing or parking works offline, but the screen may take a moment to update while the till waits for the card provider to confirm each payment it sends back. If a payment was still being taken when you cleared or parked the sale, the till does not complete that sale and sends the payment back too.
 
+## When a Tap to Pay payment is not confirmed
+
+A tap on a phone can leave the till unsure whether the customer was charged (a lost connection, or the bank still processing). The till then shows **Payment not confirmed** with the amount, locks every other payment, and keeps the sale on the screen. It never says "declined", because the card may have been charged.
+
+- **Check again** asks the payment service. If it says the payment went through, the screen shows **Paid already**: tap **Continue** to finish the sale. If it says nothing was charged, the screen shows **Not paid**, the sale unlocks, and **Try again** starts a new payment. If it is still processing, wait a moment and check again; the till only asks once every two seconds.
+- **Cancel this payment** asks the service first and only lets go of the sale when nothing was charged.
+- **Ask a manager** opens a step for a manager. They type their PIN and see what the payment service says. If the service says the payment went through, they can only **Approve payment**. If it says nothing was charged, they can unlock the sale. If the service cannot be reached, they must pick a reason, and the choice is recorded with their name. If the amount charged is different from the sale, the screen shows both amounts and the manager can **Accept and record** it; refund any difference outside the till.
+- If the payment could not even start, the till says **Could not start the payment. Nothing was charged.**, the sale stays unlocked, and you can try again or use another method.
+
 ## Gift vouchers
 
 To sell a gift voucher, or take one the till issued as payment, use the **Split** tab too — see [Gift vouchers](/help/vouchers).
