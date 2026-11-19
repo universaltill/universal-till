@@ -17,6 +17,8 @@ func TestPageEventsHaveDataClasses(t *testing.T) {
 		identifyEvent,
 		identifyConfirmedEvent,
 		agentActionResultEvent,
+		shiftOpenedEvent,
+		shiftClosedEvent,
 	} {
 		if _, ok := plugins.EventDataClasses(ev); !ok {
 			t.Errorf("%q has no entry in plugins.EventDataClasses", ev)
