@@ -673,8 +673,8 @@ test('a built-in icon is not a photo: no Remove background button on item or cat
 // Screenshots of the offer panel for the UX gate (ut-docs#3127): the result
 // state on all three surfaces at the 1024×600 floor and at 360 px, in
 // English and German (the longest shipped locale; a till only has German
-// with the language pack, so run the till with UT_TEST_I18N_OVERLAY_DIR at
-// ut-plugin-language-de/locales), plus one RTL (fa). Off unless
+// with the language bundle, so run the till with UT_TEST_I18N_OVERLAY_DIR at
+// a dir built by scripts/ci/build-locale-overlay.sh), plus one RTL (fa). Off unless
 // UT_CUTOUT_SHOTS_DIR names where to write them — they are for a person to
 // look at, not a CI assertion.
 const SHOTS = process.env.UT_CUTOUT_SHOTS_DIR || '';

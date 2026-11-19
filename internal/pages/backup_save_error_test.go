@@ -42,26 +42,52 @@ func TestSaveBackupToDownloadsRefusedOnAndroid(t *testing.T) {
 	if !errors.Is(err, errUseNativePicker) {
 		t.Fatalf("err = %v, want errUseNativePicker", err)
 	}
-	if got := backupSaveFailureKey(err); got != "settings.backup.save_failed_use_picker" {
+	if got := backupSaveFailureKey(err); got != "settings.backup.save_failed_picker_unavailable" {
 		t.Fatalf("key = %q", got)
 	}
 }
 
-// ut-docs#5619: the Android app's save picker is wired from the Settings
-// page: the button names its backup and the bridge result is translated.
+// ut-docs#5619 / #6550: the Android save picker is wired from the shell, not a
+// per-visit page script (e2e/tests/backup-save-picker-6550.spec.ts is the real
+// regression test). This is only a secondary string check that the pieces exist.
 func TestSettingsBackupPickerWiring(t *testing.T) {
-	b, err := os.ReadFile("web/ui/pages/settings.html") // TestMain chdirs to the repo root
+	page, err := os.ReadFile("web/ui/pages/settings.html") // TestMain chdirs to the repo root
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(b)
+	js, err := os.ReadFile("web/public/inline-actions.js")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
-		`data-backup-save="{{ .Name }}"`, "AndroidKiosk", "saveBackupCopy", "utBackupSaveResult",
-		"/api/backup/copied/", `"settings.backup.picker_saved"`, `"settings.backup.picker_cancelled"`,
-		`"settings.backup.picker_failed"`, `"settings.backup.picker_no_space"`,
+		`data-backup-save="{{ .Name }}"`, `data-backup-native="1"`, `$.backupNativePicker`,
+		`data-picker-saved="{{ T "settings.backup.picker_saved" }}"`,
+		`data-picker-cancelled="{{ T "settings.backup.picker_cancelled" }}"`,
+		`data-picker-failed="{{ T "settings.backup.picker_failed" }}"`,
+		`data-picker-no-space="{{ T "settings.backup.picker_no_space" }}"`,
+		`data-picker-unavailable="{{ T "settings.backup.save_failed_picker_unavailable" }}"`,
 	} {
-		if !strings.Contains(s, want) {
+		if !strings.Contains(string(page), want) {
 			t.Errorf("settings.html lacks %q", want)
 		}
+	}
+	// The old per-visit inline script (killed by dropPageListeners) must not return.
+	if strings.Contains(string(page), "window.utBackupSaveResult") {
+		t.Error("settings.html defines utBackupSaveResult again; it belongs in inline-actions.js")
+	}
+	for _, want := range []string{"saveBackupCopy", "utBackupSaveResult", "/api/backup/copied/", "data-backup-save"} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("inline-actions.js lacks %q", want)
+		}
+	}
+}
+
+// ut-docs#6550: the page marks the Save button for the Android app from the
+// real host flag, so a missing bridge there is answered on the client instead
+// of by the server's dead-end message.
+func TestSettingsPageFlagsNativePickerFromHost(t *testing.T) {
+	src := readRepoFile(t, "internal/pages/settings_page.go")
+	if !strings.Contains(src, `"backupNativePicker": hostIsAndroid`) {
+		t.Error(`settings_page.go must pass "backupNativePicker": hostIsAndroid to the template`)
 	}
 }

@@ -280,7 +280,13 @@ type ListPluginsRequest struct {
 	// filter. That's a distinct concept, see PluginSummary.Capabilities
 	// below (sourced from the manifest's required_capabilities).
 	Capability []string `json:"capability,omitempty"`
-	PageToken  string   `json:"page_token,omitempty"`
+	// Market asks the catalogue for the listings meant for one market
+	// (ISO 3166-1 alpha-2, wire key `markets`, ADR-0129 §4). The catalogue
+	// treats a listing with no markets as meant for every market, so a
+	// caller that must tell the two apart (ADR-0172 §2) also checks
+	// PluginSummary.Markets itself.
+	Market    string `json:"markets,omitempty"`
+	PageToken string `json:"page_token,omitempty"`
 }
 
 // PluginSummary represents a plugin in the catalog (matches OpenAPI schema).
@@ -312,9 +318,14 @@ type PluginSummary struct {
 	// availableLocales in the live protojson schema) — a listing can serve
 	// multiple locales, so this is an array, never a single value.
 	AvailableLocales []string `json:"available_locales,omitempty"`
-	ApprovedAt       string   `json:"approved_at,omitempty"`
-	CreatedAt        string   `json:"created_at,omitempty"`
-	UpdatedAt        string   `json:"updated_at,omitempty"`
+	// Markets is where the listing is meant to be used (ISO 3166-1 alpha-2,
+	// upper case; wire key `markets`, ADR-0129 §3). Empty = every market.
+	// ADR-0172 §2: an auto-install needs the shop's country named here
+	// explicitly, never the empty "every market".
+	Markets    []string `json:"markets,omitempty"`
+	ApprovedAt string   `json:"approved_at,omitempty"`
+	CreatedAt  string   `json:"created_at,omitempty"`
+	UpdatedAt  string   `json:"updated_at,omitempty"`
 }
 
 // UnmarshalJSON maps the live catalog wire format onto PluginSummary. The
@@ -354,6 +365,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		ArtifactHash          string   `json:"artifact_hash"`
 		AvailableLocalesCamel []string `json:"availableLocales"`
 		AvailableLocales      []string `json:"available_locales"`
+		Markets               []string `json:"markets"`
 		ApprovedAt            string   `json:"approved_at"`
 		CreatedAt             string   `json:"created_at"`
 		UpdatedAt             string   `json:"updated_at"`
@@ -390,6 +402,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	if len(p.AvailableLocales) == 0 {
 		p.AvailableLocales = w.AvailableLocales
 	}
+	p.Markets = w.Markets
 	p.ApprovedAt = w.ApprovedAt
 	p.CreatedAt = w.CreatedAt
 	p.UpdatedAt = w.UpdatedAt
@@ -613,6 +626,9 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 	for _, cap := range req.Capability {
 		// Map to 'capability' parameter as per OpenAPI
 		params.Add("capability", cap)
+	}
+	if m := strings.TrimSpace(req.Market); m != "" {
+		params.Set("markets", m)
 	}
 	// Note: Real API uses page/page_size instead of page_token
 	if req.PageToken != "" {

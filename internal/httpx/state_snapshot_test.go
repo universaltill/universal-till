@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -29,6 +30,7 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 	InitTheme("")
 	InitRailAmendments(nil)
 	InitRailVisibility(nil)
+	InitBrowserPrint(nil)
 
 	baseline := SnapshotStateForTests()
 	wantTV := TranslationsVersion()
@@ -49,6 +51,7 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 		InitTheme("dark")
 		InitRailAmendments(func() []uislot.Amendment { return nil })
 		InitRailVisibility(func(*http.Request, string) bool { return false })
+		InitBrowserPrint(func(*http.Request) bool { return true }) // ut-docs#6154
 		// The opposite of the baseline, so a dropped restore fails on any GOOS.
 		CrossDeviceLinkActionable = func() bool { return !cross() }
 		UpdateInstallBridge = func() bool { return !bridge() }
@@ -83,6 +86,9 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 		}
 		if got := LocaleGeneration(); got != 0 {
 			t.Errorf("round %d: locale generation %d, want 0", round, got)
+		}
+		if BrowserPrintOff(httptest.NewRequest(http.MethodGet, "/", nil)) {
+			t.Errorf("round %d: browser-print source not restored", round)
 		}
 		if on, _ := kioskMode.Load().(bool); on {
 			t.Errorf("round %d: kiosk still on", round)

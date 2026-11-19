@@ -337,12 +337,22 @@ func (s *Service) snapshotLocked() BasketSnapshot {
 // Origin is set here rather than by a separate setter afterward because
 // resetLocked() below clears any previous origin -- a caller that set it
 // first would have it silently wiped.
+//
+// A locked tender the restore drops is handed to the abandoned-tender handler
+// AFTER s.mu is released (ut-docs#6602).
 func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	p := s.restoreHeldLocked(snap, origin)
+	s.mu.Unlock()
+	s.handOffAbandoned(AbandonReplaced, p)
+}
+
+// restoreHeldLocked is RestoreHeld's body; caller holds s.mu. It returns the
+// pending-tender stash the reset dropped.
+func (s *Service) restoreHeldLocked(snap BasketSnapshot, origin HeldOrigin) PendingTender {
 	// Lock-free cores, NOT s.Reset()/s.SetCustomer() — s.mu is non-reentrant
 	// and already held here (see the locking-pattern comment on Service.mu).
-	s.resetLocked()
+	p := s.resetLocked()
 	s.heldOrigin = origin
 	s.orderDisplayNo = snap.DisplayNo
 	s.orderTrackingToken = snap.TrackingToken
@@ -414,6 +424,7 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.tableLabel = snap.TableLabel
 	s.applyTablePolicyLocked()
 	s.recomputeTotals()
+	return p
 }
 
 // cloneGiftVoucher copies a voucher-sale line's details so a snapshot and

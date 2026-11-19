@@ -1,0 +1,64 @@
+# Publishes a release's signed Windows installer to the public installer
+# storage (stable, direct HTTPS URL for Microsoft Partner Center; ut-docs#6407,
+# #6405). Reusable (release.yml calls it after publish-release) and runnable by
+# hand for an existing tag. Logic + checks: scripts/ci/publish-installer.sh.
+# Identity: `unitill-installer-publisher` (OIDC, no secret), Blob Data
+# Contributor on the `installers` container only (ut-infra
+# unitill-infra/release-signing/installer-publisher.tf). Same trust as the
+# signer: this repo, `release-signing` environment (main + v* tags).
+name: Publish installer
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      expected_sha256:
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag, e.g. v0.36.1"
+        required: true
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.repository == 'universaltill/universal-till'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write # OIDC for azure/login; job-scoped, actions are SHA-pinned
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # Triggering commit: the tag's commit when called from release.yml, main on a
+        # manual dispatch (dispatch from main: an older tag lacks these scripts).
+      - name: Build osslsigncode (pinned commit)
+        timeout-minutes: 10
+        run: |
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          bash packaging/windows/install-osslsigncode.sh
+      - name: Verify-only signing setup (pinned Microsoft root)
+        env:
+          SETUP_SIGNING_VERIFY_ONLY: "1"
+        run: packaging/windows/setup-signing.sh
+      - name: Azure login (OIDC, installer publisher)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_INSTALLER_PUBLISHER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Publish and verify the public URL
+        env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          STORAGE_ACCOUNT: unitillinstallers
+          TAG: ${{ inputs.tag }}
+          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+        run: bash scripts/ci/publish-installer.sh "$TAG" "$EXPECTED_SHA256"
