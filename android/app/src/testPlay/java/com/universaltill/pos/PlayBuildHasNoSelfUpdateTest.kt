@@ -29,6 +29,7 @@ class PlayBuildHasNoSelfUpdateTest {
         absent("com.universaltill.pos.UpdateLogic")
         absent("com.universaltill.pos.InstallPreflight")
         absent("com.universaltill.pos.PermissionResume")
+        absent("com.universaltill.pos.AfterCheck")
         // The inert stand-in has no update members.
         val names = SelfUpdateActivity::class.java.declaredMethods.map { it.name }
         assertFalse(names.any { it.contains("Download", true) || it.contains("Installer", true) || it.contains("Apk", true) })

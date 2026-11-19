@@ -29,7 +29,7 @@ import (
 //
 // Deliberately left editable (per-till keys, or not a settings write):
 // theme (theme), the Display card (display.*, incl. display.effects_*,
-// window mode, launch on startup, exit to OS), the Cloud record card
+// window mode, launch on startup, exit to OS), the Privacy card
 // (registration.*, ADR-0200: per-till, a replica never reports itself; registration.stopped is shop-wide, written through to the main till), the printer card
 // (printer.*), this till's name and register (sync.till_name /
 // sync.till_register_id on an additional till), the Android update form and

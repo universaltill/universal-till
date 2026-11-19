@@ -32,4 +32,11 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
     protected fun selfUpdateOnResume() = Unit
 
     protected fun selfUpdateOnDestroy() = Unit
+
+    /** No nightly prefetch in a store build (ut-docs#6551). */
+    fun selfUpdatePrefetch() = Unit
+
+    fun selfUpdateReady(): Boolean = false
+
+    protected fun selfUpdateOnPause() = Unit
 }

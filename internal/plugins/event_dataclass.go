@@ -43,13 +43,18 @@ var eventDataClasses = map[string][]string{
 	"customer.erased": {data.DataClassCustomers},
 	// actor/approver staff ids; a cash-drawer journal entry
 	"till.drawer.no_sale": {data.DataClassSales, data.DataClassStaff},
+	// cashier staff id; shift cash totals (the shift views are class sales)
+	"shift.opened": {data.DataClassSales, data.DataClassStaff},
+	"shift.closed": {data.DataClassSales, data.DataClassStaff},
 	// the item photo and the catalog item it was matched to
 	"catalog.identify":           {data.DataClassCatalog},
 	"catalog.identify.confirmed": {data.DataClassCatalog},
 	// the operator's own request and page parameters
-	"ui.view.ask":           {},
-	"ui.action.ask":         {},
-	"plugin.button.pressed": {},
+	"ui.view.ask":   {},
+	"ui.action.ask": {},
+	// the plugin's own non-secret settings (ADR-0121 S5, ut-docs#4160)
+	"ui.settings.options.ask": {},
+	"plugin.button.pressed":   {},
 	// the outcome of the agent's own proposal
 	"agent.action.result": {},
 }
