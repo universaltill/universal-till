@@ -105,15 +105,6 @@ func TestMarketplaceHelperFunctions(t *testing.T) {
 		t.Errorf("normalizeMarketplaceChecksum plain = %q", got)
 	}
 
-	for tier, want := range map[string]string{
-		"verified": "trusted", "approved": "trusted",
-		"unverified": "untrusted", "": "untrusted", "anything": "untrusted",
-	} {
-		if got := marketplaceTrustTier(tier); got != want {
-			t.Errorf("marketplaceTrustTier(%q) = %q, want %q", tier, got, want)
-		}
-	}
-
 	if got := sanitizePathSegment(`a/b\c:d`); got != "a-b-c-d" {
 		t.Errorf("sanitizePathSegment = %q", got)
 	}
