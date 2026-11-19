@@ -925,8 +925,8 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// same-sale/same-line/same-amount), but there's no reason to let
 		// arbitrary-length operator input reach the bridge/device's own
 		// `seen` map at all.
-		if len(refundAttemptID) > 128 {
-			refundAttemptID = ""
+		if len(refundAttemptID) > 128 || strings.HasPrefix(refundAttemptID, reversalRequestIDPrefix) {
+			refundAttemptID = "" // too long, or in the reversal id space (ut-docs#6601)
 		}
 		refundPayload := map[string]any{
 			"method":           method,
