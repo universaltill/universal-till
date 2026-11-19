@@ -813,6 +813,8 @@ var PerTillSettingPrefixes = []string{
 	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
 	// "restore.marker"): they guard this till's own receipt/Z sequences.
 	"restore.",
+	// ut-docs#6538: whether THIS main till takes phone card reader pairing.
+	"card_readers.phone_pairing",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is

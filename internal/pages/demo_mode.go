@@ -330,6 +330,10 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /sync-quarantine":                 true,
 	"GET /tills":                           true,
 	"GET /ui/tills/pending-pairings":       true,
+	"GET /ui/tills/reader-requests":        true, // ut-docs#6538: card reader pairing is a manager tool
+	"GET /ui/tills/readers":                true,
+	"POST /ui/tills/readers/{id}/rename":   true,
+	"POST /ui/tills/readers/{id}/revoke":   true,
 	"GET /ui/tills/roster":                 true, // the denied /tills page's polled roster (ADR-0114 §10)
 	"POST /api/enrol/check-plan":           true, // ADR-0148: a demo till never contacts the cloud
 	"POST /api/subscription/check-now":     true, // ut-docs#4285: same — a demo till never contacts the cloud
