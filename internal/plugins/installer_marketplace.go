@@ -507,13 +507,18 @@ func sanitizePathSegment(value string) string {
 	return replacer.Replace(value)
 }
 
+// marketplaceTrustTier maps the catalogue's trust tier to the local
+// plugins.trust_level label (ut-docs#6549). Official listings are signed by
+// the same marketplace key after first-party approval, so official, verified,
+// trusted and approved are all "trusted"; anything else (unverified, empty,
+// unknown) is "untrusted". Never "system": that is reserved for layouts built
+// into the till. The label is display-only; permissions are granted separately.
 func marketplaceTrustTier(tier string) string {
-	switch tier {
-	case "verified", "approved":
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "official", "verified", "trusted", "approved":
 		return "trusted"
-	default:
-		return "untrusted"
 	}
+	return "untrusted"
 }
 
 func (i *MarketplaceInstaller) upsertCatalogEntry(ctx context.Context, manifest *Manifest, bundleURL, checksum, signature string) error {
