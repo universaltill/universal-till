@@ -684,10 +684,11 @@ func SetTapToPayBridge(b TapToPayBridge) {
 
 // TapToPayResolver is the gomobile-bind-visible mirror of
 // devicepay.Resolver (ut-docs#6533): the Android shell's "the operator says
-// the earlier payment was not charged". Separate from TapToPayBridge so the
-// iOS protocol is unchanged. One string in, a JSON SetupResult out.
+// the earlier payment was / was not charged". Separate from TapToPayBridge so
+// the iOS protocol is unchanged. outcome is "not_charged" or "charged"
+// (devicepay.OutcomeNotCharged / OutcomeCharged); a JSON SetupResult comes back.
 type TapToPayResolver interface {
-	ResolveUnknown(idempotencyKey string) string
+	Resolve(idempotencyKey, outcome string) string
 }
 
 // SetTapToPayResolver registers the Android resolver with internal/devicepay;
@@ -705,12 +706,13 @@ func SetTapToPayResolver(r TapToPayResolver) {
 // A failure's error text is a stable code Swift maps to a capability or
 // decline reason: the cloud's own error code (e.g. not_onboarded,
 // invalid_request, provider_unavailable), else http_<status>, or one of
-// op_not_allowed, not_enrolled, offline, response_too_large,
-// request_too_large, insecure_endpoint, failed.
+// op_not_allowed (the shell may not refund), no_attempt (a session_create
+// that is not core's in-flight attempt), not_enrolled, offline,
+// response_too_large, request_too_large, insecure_endpoint, failed.
 func TapToPayCloud(provider, op, bodyJSON string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), paybroker.Timeout)
 	defer cancel()
-	out, err := paybroker.Call(ctx, provider, op, []byte(bodyJSON))
+	out, err := paybroker.Call(ctx, paybroker.CallerNative, provider, op, []byte(bodyJSON))
 	if err != nil {
 		return "", errors.New(tapToPayErrorCode(err))
 	}
@@ -737,6 +739,8 @@ func tapToPayErrorCode(err error) string {
 		return "request_too_large"
 	case errors.Is(err, paybroker.ErrInsecureEndpoint):
 		return "insecure_endpoint"
+	case errors.Is(err, paybroker.ErrNoAttempt):
+		return "no_attempt"
 	default:
 		return "failed"
 	}
