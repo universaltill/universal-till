@@ -4,7 +4,7 @@ Branch `fix/6551-android-nightly-prefetch` (draft PR universaltill/universal-til
 plus ut-docs branch `docs/6551-android-nightly-prefetch` (`architecture/packaging.md`).
 
 ## What shipped
-- `internal/androidupdate.Prefetcher` + `SetPrefetcher`/`RegisteredPrefetcher`
+- `internal/androidupdate.Prefetcher` + `Current`/`RegisteredPrefetcher`
   (RWMutex registry, same shape as `kiosk.SetBridge`); gobind mirror
   `mobile.UpdateBridge` / `SetUpdateBridge` (nil passes through as a nil
   interface; compile-time assertions keep the two method sets identical).
@@ -28,8 +28,10 @@ plus ut-docs branch `docs/6551-android-nightly-prefetch` (`architecture/packagin
   stubs, never registers the bridge.
 - Chip / Settings: `downloaded` and `busy` states, `Install now` label;
   three new `en.json` keys with `en.meta.json`; `web/help/en/updates.md`
-  updated; deadcode baseline gains `SetPrefetcher` (gobind-only caller, same
-  as `kiosk.SetBridge`).
+  updated. CI's deadcode-baseline growth guard (ut-docs#3406) refused the
+  first push's new baseline entry for a gobind-only `SetPrefetcher`. The
+  setter was replaced by an exported `atomic.Pointer` (`androidupdate.Current`)
+  that `mobile.SetUpdateBridge` stores into, so the baseline is unchanged.
 
 ## Review (independent, Opus 5.5; code authored by Sonnet)
 Verdict: **approve-with-fixes**. No blocker or major finding.

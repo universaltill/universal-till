@@ -6,19 +6,28 @@ type stubPrefetcher struct{ calls int }
 
 func (s *stubPrefetcher) PrefetchUpdate() error { s.calls++; return nil }
 
+// setPrefetcher stores p the way mobile.SetUpdateBridge does.
+func setPrefetcher(p Prefetcher) {
+	if p == nil {
+		Current.Store(nil)
+		return
+	}
+	Current.Store(&p)
+}
+
 // ut-docs#6551: no shell registered is the default and means "Activity not
 // in front / Play build / non-Android".
 func TestRegisteredPrefetcher_DefaultNil(t *testing.T) {
-	SetPrefetcher(nil)
+	setPrefetcher(nil)
 	if got := RegisteredPrefetcher(); got != nil {
 		t.Fatalf("RegisteredPrefetcher() = %#v, want nil", got)
 	}
 }
 
-func TestSetPrefetcher_SetAndClear(t *testing.T) {
-	t.Cleanup(func() { SetPrefetcher(nil) })
+func TestCurrent_SetAndClear(t *testing.T) {
+	t.Cleanup(func() { setPrefetcher(nil) })
 	stub := &stubPrefetcher{}
-	SetPrefetcher(stub)
+	setPrefetcher(stub)
 	got := RegisteredPrefetcher()
 	if got != Prefetcher(stub) {
 		t.Fatalf("RegisteredPrefetcher() = %#v, want the stub", got)
@@ -26,8 +35,8 @@ func TestSetPrefetcher_SetAndClear(t *testing.T) {
 	if err := got.PrefetchUpdate(); err != nil || stub.calls != 1 {
 		t.Fatalf("PrefetchUpdate via registry: err=%v calls=%d", err, stub.calls)
 	}
-	SetPrefetcher(nil)
+	setPrefetcher(nil)
 	if got := RegisteredPrefetcher(); got != nil {
-		t.Fatalf("after SetPrefetcher(nil): %#v, want nil", got)
+		t.Fatalf("after clearing Current: %#v, want nil", got)
 	}
 }

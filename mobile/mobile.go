@@ -617,7 +617,12 @@ type UpdateBridge interface {
 // flavours only; onResume) and clears it with nil (onPause). The nightly
 // scheduler keeps the day's slot unspent while none is registered.
 func SetUpdateBridge(b UpdateBridge) {
-	androidupdate.SetPrefetcher(b) // a nil UpdateBridge converts to a nil Prefetcher
+	if b == nil {
+		androidupdate.Current.Store(nil)
+		return
+	}
+	var p androidupdate.Prefetcher = b
+	androidupdate.Current.Store(&p)
 }
 
 // SetKioskPinned records the self-order pin state MainActivity now intends

@@ -1,6 +1,6 @@
 package androidupdate
 
-import "sync"
+import "sync/atomic"
 
 // Prefetcher asks the Android shell to download and verify the update APK
 // without launching the installer (ut-docs#6551). Called on a Go goroutine;
@@ -16,27 +16,19 @@ type Prefetcher interface {
 	PrefetchUpdate() error
 }
 
-var (
-	pmu        sync.RWMutex
-	prefetcher Prefetcher
-)
+// Current holds the shell's prefetch bridge; a nil pointer means none is
+// registered. mobile.SetUpdateBridge stores into it directly: it is a
+// variable rather than a setter func because the setter's only production
+// caller would sit in the gomobile-bind package `mobile`, which is not a
+// root of guard-deadcode-baseline.sh, and a feature PR may not grow that
+// baseline (guard-deadcode-baseline-growth.sh, ut-docs#3406).
+var Current atomic.Pointer[Prefetcher]
 
-// SetPrefetcher registers the shell's prefetch bridge; nil un-registers it.
-//
-// Listed on scripts/ci/deadcode-baseline.txt as a known false positive of
-// the whole-program guard: its only production caller, mobile.SetUpdateBridge,
-// lives in the gomobile-bind library package `mobile`, which is not a root of
-// guard-deadcode-baseline.sh (same as kiosk.SetBridge).
-func SetPrefetcher(p Prefetcher) {
-	pmu.Lock()
-	defer pmu.Unlock()
-	prefetcher = p
-}
-
-// RegisteredPrefetcher returns the registered bridge, nil when none. Call it
-// outside pmu; the returned bridge may be invoked freely.
+// RegisteredPrefetcher returns the registered bridge, nil when none. The
+// returned bridge may be invoked freely.
 func RegisteredPrefetcher() Prefetcher {
-	pmu.RLock()
-	defer pmu.RUnlock()
-	return prefetcher
+	if p := Current.Load(); p != nil {
+		return *p
+	}
+	return nil
 }

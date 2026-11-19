@@ -49,7 +49,6 @@ catimport/smart_products.go: unreachable func: suggestSKU
 catimport/smart_products.go: unreachable func: withAliasMapping
 catimport/smart_products.go: unreachable func: yesNo
 cmd/unitill-desktop/control.go: unreachable func: controlServer.LastInputAt
-internal/androidupdate/prefetch.go: unreachable func: SetPrefetcher
 internal/bluetooth/android_bridge.go: unreachable func: SetAndroidBridge
 internal/buildinfo/channel.go: unreachable func: OverrideChannelForTest
 internal/buildinfo/channel.go: unreachable func: RequireExplicitChannel
