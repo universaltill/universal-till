@@ -654,6 +654,8 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/designer/categories/{id}":            true,
 	"POST /api/designer/categories/{id}/active":     true,
 	"POST /api/inventory/receipt":                   true,
+	"POST /api/inventory/stock-take":                true,
+	"GET /ui/inventory/stock-take":                  true,
 	// Orders, kitchen display and routing (staff side, local).
 	"GET /api/orders/stream":               true,
 	"GET /kitchen-display/{station_id}":    true,
@@ -803,6 +805,8 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/save":                           true,
 	"POST /api/settings/staff-languages":                true,
 	"POST /api/settings/store-name":                     true,
+	"GET /name-shop":                                    true, // ut-docs#4391: allowed so an unnamed demo till could still reach the page (denied would 403 every gated admin page); same as POST /api/settings/store-name above
+	"POST /name-shop":                                   true,
 	"POST /api/settings/till-name":                      true,
 	"POST /api/settings/till-register":                  true,
 	"POST /api/settings/ui-scale":                       true,

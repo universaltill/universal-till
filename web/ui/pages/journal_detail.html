@@ -19,6 +19,7 @@
   </div>
 </div>
 
+{{ if .Sale.DisplayNo }}<p class="order-no-journal" data-testid="journal-order-no">{{ T "journal.col.order_no" }}: <span dir="ltr">{{ .Sale.DisplayNo }}</span></p>{{ end }}
 <div style="text-align:center; margin:.4rem 0">{{ barcodesvg .Sale.ReceiptNo }}</div>
 
 {{ if or .Original .Returns }}

@@ -1499,6 +1499,11 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			return saleID, nil
 		}
 		if errors.Is(err, errReceiptConflictRetry) {
+			// The rolled-back transaction took the counter bump with it, so
+			// re-seed the stored counter from the full scan (ut-docs#6663).
+			if rerr := repo.ReseedReceiptCounter(ctx); rerr != nil {
+				return "", rerr
+			}
 			continue
 		}
 		return "", err

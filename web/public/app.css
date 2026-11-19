@@ -5053,6 +5053,12 @@ body.login-screen {
    reuses .pairing-notice's look; its inline name + Link form wraps under
    the text on a narrow screen, and pair-start's progress shows below. */
 .join-notice { flex-wrap: wrap; }
+/* ut-docs#4391: "Name your shop" banner. Its long CTA link (German at 360px)
+   left the flex:1 / min-width:0 text ~0 wide, so it broke one letter per
+   line. Wrap the link + dismiss under the text and give the text a real
+   basis. */
+.shop-name-notice { flex-wrap: wrap; }
+.shop-name-notice .pairing-notice-text { flex: 1 1 12rem; overflow-wrap: break-word; }
 .join-notice-form { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; }
 .join-notice-form input[type="text"] { width: auto; min-width: 8rem; margin: 0; }
 .join-notice-label { margin: 0; font-weight: 600; color: inherit; }
@@ -7740,7 +7746,25 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   border-width: 2px; }
 .plugin-view-paging { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
   padding-block: .6rem; padding-inline: .6rem; }
-.plugin-view-paging-pos { font-variant-numeric: tabular-nums; }
+.plugin-view-paging-pos { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plugin-view-paging .btn-touch { min-inline-size: 46px; justify-content: center; }
+/* ut-docs#4114: a panel page is loading (htmx-request on the panel via
+   hx-indicator). The old page dims, both links stop taking taps (hx-sync
+   drops repeats anyway), and the tapped link shows a busy ring (#5291; the
+   link carries data-ut-busy from app.js, as hx-indicator moves htmx's own
+   .htmx-request class from the link to the panel). */
+.plugin-view.htmx-request .plugin-view-table tbody { opacity: .55; transition: opacity .15s; }
+.plugin-view.htmx-request .plugin-view-paging a { opacity: .6; pointer-events: none; cursor: progress; }
+.plugin-view-paging a[data-ut-busy]::after {
+  content: ""; display: inline-block; inline-size: .9em; block-size: .9em;
+  margin-inline-start: .5em; vertical-align: -.125em;
+  border: 2px solid currentColor; border-block-start-color: transparent; border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-view-paging a[data-ut-busy]::after { animation: none; }
+  .plugin-view.htmx-request .plugin-view-table tbody { transition: none; }
+}
 /* The chat component (ut-docs#4132, ADR-0121 amendment 2026-10-11). The
    transcript scrolls inside the card; column-reverse on the scroller keeps
    it pinned to the newest turn without script while the inner log keeps
@@ -7949,6 +7973,15 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .move-decline { margin: 0; }
 #move-approval-notice-mount:empty { display: none; }
 
+/* ut-docs#4391: the "Name your shop" page (name_shop.html). Narrow like
+   .move-approval so a 1280px till or a desktop doesn't stretch two short
+   fields across the screen; the fields stack (the global wrapped-label rule)
+   at full card width, so a 360px phone needs nothing extra. */
+.name-shop-card { max-inline-size: 40rem; }
+.name-shop-form { display: flex; flex-direction: column; align-items: stretch; gap: .9rem; }
+.name-shop-form > .field-error-msg { margin-block-start: -.6rem; }
+.name-shop-form > button { align-self: flex-start; }
+
 /* ut-docs#5410: Currency display select (Settings -> Currency). */
 .currency-display-select { min-block-size: 44px; }
 
@@ -8109,6 +8142,46 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
 
+/* ut-docs#5852: till stock-take on /inventory. Count mode swaps the stock
+   card's contents in place (no dialog, so the status bar stays reachable).
+   Logical properties only. */
+.stocktake-picker { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; margin-block-end: .8rem; }
+/* display:flex beats the UA [hidden] rule: without this the picker shows on load. */
+.stocktake-picker[hidden] { display: none; }
+.stocktake-picker label { display: flex; flex-direction: column; gap: .2rem; }
+.stocktake-picker .btn-link { background: none; border: 0; color: inherit; text-decoration: underline;
+  cursor: pointer; min-block-size: 44px; padding-inline: .6rem; font: inherit; }
+.stocktake-load-error, .stocktake-alert { color: var(--danger); border: 1px solid var(--danger);
+  border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .6rem; }
+.stocktake-result { border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .8rem; font-weight: 600; }
+.stocktake-hint { margin-block: 0 .5rem; }
+.stocktake-table .stocktake-num { text-align: end; white-space: nowrap; }
+.stocktake-table .stocktake-diff { unicode-bidi: isolate; direction: ltr; }
+.stocktake-input { inline-size: 7rem; min-block-size: 44px; text-align: end; }
+.stocktake-input[aria-invalid="true"] { outline: 2px solid var(--danger); }
+.stocktake-err { font-size: .85rem; color: var(--danger); }
+.stocktake-line-err td, .stocktake-row-bad td { color: var(--danger); }
+.stocktake-note { display: flex; flex-direction: column; gap: .2rem; margin-block-start: .8rem; }
+.stocktake-bar { position: sticky; inset-block-end: var(--stocktake-sb-h, 0px); background: var(--surface); border-block-start: 1px solid var(--border);
+  padding-block: .5rem; margin-block-start: .8rem; z-index: 5; }
+.stocktake-bar-main, .stocktake-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.stocktake-bar .btn { min-block-size: 44px; }
+.stocktake-bar-main[hidden], .stocktake-confirm[hidden] { display: none; }
+.stocktake-primary { margin-inline-start: auto; }
+.stocktake-secondary { margin-inline-start: auto; }
+.stocktake-secondary:not([hidden]) + .stocktake-primary { margin-inline-start: 0; }
+.stocktake-msg { flex: 1 1 10rem; }
+body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17rem); }
+@media (max-width: 480px) {
+  .stocktake-table .stocktake-sku { display: none; }
+  .stocktake-table th, .stocktake-table td { padding-inline: .3rem; }
+  .stocktake-table .stocktake-num { white-space: normal; }
+  .stocktake-table .catalog-name { overflow-wrap: anywhere; }
+  /* Four uppercase headers (DIFFERENCE, COUNTED) out-measure a 360px card:
+     let them wrap so the review table stays inside it. */
+  .stocktake-table th { letter-spacing: 0; overflow-wrap: anywhere; }
+  .stocktake-input { inline-size: 4.5rem; }
+}
 /* About screen (ut-docs#6402): a plain list of full-width touch links. */
 .about-links { list-style: none; margin: 1rem 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; max-inline-size: 28rem; }
 .about-links .btn { display: block; text-align: start; }
@@ -8117,3 +8190,17 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
 .about-addresses dt { font-weight: 600; margin-block-start: .5rem; }
 .about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
 .about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }
+
+/* Order numbers (ut-docs#6663): the number a person reads out or waits for.
+   Digits only, always left-to-right; the receipt number stays small. */
+.order-no-hero { display: flex; flex-direction: column; align-items: center; margin: .5rem 0; text-align: center; color: var(--text); }
+.order-no-hero .order-no-label { color: var(--muted); font-size: .85rem; }
+.order-no-hero .order-no-value { font-size: 2.5rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }
+@media print { .order-no-hero, .order-no-hero .order-no-label, .order-no-hero .order-no-value { background: #fff; color: #000; } }
+.receipt-no-secondary { font-size: 1rem; font-weight: 400; font-family: ui-monospace, monospace; }
+.order-no-board { font-size: 1.5rem; font-weight: 700; unicode-bidi: isolate; }
+[data-display-board] .order-no-board { font-size: 2rem; }
+.order-no-journal { font-size: .85rem; color: var(--muted); unicode-bidi: isolate; }
+.tracking-order-no { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.tracking-order-no .order-no-label { color: var(--muted); font-size: .85rem; }
+.tracking-order-no .order-no-value { font-size: 3rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }

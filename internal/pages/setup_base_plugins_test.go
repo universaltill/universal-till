@@ -1431,3 +1431,20 @@ func TestSettingsPendingLanguageChipDoesNotPromiseUnpublishedPack(t *testing.T) 
 		t.Error("reachable catalog with no FR pack: the pending chip must go away")
 	}
 }
+
+// ut-docs#6663: a standalone (no cloud) setup sets the first main till's
+// prefix too, so its receipts are 1-000000001... from the first sale.
+func TestSetupWizardLocalPathSetsTheFirstMainTillPrefix(t *testing.T) {
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin": {"2468"}, "pin_confirm": {"2468"}, "country": {"GB"}, "currency": {"GBP"},
+		"store_name": {"Corner Cafe"}, "till_name": {"Till 1"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _, _ := dp.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "1-" {
+		t.Fatalf("sync.receipt_prefix = %q, want 1-", got)
+	}
+}
