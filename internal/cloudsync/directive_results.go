@@ -32,7 +32,7 @@ import (
 //
 // Residual window, not closed here: a crash between the hook's commit and
 // Save below re-applies the directive once on re-delivery.
-func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB, d directive, hooks Hooks, fetchDeferred, catalogApplied *bool) {
+func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB, d directive, hooks Hooks, fetchDeferred *bool, applied *appliedKinds) {
 	repo := data.NewDirectiveResultsRepo(db)
 	stored, found, err := repo.Get(ctx, d.ID)
 	if err != nil {
@@ -41,7 +41,7 @@ func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB,
 		return
 	}
 	if found {
-		// Nothing changed on this till, so catalogApplied is not set again:
+		// Nothing changed on this till, so applied is not set again:
 		// the tick that applied it already did, and the snapshot push is
 		// hash-gated anyway.
 		postStoredDirectiveResult(ctx, cfg, repo, stored)
@@ -58,7 +58,10 @@ func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB,
 		return
 	}
 	if status == "applied" && catalogTypes[d.Type] {
-		*catalogApplied = true
+		applied.catalog = true
+	}
+	if status == "applied" && deviceReportTypes[d.Type] {
+		applied.deviceReport = true
 	}
 	// A failed apply is stored too (the cloud shows it failed and the owner
 	// saves again under a new directive id), except one a hook reports as

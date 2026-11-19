@@ -63,15 +63,50 @@ func Snapshot(db *sql.DB, dbPath string) (string, error) {
 	return dest, nil
 }
 
-// BackupInfo describes one snapshot for the settings UI.
+// backupClockSkew is how far past now a file's mtime may sit and still be
+// trusted (ordinary clock skew, a NAS share a few minutes ahead).
+const backupClockSkew = 5 * time.Minute
+
+// BackupInfo describes one snapshot for the settings UI. ModTime is the raw
+// file mtime; EffectiveTime is what ages and orders the file (ut-docs#5523):
+// zero when AgeKnown is false.
 type BackupInfo struct {
-	Name    string
-	Size    int64
-	ModTime time.Time
+	Name          string
+	Size          int64
+	ModTime       time.Time
+	EffectiveTime time.Time
+	AgeKnown      bool
 }
 
-// ListBackups returns snapshots newest-first.
+// effectiveTime is the time a backup file counts as made. An mtime no more
+// than backupClockSkew past now is trusted; a later one (the clock was ahead
+// when it was written or copied) falls back to the UTC stamp in the name if
+// that is not in the future either; otherwise the age is unknown.
+func effectiveTime(name string, mtime, now time.Time) (time.Time, bool) {
+	limit := now.Add(backupClockSkew)
+	if !mtime.After(limit) {
+		return mtime, true
+	}
+	stamp := strings.TrimSuffix(strings.TrimPrefix(name, backupPrefix), ".db")
+	if IsUploadedBackupName(name) {
+		stamp = stamp[:strings.LastIndex(stamp, "-file")]
+	}
+	if t, err := time.Parse(backupTimeLayout, stamp); err == nil && !t.After(limit) {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+// ListBackups returns snapshots newest-first by effective time (see
+// ListBackupsAt).
 func ListBackups(dbPath string) ([]BackupInfo, error) {
+	return ListBackupsAt(dbPath, time.Now())
+}
+
+// ListBackupsAt returns snapshots newest-first judged against now: files
+// with a known age first by EffectiveTime descending, then unknown-age files;
+// ties (and all unknown-age files) by Name descending so "newest" is stable.
+func ListBackupsAt(dbPath string, now time.Time) ([]BackupInfo, error) {
 	dir, err := BackupDir(dbPath)
 	if err != nil {
 		return nil, err
@@ -89,13 +124,15 @@ func ListBackups(dbPath string) ([]BackupInfo, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, BackupInfo{Name: e.Name(), Size: info.Size(), ModTime: info.ModTime()})
+		eff, known := effectiveTime(e.Name(), info.ModTime(), now)
+		out = append(out, BackupInfo{Name: e.Name(), Size: info.Size(), ModTime: info.ModTime(), EffectiveTime: eff, AgeKnown: known})
 	}
-	// Name breaks a tie: the name carries the UTC timestamp, and "newest"
-	// must not change between two calls when mtimes are equal.
 	sort.Slice(out, func(i, j int) bool {
-		if !out[i].ModTime.Equal(out[j].ModTime) {
-			return out[i].ModTime.After(out[j].ModTime)
+		if out[i].AgeKnown != out[j].AgeKnown {
+			return out[i].AgeKnown
+		}
+		if out[i].AgeKnown && !out[i].EffectiveTime.Equal(out[j].EffectiveTime) {
+			return out[i].EffectiveTime.After(out[j].EffectiveTime)
 		}
 		return out[i].Name > out[j].Name
 	})
@@ -103,13 +140,20 @@ func ListBackups(dbPath string) ([]BackupInfo, error) {
 }
 
 // NewestOwnBackup is the till's newest snapshot of its OWN data: the first
-// entry of list (newest-first) that is not a file a manager uploaded
-// (IsUploadedBackupName). An upload is renamed into place with mtime = now,
-// so it sorts first and must not take the "never delete the newest" rule
-// over from the real snapshot (ut-docs#3092). Returns "" for none.
+// known-age entry of list (newest-first) that is not a file a manager
+// uploaded (IsUploadedBackupName). An upload is renamed into place with
+// mtime = now, so it sorts first and must not take the "never delete the
+// newest" rule over from the real snapshot (ut-docs#3092). When only
+// unknown-age own files exist the first of them is returned, so the last
+// backup is still never deleted (ut-docs#5523). Returns "" for none.
 func NewestOwnBackup(list []BackupInfo) string {
 	for _, b := range list {
-		if !IsUploadedBackupName(b.Name) {
+		if b.AgeKnown && !IsUploadedBackupName(b.Name) {
+			return b.Name
+		}
+	}
+	for _, b := range list {
+		if !b.AgeKnown && !IsUploadedBackupName(b.Name) {
 			return b.Name
 		}
 	}
@@ -127,17 +171,39 @@ func ValidBackupName(name string) bool {
 		strings.HasPrefix(name, backupPrefix) && strings.HasSuffix(name, ".db")
 }
 
-// PruneBackups keeps the newest keep snapshots, removing the rest.
+// PruneBackups keeps at most keep snapshots (the first keep of the
+// newest-first list), removing the rest. The newest own snapshot
+// (NewestOwnBackup) is always kept, whatever its age or position: when it
+// would fall in the removed tail it takes the place of the last kept entry,
+// so uploaded files and unknown-age ordering never displace the till's own
+// last backup (ut-docs#5523).
 func PruneBackups(dbPath string, keep int) error {
 	if keep < 1 {
 		keep = 1
 	}
+	backupMu.Lock()
+	defer backupMu.Unlock()
 	list, err := ListBackups(dbPath)
 	if err != nil {
 		return err
 	}
-	dir, _ := BackupDir(dbPath)
-	for _, b := range list[min(keep, len(list)):] {
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return err
+	}
+	protect := NewestOwnBackup(list)
+	n := min(keep, len(list))
+	inHead := false
+	for _, b := range list[:n] {
+		inHead = inHead || b.Name == protect
+	}
+	if protect != "" && !inHead {
+		n-- // make room: the protected file replaces the last kept entry
+	}
+	for i, b := range list {
+		if b.Name == protect || i < n {
+			continue
+		}
 		_ = os.Remove(filepath.Join(dir, b.Name))
 	}
 	return nil
@@ -165,7 +231,7 @@ func PruneBackupsOlderThan(dbPath string, days int, now time.Time, keepNames ...
 	}
 	backupMu.Lock()
 	defer backupMu.Unlock()
-	list, err := ListBackups(dbPath)
+	list, err := ListBackupsAt(dbPath, now)
 	if err != nil {
 		return 0, err
 	}
@@ -180,7 +246,9 @@ func PruneBackupsOlderThan(dbPath string, days int, now time.Time, keepNames ...
 	}
 	removed := 0
 	for _, b := range list {
-		if protect[b.Name] || IsUploadedBackupName(b.Name) || now.Sub(b.ModTime) <= limit {
+		// Unknown age is retained (fails toward keeping); it ages out
+		// once real time passes its stamp.
+		if protect[b.Name] || IsUploadedBackupName(b.Name) || !b.AgeKnown || now.Sub(b.EffectiveTime) <= limit {
 			continue
 		}
 		if os.Remove(filepath.Join(dir, b.Name)) == nil {
