@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -42,6 +43,7 @@ type storeItem struct {
 	StatusState      string // requested|downloading|installing|failed ("" otherwise)
 	StatusMessageKey string // operator-visible failure reason (locale key)
 	Retryable        bool
+	ReportHref       string // marketplace "Report this listing" page for this listing (ut-docs#6400)
 }
 
 // trustTierOf maps a plugin to its visible trust badge: first-party
@@ -111,6 +113,7 @@ func storeListings(r *http.Request, d *common.Deps) ([]storeItem, error) {
 	}
 	statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
+	reportBase := strings.TrimSuffix(strings.TrimRight(enroll.Effective(d.Cfg).Marketplace.EndpointURL, "/"), "/api")
 	items := []storeItem{}
 	if err == nil && snapshot != nil {
 		// Browse shows the whole public catalog — an anonymous till sees
@@ -118,10 +121,36 @@ func storeListings(r *http.Request, d *common.Deps) ([]storeItem, error) {
 		// plugins self-serve; registered/paid need a claimed store), not by
 		// hiding listings here.
 		for _, p := range snapshot.Plugins {
-			items = append(items, storeItemFrom(d, p, webBase, downloads, statuses))
+			it := storeItemFrom(d, p, webBase, downloads, statuses)
+			it.ReportHref = storeReportHref(reportBase, it.ListingID)
+			items = append(items, it)
 		}
 	}
 	return items, err
+}
+
+// Marketplace publisher terms and content guidelines live on the website, in
+// English (the operative text), in the chrome-less in-app legal view
+// (/app/legal/, no Pricing or sign-up menu: ADR-0194 §3, like the About page),
+// so a Play or App Store till never lands on a purchase surface.
+// Microsoft Store policy 11.13, ut-docs#6400. The pages themselves are
+// published by ut-website (owner-gated, ut-docs#6400).
+const (
+	storeTermsHref      = "https://universaltill.com/en-gb/app/legal/marketplace-terms/"
+	storeGuidelinesHref = "https://universaltill.com/en-gb/app/legal/marketplace-content-guidelines/"
+	storeDefaultCloud   = "https://cloud.universaltill.com"
+)
+
+// storeReportHref is the marketplace's public report page for one listing,
+// opened in the browser: nothing is fetched while the till renders. base is
+// the marketplace web base (endpoint minus /api); empty falls back to the
+// public cloud host.
+func storeReportHref(base, listingID string) string {
+	base = strings.TrimRight(base, "/")
+	if base == "" {
+		base = storeDefaultCloud
+	}
+	return base + "/ui/en-gb/plugins/" + url.PathEscape(listingID) + "/report"
 }
 
 // storeItemFrom maps one catalog listing plus the till's local download and
@@ -198,6 +227,8 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			"ActiveCat":        storeActiveCategory(r.URL.Query().Get("type"), cats),
 			"EntitledFiltered": false,
 			"CatalogError":     err != nil,
+			"TermsHref":        storeTermsHref,
+			"GuidelinesHref":   storeGuidelinesHref,
 		})(w, r)
 	}
 }
@@ -229,8 +260,10 @@ func PluginStoreDetailHandler(d *common.Deps) http.HandlerFunc {
 					"Item":      it,
 					// ut-docs#4791: the first Download registers an
 					// unregistered till, so ask for the cloud terms there.
-					"TermsGate": termsGate,
-					"terms":     termsView(r.Context(), d, locale),
+					"TermsGate":      termsGate,
+					"TermsHref":      storeTermsHref,
+					"GuidelinesHref": storeGuidelinesHref,
+					"terms":          termsView(r.Context(), d, locale),
 				})(w, r)
 				return
 			}
@@ -309,7 +342,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/plugins/store/download", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			respond(w, http.StatusForbidden, "manager or admin required")
+			respond(w, http.StatusForbidden, "plugins.install.error.forbidden")
 			return
 		}
 		// ut-docs#460: the store page is fully reachable on a replica, so
@@ -323,7 +356,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		listingID := listingFrom(r)
 		if listingID == "" {
-			respond(w, http.StatusBadRequest, "listing_id required")
+			respond(w, http.StatusBadRequest, "plugins.install.error.invalid_request")
 			return
 		}
 		// ut-docs#4791: the first Download on an unregistered till registers
@@ -339,30 +372,42 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusPreconditionRequired, "settings.enrol.terms_required")
 			return
 		}
+		// ADR-0194: a code listing is never downloaded on the App Store build.
+		listingType, codeErr := refuseCodeInstall(d, listingID)
+		if codeErr != nil {
+			respond(w, http.StatusForbidden, plugins.CodeInstallRefusedMsgID)
+			return
+		}
 		// Store registration is lazy — a download is the first interaction
 		// that needs a store identity, so enrol before building the request.
 		checkinAfterRegistration(d, enroll.EnsureRegistered(r.Context(), d.Cfg, d.Settings)) // ADR-0148 §2
 		installer, effCfg, err := storeInstaller(d)
 		if err != nil {
-			respond(w, http.StatusInternalServerError, "marketplace not configured")
+			respond(w, http.StatusInternalServerError, "plugins.install.error.configuration")
 			return
 		}
 		sd, err := installer.DownloadToStore(r.Context(), plugins.MarketplaceInstallRequest{
-			ListingID:  listingID,
-			MerchantID: effCfg.Marketplace.ClientID,
-			StoreID:    effCfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+			ListingID:     listingID,
+			CanonicalType: listingType,
+			MerchantID:    effCfg.Marketplace.ClientID,
+			StoreID:       effCfg.Marketplace.StoreID,
+			DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
-			// ut-docs#673/#703/#704/#3541: marketplace codes (not entitled,
-			// unknown listing, claim your store, till not paired / removed)
-			// get the specific, actionable reason instead of a generic
-			// gateway error; the code -> key/status table lives in plugins.
-			if f, ok := plugins.MarketplaceCodeFailure(err, storeHasOwner(r.Context(), d.Settings)); ok {
-				respond(w, f.Status, f.MessageKey)
-				return
+			// ut-docs#673/#703/#704/#3541/#6548: one classification path —
+			// marketplace codes keep their key+status, a transport failure
+			// is "unreachable", anything else a translated key. The raw
+			// error is logged, never sent to the browser.
+			logging.L().Warnf("[PluginStore] download %s: %v", listingID, err)
+			f := plugins.ClassifyInstallError(err, storeHasOwner(r.Context(), d.Settings))
+			if f.MessageKey == "plugins.install.error.retryable" {
+				f.MessageKey = "plugins.install.error.download_failed"
 			}
-			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
+			status := f.Status
+			if status == 0 {
+				status = http.StatusBadGateway
+			}
+			respond(w, status, f.MessageKey)
 			return
 		}
 		respond(w, http.StatusOK, fmt.Sprintf("downloaded v%s", sd.Version))
@@ -370,7 +415,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/plugins/store/install", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			respond(w, http.StatusForbidden, "manager or admin required")
+			respond(w, http.StatusForbidden, "plugins.install.error.forbidden")
 			return
 		}
 		// ut-docs#460: same replica guard as store/download above.
@@ -380,19 +425,26 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		listingID := listingFrom(r)
 		if listingID == "" {
-			respond(w, http.StatusBadRequest, "listing_id required")
+			respond(w, http.StatusBadRequest, "plugins.install.error.invalid_request")
 			return
 		}
 		// The signing key is fetched lazily (ADR-0148 audit item 3).
 		enroll.EnsureSigningKey(r.Context(), d.Cfg, d.Settings)
 		installer, _, err := storeInstaller(d)
 		if err != nil {
-			respond(w, http.StatusInternalServerError, "marketplace not configured")
+			respond(w, http.StatusInternalServerError, "plugins.install.error.configuration")
 			return
 		}
 		result, err := installer.InstallFromStore(r.Context(), listingID, "")
 		if err != nil {
-			respond(w, http.StatusBadRequest, fmt.Sprintf("install failed: %v", err))
+			logging.L().Warnf("[PluginStore] install %s: %v", listingID, err)
+			f := plugins.ClassifyInstallError(err, storeHasOwner(r.Context(), d.Settings))
+			recordStoreInstallFailure(r.Context(), d, listingID, f)
+			status := f.Status
+			if status == 0 {
+				status = http.StatusBadRequest
+			}
+			respond(w, status, f.MessageKey)
 			return
 		}
 		_ = plugins.NewInstallStatusStore(d.Db).Save(r.Context(), plugins.InstallStatusRecord{
@@ -414,17 +466,17 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/plugins/store/delete-download", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
-			respond(w, http.StatusForbidden, "manager or admin required")
+			respond(w, http.StatusForbidden, "plugins.install.error.forbidden")
 			return
 		}
 		listingID := listingFrom(r)
 		if listingID == "" {
-			respond(w, http.StatusBadRequest, "listing_id required")
+			respond(w, http.StatusBadRequest, "plugins.install.error.invalid_request")
 			return
 		}
 		installer, _, err := storeInstaller(d)
 		if err != nil {
-			respond(w, http.StatusInternalServerError, "marketplace not configured")
+			respond(w, http.StatusInternalServerError, "plugins.install.error.configuration")
 			return
 		}
 		if err := installer.DeleteStoreDownload(listingID); err != nil {
@@ -433,6 +485,34 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		respond(w, http.StatusOK, "download deleted")
 	})
+}
+
+// recordStoreInstallFailure saves a failed install-status record for the
+// listing so the store tile and heartbeat show it (ut-docs#6548), unless the
+// listing is recorded active and that plugin is still installed — a failed
+// reinstall must not mark a working plugin failed. A later successful install
+// overwrites the record with active.
+func recordStoreInstallFailure(ctx context.Context, d *common.Deps, listingID string, f plugins.InstallFailure) {
+	store := plugins.NewInstallStatusStore(d.Db)
+	rec, found, err := store.Get(ctx, listingID)
+	if err != nil {
+		logging.L().Warnf("[PluginStore] read install status %s: %v", listingID, err)
+	}
+	if found && rec.State == plugins.InstallStateActive && rec.PluginID != "" {
+		if _, ok := d.InstalledPlugin(rec.PluginID); ok {
+			return
+		}
+	}
+	if err := store.Save(ctx, plugins.InstallStatusRecord{
+		ListingID:  listingID,
+		PluginID:   rec.PluginID,
+		PluginName: rec.PluginName,
+		State:      plugins.InstallStateFailed,
+		MessageKey: f.MessageKey,
+		Retryable:  f.Retryable,
+	}); err != nil {
+		logging.L().Warnf("[PluginStore] save install status %s: %v", listingID, err)
+	}
 }
 
 // storeDetailPattern serves a listing's page at /plugins/store/{listing_id}

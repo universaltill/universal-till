@@ -15,22 +15,22 @@ test.beforeEach(async ({ page }) => {
 // translations/profile/LOCK) only renders with a real session (see
 // playwright.config.ts's AUTH_ONLY_SPECS note), and 🔒 was one of the two
 // icons the product owner reported small on the tablet three times over.
-// With every rail icon now one inline SVG set, the full 11-icon rail must
+// With every rail icon now one inline SVG set, the full 13-icon rail must
 // render at one identical box size — lock included, measured here.
 test.describe('nav rail SVG icons: full manager rail incl. lock (ut-docs#1423)', () => {
-  test('all 12 rail icons are SVG and share one rendered box size', async ({ page }) => {
+  test('all 13 rail icons are SVG and share one rendered box size', async ({ page }) => {
     const assertClean = watchConsole(page);
     await ensureOperator(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/settings');
-    await expect(page.locator('.session-admin-link')).toHaveCount(3);
+    await expect(page.locator('.session-admin-link')).toHaveCount(4);
     await expect(page.locator('.session-lock svg[data-icon="lock"]')).toBeVisible();
     await expect(page.locator('#bugreport-toggle svg[data-icon="bug"]')).toBeVisible();
 
     const svgs = page.locator('.nav .nav-toggle-ico svg[data-icon]');
     const n = await svgs.count();
     // ut-docs#3352 / ADR-0137: + the shell Back (arrow-left) under the logo.
-    expect(n, 'back/till/menu/inventory/orders/help/bug/users/tag/globe/user/lock').toBe(12);
+    expect(n, 'back/till/menu/inventory/orders/help/bug/users/tag/globe/contrast(my display)/user/lock').toBe(13);
 
     const boxes: { icon: string; w: number; h: number }[] = [];
     for (let i = 0; i < n; i++) {

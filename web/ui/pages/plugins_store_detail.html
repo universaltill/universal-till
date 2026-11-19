@@ -81,8 +81,12 @@
   {{ if not .Installed }}
   <p class="muted" style="font-size:.85rem; margin:.6rem 0 0">🔒 {{ T "plugins.store.manager_approval_notice" }}</p>
   {{ end }}
+  {{/* ut-docs#6400: report a listing (opens the marketplace page in the browser). */}}
+  <p style="margin:.6rem 0 0"><a href="{{ .ReportHref }}" target="_blank" rel="noopener" hx-boost="false" data-testid="store-report-link" style="min-height:44px; display:inline-flex; align-items:center">{{ T "plugins.store.report_listing" }}</a></p>
 </div>
 {{ end }}
+
+{{ template "store_marketplace_links" . }}
 
 {{ template "store_logo_js" }}
 <script>
@@ -107,9 +111,42 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     'plugins.install.error.till_moved': '{{ T "plugins.install.error.till_moved" }}',
     'plugins.install.error.register_new': '{{ T "plugins.install.error.register_new" }}',
     'plugins.install.error.service_unavailable': '{{ T "plugins.install.error.service_unavailable" }}',
+    'plugins.install.error.unreachable': '{{ T "plugins.install.error.unreachable" }}',
+    'plugins.install.error.download_failed': '{{ T "plugins.install.error.download_failed" }}',
+    'plugins.install.error.retryable': '{{ T "plugins.install.error.retryable" }}',
+    'plugins.install.error.configuration': '{{ T "plugins.install.error.configuration" }}',
+    'plugins.install.error.incompatible': '{{ T "plugins.install.error.incompatible" }}',
+    'plugins.install.error.invalid_package': '{{ T "plugins.install.error.invalid_package" }}',
+    'plugins.install.error.revoked': '{{ T "plugins.install.error.revoked" }}',
+    'plugins.install.error.payment_conflict': '{{ T "plugins.install.error.payment_conflict" }}',
+    'plugins.install.error.page_conflict': '{{ T "plugins.install.error.page_conflict" }}',
+    'plugins.install.error.page_route_conflict': '{{ T "plugins.install.error.page_route_conflict" }}',
+    'plugins.install.error.forbidden': '{{ T "plugins.install.error.forbidden" }}',
+    'plugins.install.error.invalid_request': '{{ T "plugins.install.error.invalid_request" }}',
     'settings.enrol.terms_required': '{{ T "settings.enrol.terms_required" }}',
     'settings.error.save_failed': '{{ T "settings.error.save_failed" }}'
   };
+  // The install request itself, reached only past the terms check and, for an
+  // unverified publisher, an explicit Confirm on the trust question.
+  function send(action, listing, card, termsBox) {
+    card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    msg.textContent = '⏳ ' + action + '…';
+
+    var body = { listing_id: listing };
+    if (action === 'download' && termsBox && termsBox.checked) body.accept_terms = 'on';
+    fetch('/api/plugins/store/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString()
+    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
+      if (res.ok) { UT.reload('plugin-store:' + action); return; }
+      msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
+      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    }); }).catch(function (e) {
+      msg.textContent = '✗ ' + e;
+      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    });
+  }
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('[data-store-action]');
     if (!btn) return;
@@ -129,26 +166,21 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     if ((action === 'download' || action === 'install') && card &&
         card.getAttribute('data-tier') === 'unverified') {
       var vendor = card.getAttribute('data-vendor') || '?';
-      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', vendor);
-      if (!window.confirm(q)) return;
+      // Function replacer: a vendor named "A$&B" must render literally.
+      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', function () { return vendor; });
+      var ask = (window.UT && typeof window.UT.confirm === 'function')
+        ? window.UT.confirm(q, { opener: btn })
+        : Promise.resolve(window.confirm(q)); // native-confirm:allow till-confirm.js not loaded: consent still asked, fail-closed
+      // ADR-0006 trust consent, asked in the till's own dialog (ut-docs#6116):
+      // only an explicit Confirm installs. Cancel, Escape, a swap, Lock or a
+      // pending question resolve false: no request, buttons stay enabled.
+      ask.then(function (ok) {
+        if (ok !== true || !btn.isConnected || !card.isConnected) return;
+        send(action, listing, card, termsBox);
+      });
+      return;
     }
-    card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-    msg.textContent = '⏳ ' + action + '…';
-
-    var body = { listing_id: listing };
-    if (action === 'download' && termsBox && termsBox.checked) body.accept_terms = 'on';
-    fetch('/api/plugins/store/' + action, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(body).toString()
-    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
-      if (res.ok) { UT.reload('plugin-store:' + action); return; }
-      msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
-      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    }); }).catch(function (e) {
-      msg.textContent = '✗ ' + e;
-      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    });
+    send(action, listing, card, termsBox);
   });
 })();
 </script>

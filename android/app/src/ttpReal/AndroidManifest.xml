@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- #3048: overlay merged ONLY for arm64 built with -PtapToPay=true (see build.gradle.kts). Nothing here ships otherwise. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- SPIKE (#3048): the SDK AARs declare minSdk 26; this app's is 24. Safe ONLY because every SDK touch is
+         behind SDK_INT >= 33 (TillApplication, TapToPayPlatform.create). -->
+    <uses-sdk tools:overrideLibrary="com.stripe.cots,com.stripe.stripeterminal,com.stripe.stripeterminal.internal.common,com.stripe.stripeterminal.external" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <!-- The SDK manifests also add READ_PHONE_STATE (implies telephony) and Bluetooth/coarse location:
+         keep every implied feature optional so Play does not derive required="true" from them. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- Stripe needs location at runtime on every API; the main manifest caps it at API 30 for old Bluetooth scans. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="replace" />
+    <application android:name=".TillApplication" />
+</manifest>

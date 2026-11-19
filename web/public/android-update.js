@@ -32,6 +32,16 @@
 // is a see-through dialog activity, so the WebView behind it never goes
 // hidden and `visibilitychange` alone left the button disabled for ever.
 //
+// ut-docs#6551: two more shell states. `needs_permission` = Android has not
+// allowed this app to install apps (the shell checked canRequestPackageInstalls
+// before downloading); error "still_denied" = the manager came back from
+// Android's settings with it still off. `permission_granted` = it is on now;
+// the operator taps install again (never continued silently). The page asks
+// the shell to open the system screen with
+// AndroidKiosk.openInstallPermissionSettings() (no argument: the shell owns
+// which screen and which package). The state is kept in sessionStorage so
+// the Settings page, reached by the status chip, can show the guidance.
+//
 // Deferred shell-head script (httpx.HeadAssets): loaded once per document,
 // survives boosted navigations; a no-op on any till without the bridge.
 (function () {
@@ -49,9 +59,21 @@
     window.utAndroidUpdate({ state: 'closed', percent: null, error: null });
   }
 
+  var PERM_KEY = 'utAndroidNeedsPermission';
+  function rememberPermission(state) {
+    try {
+      if (state.state === 'needs_permission') {
+        sessionStorage.setItem(PERM_KEY, state.error === 'still_denied' ? 'denied' : '1');
+      } else {
+        sessionStorage.removeItem(PERM_KEY);
+      }
+    } catch (e) { /* storage blocked: the live event still works */ }
+  }
+
   window.utAndroidUpdate = function (state) {
     if (!state || typeof state !== 'object') return;
     last = state;
+    rememberPermission(state);
     lastAt = Date.now();
     clearTimeout(graceTimer);
     if (state.state === 'installing') {
@@ -106,6 +128,8 @@
   function text(el, s) {
     if (!el || !s) return '';
     var attr = function (k) { return el.getAttribute('data-' + k) || ''; };
+    if (s.state === 'permission_granted') return attr('allowgranted');
+    if (s.state === 'needs_permission') return s.error === 'still_denied' ? attr('allowdenied') : '';
     if (s.state === 'failed') return attr('retry');
     if (s.state === 'closed') return attr('again') || attr('retry');
     if (s.state === 'ready' || s.state === 'installing') return attr('installing');
@@ -115,8 +139,32 @@
     return attr('downloading');
   }
 
+  // Opens Android's "install unknown apps" screen for this app, via the shell.
+  function openPermissionSettings() {
+    if (window.AndroidKiosk && window.AndroidKiosk.openInstallPermissionSettings) {
+      window.AndroidKiosk.openInstallPermissionSettings();
+      return true;
+    }
+    return false;
+  }
+
   window.utAndroidUpdater = {
     install: install,
+    openPermissionSettings: openPermissionSettings,
+    clearPermission: function () {
+      try { sessionStorage.removeItem(PERM_KEY); } catch (e) { /* ignore */ }
+    },
+    // The remembered needs_permission state, re-checked against the shell:
+    // permission granted outside the app (Android settings, adb) clears it.
+    pendingPermission: function () {
+      var v = null;
+      try { v = sessionStorage.getItem(PERM_KEY); } catch (e) { return null; }
+      if (v && window.AndroidKiosk && window.AndroidKiosk.canInstallPackages && window.AndroidKiosk.canInstallPackages()) {
+        try { sessionStorage.removeItem(PERM_KEY); } catch (e2) { /* ignore */ }
+        return null;
+      }
+      return v;
+    },
     text: text,
     busy: busy,
     state: function () { return last; }
@@ -138,6 +186,7 @@
       return;
     }
     b.disabled = true;
+    if (!b.hasAttribute('data-orig-label')) { b.setAttribute('data-orig-label', b.textContent); }
     b.textContent = b.getAttribute('data-downloading') || '';
     install('').then(function (outcome) {
       if (outcome === 'started') return; // progress arrives via the event below
@@ -162,6 +211,22 @@
   document.addEventListener('ut:android-update', function (e) {
     var s = e.detail;
     var buttons = document.querySelectorAll('[data-android-update-install]');
+    if (s.state === 'needs_permission' || s.state === 'permission_granted') {
+      // The guidance lives in Settings' #android-update form: the check
+      // result's button re-enables and gets its own label back (the click
+      // had set "Downloading update...").
+      for (var j = 0; j < buttons.length; j++) {
+        buttons[j].disabled = false;
+        if (buttons[j].hasAttribute('data-orig-label')) { buttons[j].textContent = buttons[j].getAttribute('data-orig-label'); }
+      }
+      // Settings rendered before the check found the update: no form, so no
+      // panel. Reload on the section so it renders and shows the guidance.
+      if (s.state === 'needs_permission' && window.location.pathname === '/settings' && !document.getElementById('android-update-form')) {
+        window.location.hash = 'android-update';
+        window.location.reload();
+      }
+      return;
+    }
     for (var i = 0; i < buttons.length; i++) {
       buttons[i].textContent = text(buttons[i], s);
       // Failed or closed: tap to try again. Otherwise it stays disabled
