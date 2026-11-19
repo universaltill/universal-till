@@ -35,6 +35,11 @@ import (
 //     under the same rules (clearedBasketTillKeyExpr); they are never part
 //     of net sales.
 
+// CloudStaffBreakdownKey is the shop-wide setting (ADR-0111 §4, ut-docs#2557)
+// that adds the per-staff-ID by_cashier breakdown to the sales aggregates a
+// till uploads. Default off: only the exact value "true" enables it.
+const CloudStaffBreakdownKey = "reports.cloud_staff_breakdown"
+
 // tillKeyExpr resolves a sale's rollup till key; its one '?' is selfTill.
 const tillKeyExpr = `COALESCE(NULLIF(s.till_id, ''), NULLIF(s.register_id, ''), ?)`
 
@@ -55,10 +60,11 @@ type SalesAggregateHour struct {
 // SalesAggregatePayment is one payment method's net takings for the day,
 // mirroring EODMethod (In − Out: amount − change_given, sales minus
 // returns — so it INCLUDES tips, exactly like EODMethod.In) plus the
-// method's tips (EODTip). ExpectedCash is the cash method's takings net of
+// method's tips (EODTip). ExpectedCash is a cash-type method's (payment_methods.type
+// = 'cash', ut-docs#5804) takings net of
 // change and refunds, MINUS cash tips — the Z-report's CashSales, not
 // expected drawer cash (no float, no adjustments, no tips); the wire name
-// expected_cash_minor is a shipped contract. Zero for any other method.
+// expected_cash_minor is a shipped contract. Zero for any non-cash method.
 type SalesAggregatePayment struct {
 	Method       string
 	Amount       money.Money
@@ -257,6 +263,10 @@ GROUP BY h ORDER BY h`, args...)
 		return agg, err
 	}
 
+	cash, err := r.cashMethodIDs(ctx)
+	if err != nil {
+		return agg, fmt.Errorf("sales aggregate cash methods: %w", err)
+	}
 	// Payment methods: EODMethod's In − Out and EODTip's tip sum, one pass.
 	rows, err = r.db.QueryContext(ctx, `
 SELECT p.method_id,
@@ -278,7 +288,7 @@ GROUP BY p.method_id ORDER BY p.method_id`, args...)
 			return agg, fmt.Errorf("scan sales aggregate payment: %w", err)
 		}
 		p.Amount, p.Tips = money.FromMinor(amount), money.FromMinor(tips)
-		if p.Method == "cash" {
+		if cash[p.Method] {
 			// The Z-report's drawer figure (CashReconciliation.CashSales,
 			// ut-docs#1046): cash tips held out — they travel in Tips.
 			// Opening float and pay-ins/outs are shift data, not included.

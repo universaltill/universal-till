@@ -302,6 +302,16 @@
       if (ctx.event && ctx.event.type === 'click') preventDefault(ctx);
     },
 
+    // Close the <details> this control sits in and hand focus back to its
+    // summary (Online orders: the Ship and Cancel panels, ut-docs#4768).
+    'close-details': function (ctx) {
+      var d = ctx.el.closest('details');
+      if (!d) return;
+      d.open = false;
+      var s = d.querySelector('summary');
+      if (s && s.focus) s.focus();
+    },
+
     // ---- elements ----
     'focus': function (ctx, id) { var el = byId(id); if (el) el.focus(); },
     // Back to the scan field once the tap's own focus has settled.
@@ -593,6 +603,56 @@
   document.addEventListener('click', function (ev) {
     dispatch(ev.target, 'data-action', ev, null);
   }, true);
+
+  // ut-docs#5619 / #6550: Settings > Backups "Save to Downloads" in the Android
+  // app. The till process cannot write the shared Downloads folder (scoped
+  // storage; it may be a USB drive), so the button opens the system save picker
+  // through the app's bridge (window.AndroidKiosk.saveBackupCopy) instead of the
+  // server-side copy. This lives HERE, not in a settings.html script: this file
+  // is loaded once per document outside #ut-page, so the shell's
+  // dropPageListeners() (which removes every document listener a page script
+  // adds on each boosted swap) can never remove it. The old inline script
+  // guarded on window.utBackupSaveResult, which outlived its listener, so from
+  // the second visit to Settings the button was a plain htmx POST. No
+  // window-flag guard here: this registers exactly once per document load.
+  // Messages are read at call time from data-picker-* on #backup-dl-msg (the
+  // current page locale; this file carries no user-facing literals).
+  function backupSay(key, ok) {
+    var el = byId('backup-dl-msg');
+    if (!el) return;
+    el.textContent = (ok ? '\u2713 ' : '\u2717 ') + (el.getAttribute('data-picker-' + key.replace('_', '-')) || el.getAttribute('data-picker-failed') || '');
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    var b = t && t.closest ? t.closest('[data-backup-save]') : null;
+    if (!b) return;
+    // Resolved at click time, never cached at load; truthiness, not
+    // typeof === 'function' (some WebViews report bridge methods as 'object').
+    var K = window.AndroidKiosk;
+    if (K && K.saveBackupCopy) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      try { K.saveBackupCopy(b.getAttribute('data-backup-save')); } catch (e) { backupSay('failed', false); }
+      return;
+    }
+    // Rendered for the Android app but the bridge is missing (old app, bridge
+    // not injected): the server could only answer "use the picker", a dead end.
+    if (b.hasAttribute('data-backup-native')) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      backupSay('unavailable', false);
+    }
+    // Anywhere else the button's own hx-post does the server-side copy.
+  }, true);
+  // Called by the Android app (MainActivity.kt reportBackupSave) by this exact name.
+  window.utBackupSaveResult = function (code, name) {
+    var known = { saved: 1, cancelled: 1, failed: 1, no_space: 1 };
+    backupSay(known[code] ? code : 'failed', code === 'saved');
+    // The copy happened even if the operator has left Settings meanwhile.
+    if (code === 'saved' && window.htmx) {
+      window.htmx.ajax('POST', '/api/backup/copied/' + encodeURIComponent(name), { swap: 'none' });
+    }
+  };
 
   // ---- DOM form/dialog events ----------------------------------------------
   [['input', 'data-input'], ['change', 'data-change'],

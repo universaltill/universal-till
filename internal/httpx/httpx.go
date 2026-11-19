@@ -73,6 +73,12 @@ var UpdateAvailable = func() bool { return updates.Current().Available }
 // unchanged.
 var PlanPurchaseAllowed = func() bool { return true }
 
+// AccountLinkOutAllowed is the seam behind the accountlinkoutallowed template
+// func (ut-docs#6401). One definition of the rule (platform AND channel, incl.
+// the iOS rule) lives in internal/pages and is set at init, like
+// PlanPurchaseAllowed above.
+var AccountLinkOutAllowed = func() bool { return true }
+
 var baseFuncs = template.FuncMap{
 	// maxStoreNameRunes is the shop-name input cap (ut-docs#5774).
 	"maxStoreNameRunes": func() int { return config.MaxStoreNameRunes },
@@ -94,8 +100,17 @@ var baseFuncs = template.FuncMap{
 	"bpPercent":       func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 	"appversion":      func() string { return buildinfo.Version },
 	"updateavailable": func() bool { return UpdateAvailable() },
-	"latestversion":   func() string { return updates.Current().Latest },
-	"canselfupdate":   func() bool { return selfupdate.Supported() },
+	// inappupdateallowed is false on the Google Play and App Store channels
+	// (ADR-0194 §2.3, ut-docs#6388): the store updates the app, so no update
+	// card, check button or install control is rendered.
+	"inappupdateallowed": func() bool { return buildinfo.CurrentChannel().InAppUpdateAllowed() },
+	// accountlinkoutallowed is false on those channels too: the claim code is
+	// text only, never a link or QR (ut-docs#6401).
+	"accountlinkoutallowed": func() bool { return AccountLinkOutAllowed() },
+	// storechannel is the install channel name (build constant, ADR-0194).
+	"storechannel":  func() string { return string(buildinfo.CurrentChannel()) },
+	"latestversion": func() string { return updates.Current().Latest },
+	"canselfupdate": func() bool { return selfupdate.Supported() },
 	// autoupdatestuck: auto-update is on and an update is waiting, but this
 	// linux install can't apply it itself (ut-docs#2733) — the chip then says
 	// so and links to what to do instead of the generic unavailable_here.
@@ -107,6 +122,11 @@ var baseFuncs = template.FuncMap{
 	// base.html, and base.html gates the chip on `allowed "settings"` so a
 	// cashier never sees it — a manager on a self-order till does.
 	"releasenoticeversion": releasenotes.NoticeVersion,
+	// registrationnoticepending: a set-up till has not shown the "what this
+	// till tells us" notice yet (ADR-0200, ut-docs#6559): the status bar
+	// offers a link to Settings, Cloud record, where it is shown. Cleared the
+	// moment the notice is shown.
+	"registrationnoticepending": enroll.NoticePending,
 	// updatedownloadlink: whether the status-bar chip's fallback (when
 	// canselfupdate is false) may show an actionable website link — false on
 	// a unix kiosk, where that link is a dead end (ut-docs#147/#159). Mirrors
@@ -781,7 +801,7 @@ func argPairs(pairs []any) map[string]any {
 // `?err=` text. Reuses the existing shared `common.error.server` key rather
 // than minting a new one — same reasoning as ut-docs#1663/#1620's own
 // error-message migrations: it avoids new-key churn across all four locales
-// plus the external ut-plugin-language-{de,es} packs, and no touched page's
+// plus the language bundles (com.universaltill.language-<code>, ADR-0160), and no touched page's
 // own namespace has a better-fitting existing "something went wrong" key.
 const genericErrKey = "common.error.server"
 
@@ -810,6 +830,12 @@ func QueryErrKey(r *http.Request) string {
 // hazard — same fix, different query parameter and banner styling.
 func QueryMsgKey(r *http.Request) string {
 	return queryBannerKey(r, "msg")
+}
+
+// QueryWarnKey is QueryMsgKey's error-level counterpart (`?warn=`): same
+// known-key-only validation, rendered as a persistent alert (ut-docs#6602).
+func QueryWarnKey(r *http.Request) string {
+	return queryBannerKey(r, "warn")
 }
 
 // queryBannerKey backs both QueryErrKey and QueryMsgKey: reads the named
@@ -1507,9 +1533,13 @@ var renderFiles = []string{
 	// TSE block) by file name.
 	"ui/partials/subscription_block.html",
 	"ui/partials/subscription_paused_banner.html",
-	// ut-docs#4720: the cloud-terms accept step under Register now and the
-	// auto-register toggle (the setup wizard, rendered standalone, inlines it).
+	// ut-docs#4720: the cloud-terms accept step (the registered card's
+	// Accept terms, and the plugin store's Download).
 	"ui/partials/enrol_terms.html",
+	// ADR-0172 §5 (ut-docs#6287): the automatic tax plugin install's status
+	// chip is included by import.html (the setup landing) and settings.html
+	// and polled standalone by GET /ui/tax-autoinstall-chip.
+	"ui/partials/tax_autoinstall_chip.html",
 	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
 	// response AND settings.html's own page render (when a restore is
 	// already staged from an earlier visit) both need this exact markup,

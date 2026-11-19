@@ -240,7 +240,8 @@ PYEOF
 expect_fail_with "a manifest with no shots key" "never captured"
 restore_shots
 
-# (f) an extra shot in a topic that declares no routes.
+# (f) an extra shot in a topic that declares no routes is allowed (ut-docs#337):
+# the recipe carries its own route. Uncaptured it still fails; captured it passes.
 cat >web/help/en/zz-noroute.md <<'MDEOF'
 ---
 id: zz-noroute
@@ -251,7 +252,18 @@ title: No route
 
 ![x](img/zz-noroute-a.png)
 MDEOF
-expect_fail_with "an extra shot in a route-less topic" "need a routed topic"
+expect_fail_with "an uncaptured extra shot in a route-less topic" "no screenshot|never captured"
+cp web/help/img/en/sell.png web/help/img/en/zz-noroute-a.png
+python3 - <<'PYEOF'
+import json
+p = "web/help/img/manifest.json"
+m = json.load(open(p))
+m["shots"]["zz-noroute"] = ["zz-noroute-a"]
+json.dump(m, open(p, "w"), indent=2)
+PYEOF
+expect_pass "a captured extra shot in a route-less topic"
+rm -f web/help/img/en/zz-noroute-a.png
+restore_shots
 rm -f web/help/en/zz-noroute.md
 expect_pass "the real tree again after the extra-shot cases"
 

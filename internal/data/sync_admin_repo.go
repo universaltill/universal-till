@@ -409,7 +409,8 @@ var nonAdminTables = map[string]string{
 	// not a numbered migration file itself) — which migrations have applied
 	// to THIS till's database. Syncing it would be circular in the same way
 	// as sync_journal_quarantine/schema_lineage below.
-	"schema_migrations": "this till's own applied-migrations record — migration-runner-internal, not app data",
+	"till_change_events": "this till's own outbox of change events to the cloud, never synced (ADR-0200)",
+	"schema_migrations":  "this till's own applied-migrations record — migration-runner-internal, not app data",
 	// ut-docs#1368: the one-row generation counter migration 022's triggers
 	// bump on every write to an adminTables entry, read by DumpAdmin to
 	// decide whether its cached bundle is still current. Sync-internal by
@@ -524,9 +525,10 @@ var nonAdminTables = map[string]string{
 	// so a re-delivery re-posts the result instead of applying twice.
 	// ADR-0169 §9 (ut-docs#4768): channel orders are recorded on the main
 	// till only; they are not a till sale and no other till shows them.
-	"channel_orders":      "orders taken at a sales channel, recorded by the main till from a channel_order directive — main-till record, never synced (ut-docs#4768)",
-	"channel_order_lines": "lines of a channel order — main-till record, never synced (ut-docs#4768)",
-	"directive_results":   "generic directive results kept so a re-delivered directive is not applied twice — per-till bookkeeping, never synced (ut-docs#4797)",
+	"channel_orders":        "orders taken at a sales channel, recorded by the main till from a channel_order directive — main-till record, never synced (ut-docs#4768)",
+	"channel_order_actions": "the main till's queued staff actions on channel orders, uploaded to the cloud — main-till bookkeeping, never synced (ut-docs#4768)",
+	"channel_order_lines":   "lines of a channel order — main-till record, never synced (ut-docs#4768)",
+	"directive_results":     "generic directive results kept so a re-delivered directive is not applied twice — per-till bookkeeping, never synced (ut-docs#4797)",
 	// ADR-0161 §5 (ut-docs#4429): imports are applied only on the main
 	// till; additional tills get the resulting catalogue rows, never the
 	// foreign-id bookkeeping behind them.
@@ -786,15 +788,22 @@ const BackupRetentionDaysSettingsKey = "backup.retention_days"
 // main till's device, carrying the main till's store token. Both ends
 // enforce it: DumpAdmin never sends these rows and ApplyAdmin never applies
 // them (a pre-fix main till still sends them). The store-level marketplace
-// keys — store_id, merchant_id, telemetry_opt_in, auto_register_opt_in — are
+// keys — store_id, merchant_id, telemetry_opt_in — are
 // the same for every till of the shop and keep syncing; the main till
 // registers each replica's own device (internal/enroll, POST
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
 	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey, BackupRetentionDaysSettingsKey,
+	// ut-docs#5066: this till's own off-site backup state (data.OffsiteBackup*).
+	OffsiteBackupPrefix,
 	// ADR-0176 (ut-docs#5366): the notices switch and the pull cursor are
 	// this till's own (each device pulls and tracks read state for itself).
 	"notices.",
+	// ADR-0200 (ut-docs#6559): this till's own registration state (notice
+	// shown, last compared version, last cloud answer, whether its identity
+	// was made automatically). NOT registration.stopped: the stop switch is
+	// shop-wide (ADR-0200 decision 6, ut-docs#6618), so it syncs to every till.
+	"registration.notice_", "registration.last_", "registration.auto_registered",
 	// ut-docs#5068: the number floors and marker a backup restore leaves on
 	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
 	// "restore.marker"): they guard this till's own receipt/Z sequences.
@@ -859,6 +868,10 @@ var PerTillSettingPrefixes = []string{
 	// the main till's queue overwrote a replica's at every pull. A full key
 	// used as a prefix; the rest of setup.* stays shop-wide.
 	"setup.pending_base_plugins",
+	// ADR-0172 §5 (ut-docs#6287): this till's own tax auto-install status
+	// chip and its "declined" record. Plugins install per machine, so both
+	// are per till, like the queue above.
+	"setup.tax_autoinstall.",
 	// ut-docs#3091: this till's running version, when it first ran it, and
 	// whether its release notes were seen (AppVersionSettingsKey above).
 	// "app.version" as a prefix also covers app.version_first_run_at.
@@ -1081,11 +1094,6 @@ type AdminApplyResult struct {
 	ErasedCustomerIDs []string
 }
 
-// ErrNotReplica: ApplyAdminWithResult refused because this till has no
-// sync.primary_url, i.e. it is not (or, after a promote that won the race,
-// no longer) a replica. Nothing was written (ut-docs#5896).
-var ErrNotReplica = errors.New("apply admin: this till is not a replica (no sync.primary_url)")
-
 // ApplyAdminWithResult makes this till's admin state match the bundle, in
 // one transaction: first delete rows the primary no longer has (children
 // first; sales-referenced rows fall back to is_active=0), then upsert
@@ -1117,12 +1125,8 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 	// this read is serialised against promote's tx; either promote committed
 	// first (blank: refuse) or this apply commits first (promote then
 	// overwrites).
-	primaryURL, _, err := AgentSettingRaw(ctx, tx, "sync.primary_url")
-	if err != nil {
-		return fmt.Errorf("apply admin: read sync.primary_url: %w", err)
-	}
-	if strings.TrimSpace(primaryURL) == "" {
-		return ErrNotReplica
+	if err := requireReplica(ctx, tx); err != nil {
+		return fmt.Errorf("apply admin: %w", err)
 	}
 
 	// ut-docs#1589 (found in #1554's own review): permission_actions and
@@ -2290,6 +2294,9 @@ const (
 // wins where both match (reports.eod_* under reports.,
 // fiscal.pending_sign_retries under fiscal.).
 var ShopWideSettingPrefixes = []string{
+	// ADR-0200 decision 6 (ut-docs#6618): "Send usage facts" off is for the
+	// whole shop, so every till follows the main till's switch.
+	"registration.stopped",
 	// Shop identity, money, tax, locale and trading rules.
 	"store.", "shop.", "sale.", "pos.", "payments.", "invoice.", "receipt.",
 	// Fiscal posture and override state (fiscal.pending_sign_retries is
@@ -2314,7 +2321,7 @@ var ShopWideSettingPrefixes = []string{
 	// comment). Listed key by key: a new marketplace.* key must be
 	// classified on purpose, since most of that family is per-till.
 	"marketplace.store_id", "marketplace.merchant_id",
-	"marketplace.telemetry_opt_in", "marketplace.auto_register_opt_in",
+	"marketplace.telemetry_opt_in",
 	// Reviewed in ut-docs#2950 and kept shop-wide (diagnostics.*,
 	// cloudsync.* and install.* moved to PerTillSettingPrefixes then):
 	// - till.name is the main till's name; a replica's own is sync.till_name.

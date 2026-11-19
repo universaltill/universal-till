@@ -121,7 +121,14 @@ Owners manage the shop from any browser at
 
 ### Optional Cloud Services
 *(paid plans — see [Pricing](#-pricing) for which plan each starts from; the core till never needs them. Tills in one shop sync over the shop's own network on every plan.)*
-- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up)
+- Encrypted off-site backup and restore, hosted in the EU (Local Plus and up). The main
+  till copies its newest daily backup to the cloud in the background, encrypted on the
+  till with a per-shop key the till generates and keeps outside the database; a
+  Key-Vault-wrapped copy in the cloud is the owner's choice (on or off, switchable;
+  released only through the owner's approval on my.), and the owner can print or
+  save the key as a `UTK1-` recovery string (`internal/offsitebackup`, ADR-0199). Restoring onto a
+  replacement till needs the shop owner's approval on my. (Settings → Backups → Cloud
+  backups; manager PIN on the till)
 - Manage from a browser (my.) and a cloud-held catalogue every till follows (basic on Local Plus, full from Shop)
 - Mobile tills syncing over the internet (Pro and up)
 - Managed fiscal device where a market requires one (e.g. German TSE; Shop and up)
@@ -158,12 +165,25 @@ problem surface in Settings, and the wizard states plainly that Universal
 Till holds the device's admin credential (PUK) on the merchant's behalf,
 requestable at any time (ADR-0045/ADR-0053).
 
-Unlike the free language packs above, a country's *fiscal* plugin (e.g.
+One narrow exception installs a *tax* plugin by itself
+([ADR-0172](https://github.com/universaltill/ut-docs/blob/main/adr/0172-a-new-till-auto-installs-its-countrys-tax-rate-plugin.md),
+which amends ADR-0025 decision 4): when setup finishes (a till that joined a
+my. shop or one set up with the wizard alone), the till installs the shop
+country's tax plugin if there is exactly one that is free, first-party
+(`official`), names the country in its `markets`, signs nothing (no
+`fiscal.*` hook or capability) and asks for no network and no permission
+beyond `events:receive`, `sales:read` and `storage` (checked again on the
+Ed25519-verified manifest). It goes through the normal marketplace install,
+is first loaded in an unregistered sandbox with one dry `tax.rate.ask`
+before it is persisted, never blocks setup or checkout, shows a status chip
+(setup landing page, Settings), and is not reinstalled once uninstalled.
+
+Unlike the free language packs above, any other country *fiscal* plugin (e.g.
 [ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) —
 §12 UStG dine-in/takeaway VAT-rate switching plus TSE signing/DSFinV-K
 export) is never auto-installed: the same business-identity step only
 *prompts* to install it when the marketplace actually has a matching
-listing, and only installs on an explicit tap
+listing (by its `markets`), and only installs on an explicit tap
 ([ADR-0025](https://github.com/universaltill/ut-docs/blob/main/adr/0025-country-tax-and-fiscal-compliance.md)
 decision 4) — offline-first means a required fiscal plugin can never be a
 silent hard dependency. Declining costs nothing: the till still runs
@@ -246,6 +266,10 @@ then open http://localhost:8080; the first-boot wizard sets language,
 currency and the admin PIN, then opens the Import page, where you import
 your products from a file, load sample data to try the till, or skip.
 
+Already have products? The Import page's **Import item photos by SKU** card adds photos in bulk
+(CSV of `sku` + image path/`https` URL, and/or a ZIP of `<SKU>.jpg` files; preview first, existing
+items only, main till only; see `internal/photoimport`).
+
 ### Option 2: Build from Source
 
 ```bash
@@ -261,6 +285,14 @@ make run          # or: ./bin/unitill-pos
 ```
 
 Open http://localhost:8080
+
+**Till settings registry.** `internal/data/agent_settings.go` is the one typed
+list of till settings (type, bounds, risk tier, stored spelling, whether the
+cloud may write it). The cloud's `set_till_setting` whitelist and the
+heartbeat report derive from it, and `docs/till-settings-registry.json` is
+generated from it for ut-cloud: after changing an entry run
+`make gen-settings-registry` and commit the result (a test fails when stale).
+A new Settings card needs an entry with a tier.
 
 ### Option 3: Docker
 
@@ -322,6 +354,12 @@ installs a release only if its `checksums.txt.sig` verifies; with none (source
 builds, or release signing not yet armed) it checks SHA-256 only. See
 `RELEASING.md`.
 
+**Release assets also carry build provenance** (ADR-0181): a signed record of
+which commit and workflow built each file, checked with
+`gh attestation verify --repo universaltill/universal-till`. It does not prove
+the commit is safe. The command and the limits are in `RELEASING.md`
+("Build provenance").
+
 ---
 
 ## ⚙️ Configuration
@@ -380,12 +418,16 @@ UT_SAMPLES_DIR=/path/to/images        # Sample product images
 
 # Update check
 UT_UPDATE_CHECK=1                     # 0 = never ask GitHub for new versions (air-gapped tills)
-UT_UPDATE_RELEASES_URL=               # Empty = the public GitHub Releases API. Set to a
+UT_UPDATE_RELEASES_URL=               # Empty = the build's buildinfo.ReleasesBaseURL
+                                       # (the public GitHub Releases API in an
+                                       # unstamped build). Set to a
                                        # mirror of releases/latest (air-gapped shops,
                                        # e2e) — its host may also serve the release's
                                        # release-notes.json (ut-docs#3940). Only where the
                                        # till learns about a release; the update download
-                                       # itself is unaffected.
+                                       # always comes from the build's
+                                       # buildinfo.ReleasesBaseURL (default: our GitHub),
+                                       # which this variable never changes.
 
 # Logging (ut-docs#2720)
 UT_LOG_LEVEL=info                     # debug | info | warn | error
@@ -678,8 +720,8 @@ We'll even link to notable forks in this README! 🎉
 - **Windows** (x64, ARM64) ✅
 - **macOS** (Apple Silicon only) ✅
 - **Raspberry Pi** (3, 4, 5, Zero 2 W) ✅
-- **Android** (tablets, POS terminals) ✅
-- **iOS** (iPhone, iPad) 🧪 in internal testing through TestFlight; not on the App Store yet
+- **Android** (tablets, POS terminals) ✅ — including 32-bit armv7 devices on Android 8-10 / Fire OS 7, whose app seccomp filter kills unknown syscalls; CI runs the armv7 boot under qemu against the Android 9 allow-list and in a qemu-system-arm VM with the AOSP seccomp filter that must kill the pristine-libc build (`scripts/ci/sim-armv7-seccomp.sh`, ADR-0188). Fire OS 7 hardware check pending (ut-docs#6300)
+- **iOS** (iPhone, iPad; iOS/iPadOS 16 or later) 🧪 in internal testing through TestFlight; not on the App Store yet
 - **Web** (any modern browser) ✅
 
 ### Tested Hardware
@@ -710,7 +752,6 @@ Further languages are translated by the community in
 reach tills as signed language bundles, offered right on the setup wizard's
 language step and installed on selection (German first; Spanish, Portuguese,
 French, Chinese, Malay and more follow as their translations are approved).
-The old per-language plugin repos (`ut-plugin-language-*`) are being retired.
 
 Want to add or improve a language? Translate it in your browser at [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/); see [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.
 

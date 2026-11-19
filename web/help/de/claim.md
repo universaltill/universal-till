@@ -17,8 +17,13 @@ Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Be
 
 1. Einstellungen → Kassenregistrierung zeigt die Geschäftsidentität; „Jetzt registrieren“ verbindet sie bei Bedarf. Auf einer verbundenen Kasse registriert die Hauptkasse sie für Sie: Diese Karte meldet dann, dass sie über die Hauptkasse registriert ist, und das Beanspruchen erfolgt an der Hauptkasse.
 2. Setzen Sie vor dem Registrieren das Häkchen bei „Ich akzeptiere die Bedingungen für den Cloud-Dienst von Universal Till (Version v0.1-draft).“; über „Bedingungen lesen“ öffnen Sie sie in einem neuen Tab. Ohne Häkchen unternimmt „Jetzt registrieren“ nichts und sagt Ihnen das. Sie stimmen einmal je Version der Bedingungen zu: Danach zeigt die Karte statt des Kästchens „Bedingungen akzeptiert: Version v0.1-draft“ mit dem Datum, und die Kasse sendet Ihre Zustimmung (die Version und Ihre Sprache) mit der Registrierung. Eine Kasse, die schon vor diesem Schritt registriert wurde (oder über eine Plugin-Installation), zeigt unter Kassenregistrierung dasselbe Kästchen mit der Schaltfläche **Bedingungen akzeptieren**: Häkchen setzen und die Schaltfläche drücken. Ist die Kasse offline, bleibt Ihre Zustimmung auf der Kasse gespeichert und die Karte sagt, dass sie die Cloud noch nicht erreicht hat; drücken Sie **An die Cloud senden**, sobald Sie wieder online sind. Der Verkauf ist nie betroffen.
+
+<!-- plan-purchase -->
+
 3. Klicken Sie auf „Dieses Geschäft übernehmen“, um einen kurzen Code (15 Minuten gültig) und einen QR-Code zu erhalten — scannen Sie ihn mit Ihrem Telefon, um von dort aus zu beanspruchen.
 4. Melden Sie sich mit Ihrer Universal-Till-ID im Marktplatz an, öffnen Sie die Beanspruchungsseite und geben Sie den Code ein.
+
+<!-- /plan-purchase -->
 
 ## Automatische Registrierung — Ihre Wahl bei der Einrichtung
 

@@ -16,6 +16,11 @@
 #   2. every NS*UsageDescription declared in ios/project.yml has a
 #      translation in every ios/UniversalTill/<lang>.lproj/InfoPlist.strings,
 #      so the permission prompt never falls back to English silently.
+#   3. if ios/project.yml lists the StripeTerminal package (Tap to Pay on
+#      iPhone, ut-docs#3049), NSLocationWhenInUseUsageDescription and
+#      NSBluetoothAlwaysUsageDescription are declared: Stripe disables
+#      payments without location, and its discovery asserts without the
+#      Bluetooth key even for Tap to Pay.
 #
 # Usage: guard-ios-usage-descriptions.sh [root]   (root defaults to the repo;
 # the regression test points it at throwaway fixtures).
@@ -35,7 +40,8 @@ root = os.environ["TARGET"]
 project = os.path.join(root, "ios", "project.yml")
 
 with open(project, encoding="utf-8") as f:
-    declared = set(re.findall(r"^\s+(NS\w+UsageDescription)\s*:\s*\S", f.read(), re.M))
+    project_text = f.read()
+declared = set(re.findall(r"^\s+(NS\w+UsageDescription)\s*:\s*\S", project_text, re.M))
 
 fail = False
 
@@ -80,6 +86,12 @@ for d in lprojs:
             have = set(re.findall(r'^\s*"(\w+)"\s*=\s*"[^"]+"\s*;', f.read(), re.M))
     for key in sorted(declared - have):
         err(f"{rel} has no translation for {key} declared in ios/project.yml.")
+
+# 3. Stripe Terminal needs location and Bluetooth usage descriptions.
+if re.search(r"^\s+StripeTerminal\s*:", project_text, re.M):
+    for key in sorted({"NSLocationWhenInUseUsageDescription", "NSBluetoothAlwaysUsageDescription"} - declared):
+        err(f"ios/project.yml lists the StripeTerminal package but declares no {key} "
+            f"-- Stripe Terminal needs it (ut-docs#3049).")
 
 if fail:
     sys.exit(1)
