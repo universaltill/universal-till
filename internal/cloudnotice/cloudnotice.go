@@ -360,13 +360,22 @@ var (
 
 // RenderBody renders a body: escape first, then allow-list. Only bold,
 // italic, https links to an allowed host and line breaks come out as markup.
-func RenderBody(body string) template.HTML {
+func RenderBody(body string) template.HTML { return renderBody(body, true) }
+
+// RenderBodyNoLinks is RenderBody with every markdown link shown as its plain
+// text and URL (ADR-0194 §3: store builds never render a synced link).
+func RenderBodyNoLinks(body string) template.HTML { return renderBody(body, false) }
+
+func renderBody(body string, allowLinks bool) template.HTML {
 	body = strings.ReplaceAll(norm.NFC.String(body), "\x00", "") // NUL is our token delimiter
 	var links []string
 	// Pull links out first so their text and URL are escaped exactly once and
 	// never touched by the emphasis rules.
 	withTokens := linkMD.ReplaceAllStringFunc(body, func(m string) string {
 		sub := linkMD.FindStringSubmatch(m)
+		if !allowLinks {
+			return sub[1] // store build: the link text only, never the address
+		}
 		if !safeHTTPS(sub[2]) {
 			return m // stays literal text, escaped below
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -116,19 +117,45 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			} else {
 				versionUnknown = true
 			}
+			// ADR-0172 §5: the tax plugin the till installed by itself says so,
+			// and its uninstall confirm says what changes.
+			autoNote, uninstallConfirm := "", ""
+			if market, auto := taxAutoInstalledPlugin(ctx, d, row.ID); auto {
+				loc := httpx.RequestLocale(r)
+				autoNote = sprintfKey(loc, "settings.plugins.auto_installed_for", countryDisplayName(ctx, d, loc, market))
+				uninstallConfirm = sprintfKey(loc, "settings.plugins.uninstall_tax_confirm", row.Name)
+			}
+			// ADR-0194: a plugin that ships inside the app (system trust and in
+			// the compiled-in lock) is the "Built in" group: it updates only
+			// with the app, so no marketplace update is offered for it.
+			isBundled := isBundledPlugin(row.ID, row.TrustLevel)
+			if isBundled {
+				hasUpdate, versionUnknown, latest = false, false, ""
+			}
 			items = append(items, map[string]any{
-				"id":             row.ID,
-				"name":           row.Name,
-				"version":        row.Version,
-				"enabled":        row.IsActive,
-				"trust":          row.TrustLevel,
-				"state":          row.InstallState,
-				"hasUpdate":      hasUpdate,
-				"latest":         latest,
-				"versionUnknown": versionUnknown,
-				"docsRoute":      docsRouteByPlugin[row.ID],
+				"bundled":          isBundled,
+				"mainControlled":   isBundled && d.SyncPrimaryURL(ctx) != "", // ADR-0194: on a satellite the main till switches it
+				"autoNote":         autoNote,
+				"uninstallConfirm": uninstallConfirm,
+				"id":               row.ID,
+				"name":             row.Name,
+				"version":          row.Version,
+				"enabled":          row.IsActive,
+				"trust":            row.TrustLevel,
+				"state":            row.InstallState,
+				"hasUpdate":        hasUpdate,
+				"latest":           latest,
+				"versionUnknown":   versionUnknown,
+				"docsRoute":        docsRouteByPlugin[row.ID],
 			})
 		}
+
+		// "Built in" first (stable within each group: the rows are by name).
+		sort.SliceStable(items, func(i, j int) bool {
+			bi, _ := items[i]["bundled"].(bool)
+			bj, _ := items[j]["bundled"].(bool)
+			return bi && !bj
+		})
 
 		raw, _ := json.Marshal(map[string]any{"items": items, "q": search})
 		httpx.Render("ui/pages/plugins.html", map[string]any{

@@ -96,11 +96,9 @@ func main() {
 
 // manualOnlyLocales are locales whose USER MANUAL (web/help/<locale>) is
 // owned and shipped by this repo even though their day-to-day UI strings are
-// NOT — a manual-only locale ships its web/locales/<code>.json from an
-// external ut-plugin-language-<code> pack instead (see universal-till/
-// CLAUDE.md's i18n section, and scripts/ci/check-lang-pack-drift.sh's own
-// PACKS list for the same de/es split). shippedLocales() below derives its
-// set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
+// NOT — a manual-only locale's UI strings come from its Weblate bundle
+// (com.universaltill.language-<code>, ADR-0160) instead.
+// shippedLocales() below derives its set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
 // as core JSON, so a missing locale directory there IS a fully-deleted
 // locale worth failing loudly on) but blind to de/es, which never have a
 // core web/locales/<code>.json to glob — so without this list, adding

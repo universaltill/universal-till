@@ -197,6 +197,7 @@ type OutboxItem struct {
 	AgeRestricted          bool
 	NetQuantityValue       *int64
 	NetQuantityUnit        *string
+	Icon                   string // raw stored icon id, "" = none (ut-docs#6071)
 }
 
 // OutboxBarcode is one item-level barcode: its stored key, type, primary.
@@ -209,12 +210,12 @@ type OutboxBarcode struct {
 // barcodes (primary first, then by key); ok is false when it is gone.
 func (*CloudOutboxRepo) OutboxItemValues(ctx context.Context, q SyncQuerier, id string) (OutboxItem, []OutboxBarcode, bool, error) {
 	var it OutboxItem
-	var desc, sku, cat, tax, nqUnit sql.NullString
+	var desc, sku, cat, tax, nqUnit, icon sql.NullString
 	var nqValue sql.NullInt64
 	err := q.QueryRowContext(ctx, `SELECT name, description, sku, base_price, category_id, tax_code_id, is_active,
-		is_weighed, age_restricted, net_quantity_value, net_quantity_unit FROM items WHERE id = ?`, id).
+		is_weighed, age_restricted, net_quantity_value, net_quantity_unit, icon FROM items WHERE id = ?`, id).
 		Scan(&it.Name, &desc, &sku, &it.PriceMinor, &cat, &tax, &it.Active,
-			&it.IsWeighed, &it.AgeRestricted, &nqValue, &nqUnit)
+			&it.IsWeighed, &it.AgeRestricted, &nqValue, &nqUnit, &icon)
 	if errors.Is(err, sql.ErrNoRows) {
 		return it, nil, false, nil
 	}
@@ -222,6 +223,7 @@ func (*CloudOutboxRepo) OutboxItemValues(ctx context.Context, q SyncQuerier, id 
 		return it, nil, false, fmt.Errorf("outbox item: %w", err)
 	}
 	it.Description, it.SKU, it.CategoryID, it.TaxCodeID = desc.String, sku.String, cat.String, tax.String
+	it.Icon = icon.String
 	if nqValue.Valid {
 		it.NetQuantityValue = &nqValue.Int64
 	}
@@ -250,20 +252,21 @@ type OutboxCategory struct {
 	ParentID string // "" = top level
 	Sort     int64
 	Active   bool
+	Icon     string // raw stored icon id, "" = none (ut-docs#6071)
 }
 
 // OutboxCategoryValues reads a category's uploadable values.
 func (*CloudOutboxRepo) OutboxCategoryValues(ctx context.Context, q SyncQuerier, id string) (OutboxCategory, bool, error) {
 	var c OutboxCategory
-	var parent sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT name, parent_id, sort_order, is_active FROM categories WHERE id = ?`, id).Scan(&c.Name, &parent, &c.Sort, &c.Active)
+	var parent, icon sql.NullString
+	err := q.QueryRowContext(ctx, `SELECT name, parent_id, sort_order, is_active, icon FROM categories WHERE id = ?`, id).Scan(&c.Name, &parent, &c.Sort, &c.Active, &icon)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, false, nil
 	}
 	if err != nil {
 		return c, false, fmt.Errorf("outbox category: %w", err)
 	}
-	c.ParentID = parent.String
+	c.ParentID, c.Icon = parent.String, icon.String
 	return c, true, nil
 }
 
