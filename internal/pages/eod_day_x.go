@@ -98,7 +98,7 @@ func registerEODDayX(mux *http.ServeMux, d *common.Deps) {
 		}
 		cfg := printerConfig(ctx, d)
 		articleMode, articleCap := resolveEODArticlePrintSettings(ctx, d)
-		doc := buildEODDayXDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset, articleMode, articleCap)
+		doc := buildEODDayXDoc(rep, shopNameOrEmpty(ctx, d), cfg.Charset, articleMode, articleCap)
 		httpx.RenderPartial("ui/partials/reports_eod_day_x.html", map[string]any{
 			"Preview": print.RenderText(doc),
 			"From":    rep.From,
@@ -134,7 +134,7 @@ func registerEODDayX(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		articleMode, articleCap := resolveEODArticlePrintSettings(ctx, d)
-		doc := buildEODDayXDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset, articleMode, articleCap)
+		doc := buildEODDayXDoc(rep, shopNameOrEmpty(ctx, d), cfg.Charset, articleMode, articleCap)
 		pctx, cancel := context.WithTimeout(ctx, xPrintTimeout)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {

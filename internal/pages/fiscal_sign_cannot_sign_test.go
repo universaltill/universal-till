@@ -100,6 +100,9 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 				mu.Lock()
 				gotRefunds = append(gotRefunds, p)
 				mu.Unlock()
+				if v, ok := refundErrOverrides.Load(dp.Db); ok {
+					return nil, v.(error)
+				}
 				if refundErr != nil {
 					return nil, refundErr
 				}

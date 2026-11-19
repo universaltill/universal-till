@@ -297,7 +297,7 @@ func applyOwnTillName(r *http.Request, d *common.Deps, posRepo *data.POSRepo, el
 	return nil
 }
 
-// storeNameErrorKey maps a config.NormalizeStoreName refusal to the
+// storeNameErrorKey maps a config.CheckStoreName refusal to the
 // message the Shop name card shows.
 func storeNameErrorKey(err error) string {
 	switch {
@@ -655,6 +655,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				autoUpdateMainVersion = "v" + normVersion(in.Target)
 			}
 		}
+		// ut-docs#6551: on a main/standalone till the window THIS till's nightly
+		// step opens in (time + its own offset); the template shows it only on
+		// a sideload Android till, where that step is a download, not an
+		// install. Empty when auto-update is off or auto_time is not canonical HH:MM
+		// (the nightly tick ignores a legacy value like "3:05").
+		autoUpdateWindowFrom, autoUpdateWindowTo := "", ""
+		if !autoUpdateFollowsMain && autoUpdateEnabled && eodTimeRe.MatchString(autoUpdateTime) {
+			autoUpdateWindowFrom, autoUpdateWindowTo, _ = followNightlyWindow(autoUpdateTime, autoUpdateJitter(r.Context(), d))
+		}
 		// Sample-data note (ut-docs#539, extended to customers/promos by
 		// ut-docs#567): best-effort — a schema-less test DB or a query
 		// error just renders the page without the note, same posture as
@@ -977,6 +986,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"autoUpdateFollowLine":  autoUpdateFollowLine,
 			"autoUpdateFollowFrom":  autoUpdateFollowFrom,
 			"autoUpdateFollowTo":    autoUpdateFollowTo,
+			"autoUpdateWindowFrom":  autoUpdateWindowFrom,
+			"autoUpdateWindowTo":    autoUpdateWindowTo,
 			"autoUpdateMainVersion": autoUpdateMainVersion,
 			"autoUpdateEnabled":     autoUpdateEnabled,
 			"autoUpdateTime":        autoUpdateTime,
@@ -2626,7 +2637,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// RequestLocale, not ResolveLocale: a refused POST must not set the
 		// ?lang= cookie.
 		locale := httpx.RequestLocale(r)
-		name, err := config.NormalizeStoreName(r.Form.Get("store_name"))
+		name, err := config.CheckStoreName(r.Form.Get("store_name"))
 		if err != nil {
 			// A text/html fragment, not http.Error's text/plain: app.js
 			// (ut-docs#916) swaps a non-empty HTML 4xx into the card's own
@@ -3573,18 +3584,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		// ut-docs#5874: the shop name takes the Shop name card's rule here
-		// too (plus the single-line rule, which also refuses U+E0100-E01EF),
-		// before the elevation gate, and the normalised name is what is
-		// stored - the raw editor cannot do what the card refuses.
+		// ut-docs#5874, ut-docs#5894: the shop name takes the one shared
+		// shop-name check (config.CheckStoreName: the Shop name card's rule
+		// plus the single-line rule) here too, before the elevation gate,
+		// and the normalised name is what is stored - the raw editor cannot
+		// do what the card refuses.
 		if key == common.KeyStoreName {
-			norm, err := data.CheckSingleLineName(value)
-			if err == nil {
-				norm, err = config.NormalizeStoreName(norm)
-			}
+			norm, err := config.CheckStoreName(value)
 			if err != nil {
 				msgKey := keyNameInvalidCharacters
-				if !errors.Is(err, data.ErrNameInvalidCharacters) && !errors.Is(err, config.ErrStoreNameInvalidChars) {
+				if !errors.Is(err, config.ErrStoreNameInvalidChars) {
 					msgKey = storeNameErrorKey(err)
 				}
 				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), msgKey), http.StatusBadRequest)

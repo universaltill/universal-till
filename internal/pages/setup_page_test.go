@@ -387,6 +387,9 @@ func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
 		if label == "control char" {
 			errKey = "common.error.name_invalid_characters"
 		}
+		if label == "over 60 runes" { // ut-docs#5898
+			errKey = keyTillNameTooLong
+		}
 		t.Run(label, func(t *testing.T) {
 			mux, svc, d := newFullAuthDeps(t)
 			form := url.Values{

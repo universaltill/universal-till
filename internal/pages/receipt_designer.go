@@ -161,7 +161,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#4260: the tracking box is greyed out until the cloud
 			// tracking page exists (#4238).
 			"TrackingAvailable": orderTrackingLinksAvailable(),
-			"Preview":           designerPreview(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale()),
+			"Preview":           designerPreview(shopNameOrEmpty(r.Context(), d), rd, httpx.DefaultLocale()),
 			"SlipTextHint":      fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "designer.receipt.voucher_slip_text_hint"), maxVoucherSlipTextLines, maxVoucherSlipTextRunes),
 		})(w, r)
 	})
@@ -174,7 +174,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		rd := designFromForm(r)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(designerPreview(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale())))
+		_, _ = w.Write([]byte(designerPreview(shopNameOrEmpty(r.Context(), d), rd, httpx.DefaultLocale())))
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/save", func(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +307,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		// The sample is the shop's receipt, so it (and the caption's charset
 		// fallback) use the shop locale; locale above is for the UI messages.
 		shopLocale := httpx.DefaultLocale()
-		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, shopLocale)
+		doc := sampleReceiptDoc(shopNameOrEmpty(r.Context(), d), rd, shopLocale)
 		doc.Charset = cfg.Charset
 		if doc.TrackingCaption != "" {
 			// Same charset fallback as a real receipt's caption.

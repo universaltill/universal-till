@@ -68,3 +68,42 @@ func TestBootRoundTrip_KeepsRealStoreNames(t *testing.T) {
 		t.Fatalf("UT_STORE_NAME after boot = %q, want %q", v, "Env Bakery")
 	}
 }
+
+// ut-docs#5894: a cfg.StoreName the shop-name check refuses (Init already
+// ignores such a UT_STORE_NAME; this is the belt-and-braces layer) is never
+// written over a blank store.name.
+func TestBootRoundTrip_DoesNotWriteRefusedStoreName(t *testing.T) {
+	for _, bad := range []string{"Shop‮", "Shop\U000E0100"} {
+		ctx := context.Background()
+		s := newTestStore(t)
+		cfg := baseCfg()
+		cfg.StoreName = bad
+		s.LoadRuntimeConfig(ctx, cfg)
+		if err := s.SaveRuntimeConfig(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if v, _, _ := s.Get(ctx, "store.name"); v != "" {
+			t.Fatalf("store.name after boot with %q = %q, want blank", bad, v)
+		}
+	}
+}
+
+// A refused name already stored (a cloud directive wrote it) is loaded into
+// cfg, refused at Save and so left byte-identical: repairing it is not the
+// boot round-trip's job.
+func TestBootRoundTrip_LeavesStoredRefusedNameUntouched(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	const stored = "Shop\U000E0100"
+	if err := s.Set(ctx, "store.name", stored); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseCfg()
+	s.LoadRuntimeConfig(ctx, cfg)
+	if err := s.SaveRuntimeConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := s.Get(ctx, "store.name"); v != stored {
+		t.Fatalf("stored name after boot = %q, want %q", v, stored)
+	}
+}

@@ -824,7 +824,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			updates.SetAutoUpdateStuck(false) // ut-docs#2733: fixed since the last tick
 			// The status-bar update button also appears on the next page
 			// load; this inline one applies immediately.
-			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s">%s</button>`,
+			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s" data-confirm-tone="neutral">%s</button>`,
 				html.EscapeString(st.Latest),
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
 				html.EscapeString(httpx.T(locale, "status.update_now")),
@@ -866,7 +866,10 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		hhmm := strings.TrimSpace(r.Form.Get("time"))
 		enabled := r.Form.Get("enabled") == "on" || r.Form.Get("enabled") == "1"
-		if enabled && !eodTimeRe.MatchString(hhmm) {
+		// Enabled needs a time; a non-empty time must be HH:MM either way, so
+		// the shop-wide stored value is never garbage (ut-docs#6551). Empty
+		// while disabled is still allowed (the default applies if re-enabled).
+		if (enabled || hhmm != "") && !eodTimeRe.MatchString(hhmm) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
 		}

@@ -596,7 +596,11 @@
     <label class="set-row">
       <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
     </label>
-    <input type="time" name="time" value="{{ .autoUpdateTime }}">
+    <input type="time" name="time" value="{{ .autoUpdateTime }}"{{ if and updateinstallbridge .autoUpdateEnabled .autoUpdateWindowFrom }} aria-describedby="update-android-window"{{ end }}>
+    {{/* ut-docs#6551: on a sideload Android till the nightly time is when the till downloads the update (time + this till's own offset, app open on screen); a manager installs it with a tap. */}}
+    {{ if and updateinstallbridge .autoUpdateEnabled .autoUpdateWindowFrom }}
+    <p class="muted" id="update-android-window" data-testid="update-android-window">{{ printf (T "settings.update.android.download_window") .autoUpdateWindowFrom .autoUpdateWindowTo }}</p>
+    {{ end }}
     {{/* ut-docs#2739 (ADR-0114 §5): when additional tills install this till's version. */}}
     <label class="set-row" for="update-fleet-follow">{{ T "settings.update.fleet_follow_label" }}</label>
     <select name="fleet_follow" id="update-fleet-follow">
@@ -781,6 +785,7 @@
         </select>
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
+      <p class="muted">{{ if .piKioskAppliance }}{{ T "settings.display.window_mode_kiosk_help_appliance" }}{{ else }}{{ T "settings.display.window_mode_kiosk_help" }}{{ end }}</p>
       <!-- ut-docs#1060: was a render-time-only conditional block here
            (still the exact same three mutually-exclusive notes, same
            strings, same comments) — moved into its own partial, same
