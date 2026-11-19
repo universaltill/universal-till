@@ -136,7 +136,7 @@ func TestBuildUpsertBatches_DifferingColumnSetsGetSeparateGroups(t *testing.T) {
 func TestAdminApplyLargeTableBatchesAcrossMultipleChunks(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	const n = 250
 	for i := 0; i < n; i++ {
@@ -229,6 +229,7 @@ func TestAdminApplyINSERTCountDoesNotGrowLinearlyWithRowCount(t *testing.T) {
 			t.Fatalf("open replica: %v", err)
 		}
 		t.Cleanup(func() { _ = replica.Close() })
+		markReplica(t, replica) // before the counting wrapper, so the seed INSERT is not counted (ut-docs#5896)
 
 		for i := 0; i < n; i++ {
 			mustExec(t, primary,

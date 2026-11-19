@@ -85,6 +85,10 @@ else
   # which `strings` drops, so it never shows as a line and is caught as a
   # missing version (ut-docs#5205).
   printf 'junk\ndev\nmore\n' >"$tmp/unstamped"
+  # check() also runs the per-artifact channel check (scripts/ci/check-artifact-channel.sh,
+  # own tests); these fixtures are not stamped, so a stub stands in for it here.
+  mkdir -p "$tmp/ws/scripts/ci" && printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/ws/scripts/ci/check-artifact-channel.sh"
+  export GITHUB_WORKSPACE="$tmp/ws"
   run_check() { # run_check <file> [key] → prints "fail=<n>"
     VERSION=0.0.1 UT_MARKETPLACE_KEY_HEX="$key" bash -c "
       set -euo pipefail

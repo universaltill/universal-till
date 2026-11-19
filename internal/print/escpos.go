@@ -69,6 +69,10 @@ type Doc struct {
 	// the receipt redeems it. Empty = no block, byte-identical to before.
 	Vouchers       []VoucherBlock
 	VoucherHeading string
+	// VoucherSlipText is the shop's own text for the gift voucher slips
+	// derived from this receipt (receipt.voucher_slip_text, ut-docs#6179),
+	// one entry per line. Render/RenderText ignore it.
+	VoucherSlipText []string
 }
 
 // VoucherBlock is one issued voucher, every field already formatted and
@@ -79,9 +83,15 @@ type VoucherBlock struct {
 	Holder string // "For: Anna"; empty = no row
 	// Balance is the voucher's balance after a top-up (ut-docs#4252),
 	// pre-formatted with its label ("New balance £35.00"); empty = no row
-	// (every newly issued voucher — its balance is its value).
+	// (every newly issued voucher — its balance is its value). A slip
+	// reprinted from the voucher's page uses BalanceLabel/BalanceAmount
+	// instead (ut-docs#6044).
 	Balance string
-	Code    string
+	// BalanceLabel/BalanceAmount print as one right-aligned row
+	// ("Balance on <date>   10.00") when BalanceAmount is set; only the
+	// label is ever clipped, so a long translation can't cut the amount.
+	BalanceLabel, BalanceAmount string
+	Code                        string
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
@@ -90,6 +100,10 @@ type VoucherBlock struct {
 	// top-ups). Render/RenderText ignore it; a block with Void set never
 	// gets a slip.
 	Slip bool
+	// SlipDate is the pre-formatted date line of this block's stand-alone
+	// slip ("Issued 13/11/2026" / "Topped up …", ut-docs#6179); "" = no line.
+	// Render/RenderText ignore it: the receipt never prints it.
+	SlipDate string
 }
 
 // Line is one sale line.
@@ -386,6 +400,9 @@ func writeVoucherESC(b *bytes.Buffer, line func(string), v VoucherBlock) {
 	if v.Balance != "" {
 		line(clip(v.Balance, Width))
 	}
+	if v.BalanceAmount != "" {
+		line(kvRow(v.BalanceLabel, v.BalanceAmount))
+	}
 	b.Write(cmdAlignMid)
 	if v.Void != "" {
 		line(clip(v.Void, Width))
@@ -408,6 +425,9 @@ func writeVoucherText(b *strings.Builder, center func(string), v VoucherBlock) {
 	}
 	if v.Balance != "" {
 		b.WriteString(clip(v.Balance, Width) + "\n")
+	}
+	if v.BalanceAmount != "" {
+		b.WriteString(kvRow(v.BalanceLabel, v.BalanceAmount) + "\n")
 	}
 	if v.Void != "" {
 		center(v.Void)

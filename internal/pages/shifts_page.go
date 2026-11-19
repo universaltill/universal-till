@@ -90,6 +90,7 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 			"NoSaleCount":         noSaleCount,
 			"NoSaleOperators":     noSaleOps,
 			"History":             history,
+			"HasClosedHistory":    hasClosedShift(history),
 			"Registers":           registers,
 			"TillRegisterID":      tillRegisterID,
 			// Minor units plus a pre-formatted decimal for the number input
@@ -108,4 +109,16 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/shifts.html", data)(w, r)
 	})
 	registerShiftXReport(mux, d)
+	registerShiftCountDetail(mux, d) // ut-docs#1043
+}
+
+// hasClosedShift reports whether the history has a row whose count can be
+// shown (ut-docs#1043), so the count panel renders only then.
+func hasClosedShift(h []data.ShiftSummary) bool {
+	for _, s := range h {
+		if !s.Open {
+			return true
+		}
+	}
+	return false
 }

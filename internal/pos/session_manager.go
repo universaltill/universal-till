@@ -3,7 +3,9 @@ package pos
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -81,6 +83,10 @@ type SessionBasketManager struct {
 	// injectable-`now` idea OrderTrackingVisible uses, kept as a field here
 	// because the stamping happens inside Create/Get, not at the call site.
 	clock func() time.Time
+	// abandon is the handler every session's Service gets (ut-docs#6601). Set
+	// at boot by SetAbandonedTenderHandler, applied by build to each new
+	// session. Atomic so build never takes m.mu.
+	abandon atomic.Pointer[AbandonedTenderHandler]
 }
 
 // sessionBasket is one live guest session: its basket engine and when a
@@ -129,6 +135,37 @@ func NewSessionBasketManager(factory func() *Service) *SessionBasketManager {
 	}
 }
 
+// SetAbandonedTenderHandler registers h on every live session and on every
+// session built afterwards (ut-docs#6601). A session minted concurrently with
+// this call may miss h; wiring is boot-only.
+func (m *SessionBasketManager) SetAbandonedTenderHandler(h AbandonedTenderHandler) {
+	if m == nil {
+		return
+	}
+	m.abandon.Store(&h)
+	m.mu.Lock()
+	svcs := make([]*Service, 0, len(m.sessions))
+	for _, sb := range m.sessions {
+		svcs = append(svcs, sb.svc)
+	}
+	m.mu.Unlock()
+	for _, svc := range svcs {
+		svc.SetAbandonedTenderHandler(h)
+	}
+}
+
+// build is factory plus the abandoned-tender handler. It takes no manager
+// lock, so it is safe inside and outside m.mu.
+func (m *SessionBasketManager) build() *Service {
+	svc := m.factory()
+	if svc != nil {
+		if h := m.abandon.Load(); h != nil {
+			svc.SetAbandonedTenderHandler(*h)
+		}
+	}
+	return svc
+}
+
 // NewDetached builds one basket with the session factory WITHOUT
 // registering it (ut-docs#4337, ADR-0159 §5): the guest_order directive
 // prices a cloud guest order on a fresh *Service built exactly like a
@@ -139,7 +176,7 @@ func (m *SessionBasketManager) NewDetached() (*Service, bool) {
 	if m == nil || m.factory == nil {
 		return nil, false
 	}
-	svc := m.factory()
+	svc := m.build()
 	return svc, svc != nil
 }
 
@@ -193,7 +230,7 @@ func (m *SessionBasketManager) Create() (string, *Service, bool) {
 	if len(m.sessions) >= MaxLiveSelfOrderSessions && !m.evictOldestEmptyLocked() {
 		return "", nil, false
 	}
-	svc := m.factory()
+	svc := m.build()
 	token := newSessionToken()
 	for _, taken := m.sessions[token]; taken; _, taken = m.sessions[token] {
 		token = newSessionToken() // 2^128 space — practically unreachable, but never overwrite a live session
@@ -221,8 +258,8 @@ func (m *SessionBasketManager) evictOldestEmptyLocked() bool {
 	var oldestSeen time.Time
 	found := false
 	for token, sb := range m.sessions {
-		if len(sb.svc.Lines()) > 0 {
-			continue
+		if len(sb.svc.Lines()) > 0 || sb.svc.HasPendingTender() {
+			continue // a pending tender is something to lose (ut-docs#6601)
 		}
 		if !found || sb.lastSeen.Before(oldestSeen) {
 			oldestToken, oldestSeen, found = token, sb.lastSeen, true
@@ -259,8 +296,12 @@ func (m *SessionBasketManager) Remove(token string) {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	sb := m.sessions[token]
 	delete(m.sessions, token)
+	m.mu.Unlock()
+	if sb != nil {
+		abandonDropped(sb.svc, AbandonSessionEnded) // after unlock (ut-docs#6601)
+	}
 }
 
 // TableOwner finds a live session currently bound to tableID (any session
@@ -420,7 +461,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 	}
 	// A nil mover means this call can only possibly mint a fresh session
 	// (the common first-ever-scan case) — build that Service now, BEFORE
-	// taking m.mu: m.factory() installs the tax/charge-policy askers, and
+	// taking m.mu: m.build() installs the tax/charge-policy askers, and
 	// installing either synchronously recomputes totals, which can invoke
 	// the same kind of blocking plugin ask SetTable itself can trigger
 	// (ut-docs#2443 M1 — building it inside the lock, as a first cut of
@@ -430,7 +471,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 	// a new Service at all, so never pays for one it won't use.
 	var freshSvc *Service
 	if mover == nil {
-		freshSvc = m.factory()
+		freshSvc = m.build()
 	}
 	m.mu.Lock()
 	cutoff := now.Add(-maxIdle)
@@ -508,7 +549,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 		// rare race (a Get a moment ago doesn't guarantee the session is
 		// still live), not the common mint path ut-docs#2443's fix is
 		// actually about.
-		freshSvc = m.factory()
+		freshSvc = m.build()
 	}
 	// ut-docs#2432: the session-count cap applies only to this fresh-mint
 	// path — never the mover branch just above, which reuses an existing
@@ -554,16 +595,33 @@ func (m *SessionBasketManager) Sweep(maxIdle time.Duration, now time.Time) int {
 		return 0
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	cutoff := now.Add(-maxIdle)
-	n := 0
+	var evicted []*Service
 	for token, sb := range m.sessions {
 		if sb.lastSeen.Before(cutoff) {
 			delete(m.sessions, token)
-			n++
+			evicted = append(evicted, sb.svc)
 		}
 	}
-	return n
+	m.mu.Unlock()
+	// Hand off dropped tenders after unlock: the handler calls plugins
+	// (ut-docs#6601).
+	for _, svc := range evicted {
+		abandonDropped(svc, AbandonSessionExpired)
+	}
+	return len(evicted)
+}
+
+// abandonDropped hands a dropped session's tender to the handler, recovering
+// a panic so one bad hand-off never skips the other dropped sessions or kills
+// the sweep goroutine (ut-docs#6601 review L1).
+func abandonDropped(svc *Service, reason AbandonReason) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("self-order session tender hand-off panicked (%s): %v (ut-docs#6601)", reason, r)
+		}
+	}()
+	svc.AbandonTender(reason)
 }
 
 // SetConfig pushes a new tax/service-charge Config to every live session —

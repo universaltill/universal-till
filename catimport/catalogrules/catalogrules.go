@@ -20,6 +20,10 @@ const (
 	NetQuantityEach        = "ea"
 )
 
+// MaxReorderLevel is the sanity ceiling for items.reorder_level (ut-docs#276,
+// ut-docs#2084): the catalog endpoint and the import both enforce it.
+const MaxReorderLevel = 1_000_000
+
 // ValidNetQuantity reports whether a value/unit pair may be stored: both
 // absent, or a positive whole value with one of the known units.
 func ValidNetQuantity(value *int64, unit *string) bool {
