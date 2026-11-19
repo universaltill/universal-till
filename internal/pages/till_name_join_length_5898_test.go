@@ -67,6 +67,16 @@ func TestPairStart_SixtyRuneNameNotRefusedForLength(t *testing.T) {
 	tcWantNotTooLong(t, rec.Body.String())
 }
 
+// ut-docs#5898 UX decision: the message says what to do next.
+func TestTillNameTooLongMessage_SaysHowToFix(t *testing.T) {
+	initPagesI18n(t)
+	got := httpx.T("en", keyTillNameTooLong)
+	want := "A till name can be at most 60 characters. Shorten the name and try again."
+	if got != want {
+		t.Fatalf("message = %q, want %q", got, want)
+	}
+}
+
 func TestSyncJoin_OverLongNameRefusedLocally(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	initPagesI18n(t)

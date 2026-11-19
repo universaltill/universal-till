@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/cloudnotice"
 	"github.com/universaltill/universal-till/internal/data"
 )
@@ -366,5 +367,50 @@ func TestNotices_FlagOffAddsNoGetParameter(t *testing.T) {
 	defer cloud.mu.Unlock()
 	if strings.Contains(cloud.queries[0], "notices") {
 		t.Fatalf("flag off: GET query = %q", cloud.queries[0])
+	}
+}
+
+// ut-docs#6622: on a store channel the notices flag is ignored (ADR-0194 §3).
+func TestNotices_StoreChannelSendsNothingWithFlagOn(t *testing.T) {
+	for _, c := range []buildinfo.InstallChannel{buildinfo.ChannelPlay, buildinfo.ChannelAppStore, buildinfo.ChannelSideload, buildinfo.ChannelDirect} {
+		t.Run(string(c), func(t *testing.T) {
+			t.Cleanup(buildinfo.OverrideChannelForTest(c))
+			d, repo, _ := noticeSetup(t, true)
+			cl := &fakeCloud{notices: block("r1", noticeItem("a", 1, "info"))}
+			srv := httptest.NewServer(cl.handler())
+			defer srv.Close()
+			runTick(t, srv.URL, d, "en")
+			m := lastNoticesReq(t, cl)
+			p, _ := repo.Pairs(context.Background())
+			if c.AccountLinkOutAllowed() {
+				if m == nil || len(p) != 1 {
+					t.Fatalf("%s: notices object=%v stored=%d, want both", c, m, len(p))
+				}
+				return
+			}
+			if m != nil || len(p) != 0 {
+				t.Fatalf("%s: notices object=%v stored=%d, want none", c, m, len(p))
+			}
+		})
+	}
+}
+
+// ut-docs#6622: the GET check-in carries no notices=<rev> on a store channel
+// either, flag on (ADR-0194 §3).
+func TestNotices_StoreChannelAddsNoGetParameter(t *testing.T) {
+	for _, c := range []buildinfo.InstallChannel{buildinfo.ChannelPlay, buildinfo.ChannelAppStore, buildinfo.ChannelSideload} {
+		t.Run(string(c), func(t *testing.T) {
+			t.Cleanup(buildinfo.OverrideChannelForTest(c))
+			fakeClock(t)
+			d, _, _ := noticeSetup(t, true)
+			cloud, srv := newCheckinCloud(3)
+			defer srv.Close()
+			mustTick(t, srv.URL, d, Hooks{})
+			cloud.mu.Lock()
+			defer cloud.mu.Unlock()
+			if has := strings.Contains(cloud.queries[0], "notices"); has != c.AccountLinkOutAllowed() {
+				t.Fatalf("%s: GET query = %q, notices param present=%v", c, cloud.queries[0], has)
+			}
+		})
 	}
 }

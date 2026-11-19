@@ -685,7 +685,7 @@ func TestRegisterSendsRegionForGermanCountry(t *testing.T) {
 		t.Fatalf("seed country: %v", err)
 	}
 	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+	if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if _, ok := gotBody["region"]; !ok {
@@ -716,7 +716,7 @@ func TestRegisterSendsCountryNormalised(t *testing.T) {
 				t.Fatalf("seed country: %v", err)
 			}
 			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+			if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 				t.Fatalf("register: %v", err)
 			}
 			if got := gotBody["country"]; got != c.wantCountry {
@@ -758,7 +758,7 @@ func TestRegisterOmitsCountryWhenUnsetOrInvalid(t *testing.T) {
 				}
 			}
 			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+			if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 				t.Fatalf("register: %v", err)
 			}
 			if _, ok := gotBody["country"]; ok {
@@ -804,7 +804,7 @@ func TestRegisterOmitsRegionForNonGermanCountry(t *testing.T) {
 				}
 			}
 			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+			if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 				t.Fatalf("register: %v", err)
 			}
 			if _, ok := gotBody["region"]; ok {
@@ -827,7 +827,7 @@ func TestRegisterSendsDeviceNameFromTillName(t *testing.T) {
 		t.Fatalf("seed till.name: %v", err)
 	}
 	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+	if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if got := gotBody["device_name"]; got != "Front Counter" {
@@ -844,7 +844,7 @@ func TestRegisterAnonymousDoesNotSetPairedAt(t *testing.T) {
 	srv := registerTestServer(t, &gotBody)
 	kv := newFakeKV()
 	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+	if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if kv.get(keyStoreID) == "" || kv.get(keyToken) == "" {
@@ -1141,7 +1141,7 @@ func TestRegisterSendsTillID(t *testing.T) {
 				kv.m[k] = v
 			}
 			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+			if err := register(context.Background(), m, "Corner Shop", kv, ""); err != nil {
 				t.Fatalf("register: %v", err)
 			}
 			want := tc.want
@@ -1311,7 +1311,7 @@ func TestRegisterRefusalCodeParsing(t *testing.T) {
 			resetState()
 			srv := refusingMarketplace(t, c.status, c.body)
 			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
-			err := register(context.Background(), m, "Shop", newFakeKV())
+			err := register(context.Background(), m, "Shop", newFakeKV(), "")
 			var he *RegisterHTTPError
 			if !errors.As(err, &he) {
 				t.Fatalf("err = %v, want *RegisterHTTPError", err)

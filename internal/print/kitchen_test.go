@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
 func sampleTicket() KitchenTicket {
@@ -44,6 +43,15 @@ func TestRenderKitchenTicketStructure(t *testing.T) {
 	if !bytes.Contains(out, []byte("TAKEAWAY")) {
 		t.Error("order type missing")
 	}
+	if !bytes.Contains(out, []byte("KITCHEN")) {
+		t.Error("station header missing")
+	}
+	if !bytes.Contains(out, []byte("Fries")) {
+		t.Error("qty-1 item row missing")
+	}
+	if bytes.Contains(out, []byte("1 x Fries")) {
+		t.Error("qty-1 item must print without a quantity prefix")
+	}
 }
 
 func TestRenderKitchenTicketNoPrices(t *testing.T) {
@@ -54,19 +62,6 @@ func TestRenderKitchenTicketNoPrices(t *testing.T) {
 		if strings.Contains(out, sym) {
 			t.Errorf("kitchen ticket must not contain price marker %q", sym)
 		}
-	}
-}
-
-func TestRenderKitchenTicketTextMirrors(t *testing.T) {
-	txt := RenderKitchenTicketText(sampleTicket())
-	for _, want := range []string{"KITCHEN", "ORDER R-0042", "2 x Cheeseburger", "- no onions", "Fries"} {
-		if !strings.Contains(txt, want) {
-			t.Errorf("preview text missing %q", want)
-		}
-	}
-	// Plain text must carry no ESC/POS control bytes.
-	if strings.ContainsRune(txt, 0x1b) || strings.ContainsRune(txt, 0x1d) {
-		t.Error("preview text must not contain ESC/POS control bytes")
 	}
 }
 
@@ -91,48 +86,6 @@ func TestRenderKitchenTicketBlankOrderTypePrintsNothing(t *testing.T) {
 	if withoutType != withType-1 {
 		t.Errorf("blank OrderType should drop exactly one line, got %d lines vs %d with a type set", withoutType, withType)
 	}
-
-	txt := RenderKitchenTicketText(tk)
-	if strings.Contains(txt, "TAKEAWAY") {
-		t.Error("preview text: blank OrderType must not print the previous ticket's order type")
-	}
-	// Line-count check mirrored for the text-preview path too (review
-	// finding, ut-docs#261): the byte path's guard alone doesn't prove the
-	// text path also skips the line entirely rather than printing a blank
-	// centered row — bytes.Contains("TAKEAWAY") above would pass either way.
-	withTypeTxt := strings.Count(RenderKitchenTicketText(sampleTicket()), "\n")
-	withoutTypeTxt := strings.Count(txt, "\n")
-	if withoutTypeTxt != withTypeTxt-1 {
-		t.Errorf("preview text: blank OrderType should drop exactly one line, got %d lines vs %d with a type set", withoutTypeTxt, withTypeTxt)
-	}
-}
-
-// ut-docs#376: RenderKitchenTicketText's center() helper must center on
-// rune count, not byte length — a multi-byte station/table name (e.g. an
-// ä/ö/ü/ß or ar/fa/tr string) would otherwise pad as if it were one column
-// wider than it visibly is, drifting off true center.
-func TestRenderKitchenTicketTextCentersByRuneCountNotByteCount(t *testing.T) {
-	tk := sampleTicket()
-	station := "Grill Café Français" // 19 runes, 21 bytes (é, ç each +1 byte)
-	tk.Station = station
-	out := RenderKitchenTicketText(tk)
-
-	wantPad := (Width - utf8.RuneCountInString(station)) / 2
-	gotPad := kitchenLeadingSpaces(t, out, station)
-	if gotPad != wantPad {
-		t.Errorf("station name should center on rune count: want %d leading spaces, got %d", wantPad, gotPad)
-	}
-}
-
-func kitchenLeadingSpaces(t *testing.T, out string, want string) int {
-	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, want) {
-			return len(line) - len(strings.TrimLeft(line, " "))
-		}
-	}
-	t.Fatalf("line containing %q not found in output", want)
-	return -1
 }
 
 // ut-docs#1181 / ADR-0073 Decision 7: a per-line Mode marker prints under
@@ -144,9 +97,8 @@ func TestRenderKitchenTicket_LineModeMarkerOnlyWhenSet(t *testing.T) {
 	if a, b := RenderKitchenTicket(base), RenderKitchenTicket(KitchenTicket{OrderNo: "R-1", Items: []KitchenItem{{Qty: "1", Name: "Coffee", Mode: ""}}}); string(a) != string(b) {
 		t.Fatal("an empty Mode must not change the ticket bytes")
 	}
-	txt := RenderKitchenTicketText(withMode)
-	if !strings.Contains(txt, "* TAKEAWAY") {
-		t.Fatalf("expected the mode marker under the item, got:\n%s", txt)
+	if strings.Contains(string(RenderKitchenTicket(base)), "* ") {
+		t.Fatal("a line without a Mode must carry no mode marker")
 	}
 	if !strings.Contains(string(RenderKitchenTicket(withMode)), "* TAKEAWAY") {
 		t.Fatal("ESC/POS ticket must carry the mode marker too")
@@ -176,22 +128,5 @@ func TestRenderKitchenTicket_ControlRunesNeverReachPrinter(t *testing.T) {
 		if a, b := bytes.Count(out, []byte("\n")), bytes.Count(clean, []byte("\n")); a != b {
 			t.Errorf("%q: %d newlines, clean ticket has %d", cs, a, b)
 		}
-	}
-}
-
-func TestRenderKitchenTicketText_ControlRunesOnlyStructuralNewlines(t *testing.T) {
-	ident := func(s string) string { return s }
-	tk := dirtyTicket(ident, "")
-	out := RenderKitchenTicketText(tk)
-	if want := RenderKitchenTicketText(dirtyTicket(twinOf, "")); out != want {
-		t.Errorf("differs from twin\n got %q\nwant %q", out, want)
-	}
-	for _, r := range out {
-		if r < 0x20 && r != '\n' {
-			t.Errorf("control rune %U", r)
-		}
-	}
-	if tk.Items[0].Modifiers[0] != dirtyTicket(ident, "").Items[0].Modifiers[0] {
-		t.Error("caller's ticket mutated")
 	}
 }

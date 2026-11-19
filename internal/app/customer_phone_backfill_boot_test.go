@@ -3,13 +3,13 @@ package app
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#3200 (ADR-0131 §3): every till — main and replica — back-fills
@@ -17,7 +17,7 @@ import (
 
 func openPhoneBootDB(t *testing.T, primaryURL string) *sql.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "unitill-pos.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "unitill-pos.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

@@ -1,7 +1,8 @@
 # catimport — the shared catalogue parser
 
 `github.com/universaltill/universal-till/catimport` reads catalogue exports
-(generic CSV/XLSX with header synonyms, plus the grandfathered Loyverse,
+(generic CSV/XLSX with header synonyms — including a `Reorder level` /
+`Low stock` / `Stock Alert Count` column for the low-stock threshold — plus the grandfathered Loyverse,
 Square, SumUp and Shopify dialects) into neutral `ImportItem`s, and `ToRows`
 turns a parsed file into ADR-0051 interchange rows. The till and ut-cloud
 use this one copy (ADR-0164 §1, ut-docs#4525).
