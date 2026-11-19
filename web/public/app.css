@@ -780,6 +780,23 @@ html[dir="rtl"] .back-arrow { transform: scaleX(-1); }
    from the session chip; keep logo, ☰, operator and Lock. */
 body.menu-screen .session-admin-link { display: none; }
 
+/* ut-docs#5823: the deposit-refund confirmation region sticks to the top of the
+   scrolling page, so it is seen even when the Deposit refund tile (last in the
+   grid) was reached by scrolling down on a short till screen. Empty = no box. */
+.pfand-notice {
+  position: sticky; z-index: 5;
+  /* --phone-top-h is only set in the <=480px block, where the sticky top bar
+     (z-index 60) would otherwise cover the notice and its X; elsewhere 0. */
+  inset-block-start: calc(var(--phone-top-h, 0px) + .5rem);
+}
+/* The sticky box scrolls over the tiles, so it needs an opaque surface under
+   the success tint (the shared basket notice stays translucent), and ink text
+   (--text, >=4.5:1 on --surface in light, dark and monochrome) instead of the
+   green --success, which is ~2.9:1 there. Green stays in the border. */
+.pfand-notice .pos-notice.success {
+  background: linear-gradient(var(--success-tint), var(--success-tint)), var(--surface);
+  color: var(--text);
+}
 /* Menu launcher page: a grid of large touch tiles. */
 .menu-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
