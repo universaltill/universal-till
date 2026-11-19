@@ -78,6 +78,10 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := db.Exec(`CREATE TABLE kiosk_counter_orders (id TEXT PRIMARY KEY, display_no TEXT NOT NULL, order_type TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, collected_at TEXT, table_id TEXT REFERENCES tables(id), guest_order_id TEXT);`); err != nil {
 		t.Fatalf("create kiosk_counter_orders: %v", err)
 	}
+	// ut-docs#6663: the counter-order number comes from the stored pointer.
+	if _, err := db.Exec(`CREATE TABLE number_series (kind TEXT NOT NULL, series TEXT NOT NULL, last INTEGER NOT NULL, period TEXT NOT NULL DEFAULT '', PRIMARY KEY (kind, series))`); err != nil {
+		t.Fatalf("create number_series: %v", err)
+	}
 
 	resolver := stubResolver{
 		"ABC": {SKU: "ABC", Name: "Apple", Qty: 1, PriceCents: 100, ItemID: "itm1", TaxRateBP: 2000},

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -159,7 +160,13 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		q := r.URL.Query()
 		hasTillParam := q.Has("till")
 		tillParam := q.Get("till")
-		f := data.SalesJournalFilter{Limit: limit, Day: day}
+		// Search by either number (ut-docs#6663): bounded, trimmed free text
+		// that only ever reaches a bound SQL parameter.
+		search := strings.TrimSpace(q.Get("q"))
+		if len([]rune(search)) > 32 {
+			search = string([]rune(search)[:32])
+		}
+		f := data.SalesJournalFilter{Limit: limit, Day: day, Search: search}
 		selectedTill := "all"
 		switch {
 		case !hasTillParam:
@@ -207,6 +214,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			Tills:                      tills,
 			SelectedTill:               selectedTill,
 			Day:                        day,
+			Search:                     search,
 			IsReplica:                  isReplica,
 			ExplicitCrossTillOnReplica: explicitCrossTillOnReplica,
 			Truncated:                  truncated,

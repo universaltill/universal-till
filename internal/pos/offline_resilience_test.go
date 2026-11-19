@@ -332,6 +332,10 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			type TEXT NOT NULL, 
 			is_active INTEGER DEFAULT 1
 		)`,
+		// ut-docs#6663: NextReceiptNo reads the stored counter and seeds it from
+		// live + archived sales.
+		`CREATE TABLE number_series (kind TEXT NOT NULL, series TEXT NOT NULL, last INTEGER NOT NULL, period TEXT NOT NULL DEFAULT '', PRIMARY KEY (kind, series))`,
+		`CREATE TABLE sales_archive (id TEXT, receipt_no TEXT NOT NULL)`,
 		`CREATE TABLE sales (
 			id TEXT PRIMARY KEY, till_id TEXT NOT NULL DEFAULT '', 
 			receipt_no TEXT NOT NULL UNIQUE, 

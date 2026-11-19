@@ -77,6 +77,11 @@ VALUES ('sale-all', 'okc', 'm', 'DEV1', 'DR-1', 'sale', 7, '2026-08-15 10:31', d
 // with a label (amounts excluded), in print order.
 func receiptLabels(doc print.Doc) []string {
 	var out []string
+	// ut-docs#6663: the order number block (label, then the number) sits
+	// under the store header, above Meta.
+	if doc.OrderNo != "" {
+		out = append(out, doc.OrderLabel, doc.OrderNo)
+	}
 	out = append(out, doc.Meta...)
 	for _, l := range doc.Lines {
 		out = append(out, l.Name)
@@ -118,7 +123,8 @@ func buildLabelsDocs(t *testing.T, locale string) (sale, others []string) {
 func TestReceiptPrintLabels_EnglishUnchanged(t *testing.T) {
 	sale, refund := buildLabelsDocs(t, "en")
 	wantSale := []string{
-		"Order A12",
+		"Order", // label above the big order number
+		"A12",
 		"Receipt R-ALL",
 		"", // date
 		"1 High Street",
@@ -155,15 +161,16 @@ func TestReceiptPrintLabels_EnglishUnchanged(t *testing.T) {
 		t.Fatalf("expected %d labels, got %d: %q", len(wantSale), len(sale), sale)
 	}
 	for i, want := range wantSale {
-		if i == 2 {
+		if i == 3 {
 			continue
 		}
 		if sale[i] != want {
 			t.Errorf("label %d: got %q, want %q", i, sale[i], want)
 		}
 	}
-	if refund[0] != "*** REFUND ***" || refund[1] != "For receipt R-ALL" || refund[2] != "Receipt R-RET" {
-		t.Errorf("refund meta: got %q", refund[:3])
+	// refund[0:2] is the order block (label, number): ut-docs#6663.
+	if refund[2] != "*** REFUND ***" || refund[3] != "For receipt R-ALL" || refund[4] != "Receipt R-RET" {
+		t.Errorf("refund meta: got %q", refund[2:5])
 	}
 	const cannotSign = "This sale could not be signed as presented — the receipt was recorded without a TSE signature and will not be signed later."
 	found := false
@@ -268,7 +275,7 @@ func TestReceiptPrintLabels_TurkishReprintBytesOnTheWire(t *testing.T) {
 		t.Fatal("the printer never received the receipt")
 	}
 	enc := charmap.Windows1254.NewEncoder()
-	for _, want := range []string{"Ara toplam", "TOPLAM", "Para üstü", "Bahşiş", "Nakit", "Sipariş A12", "Fiş R-ALL", "TSE işlem no: 4711"} {
+	for _, want := range []string{"Ara toplam", "TOPLAM", "Para üstü", "Bahşiş", "Nakit", "Sipariş", "A12", "Fiş R-ALL", "TSE işlem no: 4711"} {
 		b, err := enc.String(want)
 		if err != nil {
 			t.Fatal(err)
