@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/shoptype"
 )
@@ -328,6 +329,12 @@ type PairProfile struct {
 	// pairing. Only a JSON true counts; absent (older cloud) or a non-bool
 	// is false. Set by UnmarshalJSON, never taken raw.
 	HadMainTill bool `json:"-"`
+	// ReceiptPrefix is the cloud-issued receipt prefix of a replacement main
+	// till (ut-docs#6663, ADR-0166 amendment 2026-11-18): 1 to 3 letters and
+	// "-", e.g. "A-". "" when the cloud sent none (older cloud) or anything
+	// that is not exactly such a prefix; the till then falls back to the
+	// locally derived M<8hex>-. Set by UnmarshalJSON, never taken raw.
+	ReceiptPrefix string `json:"-"`
 }
 
 // UnmarshalJSON reads the store block and keeps shop_type only when it is a
@@ -336,8 +343,9 @@ func (p *PairProfile) UnmarshalJSON(b []byte) error {
 	type plain PairProfile
 	aux := struct {
 		*plain
-		ShopType    json.RawMessage `json:"shop_type"`
-		HadMainTill json.RawMessage `json:"had_main_till"`
+		ShopType      json.RawMessage `json:"shop_type"`
+		HadMainTill   json.RawMessage `json:"had_main_till"`
+		ReceiptPrefix json.RawMessage `json:"receipt_prefix"`
 	}{plain: (*plain)(p)}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
@@ -349,6 +357,11 @@ func (p *PairProfile) UnmarshalJSON(b []byte) error {
 	}
 	var h bool
 	p.HadMainTill = json.Unmarshal(aux.HadMainTill, &h) == nil && h
+	p.ReceiptPrefix = ""
+	var rp string
+	if json.Unmarshal(aux.ReceiptPrefix, &rp) == nil && data.IsCloudSeriesPrefix(rp) {
+		p.ReceiptPrefix = rp
+	}
 	return nil
 }
 

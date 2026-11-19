@@ -22,11 +22,18 @@ const TillNoHighWaterSettingsKey = "shop.till_no_high_water"
 // maxTillNo is the largest number tillPrefixRe accepts.
 const maxTillNo = 9999
 
-// tillPrefixRe is a joined till's receipt prefix, T<n>- with n >= 2 (the
-// main till is till 1 and has none).
-var tillPrefixRe = regexp.MustCompile(`^T([2-9]|[1-9][0-9]{1,3})-$`)
+// tillPrefixRe is a joined till's receipt prefix with n >= 2 (the main till
+// is till 1): the legacy T<n>- or, since ut-docs#6663, the plain <n>- the
+// main till grants now. Both forms share one never-reused number space.
+var tillPrefixRe = regexp.MustCompile(`^T?([2-9]|[1-9][0-9]{1,3})-$`)
 
-// tillNoOf returns n for a valid T<n>- prefix, else 0.
+// firstTillPrefixRe is the first main till's own prefix, "1-" (ut-docs#6663).
+var firstTillPrefixRe = regexp.MustCompile(`^1-$`)
+
+// FirstMainTillPrefix is the receipt prefix of a shop's first main till.
+const FirstMainTillPrefix = "1-"
+
+// tillNoOf returns n for a valid joined-till prefix (T<n>- or <n>-), else 0.
 func tillNoOf(prefix string) int {
 	m := tillPrefixRe.FindStringSubmatch(strings.TrimSpace(prefix))
 	if m == nil {
@@ -36,7 +43,26 @@ func tillNoOf(prefix string) int {
 	return n
 }
 
-// EnrolTill enrols a till and grants it its receipt prefix in ONE
+// TillNumberOfPrefix is the till number a receipt prefix stands for, where a
+// number is needed (the order-number lane): T<n>- and <n>- are till n; "",
+// "1-", the replacement-main forms (M<8hex>-, cloud letters) and a restored
+// copy's R<4hex>- count as till 1.
+func TillNumberOfPrefix(prefix string) int {
+	if n := tillNoOf(prefix); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// cloudSeriesPrefixRe is a replacement main till's cloud-issued prefix:
+// 1 to 3 letters of the cloud's alphabet (no I, O, M, R, T), then "-".
+var cloudSeriesPrefixRe = regexp.MustCompile(`^[A-HJ-LNPQSU-Z]{1,3}-$`)
+
+// IsCloudSeriesPrefix reports whether p is a prefix the cloud can grant a
+// replacement main till at pairing (ut-docs#6663). internal/db mirrors it.
+func IsCloudSeriesPrefix(p string) bool { return cloudSeriesPrefixRe.MatchString(p) }
+
+// EnrolTillPrefix enrols a till and grants it its receipt prefix in ONE
 // transaction (ut-docs#5074 S0; ut-docs#5058 UT-5 for the re-join rule):
 //
 //   - requestedPrefix is a re-joining till's own prefix ("" for a till that
@@ -54,13 +80,15 @@ func tillNoOf(prefix string) int {
 //
 // The transaction takes the write lock first (the DSN's _txlock=immediate),
 // so two tills enrolling at once can never be given the same number.
-func (r *TillsRepo) EnrolTill(ctx context.Context, name, bearerHash, role, requestedPrefix string) (id string, tillNo int, err error) {
+// It also returns the receipt prefix granted
+// ("2-", or a re-joining till's own T<n>-), which the till must adopt.
+func (r *TillsRepo) EnrolTillPrefix(ctx context.Context, name, bearerHash, role, requestedPrefix string) (id string, tillNo int, prefix string, err error) {
 	if !ValidTillRole(role) {
-		return "", 0, fmt.Errorf("enrol till: invalid role %q", role)
+		return "", 0, "", fmt.Errorf("enrol till: invalid role %q", role)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", 0, fmt.Errorf("enrol till: begin: %w", err)
+		return "", 0, "", fmt.Errorf("enrol till: begin: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -71,26 +99,30 @@ func (r *TillsRepo) EnrolTill(ctx context.Context, name, bearerHash, role, reque
 	if _, err = tx.ExecContext(ctx,
 		`INSERT INTO tills (id, name, bearer_hash, role, bearer_issued_at) VALUES (?, ?, ?, ?, ?)`,
 		id, name, bearerHash, role, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return "", 0, fmt.Errorf("enrol till: insert: %w", err)
+		return "", 0, "", fmt.Errorf("enrol till: insert: %w", err)
 	}
 	used, err := receiptPrefixesInUse(ctx, tx)
 	if err != nil {
-		return "", 0, fmt.Errorf("enrol till: %w", err)
+		return "", 0, "", fmt.Errorf("enrol till: %w", err)
 	}
 	var hwRaw string
 	if err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, TillNoHighWaterSettingsKey).Scan(&hwRaw); err != nil && err != sql.ErrNoRows {
-		return "", 0, fmt.Errorf("enrol till: read %s: %w", TillNoHighWaterSettingsKey, err)
+		return "", 0, "", fmt.Errorf("enrol till: read %s: %w", TillNoHighWaterSettingsKey, err)
 	}
 	err = nil
 	highWater, _ := strconv.Atoi(strings.TrimSpace(hwRaw)) // unset or unreadable: the scan below still counts
-	if n := tillNoOf(requestedPrefix); n > 0 && !used[fmt.Sprintf("T%d-", n)] {
+	granted := ""
+	if n := tillNoOf(requestedPrefix); n > 0 && !used[fmt.Sprintf("T%d-", n)] && !used[fmt.Sprintf("%d-", n)] {
+		// A till keeps the prefix it has for life, T<n>- or <n>- (it is also
+		// its invoice series), never renamed on re-join.
 		tillNo = n
+		granted = strings.TrimSpace(requestedPrefix)
 	} else {
 		// The till count includes the row inserted above, so the old rule's
 		// len(tills)+1 is count+1.
 		var count int
 		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tills`).Scan(&count); err != nil {
-			return "", 0, fmt.Errorf("enrol till: count tills: %w", err)
+			return "", 0, "", fmt.Errorf("enrol till: count tills: %w", err)
 		}
 		last := max(highWater, count, 1)
 		for p := range used {
@@ -99,23 +131,26 @@ func (r *TillsRepo) EnrolTill(ctx context.Context, name, bearerHash, role, reque
 		tillNo = last + 1
 	}
 	if tillNo > maxTillNo {
-		return "", 0, fmt.Errorf("enrol till: no till number left (highest granted %d)", tillNo-1)
+		return "", 0, "", fmt.Errorf("enrol till: no till number left (highest granted %d)", tillNo-1)
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tills SET receipt_prefix = ? WHERE id = ?`, fmt.Sprintf("T%d-", tillNo), id); err != nil {
-		return "", 0, fmt.Errorf("enrol till: record receipt prefix: %w", err)
+	if granted == "" {
+		granted = fmt.Sprintf("%d-", tillNo)
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE tills SET receipt_prefix = ? WHERE id = ?`, granted, id); err != nil {
+		return "", 0, "", fmt.Errorf("enrol till: record receipt prefix: %w", err)
 	}
 	if tillNo > highWater {
 		if _, err = tx.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
 			TillNoHighWaterSettingsKey, strconv.Itoa(tillNo), time.Now().UTC()); err != nil {
-			return "", 0, fmt.Errorf("enrol till: record %s: %w", TillNoHighWaterSettingsKey, err)
+			return "", 0, "", fmt.Errorf("enrol till: record %s: %w", TillNoHighWaterSettingsKey, err)
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return "", 0, fmt.Errorf("enrol till: commit: %w", err)
+		return "", 0, "", fmt.Errorf("enrol till: commit: %w", err)
 	}
-	return id, tillNo, nil
+	return id, tillNo, granted, nil
 }
 
 // receiptPrefixesInUse is every T<n>- receipt prefix this main till knows to
@@ -129,10 +164,10 @@ func receiptPrefixesInUse(ctx context.Context, q dbExecutor) (map[string]bool, e
 SELECT receipt_prefix FROM tills WHERE receipt_prefix != ''
 UNION
 SELECT DISTINCT substr(receipt_no, 1, instr(receipt_no, '-')) FROM sales
-WHERE receipt_no GLOB 'T[0-9]*-*'
+WHERE receipt_no GLOB 'T[0-9]*-*' OR receipt_no GLOB '[1-9]*-*'
 UNION
 SELECT DISTINCT substr(receipt_no, 1, instr(receipt_no, '-')) FROM sales_archive
-WHERE receipt_no GLOB 'T[0-9]*-*'
+WHERE receipt_no GLOB 'T[0-9]*-*' OR receipt_no GLOB '[1-9]*-*'
 UNION
 SELECT value FROM settings WHERE key = 'sync.receipt_prefix' AND value != ''`)
 	if err != nil {
@@ -194,18 +229,11 @@ func ReplacementMainTillPrefix(newDeviceID, oldDeviceID string) string {
 
 var replacementMainTillPrefixRe = regexp.MustCompile(`^M[0-9a-f]{8}-$`)
 
-// IsReplacementMainTillPrefix reports whether p is exactly a prefix
-// ReplacementMainTillPrefix can return. internal/db mirrors it
-// (isReplacementMainTillPrefix; a test pins the two together).
-func IsReplacementMainTillPrefix(p string) bool { return replacementMainTillPrefixRe.MatchString(p) }
-
-// customerFacingPrefix is the part of sync.receipt_prefix that belongs in
-// numbers customers hear and read (order display numbers, counter orders).
-// A replacement main till numbers those as the original main did, with no
-// prefix (ut-docs#5058 review F3).
-func customerFacingPrefix(p string) string {
-	if IsReplacementMainTillPrefix(strings.TrimSpace(p)) {
-		return ""
-	}
-	return p
+// IsReplacementMainTillPrefix reports whether p is a replacement main till's
+// prefix: the local M<8hex>- ReplacementMainTillPrefix returns, or the
+// cloud-issued letter form (IsCloudSeriesPrefix, ut-docs#6663). Both are kept
+// across a restore. internal/db mirrors it (isReplacementMainTillPrefix; a
+// test pins the two together).
+func IsReplacementMainTillPrefix(p string) bool {
+	return replacementMainTillPrefixRe.MatchString(p) || IsCloudSeriesPrefix(p)
 }

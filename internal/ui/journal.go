@@ -25,6 +25,8 @@ type JournalViewData struct {
 	Tills        []data.TillRow
 	SelectedTill string
 	Day          string
+	// Search is the receipt/order number the operator typed (ut-docs#6663).
+	Search string
 
 	// IsReplica/ExplicitCrossTillOnReplica are the B2 fix (ut-docs#550
 	// review): a replica's own sales table never accumulates sibling

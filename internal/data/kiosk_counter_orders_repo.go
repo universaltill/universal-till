@@ -232,44 +232,10 @@ func (r *KioskCounterOrdersRepo) Create(ctx context.Context, order KioskCounterO
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
 
-	// ut-docs#2703 (review F2): each till mints this sequence from its OWN
-	// table, and a held counter order is pushed to the main till -- so two
-	// kiosks on two tills both minted "C-1" onto the main's Open orders and
-	// into sales.display_no. The till's sync.receipt_prefix namespaces it,
-	// read exactly as POSRepo.NextDisplayNo reads it (in the same tx, a
-	// missing row meaning no prefix): "C-<prefix><n>", or the plain "C-<n>"
-	// on the main till with no prefix. ut-docs#2714: a REPLICA
-	// (sync.primary_url set) with a blank prefix would still collide with
-	// the main till, so it derives one from sync.till_id instead
-	// (counterOrderPrefixFromTillID); with no till id either it stays plain.
-	// NextDisplayNo still never counts these: a "C-..." value either fails
-	// its LIKE '<prefix>%' or CASTs to 0.
-	var tillPrefix, primaryURL, tillID string
-	_ = tx.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&tillPrefix)
-	tillPrefix = customerFacingPrefix(tillPrefix)
-	if strings.TrimSpace(tillPrefix) == "" {
-		_ = tx.QueryRowContext(ctx,
-			`SELECT value FROM settings WHERE key = 'sync.primary_url'`).Scan(&primaryURL)
-		if strings.TrimSpace(primaryURL) != "" {
-			_ = tx.QueryRowContext(ctx,
-				`SELECT value FROM settings WHERE key = 'sync.till_id'`).Scan(&tillID)
-			tillPrefix = counterOrderPrefixFromTillID(tillID)
-		}
+	displayNo, err := nextCounterOrderDisplayNo(ctx, tx)
+	if err != nil {
+		return KioskCounterOrder{}, err
 	}
-	seqPrefix := counterOrderDisplayNoPrefix + tillPrefix
-	var maxVal sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(MAX(CAST(substr(display_no, ?) AS INTEGER)), 0)
-FROM kiosk_counter_orders WHERE display_no LIKE ? || '%'`,
-		len(seqPrefix)+1, seqPrefix).Scan(&maxVal); err != nil {
-		return KioskCounterOrder{}, fmt.Errorf("next counter order display no: %w", err)
-	}
-	next := maxVal.Int64 + 1
-	if next < 1 {
-		next = 1
-	}
-	displayNo := seqPrefix + strconv.FormatInt(next, 10)
 
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at, table_id, guest_order_id)
@@ -323,11 +289,32 @@ func counterOrderPrefixFromTillID(tillID string) string {
 // a "held" row is ever deleted (an open/collected row is real history); an
 // unknown id is a silent no-op.
 func (r *KioskCounterOrdersRepo) DeleteHeld(ctx context.Context, id string) error {
-	if _, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete held counter order: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+	var displayNo string
+	if err := tx.QueryRowContext(ctx, `
+SELECT display_no FROM kiosk_counter_orders WHERE id = ? AND status = ?`, id, KioskCounterOrderStatusHeld).Scan(&displayNo); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return fmt.Errorf("delete held counter order: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
 DELETE FROM kiosk_counter_orders WHERE id = ? AND status = ?`, id, KioskCounterOrderStatusHeld); err != nil {
 		return fmt.Errorf("delete held counter order: %w", err)
 	}
-	return nil
+	// The pointer gives the freed number back when it was the last one
+	// issued, so the retry reuses the same C-number.
+	if last, _, ok, err := seriesLast(ctx, tx, numberKindCounterOrder, ""); err == nil && ok &&
+		displayNo == counterOrderDisplayNoPrefix+strconv.FormatInt(last, 10) && last > 0 {
+		if err := storeSeries(ctx, tx, numberKindCounterOrder, "", last-1, ""); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ListOpen returns every open counter order, oldest first — the natural
@@ -466,4 +453,123 @@ VALUES (?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), datetime('no
 		return false, fmt.Errorf("commit counter order convert: %w", err)
 	}
 	return true, nil
+}
+
+// nextCounterOrderDisplayNo allocates the "C-<n>" number of a pay-at-counter
+// order. ut-docs#2703 (review F2): each till mints this sequence from its
+// OWN table and a held counter order is pushed to the main till, so two
+// tills must never mint the same number. Since ut-docs#6663 it follows the
+// order-number rule: no prefix, the till's own block of 100 ((till number -
+// 1) * 100 .. +99, till 1 is 1..99), wrapping inside the block and skipping
+// numbers a row of this table still holds (display_no is UNIQUE, migration
+// 044). Fallbacks that keep the older prefixed count: a replica that does
+// not know its number (blank sync.receipt_prefix, ut-docs#2714: namespaced
+// by sync.till_id), a prefix the blocks cannot place (a restored copy's
+// R<4hex>-: it keeps its prefixed count until it re-joins). A till whose
+// whole block is taken reuses the number of its oldest held row (never a
+// failed order, never a number of another till's block).
+func nextCounterOrderDisplayNo(ctx context.Context, tx *sql.Tx) (string, error) {
+	prefix := strings.TrimSpace(receiptPrefix(ctx, tx))
+	legacy := ""
+	switch {
+	case !laneKnown(prefix):
+		legacy = prefix
+	case prefix == "":
+		var primaryURL, tillID string
+		_ = tx.QueryRowContext(ctx,
+			`SELECT value FROM settings WHERE key = 'sync.primary_url'`).Scan(&primaryURL)
+		if strings.TrimSpace(primaryURL) != "" {
+			_ = tx.QueryRowContext(ctx,
+				`SELECT value FROM settings WHERE key = 'sync.till_id'`).Scan(&tillID)
+			legacy = counterOrderPrefixFromTillID(tillID)
+		}
+	}
+	if legacy != "" {
+		return legacyCounterOrderDisplayNo(ctx, tx, counterOrderDisplayNoPrefix+legacy)
+	}
+
+	lo, hi := orderNoLane(TillNumberOfPrefix(prefix))
+	last, _, ok, err := seriesLast(ctx, tx, numberKindCounterOrder, "")
+	if err != nil {
+		return "", fmt.Errorf("next counter order display no: %w", err)
+	}
+	if !ok || last < lo-1 || last > hi {
+		var top sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `
+SELECT MAX(CAST(substr(display_no, ?) AS INTEGER)) FROM kiosk_counter_orders
+WHERE display_no GLOB 'C-[0-9]*' AND display_no NOT GLOB 'C-*[^0-9]*'
+  AND CAST(substr(display_no, ?) AS INTEGER) BETWEEN ? AND ?`,
+			len(counterOrderDisplayNoPrefix)+1, len(counterOrderDisplayNoPrefix)+1, lo, hi).Scan(&top); err != nil {
+			return "", fmt.Errorf("next counter order display no: %w", err)
+		}
+		last = lo - 1
+		if top.Valid {
+			last = top.Int64
+		}
+	}
+	size := hi - lo + 1
+	for i := int64(1); i <= size; i++ {
+		cand := last + i
+		if cand > hi {
+			cand = lo + (cand-hi-1)%size
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM kiosk_counter_orders WHERE display_no = ?`,
+			counterOrderDisplayNoPrefix+strconv.FormatInt(cand, 10)).Scan(&n); err != nil {
+			return "", fmt.Errorf("next counter order display no: %w", err)
+		}
+		if n == 0 {
+			if err := storeSeries(ctx, tx, numberKindCounterOrder, "", cand, ""); err != nil {
+				return "", err
+			}
+			return counterOrderDisplayNoPrefix + strconv.FormatInt(cand, 10), nil
+		}
+	}
+	// The whole block is taken (display_no is UNIQUE and rows outlive their
+	// order: a held row is kept for counterOrderHeldRetention). Reuse the
+	// number of the oldest held row, as the order number does (ADR-0166
+	// amendment 2026-11-18 E), and never count on above the block: that is
+	// the next till's block, and both orders reach the main till
+	// (ut-docs#2703). The old row stays as the record of what was ordered,
+	// under a retired number (the "~rowid" form migration 044 uses).
+	var oldID, oldNo string
+	err = tx.QueryRowContext(ctx, `
+SELECT id, display_no FROM kiosk_counter_orders
+WHERE status = ? AND display_no GLOB 'C-[0-9]*' AND display_no NOT GLOB 'C-*[^0-9]*'
+  AND CAST(substr(display_no, ?) AS INTEGER) BETWEEN ? AND ?
+ORDER BY created_at, rowid LIMIT 1`,
+		KioskCounterOrderStatusHeld, len(counterOrderDisplayNoPrefix)+1, lo, hi).Scan(&oldID, &oldNo)
+	if err == sql.ErrNoRows {
+		// Only legacy open/collected rows fill the block (never pruned, and
+		// an open one is still payable under its number): count on above it.
+		return legacyCounterOrderDisplayNo(ctx, tx, counterOrderDisplayNoPrefix)
+	}
+	if err != nil {
+		return "", fmt.Errorf("next counter order display no: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE kiosk_counter_orders SET display_no = display_no || '~' || rowid WHERE id = ?`, oldID); err != nil {
+		return "", fmt.Errorf("next counter order display no: free %s: %w", oldNo, err)
+	}
+	n, err := strconv.ParseInt(strings.TrimPrefix(oldNo, counterOrderDisplayNoPrefix), 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("next counter order display no: %w", err)
+	}
+	if err := storeSeries(ctx, tx, numberKindCounterOrder, "", n, ""); err != nil {
+		return "", err
+	}
+	return oldNo, nil
+}
+
+// legacyCounterOrderDisplayNo is the MAX-based count within seqPrefix.
+func legacyCounterOrderDisplayNo(ctx context.Context, tx *sql.Tx, seqPrefix string) (string, error) {
+	var maxVal sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(CAST(substr(display_no, ?) AS INTEGER)), 0)
+FROM kiosk_counter_orders WHERE display_no LIKE ? || '%'`,
+		len(seqPrefix)+1, seqPrefix).Scan(&maxVal); err != nil {
+		return "", fmt.Errorf("next counter order display no: %w", err)
+	}
+	return seqPrefix + strconv.FormatInt(max(maxVal.Int64+1, 1), 10), nil
 }
