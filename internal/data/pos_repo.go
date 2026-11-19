@@ -3798,7 +3798,7 @@ FROM report_archive WHERE kind = ?
 HAVING (? != 'eod' OR NOT EXISTS (
   SELECT 1 FROM report_archive ra2
   WHERE ra2.kind = 'eod'
-    AND date(ra2.created_at, 'localtime') = date(?, 'localtime')))
+    AND date(ra2.created_at, '-1 second', 'localtime') = date(?, '-1 second', 'localtime')))
 ON CONFLICT (kind, period) DO NOTHING`
 		args = []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt,
 			closedAtStr, kind, kind, closedAtStr}

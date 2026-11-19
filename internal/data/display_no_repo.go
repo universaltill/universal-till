@@ -99,7 +99,7 @@ func (r *POSRepo) NextDisplayNo(ctx context.Context, tx *sql.Tx) (string, error)
 		if err := exec.QueryRowContext(ctx, `
 SELECT MAX(CAST(display_no AS INTEGER)) FROM sales
 WHERE display_no GLOB '[0-9]*' AND display_no NOT GLOB '*[^0-9]*'
-  AND CAST(display_no AS INTEGER) BETWEEN ? AND ? AND created_at > ?`,
+  AND CAST(display_no AS INTEGER) BETWEEN ? AND ? AND created_at >= ?`,
 			lo, hi, since).Scan(&top); err != nil {
 			return "", fmt.Errorf("next display no: %w", err)
 		}
@@ -160,7 +160,7 @@ func displayNoHeldSince(ctx context.Context, exec dbExecutor, no, since string) 
 	latest := ""
 	var at sql.NullString
 	if err := exec.QueryRowContext(ctx,
-		`SELECT created_at FROM sales WHERE display_no = ? AND created_at > ? AND `+openOrderPredicate+`
+		`SELECT created_at FROM sales WHERE display_no = ? AND created_at >= ? AND `+openOrderPredicate+`
 ORDER BY created_at DESC LIMIT 1`, no, since).Scan(&at); err == nil && at.Valid {
 		latest = at.String
 	}
@@ -179,7 +179,7 @@ func legacyPrefixedDisplayNo(ctx context.Context, exec dbExecutor, prefix, since
 	var maxVal sql.NullInt64
 	if err := exec.QueryRowContext(ctx, `
 SELECT COALESCE(MAX(CAST(substr(display_no, ?) AS INTEGER)), 0)
-FROM sales WHERE display_no LIKE ? || '%' AND created_at > ?`,
+FROM sales WHERE display_no LIKE ? || '%' AND created_at >= ?`,
 		len(prefix)+1, prefix, since).Scan(&maxVal); err != nil {
 		return "", fmt.Errorf("next display no: %w", err)
 	}
