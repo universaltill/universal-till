@@ -657,6 +657,16 @@ func setupTestDB(t *testing.T) *sql.DB {
 		PRIMARY KEY (id, version)
 	);
 
+	CREATE TABLE plugin_revoked_releases (
+		manifest_id TEXT NOT NULL,
+		version TEXT NOT NULL DEFAULT '',
+		listing_id TEXT NOT NULL DEFAULT '',
+		reason TEXT NOT NULL DEFAULT '',
+		action TEXT NOT NULL DEFAULT '',
+		recorded_at TEXT NOT NULL,
+		PRIMARY KEY (manifest_id, version)
+	);
+
 	CREATE TABLE plugins (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,

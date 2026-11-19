@@ -630,7 +630,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		needsManagerPIN := !authOff && !canPerform(d, r, "refund")
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
-			"theme":                d.CurrentState().Theme,
+			"theme":                d.ResolvedTheme(r),
 			"menuItems":            d.MenuSnapshot(),
 			"Sale":                 detail,
 			"Lines":                refundableLines(detail, returned, returnedByLine),
@@ -925,8 +925,8 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// same-sale/same-line/same-amount), but there's no reason to let
 		// arbitrary-length operator input reach the bridge/device's own
 		// `seen` map at all.
-		if len(refundAttemptID) > 128 {
-			refundAttemptID = ""
+		if len(refundAttemptID) > 128 || strings.HasPrefix(refundAttemptID, reversalRequestIDPrefix) {
+			refundAttemptID = "" // too long, or in the reversal id space (ut-docs#6601)
 		}
 		refundPayload := map[string]any{
 			"method":           method,
@@ -934,6 +934,41 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			"currency":         detail.Currency,
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
+		}
+		// ut-docs#6438: hand the plugin the original sale's own provider
+		// reference(s) for this method, in payment order, so the refund never
+		// depends on per-sale plugin storage.
+		var originalPayments []map[string]any
+		for _, op := range detail.Payments {
+			if op.Method == method && op.TraceID != "" {
+				originalPayments = append(originalPayments, map[string]any{
+					"transaction_ref": op.TraceID,
+					"amount":          op.Amount,
+					"tip_amount":      op.TipAmount,
+				})
+			}
+		}
+		// ut-docs#6603: with several legs of this method, say how much goes back
+		// to each, in payment order (a leg's own amount is its cap), so the
+		// plugin never has to guess which charge to refund. Earlier partial
+		// refunds are not tracked per leg yet (see the card's notes).
+		if len(originalPayments) > 1 {
+			caps := make([]int64, len(originalPayments))
+			for i, op := range originalPayments {
+				caps[i], _ = op["amount"].(int64)
+			}
+			alloc := allocateRefundAcrossLegs(refundTotal.Minor(), caps)
+			kept := originalPayments[:0:0]
+			for i, op := range originalPayments {
+				if alloc[i] > 0 {
+					op["refund_amount"] = alloc[i]
+					kept = append(kept, op)
+				}
+			}
+			originalPayments = kept
+		}
+		if len(originalPayments) > 0 {
+			refundPayload["original_payments"] = originalPayments
 		}
 		var requestID string
 		if refundAttemptID != "" {
@@ -1000,6 +1035,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.fiscal_device_no_receipt", "refund", errors.New("fiscal device approved refund with no receipt evidence"))
 			return
 		}
+		// ut-docs#5803: record THIS till's register on the return exactly as the
+		// sale path does (pos_api.go completeTender: this till's identity, then
+		// EnsureRegister for the ambiguous case; "" stays NULL), otherwise the
+		// shift's expected-cash window (sales.register_id = shift register)
+		// never sees the cash refund.
+		refundRegisterID := tillRegisterIDBestEffort(r.Context(), d)
+		if refundRegisterID == "" {
+			if regID, rerr := repo.EnsureRegister(r.Context()); rerr == nil {
+				refundRegisterID = regID
+			}
+		}
 		saleInput := pos.SaleInput{
 			// SaleID carries forward whatever fiscalStartCarrier minted
 			// above (empty if fiscal.sign.start has no subscriber) — ADR-0077
@@ -1008,6 +1054,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			SaleID:                 fiscalStartCarrier.SaleID,
 			SaleType:               "return",
 			CashierID:              actorID,
+			RegisterID:             refundRegisterID,
 			ActorID:                actorID,
 			Currency:               detail.Currency,
 			TaxInclusive:           inclusive,
@@ -1315,4 +1362,23 @@ func refundServiceCharges(amount int64, taxBasisBP int) []pos.ChargeInput {
 		TaxBasisBP: taxBasisBP,
 		Base:       pos.ChargeBaseNetLines,
 	}}
+}
+
+// allocateRefundAcrossLegs splits a refund total over the original legs in
+// payment order, each capped at its own amount (ut-docs#6603). Any remainder
+// beyond the legs' sum is left unallocated rather than guessed onto a leg.
+func allocateRefundAcrossLegs(total int64, caps []int64) []int64 {
+	out := make([]int64, len(caps))
+	for i, c := range caps {
+		a := total
+		if a > c {
+			a = c
+		}
+		if a < 0 {
+			a = 0
+		}
+		out[i] = a
+		total -= a
+	}
+	return out
 }

@@ -1587,6 +1587,13 @@ type VoucherTopUp struct {
 	BalanceAfterMinor int64 `json:"balance_after"`
 	// Reversed: the sale was voided and the credit taken back.
 	Reversed bool `json:"reversed"`
+	// VoucherVoid: the voucher's status is 'void' NOW (read time), whatever
+	// happened to this top-up — a forced credit on a void voucher, a replica
+	// mirror (ut-docs#5793). Distinct from Reversed (this top-up taken back).
+	VoucherVoid bool `json:"voucher_void"`
+	// CreatedAt is the top_up row's created_at (RFC3339 UTC, or legacy
+	// datetime('now')); the slip's "Topped up <date>" (ut-docs#6179).
+	CreatedAt string `json:"created_at"`
 }
 
 // VoucherTopUpsInSale returns every top-up saleID made, in the order the
@@ -1617,7 +1624,8 @@ SELECT t.voucher_id, COALESCE(v.holder_label, ''), t.amount,
                                 FROM voucher_transactions l
                                WHERE l.voucher_id = t.voucher_id AND l.rowid > t.rowid)
        END,
-       EXISTS (SELECT 1 FROM voucher_transactions x WHERE x.id = ? || t.id)
+       EXISTS (SELECT 1 FROM voucher_transactions x WHERE x.id = ? || t.id),
+       v.status = 'void', t.created_at
 FROM voucher_transactions t
 JOIN vouchers v ON v.id = t.voucher_id
 WHERE t.sale_id = ? AND t.type = 'top_up'
@@ -1629,7 +1637,7 @@ ORDER BY t.rowid`, topUpReversalIDPrefix, saleID)
 	var out []VoucherTopUp
 	for rows.Next() {
 		var t VoucherTopUp
-		if err := rows.Scan(&t.VoucherID, &t.HolderLabel, &t.AmountMinor, &t.BalanceAfterMinor, &t.Reversed); err != nil {
+		if err := rows.Scan(&t.VoucherID, &t.HolderLabel, &t.AmountMinor, &t.BalanceAfterMinor, &t.Reversed, &t.VoucherVoid, &t.CreatedAt); err != nil {
 			return nil, fmt.Errorf("voucher top-ups in sale: scan: %w", err)
 		}
 		out = append(out, t)

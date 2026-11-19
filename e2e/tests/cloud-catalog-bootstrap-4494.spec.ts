@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, nameShop } from './helpers';
+import { watchConsole, ensureRegisteredAutomatically } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -142,18 +142,13 @@ test.describe.serial('cloud catalogue bootstrap over the seed rows (ut-docs#4494
     await page.goto('/catalog/tax-codes');
     await expect(page.locator('tr.tax-code-row[data-name="Standard VAT"]')).toHaveCount(1);
 
-    // Register (a fresh diagnostics till) — registering checks in at once,
-    // and that check-in tick caches catalog_master "cloud" and then pulls
-    // the feed. An already-registered till asks via "Check for a paid plan".
+    // The till registers itself once named (ADR-0200); registering checks in
+    // at once, and that check-in tick caches catalog_master "cloud" and then
+    // pulls the feed. An already-registered till asks via "Check for a paid plan".
     await page.goto('/settings#registration');
     const card = page.locator('#registration');
-    const registerBtn = card.locator('button[hx-post="/api/enrol/now"]');
-    if (await registerBtn.count()) {
-      await nameShop(page); // ut-docs#4272: registration waits for a real shop name
-      await page.locator('#enrol-accept-terms').check(); // ut-docs#4720: the cloud terms are accepted first
-      await registerBtn.click();
-      await expect(page.locator('#enrol-msg')).toContainText('✅');
-    } else {
+    await ensureRegisteredAutomatically(page);
+    {
       const checkPlan = card.locator('button[hx-post="/api/enrol/check-plan"]');
       if (await checkPlan.count()) {
         await checkPlan.click();

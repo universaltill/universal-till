@@ -110,8 +110,8 @@ func TestUncoveredRoutes(t *testing.T) {
 	}
 }
 
-// de ships no web/locales/de.json (its UI strings come from the external
-// ut-plugin-language-de pack — see manualOnlyLocales' own doc comment), so
+// de ships no web/locales/de.json (its UI strings come from its Weblate
+// bundle (com.universaltill.language-de) — see manualOnlyLocales' own doc comment), so
 // without manualOnlyLocales it would be invisible to a glob of web/locales
 // and this guard would silently never check it. This is the regression this
 // test exists to catch: en can gain a topic with no German counterpart and
@@ -178,5 +178,25 @@ func TestEnglishOnlyTopicIsWarningNotFailure(t *testing.T) {
 	}
 	if w := translationWarnings(lib, nil); len(w) != 0 {
 		t.Errorf("no locales -> no warnings, got %v", w)
+	}
+}
+
+// ut-docs#2615: an inline screenshot reference with no committed PNG is a
+// guard failure (manual.Load only drops it, so Builtin() keeps working).
+func TestMissingInlineScreenshotIsReported(t *testing.T) {
+	topic := "---\nid: x\ntitle: X\nsection: T\norder: 1\n---\n\n# X\n\n- a\n  ![Alt](img/x-a.png)\n"
+	fsys := fstest.MapFS{"help/en/x.md": {Data: []byte(topic)}}
+	lib, err := manual.Load(fsys, "help")
+	if err != nil {
+		t.Fatalf("manual.Load: %v", err)
+	}
+	got := missingImageLines(lib)
+	if len(got) != 1 || !strings.Contains(got[0], "en/x: img/x-a.png") {
+		t.Fatalf("want one line naming en/x: img/x-a.png, got %v", got)
+	}
+	fsys["help/img/en/x-a.png"] = &fstest.MapFile{Data: []byte("png")}
+	lib, _ = manual.Load(fsys, "help")
+	if got := missingImageLines(lib); len(got) != 0 {
+		t.Errorf("committed image should satisfy the check, got %v", got)
 	}
 }

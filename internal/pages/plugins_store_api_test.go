@@ -78,7 +78,7 @@ func TestStoreAPI_MissingListingID_400(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("%s without listing_id = %d, want 400", path, rec.Code)
 		}
-		if ok, msg := storeRespOf(t, rec); ok || !strings.Contains(msg, "listing_id") {
+		if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.invalid_request" {
 			t.Fatalf("%s error envelope wrong: success=%v msg=%q", path, ok, msg)
 		}
 	}
@@ -104,7 +104,7 @@ func TestStoreAPI_InstallerNotConfigured_500(t *testing.T) {
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("%s with broken installer = %d, want 500", path, rec.Code)
 		}
-		if ok, msg := storeRespOf(t, rec); ok || !strings.Contains(msg, "marketplace not configured") {
+		if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.configuration" {
 			t.Fatalf("%s envelope wrong: success=%v msg=%q", path, ok, msg)
 		}
 	}
@@ -122,7 +122,7 @@ func TestStoreAPI_DownloadFailureIs502(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("download from empty marketplace = %d, want 502 (%s)", rec.Code, rec.Body.String())
 	}
-	if ok, msg := storeRespOf(t, rec); ok || !strings.Contains(msg, "download failed") {
+	if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.download_failed" {
 		t.Fatalf("download envelope wrong: success=%v msg=%q", ok, msg)
 	}
 }
@@ -258,7 +258,7 @@ func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("install without staged bundle = %d, want 400 (%s)", rec.Code, rec.Body.String())
 	}
-	if ok, msg := storeRespOf(t, rec); ok || !strings.Contains(msg, "install failed") {
+	if ok, msg := storeRespOf(t, rec); ok || msg != "plugins.install.error.retryable" {
 		t.Fatalf("install envelope wrong: success=%v msg=%q", ok, msg)
 	}
 }
@@ -322,7 +322,7 @@ func TestStoreAPI_ResponsesUseDataErrorEnvelope(t *testing.T) {
 	if bad.Data != nil {
 		t.Fatalf("expected data:null on error, got %v", bad.Data)
 	}
-	if !strings.Contains(bad.Error, "listing_id") {
+	if bad.Error != "plugins.install.error.invalid_request" {
 		t.Fatalf("expected the validation message in error, got %q", bad.Error)
 	}
 
@@ -525,5 +525,120 @@ func TestStoreAPI_InstallFetchesSigningKeyLazily(t *testing.T) {
 	}
 	if n := keyHits.Load(); n != 1 {
 		t.Fatalf("signing-key requests after a second install = %d, want 1 (key reused)", n)
+	}
+}
+
+func TestStoreAPI_DownloadUnreachable_TranslatedKey(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
+
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-1"}, "accept_terms": {"on"}}, nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("download with marketplace down = %d, want 502 (%s)", rec.Code, rec.Body.String())
+	}
+	ok, msg := storeRespOf(t, rec)
+	if ok || msg != "plugins.install.error.unreachable" {
+		t.Fatalf("envelope wrong: success=%v msg=%q", ok, msg)
+	}
+	for _, leak := range []string{"127.0.0.1", "dial", "request failed"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("body leaks %q: %s", leak, rec.Body.String())
+		}
+	}
+	// A download is not an install: no install-status record.
+	if _, found, err := plugins.NewInstallStatusStore(d.Db).Get(t.Context(), "lst-1"); err != nil || found {
+		t.Fatalf("failed download saved a status record (found=%v err=%v)", found, err)
+	}
+}
+
+func TestStoreAPI_InstallFailure_RecordsFailedStatus(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
+		EndpointURL: "http://127.0.0.1:1",
+		PublicKey:   validStorePublicKey(t),
+	})
+
+	rec := postForm(mux, "/api/plugins/store/install", url.Values{"listing_id": {"lst-none"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("install = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if _, msg := storeRespOf(t, rec); msg != "plugins.install.error.retryable" {
+		t.Fatalf("msg = %q", msg)
+	}
+	st, found, err := plugins.NewInstallStatusStore(d.Db).Get(t.Context(), "lst-none")
+	if err != nil || !found {
+		t.Fatalf("no failed record saved (found=%v err=%v)", found, err)
+	}
+	if st.State != plugins.InstallStateFailed || st.MessageKey != "plugins.install.error.retryable" || !st.Retryable {
+		t.Fatalf("record = %+v", st)
+	}
+}
+
+func TestStoreAPI_InstallFailure_KeepsActiveRecord(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
+		EndpointURL: "http://127.0.0.1:1",
+		PublicKey:   validStorePublicKey(t),
+	})
+	d.Pm.Installed["com.test.kept"] = plugins.Plugin{}
+	store := plugins.NewInstallStatusStore(d.Db)
+	if err := store.Save(t.Context(), plugins.InstallStatusRecord{
+		ListingID: "lst-kept", PluginID: "com.test.kept", PluginName: "Kept",
+		CurrentVersion: "1.0.0", State: plugins.InstallStateActive,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rec := postForm(mux, "/api/plugins/store/install", url.Values{"listing_id": {"lst-kept"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("install = %d (%s)", rec.Code, rec.Body.String())
+	}
+	st, found, err := store.Get(t.Context(), "lst-kept")
+	if err != nil || !found || st.State != plugins.InstallStateActive || st.PluginID != "com.test.kept" {
+		t.Fatalf("active record was overwritten: %+v found=%v err=%v", st, found, err)
+	}
+}
+
+// A stale active record (its plugin is no longer installed) is replaced by
+// the failure, so the tile shows the failed tag (ut-docs#6548 review).
+func TestStoreAPI_InstallFailure_OverwritesStaleActiveRecord(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
+		EndpointURL: "http://127.0.0.1:1",
+		PublicKey:   validStorePublicKey(t),
+	})
+	store := plugins.NewInstallStatusStore(d.Db)
+	if err := store.Save(t.Context(), plugins.InstallStatusRecord{
+		ListingID: "lst-stale", PluginID: "com.test.gone", PluginName: "Gone",
+		CurrentVersion: "1.0.0", State: plugins.InstallStateActive,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rec := postForm(mux, "/api/plugins/store/install", url.Values{"listing_id": {"lst-stale"}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("install = %d (%s)", rec.Code, rec.Body.String())
+	}
+	st, found, err := store.Get(t.Context(), "lst-stale")
+	if err != nil || !found || st.State != plugins.InstallStateFailed {
+		t.Fatalf("stale active record not replaced by failed: %+v found=%v err=%v", st, found, err)
+	}
+}
+
+func TestStoreAPI_Forbidden_TranslatedKey(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
+	for _, path := range []string{
+		"/api/plugins/store/download",
+		"/api/plugins/store/install",
+		"/api/plugins/store/delete-download",
+	} {
+		rec := postForm(mux, path, url.Values{"listing_id": {"lst-1"}}, nil)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s without a session = %d, want 403", path, rec.Code)
+		}
+		if _, msg := storeRespOf(t, rec); msg != "plugins.install.error.forbidden" {
+			t.Fatalf("%s msg = %q", path, msg)
+		}
 	}
 }

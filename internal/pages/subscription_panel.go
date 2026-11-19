@@ -92,6 +92,9 @@ func subscriptionPanelNotReady(w http.ResponseWriter, r *http.Request, d *common
 
 func registerSubscriptionPanel(mux *http.ServeMux, d *common.Deps, posRepo *data.POSRepo) {
 	mux.HandleFunc("POST /api/subscription/panel", func(w http.ResponseWriter, r *http.Request) {
+		if refusePlanPurchase(w, r) { // ut-docs#3434: no plan purchase in the iOS app
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
@@ -138,6 +141,9 @@ func registerSubscriptionPanel(mux *http.ServeMux, d *common.Deps, posRepo *data
 	})
 
 	mux.HandleFunc("POST /api/subscription/panel/handoff", func(w http.ResponseWriter, r *http.Request) {
+		if refusePlanPurchase(w, r) { // ut-docs#3434: no plan purchase in the iOS app
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
@@ -181,6 +187,9 @@ func registerSubscriptionPanel(mux *http.ServeMux, d *common.Deps, posRepo *data
 	})
 
 	mux.HandleFunc("POST /api/subscription/panel/poll", func(w http.ResponseWriter, r *http.Request) {
+		if refusePlanPurchase(w, r) { // ut-docs#3434: no plan purchase in the iOS app
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()

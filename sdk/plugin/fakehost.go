@@ -149,6 +149,7 @@ func NewFakeHost() *FakeHost {
 const (
 	storageKeyMax   = 128
 	storageValueMax = 64 << 10
+	storageKeysMax  = 1024
 	streamChunkMax  = 256 << 10
 	viewNameMax     = 128
 	viewArgsMax     = 4 << 10
@@ -268,6 +269,12 @@ func rawStorageSet(key, val []byte) int32 {
 		return ErrInvalid.Code
 	case denied:
 		return ErrDenied.Code
+	}
+	// Same rule as the host (data.PluginRepo.StorageSet): the cap counts the
+	// OTHER keys, so overwriting an existing key at the cap works and only a
+	// new key is refused with -4 (ut-docs#6438).
+	if _, exists := h.Storage[string(key)]; !exists && len(h.Storage) >= storageKeysMax {
+		return ErrInvalid.Code
 	}
 	h.Storage[string(key)] = bytes.Clone(val)
 	return 0

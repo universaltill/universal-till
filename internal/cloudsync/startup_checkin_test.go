@@ -546,7 +546,7 @@ func TestStartupCheckinEndsAfterAnHour(t *testing.T) {
 
 // Review finding (ut-docs#3673): a 402 closes only the window it answered.
 // An operator action that opens a new window while the POST is in flight
-// (Check for a paid plan, Register now) must survive the 402, or the kick
+// (Check for a paid plan, an explicit operator registration) must survive the 402, or the kick
 // it queued is swallowed by the Retry-After wait and the action does
 // nothing.
 func TestPlanRequiredKeepsWindowOpenedDuringPost(t *testing.T) {

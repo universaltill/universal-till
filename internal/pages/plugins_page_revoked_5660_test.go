@@ -22,6 +22,8 @@ type revokedItem struct {
 	RevokedReason  string `json:"revokedReason"`
 	RevokedNotice  string `json:"revokedNotice"`
 	RevokedAt      string `json:"revokedAt"`
+	HasUpdate      bool   `json:"hasUpdate"`
+	VersionUnknown bool   `json:"versionUnknown"`
 }
 
 func getPluginsPage5660(t *testing.T, d *common.Deps) (string, map[string]revokedItem) {
@@ -142,5 +144,29 @@ func TestPluginsPage_RevokedNoticeIsolatesVersionAndReasonForBidi_5660(t *testin
 	n := items["com.x.bidi"].RevokedNotice
 	if !strings.Contains(n, "⁨1.0.0⁩") || !strings.Contains(n, "⁨because⁩") {
 		t.Fatalf("notice not FSI/PDI wrapped: %q", n)
+	}
+}
+
+// A withdrawn plugin whose update status is unknown (no catalog match: offline
+// or imported from a file) gets the neutral third hint, never "no replacement
+// version yet" (UX decision on #5660, plugins.revoked.hint_unknown).
+func TestPluginsPage_RevokedUnknownUpdateStatusUsesNeutralHint_5660(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	seedRevoked5660(t, d, "com.x.unk", "1.0.0", "", true)
+
+	body, items := getPluginsPage5660(t, d)
+	it := items["com.x.unk"]
+	if !it.Revoked || !it.VersionUnknown || it.HasUpdate {
+		t.Fatalf("want revoked + versionUnknown + no update, got %+v", it)
+	}
+	const unknown = "We can&#39;t check for a replacement right now. Reconnect to look for an update."
+	if !strings.Contains(body, unknown) && !strings.Contains(body, strings.ReplaceAll(unknown, "&#39;", "'")) {
+		t.Fatalf("neutral hint text missing from page")
+	}
+	if !strings.Contains(body, `x-show="!p.hasUpdate && p.versionUnknown"`) {
+		t.Fatal("neutral hint must show when update status is unknown")
+	}
+	if !strings.Contains(body, `x-show="!p.hasUpdate && !p.versionUnknown"`) {
+		t.Fatal("'no replacement yet' hint must be hidden when update status is unknown")
 	}
 }

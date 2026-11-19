@@ -510,25 +510,24 @@ func TestDismissPendingBasePlugin_ElevationFlow(t *testing.T) {
 	assertElevatedAudit(t, d, "pending_base_plugin_dismissed", mgrID, cashierID)
 }
 
-// claim-code/enrol-now call out to enroll.ClaimCode/enroll.RegisterNow, both
-// of which need a reachable marketplace — unavailable in this offline test
-// environment. This proves the checkOrElevate gate clears on a valid
+// claim-code calls out to enroll.ClaimCode, which needs a reachable
+// marketplace — unavailable in this offline test environment; registration-stop
+// (ADR-0200) is local. This proves the checkOrElevate gate clears on a valid
 // approver PIN (no prompt left in the response), not that the marketplace
 // call itself succeeds — same "past the gate ≠ succeeded" reasoning
-// TestSettingsEndpoints_RoleMatrix's own doc comment already gives for
-// enrol-now.
-func TestEnrolClaimCodeAndNow_ElevationGateClears(t *testing.T) {
+// TestSettingsEndpoints_RoleMatrix's own doc comment already gives.
+func TestEnrolClaimCodeAndRegistrationStop_ElevationGateClears(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	seedElevationUsers(t, d)
 	cashier := auth.User{ID: "cashier-x", Role: "cashier"}
 
-	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
+	for _, path := range []string{"/api/enrol/claim-code", "/api/settings/registration-stop"} {
 		t.Run(path+"/deny_no_pin", func(t *testing.T) {
-			rec := postForm(mux, path, url.Values{"accept_terms": {"on"}}, &cashier) // terms are checked before the gate (ut-docs#4720)
+			rec := postForm(mux, path, url.Values{"accept_terms": {"on"}, "stop": {"1"}}, &cashier) // terms are checked before the gate (ut-docs#4720)
 			assertElevationPrompt(t, path, rec.Code, rec.Body.String())
 		})
 		t.Run(path+"/elevate_valid_pin", func(t *testing.T) {
-			rec := postForm(mux, path, url.Values{"override_pin": {"555222"}, "accept_terms": {"on"}}, &cashier)
+			rec := postForm(mux, path, url.Values{"override_pin": {"555222"}, "accept_terms": {"on"}, "stop": {"1"}}, &cashier)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("%s elevated = %d, want 200", path, rec.Code)
 			}

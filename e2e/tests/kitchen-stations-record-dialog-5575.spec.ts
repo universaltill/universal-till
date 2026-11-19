@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#5575: /kitchen-stations adopts the ut-docs#2010 list + record dialog
 // standard (modelled on promotions-record-dialog-3661.spec.ts). The old page
@@ -47,7 +47,7 @@ async function overflow(page: Page) {
 }
 
 test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
-  // AC3: realistic fixture, no sideways scroll, every pencil inside the viewport.
+  // AC3: realistic fixture, no sideways scroll, every name button inside the viewport.
   for (const vp of [{ width: 1024, height: 600 }, { width: 1920, height: 1080 }]) {
     for (const lang of ['en', 'de', 'fa']) {
       test(`no sideways scroll at ${vp.width}x${vp.height} (${lang})`, async ({ page }) => {
@@ -79,9 +79,9 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
         // keeps every earlier test's stations, so it may scroll INSIDE its own
         // wrapper (a >6-station matrix is a documented non-goal, ut-docs#5575);
         // the document-level check above is what proves it never spills out.
-        const pencils = page.locator('#kitchen-stations-table [data-record-edit]');
-        for (let i = 0; i < (await pencils.count()); i++) {
-          const b = (await pencils.nth(i).boundingBox())!;
+        const nameBtns = page.locator('#kitchen-stations-table .record-row-open');
+        for (let i = 0; i < (await nameBtns.count()); i++) {
+          const b = (await nameBtns.nth(i).boundingBox())!;
           expect(b.x).toBeGreaterThanOrEqual(0);
           expect(b.x + b.width).toBeLessThanOrEqual(vp.width + 0.5);
         }
@@ -89,8 +89,9 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
     }
   }
 
-  // AC2: +, pencil and row tap all open the dialog; scrim, status, Escape, focus return.
-  test('+, pencil and row tap open the dialog; Escape discards with a guard; focus returns', async ({ page }) => {
+  // AC2: +, name button and row tap all open the dialog; scrim, status, Escape, focus return.
+  test('+, name button and row tap open the dialog; Escape discards with a guard; focus returns', async ({ page }) => {
+    noNativeDialogs(page);
     const assertClean = watchConsole(page);
     const name = 'Open5575';
     await seed(page, name);
@@ -112,20 +113,20 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
     await expect(page.locator(DIALOG)).toBeHidden();
     await expect(plus).toBeFocused();
 
-    const pencil = row(page, name).locator('[data-record-edit]');
-    await pencil.click();
+    const nameBtn = row(page, name).locator('.record-row-open');
+    await nameBtn.click();
     await expect(page.locator(DIALOG)).toBeVisible();
     await expect(page.locator(`${FORM} input[name="name"]`)).toHaveValue(name);
     await expect(page.locator(`${FORM} input[name="printer_address"]`)).toHaveValue('192.0.2.10:9100');
     // Dirty edit: Escape asks first; declining keeps the dialog open.
     await page.locator(`${FORM} input[name="name"]`).fill('Changed');
-    page.once('dialog', (d) => d.dismiss());
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'cancel');
     await expect(page.locator(DIALOG)).toBeVisible();
-    page.once('dialog', (d) => d.accept());
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'confirm');
     await expect(page.locator(DIALOG)).toBeHidden();
-    await expect(pencil).toBeFocused();
+    await expect(nameBtn).toBeFocused();
 
     await row(page, name).locator('td').first().click();
     await expect(page.locator(DIALOG)).toBeVisible();
@@ -181,11 +182,10 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
     await expect(page.locator(`${DIALOG} form[data-record-when="active=0"]`)).toBeHidden();
     const trash = page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`);
     await expect(trash).toBeVisible();
-    page.once('dialog', (d) => {
-      expect(d.message()).toMatch(/default kitchen printer/i);
-      void d.accept();
+    await clickThenReload(page, async () => {
+      await trash.click();
+      await answerTillConfirm(page, 'confirm', /default kitchen printer/i);
     });
-    await clickThenReload(page, () => trash.click());
     await expect(row(page, name)).toContainText(/inactive/i);
 
     await row(page, name).click();
@@ -198,6 +198,7 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
 
   // AC7: discovery inside the dialog (stubbed), in create and edit mode.
   test('Find printers fills the address without submitting, and clears on reopen', async ({ page }) => {
+    noNativeDialogs(page);
     const assertClean = watchConsole(page);
     const name = 'Disc5575';
     await seed(page, name);
@@ -218,8 +219,8 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
       await expect(page.locator('#discover-printers-msg')).toContainText(/tap save/i);
       expect(posts, 'Use this address must not submit').toBe(0);
       // The address change counts as dirty: Escape asks before discarding.
-      page.once('dialog', (d) => d.accept());
       await page.keyboard.press('Escape');
+      await answerTillConfirm(page, 'confirm');
       await expect(page.locator(DIALOG)).toBeHidden();
     }
     await page.locator('#kitchen-stations-new').click();
@@ -238,5 +239,38 @@ test.describe('kitchen stations list + record dialog (ut-docs#5575)', () => {
     expect(b.height, 'hit area >= 44px tall').toBeGreaterThanOrEqual(43);
     await link.click();
     await expect(page).toHaveURL(/\/kitchen-display\//);
+  });
+
+  // ut-docs#6046: the name is the keyboard path; row tap focus-returns to it too.
+  test('name button opens on Enter and Space, a non-name cell tap opens, focus returns to the name; View display never opens the dialog', async ({ page }) => {
+    const name = 'Kbd6046' + Date.now();
+    await seed(page, name, { destination_type: 'display' });
+    await page.goto('/kitchen-stations');
+    const nameBtn = row(page, name).locator('.record-row-open');
+    for (const key of ['Enter', ' ']) {
+      await nameBtn.focus();
+      await page.keyboard.press(key);
+      await expect(page.locator(DIALOG)).toBeVisible();
+      await expect(page.locator(`${FORM} input[name="name"]`)).toHaveValue(name);
+      await page.keyboard.press('Escape');
+      await expect(page.locator(DIALOG)).toBeHidden();
+      await expect(nameBtn).toBeFocused();
+    }
+    await row(page, name).locator('td').nth(2).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(nameBtn).toBeFocused();
+    const link = row(page, name).locator('.kitchen-view-display');
+    await expect(link).toHaveCount(1);
+    // Hold the display request so the page stays here: the dialog check
+    // below then runs on this page, not vacuously after navigating away.
+    await page.route(/\/kitchen-display\//, (r) => r.abort());
+    await link.click();
+    await expect(page.locator(DIALOG)).toHaveCount(1);
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(page).not.toHaveURL(/\/kitchen-display\//);
+    await page.unroute(/\/kitchen-display\//);
+    await Promise.all([page.waitForURL(/\/kitchen-display\//), link.click()]);
   });
 });

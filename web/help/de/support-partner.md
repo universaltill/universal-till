@@ -3,7 +3,7 @@ id: support-partner
 title: Support-Partner
 section: Verbinden & erweitern
 order: 362
-public: true
+public: false
 summary: "Ein Support-Partner ist ein Unternehmen, das Ihr Geschäft bei Universal Till unterstützt. Der Inhaber des Geschäfts verbindet oder trennt ihn unter „Geschäft verwalten“ auf my.universaltill.com – nie an der Kasse selbst."
 keywords: [partner, wiederverkäufer, support, hilfe, einwilligung, inhaber, partnercode, trennen]
 ---

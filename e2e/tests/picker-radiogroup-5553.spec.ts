@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, openNewItemForm, closeItemForm, setOrderTypePromptMode } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, setOrderTypePromptMode, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#5553 (follow-up to #1103): the single-select colour pickers and the
 // basket order type are WAI-ARIA radio groups with a roving tabindex and
@@ -8,7 +8,8 @@ import { watchConsole, openNewItemForm, closeItemForm, setOrderTypePromptMode } 
 // the global text-input focus ring is opaque (>= 3:1, WCAG 1.4.11). The
 // forced-colors half lives in picker-forced-colors-5553.spec.ts; the
 // photo-cutout background group is covered in photo-cutout-3127.spec.ts
-// (it needs the fake rembg till). Icon grids keep aria-pressed (deferred).
+// (it needs the fake rembg till). Icon grids are focus-only listboxes
+// (icon-grid-listbox-5601.spec.ts).
 
 const ITEM_GRID = '#item-color-grid';
 const CAT_GRID = '#category-color-grid';
@@ -92,6 +93,7 @@ test.describe('picker radiogroups (ut-docs#5553)', () => {
 
   test('category dialog colour grid: saved colour is the Tab stop, off-palette falls back, arrows dirty', async ({ page }) => {
     const assertClean = watchConsole(page);
+    const none = noNativeDialogs(page);
     await page.goto('/categories');
     await page.locator('#categories-new').click();
     const dlg = page.locator('#category-dialog');
@@ -122,7 +124,6 @@ test.describe('picker radiogroups (ut-docs#5553)', () => {
 
     // Off-palette colour: nothing checked, the first tile is the Tab stop.
     await r.evaluate((el) => el.setAttribute('data-field-color', '#123456'));
-    page.on('dialog', async (d) => { await d.accept(); });
     await r.click();
     await expect(dlg).toBeVisible();
     await expect(grid.locator('[aria-checked="true"]')).toHaveCount(0);
@@ -139,15 +140,13 @@ test.describe('picker radiogroups (ut-docs#5553)', () => {
     const before = await page.locator('#category-color').inputValue();
     await page.keyboard.press('ArrowRight');
     await expect(page.locator('#category-color')).not.toHaveValue(before);
-    page.removeAllListeners('dialog');
-    let asked = 0;
-    page.on('dialog', async (d) => { asked++; await d.dismiss(); });
     await page.keyboard.press('Escape');
-    await expect.poll(() => asked).toBe(1);
+    await answerTillConfirm(page, 'cancel');
     await expect(dlg).toBeVisible();
-    page.removeAllListeners('dialog');
-    page.on('dialog', async (d) => { await d.accept(); });
     await page.keyboard.press('Escape');
+    await answerTillConfirm(page, 'confirm');
+    await expect(dlg).toBeHidden();
+    none();
     assertClean();
   });
 

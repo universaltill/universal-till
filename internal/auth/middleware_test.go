@@ -32,6 +32,7 @@ func TestExitToOSIsExemptButSettingsSurfaceStaysGated(t *testing.T) {
 	for _, p := range []string{
 		"/api/settings",
 		"/api/settings/window-mode",
+		"/api/settings/window-mode/toggle", // ut-docs#3735: F11 toggle is session-gated
 		"/api/settings/osk",
 		"/api/settings/exit-to-os/extra",
 		"/api/settings/exit-to-os-not-really",

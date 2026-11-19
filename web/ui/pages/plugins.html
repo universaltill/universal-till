@@ -20,13 +20,24 @@
   </template>
 
   <div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem">
-    <template x-for="p in items" :key="p.id">
+    <template x-for="(p, i) in items" :key="p.id">
+      <div style="display:contents">
+      {{/* ADR-0194: the plugins that ship inside the app (server flag p.bundled)
+           sit first under their own heading; the list is sorted so one heading
+           covers the group. */}}
+      <div x-show="p.bundled && (i === 0 || !items[i - 1].bundled)" style="grid-column:1 / -1" data-testid="plugins-built-in-heading">
+        <h2 style="margin:.2rem 0">{{ T "plugins.manage.group.built_in" }}</h2>
+        <p class="muted" style="margin:.2rem 0">{{ T "plugins.manage.built_in_hint" }}</p>
+      </div>
       <div class="card" x-data="{ vOpen: false, versions: null, vLoading: false, vError: null }">
         <div style="display:flex; justify-content:space-between; align-items:baseline">
           <h3 style="margin:.2rem 0" x-text="p.name"></h3>
           <span class="tag" x-text="'v' + p.version"></span>
         </div>
         <p class="muted" x-text="p.id" style="font-size:.8rem; word-break:break-all"></p>
+        {{/* ADR-0172 §5 (ut-docs#6287): the tax plugin the till installed by
+             itself says so (server flag, never derived from a country here). */}}
+        <p class="muted" x-show="p.autoNote" x-text="p.autoNote" data-testid="plugin-auto-installed-note" style="font-size:.85rem"></p>
         <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem; flex-wrap:wrap">
           {{/* ut-docs#628 follow-up: reuse the same token-based tag pattern
                shifts.html/inventory.html already use (rgba tint matching
@@ -52,6 +63,7 @@
           <span class="tag" x-show="p.revoked"
                 style="background:rgba(220,38,38,.12); color:var(--danger)">{{ T "plugins.manage.revoked" }} ⚠</span>
           <span class="tag" x-text="p.trust"></span>
+          <span class="tag" x-show="p.mainControlled" data-testid="plugin-main-controlled">{{ T "plugins.manage.main_till_controls" }}</span>
           <span class="tag warn" x-show="p.hasUpdate" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
           {{/* ut-docs#2131: a plugin the till couldn't resolve against the
                marketplace catalog (most commonly one installed via "Import
@@ -67,21 +79,22 @@
         <div class="notice-block-warn" x-show="p.revoked" role="note" style="overflow-wrap:anywhere">
           <p style="margin:0" x-text="p.revokedNotice"></p>
           <p style="margin:.3rem 0 0" x-show="p.hasUpdate">{{ T "plugins.manage.revoked_hint_update" }}</p>
-          <p style="margin:.3rem 0 0" x-show="!p.hasUpdate">{{ T "plugins.manage.revoked_hint_no_update" }}</p>
+          <p style="margin:.3rem 0 0" x-show="!p.hasUpdate && !p.versionUnknown">{{ T "plugins.manage.revoked_hint_no_update" }}</p>
+          <p style="margin:.3rem 0 0" x-show="!p.hasUpdate && p.versionUnknown">{{ T "plugins.revoked.hint_unknown" }}</p>
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
-          <a class="btn secondary" x-show="p.enabled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
+          <a class="btn secondary" x-show="p.enabled || p.bundled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
           <a class="btn secondary" x-show="p.docsRoute" :href="p.docsRoute">{{ T "plugins.manage.action.docs" }}</a>
-          <button class="btn secondary" x-show="p.enabled"
+          <button class="btn secondary" x-show="p.enabled && !p.mainControlled"
                   @click="act('/api/plugins/' + p.id + '/disable', 'POST')">{{ T "plugins.manage.action.disable" }}</button>
-          <button :class="p.revoked ? 'btn secondary' : 'btn'" x-show="!p.enabled"
+          <button :class="p.revoked ? 'btn secondary' : 'btn'" x-show="!p.enabled && !p.mainControlled"
                   @click="act('/api/plugins/' + p.id + '/enable', 'POST')">{{ T "plugins.manage.action.enable" }}</button>
           <button class="btn" x-show="p.hasUpdate"
                   @click="act('/api/plugins/' + p.id + '/update', 'POST')">{{ T "plugins.manage.action.update" }}</button>
           <a class="btn secondary" hx-boost="false"
              :href="'/api/plugins/' + encodeURIComponent(p.id) + '/export?version=' + encodeURIComponent(p.version)"
              :download="p.id + '-' + p.version + '.tar.gz'">{{ T "plugins.manage.action.export" }}</a>
-          <button class="btn secondary"
+          <button class="btn secondary" x-show="!p.bundled"
                   @click="vOpen = !vOpen; if (vOpen && versions === null && !vLoading) {
                     vLoading = true; vError = null;
                     fetch('/api/plugins/' + encodeURIComponent(p.id) + '/versions').then(function (res) {
@@ -92,8 +105,8 @@
                       return res.json().then(function (j) { vLoading = false; versions = (j.data && j.data.versions) || []; });
                     }).catch(function (e) { vLoading = false; versions = null; vError = String(e); });
                   }">{{ T "plugins.manage.action.versions" }}</button>
-          <button class="btn danger"
-                  @click="if (confirm('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?')) act('/api/plugins/' + p.id + '/uninstall', 'POST')">{{ T "plugins.manage.action.uninstall" }}</button>
+          <button class="btn danger" x-show="!p.bundled"
+                  @click="actAfterConfirm(p.uninstallConfirm || ('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?'), $event.currentTarget, '/api/plugins/' + p.id + '/uninstall', 'POST', undefined, '{{ T "plugins.manage.action.uninstall" }}')">{{ T "plugins.manage.action.uninstall" }}</button>
         </div>
         {{/* ut-docs#2239: version history is fetched lazily on first open per
              card (not eagerly with the rest of pluginsJSON at page load) so a
@@ -125,13 +138,14 @@
                   <li style="display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap; padding:.3rem 0">
                     <span x-text="v.version"></span>
                     <button class="btn secondary"
-                            @click="if (confirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?')) act('/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version })">{{ T "plugins.manage.action.rollback_to" }}</button>
+                            @click="actAfterConfirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?', $event.currentTarget, '/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version })">{{ T "plugins.manage.action.rollback_to" }}</button>
                   </li>
                 </template>
               </ul>
             </div>
           </template>
         </div>
+      </div>
       </div>
     </template>
   </div>
@@ -156,7 +170,19 @@
   var T = {
     'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
     'plugins.uninstall.error.replica_use_primary': '{{ T "plugins.uninstall.error.replica_use_primary" }}',
-    'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}'
+    'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}',
+    'plugins.manage.error.revoked': '{{ T "plugins.manage.error.revoked" }}',
+    'plugins.manage.error.bundled_main_till_controls': '{{ T "plugins.manage.error.bundled_main_till_controls" }}',
+    'plugins.manage.error.bundled_no_uninstall': '{{ T "plugins.manage.error.bundled_no_uninstall" }}',
+    'plugins.install.error.code_refused_appstore': '{{ T "plugins.install.error.code_refused_appstore" }}'
+  };
+  // Uninstall / roll back ask first, in the till's own dialog (ut-docs#6116).
+  // act() runs only on an explicit Confirm.
+  window.actAfterConfirm = function (question, opener, url, method, body, okLabel) {
+    var ask = (window.UT && typeof window.UT.confirm === 'function')
+      ? window.UT.confirm(question, okLabel ? { opener: opener, ok: okLabel } : { opener: opener })
+      : Promise.resolve(window.confirm(question)); // native-confirm:allow till-confirm.js not loaded: still ask, never act unconfirmed
+    ask.then(function (ok) { if (ok === true) window.act(url, method, body); });
   };
   window.act = function (url, method, body) {
     msg.textContent = '⏳ …';

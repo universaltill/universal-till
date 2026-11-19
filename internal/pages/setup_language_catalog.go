@@ -123,7 +123,7 @@ func setupLanguageCatalogEntries(ctx context.Context, d *common.Deps) (entries [
 	//  1. ADR-0015 (lazy store registration, still governing — see its own
 	//     status note and ADR-0026's "decisions 2-3 still proposed"):
 	//     a till creates its cloud store identity on the first plugin
-	//     DOWNLOAD/INSTALL or an operator's explicit "Register now", never
+	//     DOWNLOAD/INSTALL or an operator's explicit an explicit operator registration, never
 	//     just because a screen rendered. GET /setup is the very first
 	//     screen of every till that ever boots, so enrolling here is exactly
 	//     the "every download, demo, test boot and CI run mints a store org"
