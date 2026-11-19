@@ -47,6 +47,15 @@ func rawDeviceLocalIPsGet(dstPtr, dstCap uint32) int32
 //go:wasmimport ut device_timezone_get
 func rawDeviceTimezoneGet(dstPtr, dstCap uint32) int32
 
+// ut-docs#6455: the payment broker host fns, raw so a test can pick the
+// buffer size.
+//
+//go:wasmimport ut payment_provider_call
+func rawPaymentProviderCall(pPtr, pLen, oPtr, oLen, rPtr, rLen, dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut tap_to_pay_request
+func rawTapToPayRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
+
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
 		return 0, 0
@@ -98,6 +107,11 @@ type payload struct {
 	// device_info mode (ADR-0140): a small destination buffer for the
 	// buffer-ABI probe; 0 → the SDK wrappers.
 	Cap int `json:"cap"`
+	// payment_call / tap_request modes (ut-docs#6455).
+	Provider string `json:"provider"`
+	Op       string `json:"op"`
+	Body     string `json:"body"`
+	Calls    int    `json:"calls"` // how many times to call (default 1)
 }
 
 func main() { plugin.Run(plugin.Handlers{"*": handle}) }
@@ -180,6 +194,8 @@ func handle(ev plugin.Event) (any, error) {
 		return runHTTPLen(p.URL)
 	case "device_info":
 		return nil, runDeviceInfo(p.Cap)
+	case "payment_call", "tap_request":
+		return nil, runPayment(p)
 	}
 
 	// Storage round-trip.
@@ -418,5 +434,45 @@ func runDeviceInfo(dstCap int) error {
 		record("timezone", tz, err)
 	}
 	out, _ := json.Marshal(results)
+	return store(out)
+}
+
+// runPayment calls payment_provider_call / tap_to_pay_request p.Calls times
+// and records each return code and answer.
+func runPayment(p payload) error {
+	n := p.Calls
+	if n < 1 {
+		n = 1
+	}
+	capacity := p.Cap
+	if capacity <= 0 {
+		capacity = 4096
+	}
+	var calls []map[string]any
+	for i := 0; i < n; i++ {
+		buf := make([]byte, capacity)
+		bp, bc := ptrOf(buf)
+		req := []byte(p.Body)
+		rp, rl := ptrOf(req)
+		var c int32
+		if p.Mode == "tap_request" {
+			c = rawTapToPayRequest(rp, rl, bp, bc)
+		} else {
+			prov, op := []byte(p.Provider), []byte(p.Op)
+			pp, pl := ptrOf(prov)
+			op2, ol := ptrOf(op)
+			c = rawPaymentProviderCall(pp, pl, op2, ol, rp, rl, bp, bc)
+			runtime.KeepAlive(prov)
+			runtime.KeepAlive(op)
+		}
+		runtime.KeepAlive(req)
+		runtime.KeepAlive(buf)
+		entry := map[string]any{"code": c}
+		if c > 0 && int(c) <= capacity {
+			entry["val"] = string(buf[:c])
+		}
+		calls = append(calls, entry)
+	}
+	out, _ := json.Marshal(map[string]any{"calls": calls})
 	return store(out)
 }
