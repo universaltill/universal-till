@@ -68,8 +68,8 @@ func TestEntriesUnionAndSources(t *testing.T) {
 
 // Mirrors TestT_MissingKeyInNonEnglishFallbackFallsBackToEnglish but for
 // Entries(): a shop's store.locale (ut-docs#861) can be a non-English,
-// entirely overlay-provided locale (a language-pack plugin) that's missing a
-// key en.json has (lang-pack-drift CI tolerates this drift). T() already
+// entirely overlay-provided locale (a language bundle) that's missing a
+// key en.json has (a bundle may lag English, ADR-0160 section 2). T() already
 // falls back to English for that key (ut-docs#995) — but before this fix,
 // Entries()'s key-collection loop only scanned {fallback, baseLang(fallback),
 // locale, baseLang(locale)}, never baseLocale unconditionally, so the
@@ -157,8 +157,8 @@ func TestSetOverlaysReplacesAtomically(t *testing.T) {
 
 // A shop can set its default locale (store.locale, ut-docs#861) to a
 // non-English locale, e.g. one supplied entirely by an overlay-provided
-// language-pack plugin. Those packs are allowed to lag behind en.json
-// (lang-pack-drift CI is advisory, not blocking, per its own design) — so a
+// language bundle. Those bundles are allowed to lag behind en.json
+// (ADR-0160 section 2) — so a
 // key missing from that fallback locale must still resolve to the English
 // text, not the raw key (ut-docs#995).
 func TestT_MissingKeyInNonEnglishFallbackFallsBackToEnglish(t *testing.T) {
@@ -167,9 +167,9 @@ func TestT_MissingKeyInNonEnglishFallbackFallsBackToEnglish(t *testing.T) {
 			"en": {"basket.total": "Total", "only.en": "English only"},
 		},
 		overlays: map[string]map[string]string{
-			// "de" is entirely overlay-provided (a language-pack plugin) and
-			// deliberately missing "only.en" — the drift lang-pack-drift CI
-			// tolerates.
+			// "de" is entirely overlay-provided (a language bundle) and
+			// deliberately missing "only.en" — a bundle may lag English
+			// (ADR-0160 section 2).
 			"de": {"basket.total": "Summe"},
 		},
 		shop:     map[string]map[string]string{},

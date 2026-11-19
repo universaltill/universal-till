@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,7 +24,7 @@ import (
 // mid-sale — instead of the nightly "latest" path main and standalone tills use.
 
 func TestFollowDecision(t *testing.T) {
-	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true}
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true, JitterDue: true}
 	with := func(f func(*followInputs)) followInputs { in := base; f(&in); return in }
 	for _, c := range []struct {
 		name string
@@ -49,6 +51,22 @@ func TestFollowDecision(t *testing.T) {
 		{"interrupted last run: retried at the next start", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", followApplying }), true, "follow"},
 		{"applied last run but still behind: never loops", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "" }), false, "no_effect"},
 		{"applied an older target last run: the new one is tried", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.3.5", "" }), true, "follow"},
+		// ADR-0114 §5 / ut-docs#2739: update.fleet_follow decides WHEN.
+		{"next_idle: waits out the random jitter first", with(func(in *followInputs) { in.JitterDue = false }), false, "jitter_wait"},
+		{"next_idle explicit: jitter due, follows", with(func(in *followInputs) { in.Policy = "next_idle" }), true, "follow"},
+		{"next_idle explicit: jitter pending", with(func(in *followInputs) { in.Policy, in.JitterDue = "next_idle", false }), false, "jitter_wait"},
+		{"unknown policy reads as next_idle (due)", with(func(in *followInputs) { in.Policy = "weekly" }), true, "follow"},
+		{"unknown policy reads as next_idle (pending)", with(func(in *followInputs) { in.Policy, in.JitterDue = "weekly", false }), false, "jitter_wait"},
+		{"nightly outside the slot waits", with(func(in *followInputs) { in.Policy = "nightly" }), false, "nightly_wait"},
+		{"nightly in the slot follows (jitter ignored)", with(func(in *followInputs) { in.Policy, in.InNightlySlot, in.JitterDue = "nightly", true, false }), true, "follow"},
+		{"nightly: the next-idle jitter does not apply", with(func(in *followInputs) { in.Policy, in.JitterDue = "nightly", false }), false, "nightly_wait"},
+		{"nightly in the slot but a sale is open", with(func(in *followInputs) { in.Policy, in.InNightlySlot, in.Busy = "nightly", true, true }), false, "busy"},
+		{"nightly outside the slot, a sale open: the wait comes first", with(func(in *followInputs) { in.Policy, in.Busy = "nightly", true }), false, "nightly_wait"},
+		{"Update now overrides the nightly wait", with(func(in *followInputs) { in.Policy, in.Forced = "nightly", true }), true, "update_now"},
+		{"Update now overrides the jitter wait", with(func(in *followInputs) { in.JitterDue, in.Forced = false, true }), true, "update_now"},
+		{"Update now never overrides a sale (nightly wait)", with(func(in *followInputs) { in.Policy, in.Forced, in.Busy = "nightly", true, true }), false, "busy"},
+		{"Update now never overrides a downgrade (nightly)", with(func(in *followInputs) { in.Policy, in.Forced, in.Target = "nightly", true, "1.2.0" }), false, "not_newer"},
+		{"nightly: a no-effect target is still no_effect", with(func(in *followInputs) { in.Policy, in.LastAttempted, in.LastError = "nightly", "1.4.0", "" }), false, "no_effect"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			act, why := followDecision(c.in)
@@ -94,6 +112,7 @@ func stubFollowSeams(t *testing.T, this string, supported bool, applyErr error) 
 		followRun.reset()
 	})
 	followRun.reset()
+	pinFollowJitter(t, 0) // ADR-0114 §5's random wait is 0 s unless a test says otherwise
 	var applied []string
 	autoUpdateBuildVersion = func() string { return this }
 	autoUpdateSupported = func() bool { return supported }
@@ -220,11 +239,18 @@ func TestFollowErrorCode(t *testing.T) {
 		want string
 	}{
 		{selfupdate.ErrUnsupported, "unsupported"},
-		{errors.New("an update is already being applied"), "busy"},
+		{selfupdate.ErrApplyInProgress, "busy"},
+		{fmt.Errorf("x: %w", selfupdate.ErrApplyInProgress), "busy"},
 		{errors.New("releases API: HTTP 404"), "release"},
 		{errors.New("download: HTTP 503"), "download"},
 		{errors.New("checksum mismatch: got a want b"), "checksum"},
+		// ADR-0178: the signature text contains "checksums.txt", so the
+		// typed check must win over the substring match.
+		{fmt.Errorf("%w: release v1.4.0 has no checksums.txt.sig", selfupdate.ErrSignature), "signature"},
 		{errors.New("release v1.4.0 has no checksums.txt — refusing"), "checksum"},
+		// Non-200 checksums.txt keeps today's code; a .sig outage is not a signature failure.
+		{errors.New("checksum not found for v1.4.0: checksums.txt answered HTTP 404"), "checksum"},
+		{fmt.Errorf("download release signature: %w", errors.New("HTTP 503")), "download"},
 		{errors.New("no release archive for linux/arm64 (x)"), "no_archive"},
 		{errors.New("no macOS .dmg in release v1.4.0"), "no_archive"},
 		{errors.New("back up current binary: permission denied"), "install"},
@@ -289,6 +315,15 @@ func TestFollowLine(t *testing.T) {
 		{"level: Supported is never probed, so no manual line", with(func(in *followInputs) { in.Supported, in.Target = false, "1.3.0" }), "follows"},
 		{"this target failed", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "failed:download" }), "failed"},
 		{"this target applied without effect", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "" }), "failed"},
+		{"nightly: this target failed, retried next night", with(func(in *followInputs) {
+			in.Policy, in.LastAttempted, in.LastError = followPolicyNightly, "1.4.0", "failed:download"
+		}), "failed_nightly"},
+		{"nightly: applied without effect stays failed", with(func(in *followInputs) {
+			in.Policy, in.LastAttempted, in.LastError = followPolicyNightly, "1.4.0", ""
+		}), "failed"},
+		{"next_idle: failed stays failed", with(func(in *followInputs) {
+			in.Policy, in.LastAttempted, in.LastError = followPolicyNextIdle, "1.4.0", "failed:download"
+		}), "failed"},
 		{"an older target failed: the new one follows", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.3.5", "failed:download" }), "follows"},
 		{"arrived on the attempted target", with(func(in *followInputs) { in.This, in.LastAttempted, in.LastError = "1.4.0", "1.4.0", "" }), "follows"},
 	} {
@@ -410,5 +445,455 @@ func TestFollowInputsOf_ProbesSupportedOnlyWhenBehind(t *testing.T) {
 	behind := newFollowReplicaDeps(t, "1.5.0")
 	if in := followInputsOf(t.Context(), behind); !in.Supported || probes != 1 {
 		t.Fatalf("behind replica: Supported=%v after %d probes, want true after 1", in.Supported, probes)
+	}
+}
+
+// The waits are not an ADR-0114 §2 state: they report idle.
+func TestFollowReportState_WaitsReportIdle(t *testing.T) {
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true}
+	for name, in := range map[string]followInputs{
+		"jitter wait":  base,
+		"nightly wait": func() followInputs { i := base; i.Policy = "nightly"; return i }(),
+		"nightly wait, sale open": func() followInputs {
+			i := base
+			i.Policy, i.Busy = "nightly", true
+			return i
+		}(),
+	} {
+		if got := followReportState(in); got != "idle" {
+			t.Errorf("%s: followReportState = %q, want idle", name, got)
+		}
+	}
+}
+
+func TestFollowPolicyOf(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "next_idle", "next_idle": "next_idle", "nightly": "nightly", " nightly ": "nightly",
+		"NIGHTLY": "next_idle", "weekly": "next_idle", "false": "next_idle",
+	} {
+		if got := followPolicyOf(in); got != want {
+			t.Errorf("followPolicyOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// pinFollowJitter pins the next-idle random wait and forgets any armed one.
+func pinFollowJitter(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := followJitterDelay
+	followJitterDelay = func() time.Duration { return d }
+	followJitterWait.reset()
+	t.Cleanup(func() { followJitterDelay = orig; followJitterWait.reset() })
+}
+
+func TestFollowJitterDelay_IsWithinTwoMinutes(t *testing.T) {
+	for range 500 {
+		if d := followJitterDelay(); d < 0 || d > 120*time.Second {
+			t.Fatalf("followJitterDelay = %v, want 0..120s", d)
+		}
+	}
+}
+
+// With a 0 s jitter the tick arms the wait, re-evaluates and acts in the same
+// tick; with a longer one it does nothing until that time has passed.
+func TestFollowTick_NextIdleJitter(t *testing.T) {
+	t.Run("zero jitter acts in the same tick", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, 0)
+		autoUpdateTick(t.Context(), dp, tickNow)
+		if len(*applied) != 1 {
+			t.Fatalf("applied %v, want one attempt in the first tick", *applied)
+		}
+	})
+	t.Run("jitter holds the install until it has passed", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, 90*time.Second)
+		autoUpdateTick(t.Context(), dp, tickNow)
+		autoUpdateTick(t.Context(), dp, tickNow.Add(60*time.Second))
+		if len(*applied) != 0 {
+			t.Fatalf("applied %v inside the jitter", *applied)
+		}
+		// The deadline is kept, not re-drawn: a later tick does not push it out.
+		pinned := followJitterDelay
+		followJitterDelay = func() time.Duration { t.Error("jitter re-armed for the same target"); return pinned() }
+		autoUpdateTick(t.Context(), dp, tickNow.Add(90*time.Second))
+		if len(*applied) != 1 || (*applied)[0] != "1.4.0" {
+			t.Fatalf("applied %v once the jitter passed, want one ApplyVersion(1.4.0)", *applied)
+		}
+	})
+	t.Run("a new target draws a new jitter", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, 90*time.Second)
+		autoUpdateTick(t.Context(), dp, tickNow)
+		_ = dp.Settings.Set(t.Context(), keyMainVersion, "1.5.0")
+		autoUpdateTick(t.Context(), dp, tickNow.Add(100*time.Second)) // 1.4.0's wait is over, but the target moved
+		if len(*applied) != 0 {
+			t.Fatalf("applied %v for a target whose jitter had not started", *applied)
+		}
+		autoUpdateTick(t.Context(), dp, tickNow.Add(100*time.Second+90*time.Second))
+		if len(*applied) != 1 || (*applied)[0] != "1.5.0" {
+			t.Fatalf("applied %v, want ApplyVersion(1.5.0) after its own jitter", *applied)
+		}
+	})
+	t.Run("Update now skips the wait", func(t *testing.T) {
+		dp := newFollowReplicaDeps(t, "1.4.0")
+		applied := stubFollowSeams(t, "1.3.0", true, nil)
+		pinFollowJitter(t, time.Hour)
+		drainFollowKick(t)
+		onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+		autoUpdateTick(t.Context(), dp, tickNow)
+		if len(*applied) != 1 {
+			t.Fatalf("applied %v, want the pressed update to run at once", *applied)
+		}
+	})
+}
+
+// Rendering the Settings page (followInputsOf) must not start the clock.
+func TestFollowInputsOf_DoesNotArmTheJitter(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	pinFollowJitter(t, 0)
+	if in := followInputsOf(t.Context(), dp); in.JitterDue {
+		t.Fatal("JitterDue before any tick armed it")
+	}
+	if _, armed := followJitterWait.deadline("1.4.0"); armed {
+		t.Fatal("followInputsOf armed the jitter")
+	}
+}
+
+// nightly: only inside the main till's update.auto_time window plus THIS
+// till's own offset.
+func TestFollowTick_NightlyOnlyInTheSlot(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	applied := stubFollowSeams(t, "1.3.0", true, nil)
+	pinFollowJitter(t, 0) // would act at once under next_idle
+	ctx := t.Context()
+	_ = dp.Settings.Set(ctx, keyFleetFollow, "nightly")
+	_ = dp.Settings.Set(ctx, keyAutoUpdateTime, "03:00") // replicated from the main till
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+
+	day := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name string
+		at   time.Duration
+	}{
+		{"mid-morning", 10 * time.Hour},
+		{"03:00, before this till's 03:07 slot", 3 * time.Hour},
+		{"03:37, the window has closed", 3*time.Hour + 37*time.Minute},
+	} {
+		autoUpdateTick(ctx, dp, day.Add(c.at))
+		if len(*applied) != 0 {
+			t.Fatalf("%s: applied %v outside the slot", c.name, *applied)
+		}
+	}
+	autoUpdateTick(ctx, dp, day.Add(3*time.Hour+7*time.Minute))
+	if len(*applied) != 1 || (*applied)[0] != "1.4.0" {
+		t.Fatalf("applied %v in the slot, want one ApplyVersion(1.4.0)", *applied)
+	}
+}
+
+func TestFollowTick_NightlyDefaultsTheTimeAndUpdateNowOverrides(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	applied := stubFollowSeams(t, "1.3.0", true, nil)
+	pinFollowJitter(t, 0)
+	ctx := t.Context()
+	_ = dp.Settings.Set(ctx, keyFleetFollow, "nightly") // update.auto_time unset: 03:00
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 0 }
+
+	day := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	autoUpdateTick(ctx, dp, day.Add(14*time.Hour))
+	if len(*applied) != 0 {
+		t.Fatalf("applied %v at 14:00 under nightly", *applied)
+	}
+	drainFollowKick(t)
+	onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+	autoUpdateTick(ctx, dp, day.Add(14*time.Hour))
+	if len(*applied) != 1 {
+		t.Fatalf("applied %v, want Update now to override the nightly wait", *applied)
+	}
+}
+
+func TestFollowInputsOf_ReadsThePolicy(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	if got := followInputsOf(t.Context(), dp).Policy; got != "next_idle" {
+		t.Fatalf("unset policy = %q, want next_idle", got)
+	}
+	_ = dp.Settings.Set(t.Context(), keyFleetFollow, "nightly")
+	if got := followInputsOf(t.Context(), dp).Policy; got != "nightly" {
+		t.Fatalf("policy = %q, want nightly", got)
+	}
+	_ = dp.Settings.Set(t.Context(), keyFleetFollow, "garbage")
+	if got := followInputsOf(t.Context(), dp).Policy; got != "next_idle" {
+		t.Fatalf("garbage policy = %q, want next_idle", got)
+	}
+}
+
+// A shift close in flight (cash count, Z-style totals) must not be cut by a
+// restart: busy for the nightly main-till path, the follow and the restart gate.
+func TestAutoUpdateBusy_ShiftCloseInFlight(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	if autoUpdateBusy(dp) {
+		t.Fatal("busy with nothing open")
+	}
+	shiftCloseInFlight.Add(1)
+	t.Cleanup(func() { shiftCloseInFlight.Store(0) })
+	if !autoUpdateBusy(dp) {
+		t.Fatal("not busy while a shift close is in flight")
+	}
+	if autoUpdateIdle(dp)() {
+		t.Fatal("restart gate idle during a shift close")
+	}
+	if !followInputsOf(t.Context(), dp).Busy {
+		t.Fatal("followInputsOf not busy during a shift close")
+	}
+	shiftCloseInFlight.Add(-1)
+	if autoUpdateBusy(dp) {
+		t.Fatal("still busy after the shift close finished")
+	}
+}
+
+// probeReader reports the in-flight counter at the moment the handler reads
+// its body, i.e. while CloseShift is running.
+type probeReader struct{ seen *int32 }
+
+func (p probeReader) Read([]byte) (int, error) {
+	*p.seen = shiftCloseInFlight.Load()
+	return 0, io.EOF
+}
+
+// The CloseShift handler itself holds the counter for its whole body.
+func TestCloseShift_HoldsTheBusyCounter(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	var during int32 = -1
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", probeReader{&during}) // no shift_id: 400
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	CloseShift(dp).ServeHTTP(rec, req)
+	if during != 1 {
+		t.Fatalf("counter while the handler runs = %d, want 1", during)
+	}
+	if got := shiftCloseInFlight.Load(); got != 0 {
+		t.Fatalf("counter after the handler = %d, want 0", got)
+	}
+}
+
+// reset clears the armed jitter wait between tests (test-only: production
+// never clears it; a new target replaces it).
+func (w *followWait) reset() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.target, w.notBefore = "", time.Time{}
+}
+
+// ADR-0178 section 7: a failed:signature target is not retried in the same
+// run (the release may be mid-publish; the next run re-checks), but an
+// operator's "Update now" is one more deliberate attempt.
+func TestFollowSignatureFailureNotRetriedUnlessForced(t *testing.T) {
+	in := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true,
+		AttemptedThisRun: "1.4.0", LastAttempted: "1.4.0", LastError: "failed:signature"}
+	if act, why := followDecision(in); act || why != "attempted" {
+		t.Errorf("same-run retry = %v/%q, want refused/attempted", act, why)
+	}
+	if followCanInstall(in) {
+		t.Error("a failed:signature target must read as manual, not following")
+	}
+	in.Forced = true
+	if act, _ := followDecision(in); !act {
+		t.Error("Update now must retry a failed:signature target")
+	}
+}
+
+// ut-docs#6552: the window this till's nightly install starts in, shown on
+// its Settings page.
+func TestFollowNightlyWindow(t *testing.T) {
+	for _, c := range []struct {
+		hhmm     string
+		offset   time.Duration
+		from, to string
+		ok       bool
+	}{
+		{"03:00", 7 * time.Minute, "03:07", "03:37", true},
+		{"02:15", 7 * time.Minute, "02:22", "02:52", true},
+		{"23:50", 15 * time.Minute, "00:05", "00:35", true},
+		{"23:40", 0, "23:40", "00:10", true},
+		{"bad", 0, "", "", false},
+		{"25:99", 0, "", "", false},
+	} {
+		from, to, ok := followNightlyWindow(c.hhmm, c.offset)
+		if from != c.from || to != c.to || ok != c.ok {
+			t.Errorf("followNightlyWindow(%q, %v) = %q, %q, %v; want %q, %q, %v", c.hhmm, c.offset, from, to, ok, c.from, c.to, c.ok)
+		}
+	}
+}
+
+// ut-docs#6552: under nightly the once-per-slot-date guard replaces the
+// once-per-run one, so a failed target is retried at the next night's slot.
+func TestFollowDecision_NightlyRetriesAFailedTargetNextSlot(t *testing.T) {
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true,
+		Policy: followPolicyNightly, InNightlySlot: true, SlotDate: "2026-09-26", LastNightlySlot: "2026-09-25",
+		AttemptedThisRun: "1.4.0", LastAttempted: "1.4.0", LastError: "failed:download"}
+	if act, why := followDecision(base); !act || why != "follow" {
+		t.Fatalf("new night, failed target: act=%v why=%q, want act, follow", act, why)
+	}
+	same := base
+	same.LastNightlySlot, same.AttemptedThisRun = "2026-09-26", ""
+	if act, why := followDecision(same); act || why != "attempted" {
+		t.Fatalf("slot already spent: act=%v why=%q, want !act, attempted", act, why)
+	}
+	// A busy window does not spend the slot: only acting writes the date.
+	busy := base
+	busy.Busy = true
+	if act, why := followDecision(busy); act || why != "busy" {
+		t.Fatalf("busy: act=%v why=%q, want !act, busy", act, why)
+	}
+}
+
+// nightlyFailingFixture: a nightly replica at 03:00 with a 7 min offset whose
+// apply always fails; the stub asserts the slot date is stored before it runs.
+// The returned *string is the slot date the next apply must find stored; the
+// test sets it before each tick.
+func nightlyFailingFixture(t *testing.T, applyErr error) (*common.Deps, *int, *string) {
+	t.Helper()
+	return nightlyFixtureAt(t, applyErr, "03:00", 7*time.Minute)
+}
+
+func nightlyFixtureAt(t *testing.T, applyErr error, autoTime string, offset time.Duration) (*common.Deps, *int, *string) {
+	t.Helper()
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	ctx := t.Context()
+	_ = dp.Settings.Set(ctx, keyFleetFollow, "nightly")
+	_ = dp.Settings.Set(ctx, keyAutoUpdateTime, autoTime)
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return offset }
+	n := 0
+	want := ""
+	autoUpdateApplyVersion = func(ctx context.Context, _ string, _ func() bool) error {
+		n++
+		if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got == "" || (want != "" && got != want) {
+			t.Errorf("%s = %q before the apply ran, want %q stored first", keyAutoUpdateLastAttempt, got, want)
+		}
+		return applyErr
+	}
+	return dp, &n, &want
+}
+
+func TestFollowTick_NightlyFailureRetriedNextNightOnly(t *testing.T) {
+	dp, n, want := nightlyFailingFixture(t, errors.New("download: boom"))
+	ctx := t.Context()
+	night1 := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	night2 := night1.AddDate(0, 0, 1)
+	*want = "2026-09-25"
+	autoUpdateTick(ctx, dp, night1.Add(3*time.Hour+7*time.Minute))
+	if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got != "2026-09-25" {
+		t.Fatalf("%s = %q, want 2026-09-25", keyAutoUpdateLastAttempt, got)
+	}
+	if got := settingOf(t, dp, keyFollowError); got != "failed:download" {
+		t.Fatalf("%s = %q, want failed:download", keyFollowError, got)
+	}
+	for _, at := range []time.Duration{3*time.Hour + 7*time.Minute + 30*time.Second, 3*time.Hour + 30*time.Minute, 10 * time.Hour} {
+		autoUpdateTick(ctx, dp, night1.Add(at))
+	}
+	if *n != 1 {
+		t.Fatalf("%d applies on night 1, want exactly 1", *n)
+	}
+	*want = "2026-09-26"
+	autoUpdateTick(ctx, dp, night2.Add(3*time.Hour+7*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies after night 2's slot opened, want 2 (retry without a restart)", *n)
+	}
+	if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got != "2026-09-26" {
+		t.Fatalf("%s = %q after night 2, want 2026-09-26", keyAutoUpdateLastAttempt, got)
+	}
+	autoUpdateTick(ctx, dp, night2.Add(3*time.Hour+8*time.Minute))
+	autoUpdateTick(ctx, dp, night2.Add(3*time.Hour+30*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies after more ticks inside night 2, want still 2", *n)
+	}
+}
+
+// A window that crosses midnight (23:50 + 7 min = 23:57 to 00:27) is one slot,
+// dated by the night it opened: ticks either side of 00:00 apply once, the
+// next night retries.
+func TestFollowTick_NightlyWindowCrossingMidnightAppliesOnce(t *testing.T) {
+	dp, n, want := nightlyFixtureAt(t, errors.New("download: boom"), "23:50", 7*time.Minute)
+	ctx := t.Context()
+	d := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	*want = "2026-09-25"
+	autoUpdateTick(ctx, dp, d.Add(23*time.Hour+58*time.Minute))
+	autoUpdateTick(ctx, dp, d.Add(24*time.Hour+10*time.Minute)) // 00:10 on D+1
+	autoUpdateTick(ctx, dp, d.Add(24*time.Hour+26*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies across midnight, want exactly 1", *n)
+	}
+	*want = "2026-09-26"
+	autoUpdateTick(ctx, dp, d.Add(24*time.Hour+23*time.Hour+58*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies after the next night opened, want 2", *n)
+	}
+}
+
+func TestFollowTick_NightlyRestartInSameWindowDoesNotRetry(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, errors.New("download: boom"))
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+7*time.Minute))
+	followRun.reset() // the till restarted
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+10*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies, want 1: a restart in the same window must not retry", *n)
+	}
+}
+
+func TestFollowTick_NightlyNoEffectNeverRetried(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, nil) // staged, version never moves
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+7*time.Minute))
+	autoUpdateTick(t.Context(), dp, night.AddDate(0, 0, 1).Add(3*time.Hour+7*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies, want 1: a no-effect target is never retried automatically", *n)
+	}
+}
+
+func TestFollowTick_NightlyUpdateNowInSlotSpendsTheSlot(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, errors.New("download: boom"))
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	drainFollowKick(t)
+	onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+8*time.Minute))
+	autoUpdateTick(t.Context(), dp, night.Add(3*time.Hour+9*time.Minute))
+	if *n != 1 {
+		t.Fatalf("%d applies in the slot, want 1 (the press spent it)", *n)
+	}
+	autoUpdateTick(t.Context(), dp, night.AddDate(0, 0, 1).Add(3*time.Hour+7*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies next night, want 2", *n)
+	}
+}
+
+// A press outside the slot leaves the next slot free.
+func TestFollowTick_NightlyUpdateNowOutsideSlotLeavesTheSlot(t *testing.T) {
+	dp, n, _ := nightlyFailingFixture(t, errors.New("download: boom"))
+	night := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	drainFollowKick(t)
+	onFleetUpdate(fleetlink.FleetPayload{Target: "1.4.0", Now: true}, "1.4.0")
+	// The fixture's stub wants the date set; outside the slot it is not, so
+	// use a counting stub here.
+	autoUpdateApplyVersion = func(context.Context, string, func() bool) error { *n++; return errors.New("download: boom") }
+	autoUpdateTick(t.Context(), dp, night.Add(14*time.Hour))
+	if got := settingOf(t, dp, keyAutoUpdateLastAttempt); got != "" {
+		t.Fatalf("%s = %q after a press outside the slot, want unset", keyAutoUpdateLastAttempt, got)
+	}
+	autoUpdateTick(t.Context(), dp, night.AddDate(0, 0, 1).Add(3*time.Hour+7*time.Minute))
+	if *n != 2 {
+		t.Fatalf("%d applies, want 2 (the press, then the night's slot)", *n)
 	}
 }

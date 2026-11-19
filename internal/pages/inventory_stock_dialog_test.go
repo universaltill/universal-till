@@ -41,7 +41,7 @@ func TestInventoryPage_StockRowsCarryDialogAttributes(t *testing.T) {
 	if !strings.Contains(body, `id="stock-dialog"`) {
 		t.Fatalf("expected a #stock-dialog full-screen popup, got: %s", body)
 	}
-	if !strings.Contains(body, `class="record-dialog"`) {
+	if !strings.Contains(body, `class="record-dialog dialog-beside-chrome"`) {
 		t.Fatalf("expected #stock-dialog to reuse the record-dialog CSS shell (ut-docs#2010), got: %s", body)
 	}
 	if !strings.Contains(body, `aria-labelledby="stock-dialog-title"`) {

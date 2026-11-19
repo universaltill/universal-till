@@ -301,3 +301,14 @@ func TestRecoverMiddleware_PassesThroughWhenNoPanic(t *testing.T) {
 		t.Fatalf("body = %q, want %q", rec.Body.String(), "fine")
 	}
 }
+
+func TestRecoveryResponseWriterUnwraps(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &recoveryResponseWriter{ResponseWriter: rec}
+	if http.NewResponseController(rw).Flush() != nil {
+		t.Fatal("ResponseController must reach the underlying Flusher through Unwrap")
+	}
+	if rw.Unwrap() != http.ResponseWriter(rec) {
+		t.Fatal("Unwrap must return the wrapped writer")
+	}
+}

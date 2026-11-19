@@ -3,6 +3,7 @@ id: kitchen-stations
 title: محطات المطبخ
 section: إدارة العمل
 order: 235
+public: true
 summary: "وجّه كل فئة طعام — أو صنفًا واحدًا — إلى طابعة مطبخ أو شاشة مطبخ خاصة بها، فيُطبع طلب الشواية عند الشواية وطلب المشروبات عند البار."
 routes: [/kitchen-stations, /kitchen-display/{station_id}]
 ---

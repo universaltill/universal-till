@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -123,6 +124,9 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 			d.RequestSyncPull()
 		}
 		logging.L().Infof("sync link: linked to the main till %s (%s)", main.TillID, main.Version)
+		// A link that just came up may have missed nudges: catch the sales
+		// copy up from its cursor (ut-docs#5074).
+		d.RequestSalesMirrorPull()
 	}
 	opts.OnSync = func(_ context.Context, scopes []fleetlink.Scope) {
 		// One full pull covers every scope the HTTP pull carries (admin,
@@ -131,6 +135,12 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		// those costs no pull. Kicks coalesce, so a burst is one pull.
 		if linkScopesNeedPull(scopes) {
 			d.RequestSyncPull()
+		}
+		// ut-docs#5074: the main till's sales copy moved; pull it now
+		// instead of at the 5-minute linked floor. A no-op while the copy is
+		// off (the pull tick returns after its settings reads).
+		if linkScopesKickSalesMirror(scopes) {
+			d.RequestSalesMirrorPull()
 		}
 		// ut-docs#2858: an order held, resumed or moved on another till
 		// changes what this till's Open orders badge counts; move the held
@@ -267,6 +277,12 @@ func linkScopesNeedPull(scopes []fleetlink.Scope) bool {
 	return false
 }
 
+// linkScopesKickSalesMirror reports whether a sync nudge names the sales
+// copy (ut-docs#5074 M4).
+func linkScopesKickSalesMirror(scopes []fleetlink.Scope) bool {
+	return slices.Contains(scopes, fleetlink.ScopeSalesMirror)
+}
+
 // linkScopesTouchHeld reports whether a sync nudge names held sales.
 func linkScopesTouchHeld(scopes []fleetlink.Scope) bool {
 	for _, s := range scopes {
@@ -286,12 +302,34 @@ func markLinkContact(ctx context.Context, d *common.Deps) {
 // time.Now() taken when the main till answered, so its monotonic reading
 // is kept) — both sync.last_contact_at and this process's monotonic twin
 // (Deps.MarkMainContact, ut-docs#2915) — and returns the stored RFC 3339
-// value. Every write of sync.last_contact_at goes through here.
+// value. It writes unconditionally (a link hello, a push ack); the pull tick
+// uses recordMainContactIfReplica so a promoted till is left alone.
 func recordMainContact(ctx context.Context, d *common.Deps, at time.Time) string {
 	d.MarkMainContact(at)
 	s := at.UTC().Format(time.RFC3339)
 	_ = d.Settings.Set(ctx, "sync.last_contact_at", s)
 	return s
+}
+
+// recordMainContactIfReplica is recordMainContact plus sync.last_pull_ok_at
+// (value pullOK), both written in one transaction only while this till still
+// has a sync.primary_url; otherwise data.ErrNotReplica and nothing — neither
+// the keys nor the in-memory contact — is recorded (ut-docs#5903).
+func recordMainContactIfReplica(ctx context.Context, d *common.Deps, at time.Time, pullOK string) error {
+	s := at.UTC().Format(time.RFC3339)
+	if err := d.Settings.SetIfReplica(ctx, map[string]string{
+		"sync.last_contact_at": s,
+		"sync.last_pull_ok_at": pullOK,
+	}); err != nil {
+		if errors.Is(err, data.ErrNotReplica) {
+			return err
+		}
+		// A real DB failure: the main till did answer, so the in-memory
+		// contact is still marked (the previous behaviour); log it.
+		logging.L().Warnf("sync pull: record main contact: %v", err)
+	}
+	d.MarkMainContact(at)
+	return nil
 }
 
 // linkContactWindow is how long after its last successful pull a linked

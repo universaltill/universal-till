@@ -3,6 +3,7 @@ id: quickstart
 title: آموزش کار با صندوق
 section: فروش روزمره
 order: 5
+public: true
 summary: هر آنچه برای یک روز کاری عادی لازم دارید، قدم به قدم و ساده.
 ---
 

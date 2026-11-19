@@ -67,6 +67,14 @@ func init() {
 	// later; the poll stays as the NAT-safe fallback.
 	tickIntervalNS.Store(int64(2 * time.Minute))
 	firstDelayNS.Store(int64(15 * time.Second))
+	// UT_TEST_CLOUDSYNC_TICK_MS (e2e harness only -- never set on a real
+	// till, like UT_TEST_I18N_OVERLAY_DIR): a throwaway till that talks to a
+	// fake cloud checks in every N ms (200 minimum) so a spec can watch a
+	// notice arrive without waiting two minutes (ut-docs#5366).
+	if ms, err := strconv.Atoi(os.Getenv("UT_TEST_CLOUDSYNC_TICK_MS")); err == nil && ms >= 200 {
+		tickIntervalNS.Store(int64(ms) * int64(time.Millisecond))
+		firstDelayNS.Store(int64(ms) * int64(time.Millisecond))
+	}
 }
 
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
@@ -110,7 +118,14 @@ type Hooks struct {
 	// portal can never push a printer address, a TSE credential, a PIN or a
 	// network setting through. Deliberately a separate hook from SetSetting:
 	// that one stays the generic, unrestricted channel and is untouched.
-	SetTillSetting func(ctx context.Context, key, value string) (string, error)
+	//
+	// expect (ut-docs#5349) is the optional compare-and-set: the value the
+	// proposer saw, in the till's stored spelling; nil = the field was
+	// absent (an older cloud: unconditional write, as before), a pointer to
+	// "" = the proposer saw it unset. A till older than the release that
+	// added it ignores the field and writes unconditionally, so the cloud
+	// must not rely on it below the registry's RegistryMinTillVersion.
+	SetTillSetting func(ctx context.Context, key, value string, expect *string) (string, error)
 	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
 	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
@@ -420,6 +435,9 @@ type Hooks struct {
 	// Never on a failed tick, a block-less 402 or a gated (skipped) tick.
 	// Best-effort: it logs, it never fails the tick. Nil = unsupported.
 	ShopCurrency func(ctx context.Context)
+	// NoticeLang, when non-nil, returns the till's UI locale for the notices
+	// pull (ADR-0176 §4 "lang"). Nil = "en".
+	NoticeLang func() string
 
 	// fetchCatalogImage is set by tick (it needs the cloud endpoint and
 	// credential from cfg) and bound into each set_catalog_image's
@@ -527,7 +545,11 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// Amendment 2026-10-14 (ut-docs#4285): a lapsed or recently paid till
 	// also checks in once an hour (renewalWatchDue), so a renewal done in
 	// the cloud admin reaches it by itself.
-	if unpaid && !takeStartupCheckin(ctx, settings, now) && !operatorWindowOpen(now) && !renewalWatchDue(ctx, settings, now) {
+	// ADR-0200: a shop that switched "Send usage facts" off gets no start-up
+	// check-in (its operator window and renewal watch are cloud features it
+	// asked for, and stay).
+	startupDue := startupCheckinAllowed(ctx, cfg, settings) && takeStartupCheckin(ctx, settings, now)
+	if unpaid && !startupDue && !operatorWindowOpen(now) && !renewalWatchDue(ctx, settings, now) {
 		return false, nil
 	}
 
@@ -536,11 +558,15 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// till-state part is what the hash covers. An unpaid check-in skips the
 	// GET and POSTs (planUnpaidCheckin).
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
+	nc := newNoticeClient(db, settings, hooks)
+	nc.attach(ctx, &req)
+	// ADR-0200: waiting change events ride this POST (never in the state hash).
+	events := attachChangeEvents(ctx, cfg, db, settings, &req)
 	sum, hashErr := stateHash(req.devices)
 	var plan checkinPlan
 	if unpaid {
 		plan = planUnpaidCheckin(ctx, settings, sum)
-	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion); err != nil {
+	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion, nc); err != nil {
 		if _, ok := planRequired(err); ok {
 			// A lapse learned from the GET is this start's contact: no
 			// start-up check-in follows it (amendment §4).
@@ -552,9 +578,20 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return false, err
 	}
 	var dirs []directive
+	if events.pending() {
+		plan.post = true // a waiting event is never lost behind a 304
+	}
+	if !plan.post {
+		recordLastCheckin(ctx, settings, now) // a 304: the cloud answered
+	}
 	if plan.post {
 		dirs, err = pushSync(ctx, cfg, settings, req)
 		_, refused := planRequired(err)
+		if err == nil || refused {
+			// Only a 2xx or a 402 means the cloud has the events (ADR-0200).
+			events.ack(ctx)
+			recordLastCheckin(ctx, settings, now)
+		}
 		if unpaid && (err == nil || refused) {
 			// Only a 2xx or a 402 records the unpaid check-in: the cloud saw
 			// this till (amendment §2). Any other answer, or none, records
@@ -623,6 +660,16 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// would double-report its own sales. Throttled and self-logging;
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
+	}
+	// ut-docs#4768 (channel-order-action.md "Upload order"): the main till's queued
+	// channel order actions go up after the check-in answered and BEFORE this tick's
+	// channel_order(_update) directives are applied, so an action is judged against the
+	// cloud's newest state and its answer's `current` is applied first (a directive of
+	// the same revision is then ignored). Runs on a 304 tick too: the queue does not
+	// depend on catalogue changes. Logged, never returned.
+	if !refusedMidTick {
+		// A non-main or unenrolled till blocks its stranded rows inside (finding 2).
+		uploadChannelOrderActions(ctx, cfg, db, hooks)
 	}
 	// Archived reports (ADR-0147 §2, ut-docs#574): only in retention mode
 	// cloud/both, from EVERY till — report_archive is per-till and not
@@ -832,7 +879,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if key == "" {
 			return "failed", "missing setting key"
 		}
-		msg, err = hooks.SetTillSetting(ctx, key, str("value"))
+		var expect *string
+		if raw, present := d.Payload["expect"]; present && raw != nil {
+			e, ok := raw.(string)
+			if !ok {
+				return "failed", "expect must be a string"
+			}
+			expect = &e
+		}
+		msg, err = hooks.SetTillSetting(ctx, key, str("value"), expect)
 	case "install_plugin":
 		if hooks.InstallPlugin == nil {
 			return "failed", "install_plugin is not supported on this till"
@@ -1459,6 +1514,30 @@ func modifierGroupOptions(raw any) ([]ModifierGroupOption, error) {
 // buildSyncRequest keeps it only on a role "primary" report.
 const LANAddressKey = "lan_address"
 
+// minimalDeviceKeys is the allow-list of a minimal device report (ut-docs#6613,
+// ADR-0200): the facts the registration notice lists, and nothing else. The
+// change `events` are attached later by attachChangeEvents. A golden test
+// pins this list (approval_kid is an opaque key id the cloud needs to keep a
+// pinned approval key from being cancelled, not shop data); adding a key means a notice review and a NoticeVersion bump.
+var minimalDeviceKeys = []string{"device_id", "version", "platform", "channel", "country", "locale", "approval_kid"}
+
+// minimalDeviceReport copies only the allow-listed keys of device; "health"
+// is cut to uptime_min (when the till last started).
+func minimalDeviceReport(device map[string]any) map[string]any {
+	out := make(map[string]any, len(minimalDeviceKeys)+1)
+	for _, k := range minimalDeviceKeys {
+		if v, ok := device[k]; ok {
+			out[k] = v
+		}
+	}
+	if h, ok := device["health"].(map[string]any); ok {
+		if up, ok := h["uptime_min"]; ok {
+			out["health"] = map[string]any{"uptime_min": up}
+		}
+	}
+	return out
+}
+
 // syncRequest is the /v1/stores/sync body before it is sent: built every
 // tick (the check-in hashes its device part), sent only when the check-in
 // says so.
@@ -1466,6 +1545,10 @@ type syncRequest struct {
 	storeID string
 	devices []map[string]any
 	hasStop bool // a diagnostics stop report rides the device record
+	// notices is the optional ADR-0176 request object (nil = feature off) and
+	// onNotices receives the response's raw notices block when it has one.
+	notices   map[string]any
+	onNotices func(json.RawMessage)
 }
 
 // buildSyncRequest assembles this device's report for the sync POST.
@@ -1520,6 +1603,16 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 			}
 		}
 	}
+	// ADR-0200 (owner decision): a till whose cloud identity was made by the
+	// automatic register, and that is still unpaid, tells the cloud neither
+	// the shop name nor the till name. A paid till, or one the operator
+	// claimed or paired (which clears the mark), keeps today's behaviour.
+	// ut-docs#6613/#6618: such a till (and an auto-registered one whose shop
+	// pressed "Stop sending", whatever opened the check-in window) sends an
+	// ALLOW-LIST, never "everything the pages hook knows": the notice says
+	// no staff, settings, items or LAN address leave the till. Applied after
+	// the isReplica/diagnostics steps below so nothing later can add a key.
+	minimal := enroll.AutoRegistered(ctx, settings) && (!syncAllowedFn(ctx, settings) || enroll.Stopped(ctx, settings))
 	// ut-docs#2774: only a main till (no sync.primary_url — ADR-0011's single
 	// source of truth, same rule as discovery.RoleCheckFromSettings) tells
 	// the cloud where it is on the LAN. Gated on isReplica, not the reported
@@ -1548,8 +1641,13 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// the bounded lag §1 names, closed for upload purposes by the cloud's
 	// own "reject any batch for a non-active session" check.
 	stopReport, hasStop := diagnostics.StopReport(ctx, settings)
-	if hasStop {
+	if hasStop && !minimal {
 		device["diagnostics"] = stopReport
+	} else {
+		hasStop = false // not sent, so its marker must not clear
+	}
+	if minimal {
+		device = minimalDeviceReport(device)
 	}
 	return syncRequest{
 		storeID: enroll.Effective(cfg).Marketplace.StoreID,
@@ -1561,10 +1659,14 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 // pushSync sends the device report and returns the store's pending
 // directives.
 func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, req syncRequest) ([]directive, error) {
-	payload, _ := json.Marshal(map[string]any{
+	pl := map[string]any{
 		"store_id": req.storeID,
 		"devices":  req.devices,
-	})
+	}
+	if req.notices != nil {
+		pl["notices"] = req.notices
+	}
+	payload, _ := json.Marshal(pl)
 	body, err := postBody(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
 		if _, ok := planRequired(err); ok {
@@ -1574,6 +1676,9 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// token_retired. Same rules as a 200's; the tick still fails
 			// with the 402 below.
 			applyPlanRequiredCredential(ctx, settings, body)
+			// ut-docs#5127: a till-born shop is usually unpaid, so the
+			// moves waiting for this till ride the 402 as well.
+			applySyncMoves(body)
 		}
 		cachePlanRequired(ctx, settings, err)
 		return nil, err
@@ -1598,10 +1703,16 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// ServerTime: the cloud's clock (RFC 3339), for stock count
 			// mode's clock conversion (ut-docs#4749). Optional.
 			ServerTime string `json:"server_time"`
+			// Notices is ADR-0176's optional block; raw so a malformed one
+			// can never fail the decode of the directives beside it.
+			Notices json.RawMessage `json:"notices"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
+	}
+	if req.onNotices != nil && len(resp.Data.Notices) > 0 && string(resp.Data.Notices) != "null" {
+		req.onNotices(resp.Data.Notices)
 	}
 	cacheEntitlement(ctx, settings, resp.Data.Entitlement, time.Now())
 	if st, err := time.Parse(time.RFC3339, resp.Data.ServerTime); err == nil {
@@ -1615,7 +1726,25 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 	// doesn't pin the token; every cloud caller sends it from the next
 	// request (enroll.Effective). Never fails the sync.
 	enroll.ApplyRotatedCredential(ctx, settings, resp.Data.DeviceID, resp.Data.DeviceToken)
+	applySyncMoves(body)
 	return resp.Data.Directives, nil
+}
+
+// applySyncMoves hands a sync answer's pending_moves / ended_moves (the 200
+// and the 402 plan_required, ut-docs#5127 CL-2b) to enroll, which keeps the
+// moves waiting for this till's approval. Absent fields (the feature off, an
+// older cloud) change nothing; a malformed body is ignored.
+func applySyncMoves(body []byte) {
+	var env struct {
+		Data struct {
+			PendingMoves json.RawMessage `json:"pending_moves"`
+			EndedMoves   json.RawMessage `json:"ended_moves"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &env) != nil {
+		return
+	}
+	enroll.ApplySyncMoves(env.Data.PendingMoves, env.Data.EndedMoves)
 }
 
 // cacheEntitlement records the sync response's entitlement block in the
@@ -1830,6 +1959,12 @@ type snapshotItemRow struct {
 	// path and items.icon, the same read the category report uses
 	// (ut-docs#2717), so my. draws and preselects what the till draws.
 	Icon string `json:"icon"`
+	// IconStored (ut-docs#6028) is the raw items.icon, "" for none — set
+	// even while a photo hides it (Icon above is the displayed one), so my.'s
+	// picker shows the icon actually stored; the item counterpart of the
+	// categories report's icon_stored (ut-docs#3585). A lone library tile
+	// reports its id in Icon and "" here, as for categories.
+	IconStored string `json:"icon_stored"`
 	// EverSold (ut-docs#3317) is true once the item or one of its variants
 	// has a sale line here (live or archived). my. offers Delete only while
 	// it is false; the cloud keeps it true once any till reported it.
@@ -1988,6 +2123,7 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB, 
 			Variants:     make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256:  ServedImageSHA256(thumbs[it.ID]),
 			Icon:         iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
+			IconStored:   it.Icon,
 			SellScreen:   it.SellScreen,
 		}
 		if len(it.Barcodes) > 0 {

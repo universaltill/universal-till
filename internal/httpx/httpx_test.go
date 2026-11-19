@@ -558,3 +558,32 @@ func TestFuncsForNumberGrouping(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5748: a bare "en" pick on an en-US shop shows month-first dates.
+func TestFuncsFor_DatetimeBareEnFollowsShop_5748(t *testing.T) {
+	defer SnapshotStateForTests()()
+	InitI18n(realI18n(t), "en")
+	ts := time.Date(2025, 11, 6, 21, 33, 0, 0, time.Local)
+	run := func(locale string) string {
+		fn, ok := FuncsFor(locale)["datetime"].(func(any) string)
+		if !ok {
+			t.Fatal("datetime helper not found")
+		}
+		return fn(ts.Format(time.RFC3339))
+	}
+	SetDefaultLocale("en-US")
+	for _, l := range []string{"en", "en-US"} {
+		if got := run(l); got != "11/06/2025 21:33" {
+			t.Errorf("en-US shop, FuncsFor(%q) datetime = %q", l, got)
+		}
+	}
+	SetDefaultLocale("en-GB")
+	if got := run("en"); got != "06/11/2025 21:33" {
+		t.Errorf("en-GB shop, FuncsFor(en) datetime = %q", got)
+	}
+	SetDefaultLocale("en-US")
+	r := httptest.NewRequest("GET", "/?lang=en", nil)
+	if got := run(ResolveLocale(httptest.NewRecorder(), r)); got != "11/06/2025 21:33" {
+		t.Errorf("?lang=en on en-US shop = %q", got)
+	}
+}

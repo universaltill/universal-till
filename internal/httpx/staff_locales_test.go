@@ -38,3 +38,31 @@ func TestParseStaffLocales(t *testing.T) {
 		t.Fatalf("got %v, want nil", got)
 	}
 }
+
+func TestShopLanguagesFor(t *testing.T) {
+	avail := []string{"ar", "de", "en", "fa", "tr"}
+	cases := []struct {
+		name, stored, def string
+		want              []string
+	}{
+		{"unset: default first then en", "", "de", []string{"de", "en"}},
+		{"default first, rest in installed order", "tr,ar", "de", []string{"de", "ar", "tr"}},
+		{"deduped when default also selected", "de,tr", "de", []string{"de", "tr"}},
+		{"English shop", "", "en", []string{"en"}},
+		{"default not installed", "tr", "pt-PT", []string{"tr"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ShopLanguagesFor(c.stored, c.def, avail); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("ShopLanguagesFor(%q,%q) = %v, want %v", c.stored, c.def, got, c.want)
+			}
+		})
+	}
+}
+
+func TestTExact_NoTranslator(t *testing.T) {
+	InitI18n(nil, "en")
+	if v, ok := TExact("de", "x"); ok || v != "" {
+		t.Errorf("TExact = %q,%v", v, ok)
+	}
+}

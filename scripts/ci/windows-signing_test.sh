@@ -137,6 +137,32 @@ pki() {
     -subj "/CN=UT TEST SIGNER LTD/O=UT TEST SIGNER LTD" 2>/dev/null
   printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=codeSigning\n' > leaf.ext
   openssl x509 -req -in leaf.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out leaf.pem -days 2 -extfile leaf.ext 2>/dev/null
+  # ut-docs#6636: leaves that a substring match would accept. evil: CN has a
+  # suffix; orgonly: the publisher is only in O=; slash: no CN, but a '/'
+  # inside O= spells "/CN=<publisher>" in X509_NAME_oneline; issued: the
+  # leaf is "Other" but its issuer (an intermediate) is named like the publisher.
+  mkleaf() { # mkleaf <name> <subj> <ca-prefix>
+    openssl req -newkey rsa:2048 -nodes -keyout "$1.key" -out "$1.csr" -subj "$2" 2>/dev/null
+    openssl x509 -req -in "$1.csr" -CA "$3.pem" -CAkey "$3.key" -CAcreateserial -out "$1.pem" -days 2 -extfile leaf.ext 2>/dev/null
+  }
+  mkleaf evil "/CN=UT TEST SIGNER LTD EVIL" ca
+  mkleaf orgonly "/O=UT TEST SIGNER LTD/CN=Other" ca
+  mkleaf slash "/O=x\\/CN=UT TEST SIGNER LTD" ca
+  # twocn: two CN RDNs, the publisher first. forged: a cert in the cert bag that
+  # claims the signer's serial with CN=<publisher>, next to the real signer
+  # "forgedsigner" (CN=Other). short: a genuine publisher leaf whose 80-bit
+  # serial `openssl pkcs7 -print` writes in decimal.
+  mkleaf twocn "/CN=UT TEST SIGNER LTD/CN=Other" ca
+  mkleaf forgedsigner "/CN=Other" ca
+  fser="$(openssl x509 -noout -serial -in forgedsigner.pem | sed 's/^serial=//')"
+  openssl req -newkey rsa:2048 -nodes -keyout forged.key -out forged.csr -subj "/CN=UT TEST SIGNER LTD" 2>/dev/null
+  openssl x509 -req -in forged.csr -CA ca.pem -CAkey ca.key -set_serial "0x${fser}" -out forged.pem -days 2 -extfile leaf.ext 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout short.key -out short.csr -subj "/CN=UT TEST SIGNER LTD" 2>/dev/null
+  openssl x509 -req -in short.csr -CA ca.pem -CAkey ca.key -set_serial 0x7A7A7A7A7A7A7A7A7A7A -out short.pem -days 2 -extfile leaf.ext 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout inter.key -out inter.csr -subj "/CN=UT TEST SIGNER LTD" 2>/dev/null
+  printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign\n' > inter.ext
+  openssl x509 -req -in inter.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out inter.pem -days 2 -extfile inter.ext 2>/dev/null
+  mkleaf issued "/CN=Other" inter
   openssl req -newkey rsa:2048 -nodes -keyout tsa.key -out tsa.csr -subj "/CN=UT Test TSA" 2>/dev/null
   printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,timeStamping\n' > tsa.ext
   openssl x509 -req -in tsa.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out tsa.pem -days 2 -extfile tsa.ext 2>/dev/null
@@ -165,7 +191,10 @@ f="\${!#}"
 tsa=(-TSA-certs "$T/tsa.pem" -TSA-key "$T/tsa.key")
 [ -n "\${STUB_TSA_URL:-}" ] && tsa=(-ts "\$STUB_TSA_URL")
 [ "\${STUB_NO_TSA:-}" = 1 ] && tsa=()
-osslsigncode sign -certs "$T/leaf.pem" -key "$T/leaf.key" "\${tsa[@]}" -in "\$f" -out "\$f.signed" >/dev/null
+ac=()
+[ -n "\${STUB_AC:-}" ] && ac=(-ac "\$STUB_AC")
+leaf="\${STUB_LEAF:-$T/leaf}"
+osslsigncode sign -certs "\$leaf.pem" -key "\$leaf.key" "\${ac[@]}" "\${tsa[@]}" -in "\$f" -out "\$f.signed" >/dev/null
 mv "\$f.signed" "\$f"
 EOF
 chmod +x "$T/bin/java"
@@ -197,6 +226,34 @@ if run_sign -- --verify-only "$f"; then pass "signed file passes --verify-only";
 if run_sign SIGN_PUBLISHER="SOMEONE ELSE LTD" -- --verify-only "$f"; then fail "accepted the wrong publisher"; else pass "wrong publisher is rejected"; fi
 if run_sign SIGN_CA_BUNDLE="$T/other-ca.pem" -- --verify-only "$f"; then fail "accepted a signature from an untrusted root"; else pass "untrusted root is rejected"; fi
 if grep -qF "$TOKEN_VALUE" "$T/java-argv.log"; then fail "the token appeared on jsign's command line"; else pass "token never on the command line"; fi
+
+# ut-docs#6636: the signer is the leaf certificate's CN, exact and case-sensitive.
+for c in evil orgonly slash; do
+  f="$(fresh "$c.exe")"
+  if run_sign STUB_LEAF="$T/$c" -- "$f"; then fail "leaf '$c' was accepted"
+  elif grep -qF 'is not signed by' "$T/out.log"; then pass "leaf '$c' is rejected as the wrong signer"
+  else fail "leaf '$c' failed for the wrong reason: $(cat "$T/out.log")"; fi
+done
+f="$(fresh twocn.exe)"
+if run_sign STUB_LEAF="$T/twocn" -- "$f"; then fail "a leaf with two CN values was accepted"
+elif grep -qF 'is not signed by' "$T/out.log"; then pass "leaf with two CN values is rejected"
+else fail "twocn failed for the wrong reason: $(cat "$T/out.log")"; fi
+f="$(fresh forged.exe)"
+if run_sign STUB_LEAF="$T/forgedsigner" STUB_AC="$T/forged.pem" -- "$f"; then fail "a forged cert with the signer's serial was accepted"
+elif grep -qF 'signer certificate is not in the signature' "$T/out.log"; then pass "forged extra cert with the signer's serial is rejected"
+else fail "forged case failed for the wrong reason: $(cat "$T/out.log")"; fi
+f="$(fresh short.exe)"
+if run_sign STUB_LEAF="$T/short" -- "$f"; then pass "leaf with a short (decimal-printed) serial is accepted"
+else fail "short-serial leaf was rejected: $(cat "$T/out.log")"; fi
+f="$(fresh issued.exe)"
+if run_sign STUB_LEAF="$T/issued" STUB_AC="$T/inter.pem" -- "$f"; then fail "an issuer named like the publisher was accepted"
+elif grep -qF 'is not signed by' "$T/out.log"; then pass "issuer named like the publisher is rejected"
+else fail "issuer case failed for the wrong reason: $(cat "$T/out.log")"; fi
+f="$(fresh case.exe)"
+run_sign -- "$f" || fail "good file did not sign for the case test"
+if run_sign SIGN_PUBLISHER="ut test signer ltd" -- --verify-only "$f"; then fail "a different-case publisher was accepted"
+elif grep -qF 'is not signed by' "$T/out.log"; then pass "publisher in a different case is rejected"
+else fail "case test failed for the wrong reason: $(cat "$T/out.log")"; fi
 
 f="$(fresh nots.exe)"
 if run_sign STUB_NO_TSA=1 -- "$f"; then fail "accepted a signature without a timestamp"; else pass "missing timestamp is rejected"; fi

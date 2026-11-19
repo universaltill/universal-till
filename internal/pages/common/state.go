@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/taxrate"
@@ -20,8 +21,12 @@ import (
 const (
 	KeyTheme    = "theme"
 	KeyCurrency = "store.currency"
-	KeyCountry  = "store.country"
-	KeyRegion   = "store.region"
+	// KeyCurrencyDisplay is how amounts write the shop currency: auto
+	// (the registry decides per currency), symbol or code (ut-docs#5410).
+	// Empty reads as auto.
+	KeyCurrencyDisplay = "store.currency_display"
+	KeyCountry         = "store.country"
+	KeyRegion          = "store.region"
 	// KeyLocale is the shop's live-switchable default locale (ut-docs#861) —
 	// same key internal/settings/runtime.go's LoadRuntimeConfig/SaveRuntimeConfig
 	// already read/wrote at boot, but until #861 nothing but that one
@@ -156,6 +161,15 @@ const (
 	// error) or has not run yet. Per-till like the queue it annotates: the
 	// key sits under data's "setup.pending_base_plugins" per-till prefix.
 	KeyBasePluginsNotPublished = "setup.pending_base_plugins_not_published"
+	// KeyTaxAutoInstallStatus holds the JSON status of this till's automatic
+	// tax-plugin install (ADR-0172 §5): installing, installed, or retrying
+	// with its error class. Drives the setup-landing and Settings chips.
+	// Per-till (data's "setup.tax_autoinstall." prefix).
+	KeyTaxAutoInstallStatus = "setup.tax_autoinstall.status"
+	// KeyTaxAutoInstallDeclined holds the id of the tax plugin the operator
+	// uninstalled (or dismissed) after it was installed automatically, so the
+	// retry never reinstalls it (ADR-0172 §5). Per-till.
+	KeyTaxAutoInstallDeclined = "setup.tax_autoinstall.declined"
 	// KeyLocaleSwitchPending holds the locale a manager picked in Settings →
 	// Language before its language pack was installed (ut-docs#4477, ADR-0160
 	// §6), as "<locale>@<unix seconds of the pick>". The pack is queued on
@@ -164,16 +178,6 @@ const (
 	// the pick), then clears it. Per-till like the queue: the key sits under
 	// data's "setup.pending_base_plugins" per-till prefix.
 	KeyLocaleSwitchPending = "setup.pending_base_plugins_locale_switch"
-	// KeyAutoRegisterOptIn records the shop's explicit answer to the setup
-	// wizard's eager store-registration question (ADR-0071, ut-docs#879):
-	// "true" means the operator opted in on the wizard's last screen (or
-	// later from Settings) and the till may register eagerly; "false" (or
-	// unset — a till from before this question existed) keeps ADR-0015's
-	// lazy registration as the only behavior. Same marketplace.* namespace
-	// as internal/enroll's identity keys, deliberately distinct from the
-	// unrelated marketplace.telemetry_opt_in (plugin-usage telemetry).
-	// Toggling it off later never deregisters an identity already minted.
-	KeyAutoRegisterOptIn = "marketplace.auto_register_opt_in"
 	// KeyTSEProvisioningState holds the JSON lifecycle state of the German
 	// TSE reseller-provisioning flow (ADR-0053, ut-docs#802): written by the
 	// setup wizard the instant a complete business identity is submitted
@@ -393,6 +397,7 @@ func LoadStateChecked(ctx context.Context, store *settings.Store, cfg *config.Co
 	st := RuntimeState{
 		Theme:                  get(KeyTheme, cfg.Theme),
 		Currency:               get(KeyCurrency, cfg.Locales.Currency),
+		CurrencyDisplay:        ClampCurrencyDisplay(get(KeyCurrencyDisplay, httpx.CurrencyDisplayAuto)),
 		Country:                get(KeyCountry, "GB"),
 		Region:                 get(KeyRegion, ""),
 		Locale:                 get(KeyLocale, cfg.Locales.Locale),
@@ -612,6 +617,7 @@ func StateKV(ctx context.Context, store *settings.Store, st RuntimeState) map[st
 	kv := map[string]string{
 		KeyTheme:                  st.Theme,
 		KeyCurrency:               st.Currency,
+		KeyCurrencyDisplay:        ClampCurrencyDisplay(st.CurrencyDisplay),
 		KeyCountry:                st.Country,
 		KeyRegion:                 st.Region,
 		KeyLocale:                 st.Locale,
@@ -793,4 +799,23 @@ func buildSlotAmendments(pm *plugins.Manager, slot string) []uislot.Amendment {
 		return nil
 	}
 	return out
+}
+
+// ClampCurrencyDisplay returns mode if it is a storable currency display
+// mode, else auto (the empty/unset value is auto). Validation that must
+// refuse a bad value (the settings save) uses httpx.IsCurrencyDisplayMode.
+func ClampCurrencyDisplay(mode string) string {
+	if httpx.IsCurrencyDisplayMode(mode) {
+		return mode
+	}
+	return httpx.CurrencyDisplayAuto
+}
+
+// InitCurrencyFromState publishes the shop currency AND its display mode to
+// httpx. Every place that publishes the currency calls this, never
+// httpx.InitCurrency alone, so a new publisher cannot leave the display mode
+// stale (TestInitCurrencyOnlyThroughStateHelper, ut-docs#5410).
+func InitCurrencyFromState(st RuntimeState) {
+	httpx.InitCurrency(st.Currency)
+	httpx.InitCurrencyDisplay(st.CurrencyDisplay)
 }

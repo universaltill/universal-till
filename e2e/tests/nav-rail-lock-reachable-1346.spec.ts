@@ -51,10 +51,10 @@ test.describe('nav rail Lock button stays reachable at 1024x600 with a full mana
     await page.goto('/settings');
 
     // Sanity check this is actually the crowded rail the review measured:
-    // 3 manager admin links (Users/Promotions/Translations) + operator +
+    // 4 session-chip links (Users/Promotions/Translations + My display) + operator +
     // Lock in `.nav-right`, on top of Till/Menu/Inventory/Orders in
     // `.nav-primary` above it.
-    await expect(page.locator('.session-admin-link')).toHaveCount(3);
+    await expect(page.locator('.session-admin-link')).toHaveCount(4);
 
     const lockBtn = page.locator('.session-lock button.btn-lock');
     // `.nav` is `overflow-y: auto` — scroll it into view first, matching
@@ -164,7 +164,7 @@ test.describe('nav rail Lock button stays reachable with an enrolled-till sync c
 
     // Same crowded-rail sanity check as the test above, now WITH the sync
     // chip also present.
-    await expect(page.locator('.session-admin-link')).toHaveCount(3);
+    await expect(page.locator('.session-admin-link')).toHaveCount(4);
 
     const lockBtn = page.locator('.session-lock button.btn-lock');
     await lockBtn.scrollIntoViewIfNeeded();

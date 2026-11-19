@@ -29,6 +29,7 @@ type checkinCloud struct {
 	version int64
 	status  int      // non-zero: answer every GET with this status (401, 404 …)
 	inm     []string // If-None-Match of every GET, in order
+	queries []string // raw query of every GET, in order
 }
 
 func newCheckinCloud(version int64) (*checkinCloud, *httptest.Server) {
@@ -39,6 +40,7 @@ func newCheckinCloud(version int64) (*checkinCloud, *httptest.Server) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.inm = append(c.inm, r.Header.Get("If-None-Match"))
+		c.queries = append(c.queries, r.URL.RawQuery)
 		if r.Method != http.MethodGet || r.URL.Query().Get("store_id") != "store-1" || r.Header.Get("Authorization") != "Bearer tok-1" {
 			w.WriteHeader(http.StatusBadRequest)
 			return

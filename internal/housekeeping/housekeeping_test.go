@@ -102,11 +102,12 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 		"tmp/ut-bkp-1.db-journal",
 	}
 	var mustGo []string
-	// 16 snapshots: the newest DefaultBackupKeep stay, two go.
+	// 16 snapshots, all years old: only the newest stays (an age rule never
+	// deletes the newest backup), the other 15 go.
 	for i := 0; i < 16; i++ {
 		name := fmt.Sprintf("backups/unitill-pos-2020010%d-%02d0000.db", 1, i)
 		put(t, root, name, ancient.Add(time.Duration(i)*time.Hour))
-		if i < 2 {
+		if i < 15 {
 			mustGo = append(mustGo, name)
 		} else {
 			mustKeep = append(mustKeep, name)
@@ -171,7 +172,7 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 	for _, r := range results {
 		removed[r.Kind] = r.Removed
 	}
-	want := map[string]int{KindBackups: 2, KindPreRestore: 5, KindIssueReports: 1, KindUpdateDownloads: 1, KindStagedUploads: 3}
+	want := map[string]int{KindBackups: 15, KindPreRestore: 5, KindIssueReports: 1, KindUpdateDownloads: 1, KindStagedUploads: 3}
 	for k, n := range want {
 		if removed[k] != n {
 			t.Errorf("%s removed %d, want %d", k, removed[k], n)
@@ -318,7 +319,7 @@ func TestPackageNeverTouchesTheDatabase(t *testing.T) {
 	forbidden := []string{"database/sql", module + "internal/data", "modernc.org/sqlite", "github.com/mattn/go-sqlite3"}
 	// internal/db also opens the database; only its backup-file functions
 	// are allowed here, whatever name it is imported under.
-	allowedDB := map[string]bool{"BackupInfo": true, "DefaultBackupKeep": true, "ListBackups": true, "PruneBackups": true, "PrunePreRestore": true}
+	allowedDB := map[string]bool{"BackupInfo": true, "PruneBackupsOlderThan": true, "ListBackups": true, "PruneBackups": true, "PrunePreRestore": true}
 	matches, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()
 	for _, f := range matches {
@@ -372,5 +373,29 @@ func TestSchedule(t *testing.T) {
 	}
 	if !s.Due(testNow.Add(Interval)) {
 		t.Error("not due after a full interval")
+	}
+}
+
+// ut-docs#3092 (reopened): the daily sweep keeps the last N days, not N files.
+func TestRun_BackupsKeepTheLastNDays(t *testing.T) {
+	root, dbPath := layout(t)
+	for i := 0; i < 14; i++ {
+		at := testNow.Add(-time.Duration(i)*24*time.Hour - time.Hour)
+		put(t, root, fmt.Sprintf("backups/unitill-pos-%s.db", at.Format("20060102-150405")), at)
+	}
+	l := Normal
+	l.BackupMaxAge = 7 * 24 * time.Hour
+	var removed int
+	for _, r := range RunWith(dbPath, testNow, 0, l) {
+		if r.Kind == KindBackups {
+			removed = r.Removed
+		}
+	}
+	if removed != 7 {
+		t.Fatalf("removed %d, want 7", removed)
+	}
+	l.BackupMaxAge = 30 * 24 * time.Hour
+	if r := sweepBackups(dbPath, 0, l.BackupMaxAge, testNow); r.Removed != 0 {
+		t.Fatalf("a 30-day setting removed %d more", r.Removed)
 	}
 }

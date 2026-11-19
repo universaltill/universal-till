@@ -9,9 +9,25 @@ specs across projects, each against its own server(s):
   `9091 + parallelIndex` (`tests/worker-till.ts`, driven by the
   `workerServerURL` fixture in `tests/fixtures.ts`; the binary is built
   once per run by `global-setup.ts` into the gitignored `e2e/.bin/`).
+  ut-docs#4629: CI clones `ut-translations`, builds a flat German overlay with
+  `scripts/ci/build-locale-overlay.sh` and passes that dir as `UT_E2E_I18N_OVERLAY_DIR` (mapped to the till's
+  `UT_TEST_I18N_OVERLAY_DIR`, default-project worker tills ONLY), so
+  `?lang=de` is real German and `portrait-no-clip-sweep-3060` /
+  `settings-tablet-portrait-4628` assert it. Locally:
+  `bash scripts/ci/build-locale-overlay.sh --locale de --out /tmp/ov && UT_E2E_I18N_OVERLAY_DIR=/tmp/ov npx playwright test --project=default`
+  (from the repo root; needs `../ut-translations` or `--translations <dir>`);
+  without it they only annotate. Locally an already-healthy till on a worker
+  port is reused (started without the overlay it would fail the assertion):
+  stop stray tills or set `UT_E2E_WORKER_PORT_BASE`. CI never reuses one.
   There is no `webServer` entry and no fixed port for it any more — a
   spec that needs its own URL takes the `baseURL` fixture, never a
   literal.
+  `startWorkerTill(idx, { auth: true })` boots an auth-ON till on worker
+  port + 150 (`AUTH_PORT_OFFSET`); first boot goes through
+  `POST /api/auth/setup` with the admin PIN, the returned till exposes
+  `adminPin`, and a spec signs in through `/login`. Used by
+  `plugin-confirm-5466.spec.ts` (the plugin-view `confirm` component needs a
+  signed-in operator, ut-docs#5466).
 - **auth** (`run-till-auth.sh`, port 8092, auth ON) — a genuinely fresh
   install with no operator PINs set yet, so `login.spec.ts` and its 4
   sibling specs (nav-rail lock/icons, session-expiry x2) can drive the
@@ -21,6 +37,9 @@ specs across projects, each against its own server(s):
 - **cutout** (`run-till-cutout.sh`, port 8101) — a till whose background
   removal points at `fake-rembg-server.mjs` (port 8102), a stand-in for the
   shop's `rembg s`, for `photo-cutout-3127.spec.ts` (ut-docs#3127).
+- **plugins** (`run-till-plugins.sh`, port 8107, docs-shots only) — a till with
+  a seeded offline catalogue snapshot for the plugins topic's store shots
+  (ut-docs#335).
 
 **docs-shots font prerequisite (ut-docs#4407).** The app ships no webfont
 (`web/public/app.css` uses a system-font stack), so screenshots depend on the
@@ -57,10 +76,27 @@ genuinely fresh till shows `1.20`, not `1.44`. Fixed both the isolation
 bug and the now-exposed test.
 
     cd e2e && npm ci && npx playwright install chromium
-    npx playwright test                    # headless, every project in playwright.config.ts
+    npx playwright test                    # headless, every project in playwright.config.ts (Chromium; WebKit is separate)
     npx playwright test --headed           # watch it
     npx playwright test --project=default  # skip the auth/setup specs
     npx playwright test --project=auth     # just login.spec.ts and its siblings
+
+### WebKit phone lane (ut-docs#3734)
+
+The iOS app (WKWebView) and the Pi shell (WebKitGTK) render in WebKit, so the
+specs whose purpose is phone width also run under Playwright WebKit, from a
+separate config (`playwright.webkit.config.ts`) so the Chromium run and dev
+machines never need WebKit and no static tills are booted for it.
+
+- Covers every spec with `phone` in its file name, minus the `*_ONLY_SPECS`
+  sets (the auth-project `phone-drawer-*` specs are not in the lane).
+- Locally: `npx playwright install webkit && npx playwright test -c playwright.webkit.config.ts`
+  (or `npm run test:webkit`); `--list` needs no browser.
+- CI: the `webkit-phone` job in `.github/workflows/e2e.yml`, parallel to the
+  Chromium job; on a PR it runs only if the diff touches `web/**`, `e2e/**` or `e2e.yml`,
+  always on push to main.
+- A spec that cannot run in WebKit is skipped per test with
+  `test.skip(browserName === 'webkit', '<reason> ut-docs#N')`, never blanket.
 
 Rules learned the hard way:
 - **One till per worker, never one till shared by two workers** — a

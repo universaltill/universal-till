@@ -34,7 +34,7 @@ func seedNoopPrimary(t *testing.T, primary *db.DB) {
 func TestApplyAdmin_IdenticalBundleTwiceMovesNoVersion(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedNoopPrimary(t, primary)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -61,7 +61,7 @@ func TestApplyAdmin_IdenticalBundleTwiceMovesNoVersion(t *testing.T) {
 func TestApplyAdmin_SettingOnlyChangeMovesAdminNotSellVersion(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedNoopPrimary(t, primary)
 
 	prepo := NewSyncAdminRepo(primary.DB)
@@ -101,7 +101,7 @@ func TestApplyAdmin_SettingOnlyChangeMovesAdminNotSellVersion(t *testing.T) {
 func TestApplyAdmin_RealChangesStillApply(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedNoopPrimary(t, primary)
 
 	prepo := NewSyncAdminRepo(primary.DB)
@@ -147,7 +147,7 @@ func TestApplyAdmin_RealChangesStillApply(t *testing.T) {
 func TestApplyAdmin_AlreadyRetiredRowMovesNoVersion(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	seedNoopPrimary(t, primary)
 
 	prepo := NewSyncAdminRepo(primary.DB)

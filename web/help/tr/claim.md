@@ -3,8 +3,10 @@ id: claim
 title: Mağaza kaydı ve sahiplenme
 section: Bağlantı ve eklentiler
 order: 320
+public: false
 summary: Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı SİZİN hesabınıza bağlar — çevrimiçi yönetim (Mağazalarım, kasa filosu) ve ücretli özellikler böyle açılır.
 keywords: [kayıt, sahiplenme, bulut, marketplace, mağaza, eşleştirme, eşleştirme kodu, yeniden eşleştirme]
+routes: [/settings/cloud/move/{id}]
 ---
 
 # Mağaza kaydı ve sahiplenme
@@ -15,8 +17,13 @@ Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı S
 
 1. Ayarlar → Kasa kaydı mağaza kimliğini gösterir; gerekirse Şimdi kaydet ile bağlayın. Katılmış bir kasada kaydı ana kasa sizin için yapar: bu kart o zaman kasanın ana kasa üzerinden kayıtlı olduğunu söyler ve sahiplenme ana kasada yapılır.
 2. Kaydolmadan önce "Universal Till bulut hizmeti şartlarını kabul ediyorum (sürüm v0.1-draft)" kutusunu işaretleyin; "Şartları oku" şartları yeni bir sekmede açar. İşaret yoksa Şimdi kaydet hiçbir şey yapmaz ve bunu size söyler. Şartları her sürüm için bir kez kabul edersiniz: sonrasında kart kutu yerine tarihle birlikte "Şartlar kabul edildi: sürüm v0.1-draft" gösterir ve kasa kabulünüzü (sürümü ve dilinizi) kayıtla birlikte gönderir. Bu adımdan önce (ya da bir eklenti kurulumuyla) kaydedilmiş bir kasa, Kasa kaydı altında aynı kutuyu **Şartları kabul et** düğmesiyle gösterir: kutuyu işaretleyip düğmeye basın. Kasa çevrimdışıysa kabulünüz kasada saklanır ve kart henüz buluta ulaşmadığını söyler; tekrar çevrimiçi olunca **Buluta gönder**'e basın. Satış hiçbir zaman etkilenmez.
+
+<!-- plan-purchase -->
+
 3. Bu mağazayı sahiplen'e tıklayıp kısa kodu (15 dakika geçerli) ve QR'ı alın — telefonunuzla tarayıp oradan sahiplenin.
 4. Universal Till kimliğinizle marketplace'e giriş yapın, sahiplenme sayfasını açın ve kodu girin.
+
+<!-- /plan-purchase -->
 
 ## Otomatik kayıt — kurulumda sizin seçiminiz
 
@@ -32,11 +39,15 @@ Ayarlar → Abonelik (yalnızca yöneticiler) planınızı bu kasanın Universal
 - Yerel (ücretsiz): yapılacak bir şey yok, kart yalnızca ücretsiz planda olduğunuzu söyler.
 - Etkin: planınız, ödendiği son tarih ve son doğrulama.
 - Abonelik doğrulanmadı: kasa planınızı 7 günden uzun süredir bulutla doğrulayamadı, bu yüzden ücretli özellikler (bulut eşitleme, ürünleri tarayıcıdan yönetme ve yönetilen TSE kurulumu gibi) duraklatıldı. Kasanın internet bağlantısını kontrol edin; bağlandığında kendiliğinden düzelir.
-- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır. Planın son ödemesinden sonraki 90 gün boyunca, aboneliği sona ermiş bir kasa saatte bir kendiliğinden bulutla bağlantı kurar ve yenilemeyi genellikle bir saat içinde öğrenir. Hemen görmek için bu kartta ya da Ayarlar → Kasa kaydı bölümündeki duraklatılan özellikler uyarısında “Şimdi kontrol et” düğmesine basın (yalnızca yöneticiler ve admin'ler): kasa buluta sorar ve yanıtı yerinde gösterir; ya planın artık hangi tarihe kadar ödendiğini ya da henüz yenilenmediğini. Ana kasa üzerinden kayıtlı bir kasada düğmeye ana kasada basın: bu kasa yenilemeyi oradan alır.
+- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler abonelik yeniden etkin olana kadar duraklatılır. Planın son ödemesinden sonraki 90 gün boyunca, aboneliği sona ermiş bir kasa saatte bir kendiliğinden bulutla bağlantı kurar ve yenilemeyi genellikle bir saat içinde öğrenir. Hemen görmek için bu kartta ya da Ayarlar → Kasa kaydı bölümündeki duraklatılan özellikler uyarısında “Şimdi kontrol et” düğmesine basın (yalnızca yöneticiler ve admin'ler): kasa buluta sorar ve yanıtı yerinde gösterir; ya planın artık hangi tarihe kadar ödendiğini ya da henüz yenilenmediğini. Ana kasa üzerinden kayıtlı bir kasada düğmeye ana kasada basın: bu kasa yenilemeyi oradan alır.
 
-Son iki durumda durum çubuğundaki bir işaret aşağıda anlatılan paneli açar; Kasa kaydı ve Fiş imzalama (TSE) kartları da hangi özelliklerinin duraklatıldığını yerinde gösterir. Hiçbir şey gizlenmez ve önceden kurulmuş bir TSE fişleri imzalamaya devam eder.
+Son iki durumda durum çubuğunda bir işaret görünür; Kasa kaydı ve Fiş imzalama (TSE) kartları da hangi özelliklerinin duraklatıldığını yerinde gösterir. Hiçbir şey gizlenmez ve önceden kurulmuş bir TSE fişleri imzalamaya devam eder.
+
+<!-- plan-purchase -->
 
 **Planı yenile veya değiştir** (yalnızca yöneticiler ve idareciler) bu kartta, Kasa kaydı'ndaki duraklatılan özellikler uyarısında ve durum çubuğundaki işarette bulunur. Bulunduğunuz ekranın üzerinde bir panel açar. Kasa önce buluttan güncel planınızı sorar: plan zaten yenilendiyse (örneğin Universal Till hesabınızdan), panel hangi tarihe kadar ödendiğini hemen gösterir; başka bir plan isterseniz Planı değiştir de sunulur. Aksi halde Mevcut planı yenile veya Plan seç'i seçin ve QR kodunu telefonunuzla tarayın: ödeme kasada değil, telefonunuzda yapılır. Kod gösterildiği sürece kasa her 20 saniyede bir, en fazla 10 dakika boyunca kontrol eder ve yeni planınız gelir gelmez ona geçer. Kapat (veya Escape) sizi tam olarak bulunduğunuz yere geri götürür. Ana kasa üzerinden kaydedilmiş bir kasa, yenilemeyi ana kasadan alır.
+
+<!-- /plan-purchase -->
 
 ## Bulut eşitlemesi ücretli planlara dahildir
 
@@ -73,10 +84,27 @@ Kart sorunu tek satırda söyler; satış hiçbir zaman etkilenmez:
 
 Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gerekiyorsa ya da bir kasa mağazanın bulut hesabından kaldırıldıysa veya yeniden eşleştirilmesi gerektiğini söylüyorsa bunu kullanın.
 
-1. Mağazanın bulut hesabında «Kasa ekle veya yeniden eşleştir»i seçerek bir eşleştirme kodu alın (8 karakter, 15 dakika geçerli, tek kullanımlık).
-2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar.
+1. Mağazanın bulut hesabında «Kasa eşleştir» (veya listede zaten bulunan bir kasa için «Yeniden eşleştir») seçeneğini seçerek bir eşleştirme kodu alın (8 karakter, 15 dakika geçerli, tek kullanımlık).
+2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar. Bu kasa zaten bir mağazaya bağlıysa önce bu bağlantıyı değiştirmek isteyip istemediğinizi sorar ve kontrol edebilmeniz için girdiğiniz kodu gösterir; İptal hiçbir şeyi değiştirmez.
 3. Kasa yalnızca kendi bulut bağlantısını değiştirir: yeni bir cihaz kimliği ve kendine ait bir kimlik bilgisi alır. Satışlar, ürünler ve ayarlar kasada kalır; satış bu süre boyunca çevrimdışı çalışmaya devam eder.
-4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır.
+4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır. Bir mağazaya bağlı kasada da yanlış bir kod, kasayı yeni bir kodla eşleştirene kadar bağlantısız bırakır (kasa bu yüzden önce sorar); katılmış bir kasa ise ana kasası üzerinden yeniden kaydedilir.
+
+## Bu kasayı başka bir mağazaya taşıma
+
+Universal Till bulutu bunu sunuyorsa, zaten bir mağazaya ait olan bir kasayı sahibi olduğunuz başka bir mağazanın koduyla eşleştirmek, kasayı ikinci kasa olarak eklemek yerine o mağazaya **taşır**. Kasa kimliğini korur; satış geçmişi, ürünleri ve ayarları da onunla gider: iki mağaza tek mağaza olur. Bir yönetici veya admin kasanın kendisinde onaylayana kadar hiçbir şey taşınmaz.
+
+1. Kodu «Bir mağazayla eşleştir» altına girip Eşleştir'e basın. Kasa taşımayı onaylamanızı ister, ardından taşıma sayfasını gösterir. Taşıma beklerken kasa kendi mağazasında kalır ve satışa devam eder.
+2. Taşıma sayfasında hedef mağazayı ve isteğin son geçerlilik zamanını (yaklaşık bir gün) kontrol edin. Onaylamak için o mağazanın adını yazın, **Taşımayı onayla**'ya basın ve bir yöneticinin veya adminin PIN'ini girin. **Reddet** de PIN ister. Kasiyer bu isteği hiç görmez.
+3. Biri karar verene kadar yöneticiler ve adminler, satış ekranı dışındaki her sayfada bir bildirim görür: "*mağaza* bu kasayı kendi mağazasına taşımak istiyor". **İncele** taşıma sayfasını açar.
+4. Onaydan sonra kasa "*mağaza* mağazasına taşındı" der; bulut hesabı birleştirilmiş geçmişi birkaç dakika içinde gösterir. Satış hiç durmaz.
+
+Bilmekte fayda var:
+
+- Onaylamak, bu mağazanın tüm satış geçmişini diğer hesaba gönderir. Destek ekibi bunu sizden asla istemez; sizin istemediğiniz bir taşımayı reddedin.
+- Onaylamak veya reddetmek için kasa çevrimiçi olmalıdır. Çevrimdışıyken düğmeler kapalıdır ve sonradan hiçbir şey gönderilmez.
+- Üç yanlış PIN taşımayı reddeder. Sahibi taşımayı bulut hesabında iptal ederse veya kimse zamanında karar vermezse bildirim bunu söyler ve hiçbir şey değişmez.
+- Bu kasanın mağazasında başka kasalar, bir mali cihaz, ücretli bir plan veya başka bir sahip varsa, iki mağaza farklı para birimleri kullanıyorsa ya da kod diğer mağazanın sahibi tarafından oluşturulmadıysa taşıma reddedilir ve hiçbir şey değişmez. Mesaj nedenini söyler.
+- "Bu kasanın onay anahtarı değişmiş" mesajı, kasanın taşımaları imzalayamadığı anlamına gelir: destekle iletişime geçin. Eski mağazası artık onu tanımayan ve satışları olan bir kasa yeni kasa olarak eşleştirilmez (satışları geride kalırdı); birleştirmek için destekle iletişime geçin.
 
 ## Mağazanın para birimi
 
