@@ -851,7 +851,7 @@ func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
 		{common.KeyIdleLock, "15", "15"},
 		{common.KeyKioskPaymentMode, common.KioskPaymentModeCounter, common.KioskPaymentModeCounter},
 		{common.KeyStaffLocales, "en", "en"},
-		{common.KeyLocale, "en", "en"},
+		{common.KeyLocale, "en", "en-GB"}, // ut-docs#5751: a bare "en" keeps the shop's region (this fixture's country is GB)
 	}
 	withRealLocales(t)
 	covered := map[string]bool{}
