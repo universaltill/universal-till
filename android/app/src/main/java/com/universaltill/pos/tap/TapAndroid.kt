@@ -51,7 +51,9 @@ class GoDevicepayBridge(private val core: DevicepayBridgeCore) : mobile.TapToPay
 
     override fun showEducation(provider: String?): String = core.showEducation(provider)
 
-    override fun resolveUnknown(idempotencyKey: String?): String = core.resolveUnknown(idempotencyKey)
+    // K1a: Go's Resolver is Resolve(key, outcome) (ut-docs#6455). The outcome-aware
+    // Kotlin side is ut-docs#6533 (A1); until it lands every outcome clears the record.
+    override fun resolve(idempotencyKey: String?, outcome: String?): String = core.resolveUnknown(idempotencyKey)
 }
 
 /**
