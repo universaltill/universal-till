@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,31 +246,76 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 const maxCountProtocolLen = 4096
 
 // ValidCountProtocol reports whether s is a flat JSON object mapping a
-// denomination key to a non-negative piece count, e.g. {"5000":2,"100":13}
-// — the documented count_protocol shape. json.Valid alone accepts any
-// JSON value (a bare string, a number, an array), which silently defeats
-// the documented contract (ut-docs#1006 review finding 6). Exported so the
-// HTTP handler can pre-validate and return 400 rather than relying on
-// CloseShift's own error, which the handler layer can't safely distinguish
-// from a genuine internal error.
+// denomination to a piece count, e.g. {"5000":2,"100":13} — the documented
+// count_protocol shape, and exactly what ReadCountProtocol can read back
+// without dropping anything (ut-docs#6159):
+//   - every key is a canonical positive integer in minor units (digits
+//     only, no sign, no leading zero, no whitespace, fits int64);
+//   - every value is a bare JSON number token (a quoted "3" is refused)
+//     that is a non-negative integer fitting int64 (3.5, 1e2, -1, null,
+//     true are refused); 0 pieces is allowed;
+//   - no denomination*pieces product and no running sum overflows int64;
+//   - no key appears twice, and nothing but whitespace follows the object.
+//
+// json.Valid alone accepts any JSON value (a bare string, a number, an
+// array), which silently defeats the contract (ut-docs#1006 review finding
+// 6). Exported so the HTTP handler can pre-validate and return 400 rather
+// than relying on CloseShift's own error, which the handler layer can't
+// safely distinguish from a genuine internal error.
 func ValidCountProtocol(s string) bool {
 	if len(s) > maxCountProtocolLen {
 		return false
 	}
-	var m map[string]json.Number
+	// Walk the object token by token rather than decoding into a map: a
+	// map silently keeps the last of two duplicate keys, and Decode+More
+	// lets a stray trailing "}" or "]" through (ut-docs#6159 review).
 	dec := json.NewDecoder(strings.NewReader(s))
-	dec.UseNumber()
-	if err := dec.Decode(&m); err != nil {
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return false
 	}
-	if dec.More() {
-		return false
-	}
-	for _, v := range m {
-		n, err := v.Int64()
-		if err != nil || n < 0 {
+	seen := make(map[string]bool)
+	var sum int64
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
 			return false
 		}
+		k, isKey := kt.(string)
+		if !isKey || seen[k] {
+			return false
+		}
+		seen[k] = true
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return false
+		}
+		denom, ok := parseDenomKey(k)
+		if !ok {
+			return false
+		}
+		// A number token starts with '-' or a digit; this refuses quoted
+		// numerals, null, booleans and nested values before parsing.
+		if len(raw) == 0 || (raw[0] != '-' && (raw[0] < '0' || raw[0] > '9')) {
+			return false
+		}
+		pieces, err := strconv.ParseInt(string(raw), 10, 64)
+		if err != nil || pieces < 0 {
+			return false // also refuses 3.5 and 1e2 (not integer tokens)
+		}
+		if pieces > math.MaxInt64/denom {
+			return false
+		}
+		line := denom * pieces
+		if line > math.MaxInt64-sum {
+			return false
+		}
+		sum += line
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return false // anything but whitespace after the object
 	}
 	return true
 }

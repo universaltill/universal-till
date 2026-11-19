@@ -1,0 +1,18 @@
+{{/* ADR-0172 §5 (ut-docs#6287): the status of the till's automatic tax
+     plugin install. Rendered on the page the setup wizard lands on, in the
+     Settings "free plugins" row, and by GET /ui/tax-autoinstall-chip (its own
+     poll, every 5 s, only while installing or retrying). A status chip, never
+     a modal: the till keeps selling, and the second line says so.
+       installing — "Installing <plugin> in the background…"
+       installed  — "<plugin> installed" (static, no poll)
+       retrying   — "Couldn't install <plugin> yet — retrying…", with a second
+                    line for the error class (offline / not_listed / refused)
+     Words first, never colour alone: the glyph is decoration (aria-hidden)
+     and the sentence carries the meaning. Logical CSS only. */}}
+<div id="tax-autoinstall-chip" data-testid="tax-autoinstall" aria-live="polite"{{ if .Poll }} hx-get="/ui/tax-autoinstall-chip" hx-trigger="every 5s" hx-swap="outerHTML"{{ end }}>
+  <span class="chip chip-note{{ if eq .State "retrying" }} chip-warn{{ end }}" role="status" data-testid="tax-autoinstall-chip" data-state="{{ .State }}"{{ if .ErrorClass }} data-error="{{ .ErrorClass }}"{{ end }}>
+    <span aria-hidden="true">{{ if eq .State "installed" }}✓{{ else if eq .State "retrying" }}⚠{{ else }}…{{ end }}</span>
+    {{ .Text }}
+  </span>
+  {{ if .ErrorText }}<p class="muted" data-testid="tax-autoinstall-error" data-error="{{ .ErrorClass }}">{{ .ErrorText }}</p>{{ end }}
+</div>

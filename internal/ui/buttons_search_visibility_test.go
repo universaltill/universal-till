@@ -76,19 +76,16 @@ func TestButtonsHTTPList_CategoryGroupSectionsCarrySearchVisibilityWiring(t *tes
 	if strings.Count(body, `x-show="sectionHasMatch($el)"`) < 2 {
 		t.Fatalf("expected at least Dairy and Bakery's category-group sections to carry sectionHasMatch($el) wiring, got: %s", body)
 	}
-	if !strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) {
-		t.Fatalf("expected a no-matches message wired to sectionHasMatch($el.parentElement) somewhere in the tabbed view, got: %s", body)
-	}
-	// This package's tests never wire a real translator (no InitI18n call),
-	// so T falls back to the raw key — assert on that rather than the
-	// translated English string, which guard-i18n.sh (not this test) is
-	// what actually enforces exists in every locale file.
-	if !strings.Contains(body, "products.no_matches") {
-		t.Fatalf("expected the products.no_matches key to render in the tabbed view, got: %s", body)
+	// ut-docs#2418: #buttons-grid hides while a query is active, so the
+	// old in-grid no-matches message could never show and is gone (the
+	// server-rendered #search-results carries the real one). The T key
+	// falls back to the raw key in this package's tests.
+	if strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) || strings.Contains(body, "products.no_matches") {
+		t.Fatalf("the unreachable in-grid no-matches message must not render in the tabbed view, got: %s", body)
 	}
 }
 
-// TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage
+// TestButtonsHTTPList_SingleCategoryNoTabsHasNoInGridNoMatchesMessage
 // (ut-docs#422 review finding): the single-real-category, no-tab-bar
 // branch reuses "category-group" too, so it inherits that template's
 // x-show="sectionHasMatch($el)" the same as any tabbed subcategory — a
@@ -98,7 +95,7 @@ func TestButtonsHTTPList_CategoryGroupSectionsCarrySearchVisibilityWiring(t *tes
 // pre-#422 behavior (which at least kept the header visible) — a
 // regression, not just the pre-existing $flat-branch gap this card
 // explicitly left as a non-goal.
-func TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage(t *testing.T) {
+func TestButtonsHTTPList_SingleCategoryNoTabsHasNoInGridNoMatchesMessage(t *testing.T) {
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	store := NewButtonStore(db)
@@ -137,12 +134,12 @@ func TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage(t *test
 	if !strings.Contains(body, `x-show="sectionHasMatch($el)"`) {
 		t.Fatalf("expected the lone category-group section to carry sectionHasMatch($el) wiring, got: %s", body)
 	}
-	if !strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) {
-		t.Fatalf("expected a no-matches message in the no-tab-bar branch too, got: %s", body)
+	if strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) || strings.Contains(body, "products.no_matches") {
+		t.Fatalf("the unreachable in-grid no-matches message must not render in the no-tab-bar branch (ut-docs#2418), got: %s", body)
 	}
 }
 
-// TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage (ut-docs#914,
+// TestButtonsHTTPList_FlatCatalogHasNoInGridNoMatchesMessage (ut-docs#914,
 // ut-docs#422 follow-up): a till where no category has ever been assigned
 // to anything renders via the $flat branch — a bare .grid with no
 // category-group wrapper, so it never inherited the sectionHasMatch
@@ -150,7 +147,7 @@ func TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage(t *test
 // search matching nothing there left a blank grid with zero feedback.
 // This is the last of the three render branches to gain the same
 // no-matches message; the other two are covered by the tests above.
-func TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage(t *testing.T) {
+func TestButtonsHTTPList_FlatCatalogHasNoInGridNoMatchesMessage(t *testing.T) {
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	store := NewButtonStore(db)
@@ -186,11 +183,8 @@ func TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage(t *testing.T) {
 	if strings.Contains(body, `class="category-group"`) {
 		t.Fatalf("fixture should render the bare $flat grid, not a category-group section, got: %s", body)
 	}
-	if !strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) {
-		t.Fatalf("expected a no-matches message in the $flat branch too, got: %s", body)
-	}
-	if !strings.Contains(body, "products.no_matches") {
-		t.Fatalf("expected the products.no_matches key to render in the $flat branch, got: %s", body)
+	if strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) || strings.Contains(body, "products.no_matches") {
+		t.Fatalf("the unreachable in-grid no-matches message must not render in the $flat branch (ut-docs#2418), got: %s", body)
 	}
 }
 
@@ -249,7 +243,7 @@ func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T
 	body := rec.Body.String()
 
 	if strings.Count(body, `x-show="panelVisible('`) != 2 {
-		t.Fatalf("expected both tab panels wired to panelVisible(id, panelEl), got: %s", body)
+		t.Fatalf("expected both tab panels wired to panelVisible(id), got: %s", body)
 	}
 	if strings.Contains(body, `x-show="tab === '`) {
 		t.Fatalf("expected no tab panel left on the old tab-only visibility check, got: %s", body)
@@ -263,10 +257,10 @@ func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T
 	if strings.Count(body, `<h3 class="category-header" x-show="q" x-cloak>`) != 2 {
 		t.Fatalf("expected both Food's and Drinks' own buttons to carry a q-gated category header, got: %s", body)
 	}
-	// Exactly one no-matches message for the whole tabbed view (outside the
-	// per-panel loop), not one per panel.
-	if strings.Count(body, `x-show="!sectionHasMatch($el.parentElement)"`) != 1 {
-		t.Fatalf("expected exactly one whole-catalogue no-matches message in the tabbed view, got: %s", body)
+	// No in-grid no-matches message at all (ut-docs#2418): #buttons-grid is
+	// hidden while a query is active, so it could never render.
+	if strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) {
+		t.Fatalf("expected no in-grid no-matches message in the tabbed view, got: %s", body)
 	}
 }
 

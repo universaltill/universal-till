@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpserver"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/offsitebackup"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -187,6 +188,19 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 					run()
 				}
 			}
+		}()
+	}
+
+	// Off-site encrypted backup (ut-docs#5066, ADR-0199): the main till copies
+	// its newest daily snapshot off the till, encrypted on the till. Its own
+	// goroutine, off the sale path; the gate (paired, main till, plan with
+	// cloud backup) and the backoff are inside the round.
+	if db != nil {
+		wg.Add(1)
+		go func() {
+			defer logging.RecoverAndLog("server.offsitebackup")
+			defer wg.Done()
+			offsitebackup.Shared(cfg, db).Run(ctx)
 		}()
 	}
 

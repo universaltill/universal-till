@@ -82,6 +82,34 @@ ORDER BY s.listing_id`)
 	return bundle, nil
 }
 
+// DumpActivePluginsWithSystem is DumpActivePlugins plus the ENABLED bundled
+// first-party plugins among systemIDs (system trust, is_active, ADR-0194):
+// they have no marketplace install record, so the main till's switch for them
+// would otherwise never reach a satellite. They travel as rows with a blank
+// listing id, which a satellite that predates this skips (see
+// convergePluginSet) and a current one applies as "switch this on". A plugin
+// that is off is simply absent: absent means off.
+func (r *SyncPluginsRepo) DumpActivePluginsWithSystem(ctx context.Context, systemIDs []string) (PluginsBundle, error) {
+	bundle, err := r.DumpActivePlugins(ctx)
+	if err != nil {
+		return PluginsBundle{}, err
+	}
+	for _, id := range systemIDs {
+		var row PluginSyncRow
+		err := r.db.QueryRowContext(ctx,
+			`SELECT id, name, version FROM plugins WHERE id = ? AND is_active = 1 AND trust_level = 'system'`, id).
+			Scan(&row.PluginID, &row.PluginName, &row.Version)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return PluginsBundle{}, fmt.Errorf("dump bundled plugin %s: %w", id, err)
+		}
+		bundle.Plugins = append(bundle.Plugins, row)
+	}
+	return bundle, nil
+}
+
 // InstalledPluginVersion reports whether a plugin is installed locally, at
 // which version, and in which install lifecycle state — the replica-side
 // half of the plugin-set diff. The state matters because a row can claim

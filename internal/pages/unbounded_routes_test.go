@@ -33,6 +33,7 @@ var unboundedRoutes = []struct{ pattern, why string }{
 	{"POST /api/import/sample-data", "seeds a whole sample catalogue"},
 	{"POST /api/import/from-file", "catalogue import of an arbitrary size"},
 	{"POST /api/import/from-system", "catalogue import from another POS, arbitrary size"},
+	{"POST /api/import/photos", "bulk photo import: hundreds of images read or downloaded one by one (ut-docs#6527)"},
 	{"POST /api/catalog/export-save", "writes the whole catalogue to disk"},
 	{"POST /api/update/apply", "downloads, verifies and applies a self-update, then restarts"},
 	{"POST /api/setup/update-apply", "same as /api/update/apply, from the setup wizard"},

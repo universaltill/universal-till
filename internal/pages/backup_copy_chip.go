@@ -3,12 +3,14 @@ package pages
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/offsitebackup"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -76,10 +78,51 @@ func backupCopyDue(ctx context.Context, d *common.Deps, now time.Time) bool {
 // space, and the manager sees it in the back office.
 func registerBackupCopyChip(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/backup-copy-chip", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "data_management") || !backupCopyDue(r.Context(), d, backupCopyChipNow()) {
+		if !canPerform(d, r, "data_management") {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		httpx.RenderPartial("ui/partials/backup_copy_chip.html", nil)(w, r)
+		// ut-docs#5066: an entitled till whose encrypted cloud copy has been
+		// failing for more than 48 h says so (the copy-off reminder is quiet
+		// on such a till, the cloud copy having refreshed backup.last_copied_at).
+		now := backupCopyChipNow()
+		cloudFailing := offsiteFailingLong(r.Context(), d, now)
+		// Not a failure, a question: the owner has not yet said whether a
+		// copy of the backup key may be kept in the cloud (ut-docs#5066, E2).
+		keyAsk := !cloudFailing && offsiteKeyUnasked(r.Context(), d)
+		if !cloudFailing && !keyAsk && !backupCopyDue(r.Context(), d, now) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		httpx.RenderPartial("ui/partials/backup_copy_chip.html", map[string]any{"cloud": cloudFailing, "keyAsk": keyAsk})(w, r)
 	})
+}
+
+// offsiteFailingLong reports whether this till is entitled to cloud backup and
+// its upload has been failing for more than 48 h (ut-docs#5066). A refusal
+// (402/409) is not a failure and never counts.
+func offsiteFailingLong(ctx context.Context, d *common.Deps, now time.Time) bool {
+	if d.Settings == nil || !reportRetentionCloudAllowed(ctx, d, now) {
+		return false
+	}
+	v, ok, _ := d.Settings.Get(ctx, data.OffsiteFailingSinceKey)
+	if !ok {
+		return false
+	}
+	since, err := time.Parse(time.RFC3339, v)
+	return err == nil && now.Sub(since) > 48*time.Hour
+}
+
+// offsiteKeyUnasked: this till is an entitled main till that already holds a
+// backup key and its shop has not been asked about a cloud copy of it.
+func offsiteKeyUnasked(ctx context.Context, d *common.Deps) bool {
+	if d.Settings == nil || d.Db == nil || d.Cfg == nil {
+		return false
+	}
+	svc := offsitebackup.Shared(d.Cfg, d.Db)
+	if svc.Gate(ctx) != offsitebackup.GateOpen || !svc.HasKey() {
+		return false
+	}
+	v, _, _ := d.Settings.Get(ctx, data.OffsiteKeyInCloudKey)
+	return strings.TrimSpace(v) == ""
 }
