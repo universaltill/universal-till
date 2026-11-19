@@ -95,6 +95,7 @@ type collect struct {
 	results  chan phoneResult
 	cancel   chan struct{}
 	once     sync.Once
+	sent     bool // the collect frame went out: only then can a result count
 }
 
 type phoneResult struct {
@@ -219,6 +220,9 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 		ReaderID: ref, Provider: a.Provider, AmountMinor: a.AmountMinor, Currency: a.Currency,
 		IdempotencyKey: a.Key, TimeoutMs: window.Milliseconds(), ClientSecret: pi.Secret, LocationID: pi.LocationID,
 	}
+	s.mu.Lock()
+	c.sent = true
+	s.mu.Unlock()
 	ackCtx, cancelAck := context.WithTimeout(ctx, s.cfg.AckTimeout)
 	raw, err := peer.Request(ackCtx, fleetlink.TypeReaderCollect, frame)
 	cancelAck()
@@ -391,7 +395,7 @@ func (s *Service) ReaderResult(p *fleetlink.Peer, r fleetlink.ReaderResult, ok b
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.byKey[r.IdempotencyKey]
-	if c == nil || c.peer != p {
+	if c == nil || c.peer != p || !c.sent {
 		s.dropped++
 		return
 	}

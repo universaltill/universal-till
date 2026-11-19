@@ -180,6 +180,9 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /pay/tap/check":           true,
 	"GET /ui/pay/tap/resolve":       true,
 	"POST /manager/pay/tap/resolve": true,
+	// ut-docs#6538: a phone card reader's progress and cancel; a demo till has no readers.
+	"GET /ui/pay/tap/remote":      true,
+	"POST /pay/tap/remote/cancel": true,
 	// Online orders (ADR-0169 §9, ut-docs#4768): a demo till has no sales
 	// channel; the pages are shop data a public visitor has no use for.
 	// Slice D (accept/pick/pack/ship/cancel): also writes to a cloud sales channel.
