@@ -13,7 +13,7 @@
   <p class="pairing-code" style="font-size:1.5rem; letter-spacing:.2em; font-weight:bold">{{ .code }}</p>
   <p class="muted">{{ T "tills.pairing.waiting_help" }}</p>
 {{ else if eq .status "joined" }}
-  <p>✓ {{ T "tills.joined" }}: {{ .shopName }}</p>
+  <p>✓ {{ T "tills.joined" }}{{ with .shopName }}: {{ . }}{{ end }}</p>
   {{ if .restartSupported }}
   <!-- The join is staged as a restore-pending.db that only the next process
        start can apply (db.ApplyPendingRestore runs before db.Open), so the

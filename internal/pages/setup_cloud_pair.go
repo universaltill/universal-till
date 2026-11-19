@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -278,11 +277,7 @@ func registerSetupCloudPair(mux *http.ServeMux, d *common.Deps, cs *setupCloudSt
 		locale := httpx.ResolveLocale(w, r)
 		tillName, nameErr := validateTillName(r.PostFormValue("name"))
 		if nameErr != nil {
-			key := keyTillNameRequired
-			if errors.Is(nameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
-				key = keyNameInvalidCharacters
-			}
-			cloudPairMessage(w, httpx.T(locale, key))
+			cloudPairMessage(w, httpx.T(locale, tillNameErrKey(nameErr)))
 			return
 		}
 		// ut-docs#5058: the confirm panel's Replace button alone sends
@@ -398,9 +393,10 @@ func cloudShopView(r *http.Request, h *heldCloudPairing, countries []setupCountr
 	if st == nil {
 		return v
 	}
-	// The same refusal as the final post (isRefusedStoreName, incl. the
-	// localized placeholder): a name it would refuse is asked locally.
-	if n := strings.TrimSpace(st.Name); n != "" && !isRefusedStoreName(r, n) {
+	// The same refusal as the final post (firstBootStoreName, incl. the
+	// localized placeholder and hidden characters, ut-docs#5894): a name it
+	// would refuse is asked locally.
+	if n, key := firstBootStoreName(r, st.Name); key == "" {
 		v.Name, v.HasName = n, true
 	}
 	if isValidShopType(st.ShopType) {
