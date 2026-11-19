@@ -255,7 +255,8 @@ func showWhenHidden(m *plugins.Manifest, w *plugins.ManifestSettingCondition, cu
 		}
 	}
 	ctl := m.SettingDecl(w.Key)
-	return !(ctl != nil && ctl.Type == plugins.SettingTypeChoice && cur != "" && !ctl.ChoiceAllows(cur))
+	// An asked controller's value is legitimate even when no static option names it.
+	return !(ctl != nil && ctl.Type == plugins.SettingTypeChoice && !ctl.OptionsAsk && cur != "" && !ctl.ChoiceAllows(cur))
 }
 
 // submittedBool reads a switch from the form: present reports whether the
