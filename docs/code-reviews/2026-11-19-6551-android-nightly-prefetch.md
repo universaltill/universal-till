@@ -4,7 +4,7 @@ Branch `fix/6551-android-nightly-prefetch` (draft PR universaltill/universal-til
 plus ut-docs branch `docs/6551-android-nightly-prefetch` (`architecture/packaging.md`).
 
 ## What shipped
-- `internal/androidupdate.Prefetcher` + `Current`/`RegisteredPrefetcher`
+- `internal/androidupdate/apkprefetch` (`Prefetcher`, `Current`, `RegisteredPrefetcher`)
   (RWMutex registry, same shape as `kiosk.SetBridge`); gobind mirror
   `mobile.UpdateBridge` / `SetUpdateBridge` (nil passes through as a nil
   interface; compile-time assertions keep the two method sets identical).
@@ -30,8 +30,13 @@ plus ut-docs branch `docs/6551-android-nightly-prefetch` (`architecture/packagin
   three new `en.json` keys with `en.meta.json`; `web/help/en/updates.md`
   updated. CI's deadcode-baseline growth guard (ut-docs#3406) refused the
   first push's new baseline entry for a gobind-only `SetPrefetcher`. The
-  setter was replaced by an exported `atomic.Pointer` (`androidupdate.Current`)
+  setter was replaced by an exported `atomic.Pointer` (`apkprefetch.Current`)
   that `mobile.SetUpdateBridge` stores into, so the baseline is unchanged.
+  The second push's desktop-shell run then flagged the existing gobind-only
+  `androidupdate.ReportAccepted`/`ReportRefused`, because `internal/pages` now
+  imported that package. The bridge moved to its own package,
+  `internal/androidupdate/apkprefetch`. `guard-deadcode-baseline.sh` passes
+  locally under go1.27.1.
 
 ## Review (independent, Opus 5.5; code authored by Sonnet)
 Verdict: **approve-with-fixes**. No blocker or major finding.

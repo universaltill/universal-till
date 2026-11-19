@@ -1,4 +1,6 @@
-package androidupdate
+// Package apkprefetch holds the Android shell's nightly APK prefetch bridge
+// (ut-docs#6551).
+package apkprefetch
 
 import "sync/atomic"
 
@@ -21,7 +23,10 @@ type Prefetcher interface {
 // variable rather than a setter func because the setter's only production
 // caller would sit in the gomobile-bind package `mobile`, which is not a
 // root of guard-deadcode-baseline.sh, and a feature PR may not grow that
-// baseline (guard-deadcode-baseline-growth.sh, ut-docs#3406).
+// baseline (guard-deadcode-baseline-growth.sh, ut-docs#3406). For the same
+// reason this is its own package, not part of internal/androidupdate:
+// internal/pages imports it, and importing androidupdate would load that
+// package's gobind-only Report* funcs into the whole-program analysis.
 var Current atomic.Pointer[Prefetcher]
 
 // RegisteredPrefetcher returns the registered bridge, nil when none. The

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -1097,11 +1098,11 @@ func TestSetTapToPayResolver_RegistersWithDevicepay(t *testing.T) {
 	}
 }
 
-// UpdateBridge and androidupdate.Prefetcher must stay method-for-method
+// UpdateBridge and apkprefetch.Prefetcher must stay method-for-method
 // identical (ut-docs#6551): SetUpdateBridge relies on structural conversion.
 var (
-	_ androidupdate.Prefetcher = UpdateBridge(nil)
-	_ UpdateBridge             = androidupdate.Prefetcher(nil)
+	_ apkprefetch.Prefetcher = UpdateBridge(nil)
+	_ UpdateBridge           = apkprefetch.Prefetcher(nil)
 )
 
 type stubUpdateBridge struct{ calls int }
@@ -1114,15 +1115,15 @@ func TestSetUpdateBridge_RegistersWithAndroidupdate(t *testing.T) {
 	t.Cleanup(func() { SetUpdateBridge(nil) })
 	stub := &stubUpdateBridge{}
 	SetUpdateBridge(stub)
-	got := androidupdate.RegisteredPrefetcher()
-	if got != androidupdate.Prefetcher(stub) {
+	got := apkprefetch.RegisteredPrefetcher()
+	if got != apkprefetch.Prefetcher(stub) {
 		t.Fatalf("RegisteredPrefetcher() = %#v, want the stub", got)
 	}
 	if err := got.PrefetchUpdate(); err != nil || stub.calls != 1 {
 		t.Fatalf("PrefetchUpdate via the registered bridge: %v, calls=%d", err, stub.calls)
 	}
 	SetUpdateBridge(nil)
-	if got := androidupdate.RegisteredPrefetcher(); got != nil {
+	if got := apkprefetch.RegisteredPrefetcher(); got != nil {
 		t.Fatalf("after SetUpdateBridge(nil): %#v, want nil", got)
 	}
 }

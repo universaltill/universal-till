@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -36,9 +36,9 @@ func stubAndroidTick(t *testing.T, current, fresh updates.Status, withShell bool
 	t.Cleanup(func() { autoUpdateGOOS, autoUpdatePrefetcher = origGOOS, origPF })
 	autoUpdateGOOS = "android"
 	fp := &fakePrefetcher{}
-	autoUpdatePrefetcher = func() androidupdate.Prefetcher { return nil }
+	autoUpdatePrefetcher = func() apkprefetch.Prefetcher { return nil }
 	if withShell {
-		autoUpdatePrefetcher = func() androidupdate.Prefetcher { return fp }
+		autoUpdatePrefetcher = func() apkprefetch.Prefetcher { return fp }
 	}
 	return fp, applyCalls
 }

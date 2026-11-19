@@ -70,6 +70,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
@@ -604,7 +605,7 @@ func SetKioskBridge(b KioskBridge) {
 	kiosk.SetBridge(b) // a nil KioskBridge converts to a nil kiosk.Bridge
 }
 
-// UpdateBridge is the gobind-visible mirror of androidupdate.Prefetcher
+// UpdateBridge is the gobind-visible mirror of apkprefetch.Prefetcher
 // (ut-docs#6551) — declared here for BluetoothBridge's reason; kept
 // structurally identical so SetUpdateBridge passes it straight through.
 type UpdateBridge interface {
@@ -618,11 +619,11 @@ type UpdateBridge interface {
 // scheduler keeps the day's slot unspent while none is registered.
 func SetUpdateBridge(b UpdateBridge) {
 	if b == nil {
-		androidupdate.Current.Store(nil)
+		apkprefetch.Current.Store(nil)
 		return
 	}
-	var p androidupdate.Prefetcher = b
-	androidupdate.Current.Store(&p)
+	var p apkprefetch.Prefetcher = b
+	apkprefetch.Current.Store(&p)
 }
 
 // SetKioskPinned records the self-order pin state MainActivity now intends

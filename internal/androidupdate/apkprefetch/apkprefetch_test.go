@@ -1,4 +1,4 @@
-package androidupdate
+package apkprefetch
 
 import "testing"
 

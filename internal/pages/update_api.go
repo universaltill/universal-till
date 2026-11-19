@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
@@ -62,7 +62,7 @@ var (
 	autoUpdateGOOS = runtime.GOOS
 	// autoUpdatePrefetcher is the Android shell's prefetch bridge, nil when
 	// none is registered (ut-docs#6551).
-	autoUpdatePrefetcher = androidupdate.RegisteredPrefetcher
+	autoUpdatePrefetcher = apkprefetch.RegisteredPrefetcher
 	// autoUpdateInstallUnwritable: the .deb-fixable cause (ut-docs#2733).
 	autoUpdateInstallUnwritable = selfupdate.LinuxInstallUnwritable
 	// GET /api/update/notes (ut-docs#3940): the cached release status, the
@@ -263,7 +263,7 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if autoUpdateBusy(d) {
 		return
 	}
-	var pf androidupdate.Prefetcher
+	var pf apkprefetch.Prefetcher
 	if android {
 		// No shell answering (Activity not in front): keep today's slot so a
 		// later tick in the window retries.
