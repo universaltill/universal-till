@@ -13,7 +13,6 @@
 /	till	button#cat-tab-more	30x27
 /	till	button#order-type-dine-in	91x43
 /	till	button#order-type-takeaway	109x43
-/admin	phone	#shop-name-notice > a	107x23
 /admin	phone	#ut-page > a.help-hint[data-testid=help-hint]	27x27
 /admin	phone	#ut-page > a.sb-enrol.sb-item	218x23
 /admin	till	#shop-name-notice > a	107x23

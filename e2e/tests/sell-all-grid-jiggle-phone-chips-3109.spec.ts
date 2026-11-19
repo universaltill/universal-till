@@ -30,11 +30,11 @@ const ITEMS: Item[] = CATS.flatMap((cat, c) =>
 // fa/tr/ar are in the same position until Weblate delivers the key (ADR-0160:
 // a code PR adds English only), so their candidate text is injected too.
 const PACK_COMPACT: Record<string, string> = {
-  fa: 'ویرایش کالاها — برای مرتب‌سازی دسته‌ای را انتخاب کنید',
+  fa: 'ویرایش کالاها — دسته را انتخاب کنید',
   tr: 'Ürünleri sıralamak için kategori seçin',
   ar: 'تحرير الأصناف — اختر فئة لإعادة الترتيب',
   de: 'Artikel — Kategorie zum Sortieren wählen',
-  es: 'Editando artículos — elige una categoría para ordenar',
+  es: 'Artículos — elige categoría y ordena',
   pt: 'Itens — escolha uma categoria para ordenar',
 };
 // Each pack's own Done label (common.done), set before measuring the title so
