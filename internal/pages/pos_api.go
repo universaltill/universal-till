@@ -3792,6 +3792,20 @@ func legCurrency(p pos.PaymentInput, saleCurrency string) string {
 	return saleCurrency
 }
 
+// reversalRequestIDPrefix starts every reversal's refund event id. A client
+// refund_attempt_id may not start with it (refund_page.go).
+const reversalRequestIDPrefix = "reversal:"
+
+// reversalRequestID is the refund event id for reversing the leg authorized
+// as authReqID: the same on every re-send, so the provider sees one request
+// (ut-docs#1762, ut-docs#6601). "" keeps the fresh id when there is none.
+func reversalRequestID(authReqID string) string {
+	if authReqID == "" {
+		return ""
+	}
+	return reversalRequestIDPrefix + authReqID
+}
+
 // reversePaymentLegs sends back every captured leg of a tender that is being
 // abandoned or refused after authorize (ADR-0136 Decision 2, ut-docs#6602):
 // the existing blocking payment.<key>.refund event, with the base refund
@@ -3818,7 +3832,7 @@ func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.Captured
 				"tip_amount":      leg.TipAmount.Minor(),
 			}}
 		}
-		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, leg.MethodID, "refund", "", payload); err != nil {
+		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
 			failed++
 			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
 		}
