@@ -37,6 +37,9 @@ type readerPlugin struct {
 	answer   func(n int) string // authorize answer, "" = approved with a ref
 	state    func(refs []string) (json.RawMessage, error)
 	stateReq int
+	// onAuth, when set, runs inside each authorize dispatch with the
+	// dispatch context (ut-docs#6455: the payment broker binding rides on it).
+	onAuth func(ctx context.Context, ev plugins.Event)
 }
 
 func (rp *readerPlugin) authCalls() []authCall {
@@ -89,7 +92,11 @@ func seedReaderPlugin(t *testing.T, dp *common.Deps, pluginID, method string, ho
 			rp.auths = append(rp.auths, authCall{ID: ev.ID, Payload: p})
 			n := len(rp.auths)
 			ans := rp.answer
+			hook := rp.onAuth
 			rp.mu.Unlock()
+			if hook != nil {
+				hook(ctx, ev)
+			}
 			a := ""
 			if ans != nil {
 				a = ans(n)
