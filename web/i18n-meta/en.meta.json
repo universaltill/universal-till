@@ -1216,5 +1216,6 @@
   "card_reader.settings.source_migrated": {"description": "Small tag on a card reader that was taken over automatically from the payment plugin's own reader setting.", "review": "standard", "max_length": 32},
   "card_reader.needs_plugin_update": {"description": "Shown next to a card reader whose payment plugin is too old to work with several readers. The placeholder is the plugin's name.", "review": "standard", "placeholders": ["name of the payment plugin"]},
   "page.title.card_readers": {"description": "Browser tab title of the card readers page.", "review": "standard", "max_length": 32},
-  "tender.card_reader": {"description": "Label of the sale screen payment button that opens the list of card readers, used only when the generic Card button is also shown, so the two read differently.", "review": "standard", "max_length": 20}
+  "tender.card_reader": {"description": "Label of the sale screen payment button that opens the list of card readers, used only when the generic Card button is also shown, so the two read differently.", "review": "standard", "max_length": 20},
+  "pfand.recorded": {"description": "Menu page: brief confirmation shown after a deposit refund (Pfand) payout is recorded; the placeholder is the refunded amount as a formatted currency string.", "review": "standard", "placeholders": ["refunded amount, formatted currency"], "max_length": 60}
 }
