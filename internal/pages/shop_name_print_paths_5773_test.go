@@ -111,7 +111,7 @@ func TestVoucherSlipReprint_UnnamedShopHasNoName(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg := printerConfig(t.Context(), dp)
-		if got := voucherSlipFor(t.Context(), dp, v, cfg, time.Now()).StoreName; got != c.want {
+		if got := voucherSlipFor(t.Context(), dp, v, slipBalance{}, cfg, time.Now()).StoreName; got != c.want {
 			t.Fatalf("store.name %q: slip StoreName = %q, want %q", c.store, got, c.want)
 		}
 	}

@@ -21,9 +21,15 @@
 #     kiosk mode status/lock/exit must be UNreachable, so it stays modal.
 #   - a reviewed exception: a same-line `showmodal:allow <reason>` marker.
 #
-# Known gap, accepted: comment stripping is lexical, so a `/*` or `<!--`
+# A `/*` opens a comment only at line start, after whitespace or as `{{/*`,
+# and a `/*` after a `//` comment is text: a path ("/api/*") or an attribute
+# (accept="image/*") never hides the code after it (ut-docs#6132). A
+# `/* ... */` glued to code (`x;/* c */`) is then not stripped -- at worst a
+# false alarm on its prose, never a missed call.
+#
+# Known gap, accepted: comment stripping is lexical, so a ` /*` or `<!--`
 # inside a JS string/regex can hide what follows until the matching close
-# (a missed call, never a false alarm), and a `//` inside a string hides
+# (a missed call, never a false alarm), and a ` //` inside a string hides
 # the rest of its line. This is a grep, not a parser.
 #
 # Explicit-args form for fixture-based testing (guard-no-showmodal_test.sh):
@@ -59,7 +65,29 @@ KIOSK_FILES="partials/self_order_cart.html partials/self_order_grid.html"
 violations="$(awk -v ui="$UI_DIR/" -v kiosk="$KIOSK_FILES" '
   BEGIN { n = split(kiosk, k, " "); for (i = 1; i <= n; i++) isKiosk[ui k[i]] = 1 }
   FNR == 1 { state = "" }
-  function strip(line,    out, a, b, best, op, cl) {
+  # A `/*` opens a block comment only at line start, after whitespace or as
+  # a Go template `{{/*` -- never inside a word, a path ("/api/*") or an
+  # attribute value (accept="image/*"), ut-docs#6132. Returns 0 if none.
+  function blockopen(line,    i, p, rest) {
+    p = 0; rest = line
+    while ((i = index(rest, "/*")) > 0) {
+      p += i
+      if (p == 1 || substr(line, p - 1, 1) ~ /[ \t]/ || substr(line, p - 2, 2) == "{{") return p
+      rest = substr(rest, i + 2); p += 1
+    }
+    return 0
+  }
+  # A `//` comment starts at line start or after whitespace. Returns 0 if none.
+  function linecomment(line,    i, p, rest) {
+    p = 0; rest = line
+    while ((i = index(rest, "//")) > 0) {
+      p += i
+      if (p == 1 || substr(line, p - 1, 1) ~ /[ \t]/) return p
+      rest = substr(rest, i + 1)
+    }
+    return 0
+  }
+  function strip(line,    out, a, b, c, best, op, cl) {
     out = ""
     while (length(line) > 0) {
       if (state != "") {
@@ -68,7 +96,11 @@ violations="$(awk -v ui="$UI_DIR/" -v kiosk="$KIOSK_FILES" '
         line = substr(line, b + length(state)); state = ""
         continue
       }
-      a = index(line, "<!--"); b = index(line, "/*")
+      a = index(line, "<!--"); b = blockopen(line); c = linecomment(line)
+      if (c != 0 && (a == 0 || c < a) && (b == 0 || c < b)) {
+        # a `//` comment ends the code here; a /* or <!-- after it is text
+        out = out substr(line, 1, c - 1); break
+      }
       if (a == 0 && b == 0) { out = out line; break }
       if (a != 0 && (b == 0 || a < b)) { best = a; op = 4; cl = "-->" }
       else { best = b; op = 2; cl = "*/" }

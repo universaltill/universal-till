@@ -14,6 +14,10 @@
       <label>{{ T "designer.receipt.header" }} 2 <input type="text" name="header2" value="{{ .H2 }}" maxlength="42" placeholder="{{ T "designer.receipt.header_ph2" }}"></label>
       <label>{{ T "designer.receipt.header" }} 3 <input type="text" name="header3" value="{{ .H3 }}" maxlength="42" placeholder="{{ T "designer.receipt.header_ph3" }}"></label>
       <label>{{ T "designer.receipt.footer" }} <input type="text" name="footer" value="{{ .D.Footer }}" maxlength="42"></label>
+      <label>{{ T "designer.receipt.voucher_slip_text" }}
+        <textarea name="voucher_slip_text" rows="4" dir="auto" data-osk-enter="newline"
+                  aria-describedby="rd-slip-text-hint">{{ .D.VoucherSlipText }}</textarea></label>
+      <small id="rd-slip-text-hint" class="muted rd-hint">{{ .SlipTextHint }}</small>
       <div class="field-checks">
         <label><input type="checkbox" name="show_sku" {{ if .D.ShowSKU }}checked{{ end }}> {{ T "designer.receipt.show_sku" }}</label>
         <label><input type="checkbox" name="show_tax" {{ if .D.ShowTax }}checked{{ end }}> {{ T "designer.receipt.show_tax" }}</label>
@@ -22,12 +26,12 @@
         <label><input type="checkbox" name="show_tracking_qr" {{ if .D.ShowTrackingQR }}checked{{ end }}{{ if not .TrackingAvailable }} disabled aria-describedby="rd-tracking-note"{{ end }}> {{ T "designer.receipt.show_tracking_qr" }}</label>
         {{ if not .TrackingAvailable }}<small id="rd-tracking-note" class="muted">{{ T "designer.receipt.tracking_qr_needs_cloud" }}</small>{{ end }}
       </div>
-      <div style="display:flex; gap:.4rem; align-items:center; margin-top:.6rem">
+      <div class="rd-actions">
         <button class="btn primary" type="button"
                 hx-post="/api/receipt-designer/save" hx-include="#rd-form" hx-target="#rd-msg" hx-swap="innerHTML">{{ T "designer.receipt.save" }}</button>
         <button class="btn secondary" type="button"
                 hx-post="/api/receipt-designer/test" hx-include="#rd-form" hx-target="#rd-msg" hx-swap="innerHTML">{{ T "settings.printer.test" }}</button>
-        <span id="rd-msg" aria-live="polite"></span>
+        <span id="rd-msg" class="rd-msg" aria-live="polite"></span>
       </div>
     </form>
     <hr style="margin:.8rem 0; border:none; border-top:1px dashed #d1d5db">

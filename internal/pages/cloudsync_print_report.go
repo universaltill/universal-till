@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -127,10 +126,7 @@ func printReportCols(values []string) string {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		if pad := printReportColWidth - utf8.RuneCountInString(v); pad > 0 {
-			b.WriteString(strings.Repeat(" ", pad))
-		}
-		b.WriteString(v)
+		b.WriteString(padStart(v, printReportColWidth))
 	}
 	return b.String()
 }

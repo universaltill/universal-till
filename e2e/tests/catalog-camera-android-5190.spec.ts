@@ -58,6 +58,17 @@ test.describe('Android app: Take a photo opens the system camera', () => {
 test.describe('Android app: the photo the system camera returns', () => {
   test('is shrunk to 1024px; the background offer comes first, then it saves with no Upload Image tap', async ({ page }) => {
     await stubCameraAndCounters(page, true);
+    // remember the `image` part of every FormData sent over XHR (htmx), so the
+    // test can inspect what was uploaded without reading the page's input
+    await page.addInitScript(() => {
+      const send = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function (body?: any) {
+        if (body instanceof FormData && body.get('image') instanceof File) {
+          (window as any).__uploadedImage = body.get('image');
+        }
+        return send.call(this, body);
+      };
+    });
     await openItemImagePanel(page);
     const upload = page.waitForRequest((r) => r.url().includes('/api/catalog/item/image') && r.method() === 'POST');
     // what the shell hands back: a big camera JPEG in the capture input
@@ -78,13 +89,25 @@ test.describe('Android app: the photo the system camera returns', () => {
     // original photo" is the decision and saves at once
     await page.getByRole('button', { name: 'Use original photo' }).click();
     await upload; // saved with no tap on Upload Image
+    // ut-docs#6151: assert on the file that was actually POSTed, not on the
+    // #image-file input. The page clears that input when the upload's
+    // RESPONSE arrives, and awaiting the request does not order a read of it
+    // before that, so reading files[0] here flaked (10/50 under --repeat-each
+    // 50 --workers 4). (Chromium gives
+    // Playwright no postDataBuffer() for a file-backed multipart body, so the
+    // `image` part is captured from the FormData at send time, see addInitScript above.)
     const dims = await page.evaluate(async () => {
-      const f = (document.getElementById('image-file') as HTMLInputElement).files![0];
+      const f = (window as any).__uploadedImage as File | undefined;
+      if (!f) return null;
       const bmp = await createImageBitmap(f);
       return { w: bmp.width, h: bmp.height, type: f.type };
     });
-    expect(Math.max(dims.w, dims.h)).toBeLessThanOrEqual(1024);
-    expect(dims.type).toBe('image/jpeg');
+    expect(dims, 'an image part was sent in the upload').not.toBeNull();
+    expect(dims!.type).toBe('image/jpeg');
+    expect(dims!.w).toBeGreaterThan(0);
+    expect(dims!.h).toBeGreaterThan(0);
+    // shrinkPhoto scales the 3264x2448 original so the long edge is exactly 1024
+    expect(Math.max(dims!.w, dims!.h)).toBe(1024);
   });
 });
 

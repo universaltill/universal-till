@@ -84,6 +84,29 @@ func availableThemes(ctx context.Context, d *common.Deps) []ThemeOption {
 	return options
 }
 
+// themeAvailable reports whether key is an installed theme (exact match on
+// availableThemes). If the plugin list cannot be read, plugin themes drop out
+// of availableThemes, so a personal plugin theme reads as unavailable and the
+// till theme renders instead — fail-safe, never a broken render.
+func themeAvailable(ctx context.Context, d *common.Deps, key string) bool {
+	for _, opt := range availableThemes(ctx, d) {
+		if opt.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// wireThemeAvailable installs Deps.ThemeAvailable so common.ResolvedTheme can
+// validate an operator's personal theme without importing pages
+// (ut-docs#3440). Cost: one embedded-FS ReadDir plus one ListThemeEntries
+// query per render, only for an operator who has a personal theme row.
+func wireThemeAvailable(d *common.Deps) {
+	d.ThemeAvailable = func(ctx context.Context, key string) bool {
+		return themeAvailable(ctx, d, key)
+	}
+}
+
 // cloudThemeOptions is availableThemes shaped for the cloud's Design picker
 // (cloudsync_wire.go's DeviceExtra hook): {"key","label"} pairs where the key
 // is the raw entry key the cloud sends back as a `set_setting theme`
