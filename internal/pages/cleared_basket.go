@@ -3,7 +3,6 @@ package pages
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -33,7 +32,6 @@ func recordClearedBasket(ctx context.Context, d *common.Deps, r *http.Request, s
 		}
 	}
 	if _, err := repo.InsertClearedBasket(ctx, data.ClearedBasket{
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 		RegisterID: registerID,
 		ActorID:    getSessionUserID(r),
 		LineCount:  lines,
