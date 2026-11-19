@@ -8046,7 +8046,8 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 #promotions-table td.promo-dates .promo-date { display: block; }
 /* A readonly field (promotion code and customer on edit, country code) must
    not look editable: a tap on it summons no keyboard, which reads as broken. */
-.record-dialog-body input[readonly] { background: var(--surface-2); cursor: default; }
+.record-dialog-body input[readonly],
+.record-dialog-body select:disabled { background: var(--surface-2); cursor: default; opacity: 1; color: var(--text); }
 
 /* ---------- Notices from Universal Till and partners (ADR-0176, ut-docs#5366) ----------
    Spec: ut-docs docs/design/5366-till-notices. ONE notification surface
