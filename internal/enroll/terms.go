@@ -17,7 +17,12 @@ import (
 // operator to accept. It must be a version ut-cloud's internal/terms
 // publishes, else the cloud answers 400 terms_version_unknown to
 // POST /v1/stores/register (ut-docs#4717, ut-docs#4720).
-const TermsVersion = "v0.1-draft"
+//
+// It is the identifier printed on the published Merchant Terms page
+// (universaltill.com/<site>/legal/merchant-terms/, ut-docs#6449, legal
+// B3/C8). A till that recorded the earlier "v0.1-draft" does not match, so
+// AcceptedTerms reports false and the accept step is shown again.
+const TermsVersion = "merchant-terms-v1.0"
 
 // Per-till settings holding the operator's acceptance. They belong to the
 // till that registers, so they are per-till (data.PerTillSettingPrefixes,
@@ -37,8 +42,8 @@ const (
 var ErrNoTermsAcceptance = errors.New("no cloud-terms acceptance recorded on this till")
 
 // TermsURL is where the operator reads the cloud terms in their language.
-// Paths are region-tagged (ADR-0038); the interim page is published by
-// ut-docs#4670. English is the operative text, so every locale other than
+// Paths are region-tagged (ADR-0038); the page is the Merchant Terms
+// (ut-docs#6449; the old cloud-terms addresses redirect to it). English is the operative text, so every locale other than
 // German and Turkish links the English page.
 func TermsURL(locale string) string { return termsURL(locale, "") }
 
@@ -55,7 +60,7 @@ func termsURL(locale, app string) string {
 	case "tr":
 		site = "tr-tr"
 	}
-	return "https://universaltill.com/" + site + "/" + app + "legal/cloud-terms/"
+	return "https://universaltill.com/" + site + "/" + app + "legal/merchant-terms/"
 }
 
 // termsLang is the lowercased primary language subtag ("de-AT" -> "de").
