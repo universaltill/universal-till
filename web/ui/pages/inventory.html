@@ -449,7 +449,14 @@
   function byId(id) { return document.getElementById(id); }
   function fmtNum(n) { return (Math.round(n * 1000) / 1000).toString().replace('.', decimalSep); }
   function parseCount(text, row) {
-    var t = text.trim().replace(',', '.');
+    // Persian/Arabic-Indic digits to Latin (fa/ar keyboards), 
+    var t = text.trim().replace(/[\u06F0-\u06F9]/g, function (c) { return String(c.charCodeAt(0) - 0x06F0); })
+      .replace(/[\u0660-\u0669]/g, function (c) { return String(c.charCodeAt(0) - 0x0660); })
+      .replace(/\u066B/g, '.');
+    // A comma is accepted as a decimal point on any keyboard ("1,5"), but "1,234" is
+    // ambiguous where the separator is '.': refuse it rather than read it as 1.234.
+    if (decimalSep !== ',' && /^\d+,\d{3}$/.test(t)) return { bad: true };
+    t = t.replace(',', '.');
     if (t === '') return { blank: true };
     if (!/^\d+(\.\d{1,3})?$/.test(t)) return { bad: true };
     return { value: Number(t) };
@@ -483,6 +490,11 @@
         lowCard.hidden = true;
         var title = byId('stocktake-title');
         if (title) title.focus();
+        // Locale decimal separator, never Go's default float form (1e+06).
+        card.querySelectorAll('.stocktake-row').forEach(function (r) {
+          var cell = r.querySelector('.stocktake-stock');
+          if (cell) cell.textContent = fmtNum(Number(r.dataset.stock));
+        });
         applyStockFilter();
         updateBar();
         watchStatusBar();

@@ -22,7 +22,7 @@
         <tr class="stocktake-row" data-key="{{ if .VariantID }}|{{ .VariantID }}{{ else }}{{ .ItemID }}|{{ end }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-category="{{ .CategoryID }}" data-stock="{{ .Quantity }}" data-weighed="{{ if .IsWeighed }}1{{ else }}0{{ end }}">
           <td class="catalog-name">{{ .Name }}{{ if .VariantName }} <span class="muted">— {{ .VariantName }}</span>{{ end }}</td>
           <td class="muted stocktake-sku">{{ .SKU }}</td>
-          <td class="stocktake-num">{{ .Quantity }}</td>
+          <td class="stocktake-num stocktake-stock">{{ .Quantity }}</td>
           <td class="stocktake-num">
             <input type="text" class="stocktake-input" inputmode="decimal" autocomplete="off" aria-label="{{ T "inventory.stocktake.col_counted" }}: {{ .Name }}{{ if .VariantName }} — {{ .VariantName }}{{ end }}">
             <div class="stocktake-err muted" hidden>{{ T "inventory.stocktake.bad_number" }}</div>
