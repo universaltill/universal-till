@@ -753,6 +753,8 @@ window.utCurrency = (function(){
         var basket = document.getElementById('basket');
         if (basket) {
           basket.outerHTML = text;
+          // Raw swap, not htmx: no afterSettle, so re-apply the tile badges (ut-docs#3241).
+          if (window.UT && typeof window.UT.applyTileBadges === 'function') window.UT.applyTileBadges();
         }
         // ut-docs#921 review finding: a rejected tender (underpayment,
         // insufficient stock, the fiscal hard gate, ...) renders as a 200
@@ -1339,6 +1341,62 @@ document.addEventListener('ut-basket-resync', function(){
     });
   }, 0);
 });
+
+// ut-docs#3241: phone item tiles show how many of that item are in the sale.
+// The counts are computed server-side (pos.Basket.ItemCountsByItem) and ride
+// every #basket render as data-item-counts; this only COPIES them onto the
+// tiles -- it never adds or subtracts on tap. afterSettle (not afterSwap): the
+// settle step restores attributes on an id-matched outerHTML swap. Covers
+// basket swaps and grid re-renders alike; coalesced because afterSettle fires
+// once per inserted element. The badge is display:none above the phone tier.
+(function utTileBasketBadges(){
+  var queued = false;
+  function apply(){
+    var b = document.getElementById('basket');
+    if (!b) return;
+    var counts = {};
+    try { counts = JSON.parse(b.dataset.itemCounts || '{}') || {}; } catch (e) { counts = {}; }
+    var fmt = b.dataset.inBasketLabel || '%d';
+    var tiles = document.querySelectorAll('.pos-container .tile-cell > .btn-tile[data-item-id]:not([data-testid="designer-tile"])');
+    for (var i = 0; i < tiles.length; i++) {
+      var tile = tiles[i];
+      var n = counts[tile.dataset.itemId] || 0;
+      var badge = tile.querySelector(':scope > .tile-qty-badge');
+      var sr = tile.querySelector(':scope > .tile-qty-sr');
+      if (n > 0) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'tile-qty-badge';
+          badge.setAttribute('aria-hidden', 'true');
+          tile.appendChild(badge);
+        }
+        if (!sr) {
+          sr = document.createElement('span');
+          sr.className = 'tile-qty-sr visually-hidden';
+        }
+        // Keep the screen-reader text the LAST child ("Latte, 2.50, 2 in basket").
+        if (tile.lastElementChild !== sr) tile.appendChild(sr);
+        var shown = n > 99 ? '99+' : String(n);
+        if (badge.textContent !== shown) badge.textContent = shown;
+        var text = fmt.replace('%d', String(n));
+        if (sr.textContent !== text) sr.textContent = text;
+      } else {
+        if (badge) badge.remove();
+        if (sr) sr.remove();
+      }
+    }
+  }
+  function schedule(){
+    if (queued) return;
+    queued = true;
+    setTimeout(function(){ queued = false; apply(); }, 0);
+  }
+  window.UT = window.UT || {};
+  window.UT.applyTileBadges = schedule;
+  document.addEventListener('htmx:afterSettle', schedule);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', schedule);
+  else schedule();
+})();
 
 // ut-docs#5458: re-render the live basket from the till's own state. source is
 // #basket so the xhr sits in the slot hx-sync="#basket:replace" aborts: a newer
