@@ -650,6 +650,13 @@
     // top=0, which would scroll the field to the top for nothing.
     if (!osk || !el.isConnected || current !== el || !osk.classList.contains('osk-open')) return;
     var oskTop = osk.getBoundingClientRect().top;
+    // A sticky action bar lifted above the keyboard (stock-take, ut-docs#5852)
+    // also covers the field: clear whichever edge is higher.
+    var bar = document.querySelector('.stocktake-bar');
+    if (bar && !bar.contains(el) && bar.offsetParent !== null) {
+      var barTop = bar.getBoundingClientRect().top;
+      if (barTop > 0 && barTop < oskTop) oskTop = barTop;
+    }
     var remaining = el.getBoundingClientRect().bottom - (oskTop - OSK_GAP);
     for (var a = el.parentElement; a && remaining > 0; a = a.parentElement) {
       var cs = getComputedStyle(a);

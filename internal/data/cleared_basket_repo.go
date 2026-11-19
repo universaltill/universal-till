@@ -2,8 +2,10 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,7 +21,7 @@ import (
 // the reporting till's tills.id.
 type ClearedBasket struct {
 	ID         string // generated when empty
-	CreatedAt  string // RFC 3339; required — local_date derives from it
+	CreatedAt  string // RFC 3339; local_date derives from it. Empty = stamped under the write lock (ut-docs#5831)
 	RegisterID string
 	TillID     string
 	ActorID    string
@@ -35,19 +37,38 @@ type ClearedBasket struct {
 // sales.local_date — so the clear lands on the same business date as a sale
 // completed at the same instant.
 func (r *POSRepo) InsertClearedBasket(ctx context.Context, e ClearedBasket) (string, error) {
-	if e.CreatedAt == "" {
-		return "", errors.New("insert cleared basket: CreatedAt is required")
-	}
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
-	_, err := r.db.ExecContext(ctx, `
+	// ut-docs#5831 (review B1): an empty CreatedAt is stamped HERE, after the
+	// write lock is held (a tx), never before waiting on it: a row that waits
+	// behind a Z must not carry a stamp from before the Z's bound.
+	var exec interface {
+		ExecContext(context.Context, string, ...any) (sql.Result, error)
+	} = r.db
+	var tx *sql.Tx
+	if e.CreatedAt == "" {
+		var berr error
+		tx, berr = r.db.BeginTx(ctx, nil)
+		if berr != nil {
+			return "", fmt.Errorf("insert cleared basket: begin: %w", berr)
+		}
+		defer func() { _ = tx.Rollback() }()
+		e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		exec = tx
+	}
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO cleared_baskets (id, created_at, local_date, register_id, till_id, actor_id, line_count, total_minor)
 VALUES (?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?, ?, ?, ?)`,
 		e.ID, e.CreatedAt, e.CreatedAt, nullIfEmpty(e.RegisterID), nullIfEmpty(e.TillID),
 		nullIfEmpty(e.ActorID), e.LineCount, e.Total.Minor())
 	if err != nil {
 		return "", fmt.Errorf("insert cleared basket: %w", err)
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return "", fmt.Errorf("insert cleared basket: commit: %w", err)
+		}
 	}
 	return e.ID, nil
 }
