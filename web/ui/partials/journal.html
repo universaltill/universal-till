@@ -13,6 +13,9 @@
           {{ end }}
         </select>
       </label>
+      <label>{{ T "journal.filter.search" }}
+        <input type="search" name="q" value="{{ .Search }}" maxlength="32" dir="ltr" autocomplete="off" hx-get="/ui/journal?limit=full" hx-trigger="change, search" hx-target="#journal" hx-swap="outerHTML" hx-include="closest form">
+      </label>
       <label>{{ T "journal.filter.day" }}
         <input type="date" name="day" value="{{ .Day }}" hx-get="/ui/journal?limit=full" hx-target="#journal" hx-swap="outerHTML" hx-include="closest form">
       </label>
@@ -34,12 +37,13 @@
   {{ if .Entries }}
     <table>
       <thead>
-        <tr><th>{{ T "journal.col.receipt" }}</th><th>{{ T "journal.col.total" }}</th><th>{{ T "journal.col.tender" }}</th><th>{{ T "journal.col.sync" }}</th><th>{{ T "journal.col.time" }}</th>{{ if .ShowFilters }}<th>{{ T "journal.col.till" }}</th>{{ end }}</tr>
+        <tr><th>{{ T "journal.col.receipt" }}</th><th>{{ T "journal.col.order_no" }}</th><th>{{ T "journal.col.total" }}</th><th>{{ T "journal.col.tender" }}</th><th>{{ T "journal.col.sync" }}</th><th>{{ T "journal.col.time" }}</th>{{ if .ShowFilters }}<th>{{ T "journal.col.till" }}</th>{{ end }}</tr>
       </thead>
       <tbody>
         {{ range .Entries }}
           <tr class="journal-row" data-action="go:/journal/{{ .ReceiptNo }}" data-receipt="{{ .ReceiptNo }}">
             <td><a href="/journal/{{ .ReceiptNo }}" data-action="stop">{{ .ReceiptNo }}</a></td>
+            <td>{{ if .DisplayNo }}<span class="order-no-journal" dir="ltr">{{ .DisplayNo }}</span>{{ end }}</td>
             <td>{{ money .Total }}</td>
             <td>{{ tenderLabel .TenderType }}</td>
             <td>{{ .SyncStatus }}</td>

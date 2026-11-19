@@ -159,7 +159,12 @@
 {{ define "receipt_body" }}
 {{ if .StoreName }}<h2 class="receipt-store">{{ .StoreName }}</h2>{{ end }}
 {{ range .DesignHeader }}<div class="receipt-design-line"><small>{{ . }}</small></div>{{ end }}
-<h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
+{{/* ut-docs#6663: the order number is what the customer waits for: large,
+     digits only, always left-to-right. The receipt number below stays the
+     legal identity (small, monospaced). A sale with no order number (a
+     legacy sale) shows none. */}}
+{{ if .DisplayNo }}<p class="order-no-hero" data-testid="receipt-order-no"><small class="order-no-label">{{ T "receipt.order_no_label" }}</small> <span class="order-no-value" dir="ltr">{{ .DisplayNo }}</span></p>{{ end }}
+<h2{{ if .DisplayNo }} class="receipt-no-secondary"{{ end }}>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
 {{ if .TableLabel }}<p class="receipt-table"><small>{{ T "basket.table.label" }}: {{ .TableLabel }}</small></p>{{ end }}
 {{/* ut-docs#1181 (ADR-0073 Decision 7): only a MIXED sale marks its
      mode -- a uniform sale's receipt is unchanged. */}}

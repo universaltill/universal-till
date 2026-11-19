@@ -1828,6 +1828,16 @@ func (s *Service) LockTender(sig string, p PendingTender) {
 	s.tenderLock = sig
 }
 
+// PendingTender returns a copy of what the locked tender left behind.
+func (s *Service) PendingTender() PendingTender {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return PendingTender{
+		Captured: append([]CapturedLeg(nil), s.pendingTender.Captured...),
+		Unknown:  append([]UnknownLeg(nil), s.pendingTender.Unknown...),
+	}
+}
+
 func (s *Service) TenderLock() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

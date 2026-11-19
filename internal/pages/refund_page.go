@@ -941,11 +941,19 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		var originalPayments []map[string]any
 		for _, op := range detail.Payments {
 			if op.Method == method && op.TraceID != "" {
-				originalPayments = append(originalPayments, map[string]any{
+				entry := map[string]any{
 					"transaction_ref": op.TraceID,
 					"amount":          op.Amount,
 					"tip_amount":      op.TipAmount,
-				})
+				}
+				// ut-docs#6566: the reader this leg was paid on, straight from
+				// the payment row (no registry lookup): a reader removed or
+				// offline since never blocks a refund, which goes by
+				// transaction_ref. Context for the provider, additive.
+				if op.TerminalID != "" {
+					entry["reader_id"] = op.TerminalID
+				}
+				originalPayments = append(originalPayments, entry)
 			}
 		}
 		// ut-docs#6603: with several legs of this method, say how much goes back
