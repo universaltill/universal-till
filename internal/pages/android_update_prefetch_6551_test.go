@@ -161,22 +161,36 @@ func TestAutoUpdateTick_NonAndroidUnsupportedStillSkips(t *testing.T) {
 }
 
 func TestAndroidInstall_RefusesWhileBasketOpen(t *testing.T) {
-	basket := func(d *common.Deps, kiosk bool) {
-		e := d.Engine
-		if kiosk {
+	coffee := pos.BasketLine{SKU: "sku-1", Name: "Coffee", Qty: 1, PriceCents: 250}
+	basket := func(t *testing.T, d *common.Deps, kind string) {
+		switch kind {
+		case "cashier":
+			d.Engine.AddLineWithModifiers(coffee, 1, nil)
+		case "kiosk":
 			d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, nil)
-			e = d.KioskEngine
+			d.KioskEngine.AddLineWithModifiers(coffee, 1, nil)
+		case "table":
+			// A table-QR order (ADR-0103) lives in its own session basket.
+			d.SelfOrderSessions = pos.NewSessionBasketManager(func() *pos.Service {
+				return pos.NewServiceWithResolver(pos.Config{}, nil)
+			})
+			_, sess, _ := d.SelfOrderSessions.Create()
+			sess.AddLineWithModifiers(coffee, 1, nil)
+		case "shift-close":
+			shiftCloseInFlight.Add(1)
+			t.Cleanup(func() { shiftCloseInFlight.Add(-1) })
 		}
-		e.AddLineWithModifiers(pos.BasketLine{SKU: "sku-1", Name: "Coffee", Qty: 1, PriceCents: 250}, 1, nil)
 	}
 	for _, tc := range []struct {
-		name  string
-		kiosk bool
-		form  url.Values
+		name string
+		kind string
+		form url.Values
 	}{
-		{"cashier basket", false, url.Values{}},
-		{"kiosk basket", true, url.Values{}},
-		{"cashier basket with a PIN", false, url.Values{"manager_pin": {"000000"}}},
+		{"cashier basket", "cashier", url.Values{}},
+		{"kiosk basket", "kiosk", url.Values{}},
+		{"table-QR order", "table", url.Values{}},
+		{"shift close in flight", "shift-close", url.Values{}},
+		{"cashier basket with a PIN", "cashier", url.Values{"manager_pin": {"000000"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api, d := androidInstallMux(t)
@@ -184,7 +198,7 @@ func TestAndroidInstall_RefusesWhileBasketOpen(t *testing.T) {
 			orig := androidInstallCheckNow
 			androidInstallCheckNow = func(context.Context) updates.Status { checked++; return updates.Status{Available: true} }
 			t.Cleanup(func() { androidInstallCheckNow = orig })
-			basket(d, tc.kiosk)
+			basket(t, d, tc.kind)
 
 			rec := postForm(api, "/api/update/android-install", tc.form, &mgrUser)
 

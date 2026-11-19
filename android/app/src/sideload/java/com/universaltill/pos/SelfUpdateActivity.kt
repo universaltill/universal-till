@@ -122,6 +122,13 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
     // ut-docs#5436: set while [verifyThenInstall] reads the APK's signer off
     // the UI thread (v2 verification reads the whole file).
     private var updateVerifyingApk = false
+
+    /**
+     * ut-docs#6551: a manager's tap arrived while a nightly prefetch was in
+     * its size-check or verify phase; that phase then installs instead of
+     * keeping the file ready. UI thread only; reset by each fresh attempt.
+     */
+    private var updateTapUpgradedPrefetch = false
     private var updateLoggedPercent = -1
     private var lastUpdateState: String? = null
 
@@ -161,21 +168,12 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
      * crashes the till — a failure leaves the operator able to retry.
      */
     internal fun downloadAndInstallUpdate(prefetch: Boolean = false) {
-        if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
-            Log.i(TAG, "update: already in progress")
-            // ut-docs#6551: a manager's tap upgrades a running prefetch to
-            // install-on-finish; a repeat prefetch changes nothing.
-            if (!prefetch) {
-                updatePrefs().edit().remove(UPDATE_PREF_MODE).apply()
-                lastUpdateState?.let { pushUpdateState(it) }
-            }
-            return
-        }
         // ut-docs#6551: before spending a ~40 MB download, make sure Android
         // will let this app hand an APK to the installer. If not, tell the
         // page (it explains and offers the settings screen) instead of a
         // silent no-op later.
-        // A prefetch never asks: the manager's tap runs this check (R3).
+        // A prefetch never asks: the manager's tap runs this check (R3) —
+        // also when it upgrades a running prefetch below (review 2026-11-19).
         if (!prefetch &&
             UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } == InstallPreflight.NEEDS_PERMISSION
         ) {
@@ -183,6 +181,20 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
             reportUpdate(UpdateLogic.STATE_NEEDS_PERMISSION, null, null)
             return
         }
+        if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
+            Log.i(TAG, "update: already in progress")
+            // ut-docs#6551: a manager's tap upgrades a running prefetch to
+            // install-on-finish; a repeat prefetch changes nothing. The flag
+            // covers the size-check and verify phases, whose callbacks
+            // captured `prefetch` before the tap (review 2026-11-19).
+            if (!prefetch) {
+                updateTapUpgradedPrefetch = true
+                updatePrefs().edit().remove(UPDATE_PREF_MODE).apply()
+                lastUpdateState?.let { pushUpdateState(it) }
+            }
+            return
+        }
+        updateTapUpgradedPrefetch = false
         // ut-docs#4495: a new attempt. A launch Android refused silently
         // never paused this Activity, so its flag must not survive into this
         // attempt and report "closed" mid-download on the next resume.
@@ -210,11 +222,12 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateCheckingReuse = false
                     if (isDestroyed) return@runOnUiThread
+                    val stillPrefetch = prefetch && !updateTapUpgradedPrefetch
                     if (UpdateLogic.canReuseDownloadedApk(fileLength, expected, archiveVersion, installedVersionCode())) {
                         Log.i(TAG, "update: reusing the complete APK already downloaded ($fileLength bytes, versionCode $archiveVersion)")
-                        verifyThenInstall(dest, savedId, prefetch)
+                        verifyThenInstall(dest, savedId, stillPrefetch)
                     } else {
-                        enqueueUpdateDownload(manager, dest, url, savedId, prefetch)
+                        enqueueUpdateDownload(manager, dest, url, savedId, stillPrefetch)
                     }
                 }
             }.apply {
@@ -589,7 +602,7 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                 }
             runOnUiThread {
                 updateVerifyingApk = false
-                val after = UpdateLogic.afterCheck(verdict, prefetch)
+                val after = UpdateLogic.afterCheck(verdict, prefetch && !updateTapUpgradedPrefetch)
                 if (after == AfterCheck.CLEANUP && verdict is ApkCheck.Refuse) {
                     // Cleanup runs even if the Activity is gone (L2).
                     Log.w(
