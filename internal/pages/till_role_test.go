@@ -309,7 +309,7 @@ func TestTillRoleChange_RefusedOnAJoinedTill(t *testing.T) {
 func TestSyncAdminAPI_CarriesRequestingTillsRole(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	tills := data.NewTillsRepo(dp.Db)
-	satID, _, err := tills.EnrolTill(t.Context(), "Kiosk", hashBearer("token-kiosk"), data.TillRoleSatellite, "")
+	satID, _, _, err := tills.EnrolTillPrefix(t.Context(), "Kiosk", hashBearer("token-kiosk"), data.TillRoleSatellite, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func newTillRoleSettingsFixture(t *testing.T, role string) *tillRoleSettingsFixt
 	initTillRoleI18n(t)
 	f := &tillRoleSettingsFixture{main: newMigratedSyncDeps(t, "main.db"), replica: newMigratedSyncDeps(t, "replica.db")}
 	var err error
-	f.selfID, _, err = data.NewTillsRepo(f.main.Db).EnrolTill(t.Context(), "Kiosk", hashBearer("token-self"), role, "")
+	f.selfID, _, _, err = data.NewTillsRepo(f.main.Db).EnrolTillPrefix(t.Context(), "Kiosk", hashBearer("token-self"), role, "")
 	if err != nil {
 		t.Fatal(err)
 	}

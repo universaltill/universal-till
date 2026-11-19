@@ -48,7 +48,7 @@
              identity — /journal/{receipt_no} doesn't know display_no) but
              the visible TEXT is DisplayNo, already resolved to ReceiptNo
              when the sale has none. */}}
-        <td>{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .DisplayNo }}</a>{{ else }}{{ .DisplayNo }}{{ end }}{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ else if eq .OrderType "mixed" }} <span class="muted">{{ T "basket.order_type.mixed" }}</span>{{ end }}</td>
+        <td><span class="order-no-board" dir="ltr">{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .DisplayNo }}</a>{{ else }}{{ .DisplayNo }}{{ end }}</span>{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ else if eq .OrderType "mixed" }} <span class="muted">{{ T "basket.order_type.mixed" }}</span>{{ end }}</td>
         <td>{{ datetime .CreatedAt }}</td>
         <td id="order-status-{{ .ReceiptNo }}">
           <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>
