@@ -208,12 +208,50 @@ func TestCloudSetupAfterReplaceGivesANewReceiptPrefix(t *testing.T) {
 	}
 }
 
-func TestCloudSetupWithoutReplaceKeepsNoReceiptPrefix(t *testing.T) {
+// ut-docs#6663: the shop's first main till is "1-", set when setup finishes.
+func TestCloudSetupWithoutReplaceGivesTheFirstMainTillPrefix(t *testing.T) {
 	mux, d, _, nonce := cloudWizard(t)
 	doCloudPair(mux, nonce, nil)
 	finalCloudPost(mux, nonce, nil)
-	if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "" {
-		t.Fatalf("sync.receipt_prefix = %q, want empty", got)
+	if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "1-" {
+		t.Fatalf("sync.receipt_prefix = %q, want 1-", got)
+	}
+	if no, err := data.NewPOSRepo(d.Db).NextReceiptNo(t.Context(), nil); err != nil || no != "1-000000001" {
+		t.Fatalf("first receipt %q (%v), want 1-000000001", no, err)
+	}
+}
+
+// ut-docs#6663: a replacement main till takes the letter prefix the cloud
+// issued in the pair answer (data.store.receipt_prefix), whether or not the
+// wizard's commit succeeds; an invalid one falls back to the local M<8hex>-.
+func TestCloudSetupTakesTheCloudIssuedLetterPrefix(t *testing.T) {
+	for _, failCommit := range []bool{false, true} {
+		mux, d, stub, nonce := cloudWizard(t)
+		stub.set(200, hadMainTillAnswer(`,"had_main_till":true,"receipt_prefix":"B-"`))
+		doCloudPair(mux, nonce, nil)
+		if failCommit {
+			prev := commitCloudPairing
+			commitCloudPairing = func(context.Context, *common.Deps, *enroll.FirstTillPairing) error { return errors.New("boom") }
+			t.Cleanup(func() { commitCloudPairing = prev })
+		}
+		finalCloudPost(mux, nonce, nil)
+		if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "B-" {
+			t.Fatalf("failCommit=%v: sync.receipt_prefix = %q, want B-", failCommit, got)
+		}
+		if no, err := data.NewPOSRepo(d.Db).NextReceiptNo(t.Context(), nil); err != nil || no != "B-000000001" {
+			t.Fatalf("first receipt %q (%v)", no, err)
+		}
+	}
+}
+
+func TestCloudSetupInvalidCloudPrefixFallsBackToTheLocalOne(t *testing.T) {
+	mux, d, stub, nonce := cloudWizard(t)
+	stub.set(200, hadMainTillAnswer(`,"had_main_till":true,"receipt_prefix":"2-"`))
+	doCloudPair(mux, nonce, nil)
+	finalCloudPost(mux, nonce, nil)
+	got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix")
+	if !regexp.MustCompile(`^M[0-9a-f]{8}-$`).MatchString(got) {
+		t.Fatalf("sync.receipt_prefix = %q, want the local M<8hex>-", got)
 	}
 }
 
@@ -247,14 +285,14 @@ func TestCloudSetupAfterRemoveGivesANewReceiptPrefix(t *testing.T) {
 	}
 }
 
-func TestCloudSetupHadMainTillFalseKeepsNoReceiptPrefix(t *testing.T) {
+func TestCloudSetupHadMainTillFalseGivesTheFirstMainTillPrefix(t *testing.T) {
 	for name, flag := range map[string]string{"false": `,"had_main_till":false`, "absent": ``} {
 		mux, d, stub, nonce := cloudWizard(t)
 		stub.set(200, hadMainTillAnswer(flag))
 		doCloudPair(mux, nonce, nil)
 		finalCloudPost(mux, nonce, nil)
-		if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "" {
-			t.Fatalf("%s: sync.receipt_prefix = %q, want empty", name, got)
+		if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "1-" {
+			t.Fatalf("%s: sync.receipt_prefix = %q, want 1-", name, got)
 		}
 	}
 }

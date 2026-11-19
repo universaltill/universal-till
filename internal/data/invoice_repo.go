@@ -56,10 +56,11 @@ type InvoiceInput struct {
 }
 
 // Create allocates the next number in the series and inserts the invoice.
-// Allocation happens INSIDE one INSERT…SELECT — a single write statement,
-// so there is no reader→writer upgrade window for two concurrent issues
-// to deadlock in; a lost race surfaces as a UNIQUE violation and is
-// retried.
+// The number comes from the stored counter (number_series, ut-docs#6663), in
+// the same write transaction as the INSERT, so "Clear transaction history"
+// (invoices move to invoices_archive) never makes a series repeat a number.
+// A lost race on UNIQUE(series, invoice_no) re-seeds from the full scan and
+// retries.
 func (r *InvoiceRepo) Create(ctx context.Context, in InvoiceInput) (InvoiceRow, error) {
 	var orig any
 	if in.OriginalInvoiceID != "" {
@@ -67,18 +68,8 @@ func (r *InvoiceRepo) Create(ctx context.Context, in InvoiceInput) (InvoiceRow, 
 	}
 	id := uuid.NewString()
 	var lastErr error
-	for range 3 {
-		_, err := r.db.ExecContext(ctx, `
-INSERT INTO invoices (id, series, invoice_no, display_no, kind, sale_id,
-  original_invoice_id, customer_name, customer_address, customer_vat_no,
-  seller_json, net_total, tax_total, gross_total, vat_breakdown_json,
-  issued_at, issued_by)
-SELECT ?, ?, n, ? || 'INV-' || printf('%06d', n), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-FROM (SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM invoices WHERE series = ?)`,
-			id, in.Series, in.Series, in.Kind, in.SaleID,
-			orig, in.CustomerName, in.CustomerAddress, in.CustomerVATNo,
-			in.SellerJSON, in.NetTotal, in.TaxTotal, in.GrossTotal,
-			in.VATBreakdownJSON, in.IssuedAt, in.IssuedBy, in.Series)
+	for attempt := 0; attempt < 3; attempt++ {
+		err := r.insertNumbered(ctx, id, in, orig, attempt > 0)
 		if err == nil {
 			row, ok, err := r.ByID(ctx, id)
 			if err != nil || !ok {
@@ -93,6 +84,38 @@ FROM (SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM invoices WHERE series = 
 		}
 	}
 	return InvoiceRow{}, fmt.Errorf("insert invoice: %w", lastErr)
+}
+
+func (r *InvoiceRepo) insertNumbered(ctx context.Context, id string, in InvoiceInput, orig any, reseed bool) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+	if reseed {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM number_series WHERE kind = ? AND series = ?`,
+			numberKindInvoice, in.Series); err != nil {
+			return err
+		}
+	}
+	n, err := nextInSeries(ctx, tx, numberKindInvoice, in.Series, 0,
+		func() (int64, error) { return maxInvoiceSeq(ctx, tx, in.Series) })
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO invoices (id, series, invoice_no, display_no, kind, sale_id,
+  original_invoice_id, customer_name, customer_address, customer_vat_no,
+  seller_json, net_total, tax_total, gross_total, vat_breakdown_json,
+  issued_at, issued_by)
+VALUES (?, ?, ?, ? || 'INV-' || printf('%06d', ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, in.Series, n, in.Series, n, in.Kind, in.SaleID,
+		orig, in.CustomerName, in.CustomerAddress, in.CustomerVATNo,
+		in.SellerJSON, in.NetTotal, in.TaxTotal, in.GrossTotal,
+		in.VATBreakdownJSON, in.IssuedAt, in.IssuedBy); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const invoiceCols = `id, series, invoice_no, display_no, kind, sale_id,

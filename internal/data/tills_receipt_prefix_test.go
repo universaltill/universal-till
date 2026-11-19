@@ -15,7 +15,7 @@ func TestTillsRepo_ReceiptPrefixesInUse(t *testing.T) {
 	ctx := context.Background()
 	repo := NewTillsRepo(d.DB)
 	base := syncAdminGeneration(t, d)
-	if _, _, err := repo.EnrolTill(ctx, "Till 4", "hash-4", TillRoleAdditional, "T4-"); err != nil {
+	if _, _, err := enrolTill(repo, ctx, "Till 4", "hash-4", TillRoleAdditional, "T4-"); err != nil {
 		t.Fatal(err)
 	}
 	if syncAdminGeneration(t, d) == base {
@@ -46,7 +46,7 @@ func TestEnrolTill_RecordsTheHighWaterAndRevokeDoesNotLowerIt(t *testing.T) {
 	d := openMigratedDB(t, "tills-hw.db")
 	ctx := context.Background()
 	repo := NewTillsRepo(d.DB)
-	a, n, err := repo.EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, "")
+	a, n, err := enrolTill(repo, ctx, "Till 2", "h2", TillRoleAdditional, "")
 	if err != nil || n != 2 {
 		t.Fatalf("first till = %d, %v; want 2", n, err)
 	}
@@ -56,12 +56,12 @@ func TestEnrolTill_RecordsTheHighWaterAndRevokeDoesNotLowerIt(t *testing.T) {
 	if err := repo.DeleteTill(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if _, n, err = repo.EnrolTill(ctx, "Till 3", "h3", TillRoleSatellite, ""); err != nil || n != 3 {
+	if _, n, err = enrolTill(repo, ctx, "Till 3", "h3", TillRoleSatellite, ""); err != nil || n != 3 {
 		t.Fatalf("after revoke = %d, %v; want 3", n, err)
 	}
 	// A re-joining till's own number below the record is kept (it is its
 	// own) and does not lower the record.
-	if _, n, err = repo.EnrolTill(ctx, "Till 2 again", "h2b", TillRoleAdditional, "T2-"); err != nil || n != 2 {
+	if _, n, err = enrolTill(repo, ctx, "Till 2 again", "h2b", TillRoleAdditional, "T2-"); err != nil || n != 2 {
 		t.Fatalf("re-join with T2- = %d, %v; want 2", n, err)
 	}
 	if v := settingValue(t, ctx, repo, TillNoHighWaterSettingsKey); v != "3" {
@@ -69,7 +69,7 @@ func TestEnrolTill_RecordsTheHighWaterAndRevokeDoesNotLowerIt(t *testing.T) {
 	}
 	// An invalid or main-till prefix is ignored.
 	for _, bad := range []string{"T1-", "T0-", "X2-", "T10000-", "T03-"} {
-		if _, n, err = repo.EnrolTill(ctx, "Till "+bad, "h-"+bad, TillRoleAdditional, bad); err != nil || n <= 3 {
+		if _, n, err = enrolTill(repo, ctx, "Till "+bad, "h-"+bad, TillRoleAdditional, bad); err != nil || n <= 3 {
 			t.Fatalf("requested %q = %d, %v; want a fresh number", bad, n, err)
 		}
 	}
@@ -89,7 +89,7 @@ func TestEnrolTill_ConcurrentEnrolmentsGetDistinctNumbers(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, n, err := repo.EnrolTill(ctx, fmt.Sprintf("Till %d", i), fmt.Sprintf("h%d", i), TillRoleAdditional, "")
+			_, n, err := enrolTill(repo, ctx, fmt.Sprintf("Till %d", i), fmt.Sprintf("h%d", i), TillRoleAdditional, "")
 			if err != nil {
 				errs <- err
 				return
@@ -127,13 +127,13 @@ func TestEnrolTill_OnAnExistingShopKeepsEveryReceiptAndNumbersPastThem(t *testin
 		mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at) VALUES (?, ?, 'completed', 'sale', 'GBP', 1, 1, '2026-10-26T09:00:00Z')`, fmt.Sprintf("s%d", i), rn)
 	}
 	before := allReceiptNos(t, repo)
-	_, n, err := repo.EnrolTill(ctx, "Till 4", "h4", TillRoleAdditional, "")
+	_, n, err := enrolTill(repo, ctx, "Till 4", "h4", TillRoleAdditional, "")
 	if err != nil || n != 4 {
 		t.Fatalf("next till on an existing shop = %d, %v; want 4", n, err)
 	}
 	// A re-joining legacy till asking for T2- (its sales are here) is not
 	// given it again; it gets a fresh number.
-	if _, n, err = repo.EnrolTill(ctx, "Till 2 again", "h2", TillRoleAdditional, "T2-"); err != nil || n != 5 {
+	if _, n, err = enrolTill(repo, ctx, "Till 2 again", "h2", TillRoleAdditional, "T2-"); err != nil || n != 5 {
 		t.Fatalf("legacy T2- re-join = %d, %v; want 5", n, err)
 	}
 	if after := allReceiptNos(t, repo); fmt.Sprint(after) != fmt.Sprint(before) {
@@ -171,7 +171,7 @@ func TestEnrolTill_HighWaterTravelsInTheAdminBundle(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "hw-primary.db")
 	replica := openReplicaDB(t, "hw-replica.db")
-	if _, _, err := NewTillsRepo(primary.DB).EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil {
+	if _, _, err := enrolTill(NewTillsRepo(primary.DB), ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil {
 		t.Fatal(err)
 	}
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -205,7 +205,7 @@ func TestTillsRepo_ReceiptPrefixesInUseIncludesTheSalesCopy(t *testing.T) {
 		t.Fatalf("prefixes in use = %v, want T9- from the sales copy only", got)
 	}
 	// The enrolment that follows numbers past it.
-	_, no, err := NewTillsRepo(d.DB).EnrolTill(ctx, "Till X", "hash-x", TillRoleAdditional, "")
+	_, no, err := enrolTill(NewTillsRepo(d.DB), ctx, "Till X", "hash-x", TillRoleAdditional, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,11 +221,11 @@ func TestEnrolTill_ProvisionalRestorePrefixGetsANewTillNo(t *testing.T) {
 	d := openMigratedDB(t, "tills-restored.db")
 	ctx := context.Background()
 	repo := NewTillsRepo(d.DB)
-	if _, n, err := repo.EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil || n != 2 {
+	if _, n, err := enrolTill(repo, ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil || n != 2 {
 		t.Fatalf("first till = %d, %v; want 2", n, err)
 	}
 	for _, p := range []string{"R1a2b-", "Rffff-"} {
-		id, n, err := repo.EnrolTill(ctx, "Restored copy "+p, "h-"+p, TillRoleAdditional, p)
+		id, n, err := enrolTill(repo, ctx, "Restored copy "+p, "h-"+p, TillRoleAdditional, p)
 		if err != nil || n < 3 {
 			t.Fatalf("requested %q = %d, %v; want a fresh T<n>- (n >= 3)", p, n, err)
 		}
@@ -293,4 +293,104 @@ func TestNextReceiptNo_FreshInstallHasNoPrefix(t *testing.T) {
 	if err != nil || got != "000000001" {
 		t.Fatalf("NextReceiptNo = %q, %v; want 000000001", got, err)
 	}
+}
+
+// ut-docs#6663: the main till grants plain <n>- prefixes (2-, 3-, ...) in
+// the SAME never-reused number space as the legacy T<n>-.
+func TestEnrolTillPrefix_GrantsPlainNumbers(t *testing.T) {
+	d := openMigratedDB(t, "tills-plain.db")
+	ctx := context.Background()
+	repo := NewTillsRepo(d.DB)
+	for want := 2; want <= 4; want++ {
+		_, n, prefix, err := repo.EnrolTillPrefix(ctx, fmt.Sprintf("Till %d", want), fmt.Sprintf("h%d", want), TillRoleAdditional, "")
+		if err != nil || n != want || prefix != fmt.Sprintf("%d-", want) {
+			t.Fatalf("till %d = %d, %q, %v; want %d-", want, n, prefix, err, want)
+		}
+		var stored string
+		_ = repo.db.QueryRow(`SELECT receipt_prefix FROM tills WHERE name = ?`, fmt.Sprintf("Till %d", want)).Scan(&stored)
+		if stored != prefix {
+			t.Fatalf("stored prefix %q, granted %q", stored, prefix)
+		}
+	}
+}
+
+func TestEnrolTillPrefix_ShopWithLegacyT2GrantsPlain3(t *testing.T) {
+	d := openMigratedDB(t, "tills-legacy-t2.db")
+	ctx := context.Background()
+	repo := NewTillsRepo(d.DB)
+	mustExec(t, d, `INSERT INTO tills (id, name, bearer_hash, role, receipt_prefix) VALUES ('old2', 'Till 2', 'x', 'additional', 'T2-')`)
+	_, n, prefix, err := repo.EnrolTillPrefix(ctx, "Till 3", "h3", TillRoleAdditional, "")
+	if err != nil || n != 3 || prefix != "3-" {
+		t.Fatalf("got %d, %q, %v; want 3, 3-", n, prefix, err)
+	}
+}
+
+func TestEnrolTillPrefix_RevokedNumberNeverRegrantedAcrossForms(t *testing.T) {
+	d := openMigratedDB(t, "tills-revoked-forms.db")
+	ctx := context.Background()
+	repo := NewTillsRepo(d.DB)
+	id, n, _, err := repo.EnrolTillPrefix(ctx, "Till 2", "h2", TillRoleAdditional, "")
+	if err != nil || n != 2 {
+		t.Fatal(n, err)
+	}
+	if err := repo.DeleteTill(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, n, prefix, err := repo.EnrolTillPrefix(ctx, "Till x", "hx", TillRoleAdditional, ""); err != nil || n != 3 || prefix != "3-" {
+		t.Fatalf("after revoke = %d, %q, %v; want 3-", n, prefix, err)
+	}
+	// A sale under the revoked 2- keeps the number taken for re-joiners too.
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at) VALUES ('s2', '2-000000001', 'completed', 'sale', 'GBP', 1, 1, '2026-10-26T09:00:00Z')`)
+	if _, n, _, err := repo.EnrolTillPrefix(ctx, "Other", "ho", TillRoleAdditional, "2-"); err != nil || n == 2 {
+		t.Fatalf("a till asking for 2- (in use by a sale) got %d, %v", n, err)
+	}
+}
+
+func TestEnrolTillPrefix_RejoinKeepsItsOwnPrefixForm(t *testing.T) {
+	d := openMigratedDB(t, "tills-rejoin-form.db")
+	ctx := context.Background()
+	repo := NewTillsRepo(d.DB)
+	for _, want := range []string{"T5-", "6-"} {
+		_, _, prefix, err := repo.EnrolTillPrefix(ctx, "re"+want, "h"+want, TillRoleAdditional, want)
+		if err != nil || prefix != want {
+			t.Fatalf("re-join with %q = %q, %v", want, prefix, err)
+		}
+	}
+	// 1- is the main till's: never granted to a joiner.
+	if _, n, _, err := repo.EnrolTillPrefix(ctx, "one", "h1", TillRoleAdditional, "1-"); err != nil || n == 1 {
+		t.Fatalf("1- granted to a joiner: %d, %v", n, err)
+	}
+}
+
+func TestTillNumberOfPrefix(t *testing.T) {
+	for p, want := range map[string]int{"": 1, "1-": 1, "2-": 2, "T2-": 2, "12-": 12, "T10-": 10, "A-": 1, "AB-": 1, "M3f2a9c1e-": 1, "R1a2b-": 1, "T1-": 1, "0-": 1, "garbage": 1} {
+		if got := TillNumberOfPrefix(p); got != want {
+			t.Errorf("TillNumberOfPrefix(%q) = %d, want %d", p, got, want)
+		}
+	}
+}
+
+func TestIsCloudSeriesPrefix(t *testing.T) {
+	for p, want := range map[string]bool{"A-": true, "Z-": true, "AA-": true, "ZZZ-": true, "AAAA-": false, "": false, "I-": false, "O-": false,
+		"M-": false, "R-": false, "T-": false, "a-": false, "1-": false, "A": false, "A-1": false, "A--": false} {
+		if got := IsCloudSeriesPrefix(p); got != want {
+			t.Errorf("IsCloudSeriesPrefix(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+func TestReceiptPrefixesInUse_CountsPlainNumberPrefixes(t *testing.T) {
+	d := openMigratedDB(t, "tills-prefix-plain.db")
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at) VALUES ('s1', '7-000000001', 'completed', 'sale', 'GBP', 1, 1, '2026-10-26T09:00:00Z')`)
+	got, err := receiptPrefixesInUse(context.Background(), d.DB)
+	if err != nil || !got["7-"] {
+		t.Fatalf("in use = %v, %v; want 7-", got, err)
+	}
+}
+
+// enrolTill is EnrolTillPrefix without the granted prefix, for tests that
+// only need the id and number.
+func enrolTill(r *TillsRepo, ctx context.Context, name, bearerHash, role, requestedPrefix string) (string, int, error) {
+	id, n, _, err := r.EnrolTillPrefix(ctx, name, bearerHash, role, requestedPrefix)
+	return id, n, err
 }

@@ -84,7 +84,7 @@ func TestUIOrders_ReplicaRendersPrimaryData(t *testing.T) {
 	if strings.Contains(body, `href="/journal/PRIMARY-1"`) {
 		t.Fatalf("a receipt this till doesn't hold locally must not link to /journal/, got %q", body)
 	}
-	if !strings.Contains(body, "<td>PRIMARY-1") {
+	if !strings.Contains(body, `dir="ltr">PRIMARY-1</span>`) {
 		t.Fatalf("the receipt number must still be shown as plain text, got %q", body)
 	}
 }

@@ -271,8 +271,9 @@ func TestKioskCounterOrdersRepo_DisplayNoCarriesTillPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.DisplayNo != "C-T2-1" || second.DisplayNo != "C-T2-2" {
-		t.Fatalf("prefixed display numbers = %q, %q; want C-T2-1, C-T2-2", first.DisplayNo, second.DisplayNo)
+	// ut-docs#6663: no prefix; till 2 numbers from its own block (100..199).
+	if first.DisplayNo != "C-100" || second.DisplayNo != "C-101" {
+		t.Fatalf("till 2 display numbers = %q, %q; want C-100, C-101", first.DisplayNo, second.DisplayNo)
 	}
 }
 
@@ -300,8 +301,8 @@ VALUES ('sp', 'T2-1', 'T2-5', 'completed', 'sale', 'GBP', 100, 100, '2026-09-25T
 		t.Fatal(err)
 	}
 	got, err = pos.NextDisplayNo(ctx, nil)
-	if err != nil || got != "T2-6" {
-		t.Fatalf("NextDisplayNo(T2-) = (%q,%v), want (T2-6,nil): C-T2- numbers must not count", got, err)
+	if err != nil || got != "100" {
+		t.Fatalf("NextDisplayNo(T2-) = (%q,%v), want (100,nil): till 2's own block; C- and legacy T2- values must not count", got, err)
 	}
 }
 

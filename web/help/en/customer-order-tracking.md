@@ -19,7 +19,7 @@ Customers scan a QR code to follow their order's status on their own phone: afte
 
 1. When a customer completes an order at the self-order kiosk, the confirmation screen shows a QR code next to the order number (the confirmation stays up for about 20 seconds, long enough to scan).
 2. When your staff ring up a sale at the till, the receipt carries a QR code with the line **Scan to track your order**: on the printed receipt and on the receipt shown on screen after payment. Reprinting the receipt prints the same QR. This depends on the receipt setting described in the notes below.
-3. Scanning it opens a small page on the customer's phone showing the order number and its current status — the same statuses your staff set on the **Orders** screen: preparing, ready, collected.
+3. Scanning it opens a small page on the customer's phone showing the order number, large, and its current status — the same statuses your staff set on the **Orders** screen: preparing, ready, collected.
 4. The page updates itself every few seconds, so the customer sees "Ready" the moment your staff tap it — no reloading, no asking at the counter.
 5. The link opens in the language the kiosk was being used in. A printed receipt's link opens in the shop's language; the receipt shown on screen after payment uses the till screen's language.
 6. If the customer chose to pay at the counter, the page shows **Waiting for payment at the counter** until your staff take payment for the order. From then on it shows the order's status like any other order. An order left unpaid for more than about 2 hours stops showing on the page until it is paid.
