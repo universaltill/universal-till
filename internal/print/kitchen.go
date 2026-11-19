@@ -86,7 +86,12 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		b.Write(cmdDoubleOff)
 	}
 	if s := strings.TrimSpace(t.OrderNo); s != "" {
-		line(clip(orderLabel(t)+" "+s, Width))
+		// ut-docs#6663: the order number is what the kitchen calls out:
+		// label on its own normal line, the number in double size below.
+		line(clip(orderLabel(t), Width))
+		b.Write(cmdDoubleOn)
+		line(clip(s, Width/2)) // double-width halves the columns
+		b.Write(cmdDoubleOff)
 	}
 	b.Write(cmdBoldOff)
 	if s := strings.TrimSpace(t.OrderType); s != "" {

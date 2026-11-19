@@ -3084,7 +3084,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor())
+			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor(), withDisplayNo(repo.DisplayNoByReceipt(r.Context(), receiptNo)))
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = receiptPrinterWarningHTML(funcs["T"].(func(string) string), httpx.BrowserPrintOff(r), canPerform(d, r, "settings"))
@@ -3386,7 +3386,16 @@ func normalizeLegalLines(text string, lines []string) []string {
 // receiptPolicy (ADR-0089) is the shop's resolved receipt policy: "ask"
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string, serviceCharge int64) (string, error) {
+// receiptOpt adds an optional field to the receipt view model.
+type receiptOpt func(map[string]any)
+
+// withDisplayNo sets the order number (ut-docs#6663): shown large above the
+// receipt number, in the screen copy and the browser-print copy alike.
+func withDisplayNo(no string) receiptOpt {
+	return func(m map[string]any) { m["DisplayNo"] = no }
+}
+
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string, serviceCharge int64, opts ...receiptOpt) (string, error) {
 	// ut-docs#6154: receipt.html reads browserprintoff/allowed; a hand-built
 	// funcs map (tests, other callers) gets the "browser print on" defaults.
 	if _, ok := funcs["browserprintoff"]; !ok {
@@ -3489,6 +3498,7 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 	// Subtotal nor TaxTotal (same rule as pos computeSaleTotals).
 	voucherIssueTotal := receiptVoucherIssueTotal(issuedVouchers)
 	data := map[string]any{
+		"DisplayNo":         "",
 		"ReceiptNo":         receiptNo,
 		"Lines":             rlines,
 		"VoucherIssueTotal": voucherIssueTotal,
@@ -3549,6 +3559,9 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"Tracking": tracking,
 		// ut-docs#4714: the Print buttons carry it (data-customer-locale).
 		"CustomerLocale": customerLocale,
+	}
+	for _, o := range opts {
+		o(data)
 	}
 	// ut-docs#4730: a receipt printed through the browser's print dialog is
 	// the page itself, so a self-order customer's pick (installed, and not
