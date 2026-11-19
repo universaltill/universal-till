@@ -1026,6 +1026,10 @@ label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
 .x-report-print-msg { flex-basis: 100%; min-block-size: 1.3rem; margin-block-end: .4rem; }
 .x-report-print-msg .error { margin-block: 0; color: var(--danger); }
 .x-report-print-msg .error::before { content: "⚠ "; }
+/* ut-docs#5877: Print slip on a /shifts History row (logical properties only). */
+.shift-slip-row { text-align: end; }
+.shift-slip-row .btn { min-block-size: 44px; min-inline-size: 44px; }
+.shift-slip-row .x-report-print-msg { display: block; flex-basis: auto; max-inline-size: 14rem; margin-inline-start: auto; white-space: normal; }
 /* ut-docs#5800: day-so-far X report (Reports -> End of day) and the shared paper preview */
 .eod-day-x { padding-block-end: .8rem; margin-block-end: .8rem; border-block-end: 1px solid var(--border, #d1d5db); }
 .eod-day-x h3 { margin-block: 0 .3rem; }
