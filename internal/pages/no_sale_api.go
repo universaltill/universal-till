@@ -118,11 +118,10 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 				registerID = regID
 			}
 		}
-		now := time.Now().UTC().Format(time.RFC3339)
 		ev := data.NoSaleEvent{
-			CreatedAt: now, RegisterID: registerID, ActorID: actorID, ApproverID: approverID, Reason: reason,
+			RegisterID: registerID, ActorID: actorID, ApproverID: approverID, Reason: reason,
 		}
-		id, err := recordNoSale(ctx, d, repo, ev, elev.Outcome == elevated)
+		id, err := recordNoSale(ctx, d, repo, &ev, elev.Outcome == elevated)
 		if err != nil {
 			// The drawer is already open; say so rather than pretend.
 			logging.L().Errorf("no-sale: drawer opened but not recorded: %v", err)
@@ -136,14 +135,19 @@ func registerNoSaleAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
-// recordNoSale writes the event row and its audit row atomically.
-func recordNoSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, e data.NoSaleEvent, wasElevated bool) (string, error) {
+// recordNoSale writes the event row and its audit row atomically; an empty
+// e.CreatedAt is stamped (and written back) after the write lock is held.
+func recordNoSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, e *data.NoSaleEvent, wasElevated bool) (string, error) {
 	tx, err := d.Db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = tx.Rollback() }()
-	id, err := repo.InsertNoSaleEvent(ctx, tx, e)
+	// ut-docs#5831 (review B1): stamp after the write lock is held (BeginTx).
+	if e.CreatedAt == "" {
+		e.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	id, err := repo.InsertNoSaleEvent(ctx, tx, *e)
 	if err != nil {
 		return "", err
 	}

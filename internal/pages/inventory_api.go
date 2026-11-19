@@ -202,6 +202,7 @@ func respondSuccess(w http.ResponseWriter, r *http.Request, data StockReceiptRes
 func registerInventoryAPI(mux *http.ServeMux, dp *common.Deps) {
 	mux.HandleFunc("POST /api/inventory/receipt", CreateStockReceipt(dp))
 	mux.HandleFunc("GET /api/inventory/low-stock", GetLowStock(dp))
+	registerInventoryStockTake(mux, dp)
 }
 
 // GetLowStock handles GET /api/inventory/low-stock

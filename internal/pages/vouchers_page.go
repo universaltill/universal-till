@@ -377,7 +377,6 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			NewBalanceMinor:      newBal,
 			Reason:               r.PostFormValue("reason"),
 			ActorUserID:          getSessionUserID(r),
-			Now:                  time.Now().UTC().Format(time.RFC3339),
 		}
 
 		// An additional till corrects on the main till's ledger first and
