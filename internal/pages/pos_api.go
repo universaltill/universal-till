@@ -3184,7 +3184,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor(), withDisplayNo(repo.DisplayNoByReceipt(r.Context(), receiptNo)))
+			shopNameOrEmpty(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale, saleInput.ChargesTotal().Minor(), withDisplayNo(repo.DisplayNoByReceipt(r.Context(), receiptNo)))
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = receiptPrinterWarningHTML(funcs["T"].(func(string) string), httpx.BrowserPrintOff(r), canPerform(d, r, "settings"))
@@ -3198,7 +3198,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if renderErr == nil && printerCfg.VoucherSlip && len(issuedVouchers) > 0 {
 			pl := receiptPrintLocale(customerLocale, locale)
 			set := browserSlipSet{Lang: pl, Dir: slipDir(pl),
-				Slips: receiptBrowserSlips(pl, storeNameOrDefault(r.Context(), d), design.Header, voucherSlipLines(design.VoucherSlipText), issuedVouchers)}
+				Slips: receiptBrowserSlips(pl, shopNameOrEmpty(r.Context(), d), design.Header, voucherSlipLines(design.VoucherSlipText), issuedVouchers)}
 			if slips, err := renderBrowserSlips("voucher_slips_receipt", pl, set); err != nil {
 				log.Printf("tender: browser voucher slips skipped: %v", err)
 			} else {
