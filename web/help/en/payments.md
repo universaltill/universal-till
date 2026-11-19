@@ -34,9 +34,9 @@ Then open the plugin's **Settings** on the **Plugins** page. Each field shows it
 
 **SumUp**
 - **API key** and **Merchant code** — your own, from your SumUp account.
-- **Affiliate key** and **Affiliate app ID** — the application keys for card readers. Enter the affiliate key given to you; leave the app ID at its default unless you are told to change it. Without the affiliate key a reader payment is declined; the till's log file names the reason `no_affiliate_key`, and nothing is sent to SumUp.
+- **Affiliate app ID** — the application ID for card readers. Leave it at its default unless you are told to change it. Universal Till's own SumUp key for card readers is built into the plugin, so there is nothing to enter for it.
 - **Card payment currency** — **Automatic** uses your shop's currency.
-- **Card reader ID** — the paired SumUp Solo reader for this till (this field is per till). With no reader id set, the plugin is in demo mode: it approves without charging a card (an amount ending in .13 is declined, .99 times out). Use it for training only and never for real sales.
+- **Card reader ID** — the paired SumUp Solo reader for this till (this field is per till). With no reader id set, a card payment is declined. The plugin only approves without charging a card when its **Test mode** setting is switched on (an amount ending in .13 is declined, .99 times out); use that for training only and never for real sales.
 
 A plugin added with **Import from file** starts with none of its permissions granted, and its payments are declined until a manager grants them on its settings page; a store install grants them for you.
 
