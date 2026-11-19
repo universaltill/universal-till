@@ -80,6 +80,13 @@ func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint strin
 		return fmt.Errorf("plugin %s: process plugins cannot run on %s (ADR-0121)", pluginID, supervisorGOOS)
 	}
 
+	// ADR-0194 backstop: the App Store channel runs no downloaded code. The
+	// bundled set is wasm only, so a go/native row that reached the DB any
+	// other way (restore, replica) is never exec'd.
+	if err := RefuseCodeRuntime("native"); err != nil {
+		return fmt.Errorf("plugin %s: %w", pluginID, err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

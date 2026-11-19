@@ -26,10 +26,12 @@ func TestInstallFromMarketplace_OwnerWiring(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		paidPlan bool
+		claimed  bool // entitlement.claimed = true on a free plan (ut-docs#3532)
 		key      string
 	}{
-		{"anonymous store", false, "plugins.install.error.register_new"},
-		{"owned store", true, "plugins.install.error.pair_again"},
+		{"anonymous store", false, false, "plugins.install.error.register_new"},
+		{"owned store", true, false, "plugins.install.error.pair_again"},
+		{"claimed, free plan", false, true, "plugins.install.error.pair_again"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolatePluginsDir(t)
@@ -55,6 +57,11 @@ func TestInstallFromMarketplace_OwnerWiring(t *testing.T) {
 			if tc.paidPlan {
 				if err := d.Settings.Set(t.Context(), entitlement.KeyPlan, "shop"); err != nil {
 					t.Fatalf("seed plan: %v", err)
+				}
+			}
+			if tc.claimed {
+				if err := d.Settings.Set(t.Context(), entitlement.KeyStoreClaimed, "true"); err != nil {
+					t.Fatalf("seed claimed: %v", err)
 				}
 			}
 			mux := http.NewServeMux()

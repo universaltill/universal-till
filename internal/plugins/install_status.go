@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -132,8 +133,10 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 // so the UI doesn't read it as the operator's own login expiring.
 //
 // hasOwner says whether the till's store has an owner (the cloud-auth chip's
-// storeHasOwner): an unclaimed till whose credential the cloud rejects is told
-// to register as a new store, not to pair (ut-docs#5187).
+// storeHasOwner, which prefers the cloud's own `claimed` signal and only
+// infers from the cached plan when the till was never told, ut-docs#3532): an
+// unclaimed till whose credential the cloud rejects is told to register as a
+// new store, not to pair (ut-docs#5187).
 func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 	var apiErr *marketplace.APIError
 	if !errors.As(err, &apiErr) || apiErr == nil {
@@ -160,13 +163,36 @@ func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 		return InstallFailure{MessageKey: "plugins.install.error.service_unavailable", Message: "Plugin downloads are not available for this shop.", Status: http.StatusForbidden}, true
 	case "unauthorized", "token_retired":
 		if !hasOwner {
-			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Register this till as a new store.", Status: http.StatusForbidden}, true
+			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Reconnect this till in Settings → Till registration.", Status: http.StatusForbidden}, true
 		}
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	case "device_mismatch":
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	}
 	return InstallFailure{}, false
+}
+
+// marketplaceUnreachable reports a transport-level failure reaching the
+// marketplace (refused, DNS, timeout) found with errors.As through any "%w"
+// wrapper. A caller cancel is not one, and *url.Error alone is not enough: it
+// also wraps scheme/configuration errors. Mirrors netreach.networkDown.
+func marketplaceUnreachable(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // hasOwner is forwarded to MarketplaceCodeFailure.
@@ -177,10 +203,25 @@ func ClassifyInstallError(err error, hasOwner bool) InstallFailure {
 		return f
 	}
 
+	// ADR-0194: the App Store build never installs code plugins.
+	if errors.Is(err, ErrCodePluginRefused) {
+		return InstallFailure{MessageKey: CodeInstallRefusedMsgID, Message: "This build of the app cannot install this plugin.", Retryable: false, Status: http.StatusForbidden}
+	}
+
 	// ADR-0169: a cloud-hosted plugin (type `channel`) can never run on a
 	// till, so a retry can never succeed.
 	if errors.Is(err, ErrCloudHostedPlugin) {
 		return InstallFailure{MessageKey: "plugins.install.error.incompatible", Message: "This plugin is not compatible with this till.", Retryable: false}
+	}
+
+	// ut-docs#5658: a revoked release stays refused until another version is installed.
+	if errors.Is(err, ErrRevokedRelease) {
+		return InstallFailure{MessageKey: "plugins.install.error.revoked", Message: "The marketplace has withdrawn this plugin version, so it can't be installed. Install another version.", Retryable: false}
+	}
+
+	// ut-docs#6548: the till could not reach the marketplace at all.
+	if marketplaceUnreachable(err) {
+		return InstallFailure{MessageKey: "plugins.install.error.unreachable", Message: "Can't reach the plugin marketplace.", Retryable: true}
 	}
 
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))

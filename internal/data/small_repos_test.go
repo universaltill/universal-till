@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
@@ -1155,4 +1156,79 @@ func TestTillsRepo_NameTakenExcept(t *testing.T) {
 			t.Errorf("NameTakenExcept(%q, except=%q) = %v, want %v", tc.name, tc.except, got, tc.want)
 		}
 	}
+}
+
+// TestSettingsRepo_ClearReplicaIdentityMintsOwnDiscoveryID covers
+// ut-docs#5893: a joined till holds its main till's lan_discovery.till_id
+// (shop-wide, copied by the snapshot and every admin pull). Promoting must mint
+// the till its OWN discovery id in the same transaction, so it never
+// advertises, signs codes/proofs with or filters itself by the old main
+// till's id.
+func TestSettingsRepo_ClearReplicaIdentityMintsOwnDiscoveryID(t *testing.T) {
+	newRepo := func(t *testing.T) *SettingsRepo {
+		t.Helper()
+		dbc, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = dbc.Close() })
+		if _, err := dbc.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+			t.Fatal(err)
+		}
+		return NewSettingsRepo(dbc)
+	}
+	ctx := context.Background()
+
+	t.Run("replaces the old main till's id with a fresh UUID", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, LANDiscoveryTillIDSettingsKey, "old-main-id"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		val, ok, err := repo.Get(ctx, LANDiscoveryTillIDSettingsKey)
+		if err != nil || !ok {
+			t.Fatalf("expected %s set, ok=%v err=%v", LANDiscoveryTillIDSettingsKey, ok, err)
+		}
+		if val == "old-main-id" {
+			t.Fatalf("expected a fresh discovery id, still the old main till's %q", val)
+		}
+		if _, err := uuid.Parse(val); err != nil {
+			t.Fatalf("expected a UUID, got %q: %v", val, err)
+		}
+	})
+
+	t.Run("missing id is minted", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		val, ok, err := repo.Get(ctx, LANDiscoveryTillIDSettingsKey)
+		if err != nil || !ok {
+			t.Fatalf("expected %s set, ok=%v err=%v", LANDiscoveryTillIDSettingsKey, ok, err)
+		}
+		if _, err := uuid.Parse(val); err != nil {
+			t.Fatalf("expected a UUID, got %q: %v", val, err)
+		}
+	})
+
+	t.Run("cloud id still copied from sync.till_id", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, "sync.till_id", "roster-till-7"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Set(ctx, LANDiscoveryTillIDSettingsKey, "old-main-id"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if val, ok, err := repo.Get(ctx, TillIdentityCloudIDSettingsKey); err != nil || !ok || val != "roster-till-7" {
+			t.Fatalf("expected %s = roster-till-7, got val=%q ok=%v err=%v", TillIdentityCloudIDSettingsKey, val, ok, err)
+		}
+		if _, ok, _ := repo.Get(ctx, "sync.till_id"); ok {
+			t.Fatal("expected sync.till_id cleared")
+		}
+	})
 }

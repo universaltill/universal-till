@@ -619,3 +619,66 @@ func TestParseQuantityBothSeparators(t *testing.T) {
 }
 
 func timeAfter(sec int) <-chan time.Time { return time.After(time.Duration(sec) * time.Second) }
+
+func TestMyExportCarriesItemID(t *testing.T) {
+	hdr := "id,sku,name,price,category,barcodes,color,active,sold_by_weight,track_stock,modifier_groups,stock,icon\n"
+	row := func(id string) string {
+		return "\"" + id + "\",SK-1,Apples,2.00,Fruit,1000000000011,,true,false,yes,,5,\n"
+	}
+	parse := func(file string) Result {
+		t.Helper()
+		res, err := ParseProducts(strings.NewReader(file), smartOpts())
+		if err != nil || len(res.Items) != 1 {
+			t.Fatalf("parse: %v %d", err, len(res.Items))
+		}
+		return res
+	}
+	res := parse(hdr + row(" abc-123 "))
+	if res.Source != SourceMyExport || res.Items[0].ItemID != "abc-123" {
+		t.Errorf("id not carried: %q %+v", res.Source, res.Items[0])
+	}
+	if got := parse("\xEF\xBB\xBFID" + hdr[2:] + row("x9")).Items[0].ItemID; got != "x9" {
+		t.Errorf("BOM/case header: %q", got)
+	}
+	// a my. export with no active and no barcodes column still carries it
+	res, err := ParseProducts(strings.NewReader("id,sku,name,price,sold_by_weight,track_stock\nq1,SK-1,Apples,2.00,false,yes\n"), smartOpts())
+	if err != nil || res.Source != SourceMyExport || res.Items[0].ItemID != "q1" {
+		t.Errorf("no active/barcodes: %v %q %+v", err, res.Source, res.Items)
+	}
+	for name, id := range map[string]string{
+		"too long":     strings.Repeat("a", 65),
+		"control char": "ab\x01cd",
+		"inner space":  "ab cd",
+		"tab":          "ab\tcd",
+	} {
+		if got := parse(hdr + row(id)).Items[0].ItemID; got != "" {
+			t.Errorf("%s: id kept: %q", name, got)
+		}
+	}
+	if got := parse(hdr + row(strings.Repeat("a", 64))).Items[0].ItemID; got == "" {
+		t.Error("64-byte id dropped")
+	}
+}
+
+func TestNonMyExportIgnoresIDColumn(t *testing.T) {
+	res, err := ParseProducts(strings.NewReader("id,name,price\nZ1,Tea,1.00\n"), smartOpts())
+	if err != nil || len(res.Items) != 1 {
+		t.Fatalf("%v %d", err, len(res.Items))
+	}
+	if res.Source == SourceMyExport || res.Items[0].ItemID != "" {
+		t.Errorf("generic file carried id: %q %+v", res.Source, res.Items[0])
+	}
+}
+
+func TestRowForIgnoresItemID(t *testing.T) {
+	it := ImportItem{Name: "Apples", SKU: "SK-1", PriceMinor: 200}
+	a, ok := RowFor(it)
+	if !ok {
+		t.Fatal("row refused")
+	}
+	it.ItemID = "abc"
+	b, _ := RowFor(it)
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("ItemID leaked into Row: %+v vs %+v", a, b)
+	}
+}

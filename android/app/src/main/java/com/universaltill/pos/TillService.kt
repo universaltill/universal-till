@@ -128,6 +128,10 @@ class TillService : Service() {
                 // "" for the first event and the real value only from the
                 // next boot on.
                 Mobile.setDeviceModel(Build.MODEL)
+                // ADR-0194 §2.3 (ut-docs#6388): the install channel is a build
+                // constant, handed to Go once BEFORE start. It decides whether
+                // plan purchase, claim link/QR and self-update exist.
+                Mobile.setInstallChannel(BuildConfig.INSTALL_CHANNEL)
                 Mobile.setBluetoothBridge(BluetoothBridgeImpl(applicationContext))
                 val addr = Mobile.start(filesDir.absolutePath)
                 address = addr
