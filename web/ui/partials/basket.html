@@ -15,9 +15,13 @@
      piece the interception needs, WHICH placement is configured, is not
      here: it never changes basket-to-basket, so it lives on the one
      element that survives every #basket swap instead, <body>'s own
-     data-order-type-prompt-mode (base.html, httpx.InitOrderTypePromptMode). -->
+     data-order-type-prompt-mode (base.html, httpx.InitOrderTypePromptMode).
+     data-item-counts/data-in-basket-label (ut-docs#3241): same bridge, read
+     by app.js's phone tile badges -- the per-item counts are computed
+     server-side (Basket.ItemCountsByItem); JS only copies them onto tiles. -->
 <div class="basket" id="basket" data-voucher-id="{{ .VoucherID }}" data-voucher-balance-minor="{{ .VoucherBalance.Minor }}"
-     data-lines-count="{{ len .Lines }}" data-order-type-chosen="{{ .OrderTypeChosen }}">
+     data-lines-count="{{ len .Lines }}" data-order-type-chosen="{{ .OrderTypeChosen }}"
+     data-item-counts="{{ .ItemCountsJSON }}" data-in-basket-label="{{ T "basket.tile_in_basket" }}">
   {{ if .ToastMessage }}
     {{ if eq .ToastLevel "error" }}
     <div class="pos-notice error" id="toast-message" role="alert">

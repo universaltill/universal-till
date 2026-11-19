@@ -10,8 +10,8 @@ import (
 )
 
 // wireAbandonedTenderReversal registers the ut-docs#6602 handler on both
-// engines. Idempotent; called from every register func whose routes can
-// reset a basket.
+// engines and the table-session manager (ut-docs#6601). Idempotent; called
+// from every register func whose routes can reset a basket.
 func wireAbandonedTenderReversal(d *common.Deps) {
 	if d == nil {
 		return
@@ -22,10 +22,15 @@ func wireAbandonedTenderReversal(d *common.Deps) {
 	if d.KioskEngine != nil {
 		d.KioskEngine.SetAbandonedTenderHandler(abandonedTenderHandler(d))
 	}
+	// Table-QR session baskets (ut-docs#6601): pushed to live and future ones.
+	if d.SelfOrderSessions != nil {
+		d.SelfOrderSessions.SetAbandonedTenderHandler(abandonedTenderHandler(d))
+	}
 }
 
-// abandonedTenderHandler reverses the captured legs of a tender the cashier
-// dropped (clear, park, open another order) and warns about unknown legs.
+// abandonedTenderHandler reverses the captured legs of a dropped tender
+// (cashier clear, park or open another order; kiosk reset; a table session
+// that expired or ended) and warns about unknown legs.
 // context.Background(): the reversal must survive the cashier navigating away.
 func abandonedTenderHandler(d *common.Deps) pos.AbandonedTenderHandler {
 	return func(reason pos.AbandonReason, t pos.PendingTender) pos.AbandonResult {
@@ -33,7 +38,7 @@ func abandonedTenderHandler(d *common.Deps) pos.AbandonedTenderHandler {
 		what := "tender abandoned (" + string(reason) + ")"
 		failed := reversePaymentLegs(ctx, d, t.Captured, what)
 		warnUnknownLegs(t.Unknown, what)
-		log.Printf("%s: %d captured leg(s) reversed, %d failed, %d of unknown outcome (ut-docs#6602)", what, len(t.Captured)-failed, failed, len(t.Unknown))
+		log.Printf("%s: %d captured leg(s) reversed, %d failed, %d of unknown outcome (ut-docs#6602, #6601)", what, len(t.Captured)-failed, failed, len(t.Unknown))
 		return pos.AbandonResult{Reversed: len(t.Captured) - failed, Failed: failed, Unknown: len(t.Unknown)}
 	}
 }
