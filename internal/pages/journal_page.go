@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -87,7 +88,20 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 				slipCount = slipBearingVouchers(vs, tops)
 			}
 		}
+		// ut-docs#6566: a payment taken on a registry card reader shows the
+		// reader's name while the row still exists; else the stored id as ever.
+		readerNames := map[string]string{}
+		readerRepo := data.NewCardReaderRepo(d.Db)
+		for _, p := range sale.Payments {
+			if p.TerminalID == "" || readerNames[p.TerminalID] != "" {
+				continue
+			}
+			if c, err := readerRepo.GetByRef(r.Context(), p.Method, p.TerminalID); err == nil && c.Name != "" {
+				readerNames[p.TerminalID] = c.Name
+			}
+		}
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
+			"ReaderNames": readerNames,
 			"title":       fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "page.title.receipt_detail"), sale.ReceiptNo),
 			"theme":       d.ResolvedTheme(r),
 			"menuItems":   d.MenuSnapshot(),
@@ -159,7 +173,13 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		q := r.URL.Query()
 		hasTillParam := q.Has("till")
 		tillParam := q.Get("till")
-		f := data.SalesJournalFilter{Limit: limit, Day: day}
+		// Search by either number (ut-docs#6663): bounded, trimmed free text
+		// that only ever reaches a bound SQL parameter.
+		search := strings.TrimSpace(q.Get("q"))
+		if len([]rune(search)) > 32 {
+			search = string([]rune(search)[:32])
+		}
+		f := data.SalesJournalFilter{Limit: limit, Day: day, Search: search}
 		selectedTill := "all"
 		switch {
 		case !hasTillParam:
@@ -207,6 +227,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			Tills:                      tills,
 			SelectedTill:               selectedTill,
 			Day:                        day,
+			Search:                     search,
 			IsReplica:                  isReplica,
 			ExplicitCrossTillOnReplica: explicitCrossTillOnReplica,
 			Truncated:                  truncated,

@@ -925,8 +925,8 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// same-sale/same-line/same-amount), but there's no reason to let
 		// arbitrary-length operator input reach the bridge/device's own
 		// `seen` map at all.
-		if len(refundAttemptID) > 128 {
-			refundAttemptID = ""
+		if len(refundAttemptID) > 128 || strings.HasPrefix(refundAttemptID, reversalRequestIDPrefix) {
+			refundAttemptID = "" // too long, or in the reversal id space (ut-docs#6601)
 		}
 		refundPayload := map[string]any{
 			"method":           method,
@@ -941,11 +941,19 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		var originalPayments []map[string]any
 		for _, op := range detail.Payments {
 			if op.Method == method && op.TraceID != "" {
-				originalPayments = append(originalPayments, map[string]any{
+				entry := map[string]any{
 					"transaction_ref": op.TraceID,
 					"amount":          op.Amount,
 					"tip_amount":      op.TipAmount,
-				})
+				}
+				// ut-docs#6566: the reader this leg was paid on, straight from
+				// the payment row (no registry lookup): a reader removed or
+				// offline since never blocks a refund, which goes by
+				// transaction_ref. Context for the provider, additive.
+				if op.TerminalID != "" {
+					entry["reader_id"] = op.TerminalID
+				}
+				originalPayments = append(originalPayments, entry)
 			}
 		}
 		// ut-docs#6603: with several legs of this method, say how much goes back

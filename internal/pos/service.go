@@ -1828,6 +1828,16 @@ func (s *Service) LockTender(sig string, p PendingTender) {
 	s.tenderLock = sig
 }
 
+// PendingTender returns a copy of what the locked tender left behind.
+func (s *Service) PendingTender() PendingTender {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return PendingTender{
+		Captured: append([]CapturedLeg(nil), s.pendingTender.Captured...),
+		Unknown:  append([]UnknownLeg(nil), s.pendingTender.Unknown...),
+	}
+}
+
 func (s *Service) TenderLock() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1842,6 +1852,24 @@ func (s *Service) SettleTender() PendingTender {
 	s.pendingTender = PendingTender{}
 	s.tenderLock = ""
 	return p
+}
+
+// dropTenderLocked clears the tender attempt id, lock and stash, marks the
+// captured legs handed off, and returns the stash (ut-docs#6601). Clearing the
+// attempt id makes an in-flight tender reverse only legs not handed off.
+// Caller must hold s.mu.
+func (s *Service) dropTenderLocked() PendingTender {
+	s.tenderAttemptID = ""
+	s.tenderLock = ""
+	dropped := s.pendingTender
+	s.pendingTender = PendingTender{}
+	for _, l := range dropped.Captured {
+		if s.handedOff == nil || len(s.handedOff) > 4096 {
+			s.handedOff = map[string]bool{}
+		}
+		s.handedOff[l.RequestID] = true
+	}
+	return dropped
 }
 
 // resetLocked is Reset's lock-free core — also called by Restore before
@@ -1867,16 +1895,7 @@ func (s *Service) resetLocked() PendingTender {
 	s.orderTypeChosen = false
 	s.tableID = ""
 	s.tableLabel = ""
-	s.tenderAttemptID = ""
-	s.tenderLock = ""
-	dropped := s.pendingTender
-	s.pendingTender = PendingTender{}
-	for _, l := range dropped.Captured {
-		if s.handedOff == nil || len(s.handedOff) > 4096 {
-			s.handedOff = map[string]bool{}
-		}
-		s.handedOff[l.RequestID] = true
-	}
+	dropped := s.dropTenderLocked()
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""

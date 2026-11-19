@@ -21,6 +21,10 @@ const DOCS_SHOTS_NOW = '2026-01-02T15:04:05Z';
 // the two above, set ONLY here: the e2e suite's tills stay sale-free. The
 // screenshots address that fixed window through pinnedQuery in
 // tests-docs/docs-shots.spec.ts.
+//
+// UT_DOCS_SHOTS_NO_DAILY_BACKUP stops the till's daily backup, which fires ~2
+// minutes after boot: otherwise the `backups-card` shot shows "No backups yet"
+// or a wall-clock-named file depending on run speed (ut-docs#6566). Harness only.
 const DOCS_SHOTS_ENV = {
   // The server renders dates in time.Local; pin it so a regenerating machine
   // in any timezone (e.g. UTC+13) prints the same dates as CI (ut-docs#359).
@@ -28,6 +32,7 @@ const DOCS_SHOTS_ENV = {
   UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW,
   UT_DOCS_SHOTS_DISK_ROOMY: '1',
   UT_DOCS_SHOTS_SEED_SALES: '1',
+  UT_DOCS_SHOTS_NO_DAILY_BACKUP: '1',
 };
 
 // The manual's screenshot harness (`make docs-shots`) — captures every routed

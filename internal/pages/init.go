@@ -553,6 +553,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
+	registerNameShop(mux, dp)                         // ut-docs#4391: ask a manager on an unnamed main till for the shop/till name
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
 	registerNextStepsUI(mux, dp)                      // ut-docs#5058 UT-3: dismiss the "Next steps" card after a cloud setup
 	registerMoveApproval(mux, dp)                     // ut-docs#5127 UT-1b: approve or decline a move into another shop
@@ -666,6 +667,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })          // background unattended update (ut-docs#79); joined by app.Run's drain
 	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })      // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
 	StartFiscalSignReconcileSweep(bgCtx, dp, wg)                                                                 // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
+	backfillRegionalLocaleFromCountry(ctx, dp)                                                                   // ut-docs#5751: unconfirmed same-language locale takes the country's region (en-US -> en-GB); before #1892's backfill and the base-plugin retry
 	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                      // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
 	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
@@ -734,6 +736,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerRefund(mux, dp)
 	registerUsers(mux, dp, authSvc)
 	registerPermissionSettings(mux, dp) // super_admin-only role→action grant matrix editor (ut-docs#556)
+	registerCardReaders(mux, dp)        // ut-docs#6566: per-till card reader registry: picker + manager page
 	registerLocations(mux, dp)
 	registerRegisters(mux, dp)        // registers admin: create/rename/deactivate tills (ut-docs#651)
 	registerFiscalRegisterDE(mux, dp) // §146a Abs. 4 AO fiscal register (ut-docs#665)
@@ -790,7 +793,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// mux, so a panic anywhere in the chain gets a clean response. The CSP
 	// header wrap sits just inside it so login/setup pages, auth redirects
 	// and recovered 500s all carry the header too.
-	return recoverMiddleware(cspWrap(lanWrap(demoWrap(auth.Middleware(boosted, authSvc))))), dp
+	return recoverMiddleware(cspWrap(lanWrap(demoWrap(auth.Middleware(nameShopGate(boosted, dp), authSvc))))), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

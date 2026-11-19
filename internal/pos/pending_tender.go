@@ -11,12 +11,18 @@ type CapturedLeg struct {
 	Amount         money.Money // exactly what the authorize captured (incl. reader tip)
 	TransactionRef string      // provider ref (ADR-0196), may be ""
 	TipAmount      money.Money
+	// ReaderRef is the provider reader id the authorize ran on (ut-docs#6566),
+	// "" for a method with no registry reader; a reversal sends it back.
+	ReaderRef string
 }
 
 // UnknownLeg is a leg whose authorize answered outcome_unknown (ut-docs#6600).
 type UnknownLeg struct {
 	MethodID, Currency, RequestID string
 	Amount                        money.Money
+	// ReaderRowID is the card reader registry row the authorize ran on (ut-docs#6566),
+	// "" for a method with no registry reader: the picker shows it pinned.
+	ReaderRowID string
 }
 
 // PendingTender is what a locked tender leaves behind on the engine.
@@ -35,6 +41,9 @@ const (
 	AbandonCleared  AbandonReason = "the basket was cleared"
 	AbandonParked   AbandonReason = "the basket was parked"
 	AbandonReplaced AbandonReason = "another order was opened over it"
+	// Table-QR session baskets (ut-docs#6601).
+	AbandonSessionExpired AbandonReason = "the table order session expired"
+	AbandonSessionEnded   AbandonReason = "the table order session ended"
 )
 
 // AbandonResult is what the handler did; kept as a one-shot notice for the UI.
@@ -61,6 +70,23 @@ func (s *Service) TakeAbandonNotice() (AbandonResult, bool) {
 	r := *s.abandonNotice
 	s.abandonNotice = nil
 	return r, true
+}
+
+// AbandonTender drops the tender state only (the basket stays, no recompute)
+// and hands what it held to the handler (ut-docs#6601). Handler runs after
+// s.mu is released.
+func (s *Service) AbandonTender(r AbandonReason) {
+	s.mu.Lock()
+	p := s.dropTenderLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(r, p)
+}
+
+// HasPendingTender reports whether a tender is locked or holds legs.
+func (s *Service) HasPendingTender() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tenderLock != "" || !s.pendingTender.IsZero()
 }
 
 // handOffAbandoned runs the registered handler. Caller must NOT hold s.mu.

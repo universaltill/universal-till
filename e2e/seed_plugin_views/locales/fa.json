@@ -16,5 +16,7 @@
   "e2eviews.job.intro": "اجرای یک کار طولانی نمونه.",
   "e2eviews.job.run": "اجرای کار",
   "e2eviews.job.progress": "کار نمونه در نیمه راه",
-  "e2eviews.job.done": "کار نمونه تمام شد"
+  "e2eviews.job.done": "کار نمونه تمام شد",
+  "e2eviews.paged_a.title": "جدول صفحه‌بندی A",
+  "e2eviews.paged_b.title": "جدول صفحه‌بندی B"
 }

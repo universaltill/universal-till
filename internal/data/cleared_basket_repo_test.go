@@ -37,10 +37,16 @@ FROM cleared_baskets WHERE id = ?`, id).Scan(&createdAt, &localDate, &reg, &acto
 	}
 }
 
-func TestInsertClearedBasket_RequiresCreatedAt(t *testing.T) {
+// ut-docs#5831: an empty CreatedAt is stamped by the repo under the write lock.
+func TestInsertClearedBasket_EmptyCreatedAtStampedByRepo(t *testing.T) {
 	d, _ := eod1012OpenDB(t)
-	if _, err := data.NewPOSRepo(d.DB).InsertClearedBasket(context.Background(), data.ClearedBasket{LineCount: 1}); err == nil {
-		t.Fatal("insert without CreatedAt must fail")
+	id, err := data.NewPOSRepo(d.DB).InsertClearedBasket(context.Background(), data.ClearedBasket{LineCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var at, day string
+	if err := d.DB.QueryRow(`SELECT created_at, local_date FROM cleared_baskets WHERE id = ?`, id).Scan(&at, &day); err != nil || at == "" || day == "" {
+		t.Fatalf("stamp = %q %q err=%v", at, day, err)
 	}
 }
 

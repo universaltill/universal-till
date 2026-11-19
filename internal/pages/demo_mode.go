@@ -167,7 +167,14 @@ var demoDeniedRoutes = map[string]bool{
 	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
 	// demo visitor needs.
 	"POST /csp-report": true,
-	"GET /csp-report":  true,
+	// Card readers (ut-docs#6566): the manager's per-till reader list holds
+	// device ids of a real payment provider; a demo till has no readers to
+	// manage and a public visitor must not add one.
+	"GET /settings/card-readers":              true,
+	"POST /settings/card-readers":             true,
+	"POST /settings/card-readers/{id}":        true,
+	"POST /settings/card-readers/{id}/remove": true,
+	"GET /csp-report":                         true,
 	// Online orders (ADR-0169 §9, ut-docs#4768): a demo till has no sales
 	// channel; the pages are shop data a public visitor has no use for.
 	// Slice D (accept/pick/pack/ship/cancel): also writes to a cloud sales channel.
@@ -281,6 +288,7 @@ var demoDeniedRoutes = map[string]bool{
 	// The plugin camera-identify seam (ut-docs#3873): a photo upload
 	// and a plugin job; its poll has no job to find in a demo.
 	"GET /api/pos/identify/plugin":  true,
+	"GET /api/pos/card-readers":     true, // ut-docs#6566: the reader picker is read-only (state + choice), no payment is taken by it
 	"POST /api/pos/identify/plugin": true,
 	// Its pick (ut-docs#4006): stores a photo; no job to pick from in a demo.
 	"POST /api/pos/identify/plugin/pick": true,
@@ -654,6 +662,8 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/designer/categories/{id}":            true,
 	"POST /api/designer/categories/{id}/active":     true,
 	"POST /api/inventory/receipt":                   true,
+	"POST /api/inventory/stock-take":                true,
+	"GET /ui/inventory/stock-take":                  true,
 	// Orders, kitchen display and routing (staff side, local).
 	"GET /api/orders/stream":               true,
 	"GET /kitchen-display/{station_id}":    true,
@@ -803,6 +813,8 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/save":                           true,
 	"POST /api/settings/staff-languages":                true,
 	"POST /api/settings/store-name":                     true,
+	"GET /name-shop":                                    true, // ut-docs#4391: allowed so an unnamed demo till could still reach the page (denied would 403 every gated admin page); same as POST /api/settings/store-name above
+	"POST /name-shop":                                   true,
 	"POST /api/settings/till-name":                      true,
 	"POST /api/settings/till-register":                  true,
 	"POST /api/settings/ui-scale":                       true,
