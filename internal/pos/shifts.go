@@ -149,8 +149,11 @@ func OpenShift(ctx context.Context, sqlDB *sql.DB, in ShiftInput) (OpenedShift, 
 		shiftID = uuid.NewString()
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	// The stamp is taken INSIDE the write transaction (ut-docs#5831 B1): a stamp read
+	// before the lock but committed after a Z's bound would belong to no Z window.
+	var now string
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
+		now = time.Now().UTC().Format(time.RFC3339)
 		if err := repo.InsertShift(ctx, tx, shiftID, in.RegisterID, in.CashierID, in.OpeningCash.Minor(), now); err != nil {
 			return err
 		}
@@ -219,10 +222,12 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) (ClosedS
 	}
 
 	newFloat := in.ClosingCash - in.Skim
-	now := time.Now().UTC().Format(time.RFC3339)
 	variance := in.ClosingCash - money.FromMinor(expectedCash)
 
+	// Stamp inside the write transaction (ut-docs#5831 B1), see OpenShift.
+	var now string
 	err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
+		now = time.Now().UTC().Format(time.RFC3339)
 		if err := repo.UpdateShiftClose(ctx, tx, in.ShiftID, in.ClosingCash.Minor(), expectedCash, newFloat.Minor(), in.Note, in.CountProtocol, now); err != nil {
 			return err
 		}
