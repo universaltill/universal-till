@@ -191,7 +191,8 @@ func TestNameShopGate_BoostedNavGetsHXRedirect(t *testing.T) {
 
 func TestNameShopGate_SaleScreenNeverRedirects(t *testing.T) {
 	h, _ := gateFixture(t, "", "")
-	for _, p := range []string{"/", "/tables", "/open-orders"} {
+	for _, p := range []string{"/", "/tables", "/open-orders", "/orders/R-1", "/invoice/INV-1", "/shifts", "/report-issue",
+		"/journal/1", "/refund/1", "/self-order/menu", "/o/abc"} {
 		if rec := serveGate(h, gateReq("GET", p, nil), &mgrUser); rec.Code != 200 {
 			t.Fatalf("%s: code=%d, the sale flow must never be gated", p, rec.Code)
 		}

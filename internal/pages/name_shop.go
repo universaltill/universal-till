@@ -96,13 +96,16 @@ var nameShopExactPaths = map[string]bool{
 	"/healthz": true, "/version": true, "/csp-report": true, "/favicon.ico": true,
 	// Selling surfaces besides "/" (R2).
 	"/tables": true, "/open-orders": true, "/orders": true, "/self-order": true,
+	// Cash-up, bug reports and the receipt/invoice detail pages linked from
+	// the exempt /orders list (review 2026-11-19).
+	"/shifts": true, "/report-issue": true,
 	// The gate's own page and the manual.
 	nameShopPath: true, "/help": true,
 }
 
 var nameShopExemptPrefixes = []string{
 	"/api/", "/ui/", "/v1/", "/notices/", // APIs, fragments, polls
-	"/setup/", "/help/",
+	"/setup/", "/help/", "/orders/", "/invoice/",
 	"/self-order/", "/kitchen-display/", "/o/", "/refund/", "/journal/", "/plugin/", // selling / customer-facing / plugin-owned (R2); /journal/ is the /orders → refund path (review M1)
 	"/public/", "/themes/", "/plugin-icons/", "/plugin-fonts/", "/ext/", // assets
 	"/settings/cloud/move/", // move approval must never wait on a name prompt
