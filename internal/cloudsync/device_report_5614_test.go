@@ -26,7 +26,7 @@ func (s *settingHooks) get() string { s.mu.Lock(); defer s.mu.Unlock(); return s
 
 func (s *settingHooks) hooks(onSet func()) Hooks {
 	return Hooks{
-		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
+		SetTillSetting: func(ctx context.Context, key, value string, _ *string) (string, error) {
 			s.mu.Lock()
 			s.val = value
 			s.mu.Unlock()
@@ -109,7 +109,7 @@ func TestTick_NoExtraPostWithoutReportChange(t *testing.T) {
 		}},
 		{"set_till_setting failed", []map[string]any{setTillDirective("f1", "true")}, func(st *settingHooks) Hooks {
 			h := st.hooks(nil)
-			h.SetTillSetting = func(ctx context.Context, k, v string) (string, error) { return "", errors.New("refused") }
+			h.SetTillSetting = func(ctx context.Context, k, v string, _ *string) (string, error) { return "", errors.New("refused") }
 			return h
 		}},
 		{"applied but value unchanged", []map[string]any{setTillDirective("u1", "false")}, func(st *settingHooks) Hooks { return st.hooks(nil) }},
