@@ -14,7 +14,7 @@ func sampleSlip(code, holder string) VoucherSlip {
 		StoreName: "Cafe Muster",
 		Header:    []string{"Hauptstr. 1"},
 		Charset:   "utf8",
-		Voucher:   VoucherBlock{Label: "Gift voucher", Amount: "25.00", Holder: holder, Code: code, Issued: true},
+		Voucher:   VoucherBlock{Label: "Gift voucher", Amount: "25.00", Holder: holder, Code: code, Slip: true},
 	}
 }
 
@@ -191,5 +191,97 @@ func TestPrintVoucherSlip_Off(t *testing.T) {
 		if err := PrintVoucherSlip(context.Background(), Config{Mode: m}, sampleSlip("GV-A", "")); err != nil {
 			t.Errorf("mode %q: %v", m, err)
 		}
+	}
+}
+
+// ut-docs#5793: the Slip flag only selects slips; it never changes a receipt.
+func TestRender_SlipFlagDoesNotChangeReceipt(t *testing.T) {
+	mk := func(slip bool) Doc {
+		return Doc{
+			StoreName: "Cafe Muster", Charset: "utf8", VoucherHeading: "Gift vouchers",
+			Vouchers: []VoucherBlock{{Label: "Gift voucher top-up", Amount: "+20.00", Holder: "For Anna", Balance: "New balance 35.00", Code: "GV-T", Slip: slip}},
+		}
+	}
+	if !bytes.Equal(Render(mk(true)), Render(mk(false))) {
+		t.Error("Render differs with Slip set")
+	}
+	if RenderText(mk(true)) != RenderText(mk(false)) {
+		t.Error("RenderText differs with Slip set")
+	}
+}
+
+func TestRenderVoucherSlip_TopUpBlock(t *testing.T) {
+	s := VoucherSlip{
+		StoreName: "Cafe Muster", Charset: "utf8",
+		Voucher: VoucherBlock{Label: "Gift voucher top-up", Amount: "+20.00", Holder: "For Anna", Balance: "New balance 35.00", Code: "GV-T", Slip: true},
+	}
+	out := RenderVoucherSlip(s)
+	for _, want := range []string{"Gift voucher top-up", "+20.00", "For Anna", "New balance 35.00"} {
+		if !bytes.Contains(out, encodeText(want, s.Charset)) {
+			t.Errorf("slip lacks %q", want)
+		}
+	}
+	if !bytes.Contains(out, []byte("{BGV-T")) {
+		t.Error("code not printed as CODE128")
+	}
+	txt := RenderVoucherSlipText(s)
+	if !strings.Contains(txt, "GV-T") || !strings.Contains(txt, "New balance 35.00") {
+		t.Errorf("text slip lacks code/balance: %q", txt)
+	}
+	if strings.Contains(txt, "\x1d\x6b") {
+		t.Error("text slip must carry no barcode command")
+	}
+}
+
+func dirtySlip(f func(string) string, cs string) VoucherSlip {
+	in := func(s string) string { return f(s + kick + forged) }
+	return VoucherSlip{
+		StoreName: in("Shop"), Header: []string{in("Hdr")}, Note: in("Reprinted"), Charset: cs,
+		Voucher: VoucherBlock{Label: in("Gift"), Amount: in("5.00"), Holder: in("Anna"), Balance: in("Bal"), Void: in("VOID"), Code: in("CODE")},
+	}
+}
+
+func TestRenderVoucherSlip_ControlRunesNeverReachPrinter(t *testing.T) {
+	ident := func(s string) string { return s }
+	for _, cs := range allCharsets {
+		out := RenderVoucherSlip(dirtySlip(ident, cs))
+		if n := bytes.Count(out, cmdKickDrawer); n != 0 {
+			t.Errorf("%q: cmdKickDrawer x%d", cs, n)
+		}
+		if want := RenderVoucherSlip(dirtySlip(twinOf, cs)); !bytes.Equal(out, want) {
+			t.Errorf("%q: differs from twin\n got %q\nwant %q", cs, out, want)
+		}
+		clean := RenderVoucherSlip(dirtySlip(func(string) string { return "x" }, cs))
+		if a, b := bytes.Count(out, []byte("\n")), bytes.Count(clean, []byte("\n")); a != b {
+			t.Errorf("%q: %d newlines, clean slip has %d", cs, a, b)
+		}
+	}
+}
+
+// ut-docs#6044: the reprint's balance row clips only its label, never the amount.
+func TestRenderVoucherSlip_BalanceRowKeepsAmountWhole(t *testing.T) {
+	s := VoucherSlip{
+		StoreName: "Cafe Muster", Charset: "utf8",
+		Voucher: VoucherBlock{
+			Label: "Gift voucher", Amount: "25.00", Code: "GV-P", Slip: true,
+			BalanceLabel:  "Verbleibendes Guthaben am Elften November Zweitausendsechsundzwanzig",
+			BalanceAmount: "1.234,56 EUR",
+		},
+	}
+	var row string
+	for _, l := range strings.Split(RenderVoucherSlipText(s), "\n") {
+		if strings.HasSuffix(l, "1.234,56 EUR") {
+			row = l
+		}
+	}
+	if row == "" || displayWidth(row) != Width {
+		t.Fatalf("no full-width row ending in the whole amount: %q", row)
+	}
+	if !bytes.Contains(RenderVoucherSlip(s), []byte("1.234,56 EUR")) {
+		t.Error("ESC/POS slip lost the amount")
+	}
+	// Top-up slips (Balance field) are unchanged.
+	if !strings.Contains(RenderVoucherSlipText(VoucherSlip{Charset: "utf8", Voucher: VoucherBlock{Label: "x", Amount: "1", Balance: "New balance 35.00", Code: "C"}}), "New balance 35.00\n") {
+		t.Error("Balance field output changed")
 	}
 }

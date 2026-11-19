@@ -92,7 +92,22 @@ grep -v "${MIC}" "${FIX}/ios/UniversalTill/tr.lproj/InfoPlist.strings" > "${OUT}
 cp "${OUT}" "${FIX}/ios/UniversalTill/tr.lproj/InfoPlist.strings"
 assert_fails "${MIC} missing from tr.lproj/InfoPlist.strings"
 
-# 7. The real tree must pass -- the guard is wired to today's fix.
+# 7. Stripe Terminal (ut-docs#3049) needs location and Bluetooth keys:
+#    payments are disabled without location, and the SDK's discovery
+#    asserts without the Bluetooth key even for Tap to Pay.
+LOC=NSLocationWhenInUseUsageDescription
+BT=NSBluetoothAlwaysUsageDescription
+fixture "${CAM} ${MIC}" "x"
+printf 'packages:\n  StripeTerminal:\n    url: https://github.com/stripe/stripe-terminal-ios-spm\n' >> "${FIX}/ios/project.yml"
+assert_fails "StripeTerminal package without ${LOC} and ${BT}"
+fixture "${CAM} ${MIC} ${LOC}" "x"
+printf 'packages:\n  StripeTerminal:\n    url: https://github.com/stripe/stripe-terminal-ios-spm\n' >> "${FIX}/ios/project.yml"
+assert_fails "StripeTerminal package without ${BT}"
+fixture "${CAM} ${MIC} ${LOC} ${BT}" "x"
+printf 'packages:\n  StripeTerminal:\n    url: https://github.com/stripe/stripe-terminal-ios-spm\n' >> "${FIX}/ios/project.yml"
+assert_passes "StripeTerminal package with ${LOC} and ${BT}"
+
+# 8. The real tree must pass -- the guard is wired to today's fix.
 if bash "${GUARD}" >"${OUT}" 2>&1; then
   echo "PASS (correctly accepted): real repository tree"
 else

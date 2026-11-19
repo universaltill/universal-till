@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { WORKER_TILL_EFFECTS_LEVEL } from './worker-till';
+import { createTable, deactivateAllTables } from './helpers';
 
 // ut-docs#3351: on the iPhone app (TestFlight v0.30.13/14) the product owner
 // found that "all popup menus open in a zoom mode and I have to pinch them to
@@ -192,6 +193,52 @@ async function gotoRoute(page: Page, route: string) {
   await page.waitForTimeout(300);
 }
 
+// ut-docs#3411: the sweep above measures #modifier-modal and #table-modal
+// only EMPTY (opened with .show() before the server fills them) -- the e2e
+// seed has no modifier item and no table, so a modifier picker whose option
+// grid is wider than a phone would open cut off and the sweep would still
+// pass. These seed one of each and measure the popups the way a phone user
+// opens them, with their server-filled content inside.
+const RUN = Date.now().toString(36);
+let seq = 0;
+type ModItem = { itemId: string; name: string; barcode: string; optionName: string; plain: { itemId: string; name: string; barcode: string } };
+
+// Same seeding path as popup-zoom-2944.spec.ts's seedModifierItem: a CSV
+// import, a sell-screen tile, one modifier group with one option. A fresh
+// item per test (a re-import of a deactivated SKU lands on the inactive row).
+// Plus one plain item with its own tile, for the table-picker phase's basket
+// line: nothing in the shared worker till's seed is reliably sellable there.
+async function seedModifierItem(page: Page): Promise<ModItem> {
+  const tag = `${RUN}${++seq}`;
+  const name = `Pf3411 Mod ${tag}`;
+  const barcode = `PF3411BC-${tag}`;
+  const plainName = `Pf3411 Plain ${tag}`;
+  const plainBarcode = `PF3411PL-${tag}`;
+  const csv = `Name,SKU,Barcode,Price,Category,In stock\n${name},PF3411${tag},${barcode},1.00,Pf3411 Cat,1\n${plainName},PF3411P${tag},${plainBarcode},1.00,Pf3411 Cat,1\n`;
+  await page.goto('/import');
+  await page.setInputFiles('input[type=file]', { name: `import-pf3411-${RUN}.csv`, mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/import'), { timeout: 15_000 }),
+    page.getByRole('button', { name: /Import/i }).last().click({ timeout: 15_000 }),
+  ]);
+  await page.goto('/catalog');
+  const itemId = (await page.locator(`.catalog-row[data-name="${name}"]`).first().getAttribute('data-id', { timeout: 15_000 }))!;
+  const plainId = (await page.locator(`.catalog-row[data-name="${plainName}"]`).first().getAttribute('data-id', { timeout: 15_000 }))!;
+  expect((await page.request.post('/api/buttons/add', { form: { itemId, label: name, code: barcode } })).ok()).toBe(true);
+  expect((await page.request.post('/api/buttons/add', { form: { itemId: plainId, label: plainName, code: plainBarcode } })).ok()).toBe(true);
+  const groupName = `Size ${tag}`;
+  expect((await page.request.post('/api/catalog/modifier-group', { form: { itemId, name: groupName, minSelect: '0', maxSelect: '1' } })).ok()).toBe(true);
+  const html = await (await page.request.get(`/api/catalog/modifier-groups-panel?item_id=${itemId}`)).text();
+  const at = html.indexOf(`>${groupName}<`);
+  expect(at).toBeGreaterThan(-1);
+  const ids = [...html.slice(0, at).matchAll(/data-group-id="([^"]*)"/g)];
+  const groupId = ids[ids.length - 1][1];
+  // A realistic long-ish option label, so the option grid has to wrap.
+  const optionName = `Extra large with oat milk ${tag}`;
+  expect((await page.request.post('/api/catalog/modifier-option', { form: { groupId, itemId, name: optionName } })).ok()).toBe(true);
+  return { itemId, name, barcode, optionName, plain: { itemId: plainId, name: plainName, barcode: plainBarcode } };
+}
+
 for (const [w, h] of [[390, 844], [440, 956]] as const) {
   test.describe(`phone ${w}px: every popup opens fitted to the screen (ut-docs#3351)`, () => {
     test.use({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
@@ -299,6 +346,113 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
       // 31 distinct today; the floor lets at most one silently drop out.
       expect(distinct.size, [...distinct].join(' ')).toBeGreaterThanOrEqual(30);
       expect(failures, failures.join('\n')).toEqual([]);
+    });
+    test(`server-filled popups (modifier picker, table picker) fit at ${w}px with their real content (ut-docs#3411)`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const tableLabel = `E2E Pf3411 Table ${w}`;
+      // This test measures settled boxes, not animations. With motion on, a
+      // cross-document view transition can stall the page's frames after a
+      // navigation or reload (every later tap and `load` wait then hangs, CI
+      // only: ut-docs#3411), so turn it off for this test.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const item = await test.step('seed a modifier item', () => seedModifierItem(page), { timeout: 45_000 });
+      try {
+        const failures: string[] = [];
+        const fit = async (sel: string, via: string) => {
+          const f = await measure(page, sel);
+          expect(f.box.w, `${sel} must be on screen to be measured`).toBeGreaterThan(0);
+          const p = problems(f, w);
+          // measure() waves through content inside a box that scrolls or
+          // clips sideways (a table's own scroll card is reachable without a
+          // pinch). Neither picker has such a box on purpose, and the popup
+          // itself scrolls -- so an option grid wider than the phone would
+          // just open cut off at the popup's edge and pass. Here, nothing in
+          // the popup (itself included) may overflow sideways.
+          const cut = await page.evaluate((sel) => {
+            const out: string[] = [];
+            const el = document.querySelector(sel)!;
+            [el, ...Array.from(el.querySelectorAll('*'))].forEach((e) => {
+              if (e.matches('input, select, textarea') || !e.getClientRects().length) return;
+              if (!/(auto|scroll|hidden|clip)/.test(getComputedStyle(e).overflowX)) return;
+              if (e.scrollWidth > e.clientWidth + 1) out.push(`${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}.${String(e.className).trim().split(/\s+/)[0]} (scrollWidth=${e.scrollWidth}, clientWidth=${e.clientWidth})`);
+            });
+            return out.slice(0, 5);
+          }, sel);
+          if (cut.length) p.push(`content cut off sideways: ${cut.join(', ')}`);
+          if (p.length) failures.push(`${sel} (${via}): ${p.join(' | ')}`);
+        };
+
+        // ut-docs#3411: a CI-only hang (passes locally, also in a full
+        // CI-mode run). Every phase has its own step timeout and
+        // every tap its own action timeout, so a hang fails fast, names the
+        // phase and keeps the action's call log (why the tap never landed),
+        // instead of a bare "Test timeout exceeded" from the cleanup below.
+        const STEP = { timeout: 30_000 };
+        const TAP = { timeout: 15_000 };
+
+        // The modifier picker, opened by tapping the item's sell-screen tile.
+        await test.step('modifier picker: tap the item tile', async () => {
+          await page.request.post('/api/pos/reset');
+          await gotoRoute(page, '/');
+          const tile = page.locator('.btn-tile:visible', { hasText: item.name });
+          await expect(tile).toBeVisible();
+          await Promise.all([
+            page.waitForResponse((r) => r.url().includes('/ui/pos/modifiers'), TAP),
+            tile.click(TAP),
+          ]);
+        }, STEP);
+        await test.step('modifier picker: measure', async () => {
+          const mod = page.locator('#modifier-modal');
+          await expect(mod).toHaveJSProperty('open', true);
+          // Not vacuous: the server's option grid is inside, not the empty frame.
+          await expect(mod).toContainText(item.optionName);
+          await fit('#modifier-modal', 'item tile tap');
+          await closeAll(page);
+        }, STEP);
+
+        // The table picker, opened from the phone's basket sheet with one
+        // line in the basket and one seeded table (the trigger shows once a
+        // table exists).
+        await test.step('table picker: seed one table', async () => {
+          await deactivateAllTables(page);
+          await createTable(page, tableLabel);
+        }, { timeout: 45_000 }); // a login + one reload per active table
+        await test.step('table picker: open the basket sheet', async () => {
+          await page.request.post('/api/pos/reset');
+          await gotoRoute(page, '/');
+          // The basket line comes from this test's own plain tile. A POST of
+          // the seed's fixed barcode left the basket empty on CI's shared
+          // worker till, so the phone bar stayed hidden and its tap hung.
+          await page.locator('.btn-tile:visible', { hasText: item.plain.name }).click(TAP);
+          await expect(page.locator('.basket-phonebar'), 'the tile tap must put a line in the basket').not.toHaveClass(/is-empty/);
+          await page.locator('.basket-phonebar').click(TAP);
+          await expect(page.locator('body')).toHaveClass(/pos-sheet-open/);
+          await page.waitForTimeout(400);
+        }, STEP);
+        await test.step('table picker: open and measure', async () => {
+          await page.getByTestId('table-picker-open').click(TAP);
+          const tbl = page.locator('#table-modal');
+          await expect(tbl).toBeVisible();
+          await expect(tbl.locator('.table-picker-option', { hasText: tableLabel })).toBeVisible();
+          await fit('#table-modal', 'basket sheet table picker');
+        }, STEP);
+
+        expect(failures, failures.join('\n')).toEqual([]);
+      } finally {
+        // A dead page (test timeout) must not skip the data cleanup below, and
+        // a cleanup that fails or hangs must not replace the failure above:
+        // the cleanup gets its own time and every call is bounded and logged.
+        test.setTimeout(test.info().timeout + 45_000);
+        const warn = (what: string) => (e: unknown) => console.warn(`pf3411 cleanup ${what}:`, e);
+        await test.step('cleanup', async () => {
+          await closeAll(page).catch(warn('closeAll'));
+          await page.request.post('/api/buttons/remove', { form: { code: item.barcode }, timeout: 5_000 }).catch(warn('buttons/remove'));
+          await page.request.post('/api/catalog/item/deactivate', { form: { id: item.itemId }, timeout: 5_000 }).catch(warn('item/deactivate'));
+          await page.request.post('/api/buttons/remove', { form: { code: item.plain.barcode }, timeout: 5_000 }).catch(warn('plain buttons/remove'));
+          await page.request.post('/api/catalog/item/deactivate', { form: { id: item.plain.itemId }, timeout: 5_000 }).catch(warn('plain item/deactivate'));
+          await deactivateAllTables(page).catch(warn('deactivateAllTables'));
+        }, { timeout: 40_000 }).catch(warn('step'));
+      }
     });
   });
 }
