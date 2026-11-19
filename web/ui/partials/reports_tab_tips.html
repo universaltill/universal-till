@@ -1,7 +1,7 @@
 {{ if .CanView }}
-<div class="card">
+{{ if .StoreName }}<div class="card">
   <p class="muted">{{ T "reports.tips.place_of_business" }}: <strong>{{ .StoreName }}</strong></p>
-</div>
+</div>{{ end }}
 
 {{ $qs := printf "days=%d" .Days }}
 {{ if .Period }}{{ $qs = printf "period=%s&anchor=%s" .Period .Anchor }}{{ end }}

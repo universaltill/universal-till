@@ -54,7 +54,7 @@ func voucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, bal sli
 		issuedDate = slipDateLine(loc, "receipt.vouchers.issued_on", v.CreatedAt)
 	}
 	return print.VoucherSlip{
-		StoreName: storeNameOrDefault(ctx, d),
+		StoreName: shopNameOrEmpty(ctx, d),
 		Header:    rd.Header,
 		Logo:      receiptLogoRaster(rd),
 		Charset:   cfg.Charset,

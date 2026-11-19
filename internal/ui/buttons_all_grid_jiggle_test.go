@@ -184,15 +184,20 @@ func TestButtonsHTTPList_JiggleBarTitlePerMode(t *testing.T) {
 	h.Granted = true
 	// No translator is wired in this package's tests, so T renders the key.
 	const quick = `<span class="jiggle-bar-title">buttons.edit_mode.title</span>`
-	const allGrid = `<span class="jiggle-bar-title">buttons.edit_mode.title_all_grid</span>`
+	// ut-docs#3109: the all-grid bar carries a mode class (the phone tier
+	// stacks the sticky chip row under it) and two title spans -- the full
+	// text for wider tiers and a short phone one, toggled by CSS.
+	const allGridFull = `jiggle-bar-title-full">buttons.edit_mode.title_all_grid<`
+	const allGridCompact = `jiggle-bar-title-compact">buttons.edit_mode.title_all_grid_compact<`
+	const chipsBar = `jiggle-bar--chips`
 	h.BrowsingMode = "all_filter_chips"
 	body := renderList(t, h)
-	mustContainAll(t, body, allGrid)
+	mustContainAll(t, body, chipsBar, allGridFull, allGridCompact)
 	mustContainNone(t, body, quick)
 	for _, mode := range []string{"strip_overflow", "category_tabs"} {
 		h.BrowsingMode = mode
 		body := renderList(t, h)
 		mustContainAll(t, body, quick)
-		mustContainNone(t, body, allGrid)
+		mustContainNone(t, body, chipsBar, allGridFull, "title_all_grid_compact")
 	}
 }
