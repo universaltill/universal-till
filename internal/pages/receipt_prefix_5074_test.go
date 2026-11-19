@@ -73,7 +73,13 @@ func (s *prefixShop) enrol(t *testing.T, name, requested string) (string, string
 	if err := s.main.Db.QueryRow(`SELECT receipt_prefix FROM tills WHERE id = ?`, out.Data.TillID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf("T%d-", out.Data.TillNo); stored != want {
+	// ut-docs#6663: the main till grants plain <n>- now; a re-joining legacy
+	// till keeps the T<n>- it asked for.
+	want := fmt.Sprintf("%d-", out.Data.TillNo)
+	if requested != "" && stored == requested {
+		want = requested
+	}
+	if stored != want {
 		t.Fatalf("enrol %q: answered till %d but recorded prefix %q", name, out.Data.TillNo, stored)
 	}
 	return out.Data.TillID, out.Data.Bearer, out.Data.TillNo
@@ -95,7 +101,7 @@ func (s *prefixShop) revoke(t *testing.T, id string) {
 func wantTillNo(t *testing.T, what string, got, want int) {
 	t.Helper()
 	if got != want {
-		t.Fatalf("%s: till number %d (T%d-), want %d (T%d-)", what, got, got, want, want)
+		t.Fatalf("%s: till number %d (%d-), want %d (%d-)", what, got, got, want, want)
 	}
 }
 

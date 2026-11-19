@@ -707,9 +707,15 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			var fiscalNC *fiscalNeverConfiguredError
 			var fiscalTF *fiscalTSEFailingError
 			var cannotSign *fiscalCannotSignError
+			var readerErr *cardReaderError
 			status := http.StatusBadRequest
 			msgKey := "selforder.checkout.failed"
 			switch {
+			case errors.As(err, &readerErr):
+				// ut-docs#6566: no unattended reader is set up (or it is busy):
+				// nothing was charged; generic text, never a reader name.
+				status = http.StatusConflict
+				msgKey = "card_reader.kiosk_none"
 			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"

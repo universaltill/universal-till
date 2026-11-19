@@ -225,7 +225,7 @@ const (
 	StatePaused        RegistrationState = "paused"
 )
 
-// CardStatus is the status-only "Cloud record" card.
+// CardStatus is the status-only block of the Settings Privacy card.
 type CardStatus struct {
 	State       RegistrationState
 	LastCheckin time.Time // zero when none

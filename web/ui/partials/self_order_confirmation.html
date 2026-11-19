@@ -3,7 +3,7 @@
   <!-- ut-docs#1817: DisplayNo is the short customer-facing order number
        (already resolved to ReceiptNo when the sale has none) -- ReceiptNo
        itself is never shown here, it only feeds the tracking QR above. -->
-  <p class="order-confirmation-receipt">{{ T "selforder.confirm.receipt" }}: {{ .DisplayNo }}</p>
+  <p class="order-confirmation-receipt tracking-order-no"><span class="order-no-label">{{ T "selforder.confirm.receipt" }}:</span> <span class="order-no-value" dir="ltr">{{ .DisplayNo }}</span></p>
   <!-- ut-docs#582: counter mode never took payment, so the ordinary
        "sent to the kitchen" hint would be misleading (or, worse, read as a
        promise the kiosk already charged them) -- CounterMode swaps in the

@@ -37,7 +37,9 @@ import (
 // nudge still reaches a manager on every other page they use.
 func registerShopNameNoticeUI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/shop-name-notice", func(w http.ResponseWriter, r *http.Request) {
-		if onSaleScreen(r) {
+		// Also not on the "Name your shop" page itself (ut-docs#4391): it
+		// asks the same question, and the banner's CTA would loop back to it.
+		if onSaleScreen(r) || onNameShopPage(r) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -76,6 +78,20 @@ func onSaleScreen(r *http.Request) bool {
 		}
 		if u, err := url.Parse(v); err == nil {
 			return u.Path == "/"
+		}
+	}
+	return false
+}
+
+// onNameShopPage is onSaleScreen's twin for /name-shop (ut-docs#4391).
+func onNameShopPage(r *http.Request) bool {
+	for _, h := range []string{"HX-Current-URL", "Referer"} {
+		v := r.Header.Get(h)
+		if v == "" {
+			continue
+		}
+		if u, err := url.Parse(v); err == nil {
+			return u.Path == nameShopPath
 		}
 	}
 	return false

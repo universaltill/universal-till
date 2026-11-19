@@ -5,7 +5,7 @@ section: Everyday selling
 order: 20
 public: true
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
-keywords: [cash, card, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
+keywords: [cash, card, card reader, which reader, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---
 
 # Payments
@@ -34,9 +34,9 @@ Then open the plugin's **Settings** on the **Plugins** page. Each field shows it
 
 **SumUp**
 - **API key** and **Merchant code** — your own, from your SumUp account.
-- **Affiliate key** and **Affiliate app ID** — the application keys for card readers. Enter the affiliate key given to you; leave the app ID at its default unless you are told to change it. Without the affiliate key a reader payment is declined; the till's log file names the reason `no_affiliate_key`, and nothing is sent to SumUp.
+- **Affiliate app ID** — the application ID for card readers. Leave it at its default unless you are told to change it. Universal Till's own SumUp key for card readers is built into the plugin, so there is nothing to enter for it.
 - **Card payment currency** — **Automatic** uses your shop's currency.
-- **Card reader ID** — the paired SumUp Solo reader for this till (this field is per till). With no reader id set, the plugin is in demo mode: it approves without charging a card (an amount ending in .13 is declined, .99 times out). Use it for training only and never for real sales.
+- **Card reader ID** — the paired SumUp Solo reader for this till (this field is per till). With no reader id set, a card payment is declined. The plugin only approves without charging a card when its **Test mode** setting is switched on (an amount ending in .13 is declined, .99 times out); use that for training only and never for real sales.
 
 A plugin added with **Import from file** starts with none of its permissions granted, and its payments are declined until a manager grants them on its settings page; a store install grants them for you.
 
@@ -56,6 +56,20 @@ Once at least one payment method exists on the till (cash, card, gift card and v
 What can go wrong: a percent outside 0–100, or a negative fixed amount, is refused before it's saved — fix the number and try again.
 
 Changing either setting needs a manager's or admin's role — the same [manager-approval prompt](/help/elevation) as other settings changes.
+
+## Choosing a card reader
+
+When a till has more than one card reader set up (a manager adds them under **Settings → Payments → Card readers**, see [Card readers](/help/card-readers)), the payment panel shows one **Card** button instead of one button per provider. Under its name the till shows the reader used last, so you can see the default before you tap.
+
+1. Tap **Pay**, then **Card**. The till checks the readers for a moment (never longer than a few seconds, and you can tap **Choose another method** at any time) and shows **Which reader?**.
+2. The reader used last on this till is already selected. To use another one, tap it. Tapping a reader only selects it; nothing is charged yet.
+3. Tap **Pay** on the selected reader. The reader then asks the customer for their card as usual.
+
+Each reader shows what it is doing, in words and an icon: **Ready**, **Busy** (another payment is running on it), **Offline** (the till cannot reach it), **Needs setup** (ask a manager), or **Unknown** (the check did not answer; you can still try it). A reader that cannot be chosen stays in the list with the reason under its name. If only one reader is ready, the till uses it without asking, and says so. If none is ready, use another payment method or ask a manager.
+
+On a split payment, each card part has its own **Reader** choice, so two parts can go to two different readers.
+
+If a card payment could not be confirmed (see **When a card payment can't be confirmed** below), the retry is limited to the reader it was started on; the panel shows only that reader and says so. A card refund goes back through the provider and the reader the sale was paid on, and still works if that reader has since been removed or is switched off.
 
 ## Giving change on a cash sale
 

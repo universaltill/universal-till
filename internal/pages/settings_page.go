@@ -244,6 +244,59 @@ func storeNameForCard(stored string) string {
 	return strings.TrimSpace(stored)
 }
 
+// applyStoreName: the Shop name card's write (ut-docs#3115) — unchanged-name
+// short circuit on a main till, saveShopSettings (joined-till write-through),
+// audit store_name_changed {old,new}. Shared with POST /name-shop
+// (ut-docs#4391). The caller has validated name and passed the elevation gate.
+func applyStoreName(r *http.Request, d *common.Deps, posRepo *data.POSRepo, elev elevationCheck, name string) error {
+	old, _, err := d.Settings.Get(r.Context(), common.KeyStoreName)
+	if err != nil {
+		return err
+	}
+	// Unchanged: nothing to write or audit (ut-cloud's RenameStore
+	// treats a same-name rename the same way). Only on a till that
+	// decides for itself: an additional till's store.name is a mirror
+	// that can lag the main till (a rename from my. or another till not
+	// pulled yet), so a match here proves nothing and short-circuiting
+	// would silently drop the rename. It always forwards, and "old" in
+	// its audit entry is its mirror's value.
+	if strings.TrimSpace(old) == name && !tillFollowsMain(r.Context(), d) {
+		return nil
+	}
+	if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyStoreName: name}); err != nil {
+		return err
+	}
+	settingsAudit(r, posRepo, elev, "settings", common.KeyStoreName, "store_name_changed",
+		map[string]any{"old": old, "new": name})
+	return nil
+}
+
+// applyOwnTillName: this till's own name — till.name on a main till,
+// sync.till_name on a joined one (ut-docs#3292), audit till_name_changed
+// {name,key}, renameOwnRegisterAfterTill. name must be non-empty and already
+// validated. Shared with POST /name-shop (ut-docs#4391).
+func applyOwnTillName(r *http.Request, d *common.Deps, posRepo *data.POSRepo, elev elevationCheck, name string) error {
+	// The key enroll.DeviceName reads for this till's role, as the
+	// cloud's rename_till does (cloudRenameTill): the main till's
+	// own name is till.name; a joined till's is its per-till
+	// sync.till_name, which saveShopSettings keeps local. till.name
+	// is shop-wide there (it holds the main till's name), so writing
+	// it would rename the main till instead (ut-docs#3292).
+	key := "till.name"
+	if tillFollowsMain(r.Context(), d) {
+		key = "sync.till_name"
+	}
+	if err := saveShopSettings(r.Context(), d, elev, map[string]string{key: name}); err != nil {
+		return err
+	}
+	settingsAudit(r, posRepo, elev, "settings", key, "till_name_changed",
+		map[string]any{"name": name, "key": key})
+	if key == "till.name" {
+		renameOwnRegisterAfterTill(r.Context(), d, name)
+	}
+	return nil
+}
+
 // storeNameErrorKey maps a config.NormalizeStoreName refusal to the
 // message the Shop name card shows.
 func storeNameErrorKey(err error) string {
@@ -440,6 +493,7 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
 		"subscription":         !isManager,      // ut-docs#2569, ADR-0060 §6
+		"settings-privacy":     !isManager,      // ADR-0200: the Privacy card is managers-only
 		"settings-diagnostics": !isManager,      // ADR-0092 §7, ut-docs#2169
 		"settings-menulayout":  !isManager,
 		"settings-payments":    !hasPayMethods,
@@ -996,7 +1050,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
 			// ut-docs#4720: the cloud-terms accept step / accepted line.
 			"terms": termsView(r.Context(), d, locale),
-			// ADR-0200: the Cloud record card (status, notice, Stop sending).
+			// ADR-0200: the Privacy card (status, notice, Send usage facts switch).
 			"registrationCard": registrationCardView(r, d, isManager),
 			// ut-docs#5145: the cloud will not re-register this till yet.
 			"registerBlocked": registerBlockedView(r, d, locale),
@@ -2250,7 +2304,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// ADR-0200: the Cloud record card's Stop sending switch.
+	// ADR-0200: the Privacy card's Send usage facts switch.
 	registerRegistrationStop(mux, d, posRepo)
 	registerCloudStaffBreakdownSetting(mux, d, posRepo) // ut-docs#2557
 
@@ -2590,30 +2644,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "store_name", Value: name}}, elev)
 			return
 		}
-		old, _, err := d.Settings.Get(r.Context(), common.KeyStoreName)
-		if err != nil {
-			http.Error(w, "could not save", http.StatusInternalServerError)
-			return
-		}
-		// Unchanged: nothing to write or audit (ut-cloud's RenameStore
-		// treats a same-name rename the same way). Only on a till that
-		// decides for itself: an additional till's store.name is a mirror
-		// that can lag the main till (a rename from my. or another till not
-		// pulled yet), so a match here proves nothing and short-circuiting
-		// would silently drop the rename. It always forwards, and "old" in
-		// its audit entry is its mirror's value.
-		if strings.TrimSpace(old) == name && !tillFollowsMain(r.Context(), d) {
-			settingsRespondSaved(w, r, elev)
-			return
-		}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyStoreName: name}); err != nil {
+		if err := applyStoreName(r, d, posRepo, elev, name); err != nil {
 			if !respondSettingsSyncError(w, r, err) {
 				http.Error(w, "could not save", http.StatusInternalServerError)
 			}
 			return
 		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyStoreName, "store_name_changed",
-			map[string]any{"old": old, "new": name})
 		settingsRespondSaved(w, r, elev)
 	})
 
@@ -3159,26 +3195,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if name != "" {
-			// The key enroll.DeviceName reads for this till's role, as the
-			// cloud's rename_till does (cloudRenameTill): the main till's
-			// own name is till.name; a joined till's is its per-till
-			// sync.till_name, which saveShopSettings keeps local. till.name
-			// is shop-wide there (it holds the main till's name), so writing
-			// it would rename the main till instead (ut-docs#3292).
-			key := "till.name"
-			if tillFollowsMain(r.Context(), d) {
-				key = "sync.till_name"
-			}
-			if err := saveShopSettings(r.Context(), d, elev, map[string]string{key: name}); err != nil {
+			if err := applyOwnTillName(r, d, posRepo, elev, name); err != nil {
 				if !respondSettingsSyncError(w, r, err) {
 					http.Error(w, "could not save", http.StatusInternalServerError)
 				}
 				return
-			}
-			settingsAudit(r, posRepo, elev, "settings", key, "till_name_changed",
-				map[string]any{"name": name, "key": key})
-			if key == "till.name" {
-				renameOwnRegisterAfterTill(r.Context(), d, name)
 			}
 		}
 		settingsRespondSaved(w, r, elev)
@@ -3393,8 +3414,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// per-browser preference from — notification email in
 			// particular, the exact case this card exists to fix.
 			if slices.Contains(httpx.AvailableLocales(), v) {
-				st.Locale = v
-				auditPayload["locale"] = v
+				// ut-docs#5751: a bare pick of the shop's own language keeps
+				// its region (en-US stays en-US), so date order survives.
+				stored := resolveShopLocalePick(r.Context(), d, v, st.Country)
+				st.Locale = stored
+				auditPayload["locale"] = stored
 				localeChosen = true
 				// ut-docs#1074: this form field is the one genuine
 				// operator-explicit locale choice (Settings' Language
@@ -3724,6 +3748,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// shop-configuration hygiene plus an owner check on changing a
 		// live shop's tax jurisdiction, no longer a shared-key guard.
 		countryChanged := false
+		// ut-docs#5779: the locale the country implies, decided BEFORE the
+		// write so it persists with the country (one SetMany) and not only
+		// in memory.
+		var derivedLocale string
 		if key == common.KeyCountry {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
 				return
@@ -3739,6 +3767,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
 					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
 					return
+				}
+				// ut-docs#1027 / #1074 / #5779: the same rule the main till
+				// applies (confirmed guard, safe-to-preset, no-op when
+				// equal). A lookup error derives nothing; the country save
+				// itself stays lenient.
+				loc, lerr := derivedLocaleForCountry(r.Context(), d, value)
+				if lerr != nil {
+					logging.L().Warnf("settings: derive locale for country: %v", lerr)
+				} else {
+					derivedLocale = loc
 				}
 			}
 		}
@@ -3770,6 +3808,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// confirmed so a catalogue import never re-asks after this.
 			kv[common.KeyCurrencyConfirmed] = "true"
 		}
+		if derivedLocale != "" {
+			// Not KeyLocaleConfirmed/KeyLocaleGeneration: a derivation is
+			// not an operator choice (common/state.go).
+			kv[common.KeyLocale] = derivedLocale
+		}
 		localeGeneration := int64(-1)
 		if key == common.KeyLocale && slices.Contains(httpx.AvailableLocales(), value) && tillFollowsMain(r.Context(), d) {
 			cur, _, _ := d.Settings.Get(r.Context(), common.KeyLocaleGeneration)
@@ -3783,6 +3826,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_fiscal", err)
 			return
+		}
+		// ut-docs#5779: an additional till derives nothing itself -- main
+		// does -- so its memory follows the store.locale row main's answer
+		// mirrored (main's confirmed guard wins; a failed mirror leaves the
+		// old row and so the old memory).
+		if key == common.KeyCountry && tillFollowsMain(r.Context(), d) {
+			if v, _, _ := d.Settings.Get(r.Context(), common.KeyLocale); localeSafeToPreset(v) {
+				derivedLocale = v
+			}
 		}
 		// Every write to the fiscal posture toggles is itself audit-logged
 		// (ADR-0048 Decision 1): the shop's own trail honestly records when
@@ -3817,29 +3869,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// reflect into state for known keys
 		truthy := func(v string) bool { return strings.ToLower(v) == "true" || v == "1" || v == "on" }
-		// ut-docs#1027: this raw key/value table is, today, the ONLY shipped
-		// UI path that lets an operator change store.country after setup
-		// (neither Settings form posts "country" — see the currency-card
-		// handler above and the Language card below) — so it's where the
-		// card's "changing country afterwards re-derives the locale"
-		// acceptance criterion actually has to live. Looked up before
-		// UpdateState's closure, not inside it, so the DB read doesn't run
-		// under the state write lock.
-		var derivedLocale string
-		if key == common.KeyCountry {
-			// ut-docs#1074: never re-derive once the operator has explicitly
-			// chosen a locale via Settings' Language card — same guard as
-			// the /api/settings/save country handler just above.
-			localeConfirmed, _, lcErr := d.Settings.Get(r.Context(), common.KeyLocaleConfirmed)
-			if lcErr != nil {
-				logging.L().Warnf("settings: read %s: %v", common.KeyLocaleConfirmed, lcErr)
-			}
-			if localeConfirmed != "true" {
-				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
-					derivedLocale = cs.DefaultLocale
-				}
-			}
-		}
+		// ut-docs#1027 / #5779: this raw key/value table is the shipped UI
+		// path that changes store.country after setup, so the derived locale
+		// (decided and persisted with the write above) is persisted and
+		// live-applied here.
 		st := d.UpdateState(func(s *common.RuntimeState) {
 			switch key {
 			case common.KeyTheme:

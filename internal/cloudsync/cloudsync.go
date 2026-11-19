@@ -419,6 +419,13 @@ type Hooks struct {
 	// unpaid till's gated skip (ADR-0148) and for a failed POST — so only a real contact lifts the link's "wait for
 	// the next check-in". It must not block.
 	AfterTick func(ctx context.Context, contacted bool, err error)
+	// ReportPostFailed, when non-nil, runs on the check-in goroutine when a
+	// same-tick follow-up device-report POST (ut-docs#5614) failed. Such a
+	// tick still ends contacted=true, err=nil, so AfterTick alone cannot tell
+	// that the report the follow-up rebuilt never reached the cloud: a report
+	// gate uses this to not record that version as sent (ut-docs#2562). It
+	// must not block.
+	ReportPostFailed func()
 	// LinkVersion, when non-nil, returns the newest link_version the cloud
 	// link has seen in a hello or nudge (0 = none) — ADR-0117 §3,
 	// ut-docs#2827. A version newer than the one the last successful POST
@@ -694,7 +701,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		}
 		return b, err
 	}
-	catalogApplied := false
+	var applied appliedKinds
 	// guest_order (ADR-0159 §5): at most maxGuestOrdersPerTick per tick —
 	// each one may take a few DB writes and a fiscal start — and the ids
 	// this tick already answered, so the retry pass below doesn't post the
@@ -745,7 +752,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			handleGuestOrder(ctx, cfg, db, d, hooks)
 			continue
 		}
-		handleGenericDirective(ctx, cfg, db, d, hooks, &fetchDeferred, &catalogApplied)
+		handleGenericDirective(ctx, cfg, db, d, hooks, &fetchDeferred, &applied)
 	}
 	// A guest_order result the cloud did not acknowledge on an earlier tick
 	// is re-posted until it answers 200 or 404 (ADR-0159 §4). Only the main
@@ -760,7 +767,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// sync), never after a mid-tick 402. A pull failure is logged and
 	// retried on the next trigger; it never fails the check-in.
 	if isMainTill && plan.post && !refusedMidTick && pullCloudCatalog(ctx, cfg, db, hooks) {
-		catalogApplied = true
+		applied.catalog = true
 	}
 	// ADR-0169 §8 (ut-docs#4763): the main till of a cloud-master store
 	// uploads its changed on-hand rows after a check-in that reached the
@@ -774,10 +781,24 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.
-	if isMainTill && catalogApplied && !refusedMidTick {
+	if isMainTill && applied.catalog && !refusedMidTick {
 		if err := pushSnapshotIfChanged(ctx, cfg, db, hooks.ItemTilePositions); err != nil {
 			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push after directives", err)
+		}
+	}
+	// Same for this till's own device report (ut-docs#5614): a setting, theme,
+	// quick-button layout or name a directive just changed reaches the cloud
+	// now, not a tick later. Any till (whichever applied it). Hash-gated;
+	// a failure is logged and the next check-in carries it (its 304 sees the
+	// changed state hash).
+	if applied.deviceReport && !refusedMidTick {
+		if err := pushDeviceReportIfChanged(ctx, cfg, settings, hooks, sum, hashErr == nil); err != nil {
+			pushRefused(ctx, settings, err, windowSeen)
+			logPushError("device report after directives", err)
+			if hooks.ReportPostFailed != nil {
+				hooks.ReportPostFailed()
+			}
 		}
 	}
 	// Issue-reporter status pull (ADR-0022, spec 012, ut-docs#348): the
@@ -1581,8 +1602,13 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		"name":      name,
 		"version":   buildinfo.Version,
 		"platform":  runtime.GOOS + "/" + runtime.GOARCH,
-		"role":      role,
-		"health":    health,
+		// The release channel the notice lists (checkin-notice-v2): the
+		// build-time install channel of ADR-0194 (sideload/play/appstore/
+		// direct), a build constant, never shop data. Set here, before
+		// DeviceExtra, so a hook value cannot override it.
+		"channel": string(buildinfo.CurrentChannel()),
+		"role":    role,
+		"health":  health,
 	}
 	// The cloud merges/retires this machine's older device rows by it
 	// (ut-docs#2802), and a main till's row needs one too (ut-docs#3307):
@@ -1608,7 +1634,7 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// the shop name nor the till name. A paid till, or one the operator
 	// claimed or paired (which clears the mark), keeps today's behaviour.
 	// ut-docs#6613/#6618: such a till (and an auto-registered one whose shop
-	// pressed "Stop sending", whatever opened the check-in window) sends an
+	// switched off "Send usage facts", whatever opened the check-in window) sends an
 	// ALLOW-LIST, never "everything the pages hook knows": the notice says
 	// no staff, settings, items or LAN address leave the till. Applied after
 	// the isReplica/diagnostics steps below so nothing later can add a key.

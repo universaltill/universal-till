@@ -34,6 +34,12 @@ enum class RefuseClass(val wire: String) {
 /** ut-docs#6551: what to do before handing an APK to the system installer. */
 enum class InstallPreflight { PROCEED, NEEDS_PERMISSION }
 
+/**
+ * ut-docs#6551: what to do once [UpdateLogic.checkUpdateApk] answered. A nightly
+ * prefetch never installs: it keeps the verified download for a manager's tap.
+ */
+enum class AfterCheck { INSTALL, KEEP_READY, CLEANUP }
+
 /** ut-docs#6551: what coming back from Android's "install unknown apps" screen means. */
 enum class PermissionResume { GRANTED, STILL_DENIED }
 
@@ -50,6 +56,32 @@ object UpdateLogic {
     const val STATE_NEEDS_PERMISSION = "needs_permission"
     const val STATE_PERMISSION_GRANTED = "permission_granted"
     const val ERROR_STILL_DENIED = "still_denied"
+
+    /** ut-docs#6551: the nightly download finished and passed the check; nothing is installing. */
+    const val STATE_DOWNLOADED = "downloaded"
+
+    /** ut-docs#6551: what to do once [checkUpdateApk] answered. A prefetch never installs. */
+    fun afterCheck(
+        verdict: ApkCheck,
+        prefetch: Boolean,
+    ): AfterCheck =
+        when (verdict) {
+            is ApkCheck.Refuse -> AfterCheck.CLEANUP
+            is ApkCheck.Accept, ApkCheck.AcceptUnpinned -> if (prefetch) AfterCheck.KEEP_READY else AfterCheck.INSTALL
+        }
+
+    /**
+     * ut-docs#6551: a verified prefetch is "ready" only while the file is still
+     * that complete, newer APK (the saved versionCode and length match, and it
+     * is newer than the running build).
+     */
+    fun prefetchReady(
+        savedVersionCode: Long?,
+        savedLength: Long?,
+        fileLength: Long,
+        installedVersionCode: Long,
+    ): Boolean =
+        savedVersionCode != null && canReuseDownloadedApk(fileLength, savedLength, savedVersionCode, installedVersionCode)
 
     /**
      * ut-docs#6551: [canRequestPackageInstalls] false means Android would

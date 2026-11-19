@@ -827,7 +827,7 @@ ORDER BY created_at, id LIMIT ?`, fromDate, afterCreated, afterCreated, afterID,
 func mirrorReceiptPrefixesInUse(ctx context.Context, q dbExecutor) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `
 SELECT DISTINCT substr(receipt_no, 1, instr(receipt_no, '-')) FROM mirror_sales
-WHERE receipt_no GLOB 'T[0-9]*-*'`)
+WHERE receipt_no GLOB 'T[0-9]*-*' OR receipt_no GLOB '[1-9]*-*'`)
 	if err != nil {
 		return nil, fmt.Errorf("receipt prefixes in the sales copy: %w", err)
 	}

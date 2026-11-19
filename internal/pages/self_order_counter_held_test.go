@@ -609,7 +609,7 @@ func TestKitchenDeltaFilter(t *testing.T) {
 // F2: on a till with a sync.receipt_prefix the C-number carries it, and the
 // customer's confirmation, the Open orders label, the paid sale's
 // display_no and the kitchen ticket all show the SAME prefixed number.
-func TestCounterCheckout_OrderNumberCarriesTillPrefixEverywhere(t *testing.T) {
+func TestCounterCheckout_OrderNumberIsTheTillsOwnEverywhere(t *testing.T) {
 	h := newCounterHeldHarness(t)
 	if err := h.dp.Settings.Set(t.Context(), "sync.receipt_prefix", "T2-"); err != nil {
 		t.Fatal(err)
@@ -619,12 +619,12 @@ func TestCounterCheckout_OrderNumberCarriesTillPrefixEverywhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := h.kioskOrder()
-	if !strings.Contains(rec.Body.String(), "C-T2-1") {
-		t.Fatalf("confirmation must show the prefixed number C-T2-1: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "C-100") {
+		t.Fatalf("confirmation must show the prefixed number C-100: %s", rec.Body.String())
 	}
 	held := h.onlyHeld()
-	if !strings.HasPrefix(held.Label, "C-T2-1 ") {
-		t.Fatalf("held label = %q, want it to start with C-T2-1", held.Label)
+	if !strings.HasPrefix(held.Label, "C-100 ") {
+		t.Fatalf("held label = %q, want it to start with C-100", held.Label)
 	}
 	if rec := h.post("/api/pos/resume", "id="+held.ID); rec.Code != http.StatusOK {
 		t.Fatalf("resume = %d", rec.Code)
@@ -637,12 +637,12 @@ func TestCounterCheckout_OrderNumberCarriesTillPrefixEverywhere(t *testing.T) {
 	if err := h.db.DB.QueryRow(`SELECT display_no FROM sales`).Scan(&displayNo); err != nil {
 		t.Fatal(err)
 	}
-	if displayNo != "C-T2-1" {
-		t.Fatalf("sale display_no = %q, want C-T2-1", displayNo)
+	if displayNo != "C-100" {
+		t.Fatalf("sale display_no = %q, want C-100", displayNo)
 	}
 	tickets := printer.Settle(1)
-	if len(tickets) != 1 || !strings.Contains(tickets[0], "C-T2-1") {
-		t.Fatalf("kitchen ticket must carry C-T2-1, got %q", tickets)
+	if len(tickets) != 1 || !strings.Contains(tickets[0], "C-100") {
+		t.Fatalf("kitchen ticket must carry C-100, got %q", tickets)
 	}
 }
 

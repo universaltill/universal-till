@@ -1954,6 +1954,84 @@ func TestUpsertCountry_RederivesLocale(t *testing.T) {
 	})
 }
 
+// ut-docs#5779: the All-settings country edit must persist the derived
+// locale (same write as the country), not only apply it to memory, so a
+// restart does not bring the old language back.
+func TestUpsertCountry_PersistsDerivedLocale(t *testing.T) {
+	seed := func(t *testing.T, d *common.Deps, locale string, confirmed bool) {
+		t.Helper()
+		if err := d.Settings.Set(t.Context(), common.KeyLocale, locale); err != nil {
+			t.Fatal(err)
+		}
+		if confirmed {
+			if err := d.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		d.UpdateState(func(s *common.RuntimeState) { s.Locale = locale })
+	}
+	upsert := func(t *testing.T, mux *http.ServeMux, country string) {
+		t.Helper()
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {country}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert %s = %d body=%s", country, rec.Code, rec.Body.String())
+		}
+	}
+	untouched := func(t *testing.T, d *common.Deps, want string) {
+		t.Helper()
+		if got := mustSetting(t, d, common.KeyLocale); got != want {
+			t.Fatalf("persisted %s = %q, want unchanged %q", common.KeyLocale, got, want)
+		}
+		if got := d.CurrentState().Locale; got != want {
+			t.Fatalf("memory locale = %q, want unchanged %q", got, want)
+		}
+	}
+	t.Run("US: row and reload match memory", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "en-GB", false)
+		if err := d.Settings.Set(t.Context(), common.KeyLocaleGeneration, "7"); err != nil {
+			t.Fatal(err)
+		}
+		upsert(t, mux, "US")
+		if got := mustSetting(t, d, common.KeyLocale); got != "en-US" {
+			t.Fatalf("persisted %s = %q, want en-US", common.KeyLocale, got)
+		}
+		if got := common.LoadState(t.Context(), d.Settings, d.Cfg).Locale; got != "en-US" {
+			t.Fatalf("locale after restart = %q, want en-US", got)
+		}
+		if got := d.CurrentState().Locale; got != "en-US" {
+			t.Fatalf("memory locale = %q, want en-US", got)
+		}
+		if got := httpx.DefaultLocale(); got != "en-US" {
+			t.Fatalf("DefaultLocale = %q, want en-US", got)
+		}
+		if got := mustSetting(t, d, common.KeyLocaleConfirmed); got != "" {
+			t.Fatalf("a derivation must not confirm the locale, got %q", got)
+		}
+		if got := mustSetting(t, d, common.KeyLocaleGeneration); got != "7" {
+			t.Fatalf("%s = %q, want unchanged 7", common.KeyLocaleGeneration, got)
+		}
+	})
+	t.Run("confirmed: nothing derived", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "tr", true)
+		upsert(t, mux, "DE")
+		untouched(t, d, "tr")
+	})
+	t.Run("RTL not installed: nothing derived", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "tr", false)
+		upsert(t, mux, "PK")
+		untouched(t, d, "tr")
+	})
+	t.Run("unknown country: nothing derived", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "tr", false)
+		upsert(t, mux, "ZZ")
+		untouched(t, d, "tr")
+	})
+}
+
 // The claim-code / register-now / fleet enrol endpoints all refuse a non-manager
 // operator before ever touching the marketplace (offline-first, no network in
 // A high-density small touchscreen (e.g. a 10.1" 1920x1200 panel, ~224 PPI)
@@ -2597,7 +2675,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 //
 // The enrollment card's enrolled branch (claim-code) can't be exercised
 // here — "enrolled" reads package-global enroll.CurrentStatus() — so the
-// card is covered by the Cloud record card's Stop sending form
+// card is covered by the Privacy card's Send usage facts switch
 // (/api/settings/registration-stop), the same un-gating (ADR-0200).
 func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
@@ -2635,7 +2713,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 
 	// One marker per elevation-wired site, unique to that form/button.
 	elevationWired := []string{
-		`hx-post="/api/settings/registration-stop"`,  // cloud record card: Stop sending (ADR-0200)
+		`hx-post="/api/settings/registration-stop"`,  // privacy card: Send usage facts (ADR-0200)
 		`hx-post="/api/settings/display-mode"`,       // display-advanced: mode form
 		`id="window-mode-form"`,                      // display-advanced: window mode
 		`id="launch-on-startup-cb"`,                  // display-advanced: autostart checkbox

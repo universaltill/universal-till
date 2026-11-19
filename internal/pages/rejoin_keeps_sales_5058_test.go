@@ -431,7 +431,7 @@ func TestRejoin_RestoredReplicaWithoutBearerReplaysAndGetsANewTillNo(t *testing.
 	if err := s.main.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE id = 'dup'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("dup sale rows on the main till = %d (err %v), want 1", n, err)
 	}
-	if p := stagedIdentity(t, s.tillPath).ReceiptPrefix; !regexp.MustCompile(`^T[0-9]+-$`).MatchString(p) {
-		t.Fatalf("staged receipt prefix = %q, want a granted T<n>-, not the provisional R prefix", p)
+	if p := stagedIdentity(t, s.tillPath).ReceiptPrefix; !regexp.MustCompile(`^T?[0-9]+-$`).MatchString(p) {
+		t.Fatalf("staged receipt prefix = %q, want a granted <n>- or T<n>-, not the provisional R prefix", p)
 	}
 }

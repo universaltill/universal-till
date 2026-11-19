@@ -794,8 +794,8 @@ func TestSyncJoin_FullFlow_StagesRestoreAndIdentity(t *testing.T) {
 		t.Fatalf("expected the joining till's name staged, got %q", id.TillName)
 	}
 	// Primary is till 1; the first replica numbers from 2 (receipt prefixes).
-	if id.ReceiptPrefix != "T2-" {
-		t.Fatalf("expected receipt prefix T2- for the first replica, got %q", id.ReceiptPrefix)
+	if id.ReceiptPrefix != "2-" {
+		t.Fatalf("expected receipt prefix 2- for the first replica, got %q", id.ReceiptPrefix)
 	}
 
 	// The join was audited on the replica.

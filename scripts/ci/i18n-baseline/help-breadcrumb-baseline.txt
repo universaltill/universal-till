@@ -3,3 +3,6 @@
 #   <loc>/<topic>.md:<item n>:<settings key> <concrete reason>
 # An entry that matches no current mismatch is stale and fails the guard --
 # delete the line once the translated breadcrumb uses the locale's label.
+ar/users.md:10:settings.privacy.title translation still describes the old opt-in wizard step; Weblate re-translates this item from the English change (ADR-0160), breadcrumb follows then
+fa/users.md:10:settings.privacy.title translation still describes the old opt-in wizard step; Weblate re-translates this item from the English change (ADR-0160), breadcrumb follows then
+tr/users.md:10:settings.privacy.title translation still describes the old opt-in wizard step; Weblate re-translates this item from the English change (ADR-0160), breadcrumb follows then

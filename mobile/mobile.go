@@ -28,9 +28,9 @@
 // surface is deliberately minimal for that reason: three lifecycle
 // functions plus a few setters and reporters (SetKioskPinned,
 // ReportAndroidUpdateRefused/Accepted); SetBluetoothBridge, SetDiscoveryBridge and
-// SetKioskBridge take the exported interface types declared IN this package,
+// SetKioskBridge and SetUpdateBridge take the exported interface types declared IN this package,
 // BluetoothBridge (ADR-0080), DiscoveryBridge (ut-docs#3218), KioskBridge
-// (ut-docs#3466) and TapToPayBridge (ut-docs#3049, with TapToPayCloud). Each must
+// (ut-docs#3466), UpdateBridge (ut-docs#6551) and TapToPayBridge (ut-docs#3049, with TapToPayCloud). Each must
 // be declared here rather than merely referenced from its internal
 // package (internal/bluetooth, internal/discovery): gobind only binds
 // types from the package named on its command line, so a type from an unbound package compiles and builds a
@@ -70,9 +70,11 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/cardreaders"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -604,6 +606,27 @@ func SetKioskBridge(b KioskBridge) {
 	kiosk.SetBridge(b) // a nil KioskBridge converts to a nil kiosk.Bridge
 }
 
+// UpdateBridge is the gobind-visible mirror of apkprefetch.Prefetcher
+// (ut-docs#6551) — declared here for BluetoothBridge's reason; kept
+// structurally identical so SetUpdateBridge passes it straight through.
+type UpdateBridge interface {
+	// PrefetchUpdate downloads and verifies the update APK without
+	// launching the installer; it returns once the work is handed over.
+	PrefetchUpdate() error
+}
+
+// SetUpdateBridge registers SelfUpdateActivity's prefetch bridge (sideload
+// flavours only; onResume) and clears it with nil (onPause). The nightly
+// scheduler keeps the day's slot unspent while none is registered.
+func SetUpdateBridge(b UpdateBridge) {
+	if b == nil {
+		apkprefetch.Current.Store(nil)
+		return
+	}
+	var p apkprefetch.Prefetcher = b
+	apkprefetch.Current.Store(&p)
+}
+
 // SetKioskPinned records the self-order pin state MainActivity now intends
 // (ut-docs#3466, ADR-0142 D5), mirroring SetDeviceModel's shape: Kotlin
 // calls it from engageKioskLock (true) and releaseKioskLock (false), and
@@ -654,6 +677,9 @@ type TapToPayBridge interface {
 // sheets cause mid-payment.
 func SetTapToPayBridge(b TapToPayBridge) {
 	devicepay.SetBridge(b) // a nil TapToPayBridge converts to a nil devicepay.Bridge
+	// ut-docs#6566: the card reader registry offers a tap_to_pay reader only
+	// while a bridge is registered; core never imports devicepay itself.
+	cardreaders.TapToPayAvailable = func() bool { return devicepay.RegisteredBridge() != nil }
 }
 
 // TapToPayResolver is the gomobile-bind-visible mirror of

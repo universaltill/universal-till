@@ -769,6 +769,7 @@
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
+    <script defer src="/public/card-reader-picker.js?v={{ assetv "public/card-reader-picker.js" }}"></script>
     <script defer src="/public/till-confirm.js?v={{ assetv "public/till-confirm.js" }}"></script>
     <script defer src="/public/pairing-stream.js?v={{ assetv "public/pairing-stream.js" }}"></script>
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
@@ -1171,6 +1172,8 @@
                 data-locked="{{ T "auth.error.locked" }}"
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
                 data-uptodate="{{ T "settings.update.up_to_date" }}"
+                data-busy="{{ T "settings.update.android.busy" }}"
+                data-downloaded="{{ printf (T "settings.update.android.downloaded") latestversion }}"
         ><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
         {{ else if updateinstallbridge }}
         <!-- ut-docs#6551: Android, viewer WITHOUT "settings" (the sale-only
@@ -1251,9 +1254,9 @@
       {{ end }}
       {{ if registrationnoticepending }}{{ if allowed "settings" }}
       <!-- ADR-0200 (ut-docs#6559): a till set up before the notice existed
-           shows it once, in Settings, Cloud record. A link, never a modal;
+           shows it once, in Settings > Privacy. A link, never a modal;
            the till registers only after the notice was shown. -->
-      <a class="sb-item sb-registration-notice" href="/settings#registration" data-testid="sb-registration-notice"><span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span> {{ T "registration.notice.prompt" }}</a>
+      <a class="sb-item sb-registration-notice" href="/settings#settings-privacy" data-testid="sb-registration-notice"><span class="btn-ico" aria-hidden="true">{{ icon "notice-info" }}</span> {{ T "registration.notice.prompt" }}</a>
       {{ end }}{{ end }}
       {{ with releasenoticeversion }}{{ if allowed "settings" }}
       <!-- ut-docs#3091: once after an update — a non-blocking notice, never a
@@ -1443,6 +1446,9 @@
           var aLabel = abtn.innerHTML, aArmed = false, aTimer = null;
           var A = function (k) { return abtn.getAttribute('data-' + k) || ''; };
           var aRetry = false;
+          // ut-docs#6551: the update is already downloaded and checked, so one
+          // tap installs (Android's own installer screen is the confirmation).
+          var aReady = false;
           var aReset = function () { abtn.innerHTML = aLabel; abtn.disabled = false; aRetry = false; };
           abtn.addEventListener('click', function () {
             // A failed download: one tap retries (the operator already
@@ -1483,6 +1489,17 @@
               }
               // ut-docs#1545: 'uptodate' — the chip renders off a check up to
               // 24h stale; the endpoint's already_current answer is the truth.
+              if (outcome === 'busy') {
+                // ut-docs#6551: a sale or order is open. Say so briefly, then
+                // go back to the label; the next tap installs (no re-arm).
+                abtn.textContent = A('busy');
+                abtn.disabled = false;
+                aRetry = true;
+                aTimer = setTimeout(function () {
+                  if (aReady) { abtn.textContent = window.utAndroidUpdater.text(abtn, { state: 'downloaded' }); } else { aReset(); }
+                }, 6000);
+                return;
+              }
               var key = { locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed';
               abtn.textContent = A(key);
               abtn.disabled = false;
@@ -1516,7 +1533,8 @@
             // came up (android-update.js reports it, also on the way back from
             // its "allow this app to install apps" settings): one tap opens it
             // again, reusing the download.
-            aRetry = s.state === 'failed' || s.state === 'closed';
+            aReady = s.state === 'downloaded';
+            aRetry = s.state === 'failed' || s.state === 'closed' || aReady;
           });
         }
       })();
