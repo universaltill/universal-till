@@ -856,7 +856,8 @@ export function rectsClear(id: string, fieldSel: string | null, el?: Element): C
 export async function actionsClearance(page: Page, id: string, fieldSel: string) {
   const r = await page.evaluate(({ id, fieldSel, fn }) => (new Function('return ' + fn)())(id, fieldSel), { id, fieldSel, fn: rectsClear.toString() });
   return r.ok ? { ok: true } : r;
-=======
+}
+
 // ---------------------------------------------------------------------------
 // ut-docs#5524: hx-confirm opens the till's own in-page dialog
 // (web/public/till-confirm.js, #ut-confirm), not the browser's window.confirm.
@@ -899,5 +900,4 @@ export async function answerTillConfirm(
   }
   await expect(dlg).toBeHidden();
   return msg;
->>>>>>> origin/main
 }
