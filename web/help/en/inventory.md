@@ -5,10 +5,10 @@ section: Setting up your shop
 order: 120
 public: true
 summary: Tracks on-hand quantities per item and variant, and what a sale, refund or delivery does to them.
-routes: [/inventory, /locations, /ui/inventory/stock-table]
+routes: [/inventory, /locations, /ui/inventory/stock-table, /ui/inventory/stock-take]
 # /locations is never screenshotted (docs-shots only captures routes[0]) —
 # accepted gap, see e2e/tests-docs/lib.js's routedTopics() comment (ut-docs#900).
-keywords: [stock, goods, receipt, delivery, adjustment, return, locations, transfer, low stock, reorder, count]
+keywords: [stock, goods, receipt, delivery, adjustment, return, locations, transfer, low stock, reorder, count, stock-take, stocktake, stock count, inventory count]
 ---
 
 # Stock & inventory
@@ -22,6 +22,19 @@ Tracks on-hand quantities per item and variant, at each of your stock locations.
 3. The inventory page predicts how many days of stock remain and suggests how much to order, from that row's own last 28 days of sales — an item's row from its own direct sales, a variant's row from that variant's own sales, never each other's — see **Low-stock alerts** below for exactly what this needs to work. The reports page carries the same alert as a chip too.
 4. Stock locations are shop-wide and always managed from the **main till** — see **Stock locations** below for creating, activating/deactivating and moving stock between them.
 5. Tap the filter icon beside the search box to open the category list, then tap a category to narrow the list to items in that category — tapping a category that has sub-categories includes their items too. It combines with the search box; tap **All categories** to clear it.
+
+## Stock-take (counting a location)
+
+Use a stock-take to count what is really on the shelf at one location and set the stock to match, all lines at once. It is a manager job and is done on the **main till**; on an additional (joined) till the button is replaced by a note, because the main till's stock would overwrite a count made there.
+
+1. On **Inventory**, tap **Stock-take**. With one location it starts straight away; with two or more, choose the **Location to count** (your register's location is preselected) and tap **Start counting**. The moment you start is remembered on the till's own clock.
+2. Every stock-tracked item (and each variant, for an item sold in variants) at that location is listed with what the till shows **In stock** and a **Counted** box. Type what you find. **Leave a box blank for anything you have not counted — it is left untouched. Type 0 when there is none on the shelf.** A weighed item accepts up to three decimals; a comma works where your language uses one. An item with variants is counted per variant only.
+3. The search box and the category filter still work while you count, and the counts you typed are kept when a row is filtered out. Receive/adjust is not available until you finish or cancel. **Cancel** asks before throwing away typed counts; so does leaving through a link to another page. Counts are not saved anywhere until you apply them, so reloading the page loses them.
+4. Tap **Review**. Only the counted lines are shown, with **In stock**, **Counted** and **Difference** (a plus or minus sign, or "No change"). Add an optional note (up to 200 characters; without one the reason is "stock take"), then tap **Apply count**. **Back to counting** keeps everything you typed.
+5. Apply saves the whole count or nothing: if any line is refused (for example a fractional count on an item that is not weighed, or an item switched off meanwhile), the review shows which line and why, nothing is saved, and your counts are still there to fix.
+6. A summary shows how many lines were counted, how many changed and how many were already correct, and the stock table refreshes.
+
+**Sales made while you count are kept.** The count describes the shelf at the moment you pressed Start; anything sold after that is taken off the counted number. Applying the same count twice changes nothing the second time. A stock-take can hold up to 500 lines — count a big location in sections, applying each one (lines you did not count are never touched) — and must be applied within 48 hours of starting. It works without a network connection. Each change is recorded as a "count" stock movement with your name on it.
 
 ## How a sale and a refund change stock
 

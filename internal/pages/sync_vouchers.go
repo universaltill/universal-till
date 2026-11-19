@@ -297,7 +297,6 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 			NewBalanceMinor:      in.NewBalanceMinor,
 			Reason:               in.Reason,
 			ActorUserID:          strings.TrimSpace(in.Actor),
-			Now:                  time.Now().UTC().Format(time.RFC3339),
 		})
 		switch {
 		case errors.Is(err, data.ErrVoucherNotFound):

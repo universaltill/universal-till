@@ -381,6 +381,12 @@ window.utCurrency = (function(){
     var redeemRow = card.querySelector('#split-tender-voucher-redeem');
     var redeemInfo = card.querySelector('#split-tender-voucher-redeem-info');
     var redeemBtn = card.querySelector('#split-tender-voucher-redeem-btn');
+    // ut-docs#6566: which registry card reader takes a leg of a method that has
+    // several (a registry row id, never a provider reader id).
+    var readerField = card.querySelector('#split-tender-reader-field');
+    var readerSelect = card.querySelector('#split-tender-reader');
+    var readerAuto = '';
+    var readerNames = new WeakMap();
 
     if (!form || !addBtn || !submitBtn || !clearBtn || !paymentsList) {
       return;
@@ -451,6 +457,42 @@ window.utCurrency = (function(){
       }
     }
 
+    // Ask the picker endpoint (JSON) which readers the selected method has.
+    // No readers (a legacy method): no field, no `reader` on the leg. Exactly
+    // one ready: it is used without asking. Several: a select of the ready
+    // ones, the last used pre-selected. A failed check never blocks the leg.
+    function syncReaderField(){
+      if (!readerField || !readerSelect || !methodSelect) return;
+      var method = String(methodSelect.value || '').trim().toLowerCase();
+      readerField.hidden = true;
+      readerSelect.replaceChildren();
+      readerAuto = '';
+      if (!method) return;
+      fetch('/api/pos/card-readers?source=pos&method=' + encodeURIComponent(method), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (p) {
+          var d = p && p.data;
+          if (!d || !d.readers || !d.readers.length) return;
+          if (String(methodSelect.value || '').trim().toLowerCase() !== method) return;
+          var ready = d.readers.filter(function (x) { return x.selectable; });
+          if (ready.length === 1) { readerAuto = ready[0].id; return; }
+          if (ready.length < 2) return;
+          var first = document.createElement('option');
+          first.value = '';
+          first.textContent = readerSelect.getAttribute('data-choose') || '';
+          readerSelect.appendChild(first);
+          ready.forEach(function (x) {
+            var o = document.createElement('option');
+            o.value = x.id;
+            o.textContent = x.name;
+            if (x.id === d.default) o.selected = true;
+            readerSelect.appendChild(o);
+          });
+          readerField.hidden = false;
+        })
+        .catch(function () { /* offline or unreachable: the tender itself answers if a reader is needed */ });
+    }
+
     function clearForm(){
       form.reset();
       var methodInput = form.querySelector('[name="method"]');
@@ -466,6 +508,7 @@ window.utCurrency = (function(){
         changeInput.value = window.utCurrency.toMajor(0);
       }
       syncVoucherField();
+      syncReaderField();
     }
 
     function renderPayments(){
@@ -486,6 +529,9 @@ window.utCurrency = (function(){
         }
         if (payment.reference) {
           details += '<br><small>' + escapeHtml(payment.reference) + '</small>';
+        }
+        if (payment.reader && readerNames.get(payment)) {
+          details += '<br><small>' + escapeHtml(readerNames.get(payment)) + '</small>';
         }
         return '<div class="payment-pill"><div><strong>' + escapeHtml(methodLabel(payment.method)) + '</strong><div class="pill-meta">' + details + '</div></div><button type="button" class="pill-remove" data-remove-payment="' + idx + '">&times;</button></div>';
       }).join('');
@@ -563,6 +609,19 @@ window.utCurrency = (function(){
       var payment = { method: method, amount: amountMinor };
       if (changeMinor > 0) {
         payment.change = changeMinor;
+      }
+      // ut-docs#6566: the chosen registry card reader (several ready), or the
+      // one ready reader; absent for a method with no registry readers.
+      if (readerField && !readerField.hidden) {
+        var readerVal = String(readerSelect.value || '');
+        if (!readerVal) {
+          setStatus(msg.msgReaderRequired, 'error');
+          return false;
+        }
+        payment.reader = readerVal;
+        readerNames.set(payment, (readerSelect.selectedOptions[0] || {}).textContent || '');
+      } else if (readerAuto) {
+        payment.reader = readerAuto;
       }
       if (voucherID) {
         payment.voucher_id = voucherID;
@@ -747,7 +806,17 @@ window.utCurrency = (function(){
         var text = await response.text();
         var genericFailure = msg.msgPaymentFailed;
         if (!response.ok) {
-          setStatus(text || genericFailure, 'error');
+          // ut-docs#6566: a refused reader choice answers the JSON envelope
+          // with a localized message (nothing was charged); show that text.
+          var shown = text;
+          try {
+            var envelope = JSON.parse(text);
+            if (envelope && envelope.error && envelope.error.message) {
+              shown = envelope.error.message;
+              syncReaderField();
+            }
+          } catch (parseErr) { /* plain text body */ }
+          setStatus(shown || genericFailure, 'error');
           return;
         }
         var basket = document.getElementById('basket');
@@ -808,6 +877,7 @@ window.utCurrency = (function(){
     });
     if (methodSelect) {
       methodSelect.addEventListener('change', syncVoucherField);
+      methodSelect.addEventListener('change', syncReaderField);
     }
     if (voucherCheckBtn) {
       voucherCheckBtn.addEventListener('click', checkVoucherBalance);
@@ -835,6 +905,7 @@ window.utCurrency = (function(){
 
     renderPayments();
     syncVoucherField();
+    syncReaderField();
   }
 
   ready(initSplitTender);
@@ -1215,6 +1286,58 @@ document.addEventListener('htmx:afterRequest', function (evt) {
     t.addEventListener('blur', function () { t.removeAttribute('tabindex'); }, { once: true });
   }
   t.focus({ preventScroll: true });
+});
+
+// ut-docs#4114: a paging link inside a content slot panel swaps just that
+// panel (innerHTML), so the tapped <a> is destroyed and focus would fall to
+// <body>, throwing a keyboard or switch user back above the nav rail. Remember
+// the request (per xhr, like disabledFocus), mark the panel busy for a screen
+// reader (aria-busy; the visual busy state is .htmx-request via hx-indicator),
+// and after a successful swap put focus back inside the panel: the link with
+// the same rel (Next stays on Next), else the other link (the last page has no
+// Next), else the page indicator, else the panel itself. Only when focus really
+// fell to <body> or was removed with the old content: a deliberate move
+// mid-request is left alone. A failed request swaps nothing, so focus stays on
+// the link (Enter retries) and only the busy mark is cleared. No strings here.
+var pagingFocus = new WeakMap();
+document.addEventListener('htmx:beforeRequest', function (evt) {
+  var d = evt.detail || {};
+  if (!d.xhr || !d.elt || !d.elt.matches || !d.elt.matches('.plugin-view-paging a[rel]')) return;
+  pagingFocus.set(d.xhr, { rel: d.elt.getAttribute('rel'), panel: d.target, pos: d.elt.getAttribute('aria-describedby') });
+  d.elt.setAttribute('data-ut-busy', '1');
+  if (d.target && d.target.setAttribute) d.target.setAttribute('aria-busy', 'true');
+});
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && pagingFocus.get(d.xhr);
+  if (!rec || !d.target || d.xhr.status >= 400) return;
+  var panel = d.target;
+  var a = document.activeElement;
+  if (a && a !== document.body && a.isConnected) return; // operator moved on
+  var other = rec.rel === 'next' ? 'prev' : 'next';
+  // Scope to the table that was paged (its indicator id), not the first nav.
+  var posEl = rec.pos ? document.getElementById(rec.pos) : null;
+  var nav = (posEl && posEl.parentNode) || panel;
+  var el = nav.querySelector('a[rel="' + rec.rel + '"]') ||
+    nav.querySelector('a[rel="' + other + '"]') ||
+    posEl || panel.querySelector('.plugin-view-paging-pos');
+  if (!el) {
+    el = panel;
+    if (!el.hasAttribute('tabindex')) {
+      el.setAttribute('tabindex', '-1');
+      el.addEventListener('blur', function () { el.removeAttribute('tabindex'); }, { once: true });
+    }
+  }
+  el.focus({ preventScroll: true });
+  if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+});
+document.addEventListener('htmx:afterRequest', function (evt) {
+  var d = evt.detail || {};
+  var rec = d.xhr && pagingFocus.get(d.xhr);
+  if (!rec) return;
+  pagingFocus.delete(d.xhr);
+  if (d.elt && d.elt.removeAttribute) d.elt.removeAttribute('data-ut-busy');
+  if (rec.panel && rec.panel.removeAttribute) rec.panel.removeAttribute('aria-busy');
 });
 
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders

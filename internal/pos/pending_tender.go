@@ -11,12 +11,18 @@ type CapturedLeg struct {
 	Amount         money.Money // exactly what the authorize captured (incl. reader tip)
 	TransactionRef string      // provider ref (ADR-0196), may be ""
 	TipAmount      money.Money
+	// ReaderRef is the provider reader id the authorize ran on (ut-docs#6566),
+	// "" for a method with no registry reader; a reversal sends it back.
+	ReaderRef string
 }
 
 // UnknownLeg is a leg whose authorize answered outcome_unknown (ut-docs#6600).
 type UnknownLeg struct {
 	MethodID, Currency, RequestID string
 	Amount                        money.Money
+	// ReaderRowID is the card reader registry row the authorize ran on (ut-docs#6566),
+	// "" for a method with no registry reader: the picker shows it pinned.
+	ReaderRowID string
 }
 
 // PendingTender is what a locked tender leaves behind on the engine.

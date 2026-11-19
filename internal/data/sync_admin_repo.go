@@ -401,9 +401,11 @@ var adminTables = []adminTable{
 // reviewer of a future migration, and several tables share one.
 var nonAdminTables = map[string]string{
 	// Already named in this var's own top comment above.
-	"cloud_notices": "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
-	"sessions":      "till-local login sessions — meaningless off the issuing till",
-	"item_images":   "item photos — files don't travel over this bundle (D2 limit)",
+	"cloud_notices":      "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
+	"sessions":           "till-local login sessions — meaningless off the issuing till",
+	"item_images":        "item photos — files don't travel over this bundle (D2 limit)",
+	"card_readers":       "this till's own card reader registry (ut-docs#6566): provider reader ids are device specific, so it never leaves the till — no journal, snapshot, bundle or roster; it travels in a full backup only",
+	"refund_leg_refunds": "what each refund sent back to each original payment leg (ut-docs#6649): till-local netting state, written after the provider approved; a sale without rows falls back to netting the method's earlier refunds, so nothing needs to leave the till",
 
 	// Migration runner's own bookkeeping (created by internal/db's migrator,
 	// not a numbered migration file itself) — which migrations have applied
@@ -441,6 +443,7 @@ var nonAdminTables = map[string]string{
 	// cross-till reporting is export_repo.go's job, not LAN admin sync's.
 	"sales":                                "per-till sale header — append-only ledger, wrong shape for this bundle",
 	"sales_archive":                        "archived sales rows — same reasoning",
+	"number_series":                        "this till's own stored receipt/invoice/order counters (ut-docs#6663) — per till, a synced copy would make two tills share a series",
 	"held_sales":                           "a parked/suspended sale basket on this till — a primary-wins bundle with deleteMissing pruning would erase a satellite's own genuinely-parked orders on every pull, worse than not syncing (ut-docs#1672); since ADR-0093 (ut-docs#1920) it crosses tills by a live, idempotent write-through to the primary at park/resume time instead (internal/pages/held_sale_sync_proxy.go + sync_held_sales.go), which this exclusion is precisely what leaves room for",
 	"held_sales_archive":                   "archived held_sales rows — same reasoning",
 	"held_sales_tombstones":                "ADR-0093 Amendment B (ut-docs#2712): the primary's own 24h record of held sales it deleted, answering a replica's POST /api/sync/held-sales/claim — only meaningful on the primary that wrote it, per-database, never synced",

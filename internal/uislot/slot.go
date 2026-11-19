@@ -545,6 +545,11 @@ var SettingsCategories = []Category{
 // below stays the template's card order.
 var CoreSettings = []Entry{
 	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100, Group: "settings.cat.devices.label"},
+	// ADR-0200: Privacy, manager-only, right after Till registration in
+	// settings.html. The registration notice names "Settings > Privacy" and
+	// the "Send usage facts" switch inside it; filtered from a cashier's
+	// sidebar like subscription.
+	{Key: "settings-privacy", Href: "#settings-privacy", LabelKey: "settings.privacy.title", Order: 125, Group: "settings.cat.staff.label"},
 	// ut-docs#2569 (ADR-0060 §6): Subscription, manager-only, right after
 	// Till registration in settings.html — beside the cloud link whose paid
 	// features it explains; filtered from a cashier's sidebar like

@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -11,9 +12,11 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// The Settings "Cloud record" card (ADR-0200, ut-docs#6559): status only
+// The Settings "Privacy" card (ADR-0200, ut-docs#6559): status only
 // (registered, not registered, paused), the last time the cloud answered, the
-// notice (what this till tells Universal Till) and the "Stop sending" switch.
+// notice (what this till tells Universal Till) and the "Send usage facts"
+// switch. The notice says "in Settings > Privacy, switch off "Send usage
+// facts"", so both names are pinned to it (privacy_card_test.go).
 // There is no Register button and no opt-in: the till registers itself.
 //
 // The registration.notice.* strings are the owner-approved
@@ -47,7 +50,7 @@ func registrationCardView(r *http.Request, d *common.Deps, allowed bool) map[str
 }
 
 // registerRegistrationStop wires POST /api/settings/registration-stop: the
-// shop-wide "Stop sending" / "Resume sending" switch. Elevation-gated like
+// shop-wide "Send usage facts" switch (off posts stop=1, on stop=0). Elevation-gated like
 // the other shop settings (a cashier gets the in-place PIN prompt), audited,
 // persisted per till under registration.stopped. Stopping halts registration,
 // change reports and the start-up refresh of an unpaid till; it deletes
@@ -56,7 +59,15 @@ func registerRegistrationStop(mux *http.ServeMux, d *common.Deps, posRepo *data.
 	mux.HandleFunc("POST /api/settings/registration-stop", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
-		stop := r.Form.Get("stop") == "1"
+		// Only an explicit "0" or "1" is a decision: a missing or garbled
+		// value must never read as "resume" (hx-vals js: can be dropped by a
+		// stricter CSP). Refused before anything is checked or changed.
+		raw := r.Form.Get("stop")
+		if raw != "0" && raw != "1" {
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "settings.error.save_failed", "settings_registration_stop", errors.New("stop must be 0 or 1"))
+			return
+		}
+		stop := raw == "1"
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			summaryKey := "elevation.summary.registration_resume"

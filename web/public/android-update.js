@@ -14,12 +14,12 @@
 //    bridge takes no URL — the native shell resolves the release APK itself —
 //    so nothing here chooses what gets installed. Resolves to an outcome
 //    string: started | needs_pin | wrong_pin | locked | failed | uptodate |
-//    nobridge. Each surface maps it to its own translated data-* text.
+//    nobridge | busy (409: a sale/order is open, ut-docs#6551). Each surface maps it to its own translated data-* text.
 //
 // 2. window.utAndroidUpdate(state) — called BY the native shell
 //    (MainActivity.reportUpdate, evaluateJavascript) on every transition and
-//    once a second while downloading: {state: downloading|ready|installing|
-//    failed|closed, percent, error}. Re-broadcast as a `ut:android-update`
+//    once a second while downloading: {state: downloading|ready|downloaded|
+//    installing|failed|closed, percent, error}. Re-broadcast as a `ut:android-update`
 //    document event; utAndroidUpdater.text(el, state) turns it into the
 //    element's own data-progress / data-downloading / data-installing /
 //    data-retry / data-again text.
@@ -41,6 +41,12 @@
 // AndroidKiosk.openInstallPermissionSettings() (no argument: the shell owns
 // which screen and which package). The state is kept in sessionStorage so
 // the Settings page, reached by the status chip, can show the guidance.
+//
+// ut-docs#6551: `downloaded` = the nightly pre-download finished and passed
+// the shell's check; nothing is installing. The text is "Update vX ready — tap
+// to install" and one tap installs. The shell does not push it on a page load
+// (the chip may render after the event), so announceReady() asks it once via
+// AndroidKiosk.updateReady() (a bare boolean) and replays the state.
 //
 // Deferred shell-head script (httpx.HeadAssets): loaded once per document,
 // survives boosted navigations; a no-op on any till without the bridge.
@@ -105,6 +111,9 @@
       // the session is not trusted), or the PIN given was wrong.
       if (res.status === 403) return pin ? 'wrong_pin' : 'needs_pin';
       if (res.status === 429) return 'locked';
+      // ut-docs#6551: a sale, self-order or table order (or a shift close) is
+      // open; installing restarts the app and would lose it.
+      if (res.status === 409) return 'busy';
       if (!res.ok) return 'failed';
       // ut-docs#1545: a 200 is NOT "go ahead and download". The endpoint's
       // freshness re-check answers { data: { already_current: true } } with
@@ -132,6 +141,7 @@
     if (s.state === 'needs_permission') return s.error === 'still_denied' ? attr('allowdenied') : '';
     if (s.state === 'failed') return attr('retry');
     if (s.state === 'closed') return attr('again') || attr('retry');
+    if (s.state === 'downloaded') return attr('downloaded') || attr('again') || attr('retry');
     if (s.state === 'ready' || s.state === 'installing') return attr('installing');
     if (typeof s.percent === 'number' && attr('progress')) {
       return attr('progress').replace('%d', String(s.percent)).replace('%%', '%');
@@ -203,7 +213,7 @@
         return;
       }
       b.disabled = false;
-      var key = { locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed';
+      var key = { locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge', busy: 'busy' }[outcome] || 'failed';
       b.textContent = b.getAttribute('data-' + key) || '';
     });
   });
@@ -229,11 +239,29 @@
     }
     for (var i = 0; i < buttons.length; i++) {
       buttons[i].textContent = text(buttons[i], s);
-      // Failed or closed: tap to try again. Otherwise it stays disabled
+      // Failed, closed or downloaded: tap to (re)try. Otherwise it stays disabled
       // while the download runs and the installer opens.
-      buttons[i].disabled = s.state !== 'failed' && s.state !== 'closed';
+      buttons[i].disabled = s.state !== 'failed' && s.state !== 'closed' && s.state !== 'downloaded';
     }
   });
+
+  // ut-docs#6551: replay "downloaded" for a chip that rendered after the
+  // shell's event (page load, boosted navigation). Asks the shell a yes/no
+  // question only; takes no focus and does not scroll.
+  function announceReady() {
+    try {
+      if (busy() || (last && last.state !== 'downloaded')) return;
+      if (window.AndroidKiosk && window.AndroidKiosk.updateReady && window.AndroidKiosk.updateReady()) {
+        window.utAndroidUpdate({ state: 'downloaded', percent: 100, error: null });
+      }
+    } catch (e) { /* no bridge, or an older shell: nothing to announce */ }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', announceReady);
+  } else {
+    announceReady();
+  }
+  document.addEventListener('htmx:afterSettle', function () { setTimeout(announceReady, 0); });
 
   // Back from Android's installer (or from its "allow this app to install
   // apps" settings, on the first install of a build): the operator may have

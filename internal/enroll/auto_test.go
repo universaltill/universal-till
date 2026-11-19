@@ -16,7 +16,7 @@ import (
 )
 
 // ADR-0200 (ut-docs#6559): automatic registration. The notice text behind
-// NoticeVersion is a DRAFT pending owner approval.
+// NoticeVersion is the owner-approved checkin-notice-v2 id.
 
 func setReleaseVersion(t *testing.T, v string) {
 	t.Helper()

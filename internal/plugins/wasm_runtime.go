@@ -413,7 +413,10 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			// waits on the plugin's decline/approve answer before letting the
 			// refund proceed (ut-docs#434).
 			for _, evName := range events {
-				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
+				// ut-docs#6566: payment.<key>.readers, the card reader registry's
+				// read-only state op, is awaited by the reader picker.
+				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") ||
+					(strings.HasPrefix(evName, "payment.") && strings.HasSuffix(evName, ".readers")) {
 					bus.SetEventMode(evName, Blocking)
 				}
 			}
@@ -894,7 +897,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		// charged). Keep the stdout on the error so core can tell that apart
 		// from a plain decline; the line is logged through the same redaction.
 		var exitErr *sys.ExitError
-		if strings.HasSuffix(ev.Type, ".authorize") && errors.As(runErr, &exitErr) {
+		if (strings.HasSuffix(ev.Type, ".authorize") || strings.HasSuffix(ev.Type, ".refund")) && errors.As(runErr, &exitErr) {
 			if out := strings.TrimSpace(stdout.buf.String()); out != "" {
 				logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
 				return nil, &HandlerExitError{Code: int(exitErr.ExitCode()), Stdout: json.RawMessage(out), err: runErr}
@@ -910,7 +913,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 }
 
 // HandlerExitError is a wasm handler that exited non-zero after printing an
-// answer (ut-docs#6600). Only produced for ".authorize" events, where the
+// answer (ut-docs#6600, #6647). Only produced for ".authorize" and ".refund" events, where the
 // stdout carries a decline_code core must read.
 type HandlerExitError struct {
 	Code   int

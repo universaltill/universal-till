@@ -780,6 +780,23 @@ html[dir="rtl"] .back-arrow { transform: scaleX(-1); }
    from the session chip; keep logo, ☰, operator and Lock. */
 body.menu-screen .session-admin-link { display: none; }
 
+/* ut-docs#5823: the deposit-refund confirmation region sticks to the top of the
+   scrolling page, so it is seen even when the Deposit refund tile (last in the
+   grid) was reached by scrolling down on a short till screen. Empty = no box. */
+.pfand-notice {
+  position: sticky; z-index: 5;
+  /* --phone-top-h is only set in the <=480px block, where the sticky top bar
+     (z-index 60) would otherwise cover the notice and its X; elsewhere 0. */
+  inset-block-start: calc(var(--phone-top-h, 0px) + .5rem);
+}
+/* The sticky box scrolls over the tiles, so it needs an opaque surface under
+   the success tint (the shared basket notice stays translucent), and ink text
+   (--text, >=4.5:1 on --surface in light, dark and monochrome) instead of the
+   green --success, which is ~2.9:1 there. Green stays in the border. */
+.pfand-notice .pos-notice.success {
+  background: linear-gradient(var(--success-tint), var(--success-tint)), var(--surface);
+  color: var(--text);
+}
 /* Menu launcher page: a grid of large touch tiles. */
 .menu-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
@@ -5053,6 +5070,12 @@ body.login-screen {
    reuses .pairing-notice's look; its inline name + Link form wraps under
    the text on a narrow screen, and pair-start's progress shows below. */
 .join-notice { flex-wrap: wrap; }
+/* ut-docs#4391: "Name your shop" banner. Its long CTA link (German at 360px)
+   left the flex:1 / min-width:0 text ~0 wide, so it broke one letter per
+   line. Wrap the link + dismiss under the text and give the text a real
+   basis. */
+.shop-name-notice { flex-wrap: wrap; }
+.shop-name-notice .pairing-notice-text { flex: 1 1 12rem; overflow-wrap: break-word; }
 .join-notice-form { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; }
 .join-notice-form input[type="text"] { width: auto; min-width: 8rem; margin: 0; }
 .join-notice-label { margin: 0; font-weight: 600; color: inherit; }
@@ -7118,6 +7141,9 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
 .designer-cat-field input[type="text"] { inline-size: min(100%, 22rem); }
 .designer-cat-form-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* ut-docs#2568: the picture/icon deep link above the inline form; a 44px touch target (.btn.compact alone is 40px), may wrap in long locales. */
+.designer-cat-image-link { grid-column: 1 / -1; margin: 0; margin-block: .25rem; }
+.designer-cat-image-link .btn { min-block-size: 2.75rem; display: inline-flex; align-items: center; text-align: start; }
 /* The colour picker: the same .item-color-tile swatches catalog.html uses,
    as <label>s around a native radio (native arrow-key roving focus, no
    picker script). The radio stays visible so selection is never colour-
@@ -7754,7 +7780,25 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   border-width: 2px; }
 .plugin-view-paging { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
   padding-block: .6rem; padding-inline: .6rem; }
-.plugin-view-paging-pos { font-variant-numeric: tabular-nums; }
+.plugin-view-paging-pos { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plugin-view-paging .btn-touch { min-inline-size: 46px; justify-content: center; }
+/* ut-docs#4114: a panel page is loading (htmx-request on the panel via
+   hx-indicator). The old page dims, both links stop taking taps (hx-sync
+   drops repeats anyway), and the tapped link shows a busy ring (#5291; the
+   link carries data-ut-busy from app.js, as hx-indicator moves htmx's own
+   .htmx-request class from the link to the panel). */
+.plugin-view.htmx-request .plugin-view-table tbody { opacity: .55; transition: opacity .15s; }
+.plugin-view.htmx-request .plugin-view-paging a { opacity: .6; pointer-events: none; cursor: progress; }
+.plugin-view-paging a[data-ut-busy]::after {
+  content: ""; display: inline-block; inline-size: .9em; block-size: .9em;
+  margin-inline-start: .5em; vertical-align: -.125em;
+  border: 2px solid currentColor; border-block-start-color: transparent; border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-view-paging a[data-ut-busy]::after { animation: none; }
+  .plugin-view.htmx-request .plugin-view-table tbody { transition: none; }
+}
 /* The chat component (ut-docs#4132, ADR-0121 amendment 2026-10-11). The
    transcript scrolls inside the card; column-reverse on the scroller keeps
    it pinned to the newest turn without script while the inner log keeps
@@ -7963,6 +8007,15 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .move-decline { margin: 0; }
 #move-approval-notice-mount:empty { display: none; }
 
+/* ut-docs#4391: the "Name your shop" page (name_shop.html). Narrow like
+   .move-approval so a 1280px till or a desktop doesn't stretch two short
+   fields across the screen; the fields stack (the global wrapped-label rule)
+   at full card width, so a 360px phone needs nothing extra. */
+.name-shop-card { max-inline-size: 40rem; }
+.name-shop-form { display: flex; flex-direction: column; align-items: stretch; gap: .9rem; }
+.name-shop-form > .field-error-msg { margin-block-start: -.6rem; }
+.name-shop-form > button { align-self: flex-start; }
+
 /* ut-docs#5410: Currency display select (Settings -> Currency). */
 .currency-display-select { min-block-size: 44px; }
 
@@ -8124,6 +8177,57 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
 
+/* ---------- Plugin settings: asked options (ADR-0121 S5, ut-docs#4160) ---------- */
+.ps-ask select { inline-size: 100%; max-inline-size: 100%; min-inline-size: 0; min-block-size: 46px; }
+.ps-ask-msg { font-size: .9rem; text-align: start; overflow-wrap: anywhere; }
+.ps-ask-msg:not(:empty) { margin-block-start: .35rem; margin-block-end: .5rem; }
+.ps-ask-msg .btn { display: block; margin-block-start: .4rem; min-block-size: 46px; }
+/* The loading line is shown by the page script (class ps-ask-slow) only when
+   the answer is still pending after 400 ms, so a cache hit never flashes it.
+   Not a CSS animation-delay: html.fx-light turns animations off. */
+.ps-ask-loading { display: none; font-size: .85rem; color: var(--muted); }
+.ps-ask-slow .ps-ask-loading { display: block; }
+
+/* ut-docs#5852: till stock-take on /inventory. Count mode swaps the stock
+   card's contents in place (no dialog, so the status bar stays reachable).
+   Logical properties only. */
+.stocktake-picker { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; margin-block-end: .8rem; }
+/* display:flex beats the UA [hidden] rule: without this the picker shows on load. */
+.stocktake-picker[hidden] { display: none; }
+.stocktake-picker label { display: flex; flex-direction: column; gap: .2rem; }
+.stocktake-picker .btn-link { background: none; border: 0; color: inherit; text-decoration: underline;
+  cursor: pointer; min-block-size: 44px; padding-inline: .6rem; font: inherit; }
+.stocktake-load-error, .stocktake-alert { color: var(--danger); border: 1px solid var(--danger);
+  border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .6rem; }
+.stocktake-result { border: 1px solid var(--border); border-radius: .5rem; padding: .5rem .75rem; margin-block-end: .8rem; font-weight: 600; }
+.stocktake-hint { margin-block: 0 .5rem; }
+.stocktake-table .stocktake-num { text-align: end; white-space: nowrap; }
+.stocktake-table .stocktake-diff { unicode-bidi: isolate; direction: ltr; }
+.stocktake-input { inline-size: 7rem; min-block-size: 44px; text-align: end; }
+.stocktake-input[aria-invalid="true"] { outline: 2px solid var(--danger); }
+.stocktake-err { font-size: .85rem; color: var(--danger); }
+.stocktake-line-err td, .stocktake-row-bad td { color: var(--danger); }
+.stocktake-note { display: flex; flex-direction: column; gap: .2rem; margin-block-start: .8rem; }
+.stocktake-bar { position: sticky; inset-block-end: var(--stocktake-sb-h, 0px); background: var(--surface); border-block-start: 1px solid var(--border);
+  padding-block: .5rem; margin-block-start: .8rem; z-index: 5; }
+.stocktake-bar-main, .stocktake-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.stocktake-bar .btn { min-block-size: 44px; }
+.stocktake-bar-main[hidden], .stocktake-confirm[hidden] { display: none; }
+.stocktake-primary { margin-inline-start: auto; }
+.stocktake-secondary { margin-inline-start: auto; }
+.stocktake-secondary:not([hidden]) + .stocktake-primary { margin-inline-start: 0; }
+.stocktake-msg { flex: 1 1 10rem; }
+body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17rem); }
+@media (max-width: 480px) {
+  .stocktake-table .stocktake-sku { display: none; }
+  .stocktake-table th, .stocktake-table td { padding-inline: .3rem; }
+  .stocktake-table .stocktake-num { white-space: normal; }
+  .stocktake-table .catalog-name { overflow-wrap: anywhere; }
+  /* Four uppercase headers (DIFFERENCE, COUNTED) out-measure a 360px card:
+     let them wrap so the review table stays inside it. */
+  .stocktake-table th { letter-spacing: 0; overflow-wrap: anywhere; }
+  .stocktake-input { inline-size: 4.5rem; }
+}
 /* About screen (ut-docs#6402): a plain list of full-width touch links. */
 .about-links { list-style: none; margin: 1rem 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; max-inline-size: 28rem; }
 .about-links .btn { display: block; text-align: start; }
@@ -8132,3 +8236,72 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
 .about-addresses dt { font-weight: 600; margin-block-start: .5rem; }
 .about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
 .about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }
+
+/* ut-docs#6566: the "Which reader?" picker (web/ui/partials/card_reader_picker.html)
+   and the manager's card readers page. Logical properties only (RTL, ar/fa).
+   Rows are >=56px (finger-sized, above the 48px floor) and never truncate a
+   name; states are icon + text, never colour alone. The action bar is sticky
+   so Confirm stays on screen with many readers (the list scrolls, touch-
+   action: pan-y, click handlers only: no pointer/drag handlers). */
+.pay-grid[hidden], .card-reader-mount[hidden] { display: none; }
+.card-reader-mount { display: flex; flex-direction: column; min-block-size: 0; }
+/* O2: while the picker is open the tender footer and Offline toggle step aside */
+.payment-overlay.card-reader-picking .tender-footer, .payment-overlay.card-reader-picking .offline-toggle { display: none; }
+.pay-btn .pay-btn-sub { display: block; font-size: .8rem; font-weight: 400; }
+.card-reader-picker { display: flex; flex-direction: column; gap: .5rem; min-block-size: 0; }
+.card-reader-picker h3 { margin: 0; min-block-size: 3rem; display: flex; align-items: center; }
+.card-reader-list { display: flex; flex-direction: column; gap: .5rem; overflow-y: auto; touch-action: pan-y;
+                    max-block-size: 50vh; min-block-size: 0; }
+.card-reader-option { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+                      flex: none; /* never shrink in the scrolling list: 5+ readers squashed rows and spilled the text */
+                      gap: .25rem .75rem; inline-size: 100%; min-block-size: 56px; padding-block: .5rem; padding-inline: .9rem;
+                      text-align: start; background: var(--surface); color: var(--text);
+                      border: 1px solid var(--control-border); border-radius: .5rem; font: inherit; cursor: pointer; }
+.card-reader-option[aria-checked="true"] { border: 2px solid var(--accent); background: var(--surface-2); }
+.card-reader-option[aria-checked="true"] .card-reader-name::before { content: "\2713\00a0"; }
+.card-reader-option[aria-disabled="true"] { border-style: dashed; background: var(--surface-2); cursor: not-allowed; }
+.card-reader-option:focus-visible { outline: 3px solid var(--focus-border); outline-offset: 2px; }
+.card-reader-main { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 12rem; }
+.card-reader-name { font-weight: 700; overflow-wrap: anywhere; }
+.card-reader-kind { font-size: .85rem; overflow-wrap: anywhere; }
+.card-reader-state { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; white-space: nowrap; }
+.card-reader-state[data-state="offline"], .card-reader-state[data-state="needs_setup"] { color: var(--danger); }
+.card-reader-icon { flex: none; }
+.card-reader-reason { flex-basis: 100%; font-size: .85rem; color: var(--text); overflow-wrap: anywhere; }
+.card-reader-reason:empty { display: none; }
+.card-reader-actions { position: sticky; inset-block-end: 0; display: flex; flex-wrap: wrap; gap: .5rem;
+                       padding-block: .5rem; background: var(--surface); }
+.card-reader-actions .card-reader-confirm { flex: 2 1 12rem; min-block-size: 56px; }
+.card-reader-actions .card-reader-back { flex: 1 1 8rem; min-block-size: 56px; }
+.card-reader-live { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 480px) {
+  .card-reader-actions { flex-direction: column; }
+  .card-reader-actions .card-reader-confirm, .card-reader-actions .card-reader-back { flex-basis: auto; inline-size: 100%; }
+}
+/* Settings page */
+.card-reader-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
+                            padding-block: .6rem; border-block-end: 1px solid var(--border); }
+.card-reader-settings-row .card-reader-main { flex: 1 1 14rem; }
+.card-reader-settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.card-reader-settings-actions .btn { min-block-size: 48px; min-inline-size: 48px; }
+/* O3: the whole row is the target (>=48px) and the control itself is bigger than the browser's 13px box */
+.card-reader-settings-actions label { display: flex; align-items: center; gap: .6rem; min-block-size: 48px; flex: 1 1 100%; cursor: pointer; }
+.card-reader-settings-actions label input[type="checkbox"] { inline-size: 1.75rem; block-size: 1.75rem; flex: none; margin: 0; }
+.card-reader-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.card-reader-tag { font-size: .8rem; padding-block: .1rem; padding-inline: .45rem; border: 1px solid var(--control-border); border-radius: 999px; }
+.card-reader-add-form { display: grid; gap: .6rem; max-inline-size: 32rem; margin-block-start: 1rem; }
+.card-reader-add-form input, .card-reader-add-form select { min-block-size: 48px; }
+.card-reader-rename-form { display: inline-flex; gap: .4rem; flex-wrap: wrap; }
+/* Order numbers (ut-docs#6663): the number a person reads out or waits for.
+   Digits only, always left-to-right; the receipt number stays small. */
+.order-no-hero { display: flex; flex-direction: column; align-items: center; margin: .5rem 0; text-align: center; color: var(--text); }
+.order-no-hero .order-no-label { color: var(--muted); font-size: .85rem; }
+.order-no-hero .order-no-value { font-size: 2.5rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }
+@media print { .order-no-hero, .order-no-hero .order-no-label, .order-no-hero .order-no-value { background: #fff; color: #000; } }
+.receipt-no-secondary { font-size: 1rem; font-weight: 400; font-family: ui-monospace, monospace; }
+.order-no-board { font-size: 1.5rem; font-weight: 700; unicode-bidi: isolate; }
+[data-display-board] .order-no-board { font-size: 2rem; }
+.order-no-journal { font-size: .85rem; color: var(--muted); unicode-bidi: isolate; }
+.tracking-order-no { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.tracking-order-no .order-no-label { color: var(--muted); font-size: .85rem; }
+.tracking-order-no .order-no-value { font-size: 3rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }

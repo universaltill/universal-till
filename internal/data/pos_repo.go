@@ -102,7 +102,10 @@ type SaleLineSnapshot struct {
 }
 
 type SaleJournalEntry struct {
-	ReceiptNo  string
+	ReceiptNo string
+	// DisplayNo is the sale's order number ('' for a sale from before order
+	// numbers); ReceiptNo stays the identity (ut-docs#6663).
+	DisplayNo  string
 	Total      int64
 	TenderType string
 	SyncStatus string
@@ -124,7 +127,10 @@ type SalesJournalFilter struct {
 	TillID   string
 	AllTills bool
 	Day      string
-	Limit    int
+	// Search finds a sale by either number (ut-docs#6663): the exact receipt
+	// number, the exact order number, or the digits a receipt number ends in.
+	Search string
+	Limit  int
 }
 
 type QueuedSale struct {
@@ -3792,7 +3798,7 @@ FROM report_archive WHERE kind = ?
 HAVING (? != 'eod' OR NOT EXISTS (
   SELECT 1 FROM report_archive ra2
   WHERE ra2.kind = 'eod'
-    AND date(ra2.created_at, 'localtime') = date(?, 'localtime')))
+    AND date(ra2.created_at, '-1 second', 'localtime') = date(?, '-1 second', 'localtime')))
 ON CONFLICT (kind, period) DO NOTHING`
 		args = []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt,
 			closedAtStr, kind, kind, closedAtStr}
@@ -5254,33 +5260,16 @@ GROUP BY sl.variant_id`, fromStr, toStr)
 // is the max within this till's own prefix.
 func (r *POSRepo) NextReceiptNo(ctx context.Context, tx *sql.Tx) (string, error) {
 	exec := r.exec(tx)
-	var prefix string
-	_ = exec.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&prefix)
-	var maxVal sql.NullInt64
-	if err := exec.QueryRowContext(ctx, `
-SELECT COALESCE(MAX(CAST(substr(receipt_no, ?) AS INTEGER)), 0)
-FROM sales WHERE receipt_no LIKE ? || '%'`,
-		len(prefix)+1, prefix).Scan(&maxVal); err != nil {
+	prefix := receiptPrefix(ctx, exec)
+	// The counter is stored (number_series, ut-docs#6663), so "Clear
+	// transaction history" cannot restart it; the first use of a series
+	// seeds from live + archived sales. A restore jump (restore_numbers.go)
+	// reserves a block of numbers the lost till may have issued after the
+	// backup; its floor only applies to the prefix it was computed for.
+	next, err := nextInSeries(ctx, exec, numberKindReceipt, prefix, restoreFloor(ctx, exec, prefix),
+		func() (int64, error) { return maxReceiptSeq(ctx, exec, prefix) })
+	if err != nil {
 		return "", fmt.Errorf("next receipt no: %w", err)
-	}
-	top := maxVal.Int64
-	// A restore jump (restore_numbers.go) reserves a block of numbers the
-	// lost till may have issued after the backup; its floor only applies to
-	// the prefix it was computed for.
-	var floorPrefix, floorVal string
-	if err := exec.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorPrefixKey).Scan(&floorPrefix); err == nil && floorPrefix == prefix {
-		if err := exec.QueryRowContext(ctx,
-			`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorKey).Scan(&floorVal); err == nil {
-			if f, perr := strconv.ParseInt(floorVal, 10, 64); perr == nil && f > top {
-				top = f
-			}
-		}
-	}
-	next := top + 1
-	if next < 1 {
-		next = 1
 	}
 	return fmt.Sprintf("%s%09d", prefix, next), nil
 }
@@ -5359,97 +5348,6 @@ const (
 	// for shop_type retail/service when the key is still unset.
 	OrderTypePromptModeOff = "off"
 )
-
-// NextDisplayNo allocates the next short, customer-facing order number for
-// a sale -- an ADDITIONAL identity to receipt_no (ut-docs#1817), never a
-// replacement: receipt_no keeps its own independent, gapless allocation
-// (NextReceiptNo, called separately) exactly as before. Reuses the SAME
-// per-till sync.receipt_prefix NextReceiptNo already reads for multi-till
-// collision safety -- two tills sharing a room can never call out the same
-// display number, with no second prefixing mechanism invented. Offline-safe
-// by construction: one local SQLite read in the caller's own transaction,
-// no network round-trip, same as NextReceiptNo.
-//
-// Read via a bare SELECT MAX(...)+1, not a real DB sequence -- the same
-// trade-off NextReceiptNo already accepts: a crash between allocating and
-// inserting leaves a gap, never a collision (a collision is caught by the
-// caller's own retry-on-conflict loop in internal/pos/sales.go, which this
-// rides alongside in the exact same transaction as the receipt-no
-// allocation).
-//
-// The scheme itself is read here, inside exec(tx), rather than taken as a
-// parameter -- same reason prefix is read this way and not passed in: a
-// caller (internal/pos/sales.go) may be running with tx == nil in a test,
-// and exec(tx) is what safely falls back to r.db for that case. A caller
-// passing its own pre-read tx.QueryRowContext for this would reintroduce
-// exactly the nil-tx panic exec(tx) exists to avoid.
-func (r *POSRepo) NextDisplayNo(ctx context.Context, tx *sql.Tx) (string, error) {
-	exec := r.exec(tx)
-	var prefix string
-	_ = exec.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&prefix)
-	prefix = customerFacingPrefix(prefix)
-	var scheme string
-	_ = exec.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = ?`, SaleDisplayNoSchemeKey).Scan(&scheme)
-
-	// since bounds the count to the current trading period for the default
-	// scheme -- "" (compares before any real created_at ever could, so the
-	// WHERE clause below is effectively unbounded) for
-	// DisplayNoSchemeLifetimeNoReset and for a till that has never closed
-	// yet, both of which want every sale ever recorded under this prefix.
-	//
-	// Deliberately NOT r.LatestArchivedAt (which always queries via r.db,
-	// never exec(tx)): a real deadlock, not a theoretical one -- confirmed
-	// by TestFiscalChip_ConfiguredLastSaleGapped_RendersWarnWithCount timing
-	// out at 10 minutes while this method, running inside CompleteSale's own
-	// transaction, blocked forever in database/sql.(*DB).conn waiting for a
-	// second connection that the pool never frees (the in-flight tx holds
-	// the only one). Reading the SAME "eod" boundary inline through exec
-	// keeps it on the SAME connection as everything else in this method,
-	// same reason prefix/scheme are read that way above.
-	//
-	// report_archive.created_at and sales.created_at are NOT the same text
-	// shape -- archiveTimestampFmt ("2006-01-02 15:04:05", space-separated)
-	// vs. sales' plain time.RFC3339 ("...T...Z") -- so a bare string compare
-	// between them is wrong: 'T' (0x54) sorts after ' ' (0x20), so
-	// created_at > since would read true for a same-calendar-day sale
-	// regardless of actual time, and the "reset" would never actually
-	// reset (caught by independent review, ut-docs#1817 — verified live: a
-	// probe with the real archive format left the counter monotonically
-	// increasing across closes instead of returning to 1). Parse with the
-	// SAME layout LatestArchivedAt itself uses, then re-format to RFC3339
-	// to match sales.created_at's own shape, exactly what LatestArchivedAt
-	// would have handed back had it been safe to call here.
-	var since string
-	if scheme != DisplayNoSchemeLifetimeNoReset {
-		var raw sql.NullString
-		_ = exec.QueryRowContext(ctx,
-			`SELECT MAX(created_at) FROM report_archive WHERE kind = 'eod'`).Scan(&raw)
-		if raw.Valid {
-			if ts, err := time.Parse(archiveTimestampFmt, raw.String); err == nil {
-				since = ts.UTC().Format(time.RFC3339)
-			}
-			// A parse failure leaves since == "" -- same fail-open-to-
-			// unbounded behaviour as "no close yet", never an error: a
-			// malformed archive row must not block every sale on this till.
-		}
-	}
-	var maxVal sql.NullInt64
-	if err := exec.QueryRowContext(ctx, `
-SELECT COALESCE(MAX(CAST(substr(display_no, ?) AS INTEGER)), 0)
-FROM sales WHERE display_no LIKE ? || '%' AND created_at > ?`,
-		len(prefix)+1, prefix, since).Scan(&maxVal); err != nil {
-		return "", fmt.Errorf("next display no: %w", err)
-	}
-	next := maxVal.Int64 + 1
-	if next < 1 {
-		next = 1
-	}
-	// No zero-padding, unlike receipt_no's %09d -- the entire point is a
-	// short, callable number.
-	return fmt.Sprintf("%s%d", prefix, next), nil
-}
 
 // CurrentQty returns quantity and whether a matching inventory row existed.
 //
@@ -7198,22 +7096,22 @@ VALUES (?, ?, ?, ?, ?)
 	return nil
 }
 
-// LoadShiftForClose fetches shift info required to close.
-func (r *POSRepo) LoadShiftForClose(ctx context.Context, tx *sql.Tx, shiftID string) (string, string, int64, error) {
-	var registerID, cashierID string
-	var openingCash int64
-	err := r.exec(tx).QueryRowContext(ctx, `
-SELECT register_id, cashier_id, opening_cash
+// LoadShiftForClose fetches the open shift's register, cashier, opened_at
+// (the row's exact string) and opening cash — what closing it needs and
+// what the shift.closed event reports (ut-docs#5770).
+func (r *POSRepo) LoadShiftForClose(ctx context.Context, tx *sql.Tx, shiftID string) (registerID, cashierID, openedAt string, openingCash int64, err error) {
+	err = r.exec(tx).QueryRowContext(ctx, `
+SELECT register_id, cashier_id, opened_at, opening_cash
 FROM shifts 
 WHERE id = ? AND closed_at IS NULL
-`, shiftID).Scan(&registerID, &cashierID, &openingCash)
+`, shiftID).Scan(&registerID, &cashierID, &openedAt, &openingCash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", 0, errors.New("shift not found or already closed")
+			return "", "", "", 0, errors.New("shift not found or already closed")
 		}
-		return "", "", 0, fmt.Errorf("query shift: %w", err)
+		return "", "", "", 0, fmt.Errorf("query shift: %w", err)
 	}
-	return registerID, cashierID, openingCash, nil
+	return registerID, cashierID, openedAt, openingCash, nil
 }
 
 // UpdateShiftClose sets closing details. newFloat is the drawer's
@@ -8129,6 +8027,9 @@ type SaleDetailLine struct {
 }
 
 type SaleDetailPayment struct {
+	// ID is the payments row id (ut-docs#6649: per-leg refund netting). Never
+	// on the journal wire.
+	ID          string `json:"-"`
 	Method      string `json:"method"`
 	Amount      int64  `json:"amount"`
 	ChangeGiven int64  `json:"change_given"`
@@ -8280,17 +8181,17 @@ ORDER BY sl.line_no, slm.rowid`, d.ID)
 	}
 
 	payRows, err := r.db.QueryContext(ctx, `
-SELECT method_id, amount, change_given, tip_amount, COALESCE(tip_recipient, 'employee'), COALESCE(reference, ''),
+SELECT id, method_id, amount, change_given, tip_amount, COALESCE(tip_recipient, 'employee'), COALESCE(reference, ''),
        COALESCE(masked_pan, ''), COALESCE(auth_code, ''), COALESCE(terminal_id, ''), COALESCE(trace_id, ''),
        COALESCE(voucher_id, ''), paid_at
-FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
+FROM payments WHERE sale_id = ? ORDER BY paid_at, rowid`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale payments: %w", err)
 	}
 	defer payRows.Close()
 	for payRows.Next() {
 		var p SaleDetailPayment
-		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.TipRecipient, &p.Reference,
+		if err := payRows.Scan(&p.ID, &p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.TipRecipient, &p.Reference,
 			&p.MaskedPAN, &p.AuthCode, &p.TerminalID, &p.TraceID, &p.VoucherID, &p.PaidAt); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
 		}
@@ -8388,7 +8289,8 @@ func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([
 		limit = 5
 	}
 	query := `
-SELECT s.receipt_no, s.total, s.tender_type, s.sync_status, s.created_at, s.till_id, COALESCE(t.name, '') AS till_name
+SELECT s.receipt_no, s.total, s.tender_type, s.sync_status, s.created_at, s.till_id, COALESCE(t.name, '') AS till_name,
+       COALESCE(s.display_no, '')
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
 WHERE 1=1
@@ -8402,6 +8304,11 @@ WHERE 1=1
 		query += ` AND s.local_date = date(?)`
 		args = append(args, f.Day)
 	}
+	if q := strings.TrimSpace(f.Search); q != "" {
+		query += ` AND (s.receipt_no = ? OR s.display_no = ? OR s.receipt_no LIKE ? ESCAPE '\')`
+		esc := likeLiteral.Replace(q)
+		args = append(args, q, q, "%"+esc)
+	}
 	query += ` ORDER BY s.created_at DESC LIMIT ?`
 	args = append(args, limit+1)
 
@@ -8413,7 +8320,7 @@ WHERE 1=1
 	var out []SaleJournalEntry
 	for rows.Next() {
 		var entry SaleJournalEntry
-		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt, &entry.TillID, &entry.TillName); err != nil {
+		if err := rows.Scan(&entry.ReceiptNo, &entry.Total, &entry.TenderType, &entry.SyncStatus, &entry.CreatedAt, &entry.TillID, &entry.TillName, &entry.DisplayNo); err != nil {
 			return nil, false, fmt.Errorf("scan sales journal: %w", err)
 		}
 		out = append(out, entry)
@@ -9210,4 +9117,73 @@ func (r *POSRepo) exec(tx *sql.Tx) dbExecutor {
 		return tx
 	}
 	return r.db
+}
+
+// RefundLegRefund is what one completed refund sent back to one original
+// payment leg (ut-docs#6649).
+type RefundLegRefund struct {
+	OriginalPaymentID string
+	Amount            int64
+}
+
+// RefundedByLeg sums, per original payment id, what completed refunds already
+// sent back to that leg (rows written when the refund was recorded).
+func (r *POSRepo) RefundedByLeg(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT original_payment_id, SUM(amount) FROM refund_leg_refunds WHERE original_sale_id = ? GROUP BY original_payment_id`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("refunded by leg: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var sum int64
+		if err := rows.Scan(&id, &sum); err != nil {
+			return nil, fmt.Errorf("scan refunded by leg: %w", err)
+		}
+		out[id] = sum
+	}
+	return out, rows.Err()
+}
+
+// RefundedByMethod sums what completed returns linked to originalSaleID paid
+// back through one payment method (all legs together, recorded or not).
+func (r *POSRepo) RefundedByMethod(ctx context.Context, originalSaleID, methodID string) (int64, error) {
+	var total int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(ABS(p.amount)), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+JOIN sale_links k ON k.sale_id = s.id
+WHERE k.original_sale_id = ? AND p.method_id = ?`, originalSaleID, methodID).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("refunded by method: %w", err)
+	}
+	return total, nil
+}
+
+// InsertRefundLegRefunds records the per-leg allocation an approved refund
+// used, against the return sale that recorded it. One transaction: all legs
+// or none.
+func (r *POSRepo) InsertRefundLegRefunds(ctx context.Context, originalSaleID, returnSaleID string, legs []RefundLegRefund) error {
+	if len(legs) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("record refund legs: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, l := range legs {
+		if l.Amount <= 0 || l.OriginalPaymentID == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO refund_leg_refunds (id, original_sale_id, original_payment_id, return_sale_id, amount)
+VALUES (?, ?, ?, ?, ?)`, uuid.NewString(), originalSaleID, l.OriginalPaymentID, returnSaleID, l.Amount); err != nil {
+			return fmt.Errorf("record refund legs: %w", err)
+		}
+	}
+	return tx.Commit()
 }

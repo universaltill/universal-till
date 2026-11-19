@@ -444,6 +444,18 @@ func pluginJobPoll(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.Path, "/plugin/") || r.URL.Path == identifyJobPollPath
 }
 
+// cardReaderRefreshPoll reports whether r is the open "Which reader?" picker
+// refreshing reader states on its 10 s timer (ut-docs#6566, card-reader-picker.js
+// sends poll=1). Like every other poller it must not extend the session: an
+// untouched till with the picker left open would otherwise never idle-lock.
+// The cashier's own opening of the picker (no poll=1) still counts as input.
+func cardReaderRefreshPoll(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return r.URL.Path == "/api/pos/card-readers" && r.URL.Query().Get("poll") == "1"
+}
+
 // identifyJobPollPath is the catalog.identify seam's job poll route
 // (internal/pages/plugin_identify.go).
 const identifyJobPollPath = "/api/pos/identify/plugin"
@@ -599,7 +611,7 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 		}
 		if c, err := r.Cookie(CookieName); err == nil {
 			p := r.URL.Path
-			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && !sseStream(p)
+			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !cardReaderRefreshPoll(r) && !displayBoardPoll(p) && !sseStream(p)
 			if u, ok := svc.ResolveFor(r.Context(), c.Value, touch, displayBoardRequest(r)); ok {
 				// ut-docs#3935: a request-scoped permission snapshot, so
 				// the ~10 Can checks a page render makes read the

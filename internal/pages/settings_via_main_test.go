@@ -42,7 +42,7 @@ func TestSettingsAndStatusBar_ReplicaRegisteredViaMainTill(t *testing.T) {
 		}
 	}
 
-	// Not vouched yet: the status-bar chip links to the Cloud record card; there
+	// Not vouched yet: the status-bar chip links to the Privacy card; there
 	// is no Register now button any more (ADR-0200).
 	enroll.Init(ctx, &config.Config{}, emptyKV{}, &sync.WaitGroup{})
 	body := get()

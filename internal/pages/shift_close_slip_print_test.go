@@ -25,7 +25,7 @@ func shiftSlipClosedFixture(t *testing.T) *xpFx {
 	f := xpFixture(t)
 	f.exec(t, `INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at)
 VALUES('adj1','u1','shift','sh1','cash_adjustment','{"type":"payout","amount":-300,"reason":"Milk"}',?)`, xpAt(f.t0, 5*time.Minute))
-	err := pos.CloseShift(t.Context(), f.dp.Db, pos.ShiftCloseInput{
+	_, err := pos.CloseShift(t.Context(), f.dp.Db, pos.ShiftCloseInput{
 		ShiftID: "sh1", ClosingCash: money.FromMinor(108000), Skim: money.FromMinor(10000), SkimApproverID: "u1"})
 	if err != nil {
 		t.Fatal(err)

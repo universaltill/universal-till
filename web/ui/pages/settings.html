@@ -80,8 +80,12 @@
      registration card (cloud sync is back on), after a pause so the result
      line is read. A hidden sibling, never attributes on the card itself:
      htmx inherits hx-select/hx-target, which would filter every request
-     inside the card down to nothing (index.html documents the same trap). */}}
-<span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
+     inside the card down to nothing (index.html documents the same trap).
+     The Privacy card's status and last check-in change with the same events,
+     so the same single GET also swaps it, out of band (hx-select-oob): one
+     request, no second /settings render. A till that does not render the
+     card (a cashier) simply has nothing to swap. */}}
+<span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-select-oob="#settings-privacy" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
   {{/* ut-docs#2569: cloud sync and browser management pause here when the
@@ -210,7 +214,7 @@
   {{ else }}
     {{/* ADR-0200 (ut-docs#6559): no Register button and no terms step here: the
          till registers itself in the background once it is set up, and the
-         Cloud record card below says where it stands. The cloud terms are
+         Privacy card below says where it stands. The cloud terms are
          accepted at claim, on a paid feature and at a plugin download. */}}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
@@ -239,14 +243,22 @@
     </form>
     <div id="pair-msg" aria-live="polite" class="set-gap-s"></div>
   </div>
-  {{/* ADR-0200 (ut-docs#6559): the Cloud record. Status only: where this till
-       stands (an icon AND words, never colour alone), when the cloud last
-       answered, the notice, and one Stop sending switch. Managers only (the
-       caller passes nil otherwise). Rendering it is what "the notice was
-       shown" means for a till set up before the notice existed. The notice
-       wording is a DRAFT pending owner approval. */}}
+</div>
+{{/* ADR-0200 (ut-docs#6559): Settings > Privacy. The registration notice
+     (checkin-notice-v2, owner-approved) tells a shop to "switch off
+     "Send usage facts"" in Settings > Privacy, so this card and that switch
+     carry exactly those names (internal/pages/privacy_card_test.go pins
+     them to the notice text). Status only: where this till stands (an icon
+     AND words, never colour alone), when the cloud last answered, the
+     notice, and the one switch. Managers only (the caller passes nil
+     otherwise; the sidebar row is filtered the same way in
+     filterSettingsNavForRender). Rendering it is what "the notice was shown"
+     means for a till set up before the notice existed. */}}
+{{ if .registrationCard }}
+<div class="card" id="settings-privacy">
+  <h2>{{ T "settings.privacy.title" }} {{ helpLink "claim" }}</h2>
   {{ with .registrationCard }}
-  <div class="set-divider" id="cloud-record" data-testid="cloud-record">
+  <div data-testid="cloud-record">
     <h3 style="margin:0 0 .3rem">{{ T "settings.registration.title" }}</h3>
     <p data-testid="cloud-record-status">
       {{ if eq .state "registered" }}✅ {{ T "settings.registration.status.registered" }}
@@ -264,18 +276,28 @@
       <p>{{ T "registration.notice.stop_hint" }}</p>
       <p>{{ T "registration.notice.controller" }}</p>
     </div>
-    <form hx-post="/api/settings/registration-stop" hx-swap="none" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
-          data-after-request="ok not-html reload:settings-registration; fail save-error:settings-save-error">
-      <input type="hidden" name="stop" value="{{ if .paused }}0{{ else }}1{{ end }}">
+    {{/* The switch posts on change, like launch-on-startup below: ON = the till
+         sends (stop=0), OFF = stop=1. hx-vals reads the checkbox by id (see the
+         launch-on-startup note on why not event.target). A cashier gets the
+         manager-PIN prompt from the handler; a failed save reverts the switch;
+         a saved one reloads, since the status line and the status bar chip
+         change with it. */}}
+    <div class="set-gap-s">
+      <label class="set-row">
+        <input type="checkbox" role="switch" id="registration-send-cb" name="send" data-testid="registration-stop-btn"
+               hx-post="/api/settings/registration-stop" hx-trigger="change" hx-swap="none" hx-sync="this:drop"
+               hx-vals="js:{stop: document.getElementById('registration-send-cb').checked ? '0' : '1'}"
+               data-after-request="ok not-html reload:settings-registration; fail toggle-checked save-error:settings-save-error"
+               {{ if not .paused }}checked{{ end }}>
+        {{ T "settings.registration.send_usage_facts" }}
+      </label>
       <p class="muted">{{ if .paused }}{{ T "settings.registration.resume_help" }}{{ else }}{{ T "settings.registration.stop_help" }}{{ end }}</p>
-      <div class="set-gap-s">
-        <button class="btn btn-touch" type="submit" data-testid="registration-stop-btn">{{ if .paused }}{{ T "settings.registration.resume" }}{{ else }}{{ T "settings.registration.stop" }}{{ end }}</button>
-        <span id="registration-msg" aria-live="polite"></span>
-      </div>
-    </form>
+      <span id="registration-msg" aria-live="polite"></span>
+    </div>
   </div>
   {{ end }}
 </div>
+{{ end }}
 {{/* ut-docs#2569 (ADR-0060 §6): Settings → Subscription — plan, status and
      the paused-features banner (web/ui/partials/subscription_block.html).
      Manager-only, like #settings-diagnostics below (the sidebar row is
@@ -387,6 +409,9 @@
         data-allowdenied="{{ T "settings.update.android.allow_still_denied" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
         data-uptodate="{{ T "settings.update.up_to_date" }}"
+        data-busy="{{ T "settings.update.android.busy" }}"
+        data-downloaded="{{ printf (T "settings.update.android.downloaded") latestversion }}"
+        data-installnow="{{ T "settings.update.android.install_now" }}"
         data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
     <span id="android-update"></span>
     <!-- The PIN is hidden when the session alone will authorise (ut-docs#1537):
@@ -451,6 +476,8 @@
     var pinLabel = document.getElementById('android-update-pin-label');
     var pinInput = form.querySelector('[name="manager_pin"]');
     var T = function (k) { return form.getAttribute('data-' + k); };
+    // ut-docs#6551: the button's own markup, restored after "Install now".
+    var btnLabel = btn.innerHTML;
 
     // ut-docs#1537: every branch below says something. The old handler wrote a
     // bare "✗" for a wrong PIN, a lockout and a dead network alike, and wrote
@@ -482,7 +509,7 @@
         }
         // ut-docs#1545: 'uptodate' is the endpoint's already_current answer
         // — this control renders off a check up to 24h stale.
-        msg.textContent = T({ locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed');
+        msg.textContent = T({ locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge', busy: 'busy' }[outcome] || 'failed');
       });
     });
     // The shell's own report: % while downloading, the installer opening, a
@@ -538,6 +565,9 @@
       hideAllow();
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
+      // ut-docs#6551: already downloaded and checked: the button says what a
+      // tap does. Any later state gets the original label back.
+      if (s.state === 'downloaded') { btn.textContent = T('installnow'); } else { btn.innerHTML = btnLabel; }
     });
     // The submit handler maps a rejected start; the shell answers a refused
     // permission with needs_permission AFTER 'started', so nothing more here.
@@ -566,7 +596,11 @@
     <label class="set-row">
       <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
     </label>
-    <input type="time" name="time" value="{{ .autoUpdateTime }}">
+    <input type="time" name="time" value="{{ .autoUpdateTime }}"{{ if and updateinstallbridge .autoUpdateEnabled .autoUpdateWindowFrom }} aria-describedby="update-android-window"{{ end }}>
+    {{/* ut-docs#6551: on a sideload Android till the nightly time is when the till downloads the update (time + this till's own offset, app open on screen); a manager installs it with a tap. */}}
+    {{ if and updateinstallbridge .autoUpdateEnabled .autoUpdateWindowFrom }}
+    <p class="muted" id="update-android-window" data-testid="update-android-window">{{ printf (T "settings.update.android.download_window") .autoUpdateWindowFrom .autoUpdateWindowTo }}</p>
+    {{ end }}
     {{/* ut-docs#2739 (ADR-0114 §5): when additional tills install this till's version. */}}
     <label class="set-row" for="update-fleet-follow">{{ T "settings.update.fleet_follow_label" }}</label>
     <select name="fleet_follow" id="update-fleet-follow">
@@ -931,6 +965,9 @@
       <span id="pay-default-msg" aria-live="polite"></span>
     </label>
   </form>
+  <!-- ut-docs#6566: the per-till card reader list (manager page; the route
+       answers a cashier with 403, this link is not the gate). -->
+  <p id="settings-card-readers" class="set-row"><a class="btn secondary" data-testid="card-readers-link" href="/settings/card-readers">{{ T "card_reader.settings.title" }}</a></p>
   <p class="muted" class="set-gap">{{ T "settings.payments.fees_help" }}</p>
   {{ range .payFees }}
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"

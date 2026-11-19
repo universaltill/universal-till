@@ -470,7 +470,7 @@ var ErrRegistrationStopped = errors.New("enrolment: registration stopped for thi
 // bearer) and supplies TillID/DeviceName from its own records. The store
 // token is used here and never returned.
 func VouchForReplica(ctx context.Context, cfg *config.Config, kv Settings, req ReplicaRequest) (Vouch, error) {
-	// ut-docs#6618 (ADR-0200 decision 6): "Stop sending" is shop-wide. A
+	// ut-docs#6618 (ADR-0200 decision 6): "Send usage facts" off is shop-wide. A
 	// stopped shop whose cloud identity was made automatically does not get
 	// new tills registered in the cloud behind its back. An operator-claimed
 	// shop uses the cloud on purpose and is not affected.

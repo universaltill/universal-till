@@ -941,28 +941,73 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		var originalPayments []map[string]any
 		for _, op := range detail.Payments {
 			if op.Method == method && op.TraceID != "" {
-				originalPayments = append(originalPayments, map[string]any{
+				entry := map[string]any{
 					"transaction_ref": op.TraceID,
 					"amount":          op.Amount,
 					"tip_amount":      op.TipAmount,
-				})
+				}
+				// ut-docs#6566: the reader this leg was paid on, straight from
+				// the payment row (no registry lookup): a reader removed or
+				// offline since never blocks a refund, which goes by
+				// transaction_ref. Context for the provider, additive.
+				if op.TerminalID != "" {
+					entry["reader_id"] = op.TerminalID
+				}
+				originalPayments = append(originalPayments, entry)
 			}
 		}
 		// ut-docs#6603: with several legs of this method, say how much goes back
-		// to each, in payment order (a leg's own amount is its cap), so the
-		// plugin never has to guess which charge to refund. Earlier partial
-		// refunds are not tracked per leg yet (see the card's notes).
+		// to each, in payment order, so the plugin never has to guess which
+		// charge to refund. ut-docs#6649: each leg's cap is what it has LEFT
+		// after earlier refunds (recorded per leg; a refund made before those
+		// records existed is netted in payment order). Fail closed: if the
+		// earlier refunds cannot be read, nothing is refunded.
+		var legRefunds []data.RefundLegRefund
 		if len(originalPayments) > 1 {
-			caps := make([]int64, len(originalPayments))
-			for i, op := range originalPayments {
-				caps[i], _ = op["amount"].(int64)
+			legPaymentIDs := make([]string, 0, len(originalPayments))
+			for _, op := range detail.Payments {
+				if op.Method == method && op.TraceID != "" {
+					legPaymentIDs = append(legPaymentIDs, op.ID)
+				}
 			}
+			recordedByLeg, lerr := repo.RefundedByLeg(r.Context(), detail.ID)
+			methodRefunded, merr := repo.RefundedByMethod(r.Context(), detail.ID, method)
+			if lerr != nil || merr != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", errors.Join(lerr, merr))
+				return
+			}
+			amounts := make([]int64, len(originalPayments))
+			recorded := make([]int64, len(originalPayments))
+			var recordedSum int64
+			for i, op := range originalPayments {
+				amounts[i], _ = op["amount"].(int64)
+				recorded[i] = recordedByLeg[legPaymentIDs[i]]
+				recordedSum += recorded[i]
+			}
+			unrecorded := methodRefunded - recordedSum
+			if unrecorded < 0 {
+				unrecorded = 0
+			}
+			caps := netRefundLegCaps(amounts, recorded, unrecorded)
 			alloc := allocateRefundAcrossLegs(refundTotal.Minor(), caps)
+			// Fail closed: legs that have less left than this refund must send
+			// back would otherwise drop the per-leg list and let the plugin
+			// guess a charge (review finding).
+			var allocated int64
+			for _, a := range alloc {
+				allocated += a
+			}
+			if allocated < refundTotal.Minor() {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.method_exhausted", "refund",
+					fmt.Errorf("refund %d exceeds what is left on the %q payments (%d)", refundTotal.Minor(), method, allocated))
+				return
+			}
 			kept := originalPayments[:0:0]
 			for i, op := range originalPayments {
 				if alloc[i] > 0 {
 					op["refund_amount"] = alloc[i]
 					kept = append(kept, op)
+					legRefunds = append(legRefunds, data.RefundLegRefund{OriginalPaymentID: legPaymentIDs[i], Amount: alloc[i]})
 				}
 			}
 			originalPayments = kept
@@ -1004,7 +1049,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			// (paymentDeclinedError / pos.toast.payment_declined): log the
 			// real detail server-side, show a generic localized decline
 			// message instead.
-			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.provider_declined", "refund", blocked)
+			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, refundDeclineKey(blocked), "refund", blocked)
 			return
 		}
 		// ut-docs#1788: independent, core-side backstop for Turkey's
@@ -1120,6 +1165,13 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			// "return" sale going through the identical CompleteSale path.
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, classifyTenderError(err), "refund", err)
 			return
+		}
+		// ut-docs#6649: remember what each original leg just got back, so the
+		// next refund of this sale nets it. The provider already approved and
+		// the return is committed, so a failed write is logged, never unwinds
+		// the refund (the method-level fallback still nets it).
+		if err := repo.InsertRefundLegRefunds(r.Context(), detail.ID, saleID, legRefunds); err != nil {
+			log.Printf("refund %s: recording per-leg refund amounts failed: %v", saleID, err)
 		}
 		// Same per-completion audit marker completeTender writes for a sale
 		// taken during an active TSE-override window (ADR-0048 Decision 3)
@@ -1381,4 +1433,58 @@ func allocateRefundAcrossLegs(total int64, caps []int64) []int64 {
 		total -= a
 	}
 	return out
+}
+
+// netRefundLegCaps is each leg's amount minus what earlier refunds already
+// sent back to it (recorded per leg), then minus `unrecorded`: refunds made
+// before per-leg records existed, taken from the legs in payment order
+// (ut-docs#6649). Never negative.
+func netRefundLegCaps(amounts, recorded []int64, unrecorded int64) []int64 {
+	out := make([]int64, len(amounts))
+	for i, a := range amounts {
+		rem := a
+		if i < len(recorded) {
+			rem -= recorded[i]
+		}
+		if rem < 0 {
+			rem = 0
+		}
+		out[i] = rem
+	}
+	for i := range out {
+		if unrecorded <= 0 {
+			break
+		}
+		take := unrecorded
+		if take > out[i] {
+			take = out[i]
+		}
+		out[i] -= take
+		unrecorded -= take
+	}
+	return out
+}
+
+// Decline codes a payment plugin may print on a refund answer (ut-docs#6647).
+const (
+	declineCodeRefundPartial        = "refund_partial"
+	declineCodeRefundOutcomeUnknown = "refund_outcome_unknown"
+)
+
+// refundDeclineKey picks the operator text for a refused refund hook. Only the
+// two codes that mean money may already have moved get their own text (retry
+// the same refund here, never another method); everything else, including an
+// unknown code or no code, keeps the generic decline. The code is only ever
+// compared, never shown.
+func refundDeclineKey(err error) string {
+	var exitErr *plugins.HandlerExitError
+	if errors.As(err, &exitErr) {
+		switch exitErr.DeclineCode() {
+		case declineCodeRefundPartial:
+			return "refund.error.partial"
+		case declineCodeRefundOutcomeUnknown, declineCodeOutcomeUnknown:
+			return "refund.error.outcome_unknown"
+		}
+	}
+	return "refund.error.provider_declined"
 }
