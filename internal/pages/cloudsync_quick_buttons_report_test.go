@@ -213,6 +213,36 @@ func TestQuickButtonsReportGate_SendsOnChangeCommitsOnSuccess(t *testing.T) {
 	}
 }
 
+// ut-docs#2562 review M1: a failed same-tick follow-up report POST (#5614)
+// ends the tick contacted=true err=nil, but the version the rebuilt report
+// carried never reached the cloud, so the gate must not record it as sent.
+func TestQuickButtonsReportGate_FailedFollowUpPostDoesNotCommit(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	has := func(e map[string]any) bool { _, a := e["quick_buttons"]; return a }
+	hooks.DeviceExtra(ctx)
+	hooks.AfterTick(ctx, true, nil) // steady state: V1 sent
+	if has(hooks.DeviceExtra(ctx)) {
+		t.Fatal("steady state must omit the report")
+	}
+	hooks.AfterTick(ctx, true, nil)
+	qbExec(t, dp, `INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('itmN','NEW','New',100,'tax_std',1)`)
+	// the follow-up rebuild adds V2 (pending); its POST then fails
+	if !has(hooks.DeviceExtra(ctx)) {
+		t.Fatal("changed sell screen must bring the report back")
+	}
+	hooks.ReportPostFailed()
+	hooks.AfterTick(ctx, true, nil) // tick still ends contacted, err nil
+	if !has(hooks.DeviceExtra(ctx)) {
+		t.Fatal("V2 never reached the cloud: the next check-in must re-send it")
+	}
+	hooks.AfterTick(ctx, true, nil) // a good tick commits
+	if has(hooks.DeviceExtra(ctx)) {
+		t.Fatal("after a successful carry the gate is steady again")
+	}
+}
+
 func TestCloudSetQuickButtonLayout_ImplicitTileMovesAheadOfExplicit(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()

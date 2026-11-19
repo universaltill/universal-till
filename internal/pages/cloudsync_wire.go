@@ -690,6 +690,18 @@ type quickButtonsReportGate struct {
 	// pendingTracked: pendingVer is a real version (an untracked version
 	// sends on every check-in and records nothing).
 	pendingTracked bool
+	// postFailed: this tick's same-tick follow-up report POST failed, so the
+	// rebuilt report (pending) never reached the cloud (markPostFailed).
+	postFailed bool
+}
+
+// markPostFailed is cloudsync.Hooks.ReportPostFailed's half: the tick ends
+// contacted=true err=nil although the follow-up POST failed, so commit must
+// not record the version that follow-up carried (ut-docs#2562).
+func (g *quickButtonsReportGate) markPostFailed() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.postFailed = true
 }
 
 // add puts the report into extra when it should be sent. The version is read
@@ -720,10 +732,10 @@ func (g *quickButtonsReportGate) add(ctx context.Context, d *common.Deps, extra 
 func (g *quickButtonsReportGate) commit(_ context.Context, contacted bool, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.pending && g.pendingTracked && contacted && err == nil {
+	if g.pending && g.pendingTracked && contacted && err == nil && !g.postFailed {
 		g.sent, g.sentVer, g.sentAt = true, g.pendingVer, time.Now()
 	}
-	g.pending = false
+	g.pending, g.postFailed = false, false
 }
 
 // remoteReportMaxGroupItems caps the per-group `items` list in the
@@ -857,6 +869,16 @@ type rolesReportGate struct {
 	// at a tracked generation pendingGen, waiting for the outcome.
 	pending    bool
 	pendingGen int64
+	// postFailed: see quickButtonsReportGate.postFailed.
+	postFailed bool
+}
+
+// markPostFailed: the tick's same-tick follow-up report POST failed though the
+// tick ended contacted=true err=nil; commit must not record that report.
+func (g *rolesReportGate) markPostFailed() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.postFailed = true
 }
 
 // add puts roles and permission_actions into extra when they should be
@@ -912,10 +934,10 @@ func (g *rolesReportGate) add(ctx context.Context, d *common.Deps, extra map[str
 func (g *rolesReportGate) commit(_ context.Context, contacted bool, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.pending && contacted && err == nil {
+	if g.pending && contacted && err == nil && !g.postFailed {
 		g.sent, g.sentGen = true, g.pendingGen
 	}
-	g.pending = false
+	g.pending, g.postFailed = false, false
 }
 
 // reset forgets what was sent: called on a satellite, so a till promoted
@@ -1602,6 +1624,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Records whether the check-in carrying a roles / quick-buttons
 		// report got through (the gates' commit). wireCloudLinkHooks chains
 		// onto it.
+		ReportPostFailed: func() {
+			rolesGate.markPostFailed()
+			qbGate.markPostFailed()
+		},
 		AfterTick: func(ctx context.Context, contacted bool, err error) {
 			rolesGate.commit(ctx, contacted, err)
 			qbGate.commit(ctx, contacted, err)
