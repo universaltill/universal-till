@@ -234,10 +234,27 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return nil, err
 	}
+	migrateLegacyCardReaders(ctx, db)
 	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, db)
 	m.syncBundleFonts()
 	return m, nil
+}
+
+// migrateLegacyCardReaders imports each payment plugin's register-scoped
+// `*_reader_id` setting into the card reader registry (ut-docs#6566, D4).
+// Idempotent and best effort: a failure is logged, never blocks startup or a
+// plugin lifecycle change, and the setting itself is never touched, so
+// upgrade and rollback stay safe.
+func migrateLegacyCardReaders(ctx context.Context, db *sql.DB) {
+	n, err := data.NewCardReaderRepo(db).MigrateLegacyReaderSettings(ctx)
+	if err != nil {
+		log.Printf("card readers: legacy reader import failed: %v", err)
+		return
+	}
+	if n > 0 {
+		log.Printf("card readers: imported %d legacy reader setting(s) into the registry", n)
+	}
 }
 
 // warnPaymentMethodAnomalies logs startup warnings for payment_methods
@@ -322,6 +339,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return err
 	}
+	migrateLegacyCardReaders(ctx, m.db)
 	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, m.db)
 	m.syncLocales()

@@ -336,7 +336,10 @@ func TestEveryPollerIsClassified(t *testing.T) {
 	// tour.js (ut-docs#3710): its setInterval only re-checks the DOM while
 	// the guided tour is open (a dialog opened, the target moved) and never
 	// talks to the server — reviewed, nothing to classify.
-	jsTimers := map[string]bool{"app.js": true, "sell-screen-watch.js": true, "tour.js": true}
+	// card-reader-picker.js (ut-docs#6566): refreshes the open "Which reader?"
+	// picker every 10 s; the request carries poll=1 and is classified per
+	// request (cardReaderRefreshPoll), checked in TestCardReaderPickerRefreshIsABackgroundPoll.
+	jsTimers := map[string]bool{"app.js": true, "sell-screen-watch.js": true, "tour.js": true, "card-reader-picker.js": true}
 	entries, err := os.ReadDir(filepath.Join(root, "web", "public"))
 	if err != nil {
 		t.Fatalf("read web/public: %v", err)
@@ -376,5 +379,29 @@ func TestEveryPollerIsClassified(t *testing.T) {
 		if _, ok := found[p]; !ok {
 			t.Errorf("backgroundPollPaths lists %s, but nothing polls it any more — remove it", p)
 		}
+	}
+}
+
+// ut-docs#6566 (Tester finding): the open picker's 10 s refresh is a timer
+// poll, so it must not keep an untouched till signed in; the cashier's own
+// opening of the picker must still count as input.
+func TestCardReaderPickerRefreshIsABackgroundPoll(t *testing.T) {
+	get := func(method, target string) *http.Request { return httptest.NewRequest(method, target, nil) }
+	if !cardReaderRefreshPoll(get(http.MethodGet, "/api/pos/card-readers?source=pos&poll=1")) {
+		t.Error("the picker's timer refresh must not touch the session")
+	}
+	if cardReaderRefreshPoll(get(http.MethodGet, "/api/pos/card-readers?source=pos")) {
+		t.Error("opening the picker is real input and must touch the session")
+	}
+	if cardReaderRefreshPoll(get(http.MethodPost, "/api/pos/card-readers?poll=1")) || cardReaderRefreshPoll(get(http.MethodGet, "/api/pos/tender?poll=1")) {
+		t.Error("only a GET of the picker route is a background poll")
+	}
+	root := filepath.Join("..", "..")
+	js, err := os.ReadFile(filepath.Join(root, "web", "public", "card-reader-picker.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "/api/pos/card-readers?source=pos&poll=1") {
+		t.Error("card-reader-picker.js refresh must send poll=1 (see cardReaderRefreshPoll)")
 	}
 }

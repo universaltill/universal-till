@@ -67,6 +67,8 @@ var wantSplitTenderMsgAttrs = []string{
 	"voucher-check-unavailable",
 	"voucher-id-required",
 	"voucher-invalid",
+	// ut-docs#6566: the reader field of a leg on a method with several readers.
+	"reader-required",
 }
 
 // splitTenderMsgLocaleKeys maps each attribute to the locale key it renders,
@@ -97,6 +99,9 @@ var splitTenderMsgLocaleKeys = map[string]string{
 	"voucher-check-unavailable": "tender.status.voucher_check_unavailable",
 	"voucher-id-required":       "tender.status.voucher_id_required",
 	"voucher-invalid":           "pos.toast.voucher_invalid",
+	// ut-docs#6566: the status line when a reader is not chosen reuses the
+	// picker's own heading, "Which reader?".
+	"reader-required": "tap.reader.pick",
 	// ut-docs#1037 single-purpose vouchers: the balance check's verdict for
 	// a specific-item voucher (reuses the Gift voucher popup's own "Specific
 	// item" label, ut-docs#4214) and the Redeem success line.
@@ -323,6 +328,11 @@ func kebabToCamel(s string) string {
 	return b.String()
 }
 
+// splitTenderMsgWeblatePending names attributes whose key is new and not yet
+// translated (ADR-0160: translations come from Weblate, never a code PR); they
+// must render the English fallback until the Weblate pack carries them.
+var splitTenderMsgWeblatePending = map[string]bool{"reader-required": true}
+
 func TestSplitTenderStatusStringsLocalize(t *testing.T) {
 	mux := newSplitTenderI18nMux(t)
 
@@ -338,6 +348,15 @@ func TestSplitTenderStatusStringsLocalize(t *testing.T) {
 					continue
 				}
 				key := splitTenderMsgLocaleKeys[name]
+				if want[key] == "" && splitTenderMsgWeblatePending[name] {
+					// ADR-0160 (ut-docs#6566): a code PR adds English only; the
+					// other locales arrive from Weblate. Until then the string
+					// falls back to English, which is what must render.
+					if en := loadLocale(t, "en")[key]; got != en {
+						t.Errorf("data-msg-%s in %s = %q, want the English fallback %q", name, locale, got, en)
+					}
+					continue
+				}
 				if want[key] == "" {
 					t.Errorf("locale %s has no value for %q", locale, key)
 					continue

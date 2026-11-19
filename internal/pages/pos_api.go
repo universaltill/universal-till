@@ -65,6 +65,12 @@ const declineCodeOutcomeUnknown = "outcome_unknown"
 func tenderSignature(payments []pos.PaymentInput) string {
 	var b strings.Builder
 	for _, p := range payments {
+		if p.ReaderRowID != "" {
+			// ut-docs#6566: a different reader is a different tender, so a
+			// locked tender (outcome unknown) cannot be retried elsewhere.
+			fmt.Fprintf(&b, "%s:%d:%s;", p.MethodID, p.Amount.Minor(), p.ReaderRowID)
+			continue
+		}
 		fmt.Fprintf(&b, "%s:%d;", p.MethodID, p.Amount.Minor())
 	}
 	return b.String()
@@ -371,6 +377,20 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", err
 	}
 
+	// ut-docs#6566: which registry reader each card leg is paid on is decided
+	// (and refused) here, before any fiscal dispatch or authorize, so a
+	// missing/invalid/busy reader never has moved money. The in-flight marks
+	// are held until this tender ends.
+	readerSource := readerSourcePOS
+	if actorID == "kiosk" {
+		readerSource = readerSourceKiosk
+	}
+	releaseReaders, err := resolveReaderLegs(ctx, d, payments, readerSource)
+	if err != nil {
+		return "", err
+	}
+	defer releaseReaders()
+
 	dispatchFiscalSignStart(ctx, d, &saleInput)
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
@@ -485,6 +505,14 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				payload[k] = v
 			}
 		}
+		// ut-docs#6566: the registry reader the cashier chose, for a plugin
+		// that declared payment.<key>.readers. Added BEFORE the digest below,
+		// so a different reader is a different request id. The name is display
+		// only and never sent.
+		if p.ReaderRef != "" {
+			payload["reader_id"] = p.ReaderRef
+			payload["reader_kind"] = p.ReaderKind
+		}
 		// json.Marshal sorts map keys, so this hash is stable regardless
 		// of map iteration/insertion order. payload is built entirely from
 		// plain strings/numbers above, so a marshal error here can only
@@ -532,7 +560,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				// the same request id, so providers dedupe and settle.
 				engine.LockTender(tenderSig, pos.PendingTender{
 					Captured: capturedLegs,
-					Unknown:  []pos.UnknownLeg{{MethodID: p.MethodID, Currency: payCurrency, RequestID: requestID, Amount: amount}},
+					Unknown:  []pos.UnknownLeg{{MethodID: p.MethodID, Currency: payCurrency, RequestID: requestID, Amount: amount, ReaderRowID: p.ReaderRowID}},
 				})
 				ownCaptured = false
 				logging.L().Warnf("payment outcome UNKNOWN — method %q, amount %d, authorize_request_id %s: the card may have been charged; the till is locked on this tender until it is retried and settled — check the provider before taking another payment", p.MethodID, amount.Minor(), requestID)
@@ -608,7 +636,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 		if dispatched {
 			legRequestIDs[i] = requestID
-			capturedLegs = append(capturedLegs, pos.CapturedLeg{MethodID: p.MethodID, Currency: legCurrency(payments[i], saleInput.Currency), RequestID: requestID, Amount: captured, TransactionRef: payments[i].TraceID, TipAmount: payments[i].TipAmount})
+			capturedLegs = append(capturedLegs, pos.CapturedLeg{MethodID: p.MethodID, Currency: legCurrency(payments[i], saleInput.Currency), RequestID: requestID, Amount: captured, TransactionRef: payments[i].TraceID, TipAmount: payments[i].TipAmount, ReaderRef: p.ReaderRef})
+			if p.ReaderRef != "" {
+				// ut-docs#6566: the provider reader id lands on the payment
+				// row (payments.terminal_id) so a refund and the journal know
+				// it later; set server-side from the registry, never from the
+				// client. It is a device id, not card data or a secret.
+				payments[i].TerminalID = p.ReaderRef
+				touchReaderLastUsed(ctx, d, p.ReaderRowID)
+			}
 		}
 		if abandonedUnder() {
 			why = "tender refused (the basket was abandoned during authorize)"
@@ -876,6 +912,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				}
 				if p.TraceID != "" {
 					settle["transaction_ref"] = p.TraceID
+				}
+				if p.ReaderRef != "" {
+					settle["reader_id"] = p.ReaderRef
 				}
 				_, _ = bus.Publish(ctx, e.TriggerEvent, settle)
 			}
@@ -2191,6 +2230,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// shortfall rejects the tender). Empty keeps the generic,
 				// untracked voucher payment exactly as before.
 				VoucherID string `json:"voucher_id,omitempty"`
+				// Reader (ut-docs#6566) is the card_readers row id the
+				// cashier picked for this leg, never a provider reader id.
+				Reader string `json:"reader,omitempty"`
 			} `json:"payments"`
 			// IssueVouchers (ut-docs#1008) sells vouchers in this sale —
 			// see tenderVoucherIssue. Since ut-docs#4214 the till's own UI
@@ -2559,6 +2601,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				ChangeGiven: money.FromMinor(p.Change),
 				TipAmount:   money.FromMinor(p.Tip),
 				VoucherID:   voucherID,
+				ReaderRowID: strings.TrimSpace(p.Reader),
 			})
 		}
 		// Fallback for form-encoded tender buttons (hx-vals)
@@ -2606,6 +2649,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						Amount:    money.FromMinor(amount),
 						Currency:  d.CurrentState().Currency,
 						VoucherID: formVoucherID,
+						// ut-docs#6566: the picker's confirm posts the row id.
+						ReaderRowID: strings.TrimSpace(r.Form.Get("reader")),
 					})
 				}
 			}
@@ -2791,6 +2836,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		customerLocale := d.Engine.CustomerLocale()
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r), kitchenDeltaFilter(goodsLines))
 		if err != nil {
+			// ut-docs#6566: a reader choice refused before any money moved
+			// (none picked, invalid, busy): 409/400 + HX-Trigger, the till
+			// page opens the picker. Nothing was charged.
+			var readerErr *cardReaderError
+			if errors.As(err, &readerErr) {
+				log.Printf("tender needs a reader choice: %v", err)
+				writeCardReaderError(w, r, readerErr)
+				return
+			}
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {
 				// ut-docs#921 review finding (F2): the same raw-English leak
@@ -3825,12 +3879,21 @@ func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.Captured
 			"reversal":             true,
 			"authorize_request_id": leg.RequestID,
 		}
+		if leg.ReaderRef != "" {
+			// ut-docs#6566: one leg, so the reader is unambiguous at the top
+			// level too; additive, a plugin that ignores it keeps working.
+			payload["reader_id"] = leg.ReaderRef
+		}
 		if leg.TransactionRef != "" {
-			payload["original_payments"] = []map[string]any{{
+			op := map[string]any{
 				"transaction_ref": leg.TransactionRef,
 				"amount":          amount.Minor(),
 				"tip_amount":      leg.TipAmount.Minor(),
-			}}
+			}
+			if leg.ReaderRef != "" {
+				op["reader_id"] = leg.ReaderRef
+			}
+			payload["original_payments"] = []map[string]any{op}
 		}
 		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
 			failed++
