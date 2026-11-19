@@ -80,6 +80,8 @@ refused too — use the nightly pre-release for test builds.
    (`git push origin :v0.2.1`) and re-tag — but only before anyone has
    downloaded it.
 
+   Note: `release.yml`'s `cleanup-orphaned-tag` already deletes the tag of a dispatch run that did not publish. Never cancel a started release run: that leaves a phantom tag. Check for one before re-tagging.
+
 3. **Watch the release run** (`gh run watch` or the Actions tab). On a `v*`
    tag `release.yml`:
    - runs `go test ./...` (a red test aborts the release),
