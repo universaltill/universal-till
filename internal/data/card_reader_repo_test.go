@@ -26,12 +26,17 @@ func newCardReaderTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("read migration 108: %v", err)
 	}
+	cred, err := os.ReadFile("../db/migrations/112_card_reader_credentials.sql")
+	if err != nil {
+		t.Fatalf("read migration 112: %v", err)
+	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', installed_sha256 TEXT);`,
 		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, menu_group TEXT, icon_path TEXT, parent_page_key TEXT, target_action TEXT, trigger_event TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE plugin_settings (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', scope_id TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (plugin_id, key, scope, scope_id));`,
 		string(mig),
+		string(cred),
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

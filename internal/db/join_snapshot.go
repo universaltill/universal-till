@@ -113,6 +113,19 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		execErr = DeleteTillCloudIdentity(cdb)
 	}
 	if execErr == nil {
+		// ut-docs#6538: nor the identity of this till's paired card readers
+		// (bearer hashes, TLS pins) or the reader rows themselves: a reader
+		// belongs to the main till it was approved on, never to a joining till.
+		for _, q := range []string{
+			`DELETE FROM card_reader_credentials`,
+			`DELETE FROM card_readers WHERE source = 'paired'`,
+		} {
+			if _, execErr = cdb.Exec(q); execErr != nil {
+				break
+			}
+		}
+	}
+	if execErr == nil {
 		// ut-docs#5074: nor this till's sales-copy bookkeeping. A main till
 		// that was once an additional till (promoted) still holds its copy
 		// cursor, and every main till holds its change log and the other

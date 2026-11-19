@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,6 +30,7 @@ type readerRigT struct {
 	d      *common.Deps
 	tokens *enrolTokens
 	cert   *lantls.Cert
+	polls  int
 }
 
 // newReaderRig is a main till with the sync, pairing, reader-management and
@@ -42,6 +44,9 @@ func newReaderRig(t *testing.T, authOff bool) *readerRigT {
 	}
 	resetBearerFailures(t)
 	d, _ := newSyncDepsWithPath(t, "primary.db")
+	if err := d.Settings.Set(t.Context(), settingPhoneReaderPairing, "on"); err != nil {
+		t.Fatal(err)
+	}
 	d.AuthSvc = auth.NewService(d.Db)
 	seedReaderPlugin(t, d, "p.pay", "pay", true)
 	cert, err := lantls.LoadOrCreate(t.TempDir())
@@ -125,6 +130,8 @@ func (g *readerRigT) poll(t *testing.T, id, secret string, viaTLS bool) (*httpte
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests/"+id, nil)
 	req.Header.Set(fleetlink.HeaderPairRequestSecret, secret)
+	g.polls++
+	req.RemoteAddr = fmt.Sprintf("192.0.2.%d:7000", 100+g.polls) // each poll its own source: the per-source limiter is not under test here
 	if viaTLS {
 		req = g.asTLS(req)
 	}
@@ -432,7 +439,8 @@ func TestReaderCannotEnrolAsTillOrSatelliteByRole(t *testing.T) {
 	// Role escalation: a reader bearer never authenticates a till-only route.
 	g := newReaderRig(t, true)
 	_, bearer := g.enrolReader(t, "Phone")
-	for _, p := range []string{"/api/sync/snapshot", "/api/sync/admin", "/api/sync/ping", "/api/sync/plugins", "/api/sync/secrets-key", "/api/sync/stock"} {
+	// (The whole /api/sync surface is walked by TestReaderBearerRefusedOnEverySyncRoute.)
+	for _, p := range []string{"/api/sync/snapshot", "/api/sync/ping"} {
 		if rec := g.serve(readerReq(g, http.MethodGet, p, bearer, true)); rec.Code != http.StatusUnauthorized {
 			t.Errorf("reader bearer on %s = %d, want 401", p, rec.Code)
 		}
@@ -702,4 +710,23 @@ func newFormReq(method, path string, form url.Values) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return req
+}
+
+func TestPhoneReaderPairingShipsDark(t *testing.T) {
+	g := newReaderRig(t, true)
+	if err := g.d.Settings.Set(t.Context(), settingPhoneReaderPairing, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rec := g.request(t, "Phone", "s1", "card_reader", true, ""); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "reader_pairing_off") {
+		t.Fatalf("reader request with the feature off = %d %q, want 403 reader_pairing_off", rec.Code, rec.Body)
+	}
+	for _, p := range []string{"/ui/tills/reader-requests", "/ui/tills/readers"} {
+		if rec := g.serve(httptest.NewRequest(http.MethodGet, p, nil)); rec.Code != http.StatusNoContent {
+			t.Errorf("%s with the feature off = %d, want 204 (nothing shown)", p, rec.Code)
+		}
+	}
+	// Till pairing is untouched by the flag.
+	if rec := g.request(t, "Till 2", "s2", "additional", true, "192.0.2.9:1"); rec.Code != http.StatusOK {
+		t.Fatalf("till pair request with the reader feature off = %d", rec.Code)
+	}
 }

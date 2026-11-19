@@ -15,6 +15,11 @@ import (
 // server fault. Handlers map this to 409, not 500.
 var ErrNotPending = errors.New("pending pairing not found or not pending")
 
+// ErrRoleMismatch means an approval tried to change a request between a till
+// role and card_reader (ut-docs#6538): the role is fixed by the request, in
+// both directions, and the manager's approval cannot change it.
+var ErrRoleMismatch = errors.New("approval cannot change a request between a till and a card reader")
+
 // PairingRepo backs the approve-to-pair pending-request queue (ADR-0033
 // part 2/3): a replica's pair request sits here until a manager approves
 // or denies it. Only the request's SHA-256 commitment is ever stored,
@@ -56,7 +61,7 @@ func (r *PairingRepo) CreatePendingRequest(ctx context.Context, deviceName, comm
 // LAN TLS pin served on the request's connection ("" for plain HTTP,
 // ut-docs#4091).
 func (r *PairingRepo) CreatePendingRequestWithRole(ctx context.Context, deviceName, commitment, role, servedPin string, ttl time.Duration) (string, error) {
-	if !ValidTillRole(role) {
+	if !ValidPairingRole(role) {
 		return "", fmt.Errorf("create pending pairing: invalid role %q", role)
 	}
 	id := uuid.NewString()
@@ -169,15 +174,19 @@ func (r *PairingRepo) Approve(ctx context.Context, id, token string, extendTTL t
 // for the till (ut-docs#2781) over the one the replica requested; a blank
 // role keeps the requested one. The caller validates a non-blank role.
 func (r *PairingRepo) ApproveWithRole(ctx context.Context, id, token, role string, extendTTL time.Duration) error {
-	if role != "" && !ValidTillRole(role) {
+	if role != "" && !ValidPairingRole(role) {
 		return fmt.Errorf("approve pending pairing: invalid role %q", role)
 	}
 	now := r.now().UTC()
+	// ut-docs#6538: the role is fixed by the request. A reader request stays a
+	// reader and a till request stays a till; the match is part of the same
+	// compare-and-swap, so no race can slip a role change in.
 	res, err := r.db.ExecContext(ctx, `
 UPDATE pending_pairings SET status = 'approved', token = ?, expires_at = ?,
 	requested_role = COALESCE(NULLIF(?, ''), requested_role)
-WHERE id = ? AND status = 'pending' AND expires_at >= ?`,
-		token, now.Add(extendTTL).Format(time.RFC3339), role, id, now.Format(time.RFC3339))
+WHERE id = ? AND status = 'pending' AND expires_at >= ?
+  AND (? = '' OR (? = 'card_reader') = (requested_role = 'card_reader'))`,
+		token, now.Add(extendTTL).Format(time.RFC3339), role, id, now.Format(time.RFC3339), role, role)
 	if err != nil {
 		return fmt.Errorf("approve pending pairing: %w", err)
 	}
@@ -186,9 +195,26 @@ WHERE id = ? AND status = 'pending' AND expires_at >= ?`,
 		return fmt.Errorf("approve pending pairing: %w", err)
 	}
 	if n == 0 {
+		if role != "" {
+			if cur, ok, gerr := r.GetByID(ctx, id); gerr == nil && ok && cur.Status == "pending" {
+				return ErrRoleMismatch
+			}
+		}
 		return ErrNotPending
 	}
 	return nil
+}
+
+// Consume deletes an approved request in the same step that hands its result
+// over, so an approval can be collected once only (ut-docs#6538). It reports
+// whether this call removed it.
+func (r *PairingRepo) Consume(ctx context.Context, id string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM pending_pairings WHERE id = ? AND status = 'approved'`, id)
+	if err != nil {
+		return false, fmt.Errorf("consume pairing: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // RoleForToken returns the role an approved, not-yet-expired request's

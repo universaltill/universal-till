@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/binary"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -171,6 +173,15 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 	// manager approval step is the trust boundary for this direction);
 	// rate-limited per source so the queue can't be spammed unboundedly.
 	mux.HandleFunc("POST /api/sync/pair-request", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#6538 (ADR-0198 §6.2): a card reader asks over TLS only, and
+		// only a main/standalone till takes one (additional tills get no
+		// reader in v1, O-3). Checked before anything else, so nothing is
+		// stored and no database is read for a plain-HTTP attempt.
+		wantsReader := false
+		if r.TLS == nil && readerRoleAsked(r) {
+			writeReaderError(w, http.StatusBadRequest, readerErrTLSRequired)
+			return
+		}
 		// ut-docs#4411: plain HTTP closes once every till is pinned.
 		if refusePlainSyncWhenClosed(w, r, tillsRepo) {
 			return
@@ -203,8 +214,19 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			return
 		}
 		role, ok := tillRoleFromForm(in.Role)
+		if strings.TrimSpace(in.Role) == data.TillRoleCardReader {
+			role, ok, wantsReader = data.TillRoleCardReader, true, true
+		}
 		if !ok {
-			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			http.Error(w, "role must be additional, satellite or card_reader", http.StatusBadRequest)
+			return
+		}
+		if wantsReader && !phoneReaderPairingOn(r.Context(), d) {
+			writeReaderError(w, http.StatusForbidden, readerErrPairingOff)
+			return
+		}
+		if wantsReader && d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "card readers pair to the main till", http.StatusConflict)
 			return
 		}
 		// ut-docs#5862, #5875: the name shows on the manager's approval card
@@ -290,20 +312,53 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		// what /api/sync/enroll then enrols the till as (RoleForToken).
 		_ = r.ParseForm()
 		finalRole := strings.TrimSpace(r.Form.Get("role"))
-		if finalRole != "" && !data.ValidTillRole(finalRole) {
-			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+		if finalRole != "" && !data.ValidPairingRole(finalRole) {
+			http.Error(w, "role must be additional, satellite or card_reader", http.StatusBadRequest)
 			return
 		}
-		if _, exists, err := repo.GetByID(r.Context(), id); err != nil {
+		pending, exists, err := repo.GetByID(r.Context(), id)
+		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		} else if !exists {
 			http.Error(w, "pending pairing not found", http.StatusNotFound)
 			return
 		}
-		tok := tokens.issue()
+		// ut-docs#6538: the role is fixed by the request, both ways.
+		isReader := pending.RequestedRole == data.TillRoleCardReader
+		if finalRole != "" && (finalRole == data.TillRoleCardReader) != isReader {
+			writeReaderError(w, http.StatusConflict, readerErrRoleMismatch)
+			return
+		}
+		tok := ""
+		if isReader {
+			// A reader gets no enrolment token (nothing a till could
+			// redeem); its identity is created when the phone collects the
+			// approval. Refuse now what would fail then, while the manager
+			// is looking: no TLS pin, no reader-capable method, no room.
+			if pending.ServedPin == "" {
+				writeReaderError(w, http.StatusBadRequest, readerErrTLSRequired)
+				return
+			}
+			if _, _, merr := resolveReaderMethod(r.Context(), d); merr != nil {
+				writeReaderError(w, http.StatusConflict, readerErrNoMethod)
+				return
+			}
+			if active, lerr := data.NewCardReaderRepo(d.Db).ListActive(r.Context()); lerr == nil && len(active) >= data.MaxActiveCardReaders {
+				writeReaderError(w, http.StatusConflict, readerErrLimit)
+				return
+			}
+		} else {
+			tok = tokens.issue()
+		}
 		if err := repo.ApproveWithRole(r.Context(), id, tok, finalRole, pairingRequestTTL); err != nil {
-			tokens.consume(tok) // burn the now-orphaned token; don't leak a live credential
+			if tok != "" {
+				tokens.consume(tok) // burn the now-orphaned token; don't leak a live credential
+			}
+			if errors.Is(err, data.ErrRoleMismatch) {
+				writeReaderError(w, http.StatusConflict, readerErrRoleMismatch)
+				return
+			}
 			if errors.Is(err, data.ErrNotPending) {
 				http.Error(w, "pending pairing already resolved", http.StatusConflict)
 				return
@@ -389,9 +444,28 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.NotFound(w, r)
 			return
 		}
+		if row.RequestedRole == data.TillRoleCardReader {
+			completeReaderPairing(w, r, d, repo, row)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"token": row.Token}, "error": nil})
 	})
+}
+
+// readerRoleAsked peeks at a pair request's role without consuming the body,
+// so a plain-HTTP reader request is refused before any real handling.
+func readerRoleAsked(r *http.Request) bool {
+	b, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 64<<10))
+	if err != nil {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(b))
+	var peek struct {
+		Role string `json:"role"`
+	}
+	_ = json.Unmarshal(b, &peek)
+	return strings.TrimSpace(peek.Role) == data.TillRoleCardReader
 }
 
 func commitmentMatches(secret, commitment string) bool {

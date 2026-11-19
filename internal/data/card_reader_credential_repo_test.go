@@ -194,6 +194,7 @@ func TestCardReaderCredentialsOnlyInRepo(t *testing.T) {
 	allowed := map[string]bool{
 		"card_reader_credential_repo.go": true,
 		"sync_admin_repo.go":             true, // classifies the table as NOT synced
+		"join_snapshot.go":               true, // empties the table in the join snapshot's throwaway copy
 	}
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

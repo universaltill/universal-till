@@ -1,0 +1,31 @@
+{{/* ut-docs#6538 (UX B2-B4): the paired phone card readers, manager-only.
+     Presence arrives with the reader link; until then a reader reads "Not
+     connected". Words + icon, never colour alone. Revoke asks the manager PIN
+     and removes the reader at once. */}}
+<div id="card-readers-list" role="region" aria-labelledby="card-readers-title" hx-get="/ui/tills/readers" hx-trigger="tills-changed from:body" hx-target="this" hx-swap="outerHTML">
+  <h4 id="card-readers-title">{{ T "tap.reader.section_title" }}</h4>
+  {{ if .MsgKey }}<p role="status" aria-live="polite">{{ T .MsgKey }}</p>{{ end }}
+  {{ if .Readers }}
+  <ul class="reader-list">
+    {{ range .Readers }}
+    <li class="card" data-reader-id="{{ .ID }}">
+      <strong>{{ .Name }}</strong>
+      <span class="tag" role="status">{{ T "tap.reader.status.offline" }}</span>
+      <span class="muted">{{ if .LastUsed }}{{ printf (T "tap.reader.last_payment") .LastUsed }}{{ else }}{{ T "tap.reader.no_payments" }}{{ end }}</span>
+      <form hx-post="/ui/tills/readers/{{ .ID }}/rename" hx-target="#card-readers-list" hx-swap="outerHTML">
+        <input type="text" name="name" value="{{ .Name }}" maxlength="40" inputmode="none" aria-label="{{ T "tap.reader.rename" }} — {{ .Name }}">
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
+      <input type="password" name="manager_pin" id="revpin-{{ .ID }}" inputmode="numeric" autocomplete="off"
+             aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .Name }}" placeholder="{{ T "tills.pairing.manager_pin" }}">
+      <form hx-post="/ui/tills/readers/{{ .ID }}/revoke" hx-include="#revpin-{{ .ID }}" hx-target="#card-readers-list" hx-swap="outerHTML"
+            hx-confirm="{{ printf (T "tap.reader.revoke_confirm") .Name }}" data-confirm-ok="{{ T "tap.reader.revoke_btn" }}">
+        <button class="btn danger" type="submit">{{ T "tap.reader.revoke" }}</button>
+      </form>
+    </li>
+    {{ end }}
+  </ul>
+  {{ else }}
+  <p class="muted">{{ T "tap.reader.list_empty" }}</p>
+  {{ end }}
+</div>

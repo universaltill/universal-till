@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -22,10 +23,10 @@ import (
 // classified on purpose.
 
 var readerAllowed = map[string]bool{
-	"GET /api/sync/link":              true, // upgrade: the reader link
-	"POST /api/sync/bearer/rotate":    true,
-	"POST /api/sync/enroll/withdraw":  true,
-	"POST /api/sync/primary-proof":    true, // unauthenticated challenge: no bearer involved
+	"GET /api/sync/link":             true, // upgrade: the reader link
+	"POST /api/sync/bearer/rotate":   true,
+	"POST /api/sync/enroll/withdraw": true,
+	"POST /api/sync/primary-proof":   true, // unauthenticated challenge: no bearer involved
 }
 
 // readerNoBearerRoutes are /api/sync routes that do not authenticate by
@@ -34,8 +35,8 @@ var readerAllowed = map[string]bool{
 // no access to them either; they are asserted to refuse it as a credential
 // (never 2xx with it) and listed explicitly so a new route cannot slip in.
 var readerNoBearerRoutes = map[string]bool{
-	"POST /api/sync/pair-request":             true,
-	"GET /api/sync/pair-requests":             true, // manager session
+	"POST /api/sync/pair-request":               true,
+	"GET /api/sync/pair-requests":               true, // manager session
 	"POST /api/sync/pair-requests/{id}/approve": true, // manager session + PIN
 	"POST /api/sync/pair-requests/{id}/deny":    true,
 	"GET /api/sync/pair-requests/{id}":          true, // request secret
@@ -57,7 +58,9 @@ var syncRouteLiteral = regexp.MustCompile(`"((?:GET|POST|PUT|PATCH|DELETE) /api/
 
 func syncRoutesInSource(t *testing.T) []string {
 	t.Helper()
-	files, _ := filepath.Glob("*.go")
+	// TestMain chdirs to the repo root; the package's own files are here.
+	_, self, _, _ := runtime.Caller(0)
+	files, _ := filepath.Glob(filepath.Join(filepath.Dir(self), "*.go"))
 	seen := map[string]bool{}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
