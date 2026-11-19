@@ -1498,8 +1498,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// "theme.midnight.label" in the portal.
 		DeviceExtra: func(ctx context.Context) map[string]any {
 			themes := cloudThemeOptions(ctx, d)
+			// One snapshot: the rate and the basis must come from the same
+			// settings save (ut-docs#6327).
+			st := d.CurrentState()
 			extra := map[string]any{
-				"theme":    d.CurrentState().Theme,
+				"theme":    st.Theme,
 				"themes":   themes,
 				"problems": collectProblems(ctx, d),
 				// ut-docs#2306 Decision 2 (proposed ADR-0095,
@@ -1520,8 +1523,14 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// the right symbol and scale (ut-docs#2472). The till is the
 				// authority on scale: the cloud's CLDR data disagrees for
 				// PKR and has no IRT.
-				"currency":          d.CurrentState().Currency,
-				"currency_decimals": httpx.CurrencyByCode(d.CurrentState().Currency).Decimals,
+				"currency":          st.Currency,
+				"currency_decimals": httpx.CurrencyByCode(st.Currency).Decimals,
+				// ut-docs#6327: the shop's default tax rate (bp) and price
+				// basis. The engine charges this rate on items with no tax
+				// code (engine_config.go, ut-docs#3250). The cloud reads
+				// them for channel sync, main till first. 0 is a real rate.
+				"tax_rate_bp":   st.TaxRateBP,
+				"tax_inclusive": st.TaxInclusive,
 				// The till's UI language tag, for the cloud's status bar
 				// ("EUR · de-DE", manage-shop catalog contract §3.6).
 				"locale": httpx.DefaultLocale(),
