@@ -74,6 +74,7 @@ import (
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/cardreaders"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -676,6 +677,9 @@ type TapToPayBridge interface {
 // sheets cause mid-payment.
 func SetTapToPayBridge(b TapToPayBridge) {
 	devicepay.SetBridge(b) // a nil TapToPayBridge converts to a nil devicepay.Bridge
+	// ut-docs#6566: the card reader registry offers a tap_to_pay reader only
+	// while a bridge is registered; core never imports devicepay itself.
+	cardreaders.TapToPayAvailable = func() bool { return devicepay.RegisteredBridge() != nil }
 }
 
 // TapToPayResolver is the gomobile-bind-visible mirror of

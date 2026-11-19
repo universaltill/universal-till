@@ -382,6 +382,14 @@ type PaymentInput struct {
 	TerminalID string `json:"terminal_id,omitempty"`
 	TraceID    string `json:"trace_id,omitempty"` // terminal transaction/trace ID
 
+	// ReaderRowID is the card reader registry row (ut-docs#6566) the tender request
+	// named for this leg; completeTender resolves it to ReaderRef/ReaderKind
+	// before any authorize, and on approve writes ReaderRef to TerminalID.
+	// Internal only: never decoded from or encoded to JSON.
+	ReaderRowID string `json:"-"`
+	ReaderRef   string `json:"-"`
+	ReaderKind  string `json:"-"`
+
 	// VoucherID (ut-docs#1008) marks this payment as a TRACKED voucher
 	// redemption: it must ride MethodID "voucher" (the pre-existing default
 	// payment method), and CompleteSale then validates the vouchers row's
@@ -1499,6 +1507,11 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			return saleID, nil
 		}
 		if errors.Is(err, errReceiptConflictRetry) {
+			// The rolled-back transaction took the counter bump with it, so
+			// re-seed the stored counter from the full scan (ut-docs#6663).
+			if rerr := repo.ReseedReceiptCounter(ctx); rerr != nil {
+				return "", rerr
+			}
 			continue
 		}
 		return "", err

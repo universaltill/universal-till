@@ -349,7 +349,7 @@ func TestApplyPendingRestoreKeepsReplacementMainReceiptPrefix(t *testing.T) {
 
 // The matcher mirrors data.IsReplacementMainTillPrefix (db cannot import data).
 func TestReplacementPrefixMatcherMirrorsData(t *testing.T) {
-	for _, p := range []string{"", "T2-", "R1a2b-", "M3f2a-", "M3f2a9c1e-", "M3F2A9C1E-", "M3f2a9c1e", "Mzzzzzzzz-", "M3f2a9c1e-1"} {
+	for _, p := range []string{"", "T2-", "R1a2b-", "M3f2a-", "M3f2a9c1e-", "M3F2A9C1E-", "M3f2a9c1e", "Mzzzzzzzz-", "M3f2a9c1e-1", "A-", "B-", "AA-", "ZZZ-", "AAAA-", "I-", "O-", "M-", "R-", "T-", "a-", "1-", "2-"} {
 		if got, want := isReplacementMainTillPrefix(p), data.IsReplacementMainTillPrefix(p); got != want {
 			t.Errorf("%q: db=%v data=%v", p, got, want)
 		}

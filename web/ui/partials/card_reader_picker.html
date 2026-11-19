@@ -1,0 +1,57 @@
+<!-- ut-docs#6566: the "Which reader?" panel of the tender overlay. An in-
+     overlay panel, never a dialog (guard-no-showmodal): it replaces the pay
+     grid until Back. Tapping a row only SELECTS (money is involved); the
+     Confirm button is separate and posts the existing /api/pos/tender with
+     the registry row id (`reader`), never a provider reader id. Rows that
+     cannot be chosen stay in the list with icon + text + a visible reason
+     (aria-disabled, not `disabled`, so a screen reader still reads why).
+     Behaviour: web/public/card-reader-picker.js (no strings there).
+     Served by GET /api/pos/card-readers; also re-fetched every ~10 s while
+     open to refresh the states. -->
+<section id="card-reader-picker" class="card-reader-picker" data-testid="card-reader-picker"
+         aria-labelledby="card-reader-picker-title"
+         data-auto="{{ if .Auto }}1{{ end }}" data-pinned="{{ if .Pinned }}1{{ end }}"
+         data-method-filter="{{ .Method }}">
+  <h3 id="card-reader-picker-title">{{ T "tap.reader.pick" }}</h3>
+  {{ if .Pinned }}<p id="card-reader-pinned" class="notice-block-warn" data-testid="card-reader-pinned">{{ T "card_reader.pinned" }}</p>{{ end }}
+  {{ if eq .Selectable 0 }}<p id="card-reader-none-ready" class="notice-block-warn" data-testid="card-reader-none-ready">{{ T "card_reader.none_ready" }}</p>{{ end }}
+  <div id="card-reader-list" class="card-reader-list" role="radiogroup" aria-labelledby="card-reader-picker-title">
+    {{ range .Rows }}
+    <button type="button" role="radio" class="card-reader-option" data-testid="card-reader-option"
+            data-reader-id="{{ .ID }}" data-method="{{ .Method }}" data-name="{{ .Name }}" data-state="{{ .State }}"
+            aria-checked="{{ if .Default }}true{{ else }}false{{ end }}"{{ if not .Selectable }} aria-disabled="true"{{ end }}
+            aria-describedby="card-reader-reason-{{ .ID }}" tabindex="{{ if .Default }}0{{ else }}-1{{ end }}">
+      <span class="card-reader-main">
+        <span class="card-reader-name">{{ .Name }}{{ if and .Default .LastUsed }} <span class="card-reader-default-tag muted">{{ T "card_reader.pick.default_tag" }}</span>{{ end }}</span>
+        <span class="card-reader-kind muted">{{ T (printf "card_reader.kind.%s" .Kind) }}{{ if .ProviderName }} · {{ T .ProviderName }}{{ end }}<span class="fee-hint" data-fee-for="{{ .Method }}"></span></span>
+      </span>
+      <span class="card-reader-state" data-state="{{ .State }}">
+        <svg class="card-reader-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+          {{ if eq .State "ready" }}<path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          {{ else if eq .State "busy" }}<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 5v3.4l2.2 1.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          {{ else if eq .State "offline" }}<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          {{ else if eq .State "needs_setup" }}<path d="M8 2.5v7M8 12.6v.9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          {{ else }}<path d="M6 6.2a2.2 2.2 0 114 .9c0 1.3-2 1.5-2 3.1M8 12.6v.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>{{ end }}
+        </svg>
+        <span class="card-reader-state-text">{{ T (printf "card_reader.state.%s" .State) }}</span>
+      </span>
+      <span id="card-reader-reason-{{ .ID }}" class="card-reader-reason">{{ if .Reason }}{{ T .Reason }}{{ end }}</span>
+    </button>
+    {{ end }}
+  </div>
+  <div id="card-reader-live" class="card-reader-live" aria-live="polite" role="status"
+       data-announce="{{ T "card_reader.announce.changed" }}" data-auto-announce="{{ T "card_reader.pick.auto" }}"></div>
+  <form id="card-reader-form" class="card-reader-actions" hx-post="/api/pos/tender" hx-include="#offline-flag"
+        hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+        data-after-request="ok no-error-toast close:payment-overlay">
+    <input type="hidden" name="amount" value="0">
+    {{ $def := "" }}{{ $defMethod := "" }}{{ range .Rows }}{{ if .Default }}{{ $def = .ID }}{{ $defMethod = .Method }}{{ end }}{{ end }}
+    <input type="hidden" name="method" value="{{ $defMethod }}">
+    <input type="hidden" name="reader" value="{{ $def }}">
+    <button type="submit" id="card-reader-confirm" class="btn pay-btn card-reader-confirm" data-testid="card-reader-confirm"
+            data-label="{{ T "card_reader.pick.confirm" }}" data-amount="{{ money .Total }}"{{ if not $def }} disabled{{ end }}>
+      {{ range .Rows }}{{ if .Default }}{{ printf (T "card_reader.pick.confirm") (money $.Total) .Name }}{{ end }}{{ end }}
+    </button>
+    <button type="button" id="card-reader-back" class="btn secondary card-reader-back" data-testid="card-reader-back">{{ T "card_reader.pick.back" }}</button>
+  </form>
+</section>
