@@ -53,7 +53,7 @@ func TestFirstUploadGeneratesAndEscrowsTheKeyBeforeBegin(t *testing.T) {
 	// A second backup reuses the key and escrows nothing more.
 	puts := e.cloud.putKeys
 	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(false)
 	if e.cloud.begins != 2 || e.cloud.putKeys != puts {
 		t.Fatalf("begins=%d putKeys=%d (was %d)", e.cloud.begins, e.cloud.putKeys, puts)
@@ -342,7 +342,7 @@ func TestKeyChoiceOnThenOffNeverDeletesTheCloudCopy(t *testing.T) {
 	}
 	// A later round (new snapshot) changes nothing and the backups still work.
 	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(false)
 	if e.cloud.begins != 2 || e.cloud.deletes != 0 {
 		t.Fatalf("begins=%d deletes=%d", e.cloud.begins, e.cloud.deletes)
@@ -366,7 +366,7 @@ func TestEscrowBlockedByOwnerIsNotSentAndIsRemembered(t *testing.T) {
 	// The owner allows it again: the next round sends the copy.
 	e.cloud.escrowBlocked = false
 	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(false)
 	if e.cloud.keyDEK == nil || e.get(data.OffsiteEscrowBlockedKey) != "" {
 		t.Fatal("copy not sent after the owner allowed it")
@@ -522,7 +522,7 @@ func TestStuckShopNeedsLinkWithNoCloudCopyThenStartsANewKey(t *testing.T) {
 	e.cloud.ownerApproved = true // the owner approved a new key on my.
 	ctx := context.Background()
 	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(false)
 	if e.get(data.OffsiteRefusedReasonKey) != ReasonNeedsLink || e.get(data.OffsiteLinkCopyKey) != "no" {
 		t.Fatalf("reason=%q copy=%q", e.get(data.OffsiteRefusedReasonKey), e.get(data.OffsiteLinkCopyKey))
@@ -741,7 +741,7 @@ func TestFinalDeviceRevokedReasonDeletesTheKeyFile(t *testing.T) {
 			}
 			e.cloud.revokedReason = reason
 			e.now = e.now.Add(25 * time.Hour)
-			e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+			e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 			e.round(true)
 			if _, _, err := e.up.Keys.Load("st_1"); err == nil {
 				t.Fatal("the key file survived a final device_revoked")
@@ -757,7 +757,7 @@ func TestReasonlessDeviceRevokedDeletesTheKeyFile(t *testing.T) {
 	e.round(false)
 	e.cloud.revokedNoReason = true
 	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(true)
 	if _, _, err := e.up.Keys.Load("st_1"); err == nil {
 		t.Fatal("the key file survived a reason-less device_revoked")
@@ -770,7 +770,7 @@ func TestNonFinalOrOtherAuthErrorsKeepTheKeyFile(t *testing.T) {
 	e.round(false)
 	e.cloud.revokedReason = "something_temporary"
 	e.now = e.now.Add(25 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(true)
 	if _, _, err := e.up.Keys.Load("st_1"); err != nil {
 		t.Fatalf("the key was deleted on a non-final reason: %v", err)
