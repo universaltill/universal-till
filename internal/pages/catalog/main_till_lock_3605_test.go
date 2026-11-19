@@ -5,7 +5,6 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#3605: on an additional till whose main till can't be reached,
@@ -58,7 +58,7 @@ func lockedAround(t *testing.T, body, marker string) bool {
 func newLockCatalogMux(t *testing.T, standalone bool, unreachable *bool) *http.ServeMux {
 	t.Helper()
 	chdirToRepoRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "lock.db"))
+	dbase, err := db.Open(testsupport.MigratedDBFile(t, "lock.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

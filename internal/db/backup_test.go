@@ -206,3 +206,62 @@ func TestStageRestoreRejectsBadNames(t *testing.T) {
 		t.Error("missing backup accepted")
 	}
 }
+
+// ut-docs#5068: a backup restore owes a receipt/Z number jump, recorded as a
+// marker file BEFORE the swap so a crash after the swap still jumps next boot.
+func TestApplyPendingRestore_BackupRestoreOwesNumberJump(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	snap, err := Snapshot(d.DB, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StageRestore(path, filepath.Base(snap)); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	if NumberJumpPending(path) {
+		t.Fatal("jump owed before any restore was applied")
+	}
+	if applied, err := ApplyPendingRestore(path); err != nil || !applied {
+		t.Fatalf("apply: %v %v", applied, err)
+	}
+	if !NumberJumpPending(path) {
+		t.Fatal("a backup restore must leave the number-jump marker")
+	}
+	// A later boot with no staged restore keeps owing it until cleared.
+	if applied, err := ApplyPendingRestore(path); err != nil || applied {
+		t.Fatalf("second apply: %v %v", applied, err)
+	}
+	if !NumberJumpPending(path) {
+		t.Fatal("marker must survive until the jump is recorded")
+	}
+	ClearNumberJumpPending(path)
+	if NumberJumpPending(path) {
+		t.Fatal("marker not cleared")
+	}
+	ClearNumberJumpPending(path) // idempotent
+}
+
+func TestApplyPendingRestore_LANJoinOwesNoNumberJump(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	snap, err := Snapshot(d.DB, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StageRestore(path, filepath.Base(snap)); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	// A join stages the main till's snapshot beside a replica identity file.
+	if err := os.WriteFile(ReplicaIdentityPath(path), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := ApplyPendingRestore(path); err != nil || !applied {
+		t.Fatalf("apply: %v %v", applied, err)
+	}
+	if NumberJumpPending(path) {
+		t.Fatal("a LAN join must not jump numbers")
+	}
+}

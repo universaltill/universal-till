@@ -273,7 +273,7 @@ func TestShiftsPage_NoClosedHistoryHidesCountSection(t *testing.T) {
 // historyHead returns the <thead> of the History table (the one after the
 // "History" card heading).
 func historyHead(body string) string {
-	i := strings.Index(body, "<h2>History</h2>")
+	i := strings.Index(body, `>History</h2>`)
 	if i < 0 {
 		return ""
 	}

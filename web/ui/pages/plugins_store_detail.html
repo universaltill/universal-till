@@ -81,8 +81,12 @@
   {{ if not .Installed }}
   <p class="muted" style="font-size:.85rem; margin:.6rem 0 0">🔒 {{ T "plugins.store.manager_approval_notice" }}</p>
   {{ end }}
+  {{/* ut-docs#6400: report a listing (opens the marketplace page in the browser). */}}
+  <p style="margin:.6rem 0 0"><a href="{{ .ReportHref }}" target="_blank" rel="noopener" hx-boost="false" data-testid="store-report-link" style="min-height:44px; display:inline-flex; align-items:center">{{ T "plugins.store.report_listing" }}</a></p>
 </div>
 {{ end }}
+
+{{ template "store_marketplace_links" . }}
 
 {{ template "store_logo_js" }}
 <script>
@@ -107,6 +111,18 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     'plugins.install.error.till_moved': '{{ T "plugins.install.error.till_moved" }}',
     'plugins.install.error.register_new': '{{ T "plugins.install.error.register_new" }}',
     'plugins.install.error.service_unavailable': '{{ T "plugins.install.error.service_unavailable" }}',
+    'plugins.install.error.unreachable': '{{ T "plugins.install.error.unreachable" }}',
+    'plugins.install.error.download_failed': '{{ T "plugins.install.error.download_failed" }}',
+    'plugins.install.error.retryable': '{{ T "plugins.install.error.retryable" }}',
+    'plugins.install.error.configuration': '{{ T "plugins.install.error.configuration" }}',
+    'plugins.install.error.incompatible': '{{ T "plugins.install.error.incompatible" }}',
+    'plugins.install.error.invalid_package': '{{ T "plugins.install.error.invalid_package" }}',
+    'plugins.install.error.revoked': '{{ T "plugins.install.error.revoked" }}',
+    'plugins.install.error.payment_conflict': '{{ T "plugins.install.error.payment_conflict" }}',
+    'plugins.install.error.page_conflict': '{{ T "plugins.install.error.page_conflict" }}',
+    'plugins.install.error.page_route_conflict': '{{ T "plugins.install.error.page_route_conflict" }}',
+    'plugins.install.error.forbidden': '{{ T "plugins.install.error.forbidden" }}',
+    'plugins.install.error.invalid_request': '{{ T "plugins.install.error.invalid_request" }}',
     'settings.enrol.terms_required': '{{ T "settings.enrol.terms_required" }}',
     'settings.error.save_failed': '{{ T "settings.error.save_failed" }}'
   };

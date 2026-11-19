@@ -30,7 +30,7 @@ const (
 
 // backupAssetScopes are the shop-uploaded trees under the assets root. The
 // rest of public/assets (built-in icons and logos) ships with each release
-// and must keep coming from it (see paths.migrateLegacyUploadedAssets).
+// and must keep coming from it.
 var backupAssetScopes = []string{"items", "categories", "logo"}
 
 // tmpAssetSuffixes are in-flight files a backup leaves out: a replica's

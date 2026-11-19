@@ -24,7 +24,9 @@ type browserVoucherSlip struct {
 	Holder    string // "For: Anna"; "" = no row
 	Balance   string // "New balance …" (top-up); "" = no row
 	Code      string
-	Note      string // "Reprinted <date>" (voucher page only); "" = no row
+	Note      string   // "Reprinted <date>" (voucher page only); "" = no row
+	Date      string   // "Issued <date>" / "Topped up <date>"; "" = no row (ut-docs#6179)
+	Text      []string // the shop's own slip text, one entry per line (ut-docs#6179)
 }
 
 // browserSlipSet is what the templates execute: the slips plus the lang/dir
@@ -37,10 +39,10 @@ type browserSlipSet struct {
 // browserVoucherSlipFor builds the voucher page's browser slip. It reuses
 // voucherSlipFor so the content is the paper slip's; the amount is the
 // display form (the paper's FormatMoneyPrint is bound to the printer charset).
-func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, now time.Time) browserVoucherSlip {
+func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, bal slipBalance, now time.Time) browserVoucherSlip {
 	loc := httpx.DefaultLocale()
-	s := voucherSlipFor(ctx, d, v, printerConfig(ctx, d), now)
-	return browserVoucherSlip{
+	s := voucherSlipFor(ctx, d, v, bal, printerConfig(ctx, d), now)
+	out := browserVoucherSlip{
 		StoreName: s.StoreName,
 		Header:    s.Header,
 		Label:     s.Voucher.Label,
@@ -48,13 +50,22 @@ func browserVoucherSlipFor(ctx context.Context, d *common.Deps, v data.Voucher, 
 		Holder:    s.Voucher.Holder,
 		Code:      s.Voucher.Code,
 		Note:      s.Note,
+		Date:      s.Date,
+		Text:      s.Text,
 	}
+	// ut-docs#6044: the "Balance on <date>" line, in the display money form.
+	if s.Voucher.BalanceLabel != "" {
+		out.Balance = s.Voucher.BalanceLabel + " " + httpx.FormatMoneyDisplay(bal.Minor, loc)
+	}
+	return out
 }
 
 // receiptBrowserSlips maps the sale's issued/topped-up vouchers to browser
 // slips, in the order given. Every entry is eligible: at tender time nothing
 // is void (mirrors voucherSlips, Slip && Void == ""). No Reprinted note.
-func receiptBrowserSlips(locale, storeName string, header []string, vs []receiptVoucherIssue) []browserVoucherSlip {
+// slipText is the shop's own slip text (ut-docs#6179); each entry's At is the
+// stored timestamp of the voucher / top-up row, the same the paper slip reads.
+func receiptBrowserSlips(locale, storeName string, header, slipText []string, vs []receiptVoucherIssue) []browserVoucherSlip {
 	out := make([]browserVoucherSlip, 0, len(vs))
 	for _, v := range vs {
 		s := browserVoucherSlip{
@@ -63,8 +74,11 @@ func receiptBrowserSlips(locale, storeName string, header []string, vs []receipt
 			Label:     httpx.T(locale, "catalog.item_type.gift_voucher"),
 			Amount:    httpx.FormatMoneyDisplay(v.Amount, locale),
 			Code:      v.Code,
+			Text:      slipText,
 		}
+		s.Date = slipDateLine(locale, "receipt.vouchers.issued_on", v.At)
 		if v.TopUp {
+			s.Date = slipDateLine(locale, "receipt.vouchers.topped_up_on", v.At)
 			s.Label = httpx.T(locale, "receipt.vouchers.top_up")
 			s.Amount = "+" + s.Amount
 			if v.HasBalance {

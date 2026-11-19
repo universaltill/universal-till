@@ -6,3 +6,8 @@
 "error_bar_action" = "Back to till";
 "external_link_failed" = "Couldn’t open the link in a browser.";
 "error_no_address" = "The till server didn’t report an address.";
+/* Tap to Pay on iPhone status banner (ut-docs#3049). English only: other
+   languages fall back to English through NSLocalizedString's value:. */
+"ttp_preparing" = "Getting Tap to Pay ready…";
+"ttp_preparing_progress" = "Getting Tap to Pay ready… %d%%";
+"ttp_setup_failed" = "Tap to Pay on iPhone couldn't be set up. Open Settings › Payments to try again.";

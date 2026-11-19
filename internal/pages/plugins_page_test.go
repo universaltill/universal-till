@@ -78,6 +78,7 @@ type pluginsManagerItem struct {
 	Latest         string `json:"latest"`
 	HasUpdate      bool   `json:"hasUpdate"`
 	VersionUnknown bool   `json:"versionUnknown"`
+	Bundled        bool   `json:"bundled"`
 }
 
 // An installed, enabled plugin with an active page entry using the reserved
