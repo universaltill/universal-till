@@ -36,7 +36,9 @@ func TestWasmRuntimeSyncLoadsRealModuleAndSubscribes(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES
 		('swh1', ?, 'test.sync.ping', 'guest.handle', 1),
 		('swh2', ?, 'test.sync.ask', 'guest.answer', 1),
-		('swh3', ?, 'payment.test.refund', 'guest.handle', 1)`, pluginID, pluginID, pluginID); err != nil {
+		('swh3', ?, 'payment.test.refund', 'guest.handle', 1),
+		('swh4', ?, 'payment.test.readers', 'guest.handle', 1),
+		('swh5', ?, 'test.sync.readers', 'guest.handle', 1)`, pluginID, pluginID, pluginID, pluginID, pluginID); err != nil {
 		t.Fatalf("seed hooks: %v", err)
 	}
 
@@ -76,6 +78,15 @@ func TestWasmRuntimeSyncLoadsRealModuleAndSubscribes(t *testing.T) {
 	// the plugin's decline/approve answer — ut-docs#434).
 	if bus.GetEventMode("payment.test.refund") != Blocking {
 		t.Fatalf("refund event not blocking")
+	}
+	// ut-docs#6566: payment.<key>.readers (the read-only reader state op of the
+	// card reader registry) blocks too: the picker waits on its answer. Only
+	// the payment family is marked, never an arbitrary ".readers" event.
+	if bus.GetEventMode("payment.test.readers") != Blocking {
+		t.Fatalf("payment readers event not blocking")
+	}
+	if bus.GetEventMode("test.sync.readers") == Blocking {
+		t.Fatalf("a non-payment .readers event must stay non-blocking")
 	}
 
 	// A second Sync with the same version keeps the compiled module (the

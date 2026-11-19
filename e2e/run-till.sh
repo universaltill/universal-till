@@ -37,6 +37,15 @@ if [ "${UT_DOCS_SHOTS_SEED_SALES:-}" = "1" ]; then
   go run ./e2e/seed_docs_sales
 fi
 
+# ut-docs#6566: a card terminal test plugin (declares payment.<key>.readers) and
+# three registry readers, for the "Card readers" manual screenshot and the
+# "Which reader?" picker specs. Opt-in like the docs sales above: the docs
+# harness sets UT_DOCS_SHOTS_SEED_SALES, a picker spec asks for
+# UT_E2E_SEED_CARD_READERS=1; the plain e2e suite's tills stay reader-free.
+if [ "${UT_DOCS_SHOTS_SEED_SALES:-}" = "1" ] || [ "${UT_E2E_SEED_CARD_READERS:-}" = "1" ]; then
+  go run ./e2e/seed_card_readers
+fi
+
 # Build once, then run the BINARY (not `go run`) from INSIDE the fresh data
 # dir, not the repo root. `go run` (even with `-C`) ties the process's
 # working directory to the module root — and the app's one-time legacy-data

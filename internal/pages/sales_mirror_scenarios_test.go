@@ -337,7 +337,14 @@ func TestSalesMirrorScenario_CopyNeverCountsOnTheAdditionalTill(t *testing.T) {
 	snap := func() string {
 		eod, _ := repo.EndOfDayInstant(ctx, from, to)
 		eod.GeneratedAt = "" // stamped with the wall clock on every call (M3 review finding 1)
-		next, _ := repo.NextReceiptNo(ctx, nil)
+		// The counter is stored (ut-docs#6663): peek in a rolled-back
+		// transaction so the probe does not spend a number.
+		peek, err := b.d.Db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, _ := repo.NextReceiptNo(ctx, peek)
+		_ = peek.Rollback()
 		queue, _ := repo.LocalSalesSince(ctx, "", "", 1000)
 		var stock float64
 		_ = b.d.Db.QueryRow(`SELECT COALESCE(SUM(quantity), 0) FROM inventory`).Scan(&stock)

@@ -172,6 +172,12 @@ LIMIT 1
 	return ev, true, nil
 }
 
+// openOrderPredicate is the SQL condition for "an order still in the active
+// queue" (the Order status list's own rule). NextDisplayNo shares it to skip
+// order numbers an open order still holds (ut-docs#6663).
+const openOrderPredicate = `sale_type = 'sale' AND status = 'completed'
+  AND order_status NOT IN ('collected', 'cancelled')`
+
 // ListRecentOrders returns the newest COMPLETED sales (returns excluded —
 // the kitchen never preps a refund; voided/refunded/parked/still-open sales
 // excluded too — the kitchen must never get a one-tap status control for a
@@ -195,8 +201,7 @@ SELECT receipt_no, COALESCE(order_type, ''), order_status, COALESCE(order_status
        COALESCE(kitchen_print_failed_at, ''), COALESCE(receipt_print_failed_at, ''),
        COALESCE(NULLIF(display_no, ''), receipt_no)
 FROM sales
-WHERE sale_type = 'sale' AND status = 'completed'
-  AND order_status NOT IN ('collected', 'cancelled')
+WHERE `+openOrderPredicate+`
 ORDER BY created_at DESC
 LIMIT ?
 `, limit)

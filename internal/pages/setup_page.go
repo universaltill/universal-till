@@ -819,6 +819,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// "no"/absent answer changes nothing about today's lazy registration.
 		// Truthy check matches the telemetry checkbox convention
 		// (settings_page.go): "on" from the checkbox, "1" as the alternative.
+		// ut-docs#6663: a till that has not traded sets its receipt prefix (also
+		// its invoice series) once, here, whichever path finished the wizard.
+		setFirstReceiptPrefix(r.Context(), d, posRepo, cloudHeld)
+
 		if cloudHeld != nil {
 			// ADR-0166 §4 step 6: the seed above is written, so persist the
 			// credential now and ask for a check-in. Pairing already
@@ -835,17 +839,6 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// cloud's store.had_main_till says the shop had a main till
 			// before, so an ordinary code must not restart at 000000001.
 			// No old device id is known there, so none is passed.
-			prefix := ""
-			if rp := cloudHeld.p.Replaced; rp != nil {
-				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, rp.DeviceID)
-			} else if st := cloudHeld.p.Store; st != nil && st.HadMainTill {
-				prefix = data.ReplacementMainTillPrefix(cloudHeld.p.DeviceID, "")
-			}
-			if prefix != "" {
-				if err := d.Settings.Set(r.Context(), "sync.receipt_prefix", prefix); err != nil {
-					logging.L().Warnf("setup wizard: set the replacement till's receipt prefix: %v", err)
-				}
-			}
 			if err := commitCloudPairing(r.Context(), d, cloudHeld.p); err != nil {
 				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
 				cloudPairFailed = true
@@ -939,5 +932,35 @@ func seedDefaultGiftVoucherItem(ctx context.Context, d *common.Deps, locale stri
 	}
 	if _, err := data.NewCatalogRepo(d.Db).SeedDefaultGiftVoucherItem(ctx, name); err != nil {
 		logging.L().Warnf("setup: gift voucher item not created: %v", err)
+	}
+}
+
+// setFirstReceiptPrefix gives a new main till its receipt prefix when setup
+// finishes (ut-docs#6663, ADR-0166 amendment 2026-11-18), in this order:
+//
+//  1. the letter prefix the cloud issued in the pair answer
+//     (data.store.receipt_prefix, e.g. "A-"): a replacement main till;
+//  2. a confirmed replacement, or a shop that had a main till before
+//     (store.had_main_till), against a cloud that sent none: the locally
+//     derived M<8hex>- (ut-docs#5058 T4, ut-docs#5332);
+//  3. otherwise the shop's first main till: "1-", cloud or standalone.
+//
+// First boot: no sale exists yet, so no number is repeated or skipped.
+// A till that already holds a prefix or has traded is never touched.
+func setFirstReceiptPrefix(ctx context.Context, d *common.Deps, repo *data.POSRepo, held *heldCloudPairing) {
+	prefix := data.FirstMainTillPrefix
+	if held != nil {
+		st := held.p.Store
+		switch {
+		case st != nil && st.ReceiptPrefix != "":
+			prefix = st.ReceiptPrefix
+		case held.p.Replaced != nil:
+			prefix = data.ReplacementMainTillPrefix(held.p.DeviceID, held.p.Replaced.DeviceID)
+		case st != nil && st.HadMainTill:
+			prefix = data.ReplacementMainTillPrefix(held.p.DeviceID, "")
+		}
+	}
+	if _, err := repo.SetFirstReceiptPrefix(ctx, prefix); err != nil {
+		logging.L().Warnf("setup wizard: set the till's receipt prefix: %v", err)
 	}
 }

@@ -213,7 +213,7 @@ func TestNextStepsSettingIsPerTill(t *testing.T) {
 }
 
 // N1 (tester, ut-docs#5058): a local setup writes no next-steps marker and
-// no receipt prefix.
+// only the first main till's receipt prefix (ut-docs#6663).
 func TestLocalSetupWritesNoNextSteps(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	rec := postForm(mux, "/api/setup", url.Values{
@@ -226,7 +226,8 @@ func TestLocalSetupWritesNoNextSteps(t *testing.T) {
 	if got := nextStepsValue(t, d); got != "" {
 		t.Fatalf("local setup wrote %s=%q", nextStepsKey, got)
 	}
-	if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "" {
-		t.Fatalf("local setup wrote sync.receipt_prefix=%q", got)
+	// ut-docs#6663: a local setup does set the first main till's prefix.
+	if got, _, _ := d.Settings.Get(t.Context(), "sync.receipt_prefix"); got != "1-" {
+		t.Fatalf("local setup wrote sync.receipt_prefix=%q, want 1-", got)
 	}
 }

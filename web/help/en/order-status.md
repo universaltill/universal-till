@@ -34,4 +34,11 @@ Mark each order's progress — preparing, ready, collected — with one tap, so 
 
 ## Order numbers
 
-Every sale keeps its permanent receipt number (used for refunds and reports) — but customers, the kitchen ticket, the self-order confirmation screen, and this list show a **short order number** instead, so it's easy to read out or call across the counter. In **Settings → Order numbers**, choose whether it resets to 1 after each till close (the default — matches what most modern POS systems do) or just keeps counting without ever resetting. Changing it only affects new sales; past receipts are unaffected.
+Every sale keeps two numbers, and they do different jobs.
+
+- The **order number** is the short number your customer waits for. It is digits only and never has a prefix. It is printed large under the shop name on the receipt, shown large on the receipt screen, the kitchen ticket, this list, the order-tracking page and the self-order confirmation, and it is also in the Journal.
+- The **receipt number** is the permanent number used for refunds and reports. It stays small, keeps its prefix (for example **1-000000042**) and is the one the barcode scans. It is never reused, not even after you clear the transaction history.
+
+Each till has its own range of 100 order numbers (the main till uses 1 to 99, the next till 100 to 199, and so on), so two tills never call the same number. When a till reaches the end of its range it goes round again, and it skips any number that an open order still holds. In **Settings → Order numbers**, choose whether it starts again at the beginning of its range after each till close (the default) or just keeps counting until the end of its range. Changing it only affects new sales; past receipts are unaffected.
+
+To find a sale in the **Journal**, type either number in the search box: the receipt number, or the order number the customer holds. An order number can come up for more than one sale over time, so check the time shown beside it.

@@ -1,18 +1,9 @@
 package pos
 
 // Test-only accessors (ut-docs#6602): production code uses SettleTender,
-// RotateTenderAttemptIDIf and the reset hand-off; these stay out of the
+// RotateTenderAttemptIDIf and the reset hand-off (PendingTender moved to
+// service.go in ut-docs#6566: the reader picker reads it); these stay out of the
 // shipped binary so the deadcode guard sees no unreachable function.
-
-// PendingTender returns a deep copy of the current stash.
-func (s *Service) PendingTender() PendingTender {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return PendingTender{
-		Captured: append([]CapturedLeg(nil), s.pendingTender.Captured...),
-		Unknown:  append([]UnknownLeg(nil), s.pendingTender.Unknown...),
-	}
-}
 
 // RotateTenderAttemptID discards the current tender attempt's id so the
 // next TenderAttemptID call mints a fresh one, WITHOUT touching the basket.
