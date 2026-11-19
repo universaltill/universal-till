@@ -3207,7 +3207,7 @@ func TestSettingsDisplayWindowModeHelpMatchesTopology(t *testing.T) {
 		return rec.Body.String()
 	}
 	const (
-		normalHint    = "work the same here"
+		normalHint    = "work the same: the till fills the whole screen"
 		applianceHint = "Only Kiosk keeps this screen on"
 		profileHint   = "Self-order kiosk device profile"
 	)
