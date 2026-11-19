@@ -126,6 +126,17 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
   // separately and directly, in Go, by
   // TestGetLowStock_RowsCarryDialogAttributes — so the two halves together
   // cover the path end to end without either one assuming the other.
+  // ut-docs#6137: the page's own `hx-trigger="load"` fetch of
+  // /api/inventory/low-stock replaces #low-stock-list's innerHTML; if it
+  // lands after injectLowStockRow it wipes the injected row. Arm the response
+  // wait before navigating, then wait for htmx to finish swapping/settling.
+  async function gotoInventorySettled(page: import('@playwright/test').Page) {
+    const lowStock = page.waitForResponse((r) => r.url().includes('/api/inventory/low-stock'));
+    await page.goto('/inventory');
+    await lowStock;
+    await expect(page.locator('#low-stock-list')).not.toHaveClass(/htmx-(request|swapping|settling)/);
+  }
+
   async function injectLowStockRow(page: import('@playwright/test').Page) {
     return page.evaluate(() => {
       const src = document.querySelector('#stock-table .stock-row') as HTMLElement;
@@ -142,7 +153,7 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
 
   test('(f) a low-stock row, in a fragment swapped in after load, opens the same dialog prefilled', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/inventory');
+    await gotoInventorySettled(page);
     const { name, locationName } = await injectLowStockRow(page);
 
     // Delegation is on `document`, so it must survive the container's
@@ -160,7 +171,7 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
 
   test('(g) the stock search filter never hides low-stock rows', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/inventory');
+    await gotoInventorySettled(page);
     await injectLowStockRow(page);
 
     await page.locator('#stock-search').fill('zzz-matches-nothing');
@@ -176,7 +187,7 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
     { width: 1024, height: 600, label: 'kiosk floor 1024x600', oneRow: true },
     { width: 360, height: 740, label: 'phone 360px', oneRow: false },
   ]) {
-    test(`(e) at ${vp.label} the dialog is full-bleed and the head stays pinned to one row`, async ({ page }) => {
+    test(`(e) at ${vp.label} the dialog fills the screen beside the rail/above the status bar and the head stays pinned to one row (#6125)`, async ({ page }) => {
       const assertClean = watchConsole(page);
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto('/inventory');
@@ -185,9 +196,22 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
       const dlg = page.locator(DIALOG);
       await expect(dlg).toBeVisible();
       const box = (await dlg.boundingBox())!;
-      expect(box.x).toBe(0);
+      // ut-docs#6125 (was full-bleed): at >=481px the dialog sits beside the
+      // rail (measured from .nav's own box, not a literal) and every width it
+      // stops at the status bar so Lock/status stay reachable. At 360px the
+      // rail is a top bar the dialog still spans: x = 0, full width.
+      const chrome = await page.evaluate(() => ({
+        navRight: document.querySelector('.nav')!.getBoundingClientRect().right,
+        sbTop: document.querySelector('.statusbar')!.getBoundingClientRect().top,
+      }));
+      if (vp.width >= 481) {
+        expect(Math.abs(box.x - chrome.navRight)).toBeLessThanOrEqual(0.5);
+      } else {
+        expect(box.x).toBe(0);
+      }
       expect(box.y).toBe(0);
-      expect(Math.round(box.width)).toBe(vp.width);
+      expect(Math.round(box.x + box.width)).toBe(vp.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(chrome.sbTop + 0.5);
 
       const head = (await page.locator(`${DIALOG} .record-dialog-head`).boundingBox())!;
       // ut-docs#2000's finding was a dialog head eating 42% of a 360px

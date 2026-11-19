@@ -569,7 +569,7 @@ func TestKitchenStationsPage_RendersListHeaderAndRecordDialog(t *testing.T) {
 		`data-field-destination_type="both"`,
 		`data-field-printer_address="tcp://10.0.0.5:9100"`,
 		`data-field-active="1"`,
-		`data-record-edit`,
+		`class="record-row-open" data-record-edit`,
 		`data-record-when="active=1"`,
 		`data-record-when="active=0"`,
 		`<dialog id="kitchen-station-dialog"`,
@@ -633,6 +633,12 @@ func TestKitchenStationsPage_JoinedShowsHintAndDisablesNew(t *testing.T) {
 			t.Errorf("joined page lacks %s", want)
 		}
 	}
+	if n := strings.Count(body, `aria-describedby="kitchen-station-joined-note"`); n != 2 {
+		t.Errorf("Name and Destination must both point at the joined note, got %d", n)
+	}
+	if strings.Contains(body, "rename or remove stations") {
+		t.Error("joined hint must say deactivate, not remove (stations are never removed here)")
+	}
 	i := strings.Index(body, `id="kitchen-stations-new"`)
 	if i < 0 {
 		t.Fatal("New button missing")
@@ -653,6 +659,9 @@ func TestKitchenStationsPage_MainTillUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := getKitchenStationsBody(t, mux, manager)
+	if strings.Contains(body, `aria-describedby="kitchen-station-joined-note"`) {
+		t.Error("main till must not point fields at the joined note")
+	}
 	for _, bad := range []string{`id="kitchen-stations-joined-hint"`, `data-joined="1"`, `id="kitchen-station-joined-note"`} {
 		if strings.Contains(body, bad) {
 			t.Errorf("main till must not render %s", bad)

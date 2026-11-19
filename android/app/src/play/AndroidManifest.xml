@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Google Play flavor ONLY (ADR-0194 §2.4, ut-docs#6409). Belt and braces:
+         the permission is not in src/main either, but a library that merges it
+         in is removed here, so the bundle can never carry it. -->
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+
+    <application>
+        <!-- Stamped channel, read from the bundle by android/scripts/check-aab.sh
+             so a sideload build can never be uploaded as a Play build (review F16). -->
+        <meta-data
+            android:name="com.universaltill.pos.install_channel"
+            android:value="play" />
+    </application>
+</manifest>

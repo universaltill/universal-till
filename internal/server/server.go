@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpserver"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/offsitebackup"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -46,10 +47,13 @@ type BackgroundJobs struct {
 }
 
 // NewBackgroundJobs creates a background job scheduler
-func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger, onRevoked func(context.Context) error) *BackgroundJobs {
 	var revocationChecker *plugins.RevocationChecker
 	if cfg.Marketplace.EndpointURL != "" {
 		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
+		if onRevoked != nil {
+			revocationChecker.SetOnRevoked(onRevoked)
+		}
 	}
 
 	telemetryClient := plugins.NewTelemetryClient(db, func() plugins.TelemetryIdentity {
@@ -143,14 +147,14 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 // that both waits on wg AND waits for Start to return (as app.Run does) can
 // safely assume nothing Start ever spawned is still touching db/supervisor
 // once both have happened. wg must not be nil.
-func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
+func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, onPluginsRevoked func(context.Context) error, wg *sync.WaitGroup) error {
 	// Start background jobs if a marketplace (catalog repository) is
 	// configured. Start() itself only launches goroutines and returns
 	// immediately, so it doesn't need its own wrapping goroutine — jobs' own 2
 	// goroutines register with wg directly.
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
-		jobs := NewBackgroundJobs(db, supervisor, cfg, logger)
+		jobs := NewBackgroundJobs(db, supervisor, cfg, logger, onPluginsRevoked)
 		jobs.Start(ctx, wg)
 	}
 
@@ -184,6 +188,19 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 					run()
 				}
 			}
+		}()
+	}
+
+	// Off-site encrypted backup (ut-docs#5066, ADR-0199): the main till copies
+	// its newest daily snapshot off the till, encrypted on the till. Its own
+	// goroutine, off the sale path; the gate (paired, main till, plan with
+	// cloud backup) and the backoff are inside the round.
+	if db != nil {
+		wg.Add(1)
+		go func() {
+			defer logging.RecoverAndLog("server.offsitebackup")
+			defer wg.Done()
+			offsitebackup.Shared(cfg, db).Run(ctx)
 		}()
 	}
 

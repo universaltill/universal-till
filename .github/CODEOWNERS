@@ -1,0 +1,15 @@
+# ADR-0194 / ut-docs#6565 (finding 20): the App Store build embeds first-party
+# plugin bytes pinned by hash. A change to what is pinned, to the script that
+# fetches and verifies it, or to the gate that keeps code out of that build is
+# a supply-chain change: the pipeline owner (ut-docs developers/farshidmirza.json,
+# role owner) reviews it. Takes effect when the branch protection rule on main
+# has "Require review from Code Owners" ticked.
+/internal/plugins/bundled/bundled.lock.json              @farshidmirza
+/internal/plugins/bundled/embed_on.go                    @farshidmirza
+/internal/plugins/bundled/lock.go                        @farshidmirza
+/scripts/ci/fetch-bundled-plugins.sh                     @farshidmirza
+/scripts/ci/guard-appstore-no-code-fetch.sh              @farshidmirza
+/internal/plugins/code_gate.go                           @farshidmirza
+/internal/buildinfo/channel.go                           @farshidmirza
+/.github/workflows/ios-testflight.yml                    @farshidmirza
+/.github/CODEOWNERS                                      @farshidmirza

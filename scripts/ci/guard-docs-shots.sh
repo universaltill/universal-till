@@ -9,6 +9,21 @@
 # that could change what is on screen (web/ui/**, web/public/**, non-test
 # internal/pages/**.go), changed after the screenshots were last taken.
 #
+# EXTRA SHOTS (ut-docs#2615): beyond <id>.png a topic may show inline shots.
+# An image reference `![alt](img/<id>-<part>.png)` in web/help/en/<id>.md
+# declares the extra shot `<id>-<part>` (the English markdown is the single
+# source of truth; e2e/tests-docs/lib.js extraShotsByTopic and
+# internal/manual read the same references). This guard checks, en only:
+# every declared shot has img/en/<stem>.png, manifest.json "shots" records
+# exactly the declared set (an entry no markdown references is an orphan, a
+# declared shot not recorded was never captured), and a bad reference fails.
+# A route-less topic may have extras (ut-docs#337); it has no topic hash, so
+# its extras ride on the surface hash, which covers a page only if its route
+# is some routed topic's routes[0] (not checked yet: some recipes, e.g.
+# self-order and plugins store, visit other routes). A manifest without a "shots" key (older) counts
+# as none recorded. Their content freshness rides on the topic and surface
+# hashes: the shots are regenerated in the same run from the same inputs.
+#
 # HASH ALGORITHM — must stay in lockstep with e2e/tests-docs/lib.js (the
 # generation side), where it is spelled out in full:
 #   surface_sha256 = sha256 of the concatenation of
@@ -106,7 +121,9 @@ MANIFEST="web/help/img/manifest.json"
 # point of a cross-check meant to catch the two implementations drifting).
 # Checked here, before the manifest-existence gate, since print-only mode has
 # no reason to require one either.
-if [ -z "${GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY:-}" ]; then
+# GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY: likewise prints the declared extra shots
+# ("<topic> <stem>" per line, sorted) for the lib.js cross-check.
+if [ -z "${GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY:-}" ] && [ -z "${GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY:-}" ]; then
   [ -f "$MANIFEST" ] || {
     echo "guard-docs-shots: $MANIFEST missing — run \`make docs-shots\` and commit the result" >&2
     exit 1
@@ -154,6 +171,32 @@ def routed_topics_with_routes():
         if tid and routes:
             out.append((tid, routes[0]))
     return out
+
+# --- extra shots (ut-docs#2615) -------------------------------------------
+# Must mirror e2e/tests-docs/lib.js extraShotsByTopic and internal/manual's
+# inlineShotRe: a reference is exactly img/<stem>.png with <stem> =
+# <topicId>-<part>, <part> = [a-z0-9]+(-[a-z0-9]+)*. Any topic, routed or
+# not, may have extras (ut-docs#337): each recipe carries its own route.
+IMG_REF_RE = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]*)[^)]*\)")
+SHOT_DEST_RE = re.compile(r"^img/([a-z0-9]+(?:-[a-z0-9]+)*)\.png$")
+
+def extra_shots():
+    """Returns ({topic: [stems]}, [error messages])."""
+    out, errors = {}, []
+    for path in sorted(glob.glob("web/help/en/*.md")):
+        tid = os.path.basename(path)[:-3]
+        text = open(path, encoding="utf-8").read().replace("\r\n", "\n")
+        stems = set()
+        for dest in IMG_REF_RE.findall(text):
+            m = SHOT_DEST_RE.match(dest)
+            if not m or not m.group(1).startswith(tid + "-"):
+                errors.append(f"bad image reference {dest!r} in {path}: inline images must be img/{tid}-<name>.png")
+                continue
+            stems.add(m.group(1))
+        if not stems:
+            continue
+        out[tid] = sorted(stems)
+    return out, errors
 
 # --- surface hash ----------------------------------------------------------
 # ServeMux route registrations, e.g. mux.HandleFunc("GET /reports", ...) or
@@ -221,6 +264,18 @@ def topic_hash(locale, tid):
 topic_routes = routed_topics_with_routes()
 topics = [tid for tid, _ in topic_routes]
 screenshotted_routes = {route for _, route in topic_routes}
+shots, shot_errors = extra_shots()
+
+# See GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY above the bash gate.
+if os.environ.get("GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY"):
+    if shot_errors:
+        print("\n".join(shot_errors), file=sys.stderr)
+        sys.exit(1)
+    for tid in sorted(shots):
+        for stem in shots[tid]:
+            print(f"{tid} {stem}")
+    sys.exit(0)
+
 cur_surface = surface_hash(screenshotted_routes)
 
 # See the GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY comment above the bash
@@ -248,7 +303,35 @@ for tid in topics:
 # the manifest must describe exactly the current routed set.
 orphans = sorted(set(recorded) - set(topics))
 
+# Extra shots: en PNG present; manifest "shots" == declared set exactly.
+recorded_shots = manifest.get("shots", {})
+declared = {(tid, stem) for tid, stems in shots.items() for stem in stems}
+recorded_pairs = {(tid, stem) for tid, stems in recorded_shots.items() for stem in stems}
+missing_shot_png = sorted(f"en/{stem}" for _, stem in declared
+                          if not os.path.isfile(f"web/help/img/en/{stem}.png"))
+orphan_shots = sorted(f"{tid}/{stem}" for tid, stem in recorded_pairs - declared)
+uncaptured_shots = sorted(f"{tid}/{stem}" for tid, stem in declared - recorded_pairs)
+
 fail = False
+if shot_errors:
+    fail = True
+    for e in shot_errors:
+        print("guard-docs-shots:", e)
+if missing_shot_png:
+    fail = True
+    print("guard-docs-shots: extra shots with no screenshot (locale/shot):")
+    for s in missing_shot_png:
+        print("  -", s)
+if orphan_shots:
+    fail = True
+    print("guard-docs-shots: manifest lists extra shots no en topic references (topic/shot):")
+    for s in orphan_shots:
+        print("  -", s)
+if uncaptured_shots:
+    fail = True
+    print("guard-docs-shots: extra shots never captured (not in the manifest) (topic/shot):")
+    for s in uncaptured_shots:
+        print("  -", s)
 if surface_stale:
     fail = True
     print("guard-docs-shots: the app surface (web/ui/**, web/public/**, or "
@@ -277,5 +360,5 @@ if fail:
     print("guard-docs-shots: run `make docs-shots` and commit the result")
     sys.exit(1)
 print(f"✓ docs-shots guard: {len(topics)} routed topics × {len(LOCALES)} locales "
-      f"screenshotted and fresh (surface {cur_surface[:12]}…)")
+      f"screenshotted and fresh, {len(declared)} extra shots (surface {cur_surface[:12]}…)")
 PY
