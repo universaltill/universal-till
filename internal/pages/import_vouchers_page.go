@@ -209,11 +209,12 @@ func registerVoucherImport(mux *http.ServeMux, d *common.Deps) {
 // statement, not several). Any OTHER error aborts the whole batch (rolled
 // back), same as any other multi-row import commit in this codebase.
 func commitVoucherBalanceImport(ctx context.Context, db *sql.DB, repo *data.POSRepo, items []catimport.VoucherBalanceItem) (imported int, importedTotalMinor int64, collisions []catimport.VoucherBalanceRowIssue, err error) {
-	now := time.Now().UTC().Format(time.RFC3339)
 	tx, beginErr := db.BeginTx(ctx, nil)
 	if beginErr != nil {
 		return 0, 0, nil, fmt.Errorf("begin voucher import transaction: %w", beginErr)
 	}
+	// ut-docs#5831 (review B1): stamp after the write lock is held (BeginTx).
+	now := time.Now().UTC().Format(time.RFC3339)
 	committed := false
 	defer func() {
 		if !committed {
