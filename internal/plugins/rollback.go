@@ -254,6 +254,12 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	if err := manifest.RefuseOnTill(); err != nil {
 		return err
 	}
+	// App Store channel (ADR-0194): rollback moves the row to another version
+	// without PersistManifest, so it is gated here, before the live dir or the
+	// DB is touched. Code there changes only with an app release.
+	if err := RefuseCodeRuntime(manifest.Runtime); err != nil {
+		return err
+	}
 
 	// Begin transaction
 	tx, err := rm.db.BeginTx(ctx, nil)
