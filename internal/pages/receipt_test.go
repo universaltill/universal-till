@@ -594,3 +594,53 @@ func TestRenderReceipt_VoucherRedemptionShowsCode(t *testing.T) {
 		t.Fatalf("redemption receipt does not show the voucher code on the payment line: %s", html)
 	}
 }
+
+// ut-docs#6663: the on-screen receipt shows the order number large above the
+// receipt number; a sale with none (a legacy sale) shows no hero at all.
+func TestRenderReceipt_ShowsOrderNumberHero(t *testing.T) {
+	funcs := httpx.FuncsFor("en")
+	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100}}
+	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
+	with, err := renderReceipt(funcs, "1-000000042", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en", 0, withDisplayNo("42"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(with, `data-testid="receipt-order-no"`) || !strings.Contains(with, `<span class="order-no-value" dir="ltr">42</span>`) {
+		t.Fatalf("order number hero missing: %s", with)
+	}
+	if strings.Index(with, "order-no-hero") > strings.Index(with, "1-000000042") {
+		t.Fatal("the order number must come above the receipt number")
+	}
+	without, err := renderReceipt(funcs, "000000042", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(without, "order-no-hero") || !strings.Contains(without, "000000042") {
+		t.Fatalf("a sale without an order number must show only the receipt number: %s", without)
+	}
+}
+
+// The browser-print copy (a second language) carries the order number too.
+func TestRenderReceipt_PrintCopyShowsOrderNumberToo(t *testing.T) {
+	html, err := renderReceipt(httpx.FuncsFor("en"), "R-1", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "", nil, "", nil, nil, "tr", "en", 0, withDisplayNo("7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(html, `class="order-no-value" dir="ltr">7</span>`) != 2 {
+		t.Fatalf("want the order number in the screen copy and the print copy: %s", html)
+	}
+}
+
+func TestJoinedReceiptPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		granted string
+		no      int
+		want    string
+	}{
+		{"3-", 3, "3-"}, {"T4-", 4, "T4-"}, {"", 2, "T2-"}, {"1-", 2, "T2-"}, {"A-", 2, "T2-"}, {"x-1", 5, "T5-"},
+	} {
+		if got := joinedReceiptPrefix(tc.granted, tc.no); got != tc.want {
+			t.Errorf("joinedReceiptPrefix(%q, %d) = %q, want %q", tc.granted, tc.no, got, tc.want)
+		}
+	}
+}

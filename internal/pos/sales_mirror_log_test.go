@@ -338,7 +338,14 @@ func TestSalesMirrorCopy_NeverCountsOnThisTill(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		next, err := repo.NextReceiptNo(ctx, nil)
+		// The counter is stored (ut-docs#6663): peek inside a rolled-back
+		// transaction so the probe itself does not spend a number.
+		peek, err := sqlDB.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, err := repo.NextReceiptNo(ctx, peek)
+		_ = peek.Rollback()
 		if err != nil {
 			t.Fatal(err)
 		}

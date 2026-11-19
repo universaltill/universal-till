@@ -50,9 +50,9 @@ func ValidTillRole(role string) bool {
 }
 
 // InsertTill enrols a replica as an additional till, granting it the next
-// receipt prefix (EnrolTill); the caller hashes the bearer.
+// receipt prefix (EnrolTillPrefix); the caller hashes the bearer.
 func (r *TillsRepo) InsertTill(ctx context.Context, name, bearerHash string) (string, error) {
-	id, _, err := r.EnrolTill(ctx, name, bearerHash, TillRoleAdditional, "")
+	id, _, _, err := r.EnrolTillPrefix(ctx, name, bearerHash, TillRoleAdditional, "")
 	return id, err
 }
 

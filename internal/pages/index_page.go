@@ -106,6 +106,11 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 				gridMethods = append(gridMethods, m)
 			}
 		}
+		// ut-docs#6566: methods with several registry readers share ONE "Card"
+		// button (the cashier picks a reader, not a provider); every other
+		// method keeps its own button unchanged.
+		prefMethod, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
+		gridMethods, cardReaders := cardReaderGrid(r.Context(), d, gridMethods, prefMethod)
 		// Per-provider fee rules (B4 cost-rules): manager-entered percent
 		// (basis points) + fixed (minor units); the tender UI shows a live
 		// "≈ fee" hint so the cashier picks the cheaper provider (ADR-0016
@@ -211,6 +216,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentFeesJSON":      template.JS(feesJSON),
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           gridMethods,
+			"cardReaders":          cardReaders,
 			// ut-docs#3873: a plugin (the AI Assistant, ut-docs#2851)
 			// answers catalog.identify — the sell screen shows core's one
 			// camera-identify button.
