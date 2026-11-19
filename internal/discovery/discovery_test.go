@@ -247,8 +247,7 @@ func TestTillID_ConcurrentCallersOnFreshDBConverge(t *testing.T) {
 // to both advertise the exact same plain "this shop" fallback, with nothing
 // but the raw till-id UUID to tell them apart in the discovery list. This is
 // the fix — the advertising-only fallback (internal/pages's OWN, separate
-// storeNameOrDefault still serves receipts, reports, the AI assistant
-// unchanged) folds in a short
+// shopNameOrEmpty serves receipts and reports: it returns "" when unnamed) folds in a short
 // suffix from this till's own stable id, so two unconfigured tills on the
 // same LAN broadcast distinguishable names by construction.
 func TestAdvertisedName_FallsBackToPerTillDisambiguatedName(t *testing.T) {

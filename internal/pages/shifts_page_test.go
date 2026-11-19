@@ -1,8 +1,10 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -609,6 +611,69 @@ func TestShiftsPage_NoSaleCountsUseLocaleDigits(t *testing.T) {
 	}
 }
 
+// ut-docs#5877: closed History rows carry a per-row "Print slip" button;
+// open rows do not; ids are unique per row; 7 columns.
+func TestShiftsPage_HistoryRowsHavePrintSlipButtonOnClosedOnly(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	at := func(d time.Duration) string { return now.Add(d).Format("2006-01-02T15:04:05Z") }
+	for _, q := range []string{
+		`INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role,is_active) VALUES('u1','alex','Alex','','cashier',1)`,
+	} {
+		if _, err := dp.Db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,closed_at,opening_cash,closing_cash,expected_cash) VALUES('cl1','reg1','u1',?,?,1000,1200,1500),('cl2','reg1','u1',?,?,1000,1000,1000)`,
+		at(-30*time.Hour), at(-26*time.Hour), at(-20*time.Hour), at(-16*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('op1','reg1','u1',?,5000)`, at(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts", nil))
+	if rec.Code != 200 {
+		t.Fatalf("got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if n := strings.Count(body, `class="btn secondary shift-slip-row-print"`); n != 2 {
+		t.Fatalf("print buttons = %d, want 2 (closed rows only)", n)
+	}
+	for _, id := range []string{"cl1", "cl2"} {
+		for _, want := range []string{
+			`hx-post="/api/shifts/` + id + `/close-slip/print"`,
+			`hx-target="#shift-slip-print-msg-` + id + `"`,
+			`id="shift-slip-print-msg-` + id + `"`,
+			`id="shift-slip-print-busy-` + id + `"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+	}
+	if strings.Contains(body, "/api/shifts/op1/close-slip/print") {
+		t.Error("open row must have no print button")
+	}
+	if !strings.Contains(body, `"reprint":"1"`) && !strings.Contains(body, `&#34;reprint&#34;:&#34;1&#34;`) {
+		t.Error("button must post reprint=1")
+	}
+	if n := strings.Count(body, "<th"); n < 7 {
+		t.Errorf("th count = %d", n)
+	}
+}
+
+func TestShiftsPage_HistoryEmptyRowColspan7(t *testing.T) {
+	mux, _ := newShiftsPageTestDeps(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts", nil))
+	if !strings.Contains(rec.Body.String(), `colspan="7" class="empty"`) {
+		t.Error("empty history row must span 7 columns")
+	}
+}
+
 // ut-docs#5782: the Current Shift card shows the cashier's name, falls back
 // to the raw id for a cashier with no users row, and to an em dash for an
 // empty id. The two <td> forms are asserted exactly so the id can't leak
@@ -679,6 +744,26 @@ func TestShiftsPage_Markup5782(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s in /shifts markup", want)
+		}
+	}
+}
+
+// ut-docs#5877 UX F2: the two close-slip error strings must fit both the
+// close-result "Print shift slip" button and the History row "Print slip"
+// button, so neither may name a button.
+func TestShiftsLocale_CloseSlipErrorsDoNotNameAButton(t *testing.T) {
+	chdirRoot(t)
+	raw, err := os.ReadFile("web/locales/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"shifts.close_slip.print_failed", "shifts.close_slip.failed"} {
+		if strings.Contains(m[k], "Print shift slip") || strings.Contains(m[k], "Print slip") {
+			t.Errorf("%s names a button: %q", k, m[k])
 		}
 	}
 }
