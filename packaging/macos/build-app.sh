@@ -24,7 +24,7 @@ cd "$REPO_ROOT"
 APP="$OUTDIR/Universal Till.app"
 # ADR-0160 §6: the source commit's time (internal/buildinfo.BuildDate).
 BUILD_DATE="${BUILD_DATE:-$(git show -s --format=%cI HEAD 2>/dev/null || true)}"
-LDFLAGS="-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE}"
+LDFLAGS="-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE}"
 # ADR-0158: release builds compile the marketplace plugin-signing key in
 # (UT_MARKETPLACE_KEY_HEX, from scripts/ci/resolve-marketplace-key.sh). Unset
 # locally = a source build that uses the env/lazy-fetch key.

@@ -139,3 +139,45 @@ test.describe('catalog item form header at phone width (ut-docs#2000)', () => {
     });
   }
 });
+
+// ut-docs#6176: just above the phone breakpoint (701-1023px) the edit-mode
+// title h3 was still ellipsised (161 of 263px at 701x900): the 12rem-basis
+// title group shares one row with +New/Close/Save (labelled, wide) and
+// shrinks to whatever is left.
+test.describe('edit-mode title is untruncated between the phone and kiosk widths (ut-docs#6176)', () => {
+  const sizes: Array<[number, number]> = [
+    [701, 900], [768, 1024], [800, 900], [900, 900], [1023, 900], [1023, 600], [1024, 600],
+  ];
+  for (const [w, h] of sizes) {
+    test(`${w}x${h}: full title, delete + action buttons on one row`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto('/catalog');
+      await page.locator('[id^=catalog-row-]').first().click();
+      await expect(page.locator('#item-form-modal')).toBeVisible();
+      await expect(page.locator('#item-form-delete')).toBeVisible();
+      const m = await page.evaluate(() => {
+        const t = document.getElementById('item-form-title')!;
+        const tops = ['item-form-delete', 'item-form-reset', 'item-form-close-btn', 'item-form-submit']
+          .map((id) => Math.round(document.getElementById(id)!.getBoundingClientRect().top));
+        const head = document.querySelector('.catalog-form-head')!.getBoundingClientRect();
+        return {
+          sw: t.scrollWidth, cw: t.clientWidth, text: t.textContent || '', tops,
+          titleMid: Math.round((t.getBoundingClientRect().top + t.getBoundingClientRect().bottom) / 2),
+          btnBottom: Math.round(document.getElementById('item-form-delete')!.getBoundingClientRect().bottom),
+          headH: Math.round(head.height),
+        };
+      });
+      expect(m.sw, `title "${m.text}" truncated (${m.sw}px in ${m.cw}px)`).toBeLessThanOrEqual(m.cw);
+      expect(new Set(m.tops).size, `delete/+New/Close/Save must share one row (tops ${m.tops})`).toBe(1);
+      if (w >= 1024) {
+        // Kiosk floor: the 701-1023px own-line title must not reach it — the
+        // title stays on the button row and the head keeps its height (144px).
+        // The h3 is centred on the 48px buttons, so its midline lies inside their band.
+        expect(m.titleMid > m.tops[0] && m.titleMid < m.btnBottom, `title must share the button row at ${w}px (title mid ${m.titleMid}, buttons ${m.tops[0]}-${m.btnBottom})`).toBe(true);
+        expect(m.headH, `kiosk head grew to ${m.headH}px`).toBeLessThanOrEqual(150);
+      }
+      assertClean();
+    });
+  }
+});

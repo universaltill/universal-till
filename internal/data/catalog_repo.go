@@ -4106,3 +4106,40 @@ func ensureBarcodeAvailable(ctx context.Context, tx *sql.Tx, barcode, targetType
 	}
 	return nil
 }
+
+// ItemsBySKU returns the ids of the items whose SKU equals sku
+// (case-insensitive; at most 3 are read, enough to see an ambiguity).
+// variantOnly is true when no item matches but an item variant carries the
+// SKU. Used by the photo bulk import (ut-docs#6527), which updates items
+// only and refuses a variant or ambiguous SKU.
+func (r *CatalogRepo) ItemsBySKU(ctx context.Context, sku string) (ids []string, variantOnly bool, err error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM items WHERE sku = ? COLLATE NOCASE LIMIT 3`, sku)
+	if err != nil {
+		return nil, false, fmt.Errorf("items by sku: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, false, fmt.Errorf("items by sku: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("items by sku: %w", err)
+	}
+	if len(ids) > 0 {
+		return ids, false, nil
+	}
+	var one int
+	err = r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM item_variants WHERE sku = ? COLLATE NOCASE LIMIT 1`, sku).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("items by sku: %w", err)
+	}
+	return nil, true, nil
+}

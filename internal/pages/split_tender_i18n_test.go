@@ -369,8 +369,9 @@ func TestSplitTenderStatusStringsLocalize(t *testing.T) {
 // English original. app.js's fmt() substitutes positionally, so a locale that
 // drops one silently loses that value at runtime — e.g. a payment
 // confirmation rendering the method but not the amount. Nothing else in CI
-// checks this, and CLAUDE.md requires these keys to be mirrored by hand into
-// the external ut-plugin-language-{de,es} packs (review finding, 2026-08-24).
+// checks this, and nothing else guards that the language bundles
+// (com.universaltill.language-<code>, ADR-0160) keep the same placeholders; Weblate's
+// placeholder check covers them (review finding, 2026-08-24).
 func TestLocalePlaceholderCountsMatchEnglish(t *testing.T) {
 	chdirRoot(t)
 	en := loadLocale(t, "en")

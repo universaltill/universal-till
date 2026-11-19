@@ -5,10 +5,16 @@
      the till keeps selling offline and retries the cloud hourly.
        revoked  — device_revoked: "Removed from the shop's cloud account"
        repair   — token_retired / unauthorized on a claimed store
-       register — the same on an anonymous store (no owner, no pairing code)
+       register — the same on an anonymous store (no owner, no pairing code):
+                  "Cloud sign-in lost"; a manager's title points at Settings →
+                  Till registration (Reconnect / Register as a new shop, ut-docs#5145)
        replaced — ut-docs#5058: the owner replaced this till as main till;
                   "Replaced by <name>", shown from the first refused call
                   and after a restart (persisted), never a modal
+       blocked  — ut-docs#5145: the cloud refused to re-register this till
+                  (it was in use in the last 72 h); "Cloud reconnect paused".
+                  The title carries the date for a manager only, never an ID
+                  or key; Settings → Till registration has the details
        restored — ut-docs#5157: this till's data was restored onto a new
                   device, so its cloud connection was reset; "Restored on
                   a new device — connect again" until paired/registered
@@ -18,7 +24,7 @@
      The link goes to Settings → Registration until the "Pair with a shop"
      screen (ut-docs#3523) exists. */}}
 <a {{ if .canManage }}href="/settings#registration" {{ end }}class="sb-item sb-cloud-auth is-{{ .variant }}" data-testid="sb-cloud-auth" data-cloud-auth="{{ .variant }}"
-   title="{{ if eq .variant "replaced" }}{{ .replacedHint }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored_hint" }}{{ else }}{{ T "status.cloud_auth.hint" }}{{ end }}">
-  <span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span>
-  <span class="sb-cloud-auth-text">{{ if eq .variant "replaced" }}{{ printf (T "status.cloud_auth.replaced") .replacedBy }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored" }}{{ else if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.register_new" }}{{ end }}</span>
+   title="{{ if eq .variant "replaced" }}{{ .replacedHint }}{{ else if or (eq .variant "blocked") (eq .variant "register") }}{{ .blockedHint }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored_hint" }}{{ else }}{{ T "status.cloud_auth.hint" }}{{ end }}">
+  <span class="btn-ico" aria-hidden="true">{{ if eq .variant "blocked" }}{{ icon "pause" }}{{ else }}{{ icon "sparkles" }}{{ end }}</span>
+  <span class="sb-cloud-auth-text">{{ if eq .variant "replaced" }}{{ printf (T "status.cloud_auth.replaced") .replacedBy }}{{ else if eq .variant "restored" }}{{ T "status.cloud_auth.restored" }}{{ else if eq .variant "blocked" }}{{ T "status.cloud_auth.blocked" }}{{ else if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.locked_out" }}{{ end }}</span>
 </a>
