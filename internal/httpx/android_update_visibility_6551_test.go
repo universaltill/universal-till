@@ -79,6 +79,19 @@ func TestBaseLayoutAndroidUpdatePillForSaleOnlyViewer(t *testing.T) {
 	if strings.Contains(manager, `sb-android-update-ask`) {
 		t.Errorf("manager must get the chip, not the ask-a-manager pill")
 	}
+	// ut-docs#6551: the "downloaded" label (one tap installs) and the 409
+	// message ride on the chip as data-* attributes, translated server-side.
+	for _, want := range []string{
+		`data-downloaded="Update v9.9.9 ready — tap to install"`,
+		`data-busy="A sale or order is still open — finish it, then install"`,
+	} {
+		if !strings.Contains(manager, want) {
+			t.Errorf("manager chip lacks %s", want)
+		}
+	}
+	if strings.Contains(cashier, "data-android-update-install") || strings.Contains(cashier, "data-downloaded=") {
+		t.Errorf("cashier must get no install control or downloaded label")
+	}
 }
 
 // Without the bridge (desktop kiosk, browser) the pill must not appear: the

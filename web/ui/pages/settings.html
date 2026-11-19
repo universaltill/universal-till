@@ -409,6 +409,9 @@
         data-allowdenied="{{ T "settings.update.android.allow_still_denied" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
         data-uptodate="{{ T "settings.update.up_to_date" }}"
+        data-busy="{{ T "settings.update.android.busy" }}"
+        data-downloaded="{{ printf (T "settings.update.android.downloaded") latestversion }}"
+        data-installnow="{{ T "settings.update.android.install_now" }}"
         data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
     <span id="android-update"></span>
     <!-- The PIN is hidden when the session alone will authorise (ut-docs#1537):
@@ -473,6 +476,8 @@
     var pinLabel = document.getElementById('android-update-pin-label');
     var pinInput = form.querySelector('[name="manager_pin"]');
     var T = function (k) { return form.getAttribute('data-' + k); };
+    // ut-docs#6551: the button's own markup, restored after "Install now".
+    var btnLabel = btn.innerHTML;
 
     // ut-docs#1537: every branch below says something. The old handler wrote a
     // bare "✗" for a wrong PIN, a lockout and a dead network alike, and wrote
@@ -504,7 +509,7 @@
         }
         // ut-docs#1545: 'uptodate' is the endpoint's already_current answer
         // — this control renders off a check up to 24h stale.
-        msg.textContent = T({ locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed');
+        msg.textContent = T({ locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge', busy: 'busy' }[outcome] || 'failed');
       });
     });
     // The shell's own report: % while downloading, the installer opening, a
@@ -560,6 +565,9 @@
       hideAllow();
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
+      // ut-docs#6551: already downloaded and checked: the button says what a
+      // tap does. Any later state gets the original label back.
+      if (s.state === 'downloaded') { btn.textContent = T('installnow'); } else { btn.innerHTML = btnLabel; }
     });
     // The submit handler maps a rejected start; the shell answers a refused
     // permission with needs_permission AFTER 'started', so nothing more here.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -1094,5 +1095,35 @@ func TestSetTapToPayResolver_RegistersWithDevicepay(t *testing.T) {
 	SetTapToPayResolver(nil)
 	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); got.Reason != devicepay.ReasonNotForeground {
 		t.Fatalf("after SetTapToPayResolver(nil): %+v, want not_foreground", got)
+	}
+}
+
+// UpdateBridge and apkprefetch.Prefetcher must stay method-for-method
+// identical (ut-docs#6551): SetUpdateBridge relies on structural conversion.
+var (
+	_ apkprefetch.Prefetcher = UpdateBridge(nil)
+	_ UpdateBridge           = apkprefetch.Prefetcher(nil)
+)
+
+type stubUpdateBridge struct{ calls int }
+
+func (s *stubUpdateBridge) PrefetchUpdate() error { s.calls++; return nil }
+
+// ut-docs#6551: SelfUpdateActivity registers its prefetch bridge in onResume
+// and clears it (null) in onPause.
+func TestSetUpdateBridge_RegistersWithAndroidupdate(t *testing.T) {
+	t.Cleanup(func() { SetUpdateBridge(nil) })
+	stub := &stubUpdateBridge{}
+	SetUpdateBridge(stub)
+	got := apkprefetch.RegisteredPrefetcher()
+	if got != apkprefetch.Prefetcher(stub) {
+		t.Fatalf("RegisteredPrefetcher() = %#v, want the stub", got)
+	}
+	if err := got.PrefetchUpdate(); err != nil || stub.calls != 1 {
+		t.Fatalf("PrefetchUpdate via the registered bridge: %v, calls=%d", err, stub.calls)
+	}
+	SetUpdateBridge(nil)
+	if got := apkprefetch.RegisteredPrefetcher(); got != nil {
+		t.Fatalf("after SetUpdateBridge(nil): %#v, want nil", got)
 	}
 }

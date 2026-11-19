@@ -1172,6 +1172,8 @@
                 data-locked="{{ T "auth.error.locked" }}"
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
                 data-uptodate="{{ T "settings.update.up_to_date" }}"
+                data-busy="{{ T "settings.update.android.busy" }}"
+                data-downloaded="{{ printf (T "settings.update.android.downloaded") latestversion }}"
         ><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
         {{ else if updateinstallbridge }}
         <!-- ut-docs#6551: Android, viewer WITHOUT "settings" (the sale-only
@@ -1444,6 +1446,9 @@
           var aLabel = abtn.innerHTML, aArmed = false, aTimer = null;
           var A = function (k) { return abtn.getAttribute('data-' + k) || ''; };
           var aRetry = false;
+          // ut-docs#6551: the update is already downloaded and checked, so one
+          // tap installs (Android's own installer screen is the confirmation).
+          var aReady = false;
           var aReset = function () { abtn.innerHTML = aLabel; abtn.disabled = false; aRetry = false; };
           abtn.addEventListener('click', function () {
             // A failed download: one tap retries (the operator already
@@ -1484,6 +1489,17 @@
               }
               // ut-docs#1545: 'uptodate' — the chip renders off a check up to
               // 24h stale; the endpoint's already_current answer is the truth.
+              if (outcome === 'busy') {
+                // ut-docs#6551: a sale or order is open. Say so briefly, then
+                // go back to the label; the next tap installs (no re-arm).
+                abtn.textContent = A('busy');
+                abtn.disabled = false;
+                aRetry = true;
+                aTimer = setTimeout(function () {
+                  if (aReady) { abtn.textContent = window.utAndroidUpdater.text(abtn, { state: 'downloaded' }); } else { aReset(); }
+                }, 6000);
+                return;
+              }
               var key = { locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed';
               abtn.textContent = A(key);
               abtn.disabled = false;
@@ -1517,7 +1533,8 @@
             // came up (android-update.js reports it, also on the way back from
             // its "allow this app to install apps" settings): one tap opens it
             // again, reusing the download.
-            aRetry = s.state === 'failed' || s.state === 'closed';
+            aReady = s.state === 'downloaded';
+            aRetry = s.state === 'failed' || s.state === 'closed' || aReady;
           });
         }
       })();
