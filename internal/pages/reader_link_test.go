@@ -338,7 +338,7 @@ func (p *fakePhone) acceptCollect(t *testing.T) fleetlink.ReaderCollect {
 
 func TestFakePhoneDrivesCollectResultConfirmEndToEnd(t *testing.T) {
 	g := newPhoneRig(t)
-	g.ob.set(func(b *opBroker) { b.status = piStatus("succeeded", 120) })
+	g.ob.set(func(b *opBroker) { b.status = strings.Replace(piStatus("succeeded", 120), "pi_k1b", "pi_r1b", 1) })
 	ph := g.connect(t, fleetlink.ReaderReady)
 
 	// The phone asks for a connection token first (the SDK connects).
@@ -496,7 +496,7 @@ func TestLostContactWordingNeverDeclined(t *testing.T) {
 	if strings.Contains(text, "declin") || !strings.Contains(text, "charged") {
 		t.Fatalf("tap.pending.lan = %q: must warn the customer may have been charged and never say declined", text)
 	}
-	for _, k := range []string{"tap.remote.waiting", "tap.remote.on_phone", "tap.reader.busy_result"} {
+	for _, k := range []string{"tap.remote.waiting", "tap.remote.on_phone", "tap.cancelling"} {
 		if strings.Contains(strings.ToLower(enText(t, k)), "declin") {
 			t.Fatalf("%s says declined", k)
 		}
@@ -613,15 +613,15 @@ func TestRemoteProgressFragmentFollowsThePhone(t *testing.T) {
 	frag := func() *httptest.ResponseRecorder {
 		return g.do(t, g.cashier, http.MethodGet, "/ui/pay/tap/remote", nil)
 	}
-	if rec := frag(); rec.Code != http.StatusNoContent {
-		t.Fatalf("no collect running: %d %s, want 204", rec.Code, rec.Body.String())
+	if rec := frag(); rec.Code != http.StatusOK || strings.Contains(bodyText(rec), enText(t, "tap.remote.waiting")) {
+		t.Fatalf("no collect running: %d %s, want the quiet poll starter", rec.Code, rec.Body.String())
 	}
 	done := g.tenderAsync(t)
 	f := ph.next(t)
 	var rec *httptest.ResponseRecorder
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if rec = frag(); rec.Code == http.StatusOK {
+		if rec = frag(); strings.Contains(bodyText(rec), enText(t, "tap.remote.waiting")) {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -643,8 +643,8 @@ func TestRemoteProgressFragmentFollowsThePhone(t *testing.T) {
 	_ = json.Unmarshal(f.Payload, &c)
 	ph.send(t, fleetlink.TypeReaderResult, "", fleetlink.ReaderResult{IdempotencyKey: c.IdempotencyKey, Status: fleetlink.ResultCancelled})
 	waitRes(t, done)
-	if rec := frag(); rec.Code != http.StatusNoContent {
-		t.Fatalf("after the collect: %d, want 204", rec.Code)
+	if rec := frag(); strings.Contains(bodyText(rec), enText(t, "tap.remote.on_phone")) {
+		t.Fatalf("after the collect the progress is still shown: %s", rec.Body.String())
 	}
 }
 

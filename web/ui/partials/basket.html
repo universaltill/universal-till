@@ -40,6 +40,9 @@
        are 56 px and keep their slot. The words never say "declined" for a
        pending or start failure. The attempt key never appears here: the
        server resolves it from the locked tender. */}}
+  {{/* ut-docs#6538 (ux A6): the phone reader's progress. Idle, it only waits for
+       a tender request to start; the server fragment then polls itself. */}}
+  <div id="tap-remote" hx-get="/ui/pay/tap/remote" hx-trigger="htmx:beforeRequest[detail.pathInfo.requestPath=='/api/pos/tender'] from:body delay:600ms" hx-swap="outerHTML"></div>
   {{ if .TapPanel }}{{ $p := .TapPanel }}
   <section id="tap-panel" class="tap-panel tap-{{ $p.State }}" aria-labelledby="tap-title" data-testid="tap-panel">
     <div role="status" aria-live="assertive" aria-atomic="true">
@@ -49,6 +52,7 @@
       <p>{{ T "tap.pending.body" }}</p>
       {{ if eq $p.Reason "processing" }}<p class="muted">{{ T "tap.pending.reason.processing" }}</p>{{ end }}
       {{ if eq $p.Reason "lookup_failed" }}<p class="muted">{{ T "tap.pending.reason.lookup_failed" }}</p>{{ end }}
+      {{ if eq $p.Reason "reader_lost" }}<p class="muted">{{ T "tap.pending.lan" }}</p>{{ end }}
       {{ if eq $p.Reason "amount_mismatch" }}<p class="muted">{{ T "tap.amount_mismatch" }}</p>{{ end }}
       {{ if $p.Still }}<p>{{ T "tap.pending.still" }}</p>{{ end }}
       <p class="muted">{{ T "tap.pending.locked" }}</p>

@@ -33,6 +33,9 @@ const (
 	PendingRequiresCapture  = "requires_capture"
 	PendingNotConfirmed     = "not_confirmed"
 	PendingAlreadySettled   = "already_settled"
+	// PendingReaderLost: the paired phone reader's link dropped mid-tap
+	// (ut-docs#6538); the screen says the customer may have been charged.
+	PendingReaderLost = "reader_lost"
 )
 
 // PaymentPendingError says the payment's outcome is not confirmed. The caller

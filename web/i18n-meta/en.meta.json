@@ -1296,5 +1296,16 @@
   "tap.reader.revoked": {"description": "Confirmation, announced to screen readers, after a card reader was removed.", "review": "standard"},
   "settings.display.window_mode_kiosk_help": {"description": "Muted help line under the Window mode select in Settings → Display: says that in the desktop app Fullscreen and Kiosk work the same and that without the desktop app, or on macOS, the window stays normal, and that Kiosk is not the Self-order kiosk device profile.", "review": "standard"},
   "settings.display.window_mode_kiosk_help_appliance": {"description": "Muted help line under the Window mode select in Settings → Display, shown only on a screen-only Pi kiosk appliance: only Kiosk keeps the screen on, the other modes turn it off.", "review": "standard"},
-  "buttons.edit_mode.title_all_grid_compact": {"description": "Phone-width (up to 480px) title of the edit-mode Done bar in the All-items-with-category-filters layout; short form of buttons.edit_mode.title_all_grid. Must fit two lines beside the Done button at 360px; translators: check it fits 2 lines beside your own Done label.", "review": "standard", "max_length": 45}
+  "buttons.edit_mode.title_all_grid_compact": {"description": "Phone-width (up to 480px) title of the edit-mode Done bar in the All-items-with-category-filters layout; short form of buttons.edit_mode.title_all_grid. Must fit two lines beside the Done button at 360px; translators: check it fits 2 lines beside your own Done label.", "review": "standard", "max_length": 45},
+  "tap.pending.lan": {"description": "Reason line on the payment-not-confirmed screen when the paired phone card reader's connection dropped while the customer was tapping. Must never say declined; the customer may have been charged.", "review": "standard"},
+  "tap.remote.waiting": {"description": "Shown on the till while a paired phone card reader has been asked to take a payment and the customer has not tapped yet.", "review": "standard"},
+  "tap.remote.on_phone": {"description": "Shown on the till once the paired phone card reader has the payment on screen and is ready for the customer's card.", "review": "standard"},
+  "tap.progress.title": {"description": "Heading of the till's screen while a paired phone card reader takes a payment; the placeholder is the reader's name.", "review": "standard", "placeholders": ["the reader's name"]},
+  "tap.progress.timeout": {"description": "Countdown under the card reader progress screen; the placeholder is the seconds left.", "review": "standard", "placeholders": ["seconds left"]},
+  "tap.cancel": {"description": "Button on the card reader progress screen that stops the payment being taken on the phone.", "review": "standard"},
+  "tap.cancelling": {"description": "Shown on the card reader progress screen while the payment is being cancelled.", "review": "standard"},
+  "tap.reader.status.ready": {"description": "Status of a paired phone card reader that is connected and ready to take a payment.", "review": "standard"},
+  "tap.reader.status.busy": {"description": "Status of a paired phone card reader that is connected but busy taking a payment.", "review": "standard"},
+  "tap.reader.status.needs_setup": {"description": "Status of a paired phone card reader that is connected but must be set up on the phone first.", "review": "standard"},
+  "tap.reader.status.unavailable": {"description": "Status of a paired phone card reader that is connected but cannot take payments right now.", "review": "standard"}
 }

@@ -20,8 +20,38 @@ const (
 	ReasonLinkLost          = "link_lost"          // the link dropped mid-collect: the customer may have been charged
 )
 
-// SetRemote registers the remote collector; nil un-registers it.
-func SetRemote(c RemoteCollector) {}
+var remote RemoteCollector // guarded by mu
 
-// WithReader marks ctx so Collect goes to the remote collector for ref.
-func WithReader(ctx context.Context, ref string) context.Context { return ctx }
+// SetRemote registers the remote collector; nil un-registers it.
+func SetRemote(c RemoteCollector) {
+	mu.Lock()
+	defer mu.Unlock()
+	remote = c
+}
+
+type readerKey struct{}
+
+// WithReader marks ctx so Collect goes to the remote collector for ref. Only
+// core's payment path sets it, from the gate's binding; a plugin or a request
+// cannot.
+func WithReader(ctx context.Context, ref string) context.Context {
+	return context.WithValue(ctx, readerKey{}, ref)
+}
+
+func readerFrom(ctx context.Context) string {
+	ref, _ := ctx.Value(readerKey{}).(string)
+	return ref
+}
+
+// collectRemote is Collect for a tender paid on a phone reader: never the
+// native bridge, whatever is registered. No remote collector: nothing was
+// started.
+func collectRemote(ctx context.Context, ref string, req Request) Result {
+	mu.RLock()
+	r := remote
+	mu.RUnlock()
+	if r == nil {
+		return Result{Status: StatusDeclined, Reason: ReasonReaderUnreachable}
+	}
+	return r.CollectRemote(ctx, ref, req)
+}

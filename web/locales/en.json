@@ -4631,5 +4631,16 @@
   "tap.reader.revoke_confirm": "Remove %s? This phone will stop taking payments at once.",
   "tap.reader.revoke_btn": "Remove reader",
   "tap.reader.revoke_inflight": "A payment is in progress. It will show as not confirmed.",
-  "tap.reader.revoked": "Reader removed"
+  "tap.reader.revoked": "Reader removed",
+  "tap.pending.lan": "Lost contact with the reader phone. The customer may have been charged.",
+  "tap.remote.waiting": "Waiting for the customer to tap",
+  "tap.remote.on_phone": "The phone is ready for the card",
+  "tap.progress.title": "Tap card on %s",
+  "tap.progress.timeout": "Time left: %d s",
+  "tap.cancel": "Cancel",
+  "tap.cancelling": "Cancelling...",
+  "tap.reader.status.ready": "Ready",
+  "tap.reader.status.busy": "Busy",
+  "tap.reader.status.needs_setup": "Needs setup",
+  "tap.reader.status.unavailable": "Unavailable"
 }

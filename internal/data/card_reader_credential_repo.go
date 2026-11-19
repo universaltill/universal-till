@@ -160,3 +160,12 @@ func (r *CardReaderRepo) CreatePaired(ctx context.Context, in CardReader, cred N
 	}
 	return r.Get(ctx, id)
 }
+
+// Active reports whether readerID has a credential that is not revoked.
+func (r *CardReaderCredentialRepo) Active(ctx context.Context, readerID string) bool {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM card_reader_credentials WHERE reader_id = ? AND revoked_at IS NULL`, readerID).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}

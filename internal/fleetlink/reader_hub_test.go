@@ -292,8 +292,12 @@ func TestTillFramesNotAddressableToReader(t *testing.T) {
 	r := h.phone(t, "rd-1")
 	readEnv(t, r)
 	h.hub.Nudge(ScopeAdmin)
-	if _, err := readEnvErr(r, 150*time.Millisecond); err == nil {
-		t.Fatal("a reader received a till sync nudge")
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		e, err := readEnvErr(r, 100*time.Millisecond)
+		if err == nil && e.Type != TypePing {
+			t.Fatalf("a reader received a till frame: %+v", e)
+		}
 	}
 }
 

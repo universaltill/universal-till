@@ -1,0 +1,20 @@
+{{/* ut-docs#6538 (ux A6): the cashier's screen while a paired phone takes the
+     card. One aria-live region (icon + words); Cancel keeps its slot; the
+     ticking number is aria-hidden so a screen reader hears only the state
+     changes. Idle: the quiet poll starter (the basket carries the same one). */}}
+{{ if .Active }}
+<section id="tap-remote" class="tap-panel tap-remote" role="region" aria-labelledby="tap-remote-title" data-testid="tap-remote"
+         hx-get="/ui/pay/tap/remote" hx-trigger="every 1s" hx-swap="outerHTML">
+  <div role="status" aria-live="assertive" aria-atomic="true">
+    <h3 id="tap-remote-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9743;</span> {{ printf (T "tap.progress.title") .Reader }}</h3>
+    <p>{{ if eq .Phase "on_phone" }}{{ T "tap.remote.on_phone" }}{{ else if eq .Phase "cancelling" }}{{ T "tap.cancelling" }}{{ else }}{{ T "tap.remote.waiting" }}{{ end }}</p>
+  </div>
+  <p class="muted" aria-hidden="true">{{ printf (T "tap.progress.timeout") .Seconds }}</p>
+  <div class="tap-actions">
+    <button type="button" class="btn secondary tap-btn" data-testid="tap-remote-cancel"
+            hx-post="/pay/tap/remote/cancel" hx-target="#tap-remote" hx-swap="outerHTML" hx-disabled-elt="this">{{ T "tap.cancel" }}</button>
+  </div>
+</section>
+{{ else }}
+<div id="tap-remote" hx-get="/ui/pay/tap/remote" hx-trigger="htmx:beforeRequest[detail.pathInfo.requestPath=='/api/pos/tender'] from:body delay:600ms" hx-swap="outerHTML"></div>
+{{ end }}

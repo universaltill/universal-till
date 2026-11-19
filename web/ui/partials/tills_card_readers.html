@@ -1,6 +1,6 @@
 {{/* ut-docs#6538 (UX B2-B4): the paired phone card readers, manager-only.
-     Presence arrives with the reader link; until then a reader reads "Not
-     connected". Words + icon, never colour alone. Revoke asks the manager PIN
+     Presence is what the phone last reported on its live link; with no link a
+     reader reads "Not connected". Words + icon, never colour alone. Revoke asks the manager PIN
      and removes the reader at once. */}}
 <div id="card-readers-list" role="region" aria-labelledby="card-readers-title" hx-get="/ui/tills/readers" hx-trigger="tills-changed from:body" hx-target="this" hx-swap="outerHTML">
   <h4 id="card-readers-title">{{ T "tap.reader.section_title" }}</h4>
@@ -10,7 +10,7 @@
     {{ range .Readers }}
     <li class="card" data-reader-id="{{ .ID }}">
       <strong>{{ .Name }}</strong>
-      <span class="tag" role="status">{{ T "tap.reader.status.offline" }}</span>
+      <span class="tag" role="status">{{ if eq .State "ready" }}{{ T "tap.reader.status.ready" }}{{ else if eq .State "busy" }}{{ T "tap.reader.status.busy" }}{{ else if eq .State "needs_setup" }}{{ T "tap.reader.status.needs_setup" }}{{ else if eq .State "unavailable" }}{{ T "tap.reader.status.unavailable" }}{{ else }}{{ T "tap.reader.status.offline" }}{{ end }}</span>
       <span class="muted">{{ if .LastUsed }}{{ printf (T "tap.reader.last_payment") .LastUsed }}{{ else }}{{ T "tap.reader.no_payments" }}{{ end }}</span>
       <form hx-post="/ui/tills/readers/{{ .ID }}/rename" hx-target="#card-readers-list" hx-swap="outerHTML">
         <input type="text" name="name" value="{{ .Name }}" maxlength="40" inputmode="none" aria-label="{{ T "tap.reader.rename" }} — {{ .Name }}">

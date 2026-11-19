@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/readerlink"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
@@ -228,7 +229,51 @@ func tapNote(ctx context.Context, d *common.Deps, f tapFacts) {
 	}
 }
 
+// remoteProgressView is the phone reader's progress fragment's data.
+func remoteProgressView(d *common.Deps) map[string]any {
+	if d.ReaderPay == nil {
+		return map[string]any{"Active": false}
+	}
+	p, ok := d.ReaderPay.Progress()
+	if !ok {
+		return map[string]any{"Active": false}
+	}
+	left := int(time.Until(p.Deadline).Seconds())
+	if left < 0 {
+		left = 0
+	}
+	return map[string]any{"Active": true, "Reader": p.ReaderName, "Phase": p.Phase, "Seconds": left}
+}
+
 func registerTapPay(mux *http.ServeMux, d *common.Deps) {
+	// ut-docs#6538 (ux A6): the cashier's view of a phone reader taking a
+	// card. Read only, any signed-in role; it names the reader and the phase,
+	// nothing else (no key, no secret, no amount of a card).
+	mux.HandleFunc("GET /ui/pay/tap/remote", func(w http.ResponseWriter, r *http.Request) {
+		if !tapSignedIn(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		httpx.RenderPartial("ui/partials/tap_remote_progress.html", remoteProgressView(d))(w, r)
+	})
+	// Cancel (ux A6): stops the collect in flight; the collect itself tells the
+	// phone (reader.cancel) and cancels the PaymentIntent, and answers
+	// cancelled, or approved when the cancel finds the payment went through.
+	mux.HandleFunc("POST /pay/tap/remote/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if !tapSignedIn(w, r) {
+			return
+		}
+		if d.ReaderPay != nil {
+			d.ReaderPay.CancelActive()
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		v := remoteProgressView(d)
+		if v["Active"] == true {
+			v["Phase"] = readerlink.PhaseCancelling
+		}
+		httpx.RenderPartial("ui/partials/tap_remote_progress.html", v)(w, r)
+	})
+
 	mux.HandleFunc("POST /pay/tap/check", func(w http.ResponseWriter, r *http.Request) {
 		if !tapSignedIn(w, r) {
 			return

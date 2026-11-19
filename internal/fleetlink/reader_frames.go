@@ -1,8 +1,11 @@
 package fleetlink
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
+	"regexp"
 )
 
 // ut-docs#6538 R1b (ADR-0198 §6.3/§6.5): the frames of the card reader link,
@@ -109,15 +112,77 @@ type ReaderResult struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
-var errNotImplemented = errors.New("not implemented")
+var (
+	keyRE  = regexp.MustCompile(`^[A-Za-z0-9_.:\-]{1,128}$`)
+	slugRE = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+	// readerReasons is the closed set of status reasons; the text shown to a
+	// person is keyed on them, a phone-supplied string is never shown.
+	readerReasons = map[string]bool{"reader_busy": true, "reader_unreachable": true, "reader_needs_setup": true}
+)
 
-// DecodeReaderResult reads a reader.result payload strictly: one object, no
-// unknown field, a known status, a bounded key and closed-shape codes.
-func DecodeReaderResult(raw json.RawMessage) (ReaderResult, error) {
-	return ReaderResult{}, errNotImplemented
+func strictJSON(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("trailing data")
+	}
+	return nil
 }
 
-// DecodeReaderStatus reads a reader.status payload strictly.
+// DecodeReaderResult reads a reader.result payload strictly: one object, no
+// unknown field (so no card data, brand or last four can ride along), a known
+// status, a bounded key and closed-shape codes.
+func DecodeReaderResult(raw json.RawMessage) (ReaderResult, error) {
+	var r ReaderResult
+	if err := strictJSON(raw, &r); err != nil {
+		return ReaderResult{}, err
+	}
+	if !keyRE.MatchString(r.IdempotencyKey) {
+		return ReaderResult{}, errors.New("bad idempotency key")
+	}
+	switch r.Status {
+	case ResultApproved, ResultDeclined, ResultCancelled, ResultPending:
+	default:
+		return ReaderResult{}, errors.New("unknown status")
+	}
+	if r.DeclineCode != "" && !slugRE.MatchString(r.DeclineCode) {
+		return ReaderResult{}, errors.New("bad decline code")
+	}
+	if r.Reason != "" && !slugRE.MatchString(r.Reason) {
+		return ReaderResult{}, errors.New("bad reason")
+	}
+	return r, nil
+}
+
+// DecodeReaderStatus reads a reader.status payload strictly. A reason outside
+// the closed set is dropped, not refused.
 func DecodeReaderStatus(raw json.RawMessage) (ReaderStatus, error) {
-	return ReaderStatus{}, errNotImplemented
+	var s ReaderStatus
+	if err := strictJSON(raw, &s); err != nil {
+		return ReaderStatus{}, err
+	}
+	switch s.State {
+	case ReaderReady, ReaderNeedsSetup, ReaderBusy, ReaderUnavailable:
+	default:
+		return ReaderStatus{}, errors.New("unknown state")
+	}
+	if !readerReasons[s.Reason] {
+		s.Reason = ""
+	}
+	return s, nil
+}
+
+// readerResultKey is the idempotency key a (possibly malformed) result frame
+// names, "" when none can be read: used only to end that collect pending.
+func readerResultKey(raw json.RawMessage) string {
+	var k struct {
+		Key string `json:"idempotency_key"`
+	}
+	if json.Unmarshal(raw, &k) != nil || !keyRE.MatchString(k.Key) {
+		return ""
+	}
+	return k.Key
 }
