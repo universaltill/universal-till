@@ -66,6 +66,32 @@ func trustTierOf(pluginID, trustTier string) string {
 	return "unverified"
 }
 
+// listingCatalogTier returns the catalogue trust tier of a listing from the
+// CACHED catalogue snapshot only (offline-safe: never fetches). "" when the
+// repository, snapshot or listing is absent; the installer then records the
+// lower "untrusted" label (ut-docs#6549).
+func listingCatalogTier(d *common.Deps, listingID string) string {
+	if d == nil || d.CatalogRepo == nil || listingID == "" {
+		return ""
+	}
+	locale, arch := "", ""
+	if d.Cfg != nil {
+		locale, arch = marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
+	} else {
+		locale, arch = marketplace.TillCatalogKey("")
+	}
+	snap, _, err := d.CatalogRepo.Get(locale, arch)
+	if err != nil || snap == nil {
+		return ""
+	}
+	for _, p := range snap.Plugins {
+		if p.ListingID == listingID || p.ID == listingID {
+			return p.TrustTier
+		}
+	}
+	return ""
+}
+
 // storeInstaller builds a marketplace installer on the EFFECTIVE config — the
 // enrolled identity (device token, signing key) fills fields the operator
 // didn't set, so a freshly enrolled till installs without a restart. The
@@ -435,7 +461,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusInternalServerError, "plugins.install.error.configuration")
 			return
 		}
-		result, err := installer.InstallFromStore(r.Context(), listingID, "")
+		result, err := installer.InstallFromStore(r.Context(), listingID, listingCatalogTier(d, listingID))
 		if err != nil {
 			logging.L().Warnf("[PluginStore] install %s: %v", listingID, err)
 			f := plugins.ClassifyInstallError(err, storeHasOwner(r.Context(), d.Settings))
