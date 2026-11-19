@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
