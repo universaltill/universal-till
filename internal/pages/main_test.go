@@ -43,6 +43,7 @@ func resetProcessGlobals(t *testing.T) {
 	t.Helper()
 	pagesGlobalsBaseline()
 	resetShopCurrencyMemo()
+	resetBearerFailures(nil) // ut-docs#6538: a test's bad-bearer probes must not lock out the next test
 	t.Cleanup(pagesGlobalsBaseline)
 	t.Cleanup(resetShopCurrencyMemo)
 }
