@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, nameShop } from './helpers';
+import { watchConsole, ensureRegisteredAutomatically } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -81,14 +81,7 @@ test.describe.serial('Renew / Choose-a-plan panel (ut-docs#4286)', () => {
       const assertClean = watchConsole(page);
       await page.setViewportSize(size);
       // Registered against the fake cloud (an earlier spec may already have).
-      await page.goto('/settings#registration');
-      const registerBtn = page.locator('#registration button[hx-post="/api/enrol/now"]');
-      if (await registerBtn.count()) {
-        await nameShop(page); // ut-docs#4272: registration waits for a real shop name
-        await page.locator('#enrol-accept-terms').check(); // ut-docs#4720: the cloud terms are accepted first
-        await registerBtn.click();
-        await expect(page.locator('#enrol-msg')).toContainText('✅');
-      }
+      await ensureRegisteredAutomatically(page);
       // A hash-only goto is a same-document navigation: reload so the
       // card renders for the now-registered till (the opener is only for a
       // registered one).

@@ -120,6 +120,7 @@ func releaseSelfOrderSession(w http.ResponseWriter, d *common.Deps, token string
 // /backoffice) — the mode only controls whether "/" redirects here for an
 // already-authenticated visitor.
 func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
+	wireAbandonedTenderReversal(d) // table sessions hand off a dropped tender (ut-docs#6601)
 	// selfOrderSessionMintLimiter caps NEW-session minting per source IP
 	// (ut-docs#2432): GET /self-order?table=<id> mints a fresh session on
 	// every cookieless hit the busy guard doesn't block, and this route is

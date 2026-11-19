@@ -59,7 +59,7 @@
       <button type="button" class="btn secondary" id="modifier-detach-{{ .ID }}"
               hx-post="/api/catalog/modifier-group/detach"
               hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
-              hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
+              hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}" data-confirm-ok="{{ T "confirm.remove" }}"
               hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.detach" }}</button>
     </div>
   </div>

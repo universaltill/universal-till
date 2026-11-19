@@ -82,3 +82,14 @@ test('slip history: an open shift row has no Print slip button', async ({ page }
   await expect(openRow.locator('.shift-slip-row-print')).toHaveCount(0);
   await expect(page.locator('.shift-slip-row-print').first()).toBeVisible();
 });
+
+// UX F1: at 360px table-cards.js must not hide the row button behind "More"
+// (the actions header is unlabelled, so its cell is always shown).
+test('slip history: at 360px the Print slip button is visible without tapping More', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 700 });
+  await closeFreshShift(page);
+  const btn = page.locator('.shift-slip-row-print').first();
+  await expect(btn).toBeVisible();
+  const scroll = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+  expect(scroll[0]).toBeLessThanOrEqual(scroll[1]);
+});

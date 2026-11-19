@@ -3,7 +3,9 @@ import type { Page } from '@playwright/test';
 import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#5576: (1) a list row's cells all end on the same line — .list-actions
-// on a <td> used display:flex, so that cell stopped being a table cell and its
+// on a <td> (since ut-docs#6046 only /fiscal-register still has one; the
+// promotions and locations rows are name-button-only and guard the same
+// table-cell alignment) used display:flex, so that cell stopped being a table cell and its
 // border-bottom sat above the row's on a wrapped row; (2) the record dialog's
 // exit-to-OS and lock buttons were 33x32, below the 44px touch floor.
 
@@ -34,7 +36,7 @@ async function cellGeometry(page: Page, rowSel: string) {
     const trB = tr.getBoundingClientRect().bottom;
     const tds = (Array.from(tr.querySelectorAll(':scope > td')) as HTMLElement[]).filter((td) => getComputedStyle(td).display !== 'none'); // hidden data cells render nothing
     const act = tr.querySelector(':scope > td.list-actions') as HTMLElement | null;
-    const btn = tr.querySelector('.btn-icon') as HTMLElement | null;
+    const btn = tr.querySelector('.record-row-open') as HTMLElement | null;
     return {
       trBottom: trB,
       rowHeight: tr.getBoundingClientRect().height,
@@ -47,8 +49,8 @@ async function cellGeometry(page: Page, rowSel: string) {
   });
 }
 
-function expectAligned(g: Awaited<ReturnType<typeof cellGeometry>>, needActions: boolean) {
-  expect(g.rowHeight, 'precondition: row must be taller than its button so the wrap case is real').toBeGreaterThan(g.btnHeight + 12);
+function expectAligned(g: Awaited<ReturnType<typeof cellGeometry>>, needActions: boolean, requireTall = true) {
+  if (requireTall) expect(g.rowHeight, 'precondition: row must be taller than its button so the wrap case is real').toBeGreaterThan(g.btnHeight + 12);
   expect(g.displays.every((d) => d === 'table-cell'), `displays ${g.displays}`).toBe(true);
   expect(Math.max(...g.bottoms) - Math.min(...g.bottoms), `bottoms ${g.bottoms}`).toBeLessThanOrEqual(1);
   if (needActions) {
@@ -60,19 +62,19 @@ function expectAligned(g: Awaited<ReturnType<typeof cellGeometry>>, needActions:
 test.describe('list-actions borders + status-row touch targets (ut-docs#5576)', () => {
   test.use({ viewport: { width: 800, height: 600 } });
 
-  test('/promotions: every cell, incl. td.list-actions, ends on the row line', async ({ page }) => {
+  test('/promotions: every cell ends on the row line', async ({ page }) => {
     await seedPromo(page, 'B5576' + Date.now());
     await page.goto('/promotions');
-    expectAligned(await cellGeometry(page, '#promotions-table .promotion-row'), true);
+    expectAligned(await cellGeometry(page, '#promotions-table .promotion-row'), false);
   });
 
-  test('/locations: every cell, incl. td.list-actions, ends on the row line', async ({ page }) => {
+  test('/locations: every cell ends on the row line', async ({ page }) => {
     const name = 'E2E Very Long Location Name For Wrapping Check ' + Date.now() + ' Annex Building North Wing';
     await page.goto('/locations');
     await createViaDialog(page, '#locations-new', '#location-dialog', '#location-form input[name="name"]', name);
     await page.setViewportSize({ width: 600, height: 600 });
     const g = await cellGeometry(page, `#locations-table .location-row:has-text("${name.slice(0, 30)}")`);
-    expectAligned(g, true);
+    expectAligned(g, false, false); // row height no longer proves wrapping (status cell sizes it)
   });
 
   test('/categories: cells share one bottom (regression guard)', async ({ page }) => {

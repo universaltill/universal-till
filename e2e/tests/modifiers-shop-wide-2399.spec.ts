@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm } from './helpers';
+import { watchConsole, openNewItemForm, answerTillConfirm } from './helpers';
 
 // ut-docs#2399 / ADR-0101: a modifier group is a SHOP-WIDE entity. It is
 // created on /modifiers with no item at all, and assigned to categories
@@ -110,11 +110,13 @@ test.describe('modifier groups are shop-wide (ut-docs#2399)', () => {
       expect(pickerHtml).toContain('Ketchup');
 
       // Tidy: delete the group everywhere from its card (confirm dialog
-      // accepted), and the picker no longer offers it.
-      page.once('dialog', (d) => d.accept());
+      // confirmed in the in-page dialog), and the picker no longer offers it.
       await Promise.all([
         page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/delete') && r.request().method() === 'POST'),
-        cardFor(groupName).locator('.modifier-delete-btn').click(),
+        (async () => {
+          await cardFor(groupName).locator('.modifier-delete-btn').click();
+          await answerTillConfirm(page, 'confirm');
+        })(),
       ]);
       await expect(cardFor(groupName)).toHaveCount(0);
       const gone = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);

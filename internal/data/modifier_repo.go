@@ -621,9 +621,26 @@ func (r *ModifierRepo) CreateGroupWithOptions(ctx context.Context, groupID, item
 	if groupID == "" {
 		return "", errors.New("id required")
 	}
+	// ut-docs#5871: create-only, so the single-line rule applies to the
+	// group name and every option name before any write. The caller's slice
+	// is copied, never mutated.
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	if name == "" {
 		return "", errors.New("name required")
 	}
+	checkedOpts := make([]ModifierOption, len(options))
+	for i, opt := range options {
+		n, err := CheckSingleLineName(opt.Name)
+		if err != nil {
+			return "", fmt.Errorf("option %d: %w", i+1, err)
+		}
+		opt.Name = n
+		checkedOpts[i] = opt
+	}
+	options = checkedOpts
 	req := 0
 	if required {
 		req = 1
