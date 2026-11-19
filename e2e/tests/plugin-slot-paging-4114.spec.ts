@@ -68,7 +68,9 @@ for (const vp of VIEWPORTS) {
       await openReports(page, lang, vp);
       await expect(rowText(page, A)).toHaveText('A row p.1');
       const bBefore = await page.locator(B).innerHTML();
-      const tabsBefore = await page.locator('main').locator('nav, [role=tablist]').first().innerHTML().catch(() => '');
+      const tabs = page.locator('main').locator('nav, [role=tablist]').first();
+      await expect(tabs).toBeVisible(); // no swallowed error: the check below compares real markup
+      const tabsBefore = await tabs.innerHTML();
       const urlBefore = page.url();
       await page.evaluate(() => { (window as any).__pagingMarker = 4114; });
 
@@ -110,7 +112,7 @@ for (const vp of VIEWPORTS) {
 
       // Nothing else moved: panel B, the page, the history, the shell.
       expect(await page.locator(B).innerHTML()).toBe(bBefore);
-      expect(await page.locator('main').locator('nav, [role=tablist]').first().innerHTML().catch(() => '')).toBe(tabsBefore);
+      expect(await tabs.innerHTML()).toBe(tabsBefore);
       expect(page.url()).toBe(urlBefore);
       expect(await page.evaluate(() => (window as any).__pagingMarker)).toBe(4114);
       await expect(page.locator(`${A}-alert .plugin-view-notice`)).toHaveCount(0);
@@ -144,7 +146,7 @@ test('RTL order and no clipping in fa at 360px (ut-docs#4114)', async () => {
   await shot(page, 'rtl-fa-360');
 });
 
-test('in flight: one ask, panel B stays pageable, busy state clears (ut-docs#4114)', async () => {
+test('in flight: one ask for repeated taps, busy state clears (ut-docs#4114)', async () => {
   await openReports(page, 'en', VIEWPORTS[0]);
   let asks = 0;
   await page.route('**/plugin/e2e-views/paged_a?*', async (route) => {
@@ -164,9 +166,13 @@ test('in flight: one ask, panel B stays pageable, busy state clears (ut-docs#411
     return !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('.statusbar');
   });
   expect(hit).toBe(true);
-  // Taps on the busy panel's links are dropped (pointer-events + hx-sync).
-  await next.click({ force: true }).catch(() => {});
-  await next.click({ force: true }).catch(() => {});
+  // A tap on a busy panel's links is dropped by hx-sync (not just by
+  // pointer-events: dispatchEvent skips hit testing, so removing hx-sync
+  // would send a second ask and fail the count below).
+  const prev = link(page, A, 'prev');
+  if (await prev.count()) await prev.dispatchEvent('click');
+  await next.dispatchEvent('click');
+  await next.dispatchEvent('click');
   await expect(rowText(page, A)).toHaveText('A row p.2');
   expect(asks).toBe(1);
   await expect(page.locator(A)).not.toHaveAttribute('aria-busy', 'true');

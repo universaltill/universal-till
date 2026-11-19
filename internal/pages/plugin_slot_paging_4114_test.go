@@ -60,6 +60,9 @@ func TestPluginSlotPanelOf_4114(t *testing.T) {
 		{"reports.panels", "plugin-slot-reports-panels-"},
 		{"reports.panels", "plugin-slot-reports-panels-0-alert"},
 		{"reports.panels", "plugin-slot-reports-panels-0-pos"},
+		{"reports.panels", "plugin-slot-reports-panels-0-pos0"},
+		// admin.pages draws no panels (review L1): a hand-made id is refused.
+		{"admin.pages", "plugin-slot-admin-pages-0"},
 		{"reports.panels", "plugin-slot-eod-footer-0"},
 		{"eod", "plugin-slot-eod-footer-0"},
 		{"", "plugin-slot-reports-panels-0"},
@@ -78,6 +81,9 @@ func TestPluginSlotPanelOf_4114(t *testing.T) {
 		t.Errorf("pluginSlotMaxEntries = %d: the panel index is validated as one digit", pluginSlotMaxEntries)
 	}
 	for slot := range pluginSlotGates {
+		if !pluginSlotDrawsPanels(slot) {
+			continue
+		}
 		for i := 0; i < pluginSlotMaxEntries; i++ {
 			if id := pluginSlotPanelID(slot, i); !pluginSlotPanelOf(slot, id) {
 				t.Errorf("generated id %q is not a panel of %q", id, slot)
@@ -104,8 +110,8 @@ func TestPluginSlot_PanelPagingLinks_4114(t *testing.T) {
 		`hx-push-url="false"`,
 		`hx-sync="#` + panel0 + `:drop"`,
 		`hx-indicator="#` + panel0 + `"`,
-		`aria-describedby="` + panel0 + `-pos"`,
-		`id="` + panel0 + `-pos"`,
+		`aria-describedby="` + panel0 + `-pos0"`,
+		`id="` + panel0 + `-pos0"`,
 		"Page 1 of 3",
 	} {
 		if !strings.Contains(body, want) {
@@ -411,5 +417,21 @@ func TestPluginSlot_PageFailedKey_4114(t *testing.T) {
 	newSlotHarness(t)
 	if httpx.T("en", "plugin.view.page_failed") == "plugin.view.page_failed" {
 		t.Error("plugin.view.page_failed is not in en.json")
+	}
+}
+
+// Review D2: a request's own "slot" never reaches the plugin on the entry
+// route either: core sets params.slot to the route's slot.
+func TestPluginSlot_EntryRouteSlotParamFromCore_4114(t *testing.T) {
+	h := newSlotHarness(t)
+	h.moveSlotEntries("settings.sections")
+	h.answerWith(slotDoc("VIEWS"))
+	rec := h.do(http.MethodGet, "/ui/slot/settings.sections/com.test.views/panel?slot=x", nil, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d", rec.Code)
+	}
+	params, _ := h.lastPay["params"].(map[string]any)
+	if params["slot"] != "settings.sections" {
+		t.Errorf("params.slot = %v, want settings.sections set by core", params["slot"])
 	}
 }

@@ -131,6 +131,9 @@ type ViewPaging struct {
 	// Target is the content slot panel the links swap into ("" = plain page
 	// links, ut-docs#4114).
 	Target string
+	// PosID is the id of this table's page indicator in a panel: one per
+	// table, so focus and aria-describedby never reach another table's.
+	PosID string
 }
 
 // qrModulePixels: a negative size makes go-qrcode draw each module this
@@ -433,6 +436,10 @@ func (v *View) linkPaging(route string, params, pinned map[string]string, target
 		}
 		p.PrevURL, p.NextURL = "", ""
 		p.Target = target
+		p.PosID = ""
+		if target != "" {
+			p.PosID = target + "-pos" + strconv.Itoa(i)
+		}
 		if _, pin := pinned[p.Param]; pin {
 			continue
 		}

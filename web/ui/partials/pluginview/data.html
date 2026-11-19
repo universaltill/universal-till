@@ -30,9 +30,9 @@
      hears "Page n of m" after the swap. The read-only wizard, the overlay
      and an action's answer have no links: indicator only. */}}
 <nav class="plugin-view-paging" aria-label="{{ T "plugin.view.paging_label" }}">
-  {{- if .PrevURL }}<a class="btn btn-touch secondary" href="{{ .PrevURL }}" rel="prev"{{ if .Target }} hx-get="{{ .PrevURL }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-push-url="false" hx-sync="#{{ .Target }}:drop" hx-indicator="#{{ .Target }}" aria-describedby="{{ .Target }}-pos"{{ end }}>{{ T "plugin.view.page_prev" }}</a>{{ end }}
-  <span class="plugin-view-paging-pos"{{ if .Target }} id="{{ .Target }}-pos" tabindex="-1"{{ end }}>{{ .Text }}</span>
-  {{- if .NextURL }}<a class="btn btn-touch secondary" href="{{ .NextURL }}" rel="next"{{ if .Target }} hx-get="{{ .NextURL }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-push-url="false" hx-sync="#{{ .Target }}:drop" hx-indicator="#{{ .Target }}" aria-describedby="{{ .Target }}-pos"{{ end }}>{{ T "plugin.view.page_next" }}</a>{{ end }}
+  {{- if .PrevURL }}<a class="btn btn-touch secondary" href="{{ .PrevURL }}" rel="prev"{{ if .Target }} hx-get="{{ .PrevURL }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-push-url="false" hx-sync="#{{ .Target }}:drop" hx-indicator="#{{ .Target }}" aria-describedby="{{ .PosID }}"{{ end }}>{{ T "plugin.view.page_prev" }}</a>{{ end }}
+  <span class="plugin-view-paging-pos"{{ if .Target }} id="{{ .PosID }}" tabindex="-1"{{ end }}>{{ .Text }}</span>
+  {{- if .NextURL }}<a class="btn btn-touch secondary" href="{{ .NextURL }}" rel="next"{{ if .Target }} hx-get="{{ .NextURL }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-push-url="false" hx-sync="#{{ .Target }}:drop" hx-indicator="#{{ .Target }}" aria-describedby="{{ .PosID }}"{{ end }}>{{ T "plugin.view.page_next" }}</a>{{ end }}
 </nav>
 {{- end }}
 </div>

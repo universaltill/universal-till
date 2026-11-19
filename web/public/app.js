@@ -1232,7 +1232,7 @@ var pagingFocus = new WeakMap();
 document.addEventListener('htmx:beforeRequest', function (evt) {
   var d = evt.detail || {};
   if (!d.xhr || !d.elt || !d.elt.matches || !d.elt.matches('.plugin-view-paging a[rel]')) return;
-  pagingFocus.set(d.xhr, { rel: d.elt.getAttribute('rel'), panel: d.target });
+  pagingFocus.set(d.xhr, { rel: d.elt.getAttribute('rel'), panel: d.target, pos: d.elt.getAttribute('aria-describedby') });
   d.elt.setAttribute('data-ut-busy', '1');
   if (d.target && d.target.setAttribute) d.target.setAttribute('aria-busy', 'true');
 });
@@ -1244,9 +1244,12 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   var a = document.activeElement;
   if (a && a !== document.body && a.isConnected) return; // operator moved on
   var other = rec.rel === 'next' ? 'prev' : 'next';
-  var el = panel.querySelector('.plugin-view-paging a[rel="' + rec.rel + '"]') ||
-    panel.querySelector('.plugin-view-paging a[rel="' + other + '"]') ||
-    panel.querySelector('.plugin-view-paging-pos');
+  // Scope to the table that was paged (its indicator id), not the first nav.
+  var posEl = rec.pos ? document.getElementById(rec.pos) : null;
+  var nav = (posEl && posEl.parentNode) || panel;
+  var el = nav.querySelector('a[rel="' + rec.rel + '"]') ||
+    nav.querySelector('a[rel="' + other + '"]') ||
+    posEl || panel.querySelector('.plugin-view-paging-pos');
   if (!el) {
     el = panel;
     if (!el.hasAttribute('tabindex')) {

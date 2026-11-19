@@ -109,10 +109,18 @@ func pluginSlotPanelPrefix(slot string) string {
 // "<panel>-pos" never match.
 var pluginSlotPanelSuffixRe = regexp.MustCompile(`^(?:[0-9]|[0-9a-f]{16})$`)
 
+// pluginSlotDrawsPanels reports whether slot is drawn as panels with core
+// panel ids. admin.pages is not (it is a list of pages, pluginSlotSections),
+// so a hand-made panel GET there would go around a revoked ui:page.
+func pluginSlotDrawsPanels(slot string) bool {
+	_, ok := pluginSlotGates[slot]
+	return ok && slot != "admin.pages"
+}
+
 // pluginSlotPanelOf reports whether target is a panel id core gives an
 // entry of slot (ut-docs#4114). An empty slot has no panels.
 func pluginSlotPanelOf(slot, target string) bool {
-	if slot == "" || !pluginSlotPanelIDRe.MatchString(target) {
+	if slot == "" || !pluginSlotDrawsPanels(slot) || !pluginSlotPanelIDRe.MatchString(target) {
 		return false
 	}
 	rest, ok := strings.CutPrefix(target, pluginSlotPanelPrefix(slot))

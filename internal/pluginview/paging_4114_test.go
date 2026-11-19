@@ -53,3 +53,19 @@ func TestLinkPagingPanel_SlotParamTableIndicatorOnly_4114(t *testing.T) {
 		t.Errorf("slot-param table = %+v, want indicator only", p)
 	}
 }
+
+// Review M1: two paged tables in one panel get two indicator ids, so focus
+// and aria-describedby point at their own table.
+func TestLinkPagingPanel_OneIndicatorIDPerTable_4114(t *testing.T) {
+	two := `{"type":"table","columns":[{"label":{"literal":"c"},"kind":"text"}],"rows":[["x"]],"paging":{"page":2,"pages":5}}`
+	b := strings.Replace(two, `"paging":{"page":2,"pages":5}`, `"paging":{"page":1,"pages":3,"param":"p2"}`, 1)
+	v := prepared(t, two+","+b, "en")
+	v.LinkPagingPanel("/plugin/demo", nil, "reports.panels", "plugin-slot-reports-panels-0")
+	a, c := v.Components[0].Paging, v.Components[1].Paging
+	if a.PosID == "" || a.PosID == c.PosID {
+		t.Errorf("indicator ids %q and %q must be set and differ", a.PosID, c.PosID)
+	}
+	if !strings.HasPrefix(a.PosID, "plugin-slot-reports-panels-0-") {
+		t.Errorf("PosID = %q, want prefixed by the panel id", a.PosID)
+	}
+}
