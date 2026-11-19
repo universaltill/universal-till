@@ -17,7 +17,7 @@
 {{ with .Move }}
 <div class="card move-approval" data-testid="move-approval">
   <dl class="move-route">
-    <dt>{{ T "settings.move.from" }}</dt><dd><bdi>{{ .From }}</bdi></dd>
+    {{ if .From }}<dt>{{ T "settings.move.from" }}</dt><dd><bdi>{{ .From }}</bdi></dd>{{ end }}
     <dt>{{ T "settings.move.into" }}</dt><dd><strong><bdi>{{ .Into }}</bdi></strong></dd>
     <dt>{{ T "settings.move.expires" }}</dt><dd><bdi>{{ .Expires }}</bdi></dd>
   </dl>

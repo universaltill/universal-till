@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { openPhoneSheet } from './helpers';
+import { openPhoneSheet, TILL_GET_ROUTES } from './helpers';
 
 // ut-docs#3297: the product owner walked every page of the iPhone app
 // (440 CSS px, TestFlight v0.30.11) and found pages that scroll sideways,
@@ -9,12 +9,7 @@ import { openPhoneSheet } from './helpers';
 // "0" box, and "Takeaway" broken mid-word. This spec is the phone guard for
 // every GET page: a new page that scrolls sideways at 360 or 440 fails here.
 
-const ROUTES = ['/', '/admin', '/audit', '/backoffice', '/bluetooth-devices', '/catalog', '/catalog/option-sets',
-  '/catalog/tax-codes', '/categories', '/country-settings', '/designer', '/fiscal-device', '/fiscal-register',
-  '/help', '/import', '/inventory', '/items', '/journal', '/kitchen-stations', '/locations', '/menu',
-  '/modifiers', '/my-reports', '/open-orders', '/orders', '/plugins', '/plugins/store', '/promotions',
-  '/receipt-designer', '/registers', '/report-issue', '/reports', '/settings', '/settings/menu', '/shifts',
-  '/tables', '/tills', '/translations', '/users', '/users/permissions'];
+const ROUTES = TILL_GET_ROUTES;
 
 // What pokes past either viewport edge, outermost first, skipping
 // anything inside a box that scrolls or clips horizontally within the

@@ -325,7 +325,7 @@ func registerOffsiteBackup(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		doc := print.Doc{
-			StoreName: storeNameOrDefault(ctx, d),
+			StoreName: shopNameOrEmpty(ctx, d),
 			Meta:      []string{httpx.T(locale, "backup.cloud.key.print_heading")},
 			Lines:     keyPrintLines(str),
 			Footer:    []string{httpx.T(locale, "backup.cloud.key.print_hint")},
