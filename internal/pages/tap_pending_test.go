@@ -128,7 +128,11 @@ func (e *tapEnv) lastBinding(t *testing.T) paybroker.Binding {
 
 // tapRig: a till with a tap payment plugin ("tapstripe", entry config tap:true),
 // real auth (a cashier and a manager with PIN) and a fake broker.
-func tapRig(t *testing.T) *tapEnv {
+func tapRig(t *testing.T) *tapEnv { return tapRigWith(t, false) }
+
+// tapRigWith is tapRig; withReadersHook makes the method a managed-reader one
+// (its plugin declares payment.<m>.readers), so a tender can name a reader.
+func tapRigWith(t *testing.T, withReadersHook bool) *tapEnv {
 	t.Helper()
 	mux, dp := authRig(t)
 	registerTapPay(mux, dp)
@@ -136,7 +140,7 @@ func tapRig(t *testing.T) *tapEnv {
 	t.Cleanup(func() { tapCheckInterval = 2 * time.Second })
 	e := &tapEnv{mux: mux, dp: dp, broker: newFakeBroker(t)}
 	e.broker.setStatus(piStatus("processing", 0))
-	e.plugin = seedReaderPlugin(t, dp, "p.tap", "tapstripe", false)
+	e.plugin = seedReaderPlugin(t, dp, "p.tap", "tapstripe", withReadersHook)
 	if _, err := dp.Db.Exec(`UPDATE plugin_entries SET config_json = '{"tap":true,"provider":"stripe"}' WHERE plugin_id = 'p.tap'`); err != nil {
 		t.Fatal(err)
 	}

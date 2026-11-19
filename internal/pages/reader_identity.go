@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/universaltill/universal-till/internal/readerlink"
 	"net/http"
 	"strings"
 	"time"
@@ -469,3 +470,8 @@ func registerReaderManagement(mux *http.ServeMux, d *common.Deps) {
 		renderList(w, r, http.StatusOK, "tap.reader.revoked")
 	})
 }
+
+// wireReaderLink builds the remote collector for paired phone readers, hangs
+// it on the link hub (reader.result sink, reader.token handler) and registers
+// it with devicepay (ut-docs#6538 R1b). Stubbed until implemented.
+func wireReaderLink(d *common.Deps) *readerlink.Service { return nil }

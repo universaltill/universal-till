@@ -2,8 +2,10 @@ package plugins
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -108,30 +110,49 @@ func hostTapToPayRequest(ctx context.Context, m api.Module, _, _, dstPtr, dstCap
 	if !s.bound || b.Kind != paybroker.BindAuthorize || b.AttemptKey == "" || b.Provider == "" || b.AmountMinor <= 0 {
 		return hostErrDenied
 	}
-	deadline := time.Now().Add(tapCollectMax)
-	if d, has := ctx.Deadline(); has && d.Before(deadline) {
-		deadline = d
-	}
-	// The row is written BEFORE the tap, so a crash, a restart or a lost
-	// reply still leaves something the till can settle against the provider.
-	_, err := data.NewPaymentAttemptRepo(s.db).Begin(ctx, data.PaymentAttempt{
-		Key: b.AttemptKey, Provider: b.Provider, AmountMinor: b.AmountMinor, Currency: b.Currency, Deadline: deadline,
-	})
+	res, err := CollectTap(ctx, s.db, b)
 	if err != nil {
-		if errors.Is(err, data.ErrAttemptSettled) || errors.Is(err, data.ErrAttemptMismatch) || errors.Is(err, data.ErrAttemptInvalid) {
+		if errors.Is(err, errTapDenied) {
 			return hostErrDenied
 		}
-		logging.L().Errorf("[wasm:%s] tap_to_pay_request: attempt row: %v", s.pluginID, err)
+		logging.L().Errorf("[wasm:%s] tap_to_pay_request: %v", s.pluginID, err)
 		return hostErrInternal
 	}
-	tapCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	res := devicepay.Collect(tapCtx, devicepay.Request{
-		Provider: b.Provider, AmountMinor: b.AmountMinor, Currency: strings.ToLower(b.Currency), IdempotencyKey: b.AttemptKey,
-	})
 	out, err := json.Marshal(res)
 	if err != nil {
 		return hostErrInternal
 	}
 	return writeGuest(m, dstPtr, dstCap, out)
+}
+
+var errTapDenied = errors.New("tap payment refused")
+
+// CollectTap is what tap_to_pay_request does for a core-bound authorize
+// dispatch: write the attempt row BEFORE the tap (so a crash, a restart or a
+// lost reply still leaves something the till can settle against the
+// provider), then collect on the device, or on the paired phone reader the
+// binding names (ut-docs#6538). The answer is the advisory devicepay.Result;
+// core confirms with the broker itself afterwards.
+func CollectTap(ctx context.Context, db *sql.DB, b paybroker.Binding) (devicepay.Result, error) {
+	deadline := time.Now().Add(tapCollectMax)
+	if d, has := ctx.Deadline(); has && d.Before(deadline) {
+		deadline = d
+	}
+	_, err := data.NewPaymentAttemptRepo(db).Begin(ctx, data.PaymentAttempt{
+		Key: b.AttemptKey, Provider: b.Provider, AmountMinor: b.AmountMinor, Currency: b.Currency, Deadline: deadline,
+	})
+	if err != nil {
+		if errors.Is(err, data.ErrAttemptSettled) || errors.Is(err, data.ErrAttemptMismatch) || errors.Is(err, data.ErrAttemptInvalid) {
+			return devicepay.Result{}, errTapDenied
+		}
+		return devicepay.Result{}, fmt.Errorf("attempt row: %w", err)
+	}
+	tapCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	if b.ReaderRef != "" {
+		tapCtx = devicepay.WithReader(tapCtx, b.ReaderRef)
+	}
+	return devicepay.Collect(tapCtx, devicepay.Request{
+		Provider: b.Provider, AmountMinor: b.AmountMinor, Currency: strings.ToLower(b.Currency), IdempotencyKey: b.AttemptKey,
+	}), nil
 }
