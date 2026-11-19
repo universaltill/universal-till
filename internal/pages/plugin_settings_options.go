@@ -150,7 +150,8 @@ func askSettingsOptions(ctx context.Context, d *common.Deps, pluginID, version, 
 	if cached, ok := sharedSettingsOptionsCache.get(pluginID, ck); ok {
 		return cached, false
 	}
-	raw, answered, err := boundedAskPlugin(ctx, d, pluginID, settingsOptionsAskEvent, settingsOptionsAsk{Key: key, Values: values}, settingsOptionsTimeout)
+	gen := sharedSettingsOptionsCache.generation(pluginID)
+	raw, answered, err := boundedAskPlugin(ctx, d, "pages.settingsOptionsAsk", pluginID, settingsOptionsAskEvent, settingsOptionsAsk{Key: key, Values: values}, settingsOptionsTimeout)
 	if err != nil {
 		logging.L().Infof("plugin settings: options ask to %s for %q failed: %v", pluginID, key, err) // never the values
 		return nil, true
@@ -163,7 +164,11 @@ func askSettingsOptions(ctx context.Context, d *common.Deps, pluginID, version, 
 		logging.L().Infof("plugin settings: options answer from %s for %q rejected: %v", pluginID, key, err)
 		return nil, true
 	}
-	sharedSettingsOptionsCache.put(pluginID, ck, opts)
+	// An empty list is not cached (a grant or a plugin-side secret_set
+	// changes the answer without a save); a save mid-ask drops the result.
+	if len(opts) > 0 {
+		sharedSettingsOptionsCache.putIfGeneration(pluginID, gen, ck, opts)
+	}
 	return opts, false
 }
 
@@ -247,6 +252,26 @@ func askOnKeys(decl *plugins.ManifestSetting) string {
 	return strings.Join(keys, ",")
 }
 
+// pickSettingRow finds the stored row an ask is about. The global wrapper
+// sends no scope, which means "global" (ListPluginSettings orders by key only,
+// so a register row may come first); with no row in the wanted scope the
+// first row of the key is the fallback.
+func pickSettingRow(rows []data.PluginSettingRow, key, scope string) *data.PluginSettingRow {
+	if scope == "" {
+		scope = "global"
+	}
+	var row *data.PluginSettingRow
+	for i := range rows {
+		if rows[i].Key != key {
+			continue
+		}
+		if row == nil || rows[i].Scope == scope {
+			row = &rows[i]
+		}
+	}
+	return row
+}
+
 const settingsOptionsBlock = "plugin_settings_ask_fragment"
 
 // registerSettingsOptions registers POST /api/plugins/{id}/settings/{key}/options:
@@ -293,16 +318,7 @@ func registerSettingsOptions(mux *http.ServeMux, d *common.Deps, repo *data.Plug
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings_options", err)
 			return
 		}
-		var row *data.PluginSettingRow
-		scope := r.URL.Query().Get("scope")
-		for i := range rows {
-			if rows[i].Key != key {
-				continue
-			}
-			if row == nil || rows[i].Scope == scope {
-				row = &rows[i]
-			}
-		}
+		row := pickSettingRow(rows, key, r.URL.Query().Get("scope"))
 		if row == nil { // the form draws stored rows only
 			common.LocalizedError(w, r, http.StatusNotFound, "plugins.install.error.not_found")
 			return

@@ -66,6 +66,40 @@ test('the list fills in after the page, keeps the stored choice and escapes labe
   done();
 });
 
+// S1 (UX): "Loading choices…" shows only if the answer is still pending after
+// 400 ms; a fast answer never flashes it (D1).
+test('Loading choices appears only after 400 ms, never on a fast answer', async () => {
+  const loading = page.locator('.ps-ask-loading');
+  const sample = () => page.evaluate(() => new Promise<boolean>((resolve) => {
+    // Resolve true if the line is visible at any frame within 900 ms.
+    const t0 = performance.now();
+    const tick = () => {
+      const el = document.querySelector('.ps-ask-loading');
+      if (el && getComputedStyle(el).display !== 'none' && getComputedStyle(el).opacity !== '0') return resolve(true);
+      if (performance.now() - t0 > 900) return resolve(false);
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }));
+  // Fast: the real plugin answers in a few ms; the line is never visible.
+  await open(page);
+  expect(await sample()).toBe(false);
+  // Slow: hold the answer back 1.2 s; the line appears, then goes with the answer.
+  await page.route('**/settings/model/options*', async (route) => {
+    await new Promise((r) => setTimeout(r, 1200));
+    await route.continue();
+  });
+  await page.goto(`${URL}?lang=en`);
+  await expect(page.locator('#ps-form')).toBeVisible();
+  await page.waitForTimeout(150);
+  await expect(loading).toBeHidden(); // 150 ms: not yet
+  await expect(loading).toBeVisible({ timeout: 1000 });
+  await expect(loading).toHaveText(en['plugins.settings.options_loading' as keyof typeof en]);
+  await expect(model(page).locator('option[value="alpha-small"]')).toHaveCount(1, { timeout: 5000 });
+  await expect(loading).toBeHidden();
+  await page.unroute('**/settings/model/options*');
+});
+
 test('changing the provider refreshes the list without saving', async () => {
   const done = watchConsole(page);
   await open(page);

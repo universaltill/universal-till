@@ -52,7 +52,7 @@ func TestBoundedAskPlugin_ReturnsAnswer(t *testing.T) {
 	r := askHarness(t, func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
 		return json.RawMessage(`{"a":1}`), nil
 	})
-	raw, ok, err := boundedAskPlugin(t.Context(), r.d, askPluginID, "x.test.ask", map[string]any{}, time.Second)
+	raw, ok, err := boundedAskPlugin(t.Context(), r.d, "pages.test", askPluginID, "x.test.ask", map[string]any{}, time.Second)
 	if err != nil || !ok || string(raw) != `{"a":1}` {
 		t.Fatalf("got %q %v %v", raw, ok, err)
 	}
@@ -66,7 +66,7 @@ func TestBoundedAskPlugin_HandlerIgnoringContextReturnsByTimeout(t *testing.T) {
 		return nil, nil
 	})
 	start := time.Now()
-	_, ok, err := boundedAskPlugin(t.Context(), r.d, askPluginID, "x.test.ask", map[string]any{}, 100*time.Millisecond)
+	_, ok, err := boundedAskPlugin(t.Context(), r.d, "pages.test", askPluginID, "x.test.ask", map[string]any{}, 100*time.Millisecond)
 	if err == nil || ok {
 		t.Fatalf("want timeout error, got ok=%v err=%v", ok, err)
 	}
@@ -79,7 +79,7 @@ func TestBoundedAskPlugin_PanicIsError(t *testing.T) {
 	r := askHarness(t, func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
 		panic("boom")
 	})
-	_, ok, err := boundedAskPlugin(t.Context(), r.d, askPluginID, "x.test.ask", map[string]any{}, time.Second)
+	_, ok, err := boundedAskPlugin(t.Context(), r.d, "pages.test", askPluginID, "x.test.ask", map[string]any{}, time.Second)
 	if err == nil || ok {
 		t.Fatalf("want error, got ok=%v err=%v", ok, err)
 	}
@@ -89,7 +89,7 @@ func TestBoundedAskPlugin_DeclinedIsNotAnswered(t *testing.T) {
 	r := askHarness(t, func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
 		return nil, nil
 	})
-	raw, ok, err := boundedAskPlugin(t.Context(), r.d, askPluginID, "x.test.ask", map[string]any{}, time.Second)
+	raw, ok, err := boundedAskPlugin(t.Context(), r.d, "pages.test", askPluginID, "x.test.ask", map[string]any{}, time.Second)
 	if err != nil || ok || raw != nil {
 		t.Fatalf("got %q %v %v", raw, ok, err)
 	}

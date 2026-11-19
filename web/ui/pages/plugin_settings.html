@@ -141,6 +141,9 @@
     var form = ev.target && ev.target.closest && ev.target.closest('#ps-form');
     if (!form) return;
     apply(form);
+    // A chained show_when (A shown when B=x, B when C=y) reveals an asked
+    // dropdown only now; askOnce keeps already-asked ones from asking twice.
+    scan(form);
     // change only (blur for a text box), never per keystroke.
     if (ev.type === 'change') reask(form, ev.target);
   }
@@ -172,10 +175,24 @@
     if (!sel) return;
     w.__psPick = sel.value;
     sel.setAttribute('aria-busy', 'true');
+    // "Loading choices…" only if the answer is still pending after 400 ms, so
+    // a cache hit or a fast answer never flashes it. A timer, not a CSS
+    // animation-delay: html.fx-light turns animations off.
+    clearTimeout(w.__psSlow);
+    w.__psSlow = setTimeout(function () { w.classList.add('ps-ask-slow'); }, 400);
+  });
+  // The form's own save: abort asks still in flight, so a stale fragment's
+  // out-of-band message cannot land in the re-rendered form. htmx fires
+  // htmx:afterRequest on abort, which clears the loading timer below.
+  document.addEventListener('htmx:beforeRequest', function (ev) {
+    var f = ev.detail && ev.detail.elt;
+    if (!f || f.id !== 'ps-form' || !window.htmx) return;
+    f.querySelectorAll('[data-ps-ask]').forEach(function (w) { window.htmx.trigger(w, 'htmx:abort'); });
   });
   document.addEventListener('htmx:afterRequest', function (ev) {
     var w = wrapperOf(ev), sel = w && selectOf(w);
     if (sel) sel.removeAttribute('aria-busy');
+    if (w) { clearTimeout(w.__psSlow); w.classList.remove('ps-ask-slow'); }
   });
   // The operator's pick wins: if the dropdown changed while the ask was in
   // flight, drop this answer and ask again with the new pick.
@@ -460,7 +477,7 @@
 
 {{ define "plugin_settings_choice_inner" }}{{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
     <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select{{ if .Ask }} id="ps-f-{{ .Key }}"{{ end }} name="setting_{{ .Key }}"{{ if .Required }} required{{ end }}{{ if .Ask }}{{ if or .Error .Invalid }} aria-invalid="true"{{ end }} aria-describedby="ps-opts-msg-{{ .Key }}{{ if or .Error .Invalid }} ps-err-{{ .Key }}{{ end }}"{{ else if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}>{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}{{ if .Asked }} dir="auto"{{ end }}>{{ .Label }}</option>{{ end }}</select></label>{{ if .Ask }}
-    <span class="htmx-indicator ps-ask-loading">{{ T "plugins.settings.options_loading" }}</span>{{ end }}{{ end }}
+    <span class="ps-ask-loading">{{ T "plugins.settings.options_loading" }}</span>{{ end }}{{ end }}
 
 {{ define "plugin_settings_ask_msg" }}{{ if eq .AskMsg "failed" }}<span>{{ T "plugins.settings.options_failed" }}</span> <button type="button" class="btn secondary" data-ps-ask-retry="{{ .Key }}">{{ T "plugins.settings.options_retry" }}</button>{{ else if eq .AskMsg "saved_missing" }}<span>{{ T "plugins.settings.options_saved_missing" }}</span>{{ else if eq .AskMsg "empty" }}<span>{{ T "plugins.settings.options_empty" }}</span>{{ end }}{{ end }}
 

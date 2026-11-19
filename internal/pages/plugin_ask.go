@@ -16,9 +16,9 @@ import (
 // timeout even if the handler ignores ctx; a panicking handler is an error.
 // answered=false: nobody answered (no hook, events:receive refused, data
 // class withheld, declined/empty). No permission check of its own: AskPlugin
-// gates on events:receive; a caller wanting a page permission checks it
-// first (askPluginUIAs).
-func boundedAskPlugin(ctx context.Context, d *common.Deps, pluginID, event string, payload any, timeout time.Duration) (raw []byte, answered bool, err error) {
+// gates on events:receive; a caller wanting a page permission checks it first
+// (askPluginUIAs). label names the caller in a recovered panic's log.
+func boundedAskPlugin(ctx context.Context, d *common.Deps, label, pluginID, event string, payload any, timeout time.Duration) (raw []byte, answered bool, err error) {
 	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type result struct {
@@ -28,7 +28,7 @@ func boundedAskPlugin(ctx context.Context, d *common.Deps, pluginID, event strin
 	}
 	done := make(chan result, 1)
 	go func() {
-		defer logging.RecoverAndLog("pages.pluginViewAsk")
+		defer logging.RecoverAndLog(label)
 		// Sent by a deferred call so a panicking handler still answers at
 		// once (it runs before RecoverAndLog recovers).
 		res := result{err: errors.New("plugin ask panicked")}

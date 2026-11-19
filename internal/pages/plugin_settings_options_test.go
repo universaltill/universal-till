@@ -319,7 +319,7 @@ func TestSettingsOptions_DeclinedAndDeniedAreEmptyNotFailures(t *testing.T) {
 }
 
 // An empty answer is a real answer: cached.
-func TestSettingsOptions_EmptyAnswerIsCached(t *testing.T) {
+func TestSettingsOptions_EmptyAnswerIsNotCached(t *testing.T) {
 	f := setupOptionsPlugin(t, true)
 	f.answerWith(`{"options":[]}`)
 	for i := 0; i < 2; i++ {
@@ -328,8 +328,30 @@ func TestSettingsOptions_EmptyAnswerIsCached(t *testing.T) {
 			t.Fatal("empty answer shown as failure")
 		}
 	}
-	if f.askCount() != 1 {
-		t.Errorf("asks = %d, want 1", f.askCount())
+	// The "refreshes after saving" hint must hold for an unchanged save, a
+	// grant or a plugin-side secret_set too, none of which drop the cache.
+	if f.askCount() != 2 {
+		t.Errorf("asks = %d, want 2 (an empty list is never cached)", f.askCount())
+	}
+}
+
+// A save drops the plugin's entries while an ask with the old values is in
+// flight: that ask must not re-cache its stale list afterwards.
+func TestSettingsOptions_AskInFlightDuringDropIsNotCached(t *testing.T) {
+	f := setupOptionsPlugin(t, true)
+	f.answerWith(twoModels)
+	f.mu.Lock()
+	inner := f.answer
+	f.answer = func(a settingsOptionsAsk) (json.RawMessage, error) {
+		sharedSettingsOptionsCache.dropPlugin("p1") // the save lands mid-ask
+		return inner(a)
+	}
+	f.mu.Unlock()
+	form := url.Values{"setting_provider": {"a"}}
+	f.ask(t, "model", form, nil)
+	f.ask(t, "model", form, nil)
+	if f.askCount() != 2 {
+		t.Errorf("asks = %d, want 2 (a stale answer was cached after the drop)", f.askCount())
 	}
 }
 

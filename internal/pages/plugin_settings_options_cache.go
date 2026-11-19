@@ -10,10 +10,11 @@ import (
 )
 
 // The asked-options cache (ADR-0121 S5, ut-docs#4160): in memory, per plugin
-// and per (version, setting key, current values). Only real answers are
-// cached (an empty list included); a failure or no answer never is, so a new
-// grant or a Try again works at once. A save of the plugin's settings drops
-// its entries (dropPlugin), so a new API key refetches the model list.
+// and per (version, setting key, current values). Only non-empty answers are
+// cached; a failure, no answer or an empty list never is, so a new grant, a
+// secret set by the plugin or a Try again works at once. A save of the
+// plugin's settings drops its entries (dropPlugin) and bumps its generation,
+// so an ask that began before the save cannot re-cache its stale list.
 const (
 	settingsOptionsTTL          = 10 * time.Minute
 	settingsOptionsMaxPerPlugin = 64
@@ -28,10 +29,11 @@ type settingsOptionsCache struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	byPlugin map[string]map[string]cachedOptions // pluginID -> cache key -> entry
+	gen      map[string]uint64                   // pluginID -> bumped by dropPlugin
 }
 
 func newSettingsOptionsCache(now func() time.Time) *settingsOptionsCache {
-	return &settingsOptionsCache{now: now, byPlugin: map[string]map[string]cachedOptions{}}
+	return &settingsOptionsCache{now: now, byPlugin: map[string]map[string]cachedOptions{}, gen: map[string]uint64{}}
 }
 
 // sharedSettingsOptionsCache is the process-wide cache. Only installed
@@ -57,11 +59,34 @@ func (c *settingsOptionsCache) get(pluginID, k string) ([]askedOption, bool) {
 	return slices.Clone(e.opts), true
 }
 
-// put stores a copy, pruning expired entries first and evicting the oldest
-// when the plugin is at its cap.
+// generation is the plugin's drop counter; capture it before asking.
+func (c *settingsOptionsCache) generation(pluginID string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen[pluginID]
+}
+
+// put stores a copy unconditionally (see putIfGeneration).
 func (c *settingsOptionsCache) put(pluginID, k string, opts []askedOption) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.putLocked(pluginID, k, opts)
+}
+
+// putIfGeneration stores only if no dropPlugin ran since gen was captured.
+func (c *settingsOptionsCache) putIfGeneration(pluginID string, gen uint64, k string, opts []askedOption) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen[pluginID] != gen {
+		return false
+	}
+	c.putLocked(pluginID, k, opts)
+	return true
+}
+
+// putLocked stores a copy, pruning expired entries first and evicting the
+// oldest when the plugin is at its cap.
+func (c *settingsOptionsCache) putLocked(pluginID, k string, opts []askedOption) {
 	m := c.byPlugin[pluginID]
 	if m == nil {
 		m = map[string]cachedOptions{}
@@ -90,6 +115,7 @@ func (c *settingsOptionsCache) dropPlugin(pluginID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.byPlugin, pluginID)
+	c.gen[pluginID]++
 }
 
 // settingsOptionsCacheKey is version + setting key + a hash of the values

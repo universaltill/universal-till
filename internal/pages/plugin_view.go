@@ -570,7 +570,7 @@ func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	// ADR-0153 "Who is asking" (ut-docs#2838): the operator, from the
 	// session, for action_propose — never from the payload.
 	ctx = withAgentOperator(ctx)
-	raw, ok, err := boundedAskPlugin(ctx, d, entry.PluginID, event, payload, timeout)
+	raw, ok, err := boundedAskPlugin(ctx, d, "pages.pluginViewAsk", entry.PluginID, event, payload, timeout)
 	switch {
 	case err != nil:
 		return nil, vctx, err

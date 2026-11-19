@@ -8114,11 +8114,11 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
 .ps-ask-msg { font-size: .9rem; text-align: start; overflow-wrap: anywhere; }
 .ps-ask-msg:not(:empty) { margin-block-start: .35rem; margin-block-end: .5rem; }
 .ps-ask-msg .btn { display: block; margin-block-start: .4rem; min-block-size: 46px; }
-/* The loading line appears only if the answer takes longer than 400 ms, so a
-   cache hit never flashes it. */
-.ps-ask-loading { opacity: 0; font-size: .85rem; color: var(--muted); }
-.htmx-request .ps-ask-loading { animation: ps-ask-appear 0s linear .4s forwards; }
-@keyframes ps-ask-appear { to { opacity: 1; } }
+/* The loading line is shown by the page script (class ps-ask-slow) only when
+   the answer is still pending after 400 ms, so a cache hit never flashes it.
+   Not a CSS animation-delay: html.fx-light turns animations off. */
+.ps-ask-loading { display: none; font-size: .85rem; color: var(--muted); }
+.ps-ask-slow .ps-ask-loading { display: block; }
 
 /* About screen (ut-docs#6402): a plain list of full-width touch links. */
 .about-links { list-style: none; margin: 1rem 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; max-inline-size: 28rem; }

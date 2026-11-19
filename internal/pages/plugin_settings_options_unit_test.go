@@ -187,12 +187,6 @@ func TestSettingsOptionsCache(t *testing.T) {
 	if again, _ := c.get("p1", k); again[0].Label != "A" {
 		t.Error("cache returned its own backing slice")
 	}
-	// empty list is cached too
-	k2 := settingsOptionsCacheKey("1.0.0", "model", map[string]string{"provider": "b"})
-	c.put("p1", k2, nil)
-	if got, ok := c.get("p1", k2); !ok || len(got) != 0 {
-		t.Errorf("empty answer not cached: %v %v", got, ok)
-	}
 	// key sensitivity
 	if settingsOptionsCacheKey("1.0.1", "model", vals) == k {
 		t.Error("version not in key")
@@ -221,6 +215,29 @@ func TestSettingsOptionsCache(t *testing.T) {
 	}
 	if _, ok := c.get("p2", k); !ok {
 		t.Error("p2 dropped by p1's dropPlugin")
+	}
+}
+
+// A put whose generation was captured before a dropPlugin is refused.
+func TestSettingsOptionsCache_PutAfterDropIsRefused(t *testing.T) {
+	c := newSettingsOptionsCache(time.Now)
+	k := settingsOptionsCacheKey("1", "m", map[string]string{"a": "1"})
+	gen := c.generation("p1")
+	c.dropPlugin("p1")
+	if c.putIfGeneration("p1", gen, k, []askedOption{{"v", "v"}}) {
+		t.Error("stale put accepted")
+	}
+	if _, ok := c.get("p1", k); ok {
+		t.Error("stale list cached")
+	}
+	if !c.putIfGeneration("p1", c.generation("p1"), k, []askedOption{{"v", "v"}}) {
+		t.Error("fresh put refused")
+	}
+	if _, ok := c.get("p1", k); !ok {
+		t.Error("fresh list not cached")
+	}
+	if c.generation("p2") != 0 {
+		t.Error("other plugin's generation moved")
 	}
 }
 
@@ -331,5 +348,27 @@ func TestShowWhenHidden_AskedControllerIsLegitimate(t *testing.T) {
 	}
 	if showWhenHidden(m, w, "m1") {
 		t.Error("matching value must show")
+	}
+}
+
+// ListPluginSettings orders by key only, so a register row can sort before the
+// global one; an ask without a scope means the global row.
+func TestPickSettingRow_EmptyScopeIsGlobal(t *testing.T) {
+	rows := []data.PluginSettingRow{
+		{Key: "model", Scope: "register", ValueJSON: `"till"`},
+		{Key: "model", Scope: "global", ValueJSON: `"shop"`},
+		{Key: "other", Scope: "global"},
+	}
+	if r := pickSettingRow(rows, "model", ""); r == nil || r.Scope != "global" {
+		t.Errorf(`scope "" picked %+v, want the global row`, r)
+	}
+	if r := pickSettingRow(rows, "model", "register"); r == nil || r.Scope != "register" {
+		t.Errorf("scope register picked %+v", r)
+	}
+	if r := pickSettingRow(rows[:1], "model", ""); r == nil || r.Scope != "register" {
+		t.Errorf("only a register row: fallback to it, got %+v", r)
+	}
+	if r := pickSettingRow(rows, "missing", ""); r != nil {
+		t.Errorf("unknown key picked %+v", r)
 	}
 }
