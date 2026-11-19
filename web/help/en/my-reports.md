@@ -3,6 +3,7 @@ id: my-reports
 title: My reports
 section: Connecting & extending
 order: 361
+public: true
 summary: "See the problem reports this till has captured — sent or still pending (most recent 100) — with their last-known status. Works offline too."
 routes: [/my-reports]
 keywords: [bug, issue, report, status, sent, pending, github, tracking]

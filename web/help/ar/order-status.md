@@ -3,6 +3,7 @@ id: order-status
 title: حالة الطلب (تقدم المطبخ)
 section: البيع اليومي
 order: 45
+public: true
 summary: "حدّد تقدم كل طلب — قيد التحضير، جاهز، تم الاستلام — بلمسة واحدة، ليعرف الجميع أين وصل الطلب."
 routes: [/orders, /orders/{receipt}]
 ---

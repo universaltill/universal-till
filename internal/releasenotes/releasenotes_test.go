@@ -194,3 +194,35 @@ func TestRecent_VersionWithoutOwnNoteNeverShowsNewer(t *testing.T) {
 		t.Fatalf("Recent(0.1.0) = %v, want none (every note is newer)", versionsOf(got))
 	}
 }
+
+// ADR-0194 / ut-docs#6401: a note can mark plan-purchase text; Google Play and
+// App Store builds render the note without it.
+func TestNote_PlanPurchaseBlockDroppedForStoreBuilds(t *testing.T) {
+	fsys := fstest.MapFS{"rn/en/v1.0.0.md": note("v1.0.0", "2026-09-20",
+		"## New\n\n- Kept line.\n\n<!-- plan-purchase -->\n\n- Renew or change your plan from the till.\n\n<!-- /plan-purchase -->\n\n- Also kept.\n")}
+	lib, err := Load(fsys, "rn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok := lib.Get("en", "v1.0.0")
+	if !ok {
+		t.Fatal("note missing")
+	}
+	if !strings.Contains(string(n.ForPlanPurchase(true)), "Renew or change") {
+		t.Error("full render lost the purchase text")
+	}
+	if strings.Contains(string(n.ForPlanPurchase(true)), "omitted") || strings.Contains(string(n.HTML), "omitted") {
+		t.Errorf("marker leaked as a comment: %s", n.HTML)
+	}
+	got := string(n.ForPlanPurchase(false))
+	if strings.Contains(got, "Renew") || !strings.Contains(got, "Kept line.") || !strings.Contains(got, "Also kept.") {
+		t.Errorf("store render wrong: %s", got)
+	}
+}
+
+func TestNote_UnbalancedPlanPurchaseMarkerRefused(t *testing.T) {
+	fsys := fstest.MapFS{"rn/en/v1.0.0.md": note("v1.0.0", "2026-09-20", "## New\n\n<!-- plan-purchase -->\n\n- Oops.\n")}
+	if _, err := Load(fsys, "rn"); err == nil {
+		t.Fatal("an unclosed plan-purchase marker must fail the load")
+	}
+}

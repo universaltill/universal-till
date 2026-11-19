@@ -11,10 +11,16 @@ name: ios-ci
 # and the TestFlight upload are ios-testflight.yml (ut-docs#3069), which
 # only a maintainer's dispatch or a published release can start.
 # universal-till is public, so the macOS runner minutes are free.
+# A run whose macOS job GitHub never gave a runner (hosted capacity
+# starvation) is re-run by ci-runner-retry.yml (ut-docs#5490).
 on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   simulator:
     # Same image as ios-testflight.yml (Xcode 26 / iOS 26 SDK), so a PR
@@ -45,7 +51,7 @@ jobs:
             changed="ios/unknown-cannot-diff"
           fi
           echo "$changed"
-          if grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^web/public/assets/logo/unitill-logo\.svg$' <<<"$changed"; then
+          if grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^scripts/ci/fetch-bundled-plugins\.sh$|^internal/plugins/bundled/|^web/public/assets/logo/unitill-logo\.svg$' <<<"$changed"; then
             echo "match=true" >> "$GITHUB_OUTPUT"
           else
             echo "match=false" >> "$GITHUB_OUTPUT"
@@ -62,12 +68,39 @@ jobs:
           go install golang.org/x/mobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           brew install xcodegen
+      - name: Generate the Xcode project (XcodeGen)
+        if: steps.filter.outputs.match == 'true'
+        run: cd ios && xcodegen generate
+      - name: Tap to Pay unit tests (ut-docs#3049)
+        # Host-less test bundle over ios/UniversalTill/TapToPay/Core: needs
+        # neither Mobile.xcframework nor StripeTerminal, so it runs before
+        # the bind. Package versions come only from the committed
+        # Package.resolved.
+        if: steps.filter.outputs.match == 'true'
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys
+          for rt, devs in json.load(sys.stdin)["devices"].items():
+              if "iOS" not in rt: continue
+              for d in devs:
+                  if d["name"].startswith("iPhone"):
+                      print(d["udid"]); sys.exit(0)
+          sys.exit(1)')"
+          cd ios
+          xcodebuild test -project UniversalTill.xcodeproj -scheme UniversalTillTapToPayTests \
+            -destination "id=$UDID" -derivedDataPath build/dd-tests \
+            -onlyUsePackageVersionsFromResolvedFile
+      # ADR-0194 (ut-docs#6565): bind exactly what the App Store build binds,
+      # with the pinned first-party plugin bundles embedded.
+      - name: Fetch the pinned first-party plugin bundles (lock-verified)
+        if: steps.filter.outputs.match == 'true'
+        run: bash scripts/ci/fetch-bundled-plugins.sh
       - name: Bind the Go till server (gomobile bind -target=ios,iossimulator)
         if: steps.filter.outputs.match == 'true'
         run: |
           set -euo pipefail
           xcodebuild -version
-          gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+          gomobile bind -target=ios,iossimulator -tags bundledplugins -o ios/build/Mobile.xcframework ./mobile
       - name: App icon regression test (1024x1024, no alpha — ut-docs#3069)
         if: steps.filter.outputs.match == 'true'
         env:
@@ -85,7 +118,8 @@ jobs:
           xcodebuild -project UniversalTill.xcodeproj -scheme UniversalTill \
             -configuration Debug -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build
+            -derivedDataPath build/dd -onlyUsePackageVersionsFromResolvedFile \
+            CODE_SIGNING_ALLOWED=NO build
       - name: Launch smoke's drawn-WebView poll, against the real screenshot check (ut-docs#5201)
         if: steps.filter.outputs.match == 'true'
         env:

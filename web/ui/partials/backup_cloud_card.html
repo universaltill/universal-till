@@ -1,0 +1,65 @@
+{{/* ut-docs#5066: Settings → Backups → "Cloud backups". Loaded by
+     GET /ui/backup-cloud-card (offsite_backup_api.go) into settings.html,
+     for a manager on a paired main till only. State is words plus an icon,
+     never colour alone. Upload now goes through the same PIN re-auth as
+     Back up now. */}}
+<div id="backup-cloud-card" class="backup-cloud-card" data-testid="backup-cloud-card" data-state="{{ .state }}">
+  <h3>{{ T "backup.cloud.title" }}</h3>
+  <p data-testid="backup-cloud-state" aria-live="polite">
+    {{ if eq .state "ok" }}<span aria-hidden="true">✓</span> {{ printf (T "backup.cloud.state_ok") .lastSuccess }}
+    {{ else if eq .state "failing" }}<span class="row-warn-icon" aria-hidden="true">⚠</span> {{ T "backup.cloud.state_failing" }}
+    {{ else if eq .state "refused" }}<span class="row-warn-icon" aria-hidden="true">⚠</span> {{ T "backup.cloud.state_refused" }}
+    {{ else if eq .state "needs_link" }}<span class="row-warn-icon" aria-hidden="true">⚠</span> {{ T "backup.cloud.state_needs_link" }}
+    {{ else if eq .state "not_in_plan" }}{{ T "backup.cloud.state_not_in_plan" }}
+    {{ else }}{{ T "backup.cloud.state_waiting" }}{{ end }}
+  </p>
+  {{ if .reason }}<p class="muted" data-testid="backup-cloud-reason">{{ if eq .reason "disk" }}{{ T "backup.cloud.err.disk" }}{{ else if eq .reason "network" }}{{ T "backup.cloud.err.network" }}{{ else if eq .reason "server" }}{{ T "backup.cloud.err.server" }}{{ else if eq .reason "rate_limited" }}{{ T "backup.cloud.err.rate_limited" }}{{ else if eq .reason "cloud_backup_not_in_plan" }}{{ T "backup.cloud.err.cloud_backup_not_in_plan" }}{{ else if eq .reason "subscription_inactive" }}{{ T "backup.cloud.err.subscription_inactive" }}{{ else if eq .reason "not_main_till" }}{{ T "backup.cloud.err.not_main_till" }}{{ else if eq .reason "too_large" }}{{ T "backup.cloud.err.too_large" }}{{ else if eq .reason "not_enabled" }}{{ T "backup.cloud.err.not_enabled" }}{{ else }}{{ T "backup.cloud.err.other" }}{{ end }}</p>{{ end }}
+  {{ if .msg }}<p role="status" data-testid="backup-cloud-notice">{{ .msg }}</p>{{ end }}
+  <p class="muted">{{ T "backup.cloud.privacy" }}</p>
+  {{ if .entitled }}
+  {{ if and .hasKey (eq .choice "") }}
+  <div class="cloud-key-ask" data-testid="cloud-key-ask">
+    <h4>{{ T "backup.cloud.key.ask_title" }}</h4>
+    <p>{{ T "backup.cloud.key.ask_on_text" }}</p>
+    <p>{{ T "backup.cloud.key.ask_off_text" }}</p>
+    <div class="set-row set-below">
+      <form hx-post="/api/offsite/key/choice" hx-target="#backup-cloud-card" hx-swap="outerHTML"><input type="hidden" name="choice" value="on"><button class="btn secondary" type="submit" data-testid="cloud-key-choose-on">{{ T "backup.cloud.key.choose_on" }}</button></form>
+      <form hx-post="/api/offsite/key/choice" hx-target="#backup-cloud-card" hx-swap="outerHTML"><input type="hidden" name="choice" value="off"><button class="btn secondary" type="submit" data-testid="cloud-key-choose-off">{{ T "backup.cloud.key.choose_off" }}</button></form>
+    </div>
+  </div>
+  {{ else if .choice }}
+  <p class="muted" data-testid="cloud-key-status">{{ if eq .choice "on" }}{{ T "backup.cloud.key.status_on" }}{{ else }}{{ T "backup.cloud.key.status_off" }}{{ end }}{{ if .blocked }} {{ T "backup.cloud.key.blocked" }}{{ end }}</p>
+  {{ end }}
+  {{ if .hasKey }}
+  <div class="set-row set-below">
+    <a class="btn secondary" href="/backups/cloud-key" data-testid="cloud-key-save-link">{{ T "backup.cloud.key.save_link" }}</a>
+    {{ if and .choice (not .blocked) }}
+    <form hx-post="/api/offsite/key/choice" hx-target="#backup-cloud-card" hx-swap="outerHTML"><input type="hidden" name="choice" value="{{ if eq .choice "on" }}off{{ else }}on{{ end }}"><button class="btn secondary" type="submit" data-testid="cloud-key-change">{{ if eq .choice "on" }}{{ T "backup.cloud.key.change_to_off" }}{{ else }}{{ T "backup.cloud.key.change_to_on" }}{{ end }}</button></form>
+    {{ end }}
+  </div>
+  {{ end }}
+  {{ if eq .state "needs_link" }}
+  <div class="cloud-key-link" data-testid="cloud-key-link">
+    {{ if eq .linkCopy "no" }}
+    <p>{{ T "backup.cloud.key.new_text" }}</p>
+    <form hx-post="/api/offsite/key/new" hx-target="#backup-cloud-card" hx-swap="outerHTML"><button class="btn secondary" type="submit" data-testid="cloud-key-new">{{ T "backup.cloud.key.new_action" }}</button></form>
+    {{ end }}
+    <form hx-post="/api/offsite/key/enter" hx-target="#backup-cloud-card" hx-swap="outerHTML">
+      <label for="saved-key-card">{{ T "backup.cloud.key.enter_action" }}</label>
+      <input id="saved-key-card" name="saved_key" type="text" dir="ltr" translate="no" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="UTK1-XXXX-XXXX-…" data-testid="cloud-key-enter-input">
+      <button class="btn secondary" type="submit" data-testid="cloud-key-enter">{{ T "backup.cloud.key.enter_submit" }}</button>
+    </form>
+  </div>
+  {{ end }}
+  {{ end }}
+  <div class="set-row set-below">
+    {{ if and (eq .state "needs_link") (ne .linkCopy "no") }}
+    <button type="button" class="btn primary" data-testid="backup-cloud-link" hx-post="/api/offsite/link/start" hx-target="#backup-cloud-msg" hx-swap="innerHTML">{{ T "backup.cloud.link.action" }}</button>
+    {{ end }}
+    {{ if .entitled }}
+    <button type="button" class="btn secondary" data-testid="backup-cloud-now" hx-post="/api/offsite/now" hx-target="#backup-cloud-msg" hx-swap="innerHTML">{{ T "backup.cloud.upload_now" }}</button>
+    {{ end }}
+    <a class="btn secondary" href="/backups/cloud-restore" data-testid="backup-cloud-restore-link">{{ T "backup.cloud.restore" }}</a>
+    <span id="backup-cloud-msg" aria-live="polite"></span>
+  </div>
+</div>

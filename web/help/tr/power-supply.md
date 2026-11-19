@@ -3,6 +3,7 @@ id: power-supply
 title: Güç kaynağı uyarısı
 section: Bağlantı ve eklentiler
 order: 355
+public: true
 summary: Raspberry Pi'de, güç kaynağı dokunmatik ekran ve diğer USB çevre birimleri için yeterli akım sağlayamadığında durum çubuğu uyarır.
 ---
 

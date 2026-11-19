@@ -3,6 +3,7 @@ id: open-orders
 title: Offene Bestellungen
 section: Täglicher Verkauf
 order: 15
+public: true
 summary: "Jede Bestellung an dieser Kasse, die noch auf ihre Bezahlung wartet, in zwei Reitern: geparkte Verkäufe und Bestellungen vom Selbstbedienungs-Kiosk, die an der Theke bezahlt werden."
 routes: [/open-orders]
 keywords: [offene bestellungen, bestellung stornieren, stornieren, storno, bestellung löschen, offene vorgänge, gehalten, halten, geparkt, bon, fortsetzen, abrufen, tisch, wartezeit, an der theke zahlen, kiosk, selbstbedienung, c-nummer]

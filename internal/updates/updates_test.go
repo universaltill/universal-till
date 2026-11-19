@@ -215,3 +215,39 @@ func TestNewer(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0194 §2.3 / ut-docs#6388: store channels never contact GitHub.
+func TestCheckNow_NoRequestOnStoreChannels(t *testing.T) {
+	for _, c := range []buildinfo.InstallChannel{buildinfo.ChannelPlay, buildinfo.ChannelAppStore} {
+		t.Run(string(c), func(t *testing.T) {
+			resetState(t)
+			t.Cleanup(buildinfo.OverrideChannelForTest(c))
+			hits := 0
+			withCheckServer(t, "0.1.2", func(w http.ResponseWriter, r *http.Request) {
+				hits++
+				w.Write([]byte(`{"tag_name":"v9.9.9","html_url":"https://example.test/rel"}`))
+			})
+			if got := CheckNow(context.Background()); got != (Status{}) {
+				t.Fatalf("CheckNow = %+v, want zero status", got)
+			}
+			if hits != 0 {
+				t.Fatalf("%d request(s) made on %s", hits, c)
+			}
+			if Enabled() {
+				t.Fatalf("Enabled() true on %s", c)
+			}
+		})
+	}
+	for _, c := range []buildinfo.InstallChannel{buildinfo.ChannelSideload, buildinfo.ChannelDirect} {
+		t.Run(string(c)+"_checks", func(t *testing.T) {
+			resetState(t)
+			t.Cleanup(buildinfo.OverrideChannelForTest(c))
+			withCheckServer(t, "0.1.2", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"tag_name":"v0.2.0","html_url":"https://example.test/rel"}`))
+			})
+			if !CheckNow(context.Background()).Available {
+				t.Fatal("update check must still work on " + string(c))
+			}
+		})
+	}
+}

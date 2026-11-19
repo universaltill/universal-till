@@ -16,6 +16,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   comment-only edits are fine. Add a new `NNN_*.sql` and pin its checksum in
   `internal/db/shipped_migrations_test.go` (the failure message prints it).
 
+## Shared catimport module (ADR-0164, `scripts/ci/guard-catimport-version.sh`)
+- A PR changing `catimport/` Go source, `go.mod` or `go.sum` bumps
+  `catimport/VERSION` (patch fix, minor new name); `catimport-tag.yml` tags
+  `catimport/vX.Y.Z` on merge — never push that tag by hand (#5882).
+
 ## Card data (ADR-0127, `scripts/ci/guard-card-data-schema.sh`)
 - Card data lives only in the PSP's vault: no migration names a card
   number, BIN/IIN, CVV/CVC, track data or PIN block (last4, brand, expiry,
@@ -39,6 +44,14 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `#ut-scrim`; only self-order kiosk dialogs may stay modal
   (`scripts/ci/guard-no-showmodal.sh`, reviewed exception
   `showmodal:allow <reason>`; ut-docs#2097).
+- No native `window.confirm` on till surfaces: ask with `UT.confirm(q,
+  {opener}) → Promise<boolean>` (`web/public/till-confirm.js`) or
+  `hx-confirm`; act only on `true`. Fallbacks for a missing
+  `till-confirm.js`/`#ut-confirm` carry same-line `native-confirm:allow
+  <reason>` (`scripts/ci/guard-no-native-confirm.sh`; ut-docs#6116).
+  Every `hx-confirm` opener names its verb on the same tag:
+  `data-confirm-ok="{{ T "key" }}"` (optional `data-confirm-dismiss`);
+  `TestHxConfirm_EveryOpenerNamesItsVerb` (ut-docs#6117).
 
 ## Self-order kiosk isolation (`scripts/ci/guard-kiosk-engine.sh`)
 - The kiosk basket is `common.Deps.KioskEngine`, separate from the cashier's
@@ -76,13 +89,10 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   properties (`margin-inline-start`, `text-align: start`), never left/right
   (`scripts/ci/guard-rtl-logical-css.sh`; shrink-only
   `rtl-css-baseline.txt`; reviewed exception `rtl:allow <reason>`; #4375).
-- A new `en.json` key needs follow-up PRs in every `ut-plugin-language-*`
-  pack `scripts/ci/check-lang-pack-drift.sh` checks — see that script's
-  `PACKS` array for the current list; never hard-code pack names here.
-  `lang-pack-drift.yml` blocks on `push` to `main` and is advisory on PRs
-  touching `en.json` (its `::warning::` names the pack repos — #1857); it is
-  `paths:`-scoped, so its absence on other PRs is normal. Never make it a
-  required check. `scripts/ci/check-lang-pack-drift.test.sh` self-tests it.
+- Other languages come only from Weblate (`ut-translations`, ADR-0160):
+  never add or edit a translation in a code PR; a wrong string is fixed in
+  Weblate. e2e and the de render audit read German from ut-translations
+  (`scripts/ci/build-locale-overlay.sh`).
 - Validate all external input (users, plugins, devices).
 
 ## Compliance wording (ADR-0040, `scripts/ci/guard-compliance-claims.sh`)
@@ -179,7 +189,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     of `internal/db` only `lock_unix.go` triggers it; ut-docs#5279).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
-    real on PRs (push: report only, ADR-0160); exceptions in `e2e/tests-i18n-audit/allowlist.json`;
+    real on PRs (push: report only, ADR-0160; PR defers keys new in the PR and
+    pre-existing keys the de pack merely lags on, #2805/#5583); exceptions in `e2e/tests-i18n-audit/allowlist.json`;
     `UT_LOCALE_AUDIT_STRICT=1` (`scripts/ci/audit-locale-render.sh`) makes a
     missing pack checkout a hard failure, not a skip (#2300).
 - Feature branch; review record in `docs/code-reviews/<date>-<topic>.md`;
@@ -204,7 +215,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   (English-only help topics merge; translations come via Weblate, ADR-0160).
   `guard-help-breadcrumbs.sh`: a translated `Settings → X` breadcrumb must use
   the locale's own label for that section; shrink-only baseline
-  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696).
+  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696). It also
+  fails any `→` in a help topic of an `httpx.IsRTL` locale: write `←`
+  (ut-docs#5644).
   `guard-help-terms.sh`: a translated topic uses the locale UI's own word for
   a role or thing (de: "Manager", never "Führungskraft"); entries in
   `scripts/ci/help-terms.txt`; exception `help-term:allow <reason>` (#5243).

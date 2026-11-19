@@ -73,6 +73,19 @@ It is the pattern for any admin page's message spot from here on — see
    `unboundedRoutes` (`internal/pages/unbounded_routes_test.go`), which
    `TestUnboundedRoutesMatchAppJS` keeps paired.
    `htmx.config.timeout` stays 0.
+   Re-sync (ut-docs#5458): when that sticky outcome text follows a
+   non-GET, non-prompt request under `/api/pos/` on the sale screen, the
+   action may have applied, so `utBasketResync()` re-fetches `GET /ui/basket`
+   into `#basket` (a background refresh: untimed, `X-UT-Resync` header). Its
+   xhr is issued with `source: #basket`, so a newer `hx-sync="#basket:replace"`
+   tap aborts it and the newer result wins (a generation counter in
+   `htmx:beforeSwap` covers a non-synced mutation). It fails silently (no
+   second alert, the sticky text stays) and never clears the alert. The
+   `ut-basket-resync` event (ut-docs#5411) uses the same helper. A tapped
+   `.btn-tile` whose request is still pending gets `aria-busy="true"` after
+   300 ms (cleared on afterRequest/abort/timeout/error); `app.css` draws it as
+   an inset outline (no text, no layout shift, static under reduced motion and
+   `fx-light`).
    `utPostWithElevation` aborts each leg the same way after the same time,
    except on those listed paths (ut-docs#5454).
    Before #213 a failed request surfaced nothing at all.
@@ -108,6 +121,47 @@ A 400 response whose body is a rendered basket fragment (contains
 `id="basket"`) is swapped in and NOT treated as an htmx error — the
 specific server-rendered notice wins over the generic alert
 (`htmx:beforeSwap` handler in `app.js`).
+
+## Notices from Universal Till and partners (ADR-0176, ut-docs#5366)
+
+A fifth and sixth slot, same component, fed from the local `cloud_notices`
+table (never the network, never the sale path). Off unless the per-till
+setting `notices.enabled` is on; all of it needs the permission
+`notices.view` except the critical strip.
+
+- **Two new modifiers:** `.pos-notice.important` (warning tint) and
+  `.pos-notice.critical` (danger tint, 2 px border). Severity is also a glyph
+  shape (circle info, triangle important, octagon critical), never colour alone.
+- **Important toast** (`#notices-toast`, first child of `.products`, in flow,
+  `GET /notices/toast`): at most one, once per notice id+revision, 10 s
+  (`data-dismiss-ms`; `scheduleToastDismiss` honours it and pauses while the
+  toast is hovered, focused or touched), two-line body, Open + dismiss. It is
+  **never rendered while `#payment-overlay` is open**: app.js cancels the
+  poll, the server only marks a toast shown when it renders, so the notice
+  stays queued and appears once the overlay closes. Dismissing leaves the
+  notice in the inbox. Info notices never toast.
+- **Critical strip** (`#notices-strip`, `GET /notices/strip`, every page,
+  outside `<main>`): one line, sticky until a manager or admin presses
+  Acknowledge (`acked_at`, reported to the cloud; the notice stays unread until
+  opened). `.critical` is excluded from auto-expiry. A cashier without
+  `notices.view` sees the strip read-only ("A manager has been told. You can
+  keep selling."): no link, no button, no history. A partner can never send a
+  critical, and the till refuses one.
+- **Live region:** the two mounts are persistent `aria-live="polite"`
+  regions; never `role="alert"`, never focus-stealing.
+- **Bell** (`#notices-bell`, rail status group above Help; on a phone a row of
+  the burger drawer): unread count capped at "9+", a square badge with a
+  triangle when a critical is unread, and a count-aware label on the burger.
+- **Inbox** (`GET /notices`): Unread / All tabs, rows expand in place (opening
+  marks read), sender chip rendered by the server (partner = dashed outline),
+  Dismiss, Acknowledge on critical rows.
+- **Safe rendering:** titles and sender names go through `html/template`
+  escaping; bodies through `cloudnotice.RenderBody` (escape first, then bold,
+  italic, https links to `universaltill.com` hosts, line breaks); a link action
+  is re-validated at render (`cloudnotice.ParseLink`), `https` opens with
+  `rel="noopener noreferrer"`, no remote content.
+- **Nothing blocks a sale:** no overlay, no `showModal`, no sound; a failed
+  render is an empty fragment.
 
 ## Out of scope
 

@@ -1,0 +1,26 @@
+{{ define "content" }}
+{{/* ut-docs#6402: About screen. Reachable on every channel and by every signed-in role; links only, nothing that sells (ADR-0194 §2.3). External links follow the crossdevicelinkactionable rule (httpx.go): where the platform has no way back from a followed link (unix kiosk, desktop shell without window-escape handling) the address is shown as text instead. The licences page is in-app. */}}
+<div class="card about-screen" id="about-screen">
+  <h1>{{ T "about.title" }}</h1>
+  <p>{{ T "about.installed_version" }} <strong><bdi dir="ltr" data-testid="about-version">v{{ appversion }}</bdi></strong></p>
+  <ul class="about-links">
+    {{ if crossdevicelinkactionable }}
+    <li><a class="btn btn-touch" data-testid="about-privacy-link" href="{{ .privacyURL }}" target="_blank" rel="noopener" hx-boost="false">{{ T "about.privacy_link" }}</a></li>
+    <li><a class="btn btn-touch" data-testid="about-terms-link" href="{{ .termsURL }}" target="_blank" rel="noopener" hx-boost="false">{{ T "about.terms_link" }}</a></li>
+    {{ end }}
+    <li><a class="btn btn-touch" data-testid="about-licences-link" href="{{ .licencesPath }}">{{ T "about.licences_link" }}</a></li>
+    {{ if and .deleteURL crossdevicelinkactionable }}
+    <li><a class="btn btn-touch" data-testid="about-delete-account-link" href="{{ .deleteURL }}" target="_blank" rel="noopener" hx-boost="false">{{ T "about.delete_account_link" }}</a></li>
+    {{ end }}
+  </ul>
+  {{ if not crossdevicelinkactionable }}
+  <dl class="about-addresses" data-testid="about-addresses">
+    <dt>{{ T "about.privacy_link" }}</dt><dd><bdi dir="ltr">{{ .privacyURL }}</bdi></dd>
+    <dt>{{ T "about.terms_link" }}</dt><dd><bdi dir="ltr">{{ .termsURL }}</bdi></dd>
+    {{ if .deleteURL }}<dt>{{ T "about.delete_account_link" }}</dt><dd><bdi dir="ltr">{{ .deleteURL }}</bdi></dd>{{ end }}
+  </dl>
+  <p class="muted">{{ T "about.addresses_help" }}</p>
+  {{ end }}
+  {{ if .deleteURL }}<p class="muted">{{ T "about.delete_account_help" }}</p>{{ end }}
+</div>
+{{ end }}

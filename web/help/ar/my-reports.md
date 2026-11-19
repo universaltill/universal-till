@@ -3,6 +3,7 @@ id: my-reports
 title: تقاريري
 section: الاتصال والإضافات
 order: 361
+public: true
 summary: "اطّلع على تقارير المشاكل التي سجّلها هذا الصندوق — مُرسلة أو في انتظار الإرسال (أحدث 100 تقرير) — مع آخر حالة معروفة. يعمل دون اتصال أيضًا."
 routes: [/my-reports]
 keywords: [bug, issue, report, status, sent, pending, github, tracking]

@@ -3,6 +3,7 @@ id: tables
 title: Tables & floor plan
 section: Running the business
 order: 236
+public: true
 summary: Draw your shop's floor plan — every dining table with its name, area, seats and shape — and see at a glance which tables are free and which have an open order.
 keywords: [table, tables, floor plan, floor, seating, dine-in, restaurant, area, zone]
 routes: [/tables]

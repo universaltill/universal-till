@@ -2,3 +2,5 @@
 "NSLocalNetworkUsageDescription" = "Universal Till finds and syncs with the other tills in your shop over the local network.";
 "NSCameraUsageDescription" = "Universal Till uses the camera to scan barcodes and take item photos.";
 "NSMicrophoneUsageDescription" = "Universal Till uses the microphone to record a voice note for a problem report.";
+"NSLocationWhenInUseUsageDescription" = "Universal Till uses your location to accept card payments, as card networks require.";
+"NSBluetoothAlwaysUsageDescription" = "Universal Till uses Bluetooth to connect to supported card readers.";

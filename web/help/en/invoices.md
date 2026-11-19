@@ -3,6 +3,7 @@ id: invoices
 title: Invoices & tax invoices
 section: Running the business
 order: 220
+public: true
 summary: Issue a proper (tax) invoice for a sale — for business customers or wherever a titled invoice is required.
 routes: [/invoices, /invoice/{display_no}]
 keywords: [invoice, vat, customer, business, tax invoice, credit note, seller details]
@@ -72,7 +73,10 @@ Journal, if a refund was issued there).
 2. Pick a date range (**From**/**To**) and press **Show** to widen or
    narrow it — it opens showing the current calendar month; widen
    **From** to reach older invoices.
-3. Open any row to view or reprint that invoice/credit note.
+3. Open any row to view or reprint that invoice/credit note. On the invoice
+   page, **🖨 Print** prints only the invoice itself — the menu, status bar
+   and buttons stay off the paper, and the browser adds no web address, page
+   title or date in the margins.
 4. **Export CSV** downloads the current date range as a CSV for handing
    to an accountant. On screen a credit note's amounts show as ordinary
    positive numbers (only the range total subtracts them); in the CSV

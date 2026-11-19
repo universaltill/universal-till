@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, answerTillConfirm, noNativeDialogs } from './helpers';
 
 // ut-docs#4423 (ADR-0114 §7): the main till's Tills page shows its LAN
 // TLS network key and a manager "Change key" that starts a rotation now.
@@ -31,11 +31,12 @@ test('tills: Change key starts a rotation and the line reads in progress', async
   if ((await block.getAttribute('data-rotation')) === 'idle') {
     const box = await btn.boundingBox();
     expect(box!.height, 'touch target').toBeGreaterThanOrEqual(44);
-    page.once('dialog', (d) => {
-      expect(d.message()).toContain('network security key');
-      void d.accept();
-    });
+    const noNative = noNativeDialogs(page);
     await btn.click();
+    // A reversible change ("selling is never interrupted"): the accent button, not the red one.
+    await expect(page.getByTestId('till-confirm-ok')).toHaveClass(/primary/);
+    await answerTillConfirm(page, 'confirm', 'network security key');
+    noNative();
   }
   await expect(page.getByTestId('tills-network-key')).toHaveAttribute('data-rotation', 'pending');
   await expect(page.getByTestId('tills-network-key').getByRole('button')).toHaveCount(0);

@@ -3,6 +3,7 @@ id: order-status
 title: وضعیت سفارش (پیشرفت آشپزخانه)
 section: فروش روزمره
 order: 45
+public: true
 summary: "پیشرفت هر سفارش را — در حال آماده‌سازی، آماده، تحویل شد — با یک لمس ثبت کنید تا همه بدانند سفارش کجاست."
 routes: [/orders, /orders/{receipt}]
 ---

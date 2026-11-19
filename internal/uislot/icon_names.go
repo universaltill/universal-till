@@ -42,9 +42,15 @@ var knownIconNames = map[string]bool{
 	"rotate-ccw": true, "eye": true, "ellipsis": true, "eye-off": true,
 	"folder-input": true, // ut-docs#2465: the Move to category badge
 	"store":        true, // ut-docs#3090: Settings "My shop" tile
+	"contrast":     true, // ut-docs#3440: session-chip "My display" link
 	"credit-card":  true, // ut-docs#3090: Settings "Payments" tile
 	"hard-drive":   true, // ut-docs#3121: the low-disk status chip
 	"gift":         true, // ut-docs#4251: the Gift vouchers menu tile
+	// ut-docs#5366 (ADR-0176): the Notices bell and the inbox's severity /
+	// sender glyphs; drawn in httpx/icons.go like every name here.
+	"notice-bell": true, "notice-empty": true, "notice-info": true,
+	"notice-important": true, "notice-critical": true, "notice-building": true,
+	"notice-ut": true,
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.

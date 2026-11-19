@@ -3,6 +3,7 @@ id: bug-reporting
 title: گزارش یک مشکل
 section: اتصال و افزونه‌ها
 order: 360
+public: true
 summary: "مشکلی در صندوق پیش آمده؟ از هر صفحه‌ای با دکمهٔ «گزارش یک مشکل» گزارش بفرستید — تایپی، صوتی یا همراه با ضبط صفحه‌نمایش."
 routes: [/report-issue]
 keywords: [bug, issue, problem, report, support, recording, voice]

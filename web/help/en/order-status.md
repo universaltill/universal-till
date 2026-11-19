@@ -3,6 +3,7 @@ id: order-status
 title: Order status (kitchen progress)
 section: Everyday selling
 order: 45
+public: true
 summary: "Mark each order's progress — preparing, ready, collected — with one tap, so everyone can see where an order is."
 routes: [/orders, /orders/{receipt}]
 keywords: [orders, kitchen, preparing, ready, collected, cancelled, status, scan, collect]

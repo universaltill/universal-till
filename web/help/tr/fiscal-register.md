@@ -3,6 +3,7 @@ id: fiscal-register
 title: Mali kayıt defteri (Almanya)
 section: Dükkanı kurma
 order: 112
+public: false
 summary: "Almanya'nın §146a Abs. 4 AO kasa bildirimi için gereken kasa ve TSE bilgilerini, işletme konumuna göre gruplandırılmış şekilde kaydedin — bildirimi Mein ELSTER üzerinden kendiniz gönderirsiniz."
 routes: [/fiscal-register]
 keywords: [mali, almanya, AO, TSE, ELSTER, kassensichv, bildirim, kasa, kayıt]

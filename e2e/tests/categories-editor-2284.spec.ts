@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, clickThenReload } from './helpers';
+import { watchConsole, clickThenReload, noNativeDialogs } from './helpers';
 
 // ut-docs#2284: the category dialog's three pickers — colour swatch grid,
 // customization-group checkboxes and kitchen-station checkboxes — on top
@@ -42,15 +42,15 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
 
     // The colour grid: "no colour" pressed by default, hidden input empty.
     const noneTile = page.locator(`${GRID} .item-color-tile[data-color=""]`);
-    await expect(noneTile).toHaveAttribute('aria-pressed', 'true');
+    await expect(noneTile).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#category-color')).toHaveValue('');
 
     const name = `Colour Cat ${Date.now()}`;
     await page.locator(NAME).fill(name);
     const tealTile = page.locator(`${GRID} .item-color-tile[data-color="#0f766e"]`);
     await tealTile.click();
-    await expect(tealTile).toHaveAttribute('aria-pressed', 'true');
-    await expect(noneTile).toHaveAttribute('aria-pressed', 'false');
+    await expect(tealTile).toHaveAttribute('aria-checked', 'true');
+    await expect(noneTile).toHaveAttribute('aria-checked', 'false');
     await expect(page.locator('#category-color')).toHaveValue('#0f766e');
 
     // Tick the station created above by its label text.
@@ -70,16 +70,13 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
 
     // (b) Opening a row must never prompt: fail loudly if any confirm()
     // appears from here on.
-    page.on('dialog', async (d) => {
-      await d.dismiss();
-      throw new Error(`unexpected ${d.type()} dialog: ${d.message()}`);
-    });
+    const none = noNativeDialogs(page);
     await r.click();
     await expect(dlg).toBeVisible();
     await expect(dlg).toHaveAttribute('data-record-mode', 'edit');
     await expect(page.locator(NAME)).toHaveValue(name);
-    await expect(page.locator(`${GRID} .item-color-tile[data-color="#0f766e"]`)).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator(`${GRID} .item-color-tile[data-color=""]`)).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator(`${GRID} .item-color-tile[data-color="#0f766e"]`)).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator(`${GRID} .item-color-tile[data-color=""]`)).toHaveAttribute('aria-checked', 'false');
     await expect(stationLabel.locator('input[name="station_id"]')).toBeChecked();
 
     // Escape on the untouched, prefilled form closes silently.
@@ -89,11 +86,13 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
     // Create mode after an edit starts clean again: no colour, nothing ticked.
     await page.locator('#categories-new').click();
     await expect(dlg).toHaveAttribute('data-record-mode', 'create');
-    await expect(page.locator(`${GRID} .item-color-tile[data-color=""]`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`${GRID} .item-color-tile[data-color=""]`)).toHaveAttribute('aria-checked', 'true');
     await expect(stationLabel.locator('input[name="station_id"]')).not.toBeChecked();
     await page.locator(NAME).press('Escape');
     await expect(dlg).toBeHidden();
 
+    await expect(page.getByTestId('till-confirm')).toBeHidden();
+    none();
     assertClean();
   });
 });
