@@ -20,7 +20,7 @@ existing `hooks` entry `payment.<key>.readers`; no manifest or signing-mirror
 change) · plugin repos deferred → Stripe 1.9.0 and SumUp 1.8.0 PRs.
 
 ## What shipped
-- Migration `108_card_readers.sql` (`card_readers`, soft delete, unique
+- Migration `109_card_readers.sql` (`card_readers`, soft delete, unique
   `(method_key, reader_ref)`), checksum pinned. `internal/data/card_reader_repo.go`
   is the only SQL. Cap 32 active rows; name 1-40 chars unique among active rows;
   `reader_ref` matches `^[A-Za-z0-9_.:-]{1,128}$` (plugins put it in a provider
@@ -101,7 +101,7 @@ change) · plugin repos deferred → Stripe 1.9.0 and SumUp 1.8.0 PRs.
    the picker reads it.
 3. Importing `devicepay` from `pages` put its dead code into the deadcode
    guard: replaced by the `cardreaders.TapToPayAvailable` function variable.
-4. Migration replay tests need `IF NOT EXISTS` (pre-merge edit of 108, checksum
+4. Migration replay tests need `IF NOT EXISTS` (pre-merge edit of 109 (renumbered from 108 after merging main), checksum
    re-pinned).
 5. Several guard classifications (demo routes, head asset signature, split-tender
    msg attrs with the ADR-0160 English fallback, schema drift).
@@ -149,7 +149,7 @@ still owed (`make docs-shots` on the pinned box).
 
 Read in full: `pos_api.go` tender/lock/reversal diff, `card_reader_tender.go`,
 `card_readers_page.go`, `card_reader_repo.go`, `internal/cardreaders`,
-migration 108, the picker JS and templates, `auth/middleware.go`, the wasm
+migration 109, the picker JS and templates, `auth/middleware.go`, the wasm
 runtime's slot and timeout rules for the new event.
 
 ### Re-verified personally (money paths)

@@ -1,4 +1,4 @@
--- 108_card_readers.sql — ut-docs#6566: the per-till card reader registry.
+-- 109_card_readers.sql — ut-docs#6566: the per-till card reader registry.
 -- One row per physical (or device) card reader THIS till can take a card
 -- payment on. Till-local: never in the LAN journal, a snapshot or the cloud
 -- roster (reader ids are device specific); it travels in a full backup like

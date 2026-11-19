@@ -8213,3 +8213,16 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .card-reader-add-form { display: grid; gap: .6rem; max-inline-size: 32rem; margin-block-start: 1rem; }
 .card-reader-add-form input, .card-reader-add-form select { min-block-size: 48px; }
 .card-reader-rename-form { display: inline-flex; gap: .4rem; flex-wrap: wrap; }
+/* Order numbers (ut-docs#6663): the number a person reads out or waits for.
+   Digits only, always left-to-right; the receipt number stays small. */
+.order-no-hero { display: flex; flex-direction: column; align-items: center; margin: .5rem 0; text-align: center; color: var(--text); }
+.order-no-hero .order-no-label { color: var(--muted); font-size: .85rem; }
+.order-no-hero .order-no-value { font-size: 2.5rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }
+@media print { .order-no-hero, .order-no-hero .order-no-label, .order-no-hero .order-no-value { background: #fff; color: #000; } }
+.receipt-no-secondary { font-size: 1rem; font-weight: 400; font-family: ui-monospace, monospace; }
+.order-no-board { font-size: 1.5rem; font-weight: 700; unicode-bidi: isolate; }
+[data-display-board] .order-no-board { font-size: 2rem; }
+.order-no-journal { font-size: .85rem; color: var(--muted); unicode-bidi: isolate; }
+.tracking-order-no { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.tracking-order-no .order-no-label { color: var(--muted); font-size: .85rem; }
+.tracking-order-no .order-no-value { font-size: 3rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }

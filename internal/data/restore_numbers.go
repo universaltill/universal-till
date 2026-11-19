@@ -134,11 +134,18 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 		return out, fmt.Errorf("restore jump: receipt prefix: %w", err)
 	}
 
-	var maxReceipt int64
-	if err := tx.QueryRowContext(ctx, `
-SELECT COALESCE(MAX(CAST(substr(receipt_no, ?) AS INTEGER)), 0)
-FROM sales WHERE receipt_no LIKE ? || '%'`, len(prefix)+1, prefix).Scan(&maxReceipt); err != nil {
+	// The highest number this till ever issued under the prefix: live and
+	// archived sales and the stored counter (ut-docs#6663). Live sales alone
+	// are far below it on a till that cleared its history, and a floor
+	// under the counter would reserve nothing.
+	maxReceipt, err := maxReceiptSeq(ctx, tx, prefix)
+	if err != nil {
 		return out, fmt.Errorf("restore jump: last receipt: %w", err)
+	}
+	if last, _, ok, err := seriesLast(ctx, tx, numberKindReceipt, prefix); err != nil {
+		return out, fmt.Errorf("restore jump: receipt counter: %w", err)
+	} else if ok && last > maxReceipt {
+		maxReceipt = last
 	}
 	lastReceipt := maxReceipt
 	if fp, err := getSetting(RestoreReceiptFloorPrefixKey); err != nil {

@@ -819,7 +819,7 @@ func liveIdentityRows(dbPath string) (rows [][2]string, readable bool, err error
 // the replacement back on the numbers the dead till already issued.
 const receiptPrefixKey = "sync.receipt_prefix"
 
-var replacementMainTillPrefixRe = regexp.MustCompile(`^M[0-9a-f]{8}-$`)
+var replacementMainTillPrefixRe = regexp.MustCompile(`^(M[0-9a-f]{8}|[A-HJ-LNPQSU-Z]{1,3})-$`)
 
 // isReplacementMainTillPrefix mirrors data.IsReplacementMainTillPrefix (db
 // cannot import data); TestReplacementPrefixMatcherMirrorsData pins them.

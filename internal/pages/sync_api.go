@@ -764,7 +764,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// 2, and a number once granted is never granted to another till
 		// (revoked, withdrawn or promoted tills included). A re-joining till
 		// keeps its own when it is free (ut-docs#5058 UT-5).
-		tillID, tillNo, err := repo.EnrolTill(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
+		tillID, tillNo, tillPrefix, err := repo.EnrolTillPrefix(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -821,12 +821,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
-				"till_id":     tillID,
-				"bearer":      bearer,
-				"shop_name":   storeNameOrDefault(r.Context(), d),
-				"till_no":     tillNo,
-				"register_id": registerID,
-				"role":        role,
+				"till_id":   tillID,
+				"bearer":    bearer,
+				"shop_name": storeNameOrDefault(r.Context(), d),
+				"till_no":   tillNo,
+				// The prefix the till adopts (ut-docs#6663): "2-", or its own
+				// T<n>- on a re-join. An older till ignores it and builds T<n>-.
+				"receipt_prefix": tillPrefix,
+				"register_id":    registerID,
+				"role":           role,
 			},
 			"error": nil,
 		})
@@ -1447,6 +1450,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 			Bearer   string `json:"bearer"`
 			ShopName string `json:"shop_name"`
 			TillNo   int    `json:"till_no"`
+			// The receipt prefix the main till granted (ut-docs#6663);
+			// empty from an older main till, which grants T<till_no>-.
+			ReceiptPrefix string `json:"receipt_prefix"`
 			// The register the primary auto-provisioned for this till
 			// (ut-docs#894); empty from an older primary.
 			RegisterID string `json:"register_id"`
@@ -1529,7 +1535,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		PrimaryURL:    primaryURL,
 		TillID:        out.Data.TillID,
 		Bearer:        out.Data.Bearer,
-		ReceiptPrefix: fmt.Sprintf("T%d-", out.Data.TillNo),
+		ReceiptPrefix: joinedReceiptPrefix(out.Data.ReceiptPrefix, out.Data.TillNo),
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 		RegisterID:    out.Data.RegisterID,
@@ -1622,4 +1628,14 @@ func withdrawEnrolment(ctx context.Context, client *http.Client, base, bearer st
 	if resp.StatusCode != http.StatusNoContent {
 		logging.L().Warnf("join: withdraw the enrolment on the main till: %s", resp.Status)
 	}
+}
+
+// joinedReceiptPrefix is the prefix a joining till adopts: the one its main
+// till granted when it is a valid joined-till prefix (<n>- or T<n>-), else
+// T<n>- as an older main till grants (ut-docs#6663).
+func joinedReceiptPrefix(granted string, tillNo int) string {
+	if data.TillNumberOfPrefix(granted) > 1 {
+		return granted
+	}
+	return fmt.Sprintf("T%d-", tillNo)
 }

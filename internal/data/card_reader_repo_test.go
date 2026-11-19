@@ -22,7 +22,7 @@ func newCardReaderTestDB(t *testing.T) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
-	mig, err := os.ReadFile("../db/migrations/108_card_readers.sql")
+	mig, err := os.ReadFile("../db/migrations/109_card_readers.sql")
 	if err != nil {
 		t.Fatalf("read migration 108: %v", err)
 	}
