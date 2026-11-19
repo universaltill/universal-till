@@ -235,6 +235,8 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			"searchQuery":   q,
 			"searchResults": searchRows,
 			"errKey":        errKey,
+			// ut-docs#5607: joined till = names/destinations are managed on the main till.
+			"SyncPrimary": d.SyncPrimaryURL(r.Context()) != "",
 		})(w, r)
 	}
 

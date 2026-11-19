@@ -128,8 +128,9 @@ test.describe('All grid jiggle edit mode (ut-docs#2534)', () => {
       await longPress(tileOf(page, f.A[0]));
       await expect(page.locator('#buttons-grid')).toHaveClass(/jiggle-mode/);
       await expect(page.locator('[data-testid="jiggle-bar"]')).toBeVisible();
-      // This grid is items, not quick buttons: the bar says what it does here.
-      await expect(page.locator('.jiggle-bar-title')).toHaveText('Editing items — choose a category to drag its items into order; the pencil edits an item');
+      // This grid is items, not quick buttons: the bar says what it does here
+      // (ut-docs#3109: the full text is its own span; a phone shows a short twin).
+      await expect(page.locator('.jiggle-bar-title-full')).toHaveText('Editing items — choose a category to drag its items into order; the pencil edits an item');
       await expect(page.locator('.basket .line-name')).toHaveCount(0); // the hold's trailing click never sold
       for (const it of f.A) {
         await expect(cellOf(page, it).locator('[data-testid="tile-badge-edit"]')).toBeVisible();

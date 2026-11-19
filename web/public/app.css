@@ -984,6 +984,8 @@ body.sale-screen .session-admin-link { display: none; }
   .shifts-layout .catalog-form { padding-block: .6rem; }
   .shifts-layout .catalog-form > h3 { margin-block: 0 .25rem; }
   .shifts-close-grid { row-gap: .25rem; }
+  /* the banner above (ut-docs#5773) costs ~63px on an unnamed shop: tighter label/hint leading buys it back */
+  .shifts-close-grid > label, .shifts-close-grid > .shifts-close-hint { line-height: 1.2; }
   .shifts-layout .catalog-form > #shift-result { margin-block-start: .25rem; }
 }
 .catalog-row:hover td { background: var(--surface-2); }
@@ -1026,6 +1028,10 @@ label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
 .x-report-print-msg { flex-basis: 100%; min-block-size: 1.3rem; margin-block-end: .4rem; }
 .x-report-print-msg .error { margin-block: 0; color: var(--danger); }
 .x-report-print-msg .error::before { content: "⚠ "; }
+/* ut-docs#5877: Print slip on a /shifts History row (logical properties only). */
+.shift-slip-row { text-align: end; }
+.shift-slip-row .btn { min-block-size: 44px; min-inline-size: 44px; }
+.shift-slip-row .x-report-print-msg { display: block; flex-basis: auto; max-inline-size: 14rem; margin-inline-start: auto; white-space: normal; }
 /* ut-docs#5800: day-so-far X report (Reports -> End of day) and the shared paper preview */
 .eod-day-x { padding-block-end: .8rem; margin-block-end: .8rem; border-block-end: 1px solid var(--border, #d1d5db); }
 .eod-day-x h3 { margin-block: 0 .3rem; }
@@ -3133,6 +3139,8 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 }
 .jiggle-bar[hidden] { display: none; }
 .jiggle-bar-title { font-size: .85rem; font-weight: 600; color: var(--muted); min-inline-size: 0; }
+/* ut-docs#3109: the all-items bar's short phone title; only the phone tier shows it. */
+.jiggle-bar-title-compact { display: none; }
 /* ---------- Hidden tiles, edit-mode search add (ut-docs#2698) ----------
    A HIDDEN quick button (buttons.html's product-tile, .tile--hidden) stays
    in the rendered grid in its own spot, so edit mode can show it greyed
@@ -3315,6 +3323,18 @@ body.osk-padded #table-add-modal[open] {
   inset-block-start: .5rem;
   max-block-size: calc(100dvh - var(--osk-reserved-height, 17rem) - 1rem);
   overflow-y: auto; overscroll-behavior: contain;
+  /* ut-docs#5334: the sticky action row below covers the bottom ~5.05rem
+     (measured 80.75px at 16px root) of the scrollport; tell scrollIntoView /
+     osk.js's focus-centring to keep fields out of that band (+~.5rem). */
+  scroll-padding-block-end: 5.75rem;
+}
+@media (max-width: 480px) {
+  /* On a narrow screen the row can wrap to two lines (a long locale's button
+     labels), making it taller than the single-line 5.75rem above. */
+  body.osk-padded #elevation-modal[open],
+  body.osk-padded #hold-modal[open],
+  body.osk-padded #pfand-modal[open],
+  body.osk-padded #table-add-modal[open] { scroll-padding-block-end: 9rem; }
 }
 body.osk-padded #elevation-modal .modifier-actions,
 body.osk-padded #hold-modal .modifier-actions,
@@ -3322,6 +3342,27 @@ body.osk-padded #pfand-modal .modifier-actions,
 body.osk-padded #table-add-modal .modifier-actions {
   position: sticky; inset-block-end: -1.25rem; margin-block-end: -1.25rem;
   padding-block: .5rem 1.25rem; background: Canvas; /* the dialog's own UA background in every theme (dark.css --surface differs) */
+}
+/* ut-docs#5334: "more below" cue — a top-edge shadow on the sticky row while
+   content is still scrolled under it, fading out over the last 15% of the
+   dialog's scroll range (and absent when the dialog does not overflow).
+   Block-axis offset only, so RTL-safe. Reduced-motion and Light-effects
+   (which zero animation-duration / animation) and browsers without
+   scroll-driven animations just get no cue. */
+@supports (animation-timeline: scroll()) {
+  body.osk-padded #elevation-modal .modifier-actions,
+  body.osk-padded #hold-modal .modifier-actions,
+  body.osk-padded #pfand-modal .modifier-actions,
+  body.osk-padded #table-add-modal .modifier-actions {
+    animation: ut-actions-cue linear both; animation-timeline: scroll(nearest block);
+  }
+  /* Two layers so the cue shows in every theme: a 1px hairline in the theme's
+     own --border token (visible on a dark surface, where the black soft
+     shadow alone vanishes) plus the soft shadow. Both fade out together. */
+  @keyframes ut-actions-cue {
+    0%, 85% { box-shadow: 0 -1px 0 0 var(--border, #e2e8f0), 0 -.5rem .5rem -.4rem rgb(0 0 0 / .28); }
+    100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 rgb(0 0 0 / 0); }
+  }
 }
 .elevation-summary { font-weight: 600; margin-block: .4rem .6rem; }
 /* Satellite-role confirm dialog (ut-docs#2781): same non-modal treatment
@@ -4452,6 +4493,10 @@ body.osk-padded #table-add-modal .modifier-actions {
    order, same reasoning as /open-orders' own label floor); under pressure
    the merchant-named table chip is what truncates. */
 .parked-order .held-chip-table { flex: 0 1 auto; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ut-docs#1387: the Takeaway tag is short, fixed and translated -- it is the
+   point of the card, so it never shrinks or ellipsizes (it collapsed to an
+   empty pill at 360px sharing the table chip's rule). */
+.parked-order .held-chip-takeaway { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 40rem) {
   /* Three columns cannot share 360-390px: the order takes the row's whole
      first line and Move table + Cancel sit on a second line, still in their
@@ -4461,6 +4506,8 @@ body.osk-padded #table-add-modal .modifier-actions {
   .parked-orders-list > li:last-child { border-block-end: none; padding-block-end: 0; }
   .parked-orders-list > li > .parked-order,
   .parked-orders-list > li > .parked-order-form { grid-column: 1 / -1; }
+  /* Label + chip stay readable: the meta wraps to its own line. */
+  .parked-orders-list > li > .parked-order { flex-wrap: wrap; row-gap: .25rem; }
   .parked-orders-list > li > .parked-move,
   .parked-orders-list > li > .parked-move-placeholder,
   .parked-orders-list > li > .parked-order-cancel,
@@ -4472,7 +4519,9 @@ body.osk-padded #table-add-modal .modifier-actions {
    on the strip too). It now also appears here, so give it the quiet chip
    look its name promises rather than leaving it indistinguishable from the
    order label beside it. */
-.held-chip-table { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
+/* ut-docs#1387: the Takeaway tag on an all-takeaway held order is the same
+   pill (it never sits beside a table chip: a takeaway order has no table). */
+.held-chip-table, .held-chip-takeaway { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
 
 /* ut-docs#2138: /open-orders' own rows are real buttons, not <tr> click
    handlers (ut-docs#826's accessibility gate: tap-only with no keyboard
@@ -5076,6 +5125,7 @@ body.login-screen {
    basis. */
 .shop-name-notice { flex-wrap: wrap; }
 .shop-name-notice .pairing-notice-text { flex: 1 1 12rem; overflow-wrap: break-word; }
+.shop-name-notice a { display: inline-flex; align-items: center; min-block-size: 44px; } /* ut-docs#5989: link meets the 44px floor */
 .join-notice-form { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; }
 .join-notice-form input[type="text"] { width: auto; min-width: 8rem; margin: 0; }
 .join-notice-label { margin: 0; font-weight: 600; color: inherit; }
@@ -7526,6 +7576,20 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     margin: 0 -.8rem .75rem; padding: .1rem .8rem .6rem;
     background: var(--surface); border-block-end: 1px solid var(--border);
   }
+  /* ut-docs#3109: in edit mode the Done bar and the chip row both stick; the bar has a fixed height
+     (2-line compact title, 40px Done) so the chips can stick right under it instead of beneath it. */
+  .pos-container .products { --jiggle-chips-bar-bs: 3.5rem; }
+  .pos-container .products .jiggle-bar--chips {
+    inset-block-start: -.7rem; block-size: var(--jiggle-chips-bar-bs);
+  }
+  .pos-container .products .jiggle-bar--chips .jiggle-bar-title { line-height: 1.25; }
+  .pos-container .products .jiggle-bar--chips .jiggle-bar-title-full { display: none; }
+  .pos-container .products .jiggle-bar--chips .jiggle-bar-title-compact { display: inline; }
+  .pos-container .products #buttons-grid.jiggle-mode > .filter-chips {
+    inset-block-start: calc(-.7rem + var(--jiggle-chips-bar-bs));
+    /* the tile badges (z-index 2, later in the DOM) peek 8px above a tile and would paint over the row */
+    z-index: 3;
+  }
   .pos-container .products .filter-chips::-webkit-scrollbar { display: none; }
   .pos-container .products .filter-chips .chip {
     flex-shrink: 0; white-space: nowrap; position: relative;
@@ -8013,7 +8077,8 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 #promotions-table td.promo-dates .promo-date { display: block; }
 /* A readonly field (promotion code and customer on edit, country code) must
    not look editable: a tap on it summons no keyboard, which reads as broken. */
-.record-dialog-body input[readonly] { background: var(--surface-2); cursor: default; }
+.record-dialog-body input[readonly],
+.record-dialog-body select:disabled { background: var(--surface-2); cursor: default; opacity: 1; color: var(--text); }
 
 /* ---------- Notices from Universal Till and partners (ADR-0176, ut-docs#5366) ----------
    Spec: ut-docs docs/design/5366-till-notices. ONE notification surface
@@ -8290,3 +8355,5 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .tracking-order-no { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .tracking-order-no .order-no-label { color: var(--muted); font-size: .85rem; }
 .tracking-order-no .order-no-value { font-size: 3rem; font-weight: 700; line-height: 1.1; unicode-bidi: isolate; }
+/* ut-docs#5989: stand-alone link rows meet the 44px touch floor. */
+.manual-about-link a, a[data-testid="photo-import-link"] { display: inline-flex; align-items: center; min-block-size: 44px; }

@@ -249,7 +249,9 @@ test.describe('/plugins Uninstall and Roll back ask in the till dialog (ut-docs#
     const hits = await setup(page);
     await page.goto('/plugins');
     await page.getByRole('button', { name: 'Versions' }).click();
-    const rb = page.locator('button', { hasText: /roll back/i });
+    // The page's own button only: the till-confirm dialog's OK is also labelled "Roll back" (ut-docs#6148),
+    // and answerTillConfirm drives that one by its test id.
+    const rb = page.locator('button:not([data-testid^="till-confirm"])', { hasText: /roll back/i });
     await expect(rb).toHaveCount(1);
     await rb.click();
     await answerTillConfirm(page, 'cancel', new RegExp(`${PLUGIN.name} 1\\.0\\.0`));
