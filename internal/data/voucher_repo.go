@@ -1257,10 +1257,6 @@ func (r *POSRepo) AdjustVoucherBalance(ctx context.Context, tx *sql.Tx, in Vouch
 	if n := len([]rune(in.Reason)); n == 0 || n > maxVoucherAdjustmentReasonRunes {
 		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: reason of %d characters: %w", in.VoucherID, n, ErrVoucherAdjustmentReason)
 	}
-	if in.Now == "" {
-		in.Now = time.Now().UTC().Format(time.RFC3339)
-	}
-
 	own := tx == nil
 	if own {
 		tx, err = r.db.BeginTx(ctx, nil)
@@ -1274,6 +1270,11 @@ func (r *POSRepo) AdjustVoucherBalance(ctx context.Context, tx *sql.Tx, in Vouch
 		}()
 	}
 
+	// ut-docs#5831 (review B1): stamp AFTER the write lock is held (BeginTx),
+	// so a row that waited behind a Z is never stamped before the Z's bound.
+	if in.Now == "" {
+		in.Now = time.Now().UTC().Format(time.RFC3339)
+	}
 	before, after, err = r.adjustVoucherBalanceTx(ctx, tx, in)
 	if err != nil {
 		return Voucher{}, Voucher{}, err

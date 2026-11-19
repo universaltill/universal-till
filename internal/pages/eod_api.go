@@ -712,6 +712,49 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	return doc
 }
 
+// eodClock is the close's clock seam (ut-docs#5831): tests swap it to pin the
+// instant and to observe the wait; production uses the wall clock.
+var eodClock = struct {
+	now       func() time.Time
+	waitUntil func(context.Context, time.Time) error
+}{now: time.Now, waitUntil: waitUntilWall}
+
+// zCloseBound is the close's `to` (ADR-0066 amendment, ut-docs#5831): the
+// next whole second after now, always strictly later (an exact S.000 gives
+// S+1). Stored stamps are whole seconds, so every row recorded before the
+// close is stamped < the bound. Truncate also drops the monotonic reading.
+func zCloseBound(now time.Time) time.Time {
+	return now.Truncate(time.Second).Add(time.Second)
+}
+
+// waitUntilWall blocks until the wall clock has reached t or ctx ends.
+func waitUntilWall(ctx context.Context, t time.Time) error {
+	for {
+		d := time.Until(t)
+		if !time.Now().Before(t) {
+			return nil
+		}
+		if d <= 0 {
+			d = time.Millisecond
+		}
+		timer := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// eodDoneToday reports whether the latest close already covers now's local
+// day. A close belongs to the local day of its bound minus one second (the
+// last instant its window covers), so a close run in the last second before
+// midnight is that day's, not the next (ut-docs#5831).
+func eodDoneToday(latest *time.Time, now time.Time) bool {
+	return latest != nil && latest.Add(-time.Second).Local().Format("2006-01-02") == now.Format("2006-01-02")
+}
+
 // eodHoldDeadline bounds generateEOD's held write-lock section (M1).
 const eodHoldDeadline = 4 * time.Second
 
@@ -799,9 +842,12 @@ func eodActorName(ctx context.Context, d *common.Deps, actor string) string {
 // atomic double-close guard, ut-docs#1140 — the real correctness boundary;
 // see eodDue's pre-check below for the cheap up-front version).
 //
-// The window is [previous close, now) — ADR-0066 Decision 2/3: `from` comes
+// The window is [previous close, to) — ADR-0066 Decision 2/3: `from` comes
 // from LatestArchivedAt (nil on the till's first-ever close → unbounded
-// lower bound), `to` is time.Now() captured ONCE here so the query window,
+// lower bound), `to` is the NEXT WHOLE SECOND after the clock (zCloseBound,
+// ut-docs#5831: stored stamps are whole seconds, so a truncated `to` would
+// push same-second rows into the next close; the write lock is held until
+// the clock reaches `to`, at most one second) captured ONCE here so the query window,
 // the archived period, and the NEXT close's `from` (read back via
 // LatestArchivedAt off this row's own created_at) all agree — a second,
 // independent clock read anywhere in this path would leave a sub-second gap
@@ -857,7 +903,9 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 		})
 	}
 	defer releaseHeld()
-	to := time.Now()
+	// ut-docs#5831: the next whole second (see zCloseBound); the lock is held
+	// below until the clock reaches it.
+	to := zCloseBound(eodClock.now())
 	rep, err := readEODWindow(hctx, repo, from, to)
 	if err != nil {
 		return rep, false, err
@@ -867,6 +915,21 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// comment): a non-TR shop, or TR without the plugin active, leaves
 	// rep.FiscalDevice nil.
 	attachEODFiscalDevice(hctx, d, repo, &rep, from, to)
+	// Hold the lock until the clock reaches `to`: a row committed after the
+	// release is then stamped >= to (next Z), never inside [from, to) unseen.
+	// Overlaps the read time above, so at most one second. A ctx error (hold
+	// deadline) fails the Z itself; nothing is archived and the scheduler retries.
+	// M1: skipped when the latest close already covers this day: the archive
+	// below refuses it, nothing is written, so the lock need not be held on.
+	latest, lerr2 := repo.LatestArchivedAt(hctx, "eod")
+	if lerr2 != nil {
+		return rep, false, lerr2
+	}
+	if !eodDoneToday(latest, to.Add(-time.Second)) {
+		if werr := eodClock.waitUntil(hctx, to); werr != nil {
+			return rep, false, werr
+		}
+	}
 	releaseHeld() // every window read is done (idempotent)
 	// Who generated it, plus the annotation (ut-docs#1012). GeneratedBy
 	// resolves actor (a user id) to its display name via the same
@@ -1077,7 +1140,7 @@ func eodSchedulerTick(ctx context.Context, d *common.Deps, repo *data.POSRepo) {
 	if err != nil {
 		return
 	}
-	done := latest != nil && latest.Local().Format("2006-01-02") == now.Format("2006-01-02")
+	done := eodDoneToday(latest, now)
 	if !eodDue(now, enabled, hhmm, done) {
 		return
 	}
