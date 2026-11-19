@@ -984,6 +984,8 @@ body.sale-screen .session-admin-link { display: none; }
   .shifts-layout .catalog-form { padding-block: .6rem; }
   .shifts-layout .catalog-form > h3 { margin-block: 0 .25rem; }
   .shifts-close-grid { row-gap: .25rem; }
+  /* the banner above (ut-docs#5773) costs ~63px on an unnamed shop: tighter label/hint leading buys it back */
+  .shifts-close-grid > label, .shifts-close-grid > .shifts-close-hint { line-height: 1.2; }
   .shifts-layout .catalog-form > #shift-result { margin-block-start: .25rem; }
 }
 .catalog-row:hover td { background: var(--surface-2); }
