@@ -1,8 +1,10 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -669,5 +671,99 @@ func TestShiftsPage_HistoryEmptyRowColspan7(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts", nil))
 	if !strings.Contains(rec.Body.String(), `colspan="7" class="empty"`) {
 		t.Error("empty history row must span 7 columns")
+	}
+}
+
+// ut-docs#5782: the Current Shift card shows the cashier's name, falls back
+// to the raw id for a cashier with no users row, and to an em dash for an
+// empty id. The two <td> forms are asserted exactly so the id can't leak
+// next to a name.
+func TestShiftsPage_CurrentShowsCashierName(t *testing.T) {
+	cases := []struct {
+		name, cashier string
+		wantCell      string
+		notCell       string
+	}{
+		{"display name", "user5782", "<td>Alice Jones</td>", "<td>user5782</td>"},
+		{"unknown id falls back to raw id", "ghost", "<td>ghost</td>", ""},
+		{"empty id renders em dash", "", "<td>—</td>", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, dp := newShiftsPageTestDeps(t)
+			ctx := t.Context()
+			// Pages-test DB has FK enforcement on: drop it for the
+			// deleted-user cases (a restored/legacy DB).
+			dp.Db.SetMaxOpenConns(1)
+			if _, err := dp.Db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+				t.Fatal(err)
+			}
+			for _, q := range []string{
+				`INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`,
+				`INSERT INTO users(id,username,display_name,role) VALUES('user5782','alice','Alice Jones','cashier')`,
+			} {
+				if _, err := dp.Db.ExecContext(ctx, q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('shift1','reg1',?,?,5000)`,
+				tc.cashier, time.Now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.wantCell) {
+				t.Fatalf("expected %s in the Current card, got: %s", tc.wantCell, body)
+			}
+			if tc.notCell != "" && strings.Contains(body, tc.notCell) {
+				t.Fatalf("did not expect %s in: %s", tc.notCell, body)
+			}
+		})
+	}
+}
+
+// ut-docs#5782: cheap guard against losing the page-scoped layout hooks the
+// CSS and the e2e spec depend on.
+func TestShiftsPage_Markup5782(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/shifts", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="catalog-layout shifts-layout"`,
+		`class="shifts-history-scroll" role="region" tabindex="0" aria-labelledby="shifts-history-title"`,
+		`id="shifts-history-title"`,
+		`class="card shifts-history-card"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in /shifts markup", want)
+		}
+	}
+}
+
+// ut-docs#5877 UX F2: the two close-slip error strings must fit both the
+// close-result "Print shift slip" button and the History row "Print slip"
+// button, so neither may name a button.
+func TestShiftsLocale_CloseSlipErrorsDoNotNameAButton(t *testing.T) {
+	chdirRoot(t)
+	raw, err := os.ReadFile("web/locales/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"shifts.close_slip.print_failed", "shifts.close_slip.failed"} {
+		if strings.Contains(m[k], "Print shift slip") || strings.Contains(m[k], "Print slip") {
+			t.Errorf("%s names a button: %q", k, m[k])
+		}
 	}
 }

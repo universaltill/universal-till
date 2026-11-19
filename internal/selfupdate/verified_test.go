@@ -83,11 +83,9 @@ func newHitServer(t *testing.T, tag string, assets map[string][]byte) *hitServer
 		hs.mu.Unlock()
 		w.Write(assets[name])
 	})
-	hs.srv = httptest.NewServer(mux)
+	hs.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(hs.srv.Close)
-	old := releasesLatest
-	releasesLatest = hs.srv.URL + "/latest"
-	t.Cleanup(func() { releasesLatest = old })
+	useReleaseSource(t, hs.srv, hs.srv.URL)
 	return hs
 }
 

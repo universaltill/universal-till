@@ -141,6 +141,12 @@ func (uc *UpdateChecker) getInstalledPlugins(ctx context.Context) ([]installedPl
 	}
 	var plugins []installedPlugin
 	for _, r := range rows {
+		// ADR-0194: on the App Store channel an installed code plugin (the
+		// bundled Stripe/SumUp set) moves only with an app release, never
+		// through the marketplace.
+		if RefuseCodeRuntime(r.Runtime) != nil {
+			continue
+		}
 		plugins = append(plugins, installedPlugin{
 			ID:      r.ID,
 			Name:    r.Name,
