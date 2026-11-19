@@ -85,7 +85,7 @@ func registerShiftCloseSlipPrint(mux *http.ServeMux, d *common.Deps) {
 			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "shifts.close_slip.print_failed", cerr)
 			return
 		}
-		doc := buildShiftSlipDoc(slip, storeNameOrDefault(ctx, d), cfg.Charset)
+		doc := buildShiftSlipDoc(slip, shopNameOrEmpty(ctx, d), cfg.Charset)
 		pctx, cancel := context.WithTimeout(ctx, xPrintTimeout)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {

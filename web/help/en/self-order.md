@@ -29,7 +29,7 @@ Self-order fits counter-service cafés, bakeries and quick-service shops, where 
 
 ## What the customer sees
 
-1. **Start screen.** The shop name, "**Welcome!**" and **Tap to start**. When more than one language is installed, the languages are listed by their own names (English, Deutsch, Türkçe, العربية…), with no flags.
+1. **Start screen.** The shop name once the shop is named (until then no name is shown), "**Welcome!**" and **Tap to start**. When more than one language is installed, the languages are listed by their own names (English, Deutsch, Türkçe, العربية…), with no flags.
 
 2. **Language.** A customer who taps a language starts their order in it: buttons, headings and totals follow, and Arabic and Farsi read right to left. Item names still show in your own words. The order is saved in the shop's language, so the kitchen ticket, journal and reports don't change. The receipt the customer takes away prints in their language, whether it prints by itself at the kiosk or a cashier taps Print after taking payment for a pay-at-counter order, unless your receipt printer can't print that language's letters; then it prints in the shop's language. A reprint from the journal is the shop's copy. When the order ends or the kiosk resets, the start screen is back in the shop's language.
 3. **Browse.** Chips along the top show **All** and one chip per category. There is no search box on this screen, by design. Tap an item to add it.
