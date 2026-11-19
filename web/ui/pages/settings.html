@@ -931,6 +931,9 @@
       <span id="pay-default-msg" aria-live="polite"></span>
     </label>
   </form>
+  <!-- ut-docs#6566: the per-till card reader list (manager page; the route
+       answers a cashier with 403, this link is not the gate). -->
+  <p id="settings-card-readers" class="set-row"><a class="btn secondary" data-testid="card-readers-link" href="/settings/card-readers">{{ T "card_reader.settings.title" }}</a></p>
   <p class="muted" class="set-gap">{{ T "settings.payments.fees_help" }}</p>
   {{ range .payFees }}
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"

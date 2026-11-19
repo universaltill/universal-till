@@ -1,0 +1,8 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "card_reader.settings.title" }} {{ helpLink "card-readers" }}</h1>
+</div>
+<div class="card" id="card-readers-card">
+  {{ template "card_reader_settings_body.html" .readers }}
+</div>
+{{ end }}

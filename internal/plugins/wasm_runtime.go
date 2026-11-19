@@ -413,7 +413,10 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			// waits on the plugin's decline/approve answer before letting the
 			// refund proceed (ut-docs#434).
 			for _, evName := range events {
-				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
+				// ut-docs#6566: payment.<key>.readers, the card reader registry's
+				// read-only state op, is awaited by the reader picker.
+				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") ||
+					(strings.HasPrefix(evName, "payment.") && strings.HasSuffix(evName, ".readers")) {
 					bus.SetEventMode(evName, Blocking)
 				}
 			}

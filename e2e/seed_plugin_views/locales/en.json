@@ -16,5 +16,7 @@
   "e2eviews.job.intro": "Run a sample long task.",
   "e2eviews.job.run": "Run task",
   "e2eviews.job.progress": "Sample task halfway",
-  "e2eviews.job.done": "Sample task finished"
+  "e2eviews.job.done": "Sample task finished",
+  "e2eviews.paged_a.title": "Paged table A",
+  "e2eviews.paged_b.title": "Paged table B"
 }
