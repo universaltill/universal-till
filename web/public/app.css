@@ -8109,7 +8109,6 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   .order-type-option[aria-checked="true"]:focus-visible { outline-color: HighlightText; box-shadow: none; }
 }
 
-<<<<<<< HEAD
 /* ut-docs#5852: till stock-take on /inventory. Count mode swaps the stock
    card's contents in place (no dialog, so the status bar stays reachable).
    Logical properties only. */
@@ -8150,7 +8149,6 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
   .stocktake-table th { letter-spacing: 0; overflow-wrap: anywhere; }
   .stocktake-input { inline-size: 4.5rem; }
 }
-=======
 /* About screen (ut-docs#6402): a plain list of full-width touch links. */
 .about-links { list-style: none; margin: 1rem 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; max-inline-size: 28rem; }
 .about-links .btn { display: block; text-align: start; }
@@ -8159,4 +8157,3 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .about-addresses dt { font-weight: 600; margin-block-start: .5rem; }
 .about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
 .about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }
->>>>>>> origin/main

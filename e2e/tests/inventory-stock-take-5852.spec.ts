@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { setOskMode, watchConsole } from './helpers';
 
 // ut-docs#5852: till-side stock-take of one location on /inventory.
 // Count mode swaps #stock-levels-card in place (no dialog), keeps typed
@@ -131,4 +131,32 @@ test.describe('till stock-take (ut-docs#5852)', () => {
       expect(g.tL, `review table left ${g.tL} vs card left ${g.cL}`).toBeGreaterThanOrEqual(g.cL - 0.5);
     });
   }
+
+  // UX decision (card comment): with the on-screen keyboard open the Counted
+  // field being typed into must sit above the sticky Review bar, which itself
+  // sits above the keyboard (osk.js clearKeyboard).
+  test('OSK open: Counted field clears the sticky bar at 1024x600', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await setOskMode(page, 'on');
+    try {
+      await startCounting(page);
+      const rows = page.locator('#stocktake-table .stocktake-input');
+      const n = await rows.count();
+      const target = rows.nth(Math.min(n - 1, 3));
+      await target.click();
+      await expect(page.locator('#osk.osk-open')).toBeVisible();
+      await page.waitForTimeout(400);
+      const m = await page.evaluate(() => {
+        const inp = document.activeElement!.getBoundingClientRect();
+        return { inpTop: inp.top, inpBottom: inp.bottom,
+          barTop: document.querySelector('.stocktake-bar')!.getBoundingClientRect().top,
+          oskTop: document.getElementById('osk')!.getBoundingClientRect().top };
+      });
+      expect(m.inpTop).toBeGreaterThanOrEqual(0);
+      expect(m.inpBottom, `field bottom ${m.inpBottom} vs bar top ${m.barTop}`).toBeLessThanOrEqual(m.barTop);
+      expect(m.barTop).toBeLessThanOrEqual(m.oskTop);
+    } finally {
+      await setOskMode(page, 'auto');
+    }
+  });
 });
