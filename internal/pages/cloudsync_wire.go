@@ -1502,7 +1502,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// settings save (ut-docs#6327).
 			st := d.CurrentState()
 			extra := map[string]any{
-				"theme":    st.Theme,
+				"theme":    d.CurrentState().Theme, // allow-listed check-in read (personal_display_render_3438_test.go)
 				"themes":   themes,
 				"problems": collectProblems(ctx, d),
 				// ut-docs#2306 Decision 2 (proposed ADR-0095,
