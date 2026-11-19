@@ -1741,6 +1741,7 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
 		ListingID:     listingID,
 		CanonicalType: listingType,
+		TrustTier:     listingCatalogTier(d, listingID),
 		Version:       version,
 		MerchantID:    effCfg.Marketplace.ClientID,
 		StoreID:       effCfg.Marketplace.StoreID,
