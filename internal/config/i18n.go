@@ -253,11 +253,11 @@ type TranslationEntry struct {
 // baseLocale is always scanned too, the same way T's resolution chain
 // unconditionally falls back to it (ut-docs#995) — otherwise a shop whose
 // store.locale (ut-docs#861) is a non-English, overlay-only locale (a
-// language-pack plugin) missing a key that en.json has never gets that key
+// language bundle) missing a key that en.json has never gets that key
 // listed at all, so the translation editor has no row for a translator to
 // fill in (ut-docs#997). Shipped locales can't drift from en.json
-// (guard-i18n.sh), but a language-pack plugin legitimately can
-// (lang-pack-drift CI is advisory, not blocking, by design).
+// (guard-i18n.sh), but a language bundle legitimately can: it may lag English
+// (ADR-0160 section 2), so a locale may miss keys en.json has.
 func (i *I18n) Entries(locale string) []TranslationEntry {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

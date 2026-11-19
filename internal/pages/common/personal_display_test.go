@@ -28,8 +28,8 @@ type pdFixture struct {
 
 // newPDFixture builds a Deps over a real migrated DB with two operators —
 // a manager and a cashier — and the till-wide theme/browsing mode set.
-// Migration 061 registers personal_display in permission_actions but grants
-// it to no role — the shipped state until part 3 of #3149 adds grants.
+// Migration 061 registers personal_display in permission_actions; migration
+// 102 (ut-docs#3440) grants it to admin/manager/super_admin, not cashier.
 func newPDFixture(t *testing.T) pdFixture {
 	t.Helper()
 	t.Setenv("UT_AUTH", "")
@@ -69,7 +69,7 @@ func (f pdFixture) grant(t *testing.T, role string, granted bool) {
 	if granted {
 		g = 1
 	}
-	if _, err := f.sql.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, 'personal_display', ?)`, role, g); err != nil {
+	if _, err := f.sql.Exec(`INSERT OR REPLACE INTO role_permissions (role, action, granted) VALUES (?, 'personal_display', ?)`, role, g); err != nil {
 		t.Fatalf("grant personal_display to %s: %v", role, err)
 	}
 }
@@ -143,6 +143,10 @@ func TestResolved_NilAuthSvcFallsThrough(t *testing.T) {
 func TestResolved_ActionNotRegisteredFallsThrough(t *testing.T) {
 	f := newPDFixture(t)
 	f.setPersonal(t, "u-mgr")
+	// 102 grants reference the action row (FK), so drop them first.
+	if _, err := f.sql.Exec(`DELETE FROM role_permissions WHERE action = 'personal_display'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.sql.Exec(`DELETE FROM permission_actions WHERE action = 'personal_display'`); err != nil {
 		t.Fatal(err)
 	}
@@ -152,19 +156,46 @@ func TestResolved_ActionNotRegisteredFallsThrough(t *testing.T) {
 	f.assertTill(t, "u-mgr", "manager")
 }
 
-// The state migration 061 ships: personal_display registered, granted to
-// no role. Every built-in role falls through even with a personal row —
-// this is what keeps part 1 a zero-behaviour-change card.
-func TestResolved_AsShippedNoRoleGrantedFallsThrough(t *testing.T) {
+// The shipped state (061 registers, 102 grants): admin, manager and
+// super_admin resolve a personal row; cashier is sale-only and falls
+// through to the till value even with a row.
+func TestResolved_AsShippedCashierOnlyFallsThrough(t *testing.T) {
 	f := newPDFixture(t)
 	f.registerAction(t)
 	var grants int
-	if err := f.sql.QueryRow(`SELECT COUNT(*) FROM role_permissions WHERE action = 'personal_display'`).Scan(&grants); err != nil || grants != 0 {
-		t.Fatalf("precondition: personal_display role_permissions rows = %d (err %v), want 0", grants, err)
+	if err := f.sql.QueryRow(`SELECT COUNT(*) FROM role_permissions WHERE action = 'personal_display' AND granted = 1`).Scan(&grants); err != nil || grants != 3 {
+		t.Fatalf("precondition: personal_display grants = %d (err %v), want 3 (migration 102)", grants, err)
 	}
 	f.setPersonal(t, "u-mgr")
-	for _, role := range []string{"cashier", "manager", "admin", "super_admin"} {
-		f.assertTill(t, "u-mgr", role)
+	f.assertTill(t, "u-mgr", "cashier")
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		f.assertPersonal(t, "u-mgr", role)
+	}
+}
+
+// ut-docs#3440: a saved theme that is no longer installed must not leave a
+// page on the bare base stylesheet — the till theme renders instead.
+func TestResolvedTheme_UnavailablePersonalThemeFallsBack(t *testing.T) {
+	f := newPDFixture(t)
+	f.setPersonal(t, "u-mgr")
+	f.d.ThemeAvailable = func(_ context.Context, key string) bool { return false }
+	theme, mode := f.resolve(t, "u-mgr", "manager")
+	if theme != pdTillTheme {
+		t.Fatalf("theme = %q, want till theme %q", theme, pdTillTheme)
+	}
+	if mode != BrowsingModeStripOverflow {
+		t.Fatalf("browsing mode = %q, want the personal one (the hook only checks themes)", mode)
+	}
+}
+
+func TestResolvedTheme_HookTrueKeepsPersonal(t *testing.T) {
+	f := newPDFixture(t)
+	f.setPersonal(t, "u-mgr")
+	var asked string
+	f.d.ThemeAvailable = func(_ context.Context, key string) bool { asked = key; return true }
+	f.assertPersonal(t, "u-mgr", "manager")
+	if asked != "personal-theme" {
+		t.Fatalf("hook asked about %q, want %q", asked, "personal-theme")
 	}
 }
 

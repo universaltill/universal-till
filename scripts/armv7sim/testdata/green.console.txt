@@ -1,0 +1,64 @@
+UTSIM READY kernel=4.9.0-13-armmp-lpae filter_len=194 filter_sha256=a07ae56188a587ad1def205eda378778f27be8c4e223545f3539ddac07c5bf1a
+UTSIM BEGIN control-pristine-nofilter
+[INFO] logging initialised with level=INFO
+[INFO] Universal Till POS starting...
+[INFO] startup: version=dev os=linux/arm data_dir="/tmp/armv7smoke1007369842" pos_env="none (process environment and compiled defaults)" cl
+initialising plugins for env=
+[INFO] Marketplace catalog repository initialized (endpoint: https://cloud.universaltill.com/api)
+[INFO] effects level: host detection light (webkitgtk,cores=2,ram=2g)
+[INFO] Auto-started 0 plugins (0 failed)
+[RelatedItems] rebuilt 0 co-occurrence pairs
+[LAN TLS] serving TLS on the same port
+listening on [::]:8080
+[DEBUG] Marketplace request: GET https://cloud.universaltill.com/api/v1/catalog/plugins?capability=language
+[WARN] setup wizard: language catalog fetch failed (serving bundled only): request failed: Get "https://cloud.universaltill.com/api/v1/cata
+[DEBUG] Marketplace request: GET https://cloud.universaltill.com/api/v1/catalog/plugins?capability=tax
+[WARN] setup wizard: tax catalog fetch failed (serving nothing): request failed: Get "https://cloud.universaltill.com/api/v1/catalog/plugin
+shutting down HTTP server...
+OK 200
+
+UTSIM END control-pristine-nofilter exited=true code=0 signaled=false signal=0 timeout=false
+UTSIM BEGIN pristine-filtered
+[INFO] logging initialised with level=INFO
+[INFO] Universal Till POS starting...
+SIGSYS: bad system call
+PC=0x29f14 m=2 sigcode=1
+
+goroutine 20 gp=0x8d3aa08 m=2 mp=0x8c4a808 [syscall]:
+syscall.Syscall6(0x18d, 0xffffff9c, 0xb6b40018, 0x900, 0x7ff, 0xb6b90310, 0x0)
+r0      0xffffff9c
+r1      0xb6b40018
+r2      0x900
+r3      0x7ff
+r4      0xb6b90310
+r5      0x0
+r6      0xb6b30020
+r7      0x18d
+r8      0xb6b4001c
+r9      0x1
+r10     0x8d3aa08
+PC=0x29f14 m=0 sigcode=0
+
+goroutine 0 gp=0x4a0e568 m=0 mp=0x4a0f5a8 [idle]:
+r7      0x15a
+UTSIM END pristine-filtered exited=false code=-1 signaled=true signal=6 timeout=false
+UTSIM BEGIN fork-filtered
+[INFO] logging initialised with level=INFO
+[INFO] Universal Till POS starting...
+[INFO] startup: version=dev os=linux/arm data_dir="/tmp/armv7smoke373961836" pos_env="none (process environment and compiled defaults)" clo
+initialising plugins for env=
+[INFO] Marketplace catalog repository initialized (endpoint: https://cloud.universaltill.com/api)
+[INFO] effects level: host detection light (webkitgtk,cores=2,ram=2g)
+[INFO] Auto-started 0 plugins (0 failed)
+[RelatedItems] rebuilt 0 co-occurrence pairs
+[LAN TLS] serving TLS on the same port
+listening on [::]:8080
+[DEBUG] Marketplace request: GET https://cloud.universaltill.com/api/v1/catalog/plugins?capability=language
+[WARN] setup wizard: language catalog fetch failed (serving bundled only): request failed: Get "https://cloud.universaltill.com/api/v1/cata
+[DEBUG] Marketplace request: GET https://cloud.universaltill.com/api/v1/catalog/plugins?capability=tax
+[WARN] setup wizard: tax catalog fetch failed (serving nothing): request failed: Get "https://cloud.universaltill.com/api/v1/catalog/plugin
+shutting down HTTP server...
+OK 200
+
+UTSIM END fork-filtered exited=true code=0 signaled=false signal=0 timeout=false
+UTSIM DONE

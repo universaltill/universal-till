@@ -164,7 +164,7 @@ test.describe('confirm verb labels (ut-docs#6117)', () => {
     const none = noNativeDialogs(page);
     await page.setViewportSize({ width: 360, height: 640 });
     await page.goto('/');
-    // German-length labels, forced: the de pack may not be loaded locally.
+    // German-length labels, forced: the German overlay may not be loaded locally.
     await probe(page,
       '<button id="g" hx-post="/__ut6117/g" hx-confirm="Bestellung wirklich stornieren?" '
       + 'data-confirm-ok="Bestellung stornieren" data-confirm-dismiss="Bestellung behalten">g</button>');

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, expectGermanIfPackLoaded } from './helpers';
+import { watchConsole, expectGermanIfOverlayLoaded } from './helpers';
 
 // ut-docs#4628: at 800x1280 (10" tablet portrait) the two-pane Settings shell
 // kept the section nav beside the panel, leaving the panel ~355px wide: the
@@ -9,7 +9,7 @@ import { watchConsole, expectGermanIfPackLoaded } from './helpers';
 // button) so the section gets the full width. At 1024x600 (landscape kiosk)
 // the panes stay side by side.
 //
-// German is a language-pack plugin: without the overlay, ?lang=de renders
+// German is a Weblate language bundle: without the overlay, ?lang=de renders
 // English (see portrait-no-clip-sweep-3060.spec.ts), so the de cases prove real
 // German layout only where the overlay is set. That is ASSERTED when
 // UT_E2E_I18N_OVERLAY_DIR/UT_TEST_I18N_OVERLAY_DIR is set (always in CI,
@@ -30,7 +30,7 @@ for (const vp of VIEWPORTS) {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto(`/settings?lang=${lang}`);
       await expect(page.locator('html')).toHaveAttribute('dir', lang === 'fa' ? 'rtl' : 'ltr');
-      if (lang === 'de') await expectGermanIfPackLoaded(page);
+      if (lang === 'de') await expectGermanIfOverlayLoaded(page);
 
       const sections = await page.locator('#settings-nav-index li').evaluateAll((lis) =>
         lis.map((li) => li.getAttribute('data-key') || '').filter((k) => k && document.getElementById(k)));

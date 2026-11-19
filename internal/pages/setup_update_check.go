@@ -112,6 +112,9 @@ func setupUpdateApplyFailedHTML(locale string) string {
 // only window as POST /api/setup/language — NeedsFirstBoot is the gate.
 func setupUpdateCheckHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil || !firstBoot {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -154,6 +157,9 @@ func setupUpdateCheckHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc
 // setupUpdateCheckHandler above.
 func setupUpdateApplyHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if refuseInAppUpdate(w, r) { // ADR-0194 §2.3: store builds are updated by the store
+			return
+		}
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil || !firstBoot {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)

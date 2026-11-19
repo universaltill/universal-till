@@ -152,3 +152,72 @@ func TestRestoreSwapPending(t *testing.T) {
 		t.Fatal("journal not seen")
 	}
 }
+
+// ut-docs#5068 × #5089: ApplyPendingRestore records the owed number jump
+// before the swap. A crash between the renames that completes the staged
+// restore must keep owing it; one that undoes the restore must not, or the
+// till would jump its receipt and Z numbers for a restore that never landed.
+func TestRecoverInterruptedRestoreKeepsNumberJumpOnlyWhenRestoreLands(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		withPending bool
+		wantOwed    bool
+	}{
+		{"finished", true, true},
+		{"undone", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, _ := crashedSwap(t, tc.withPending)
+			if err := os.WriteFile(numberJumpPendingPath(path), []byte("token\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecoverInterruptedRestore(path); err != nil {
+				t.Fatalf("recover: %v", err)
+			}
+			if got := NumberJumpPending(path); got != tc.wantOwed {
+				t.Fatalf("number jump owed = %v, want %v", got, tc.wantOwed)
+			}
+		})
+	}
+}
+
+// Review of universal-till#2181: a restore whose marker went missing (power
+// loss, or a failed second rename on an older build) and that the journal
+// then finishes still owes its jump; a LAN join finished the same way never
+// does.
+func TestRecoverInterruptedRestoreReowesLostNumberJump(t *testing.T) {
+	path, _ := crashedSwap(t, true)
+	if NumberJumpPending(path) {
+		t.Fatal("setup: marker present")
+	}
+	if applied, err := RecoverInterruptedRestore(path); err != nil || !applied {
+		t.Fatalf("recover: %v %v", applied, err)
+	}
+	if !NumberJumpPending(path) || NumberJumpToken(path) == "" {
+		t.Fatalf("finished backup restore owes no jump (token %q)", NumberJumpToken(path))
+	}
+
+	joinPath, _ := crashedSwap(t, true)
+	if err := os.WriteFile(ReplicaIdentityPath(joinPath), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecoverInterruptedRestore(joinPath); err != nil {
+		t.Fatalf("recover join: %v", err)
+	}
+	if NumberJumpPending(joinPath) {
+		t.Fatal("a finished LAN join must owe no number jump")
+	}
+}
+
+// An empty marker still yields a token, and the same one on every read, so
+// the jump stays idempotent across boots.
+func TestNumberJumpTokenFallsBackForEmptyMarker(t *testing.T) {
+	path := testDBPath(t)
+	if err := os.WriteFile(numberJumpPendingPath(path), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, b := NumberJumpToken(path), NumberJumpToken(path)
+	if a == "" || a != b {
+		t.Fatalf("tokens %q / %q, want one stable non-empty token", a, b)
+	}
+}

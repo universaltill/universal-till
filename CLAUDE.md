@@ -92,13 +92,10 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   properties (`margin-inline-start`, `text-align: start`), never left/right
   (`scripts/ci/guard-rtl-logical-css.sh`; shrink-only
   `rtl-css-baseline.txt`; reviewed exception `rtl:allow <reason>`; #4375).
-- A new `en.json` key needs follow-up PRs in every `ut-plugin-language-*`
-  pack `scripts/ci/check-lang-pack-drift.sh` checks — see that script's
-  `PACKS` array for the current list; never hard-code pack names here.
-  `lang-pack-drift.yml` blocks on `push` to `main` and is advisory on PRs
-  touching `en.json` (its `::warning::` names the pack repos — #1857); it is
-  `paths:`-scoped, so its absence on other PRs is normal. Never make it a
-  required check. `scripts/ci/check-lang-pack-drift.test.sh` self-tests it.
+- Other languages come only from Weblate (`ut-translations`, ADR-0160):
+  never add or edit a translation in a code PR; a wrong string is fixed in
+  Weblate. e2e and the de render audit read German from ut-translations
+  (`scripts/ci/build-locale-overlay.sh`).
 - Validate all external input (users, plugins, devices).
 
 ## Compliance wording (ADR-0040, `scripts/ci/guard-compliance-claims.sh`)

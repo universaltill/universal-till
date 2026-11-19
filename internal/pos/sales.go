@@ -367,7 +367,11 @@ type PaymentInput struct {
 	// Card-present reconciliation fields (ut-docs#543) -- optional,
 	// provider-agnostic metadata a locally-attached card terminal (e.g. a
 	// future ZVT integration, ut-docs#515) supplies. All empty for every
-	// payment method today (cash, Stripe, SumUp, QR-pay, demo).
+	// payment method today (cash, QR-pay, demo), except TraceID: a payment
+	// plugin's authorize answer may carry `transaction_ref` (Stripe
+	// PaymentIntent id, SumUp transaction id), which completeTender stores
+	// here and returns on payment.<key>.refund as original_payments
+	// (ut-docs#6438, ADR-0196). Never AuthCode: that is printed on receipts.
 	//
 	// MaskedPAN must NEVER be a full card number -- scheme + last 4
 	// digits only (e.g. "VISA •••• 4242"). CompleteSale rejects anything
