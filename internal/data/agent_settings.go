@@ -111,8 +111,8 @@ var AgentSettings = []AgentSetting{
 	// cloud's set_till_setting set (ut-docs#2289, #3390); the rest are
 	// read-only to every remote caller until a later slice gives them a
 	// validation rule.
-	{Key: "registration.stopped", Region: "registration",
-		LabelKey: "settings.registration.title", HintKey: "settings.registration.stop_help",
+	{Key: "registration.stopped", Region: "settings-privacy",
+		LabelKey: "settings.registration.send_usage_facts", HintKey: "settings.registration.stop_help",
 		Kind: AgentSettingBool, On: "true", Off: "false",
 		Type: SettingTypeBool, Tier: SettingTierSensitive}, // cloud usage facts: a destination decision, shop-wide (ADR-0200 decision 6)
 	{Key: "update.auto_enabled", Region: "settings-update",

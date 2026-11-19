@@ -28,15 +28,15 @@ Alongside the code, the till shows a QR code and a link to the claim page: scan 
 
 The Google Play and App Store versions of the app show the code as text only: type it in on another device.
 
-## Automatic registration and the Cloud record
+## Automatic registration and the Privacy card
 
-Every till registers itself once setup is finished, with no question to answer and no button to press. It does this in the background, never during a sale, and keeps trying (waiting longer between tries, up to ten minutes) until the cloud answers; a till that is offline at the end of setup carries on selling and registers when it is back online. The setup wizard's last screen, and Settings → Till registration → **Cloud record**, say exactly what the till tells Universal Till:
+Every till registers itself once setup is finished, with no question to answer and no button to press. It does this in the background, never during a sale, and keeps trying (waiting longer between tries, up to ten minutes) until the cloud answers; a till that is offline at the end of setup carries on selling and registers when it is back online. The setup wizard's last screen, and Settings → **Privacy**, say exactly what the till tells Universal Till:
 
-- Each time the till starts: its software version, system type, country, language, the shop name you chose, a random till code and when it last started. Your address is not sent.
+- Each time the till starts: its software version, release channel (how this copy was installed), system type, country, language, the shop name you chose, a random till code and when it last started. Your address is not sent.
 - When the till updates itself, or a plugin is installed, updated or removed: which version or plugin changed, and when. The till keeps these in a short queue and sends them with its next check-in; it never sends anything when it is switched off.
 - Never your sales, customers, staff or items.
 
-A till set up before this existed shows the same notice once, in Settings → Till registration → Cloud record; a link in the status bar points there, and the till registers only after the notice was shown. A manager can press **Stop sending** there: the till then registers nothing and reports nothing about itself (cloud features you use still connect), and the card says **Paused** until you press **Resume sending**. Stopping does not delete what the cloud already holds; ask us to delete it. The card also shows whether the till is registered and when the cloud last answered it. The notice wording is awaiting final approval.
+A till set up before this existed shows the same notice once, in Settings → Privacy; a link in the status bar points there, and the till registers only after the notice was shown. A manager can switch off **Send usage facts** there: the till then registers nothing and reports nothing about itself (cloud features you use still connect), and the card says **Paused** until you switch it on again. Stopping does not delete what the cloud already holds; ask us to delete it. The card also shows whether the till is registered and when the cloud last answered it.
 
 ## Subscription
 

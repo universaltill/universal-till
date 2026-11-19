@@ -45,6 +45,7 @@ func TestAgentSettingsCatalogue_CoversEverySettingsRegion_4129(t *testing.T) {
 // schedule, till roles) that slice 2 ("remaining entries by region") adds.
 // A NEW card must get a registry entry, not an entry here.
 var settingsCardsWithoutRegistryKey = map[string]string{
+	"registration":         "action/status card (pairing, claim code), no key; its one key (registration.stopped) moved to the Privacy card",
 	"subscription":         "billing: tier never, not a settings key",
 	"settings-issuereport": "action card (bug report), no key",
 	"settings-diagnostics": "slice 2: diagnostics consent",

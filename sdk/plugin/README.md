@@ -34,6 +34,13 @@ func main() {
   from an older till — fall back to "en"). The ask runs in the import sandbox — only
   `FileImportHostFunctions` act, on a till and in the cloud alike — so test
   with `FakeHost.FileImport = true`.
+- **Asked settings options** (`"options_ask": true` on a `choice`, ADR-0121
+  S5): hook `ui.settings.options.ask` (+ `events:receive`), decode the ask into
+  `plugin.SettingsOptionsRequest` (`Key`, `Values` = the form's current
+  non-secret values), answer `plugin.SettingsOptionsAnswer` — at most 32
+  options, value 1..64 bytes with no comma, label plain text up to 128 bytes;
+  a nil list is an empty list. The till gives it 5 s and drops a malformed
+  answer whole.
 
 Reference (every host function, permissions, limits): ut-docs
 `reference/plugin-host-functions.md`.
