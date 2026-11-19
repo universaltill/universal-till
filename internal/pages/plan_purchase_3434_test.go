@@ -386,3 +386,30 @@ func TestPlanPurchaseIOS_HelpClaimHasNoPurchase(t *testing.T) {
 		t.Errorf("non-iOS help search no longer finds claim by its purchase paragraph: %s", rs)
 	}
 }
+
+// ut-docs#5868: on iOS the closed #subscription-panel dialog (and the script
+// that opens it) must not be in the rendered DOM at all, so no "Renew or
+// change plan" wording ships in the iOS page. Other platforms keep it for a
+// manager, and a cashier never gets it.
+func TestPlanPurchase5868_SubscriptionPanelDialogInDOM(t *testing.T) {
+	panelMarks := []string{`id="subscription-panel"`, `subscription-panel-loading`, `Renew or change plan`}
+
+	withPlanPurchasePlatform(t, "ios")
+	mux, _ := checkNowMux(t)
+	_, body := ppGet(mux, "/settings", mgrUser)
+	for _, bad := range panelMarks {
+		if strings.Contains(body, bad) {
+			t.Errorf("iOS manager page still contains %q", bad)
+		}
+	}
+
+	for _, goos := range []string{"linux", "windows", "darwin", "android"} {
+		withPlanPurchasePlatform(t, goos)
+		_, body = ppGet(mux, "/settings", mgrUser)
+		for _, want := range panelMarks {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s manager page lost %q", goos, want)
+			}
+		}
+	}
+}

@@ -1,0 +1,8 @@
+{{ define "content" }}
+{{/* ut-docs#6402: the open-source licences, inside the till layout so there is always a way back (a raw .txt in a new window is a dead end on a kiosk or the desktop webview). */}}
+<div class="card about-screen" id="about-licences">
+  <p><a class="btn btn-touch" data-testid="about-licences-back" href="/about">{{ T "about.back_link" }}</a></p>
+  <h1>{{ T "about.licences_link" }}</h1>
+  <pre class="about-licences-text" data-testid="about-licences-text" dir="ltr" tabindex="0">{{ .licencesText }}</pre>
+</div>
+{{ end }}

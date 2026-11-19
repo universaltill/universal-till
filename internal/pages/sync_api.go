@@ -412,6 +412,40 @@ func warnPlainHTTPRefused(tillID string) {
 	}
 }
 
+// plainRefusedHeader names the stable response header a main till sets on
+// its 403 to a plain-HTTP peer handshake, so the joining till can tell the
+// person what to do instead of a generic "refused" (ut-docs#4451). The status
+// and body text stay as they were; other callers rely on the 403.
+const (
+	plainRefusedHeader = "X-UT-Plain-Refused"
+	// The whole fleet is pinned TLS: plain HTTP is closed (ADR-0114 §7).
+	plainRefusedTLSOnly = "tls-only"
+	// A satellite enrols over TLS only; the joining till reached a main
+	// till that does serve TLS.
+	plainRefusedSatelliteTLSOnly = "satellite-tls-only"
+	// A satellite enrols over TLS only, but this main till cannot serve TLS
+	// at all (e.g. its key is unreadable).
+	plainRefusedSatelliteNoTLS = "satellite-no-tls"
+)
+
+// writePlainRefusal answers 403 with msg and the reason header; the header
+// is set before the status is written. All plain-HTTP refusals go through
+// it so they cannot drift.
+func writePlainRefusal(w http.ResponseWriter, reason, msg string) {
+	w.Header().Set(plainRefusedHeader, reason)
+	http.Error(w, msg, http.StatusForbidden)
+}
+
+// writeSatelliteRefusal refuses a plain-HTTP satellite enrolment, telling
+// "this main till cannot serve TLS" from "retry over TLS".
+func writeSatelliteRefusal(w http.ResponseWriter) {
+	reason := plainRefusedSatelliteTLSOnly
+	if lantls.Serving() == nil {
+		reason = plainRefusedSatelliteNoTLS
+	}
+	writePlainRefusal(w, reason, "a satellite enrols over pinned TLS only")
+}
+
 // refusePlainSyncWhenClosed closes plain-HTTP peer sync entirely once the
 // whole fleet has moved to pinned TLS (ADR-0114 §7, ut-docs#4411): this till
 // serves TLS, it has at least one enrolled till, and every enrolled till has
@@ -444,7 +478,7 @@ func refusePlainSyncWhenClosed(w http.ResponseWriter, r *http.Request, repo *dat
 	if plainClosureRefusedWarned.CompareAndSwap(false, true) {
 		logging.L().Warnf("sync: refused a plain-HTTP %s %s: every paired till uses pinned TLS, so plain-HTTP peer sync is closed (ADR-0114 §7)", r.Method, r.URL.Path)
 	}
-	http.Error(w, "plain HTTP sync is closed on this till; use pinned TLS on the same port", http.StatusForbidden)
+	writePlainRefusal(w, plainRefusedTLSOnly, "plain HTTP sync is closed on this till; use pinned TLS on the same port")
 	return true
 }
 
@@ -652,7 +686,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// till can retry the same token over TLS.
 		if r.TLS == nil {
 			if role == data.TillRoleSatellite {
-				http.Error(w, "a satellite enrols over pinned TLS only", http.StatusForbidden)
+				writeSatelliteRefusal(w)
 				return
 			}
 			// A read error fails closed before the token is spent: answering
@@ -664,7 +698,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				return
 			}
 			if ok && approved == data.TillRoleSatellite {
-				http.Error(w, "a satellite enrols over pinned TLS only", http.StatusForbidden)
+				writeSatelliteRefusal(w)
 				return
 			}
 		}
@@ -936,7 +970,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// identity (keeping the receipt prefix — numbering must not collide
 	// with the old primary) so the push/pull loops stop on their next tick
 	// and the Tills page can pair new replicas from here. Documented
-	// procedure: docs architecture/lan-sync.md "Promoting a replica".
+	// procedure: docs architecture/lan-sync.md "Promoting a replica". It also
+	// queues the icons this till holds that the cloud never received, in the
+	// same transaction (ut-docs#6240).
 	mux.HandleFunc("POST /api/sync/promote", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		locale := httpx.ResolveLocale(w, r)
@@ -975,7 +1011,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// ut-docs#5074 M6: what this till had sent its main till, read before
 		// the identity (and with it the push cursor) is cleared.
 		pushedUpTo, _, _ := d.Settings.Get(r.Context(), "sync.push_cursor")
-		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
+		if err := data.NewSettingsRepo(d.Db).PromoteReplica(r.Context()); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
@@ -1160,6 +1196,11 @@ const (
 	joinErrNameInvalid
 	// ut-docs#5898: this till's name is longer than maxTillNameRunes.
 	joinErrNameTooLong
+	// ut-docs#4451: the main till refused a plain-HTTP handshake and said
+	// why (plainRefusedHeader).
+	joinErrTLSOnly
+	joinErrSatelliteTLSOnly
+	joinErrSatelliteNoTLS
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1185,6 +1226,27 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrMainReplaced:           "tills.join_error.replaced",
 	joinErrNameInvalid:            keyNameInvalidCharacters,
 	joinErrNameTooLong:            keyTillNameTooLong,
+	joinErrTLSOnly:                "tills.join_error.tls_only",
+	joinErrSatelliteTLSOnly:       "tills.join_error.satellite_tls_only",
+	joinErrSatelliteNoTLS:         "tills.join_error.main_no_tls",
+}
+
+// plainRefusalKind maps a main till's plain-HTTP refusal (403 plus a known
+// plainRefusedHeader value) to the join error to show. Any other response,
+// including a 403 without the header or with an unknown value, is not one.
+func plainRefusalKind(resp *http.Response) (joinErrKind, bool) {
+	if resp.StatusCode != http.StatusForbidden {
+		return 0, false
+	}
+	switch resp.Header.Get(plainRefusedHeader) {
+	case plainRefusedTLSOnly:
+		return joinErrTLSOnly, true
+	case plainRefusedSatelliteTLSOnly:
+		return joinErrSatelliteTLSOnly, true
+	case plainRefusedSatelliteNoTLS:
+		return joinErrSatelliteNoTLS, true
+	}
+	return 0, false
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1424,6 +1486,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// /api/sync/enroll — 409 there means something unrelated ("pair new
 		// tills on the primary till"), which stays in the generic catch-all.
 		return "", &joinError{kind: joinErrNameTaken}
+	}
+	if k, ok := plainRefusalKind(resp); ok {
+		return "", &joinError{kind: k}
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
 		return "", &joinError{kind: joinErrRefused}

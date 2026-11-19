@@ -51,6 +51,11 @@ enum TillServer {
     static func start() throws -> URL {
         let dir = try dataDirectory()
         MobileSetDeviceModel(deviceModel())
+        // ADR-0194 / Apple 2.5.2: this app is the App Store channel. Say so
+        // explicitly, once, before the server starts (first call wins), so the
+        // latch is consumed and the till never downloads code. An unset
+        // channel already fails closed to appstore; this makes it deliberate.
+        MobileSetInstallChannel("appstore")
         // Bonjour instead of Go's raw multicast, which iOS refuses without
         // Apple's multicast entitlement (ut-docs#3218).
         MobileSetDiscoveryBridge(BonjourBridge.shared)

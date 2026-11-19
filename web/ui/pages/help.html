@@ -27,6 +27,8 @@
     </form>
 
     {{ template "help_nav" . }}
+    {{/* ut-docs#6402: reachable by every role; privacy notice, terms, licences, account deletion. */}}
+    <p class="manual-about-link"><a href="/about" data-testid="help-about-link">{{ T "about.more_link" }}</a></p>
   </aside>
 
   <div class="manual-panel" id="manual-panel">
