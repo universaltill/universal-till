@@ -65,6 +65,11 @@ func (e *tillEnv) snapshot() string {
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	// The files are made at real time but the uploader's clock is e.now:
+	// age them against the test clock (ADR/ut-docs#5523 effective time).
+	if err := os.Chtimes(p, e.now, e.now); err != nil {
+		e.t.Fatal(err)
+	}
 	return p
 }
 
@@ -192,7 +197,7 @@ func TestUploadHonoursTwentyHourRuleAndSameSnapshot(t *testing.T) {
 	e.snapshot()
 	e.round(false)
 	e.now = e.now.Add(2 * time.Hour)
-	e.snapshotCopy("unitill-pos-20991231-050000.db", time.Now().Add(time.Hour))
+	e.snapshotCopy("unitill-pos-20991231-050000.db", e.now)
 	e.round(false) // success 2 h ago: nothing
 	if e.cloud.begins != 1 {
 		t.Fatalf("begins = %d, want 1", e.cloud.begins)
@@ -210,6 +215,41 @@ func TestUploadHonoursTwentyHourRuleAndSameSnapshot(t *testing.T) {
 	e.round(true) // "Upload now" does not re-send what the cloud already holds
 	if e.cloud.begins != 2 {
 		t.Fatalf("forced round re-uploaded the same snapshot: begins = %d", e.cloud.begins)
+	}
+}
+
+func TestUploadSendsNameStampWhenMtimeIsInTheFuture(t *testing.T) {
+	e := newTill(t)
+	stamp := e.now.Add(-48 * time.Hour)
+	p := e.snapshot()
+	named := filepath.Join(e.dir, "unitill-pos-"+stamp.Format("20060102-150405")+".db")
+	if err := os.Rename(p, named); err != nil {
+		t.Fatal(err)
+	}
+	future := e.now.Add(72 * time.Hour)
+	if err := os.Chtimes(named, future, future); err != nil {
+		t.Fatal(err)
+	}
+	e.round(false)
+	if got, want := e.onlyBackup().begin.TakenAt, stamp.UTC().Format(time.RFC3339); got != want {
+		t.Fatalf("TakenAt = %s, want the name stamp %s", got, want)
+	}
+}
+
+func TestUploadSkipsOwnSnapshotOfUnknownAge(t *testing.T) {
+	e := newTill(t)
+	p := e.snapshot()
+	named := filepath.Join(e.dir, "unitill-pos-20991231-050000.db")
+	if err := os.Rename(p, named); err != nil {
+		t.Fatal(err)
+	}
+	future := e.now.Add(72 * time.Hour)
+	if err := os.Chtimes(named, future, future); err != nil {
+		t.Fatal(err)
+	}
+	e.round(false)
+	if e.cloud.begins != 0 {
+		t.Fatalf("begins = %d, want 0 for an unknown-age snapshot", e.cloud.begins)
 	}
 }
 

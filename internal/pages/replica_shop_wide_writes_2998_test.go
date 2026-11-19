@@ -165,3 +165,15 @@ func TestBackfillLocaleConfirmed_AdditionalTillNoOp(t *testing.T) {
 		t.Fatalf("%s backfilled on an additional till", common.KeyLocaleConfirmed)
 	}
 }
+
+// ut-docs#5751: the regional-locale boot backfill is main-till only.
+func TestRegionBackfill_AdditionalTillNoOp(t *testing.T) {
+	dp := seedRegionTill(t, "GB", "en-US", false)
+	followMainTill(t, dp)
+
+	backfillRegionalLocaleFromCountry(t.Context(), dp)
+
+	if got := storedLocale(t, dp); got != "en-US" {
+		t.Fatalf("store.locale = %q on an additional till, want en-US", got)
+	}
+}
