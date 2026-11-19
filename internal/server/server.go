@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,7 +170,9 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 			defer wg.Done()
 			var hk housekeeping.Schedule
 			run := func() {
-				runDailyBackup(db, cfg.DBPath, paths.Data("public", "assets"))
+				if !docsShotsNoDailyBackup(os.Getenv(DocsShotsNoDailyBackupEnv)) {
+					runDailyBackup(db, cfg.DBPath, paths.Data("public", "assets"))
+				}
 				runHousekeeping(&hk, db, cfg.DBPath, time.Now())
 			}
 			ticker := time.NewTicker(time.Hour)
@@ -323,6 +326,23 @@ const ProblemKeyDailyBackupFailed = "backup.daily_failed"
 
 // snapshotWithAssets is a seam so tests can simulate a photo failure.
 var snapshotWithAssets = dbpkg.SnapshotWithAssets
+
+// DocsShotsNoDailyBackupEnv, when set to a true boolean, stops the till's
+// timed daily backup. It is harness-only: set ONLY by the docs-shots
+// Playwright webServer env (e2e/playwright.docs.config.ts), never by Go,
+// run-till*.sh or production. The daily snapshot fires ~2 minutes after boot,
+// so without it the `backups-card` manual shot shows "No backups yet" or a
+// file named with the wall-clock time depending on how long the run took
+// (ut-docs#6566: CI determinism failure). The "Back up now" button is unaffected.
+const DocsShotsNoDailyBackupEnv = "UT_DOCS_SHOTS_NO_DAILY_BACKUP"
+
+// docsShotsNoDailyBackup resolves the pin from a raw env value; anything that
+// is not a true boolean (empty, a typo) is false, so a typo never disables a
+// real backup.
+func docsShotsNoDailyBackup(v string) bool {
+	b, err := strconv.ParseBool(strings.TrimSpace(v))
+	return err == nil && b
+}
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
 // already exists, then prunes snapshots older than the retention days.

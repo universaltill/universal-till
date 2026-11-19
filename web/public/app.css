@@ -8191,6 +8191,61 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .about-addresses dd { margin-inline-start: 0; overflow-wrap: anywhere; }
 .about-licences-text { white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 70vh; overflow: auto; font-size: .8rem; }
 
+/* ut-docs#6566: the "Which reader?" picker (web/ui/partials/card_reader_picker.html)
+   and the manager's card readers page. Logical properties only (RTL, ar/fa).
+   Rows are >=56px (finger-sized, above the 48px floor) and never truncate a
+   name; states are icon + text, never colour alone. The action bar is sticky
+   so Confirm stays on screen with many readers (the list scrolls, touch-
+   action: pan-y, click handlers only: no pointer/drag handlers). */
+.pay-grid[hidden], .card-reader-mount[hidden] { display: none; }
+.card-reader-mount { display: flex; flex-direction: column; min-block-size: 0; }
+/* O2: while the picker is open the tender footer and Offline toggle step aside */
+.payment-overlay.card-reader-picking .tender-footer, .payment-overlay.card-reader-picking .offline-toggle { display: none; }
+.pay-btn .pay-btn-sub { display: block; font-size: .8rem; font-weight: 400; }
+.card-reader-picker { display: flex; flex-direction: column; gap: .5rem; min-block-size: 0; }
+.card-reader-picker h3 { margin: 0; min-block-size: 3rem; display: flex; align-items: center; }
+.card-reader-list { display: flex; flex-direction: column; gap: .5rem; overflow-y: auto; touch-action: pan-y;
+                    max-block-size: 50vh; min-block-size: 0; }
+.card-reader-option { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+                      flex: none; /* never shrink in the scrolling list: 5+ readers squashed rows and spilled the text */
+                      gap: .25rem .75rem; inline-size: 100%; min-block-size: 56px; padding-block: .5rem; padding-inline: .9rem;
+                      text-align: start; background: var(--surface); color: var(--text);
+                      border: 1px solid var(--control-border); border-radius: .5rem; font: inherit; cursor: pointer; }
+.card-reader-option[aria-checked="true"] { border: 2px solid var(--accent); background: var(--surface-2); }
+.card-reader-option[aria-checked="true"] .card-reader-name::before { content: "\2713\00a0"; }
+.card-reader-option[aria-disabled="true"] { border-style: dashed; background: var(--surface-2); cursor: not-allowed; }
+.card-reader-option:focus-visible { outline: 3px solid var(--focus-border); outline-offset: 2px; }
+.card-reader-main { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 12rem; }
+.card-reader-name { font-weight: 700; overflow-wrap: anywhere; }
+.card-reader-kind { font-size: .85rem; overflow-wrap: anywhere; }
+.card-reader-state { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; white-space: nowrap; }
+.card-reader-state[data-state="offline"], .card-reader-state[data-state="needs_setup"] { color: var(--danger); }
+.card-reader-icon { flex: none; }
+.card-reader-reason { flex-basis: 100%; font-size: .85rem; color: var(--text); overflow-wrap: anywhere; }
+.card-reader-reason:empty { display: none; }
+.card-reader-actions { position: sticky; inset-block-end: 0; display: flex; flex-wrap: wrap; gap: .5rem;
+                       padding-block: .5rem; background: var(--surface); }
+.card-reader-actions .card-reader-confirm { flex: 2 1 12rem; min-block-size: 56px; }
+.card-reader-actions .card-reader-back { flex: 1 1 8rem; min-block-size: 56px; }
+.card-reader-live { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 480px) {
+  .card-reader-actions { flex-direction: column; }
+  .card-reader-actions .card-reader-confirm, .card-reader-actions .card-reader-back { flex-basis: auto; inline-size: 100%; }
+}
+/* Settings page */
+.card-reader-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
+                            padding-block: .6rem; border-block-end: 1px solid var(--border); }
+.card-reader-settings-row .card-reader-main { flex: 1 1 14rem; }
+.card-reader-settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.card-reader-settings-actions .btn { min-block-size: 48px; min-inline-size: 48px; }
+/* O3: the whole row is the target (>=48px) and the control itself is bigger than the browser's 13px box */
+.card-reader-settings-actions label { display: flex; align-items: center; gap: .6rem; min-block-size: 48px; flex: 1 1 100%; cursor: pointer; }
+.card-reader-settings-actions label input[type="checkbox"] { inline-size: 1.75rem; block-size: 1.75rem; flex: none; margin: 0; }
+.card-reader-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.card-reader-tag { font-size: .8rem; padding-block: .1rem; padding-inline: .45rem; border: 1px solid var(--control-border); border-radius: 999px; }
+.card-reader-add-form { display: grid; gap: .6rem; max-inline-size: 32rem; margin-block-start: 1rem; }
+.card-reader-add-form input, .card-reader-add-form select { min-block-size: 48px; }
+.card-reader-rename-form { display: inline-flex; gap: .4rem; flex-wrap: wrap; }
 /* Order numbers (ut-docs#6663): the number a person reads out or waits for.
    Digits only, always left-to-right; the receipt number stays small. */
 .order-no-hero { display: flex; flex-direction: column; align-items: center; margin: .5rem 0; text-align: center; color: var(--text); }
