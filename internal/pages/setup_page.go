@@ -3,7 +3,9 @@ package pages
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,56 +22,21 @@ import (
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
-// autoRegisterAttemptTimeout bounds the ONE synchronous store-registration
-// attempt an explicit opt-in triggers (ADR-0071, ut-docs#879) — the wizard's
-// "yes" on its last screen, and Settings toggling the same choice on later.
-// A sibling of setupBasePluginAttemptTimeout rather than a reuse of it: the
-// same 5s offline-first bound, but named for what it actually times, so the
-// two can drift independently if either ever needs to.
-const autoRegisterAttemptTimeout = 5 * time.Second
-
-// autoRegisterForSetup is POST /api/setup's ADR-0071 hook: persist the
-// operator's explicit opt-in answer FIRST (before any network attempt, same
-// mid-request-crash reasoning installBasePluginsForSetup documents for its
-// own pending-list persistence), then — on an explicit yes only — make one
-// best-effort, time-boxed EnsureRegistered call. Never blocks or fails the
-// wizard's own response: the persist error is logged and swallowed, and
-// EnsureRegistered already logs-and-swallows its own registration failure.
-// A failed attempt is NOT retried in the background: enroll.Init's loop
-// deliberately never registers a store (see its own comment — it only fetches
-// the signing key and registers a device under an ALREADY-registered store),
-// so an opted-in till that was offline at wizard completion simply falls back
-// to ADR-0015's lazy triggers — the next plugin-store visit/install, or
-// Settings → "Register now". Settings' enrolment card shows the till as not
-// registered until then, which is the operator's signal. On no/absent, no
-// call at all — ADR-0015's lazy registration stays exactly as it is.
-func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn, acceptedTerms bool, locale string) {
-	// ut-docs#4720: registering sends the cloud-terms acceptance, so an
-	// opt-in without it (neither ticked now nor accepted before) is not a
-	// valid opt-in: it is saved as "false", logged, and nothing is sent.
-	// A tick records the acceptance first, then registers as before.
-	if optIn && !acceptedTerms && !termsAlreadyAccepted(ctx, d) {
-		logging.L().Infof("setup wizard: auto-register opted in without accepting the cloud terms; not registering")
-		optIn = false
-	} else if optIn && !termsAlreadyAccepted(ctx, d) {
-		if err := enroll.RecordTermsAcceptance(ctx, d.Settings, locale); err != nil {
-			logging.L().Errorf("setup wizard: record terms acceptance: %v", err)
-			optIn = false
-		}
-	}
-	val := "false"
-	if optIn {
-		val = "true"
-	}
-	if err := d.Settings.Set(ctx, common.KeyAutoRegisterOptIn, val); err != nil {
-		logging.L().Errorf("setup wizard: persist auto-register opt-in: %v", err)
-	}
-	if !optIn {
+// registrationAfterSetup is POST /api/setup's ADR-0200 (ut-docs#6559) hook.
+// The wizard's last screen shows the "what this till tells us" notice and
+// this request is its Finish button, so the notice has been shown: remember
+// when (before anything is sent), then wake the background registration loop
+// (enroll.autoRegisterLoop). It never calls the cloud itself, so the wizard
+// finishes with no network and no delay; the loop registers in the
+// background, retrying with capped backoff until it succeeds. A failure to
+// store the notice is logged and swallowed: the loop then simply keeps
+// waiting, and nothing is sent.
+func registrationAfterSetup(ctx context.Context, d *common.Deps) {
+	if err := enroll.MarkNoticeShown(ctx, d.Settings, time.Now()); err != nil {
+		logging.L().Errorf("setup wizard: remember that the registration notice was shown: %v", err)
 		return
 	}
-	attemptCtx, cancel := context.WithTimeout(ctx, autoRegisterAttemptTimeout)
-	defer cancel()
-	checkinAfterRegistration(d, enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)) // ADR-0148 §2
+	enroll.KickAutoRegister()
 }
 
 // setupCountry prefills currency + tax for the wizard's country step (docs
@@ -219,18 +186,19 @@ const keyStoreNameRequired = "setup.error.store_name_required"
 // An existing key, shared with the pairing dialog's action-neutral wording.
 const keyTillNameRequired = "tills.pairing.error.name_required_field"
 
-// maxStoreNameRunes matches the shop-name inputs' maxlength="60".
-const maxStoreNameRunes = 60
+// keyNameInvalidCharacters is the shared refusal for a name with control,
+// line-break or invisible characters (ut-docs#5858, till names ut-docs#5862).
+const keyNameInvalidCharacters = "common.error.name_invalid_characters"
 
 // isRefusedStoreName reports whether a first-boot shop name must be refused:
 // blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
 // field's own placeholder text in the request's language, or longer than
-// the field's maxlength (enforced here too: the form's cap is client-side
-// only). Shared by the wizard and the bare POST /api/auth/setup fallback
+// config.MaxStoreNameRunes (the field's maxlength, enforced here too: the
+// form's cap is client-side only). Shared by the wizard and the bare POST /api/auth/setup fallback
 // (ut-docs#3096, #3116).
 func isRefusedStoreName(r *http.Request, name string) bool {
 	return config.IsPlaceholderStoreName(name) ||
-		utf8.RuneCountInString(strings.TrimSpace(name)) > maxStoreNameRunes ||
+		utf8.RuneCountInString(strings.TrimSpace(name)) > config.MaxStoreNameRunes ||
 		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
 }
 
@@ -305,6 +273,58 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if r.Method == http.MethodPost {
 			code = strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
 		}
+		// ut-docs#1180: ADR-0025 decision 4 — a fiscal (tax) plugin match,
+		// PROMPTED never silently installed. Same TTL-cached-catalog
+		// posture as installableLangs just above.
+		//
+		// ADR-0172: the tile is no longer tied to one hard-coded country.
+		// One tile is rendered per country the catalog names a prompted
+		// (not auto-installable) tax listing for, and step 3 reveals the one
+		// for the country the operator actually picks (client-side, no
+		// round-trip), so a hand-picked country never depends on the
+		// OS-detected one at first load (ut-docs#1460). A country whose
+		// listing is eligible for the automatic install has no tile and no
+		// step: the plugin installs itself when setup finishes.
+		//
+		// Bounded and cached like installableLangs' own catalog fetch just
+		// above, and never on the checkout path, so this doesn't violate
+		// offline-first. Since ut-docs#1512 an unreachable catalog also puts
+		// the (Offline) tile's markup in the DOM for the one country whose
+		// step already hosts the fiscal identity form.
+		taxPlugins := setupInstallableTaxPlugins(r.Context(), d)
+		data["installableTaxPlugins"] = taxPlugins
+		// The countries whose step 3 has something to show: the fiscal
+		// identity form's country plus every country with a tile. Step 2's Next
+		// skips step 3 for any other country.
+		stepCountries := []string{tseProvisionCountry}
+		for _, t := range taxPlugins {
+			if !slices.Contains(stepCountries, t.Country) {
+				stepCountries = append(stepCountries, t.Country)
+			}
+		}
+		data["taxStepCountries"] = stepCountries
+		data["tseCountry"] = tseProvisionCountry
+		for _, t := range taxPlugins {
+			// ut-docs#3244: the operator's consent is queued and the tile
+			// shows a not-yet-installable state: say so.
+			if t.Offline && setupTaxPluginQueued(r.Context(), d, t.Country) {
+				// ut-docs#3243: offline, and the operator already consented (a
+				// reload, or a resume without the redirect's query param) —
+				// show the queued note, not a fresh "Install when online" offer.
+				t.Pending = true
+			}
+		}
+		// ut-docs#3244: a country with no tile but a still-queued consent
+		// (the catalog publishes no listing, #3210 keeps the spec pending):
+		// step 3 says so.
+		queued := []string{}
+		pending, _ := loadPendingBasePlugins(r.Context(), d)
+		for _, sp := range pending {
+			if sp.CanonicalType == "tax" && sp.Prompted && !slices.ContainsFunc(taxPlugins, func(t *installableTaxPlugin) bool { return t.Country == sp.Market }) && setupTaxPluginQueued(r.Context(), d, sp.Market) {
+				queued = append(queued, sp.Market)
+			}
+		}
+		data["taxPluginQueuedCountries"] = queued
 		// ut-docs#1180 (review): POST /api/setup/tax-plugin redirects back
 		// here after an explicit install tap. Its tile lives on step 3, not
 		// step 1 like the language tiles, so a bare /setup redirect would
@@ -314,18 +334,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// along with anything typed on step 3. Carry it back over the
 		// redirect as a query param instead — no stored state, same posture
 		// as install_pending — and resume on the step the button lives on.
-		// Only a country that is BOTH tax-mapped and a real wizard country is
-		// honoured, so the param can't steer the wizard anywhere the tile
+		// Only a country that is BOTH a real wizard country and has something on
+		// step 3 (stepCountries) is honoured, so the param can't steer the wizard anywhere the tile
 		// itself couldn't.
 		resumeTaxCountry := ""
 		if r.Method == http.MethodGet {
 			if q := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tax_country"))); q != "" {
-				if _, mapped := countryTaxLocale[q]; mapped {
-					for _, c := range wizardCountryCodes(countries) {
-						if c == q {
-							code, resumeTaxCountry = q, q
-							break
-						}
+				for _, c := range wizardCountryCodes(countries) {
+					if c == q && slices.Contains(stepCountries, q) {
+						code, resumeTaxCountry = q, q
+						break
 					}
 				}
 			}
@@ -361,60 +379,6 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if p := r.URL.Query().Get("install_pending"); isPlausibleLocale(p) {
 			data["installPendingLang"] = p
 		}
-		// ut-docs#1180: ADR-0025 decision 4 — a fiscal (tax) plugin match,
-		// PROMPTED never silently installed. Same TTL-cached-catalog
-		// posture as installableLangs just above.
-		//
-		// ut-docs#1460: resolved against tseProvisionCountry (the fixed
-		// Germany country code step 3 itself is scoped to, ADR-0053), NOT
-		// the wizard's currently-detected/posted `code`. This tile only
-		// ever renders inside step 3, which is Germany-only regardless of
-		// `code` (setup.html's `country === 'DE' ? 3 : 4` — the ONLY thing
-		// that keeps this now-unconditionally-rendered markup off a non-DE
-		// operator's screen; see TestSetupWizardShowsTaxPluginInstallTileForDEOnly's
-		// pinned assertion on that exact ternary), so hardcoding the
-		// country here doesn't leak the tile anywhere else. The bug this
-		// replaced: resolving against `code` meant the tile depended on the
-		// OS-detected country at the wizard's very first GET (ut-docs#590)
-		// — step 2's country picker is pure client-side Alpine with no
-		// server round-trip on a tile click, so a till whose OS
-		// locale/timezone wasn't already German-tagged (the pilot café's
-		// TECLAST tablet: en-GB/Europe/London) never got this tile's markup
-		// into the DOM at all; no later hand-picked country could reveal
-		// markup that was never rendered. Alpine's own `x-show="step ===
-		// 3"` is what reveals it once the operator actually reaches step 3
-		// — this only has to be resolved once, not re-resolved per pick.
-		//
-		// Side effect worth knowing about: this now runs the tax-catalog
-		// fetch (setupTaxCatalogEntries, bounded by
-		// setupTaxCatalogFetchTimeout, 5m TTL-cached) unconditionally on
-		// every first-boot render, not only when the OS happened to detect
-		// Germany — setupInstallableTaxPlugin used to short-circuit on the
-		// countryTaxLocale miss before ever calling it. Bounded and cached,
-		// same as installableLangs' own catalog fetch just above, and never
-		// on the checkout path, so this doesn't violate offline-first — but
-		// it is a small first-boot latency regression for the common
-		// non-German till, worth knowing if setup ever feels slower. Since
-		// ut-docs#1512 an unreachable catalog also puts the (Offline) tile's
-		// markup in the DOM for every till; step 3's Germany-only routing
-		// still keeps it off a non-DE operator's screen.
-		//
-		// The second return (catalogUnavailable) is deliberately NOT put in
-		// data: ut-docs#1512 carries the offline state on the tile itself
-		// (installableTaxPlugin.Offline), which drives step 3's "couldn't
-		// check yet — we'll install it when you're online" note and button.
-		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, tseProvisionCountry)
-		data["installableTaxPlugin"] = taxPlugin
-		// ut-docs#3244: no tile to render (no catalog match), but the
-		// operator's consent is still queued — step 3 says so.
-		if taxPlugin == nil {
-			data["taxPluginQueued"] = setupTaxPluginQueued(r.Context(), d, tseProvisionCountry)
-		} else if taxPlugin.Offline && setupTaxPluginQueued(r.Context(), d, tseProvisionCountry) {
-			// ut-docs#3243: offline, and the operator already consented (a
-			// reload, or a resume without the redirect's query param) —
-			// show the queued note, not a fresh "Install when online" offer.
-			data["taxPluginPending"] = true
-		}
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
 		// redirect (query param, not stored state) — shows the "still
 		// installing in the background" note once, on the page that
@@ -429,6 +393,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// required; startStep below sends them on to step 4 (where "Skip for
 		// now" always meant to land them), not back to step 3, while still
 		// surfacing the stronger skip_warning copy on the step they land on.
+		data["taxResumeCountry"] = resumeTaxCountry
 		taxPluginSkipAck := resumeTaxCountry != "" && r.URL.Query().Get("tax_plugin_skip_ack") == "1"
 		data["taxPluginSkipped"] = taxPluginSkipAck
 		// Which step an error re-render lands on: business-identity errors
@@ -441,7 +406,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired {
+		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired || errKey == keyNameInvalidCharacters {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		if errKey == keyCloudExpired {
@@ -481,15 +446,13 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#4146: likewise a refused till name (a control
 			// character, too long) is not echoed: the field would look
 			// filled while every resubmit fails with "required".
-			if errKey != keyTillNameRequired {
+			if errKey != keyTillNameRequired && errKey != keyNameInvalidCharacters {
 				data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 			}
 		}
 		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
 		// parallel within the 2 s slot budget; "" when none answers.
 		data["pluginSlot"] = renderSetupSlot(r, d, httpx.RequestLocale(r))
-		// ut-docs#4720: the cloud-terms accept step under the opt-in.
-		data["terms"] = termsView(r.Context(), d, httpx.RequestLocale(r))
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
@@ -671,7 +634,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// checked before anything is persisted.
 		tillName, tillNameErr := validateTillName(r.PostFormValue("till_name"))
 		if tillNameErr != nil {
-			renderWizard(w, r, keyTillNameRequired, "")
+			key := keyTillNameRequired
+			if errors.Is(tillNameErr, data.ErrNameInvalidCharacters) { // ut-docs#5862
+				key = keyNameInvalidCharacters
+			}
+			renderWizard(w, r, key, "")
 			return
 		}
 
@@ -886,14 +853,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				requestOperatorCheckin(d, operatorCheckinWindow)
 				cloudSyncing = true
 			}
-		} else {
-			autoRegisterForSetup(r.Context(), d,
-				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1",
-				// The language the terms were shown in (termsView renders from the
-				// request locale), not st.Locale, which is the shop country's
-				// default by now (ut-docs#4720 review).
-				termsTicked(r), httpx.RequestLocale(r))
 		}
+		// The notice is on the last screen of both paths; a till that just
+		// paired already holds an identity, so its loop ends at once.
+		registrationAfterSetup(r.Context(), d)
 		cloud.finish()
 		if cloudSyncing {
 			// ut-docs#5127: registration was held until the pairing was

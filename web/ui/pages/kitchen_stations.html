@@ -1,6 +1,8 @@
 {{/* ut-docs#5575: adopts the ut-docs#2010 list/edit dialog standard
      (ut-docs/reference/list-and-dialog-pattern.md), copying promotions.html's
-     shape. The row holds only the Edit pencil; every field lives in the
+     shape. The whole row opens the dialog (data-record-open); the name is a real
+     button carrying data-record-edit — the keyboard path and the focus-return
+     target (ut-docs#6046). Every field lives in the
      record dialog, prefilled client-side from the row's data-field-*
      attributes (so it opens instantly and works offline). The routing and
      override sections below the list are unchanged. */}}
@@ -24,6 +26,8 @@
   {{ if not .stations }}
   <p class="muted">{{ T "kitchenstations.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#6056: one page-level description for every row-tap name button (never per row). */}}
+  <span id="kitchen-stations-row-edit-hint" class="visually-hidden" hidden>{{ T "common.edit" }}</span>
   <div class="list-scroll">
   <table class="table" id="kitchen-stations-table">
     <thead>
@@ -32,7 +36,6 @@
         <th>{{ T "kitchenstations.col.destination" }}</th>
         <th>{{ T "kitchenstations.col.address" }}</th>
         <th>{{ T "kitchenstations.col.status" }}</th>
-        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -45,7 +48,7 @@
           data-field-destination_type="{{ .DestinationType }}"
           data-field-printer_address="{{ .PrinterAddress }}"
           data-field-active="{{ if .Enabled }}1{{ else }}0{{ end }}">
-        <td><bdi dir="auto">{{ .Name }}</bdi></td>
+        <td><button type="button" class="record-row-open" data-record-edit aria-describedby="kitchen-stations-row-edit-hint"><span class="record-row-name"><bdi dir="auto">{{ .Name }}</bdi></span></button></td>
         <td>
           {{ if eq .DestinationType "display" }}{{ T "kitchenstations.destination.display" }}{{ else if eq .DestinationType "both" }}{{ T "kitchenstations.destination.both" }}{{ else }}{{ T "kitchenstations.destination.printer" }}{{ end }}
           {{/* Kitchen display (ut-docs#544): only an ENABLED display-capable
@@ -57,16 +60,10 @@
         </td>
         <td><bdi dir="ltr">{{ .PrinterAddress }}</bdi></td>
         <td data-card-keep>{{ if .Enabled }}{{ T "kitchenstations.active" }}{{ else }}<span class="muted">{{ T "kitchenstations.inactive" }}</span>{{ end }}</td>
-        <td class="list-actions">
-          <button type="button" class="btn secondary btn-icon" data-record-edit
-                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-          </button>
-        </td>
       </tr>
       {{ end }}
       <tr id="kitchen-stations-no-results" class="list-empty-row" hidden>
-        <td colspan="5">{{ T "common.no_results" }}</td>
+        <td colspan="4">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>
@@ -327,7 +324,7 @@
      data-record-when="active=…" matches the opened row). */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}"
+      hx-confirm="{{ T "kitchenstations.deactivate_confirm" }}" data-confirm-ok="{{ T "kitchenstations.deactivate" }}"
       hx-boost="true" hx-target="#kitchen-station-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"

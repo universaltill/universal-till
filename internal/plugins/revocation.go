@@ -39,12 +39,11 @@ type RevocationEntry struct {
 	PluginID   string `json:"pluginId"`
 	ManifestID string `json:"manifestId,omitempty"`
 	Version    string `json:"version,omitempty"` // Empty means all versions
-	// Action is "disable" or "delete" on the wire. Decoded for
-	// completeness (it's part of the real contract) but not yet acted on
-	// differently — processRevocation treats every entry as a disable,
-	// same as before this fix. Differentiating "delete" (a real uninstall,
-	// internal/plugins.UninstallPlugin) from "disable" is a deliberate
-	// follow-up, not folded into this security fix.
+	// Action is "disable" or "delete" on the wire. "delete" is reserved and
+	// is treated as "disable" (ut-docs#5658): revocation only disables, the
+	// till never uninstalls on its own (it would destroy settings, grants
+	// and storage on an unattended poll), and nothing sends "delete" today.
+	// The value is kept in the audit row as requested_action.
 	Action string `json:"action"`
 	Reason string `json:"reason"`
 }
@@ -118,6 +117,17 @@ func (rc *RevocationChecker) SyncRevocations(ctx context.Context) (int, error) {
 
 	log.Infof("[RevocationChecker] Fetched %d revocation entries", len(feed.Revocations))
 
+	// ut-docs#5658: persist the feed as the durable revoked-release set
+	// BEFORE any per-entry disable, so the record exists even when nothing
+	// is installed. Replacing the whole set is also the lift: a release the
+	// feed no longer lists loses its record (it never re-enables anything).
+	// Any failure here aborts the poll and keeps the old records (fail
+	// closed); the fetch/decode errors above return before this point, so a
+	// network failure never touches them either.
+	if err := rc.recordRevocations(ctx, feed.Revocations); err != nil {
+		return 0, err
+	}
+
 	// Process each revocation. revokedCount counts genuine disables only —
 	// processRevocation's (bool, error) split is what makes that possible:
 	// "not installed"/"already disabled" are legitimate no-ops (nil error,
@@ -146,6 +156,50 @@ func (rc *RevocationChecker) SyncRevocations(ctx context.Context) (int, error) {
 	}
 
 	return revokedCount, nil
+}
+
+// recordRevocations stores the feed as the durable revoked-release set.
+func (rc *RevocationChecker) recordRevocations(ctx context.Context, entries []RevocationEntry) error {
+	repo := data.NewPluginRepo(rc.db)
+	rows := make([]data.RevokedRelease, 0, len(entries))
+	for _, e := range entries {
+		id, err := rc.recordID(ctx, e)
+		if err != nil {
+			return err
+		}
+		if id == "" {
+			continue
+		}
+		rows = append(rows, data.RevokedRelease{ManifestID: id, Version: e.Version, ListingID: e.PluginID, Reason: e.Reason, Action: e.Action})
+	}
+	removed, err := repo.ReplaceRevokedReleases(ctx, rows, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to record revocations: %w", err)
+	}
+	if removed > 0 {
+		logging.L().Infof("[RevocationChecker] lifted %d revoked release(s) no longer in the feed", removed)
+	}
+	return nil
+}
+
+// recordID is the manifest id a feed entry is recorded under: ManifestID,
+// else the id from plugin_install_status for the listing UUID, else
+// PluginID. It needs no plugins row.
+func (rc *RevocationChecker) recordID(ctx context.Context, entry RevocationEntry) (string, error) {
+	if entry.ManifestID != "" {
+		return entry.ManifestID, nil
+	}
+	if entry.PluginID == "" {
+		return "", nil
+	}
+	row, ok, err := data.NewInstallStatusRepo(rc.db).Get(ctx, entry.PluginID)
+	if err != nil {
+		return "", fmt.Errorf("failed to query install status: %w", err)
+	}
+	if ok && row.PluginID != "" {
+		return row.PluginID, nil
+	}
+	return entry.PluginID, nil
 }
 
 // resolveTarget maps a feed entry to the installed plugin's manifest id.

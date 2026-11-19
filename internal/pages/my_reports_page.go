@@ -259,7 +259,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 
 		httpx.Render("ui/pages/my_reports.html", map[string]any{
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.my_reports"),
-			"theme":            d.CurrentState().Theme,
+			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"Rows":             rows,
 			"MoreNotShownText": moreNotShownText,

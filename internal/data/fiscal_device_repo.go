@@ -239,7 +239,7 @@ ORDER BY datetime(created_at) ASC, rowid ASC
 	// status='completed' scope as dateRangeSummaryInstant's Methods
 	// breakdown (sale_type distinguishes a sale from a return; both carry
 	// status='completed') so this is directly comparable to win.Total.
-	twin, targs := instantWindow("s.created_at", from, to)
+	twin, targs := instantWindow(saleArrivalCol("s"), from, to)
 	args := append([]any{methodID}, targs...)
 	err = r.db.QueryRowContext(ctx, `
 SELECT COUNT(*)

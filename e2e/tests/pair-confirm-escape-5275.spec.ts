@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, nameShop } from './helpers';
+import { watchConsole, ensureRegisteredAutomatically } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -65,15 +65,8 @@ test.describe.serial('pair confirm Escape / Cancel (ut-docs#5275)', () => {
   test.afterAll(async () => { await new Promise<void>((r) => cloud.close(() => r())); });
 
   test('registers this till against the fake cloud', async ({ page }) => {
-    await page.goto('/settings#registration');
     const card = page.locator('#registration');
-    const registerBtn = card.locator('button[hx-post="/api/enrol/now"]');
-    if (await registerBtn.count()) {
-      await nameShop(page);
-      await page.locator('#enrol-accept-terms').check();
-      await registerBtn.click();
-      await expect(page.locator('#enrol-msg')).toContainText('✅');
-    }
+    await ensureRegisteredAutomatically(page);
     await expect(async () => {
       await page.reload();
       await expect(card).toContainText('This till is registered', { timeout: 1000 });

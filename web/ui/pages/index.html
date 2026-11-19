@@ -265,6 +265,16 @@
   </div>
   {{ end }}
 
+  {{/* ut-docs#6602: error-level one-shot notice from "?warn=<known key>" (an
+       abandoned card payment that may still stand). .error + role=alert, so
+       app.js never auto-removes it; only its dismiss button does. */}}
+  {{ if .warnKey }}
+  <div class="pos-notice error" role="alert" data-testid="resume-warning-banner">
+    <span class="notice-text">{{ T .warnKey }}</span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+  </div>
+  {{ end }}
+
   {{/* ut-docs#5058 UT-3: the Next steps card after a cloud setup. `with`, not
        `if .nextSteps.X`: internal/ui.NewRenderer renders this content without
        the key. Not .pos-notice (app.js fades those out after 2.5 s) and not a
@@ -280,6 +290,7 @@
       <li><a href="/users">{{ T "setup.next_steps.pins" }}</a></li>
       <li><a href="/settings#settings-printer">{{ T "setup.next_steps.devices" }}</a></li>
       <li><a href="/inventory">{{ T "setup.next_steps.stock" }}</a></li>
+      <li hx-get="/ui/offsite-nextstep" hx-trigger="load" hx-swap="outerHTML" hidden></li>{{/* ut-docs#5066: cloud restore, only an empty entitled main till, only a manager */}}
     </ul>
   </section>
   {{ end }}

@@ -1,0 +1,12 @@
+{{/* ut-docs#5287: a move of this till into another shop waits for a
+     manager. Rendered by GET /ui/move-pending-chip (move_approval.go) into
+     the status bar's #sb-move-pending-mount on every page, the sale screen
+     included, for every role — a status chip, never a modal; selling is not
+     affected. Anonymous on purpose: no shop name, no deadline. Words first,
+     never colour alone. Only a viewer who may open Settings gets a link (an
+     <a> with no href is plain text), so a cashier never gets one that 403s;
+     the explanation is in the title for everyone. */}}
+<a {{ if .canManage }}href="/settings/cloud/move/{{ .moveID }}" {{ end }}class="sb-item sb-move-pending" data-testid="sb-move-pending" title="{{ T "status.move_pending_hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "clock" }}</span>
+  <span class="sb-move-pending-text">{{ T "status.move_pending" }}</span>
+</a>

@@ -3,7 +3,7 @@ id: claim
 title: Geschäftsregistrierung & Beanspruchung
 section: Verbinden & erweitern
 order: 320
-public: true
+public: false
 summary: Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Beanspruchung verknüpft das Geschäft mit IHREM Konto, sodass Sie das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen erhalten.
 keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft, abonnement, tarif, koppeln, kopplungscode, neu koppeln]
 routes: [/settings/cloud/move/{id}]
@@ -17,8 +17,13 @@ Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Be
 
 1. Einstellungen → Kassenregistrierung zeigt die Geschäftsidentität; „Jetzt registrieren“ verbindet sie bei Bedarf. Auf einer verbundenen Kasse registriert die Hauptkasse sie für Sie: Diese Karte meldet dann, dass sie über die Hauptkasse registriert ist, und das Beanspruchen erfolgt an der Hauptkasse.
 2. Setzen Sie vor dem Registrieren das Häkchen bei „Ich akzeptiere die Bedingungen für den Cloud-Dienst von Universal Till (Version v0.1-draft).“; über „Bedingungen lesen“ öffnen Sie sie in einem neuen Tab. Ohne Häkchen unternimmt „Jetzt registrieren“ nichts und sagt Ihnen das. Sie stimmen einmal je Version der Bedingungen zu: Danach zeigt die Karte statt des Kästchens „Bedingungen akzeptiert: Version v0.1-draft“ mit dem Datum, und die Kasse sendet Ihre Zustimmung (die Version und Ihre Sprache) mit der Registrierung. Eine Kasse, die schon vor diesem Schritt registriert wurde (oder über eine Plugin-Installation), zeigt unter Kassenregistrierung dasselbe Kästchen mit der Schaltfläche **Bedingungen akzeptieren**: Häkchen setzen und die Schaltfläche drücken. Ist die Kasse offline, bleibt Ihre Zustimmung auf der Kasse gespeichert und die Karte sagt, dass sie die Cloud noch nicht erreicht hat; drücken Sie **An die Cloud senden**, sobald Sie wieder online sind. Der Verkauf ist nie betroffen.
+
+<!-- plan-purchase -->
+
 3. Klicken Sie auf „Dieses Geschäft übernehmen“, um einen kurzen Code (15 Minuten gültig) und einen QR-Code zu erhalten — scannen Sie ihn mit Ihrem Telefon, um von dort aus zu beanspruchen.
 4. Melden Sie sich mit Ihrer Universal-Till-ID im Marktplatz an, öffnen Sie die Beanspruchungsseite und geben Sie den Code ein.
+
+<!-- /plan-purchase -->
 
 ## Automatische Registrierung — Ihre Wahl bei der Einrichtung
 
@@ -34,11 +39,15 @@ Einstellungen → Abonnement (nur für Manager) zeigt Ihren Tarif so, wie diese 
 - Lokal (kostenlos): Nichts zu tun, die Karte zeigt nur, dass Sie den kostenlosen Tarif nutzen.
 - Aktiv: Ihr Tarif, das Verlängerungsdatum und die letzte Bestätigung.
 - Abonnement nicht bestätigt: Die Kasse konnte Ihren Tarif seit mehr als 7 Tagen nicht bei der Cloud bestätigen, daher sind kostenpflichtige Funktionen (etwa Cloud-Synchronisierung, Artikelverwaltung im Browser und die Einrichtung der verwalteten TSE) pausiert. Prüfen Sie die Internetverbindung der Kasse; der Hinweis verschwindet von selbst, sobald sie verbunden ist.
-- Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis Sie es in Ihrem Universal-Till-Konto verlängern. Bis 90 Tage nach der letzten Zahlung meldet sich eine Kasse mit beendetem Abonnement einmal pro Stunde von selbst bei der Cloud und erfährt so meist innerhalb einer Stunde von einer Verlängerung. Um es sofort zu sehen, tippen Sie auf dieser Karte oder im Hinweis zu pausierten Funktionen unter Einstellungen → Kassenregistrierung auf „Jetzt prüfen“ (nur Manager und Administratoren): Die Kasse fragt bei der Cloud nach und zeigt die Antwort direkt an, entweder das Datum, bis zu dem der Tarif jetzt bezahlt ist, oder dass er noch nicht verlängert wurde. Auf einer Kasse, die über die Hauptkasse registriert ist, tippen Sie an der Hauptkasse darauf: Diese Kasse erhält die Verlängerung von dort.
+- Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis es wieder aktiv ist. Bis 90 Tage nach der letzten Zahlung meldet sich eine Kasse mit beendetem Abonnement einmal pro Stunde von selbst bei der Cloud und erfährt so meist innerhalb einer Stunde von einer Verlängerung. Um es sofort zu sehen, tippen Sie auf dieser Karte oder im Hinweis zu pausierten Funktionen unter Einstellungen → Kassenregistrierung auf „Jetzt prüfen“ (nur Manager und Administratoren): Die Kasse fragt bei der Cloud nach und zeigt die Antwort direkt an, entweder das Datum, bis zu dem der Tarif jetzt bezahlt ist, oder dass er noch nicht verlängert wurde. Auf einer Kasse, die über die Hauptkasse registriert ist, tippen Sie an der Hauptkasse darauf: Diese Kasse erhält die Verlängerung von dort.
 
-In den beiden letzten Fällen öffnet ein Hinweis in der Statusleiste das unten beschriebene Fenster, und Kassenregistrierung sowie Belegsignierung (TSE) zeigen direkt an, welche ihrer Funktionen pausiert sind. Nichts wird ausgeblendet, und eine bereits eingerichtete TSE signiert weiterhin Belege.
+In den beiden letzten Fällen erscheint ein Hinweis in der Statusleiste, und Kassenregistrierung sowie Belegsignierung (TSE) zeigen direkt an, welche ihrer Funktionen pausiert sind. Nichts wird ausgeblendet, und eine bereits eingerichtete TSE signiert weiterhin Belege.
+
+<!-- plan-purchase -->
 
 **Tarif verlängern oder ändern** (nur für Manager und Administratoren) finden Sie auf dieser Karte, im Hinweis zu pausierten Funktionen unter Kassenregistrierung und im Hinweis in der Statusleiste. Es öffnet ein Fenster über dem Bildschirm, auf dem Sie gerade sind. Die Kasse fragt zuerst die Cloud nach Ihrem aktuellen Tarif: Wurde er bereits verlängert (zum Beispiel in Ihrem Universal-Till-Konto), zeigt das Fenster sofort das Datum, bis zu dem er bezahlt ist, und bietet Tarif ändern an, falls Sie einen anderen möchten. Andernfalls wählen Sie Aktuellen Tarif verlängern oder Tarif auswählen und scannen den QR-Code mit Ihrem Telefon: Bezahlt wird auf dem Telefon, nie an der Kasse. Solange der Code angezeigt wird, prüft die Kasse alle 20 Sekunden, höchstens 10 Minuten lang, und wechselt zum neuen Tarif, sobald er ankommt. Schließen (oder Escape) bringt Sie genau dorthin zurück, wo Sie waren. Eine über die Hauptkasse registrierte Kasse wird über die Hauptkasse verlängert.
+
+<!-- /plan-purchase -->
 
 ## Die Cloud-Synchronisierung gehört zu den kostenpflichtigen Tarifen
 

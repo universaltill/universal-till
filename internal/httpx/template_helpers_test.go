@@ -1082,8 +1082,9 @@ func TestBaseLayoutAndroidUpdateChipFollowsViewer(t *testing.T) {
 		}
 		return w.Body.String()
 	}
-	if body := render("cashier"); strings.Contains(body, `id="sb-android-update-btn"`) || !strings.Contains(body, `class="sb-item sb-update"`) {
-		t.Errorf("cashier: want the plain update status line, not the install button")
+	if body := render("cashier"); strings.Contains(body, `id="sb-android-update-btn"`) || !strings.Contains(body, `class="sb-item sb-update is-info"`) {
+		// ut-docs#6551: the plain line became the non-interactive "ask a manager" pill.
+		t.Errorf("cashier: want the ask-a-manager pill, not the install button")
 	}
 	if body := render("manager"); !strings.Contains(body, `id="sb-android-update-btn"`) {
 		t.Errorf("manager lost the Android install chip")

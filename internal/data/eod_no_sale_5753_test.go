@@ -24,7 +24,9 @@ func nsSeedUsers(t *testing.T, d *db.DB) {
 func nsEvent(t *testing.T, repo *POSRepo, id string, at time.Time, actor, till string) {
 	t.Helper()
 	ctx := context.Background()
-	e := NoSaleEvent{ID: id, CreatedAt: b8At(at), ActorID: actor, TillID: till}
+	// ReceivedAt = the simulated apply time (ut-docs#5769): the Z counts a
+	// journaled row by when the main till recorded it.
+	e := NoSaleEvent{ID: id, CreatedAt: b8At(at), ActorID: actor, TillID: till, ReceivedAt: b8At(at)}
 	if till != "" {
 		if _, err := repo.ApplyJournaledNoSaleEvent(ctx, e); err != nil {
 			t.Fatalf("journaled no-sale %s: %v", id, err)

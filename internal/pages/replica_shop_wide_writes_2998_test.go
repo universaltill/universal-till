@@ -92,14 +92,14 @@ func TestCloudSetTillSetting_AdditionalTillRefusesShopWideKeys(t *testing.T) {
 		if data.SettingScope(key) == data.SettingPerTill {
 			continue
 		}
-		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x"); err == nil {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x", nil); err == nil {
 			t.Fatalf("set_till_setting %s on an additional till: want a refusal, got nil", key)
 		}
 		if v, _, _ := dp.Settings.Get(ctx, key); v == "x" {
 			t.Fatalf("set_till_setting %s refused but still wrote locally", key)
 		}
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask"); err != nil {
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask", nil); err != nil {
 		t.Fatalf("set_till_setting %s (per-till) on an additional till: %v", keyPrinterReceiptPolicy, err)
 	}
 	if v, _, _ := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); v != "ask" {
@@ -125,9 +125,9 @@ func TestResolveAndInstallBasePlugin_AdditionalTillKeepsLocale(t *testing.T) {
 	before := dp.CurrentState().Locale
 
 	mkt := newFakeMarketplace(t, nil)
-	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "com.universaltill.language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
 	mkt.setCatalog(marketplace.PluginSummary{
-		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		ID: "com.universaltill.language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
 		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
 	})
 	dp.Cfg.Marketplace = mkt.config()
