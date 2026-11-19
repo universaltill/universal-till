@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,36 +21,17 @@ import (
 
 // ut-docs#1180: ADR-0025 decision 4 — a fiscal ("tax") plugin such as
 // ut-plugin-tax-de (§12 UStG dine-in/takeaway VAT-rate-switching plus TSE
-// signing and DSFinV-K export) must never be silently auto-installed —
-// basePluginsForCountry (setup_base_plugins.go) is explicitly documented
-// language-packs-only for exactly this reason. Instead the wizard's country
-// step PROMPTS: a tile appears only when the marketplace actually has a
-// tax-type listing for the selected country, and it installs only on an
-// explicit click. This mirrors setup_language_catalog.go's
+// signing and DSFinV-K export) must never be silently auto-installed. The
+// one exception is ADR-0172's (tax_autoinstall.go): a free, first-party,
+// non-fiscal tax plugin that names the shop's country in its `markets`
+// installs itself at the end of setup and needs no tile. Everything else
+// is PROMPTED here: a tile appears only when the marketplace actually has a
+// tax-type listing that names the selected country in its `markets` and is
+// not auto-installable, and it installs only on an explicit click. This mirrors setup_language_catalog.go's
 // prompt-then-click-then-foreground-install-with-background-retry-fallback
 // shape as closely as possible, reusing its helpers (resolveAndInstallBasePlugin,
 // localeInList, loadPendingBasePlugins/savePendingBasePlugins) rather than a
 // second install or retry mechanism.
-
-// countryTaxLocale maps a wizard country code to the locale its fiscal
-// plugin listing is expected to declare in AvailableLocales. Deliberately
-// minimal — DE only, not every country ADR-0025 will eventually cover; an
-// audit of which other countries need a fiscal plugin listing is an
-// explicit non-goal here, tracked separately.
-//
-// NOTE when adding a country here: the tile itself lives in setup.html's
-// step 3, which step 2's Next only routes to for DE
-// (`country === 'DE' ? 3 : 4`), and renderWizard resumes a tax-plugin
-// install round-trip on step 3 for the same reason. Adding e.g. "FR" to
-// this map alone would resolve a listing that no operator can ever see —
-// the step gating has to move too. As of ut-docs#1460, renderWizard also
-// resolves this tile's data with the hardcoded tseProvisionCountry
-// (setup_tse.go), not a country looked up from this map — that hardcode
-// needs to move too, to whatever decides which of several tax-mapped
-// countries' step the operator is actually in.
-var countryTaxLocale = map[string]string{
-	"DE": "de",
-}
 
 // setupWizardTaxInstallTimeout bounds POST /api/setup/tax-plugin's one
 // synchronous resolve+install attempt. Same value and reasoning as
@@ -193,28 +175,60 @@ type installableTaxPlugin struct {
 	// consent. Without it a fully offline German first boot showed no
 	// prompt at all, and #1506's queue-on-Skip/Next had no tile to hang off.
 	Offline bool
+	// Pending: the operator already consented (Offline tile) and the spec is
+	// on the background retry list, so the tile says it is queued instead of
+	// offering the button again (ut-docs#3243).
+	Pending bool
 }
 
-// setupInstallableTaxPlugin resolves the wizard's current country against
-// countryTaxLocale, the cached tax-capability catalog, and the till's own
-// install-status store, returning the single best (highest-semver) match
-// that isn't already installed, or nil when there's genuinely nothing to
-// prompt:
-//   - no locale mapped for this country: nil, false — nothing to prompt,
-//     not "catalog unavailable" (no note should show either).
-//   - the catalog is unreachable with nothing cached, or a cache older than
-//     setupTaxCatalogStaleMax: an Offline tile, true
-//     (ut-docs#1512 — the operator is still prompted; the install is queued
-//     for when the till is online).
+// taxTileFor decides, from the tax-capability catalog, what the wizard's
+// prompted tile offers for country (ADR-0172 §2, ADR-0129 §4): the
+// highest-semver tax listing that NAMES the country in its `markets` (a
+// listing with no markets is for every market and never prompts), or nil
+// when there is none or when exactly one listing is eligible for an
+// automatic install, which needs no tile (the plugin installs itself at the
+// end of setup). Two eligible listings, or none, keep the prompt.
+func taxTileFor(entries []marketplace.PluginSummary, country string) *marketplace.PluginSummary {
+	var best *marketplace.PluginSummary
+	eligible := 0
+	for i := range entries {
+		e := &entries[i]
+		if e.CanonicalType != "tax" || !slices.ContainsFunc(e.Markets, func(m string) bool { return strings.EqualFold(m, country) }) {
+			continue
+		}
+		if taxListingEligible(e, country) == "" {
+			eligible++
+		}
+		if best == nil || updates.Newer(e.Version, best.Version) {
+			best = e
+		}
+	}
+	if eligible == 1 {
+		return nil
+	}
+	return best
+}
+
+// setupInstallableTaxPlugin resolves the wizard's tile for country from the
+// cached tax-capability catalog and the till's own install-status store,
+// returning the single best (highest-semver) prompted match that isn't
+// already installed, or nil when there's genuinely nothing to prompt:
 //   - an active local plugin with a tax entry is meant for this country
 //     (ADR-0129 markets, none = every market): nil, false, online or
 //     offline, checked before the catalog (ut-docs#3211).
-//   - no CanonicalType=="tax" listing declares the mapped locale: nil, false.
+//   - the catalog is unreachable with nothing cached, or a cache older than
+//     setupTaxCatalogStaleMax: for the one country whose step already hosts
+//     the fiscal business-identity form (tseProvisionCountry) an Offline
+//     tile, true (ut-docs#1512 — the operator is still prompted; the install
+//     is queued for when the till is online). For any other country there
+//     is nothing known to prompt: nil, true.
+//   - no listing names this country in its markets, or exactly one is
+//     eligible for the automatic install (taxTileFor): nil, false.
 //   - the best match is already installed and active: nil, false — this is
 //     what makes the tile disappear the moment install actually lands.
 func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country string) (plugin *installableTaxPlugin, catalogUnavailable bool) {
-	locale, ok := countryTaxLocale[strings.ToUpper(strings.TrimSpace(country))]
-	if !ok {
+	country = strings.ToUpper(strings.TrimSpace(country))
+	if country == "" {
 		return nil, false
 	}
 
@@ -233,23 +247,13 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 
 	entries, fetched := setupTaxCatalogEntries(ctx, d)
 	if !fetched {
-		return &installableTaxPlugin{Country: strings.ToUpper(strings.TrimSpace(country)), Offline: true}, true
+		if country == tseProvisionCountry {
+			return &installableTaxPlugin{Country: country, Offline: true}, true
+		}
+		return nil, true
 	}
 
-	// Filter to CanonicalType=="tax" via the EXISTING localeInList helper
-	// (setup_base_plugins.go) — never a second locale-matching
-	// implementation. Highest-semver wins, the same updates.Newer
-	// comparison resolveAndInstallBasePlugin itself uses.
-	var best *marketplace.PluginSummary
-	for i := range entries {
-		e := &entries[i]
-		if e.CanonicalType != "tax" || !localeInList(e.AvailableLocales, locale) {
-			continue
-		}
-		if best == nil || updates.Newer(e.Version, best.Version) {
-			best = e
-		}
-	}
+	best := taxTileFor(entries, country)
 	if best == nil {
 		return nil, false
 	}
@@ -266,7 +270,41 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 		return nil, false
 	}
 
-	return &installableTaxPlugin{Country: strings.ToUpper(strings.TrimSpace(country)), ListingID: listingID}, false
+	return &installableTaxPlugin{Country: country, ListingID: listingID}, false
+}
+
+// setupInstallableTaxPlugins is every prompted tile the wizard may need: one
+// per country the catalog names a not-auto-installable tax listing for, plus
+// the country whose step hosts the fiscal identity form (so its offline
+// tile can show). The wizard renders them all and reveals the one for the
+// country the operator picks, so a hand-picked country never depends on OS
+// detection (ut-docs#1460). Sorted by country.
+func setupInstallableTaxPlugins(ctx context.Context, d *common.Deps) []*installableTaxPlugin {
+	candidates := map[string]bool{tseProvisionCountry: true}
+	if entries, ok := setupTaxCatalogEntries(ctx, d); ok {
+		for i := range entries {
+			if entries[i].CanonicalType != "tax" {
+				continue
+			}
+			for _, m := range entries[i].Markets {
+				if m = strings.ToUpper(strings.TrimSpace(m)); m != "" {
+					candidates[m] = true
+				}
+			}
+		}
+	}
+	countries := make([]string, 0, len(candidates))
+	for c := range candidates {
+		countries = append(countries, c)
+	}
+	slices.Sort(countries)
+	var tiles []*installableTaxPlugin
+	for _, c := range countries {
+		if t, _ := setupInstallableTaxPlugin(ctx, d, c); t != nil {
+			tiles = append(tiles, t)
+		}
+	}
+	return tiles
 }
 
 // setupTaxPluginQueued reports whether the operator's consent to this
@@ -277,8 +315,8 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 // nothing about the plugin. Read errors log and return false: this only adds a note,
 // and the Settings chip stays the durable signal.
 func setupTaxPluginQueued(ctx context.Context, d *common.Deps, country string) bool {
-	locale, ok := countryTaxLocale[strings.ToUpper(strings.TrimSpace(country))]
-	if !ok {
+	country = strings.ToUpper(strings.TrimSpace(country))
+	if country == "" {
 		return false
 	}
 	installed, err := data.NewPluginRepo(d.Db).HasActiveEntryTypeForMarket(ctx, "tax", country)
@@ -295,7 +333,7 @@ func setupTaxPluginQueued(ctx context.Context, d *common.Deps, country string) b
 		return false
 	}
 	for _, spec := range pending {
-		if spec.CanonicalType == "tax" && spec.Locale == locale {
+		if spec.CanonicalType == "tax" && spec.Prompted && strings.EqualFold(spec.Market, country) {
 			return true
 		}
 	}
@@ -320,8 +358,7 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		}
 		_ = r.ParseForm()
 		country := strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
-		locale, ok := countryTaxLocale[country]
-		if !ok {
+		if !plausibleCountryCode(country) {
 			// Genuinely forged — no country to resume the wizard on.
 			http.Redirect(w, r, "/setup", http.StatusSeeOther)
 			return
@@ -345,7 +382,7 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 			return
 		}
 
-		spec := basePluginSpec{CanonicalType: "tax", Locale: locale}
+		spec := basePluginSpec{CanonicalType: "tax", Market: country, Prompted: true}
 		// ut-docs#1512: the catalog is known unreachable (the re-resolve
 		// above retried it, or served its cached miss if the last attempt
 		// was under setupTaxCatalogRetryInterval ago), so the offline tile's
@@ -379,7 +416,7 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 			http.Redirect(w, r, resume, http.StatusSeeOther)
 			return
 		}
-		logging.L().Warnf("setup wizard: foreground install of tax/%s failed, joining background retry: %v", locale, err)
+		logging.L().Warnf("setup wizard: foreground install of tax/%s failed, joining background retry: %v", country, err)
 
 		// Failure/timeout: join the EXISTING ut-docs#591 pending list — the
 		// background retry (StartBasePluginRetry) and the Settings pending
@@ -435,8 +472,7 @@ func setupTaxPluginSkipHandler(d *common.Deps, svc *auth.Service) http.HandlerFu
 		}
 		_ = r.ParseForm()
 		country := strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
-		locale, ok := countryTaxLocale[country]
-		if !ok {
+		if !plausibleCountryCode(country) {
 			// Genuinely forged — no country to resume the wizard on.
 			http.Redirect(w, r, "/setup", http.StatusSeeOther)
 			return
@@ -455,7 +491,7 @@ func setupTaxPluginSkipHandler(d *common.Deps, svc *auth.Service) http.HandlerFu
 		// background retry between page render and this click) queues
 		// nothing extra.
 		if match, _ := setupInstallableTaxPlugin(r.Context(), d, country); match != nil {
-			spec := basePluginSpec{CanonicalType: "tax", Locale: locale}
+			spec := basePluginSpec{CanonicalType: "tax", Market: country, Prompted: true}
 			if err := addPendingBasePlugins(r.Context(), d, []basePluginSpec{spec}); err != nil {
 				logging.L().Errorf("setup wizard: persist skipped tax plugin as pending: %v", err)
 			}
@@ -463,4 +499,10 @@ func setupTaxPluginSkipHandler(d *common.Deps, svc *auth.Service) http.HandlerFu
 
 		http.Redirect(w, r, resume, http.StatusSeeOther)
 	}
+}
+
+// plausibleCountryCode: two upper-case ASCII letters, the only shape a
+// market code (ISO 3166-1 alpha-2) or a posted tile country may take.
+func plausibleCountryCode(c string) bool {
+	return len(c) == 2 && c[0] >= 'A' && c[0] <= 'Z' && c[1] >= 'A' && c[1] <= 'Z'
 }

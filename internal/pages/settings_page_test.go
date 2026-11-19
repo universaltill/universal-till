@@ -1954,6 +1954,84 @@ func TestUpsertCountry_RederivesLocale(t *testing.T) {
 	})
 }
 
+// ut-docs#5779: the All-settings country edit must persist the derived
+// locale (same write as the country), not only apply it to memory, so a
+// restart does not bring the old language back.
+func TestUpsertCountry_PersistsDerivedLocale(t *testing.T) {
+	seed := func(t *testing.T, d *common.Deps, locale string, confirmed bool) {
+		t.Helper()
+		if err := d.Settings.Set(t.Context(), common.KeyLocale, locale); err != nil {
+			t.Fatal(err)
+		}
+		if confirmed {
+			if err := d.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		d.UpdateState(func(s *common.RuntimeState) { s.Locale = locale })
+	}
+	upsert := func(t *testing.T, mux *http.ServeMux, country string) {
+		t.Helper()
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {country}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert %s = %d body=%s", country, rec.Code, rec.Body.String())
+		}
+	}
+	untouched := func(t *testing.T, d *common.Deps, want string) {
+		t.Helper()
+		if got := mustSetting(t, d, common.KeyLocale); got != want {
+			t.Fatalf("persisted %s = %q, want unchanged %q", common.KeyLocale, got, want)
+		}
+		if got := d.CurrentState().Locale; got != want {
+			t.Fatalf("memory locale = %q, want unchanged %q", got, want)
+		}
+	}
+	t.Run("US: row and reload match memory", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "en-GB", false)
+		if err := d.Settings.Set(t.Context(), common.KeyLocaleGeneration, "7"); err != nil {
+			t.Fatal(err)
+		}
+		upsert(t, mux, "US")
+		if got := mustSetting(t, d, common.KeyLocale); got != "en-US" {
+			t.Fatalf("persisted %s = %q, want en-US", common.KeyLocale, got)
+		}
+		if got := common.LoadState(t.Context(), d.Settings, d.Cfg).Locale; got != "en-US" {
+			t.Fatalf("locale after restart = %q, want en-US", got)
+		}
+		if got := d.CurrentState().Locale; got != "en-US" {
+			t.Fatalf("memory locale = %q, want en-US", got)
+		}
+		if got := httpx.DefaultLocale(); got != "en-US" {
+			t.Fatalf("DefaultLocale = %q, want en-US", got)
+		}
+		if got := mustSetting(t, d, common.KeyLocaleConfirmed); got != "" {
+			t.Fatalf("a derivation must not confirm the locale, got %q", got)
+		}
+		if got := mustSetting(t, d, common.KeyLocaleGeneration); got != "7" {
+			t.Fatalf("%s = %q, want unchanged 7", common.KeyLocaleGeneration, got)
+		}
+	})
+	t.Run("confirmed: nothing derived", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "tr", true)
+		upsert(t, mux, "DE")
+		untouched(t, d, "tr")
+	})
+	t.Run("RTL not installed: nothing derived", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "tr", false)
+		upsert(t, mux, "PK")
+		untouched(t, d, "tr")
+	})
+	t.Run("unknown country: nothing derived", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		seed(t, d, "tr", false)
+		upsert(t, mux, "ZZ")
+		untouched(t, d, "tr")
+	})
+}
+
 // The claim-code / register-now / fleet enrol endpoints all refuse a non-manager
 // operator before ever touching the marketplace (offline-first, no network in
 // A high-density small touchscreen (e.g. a 10.1" 1920x1200 panel, ~224 PPI)
@@ -2392,13 +2470,13 @@ func TestEnrolDevicesEndpointRefusesNonManager(t *testing.T) {
 // ut-docs#865: claim-code and enrol/now moved off the flat canPerform gate
 // onto checkOrElevate (#557/#796 mechanism) — a denied cashier now gets the
 // in-place elevation prompt, not the flat forbidden span.
-func TestEnrolClaimCodeAndNow_RefuseNonManagerViaElevation(t *testing.T) {
+func TestEnrolClaimCodeAndRegistrationStop_RefuseNonManagerViaElevation(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 
-	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
+	for _, path := range []string{"/api/enrol/claim-code", "/api/settings/registration-stop"} {
 		// accept_terms: the terms check runs before the elevation gate
 		// (ut-docs#4720), so tick it to reach the gate under test.
-		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, strings.NewReader("accept_terms=on")), cashUser)
+		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, strings.NewReader("accept_terms=on&stop=1")), cashUser)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -2489,7 +2567,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
-		{"enrol-now", http.MethodPost, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, gateElevation},
+		{"registration-stop", http.MethodPost, "/api/settings/registration-stop", url.Values{"stop": {"1"}}, gateElevation},
 		{"enrol-pair", http.MethodPost, "/api/enrol/pair", url.Values{"code": {"K7QX-M2RP"}}, gateElevation},
 		{"enrol-check-plan", http.MethodPost, "/api/enrol/check-plan", nil, gateElevation},
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
@@ -2499,6 +2577,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gateElevation},
 		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gateElevation},
 		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
+		{"cloud-staff-breakdown", http.MethodPost, "/api/settings/cloud-staff-breakdown", url.Values{"enabled": {"on"}}, gate403}, // ut-docs#2557
 		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gateElevation},
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
 		{"store-name", http.MethodPost, "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}, gateElevation},
@@ -2596,8 +2675,8 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 //
 // The enrollment card's enrolled branch (claim-code) can't be exercised
 // here — "enrolled" reads package-global enroll.CurrentStatus() — so the
-// card is covered via its unenrolled branch (/api/enrol/now), the identical
-// un-gating in the same card.
+// card is covered by the Cloud record card's Stop sending form
+// (/api/settings/registration-stop), the same un-gating (ADR-0200).
 func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
@@ -2634,7 +2713,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 
 	// One marker per elevation-wired site, unique to that form/button.
 	elevationWired := []string{
-		`hx-post="/api/enrol/now"`,                   // enrollment card, unenrolled branch
+		`hx-post="/api/settings/registration-stop"`,  // cloud record card: Stop sending (ADR-0200)
 		`hx-post="/api/settings/display-mode"`,       // display-advanced: mode form
 		`id="window-mode-form"`,                      // display-advanced: window mode
 		`id="launch-on-startup-cb"`,                  // display-advanced: autostart checkbox
@@ -3718,5 +3797,132 @@ func TestMainTillHostPort(t *testing.T) {
 		if got := mainTillHostPort(tc.in); got != tc.want {
 			t.Errorf("mainTillHostPort(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// ut-docs#2739 (ADR-0114 §5): the main till chooses when additional tills
+// update; next_idle is the default and is what renders until "nightly" is saved.
+func TestSettingsPage_MainTillShowsFleetFollowSelect(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	selectRe := regexp.MustCompile(`(?s)<select name="fleet_follow"[^>]*>(.*?)</select>`)
+	opt := func(inner, value string) string {
+		m := regexp.MustCompile(`<option value="` + value + `"([^>]*)>`).FindStringSubmatch(inner)
+		if m == nil {
+			t.Fatalf("no <option value=%q> in %s", value, inner)
+		}
+		return m[1]
+	}
+
+	body := getSettingsAsManager(t, mux)
+	m := selectRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("main till: no fleet_follow select inside the update form")
+	}
+	if !strings.Contains(opt(m[1], "next_idle"), "selected") || strings.Contains(opt(m[1], "nightly"), "selected") {
+		t.Fatalf("untouched till: next_idle must be the selected option, got %s", m[1])
+	}
+	for _, key := range []string{"settings.update.fleet_follow_label", "settings.update.fleet_follow_next_idle",
+		"settings.update.fleet_follow_nightly", "settings.update.fleet_follow_hint"} {
+		if !strings.Contains(body, html.EscapeString(httpx.T("en", key))) {
+			t.Errorf("main till: %s not rendered", key)
+		}
+	}
+	// It lives in the locked fieldset, like the rest of the form.
+	if !regexp.MustCompile(`(?s)<fieldset class="set-lock" data-lock-region="settings-update-schedule".*?<select name="fleet_follow".*?</fieldset>`).MatchString(body) {
+		t.Fatal("the fleet_follow select must sit inside the settings-update-schedule fieldset")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	m = selectRe.FindStringSubmatch(getSettingsAsManager(t, mux))
+	if m == nil || !strings.Contains(opt(m[1], "nightly"), "selected") || strings.Contains(opt(m[1], "next_idle"), "selected") {
+		t.Fatalf("nightly saved: nightly must be the selected option, got %v", m)
+	}
+	// Hand-edited garbage reads as the default.
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "weekly"); err != nil {
+		t.Fatal(err)
+	}
+	m = selectRe.FindStringSubmatch(getSettingsAsManager(t, mux))
+	if m == nil || !strings.Contains(opt(m[1], "next_idle"), "selected") {
+		t.Fatalf("unknown value: next_idle must be selected, got %v", m)
+	}
+}
+
+// The replica sees the policy read-only: a second line only for nightly,
+// naming the window THIS till installs in (the main till's update time plus
+// this till's own offset), ut-docs#6552.
+func TestSettingsPage_AdditionalTillShowsFleetFollowPolicy(t *testing.T) {
+	orig := autoUpdateJitter
+	t.Cleanup(func() { autoUpdateJitter = orig })
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	line := `data-testid="update-follow-policy"`
+
+	body := getSettingsAsManager(t, mux)
+	if strings.Contains(body, line) || strings.Contains(body, `name="fleet_follow"`) {
+		t.Fatal("next_idle replica: no policy line and no select")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyFleetFollow, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "02:15"); err != nil {
+		t.Fatal(err)
+	}
+	body = getSettingsAsManager(t, mux)
+	if !strings.Contains(body, line) {
+		t.Fatal("nightly replica: no policy line")
+	}
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "02:22", "02:52")); !strings.Contains(body, want) {
+		t.Fatalf("nightly replica: expected %q", want)
+	}
+	if strings.Contains(body, `name="fleet_follow"`) {
+		t.Fatal("a replica must not render the select")
+	}
+
+	// update.auto_time unset: the default time plus the offset.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_nightly_window"), "03:07", "03:37")); !strings.Contains(getSettingsAsManager(t, mux), want) {
+		t.Fatalf("nightly replica, time unset: expected %q", want)
+	}
+
+	// An invalid time prints nothing rather than a bad time.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateTime, "25:99"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(getSettingsAsManager(t, mux), line) {
+		t.Fatal("invalid auto_time: the window line must be omitted")
+	}
+}
+
+// ut-docs#6552: a nightly replica whose attempt failed says it will try again
+// at the next nightly update, with the window.
+func TestSettingsPage_NightlyReplicaFailedSaysItRetries(t *testing.T) {
+	origVer, origSupported, origJitter := autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter
+	t.Cleanup(func() {
+		autoUpdateBuildVersion, autoUpdateSupported, autoUpdateJitter = origVer, origSupported, origJitter
+	})
+	autoUpdateBuildVersion = func() string { return "1.4.0" }
+	autoUpdateSupported = func() bool { return true }
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	for k, v := range map[string]string{keyMainVersion: "1.4.2", keyFleetFollow: "nightly", keyAutoUpdateTime: "03:00",
+		keyFollowAttempted: "1.4.2", keyFollowError: "failed:download"} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getSettingsAsManager(t, mux)
+	if !strings.Contains(body, `data-follow-line="failed_nightly"`) {
+		t.Fatal("expected follow line state failed_nightly")
+	}
+	want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_failed_nightly"), "v1.4.2", "03:07", "03:37"))
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected %q", want)
 	}
 }

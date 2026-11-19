@@ -89,9 +89,9 @@ func (m *Manager) SetLocalizer(l Localizer) {
 // FirstPartyIDPrefix is first-party: its strings beat the built-in locale
 // files when its bundle.json generated_at is newer than this binary's
 // buildinfo.BuildDate ("fresh"), and only fill their gaps otherwise
-// ("stale" — also every first-party plugin with no bundle.json, such as
-// today's de/es/pt packs). Every other plugin is third-party and only adds
-// locales and fills gaps (ADR-0010). Language packs are asset-only plugins
+// ("stale" — also every first-party plugin with no bundle.json). Every
+// other plugin is third-party and only adds locales and fills gaps
+// (ADR-0010). Language bundles are asset-only plugins
 // (runtime "none", canonical_type "language") but any active plugin may ship
 // translations for its own strings — see
 // ut-docs/architecture/plugin-architecture.md's (sibling repo) "Plugin i18n"

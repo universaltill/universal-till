@@ -42,8 +42,7 @@ Translate in your browser at
 [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/):
 sign in, pick a language and edit. No Git needed. Translations are stored in
 [ut-translations](https://github.com/universaltill/ut-translations) and reach
-tills as signed language bundles. Older language-pack plugins (`ut-plugin-language-*`) are
-being replaced by these bundles.
+tills as signed language bundles.
 
 A translation must mean the same as the English. Having every key present is
 not enough. Receipt and legal wording is reviewed by a person before it

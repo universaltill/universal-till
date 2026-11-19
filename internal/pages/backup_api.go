@@ -103,7 +103,7 @@ var errUseNativePicker = errors.New("backups: on Android save through the file p
 func backupSaveFailureKey(err error) string {
 	switch {
 	case errors.Is(err, errUseNativePicker):
-		return "settings.backup.save_failed_use_picker"
+		return "settings.backup.save_failed_picker_unavailable"
 	case errors.Is(err, syscall.ENOSPC):
 		return "settings.backup.save_failed_space"
 	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EROFS):
@@ -354,6 +354,8 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		audit(r, "backup_saved_copy", map[string]any{"file": name, "dest": dst})
 		recordBackupCopied(r.Context(), d) // ut-docs#5071
+		// ut-docs#5615: the status-bar chip re-fetches now, not in 10 min.
+		w.Header().Set("HX-Trigger", "backup-copied")
 		fmt.Fprintf(w, `<span>✓ %s <code>%s</code></span>`, httpx.T(locale, "settings.backup.saved_to"), dst)
 	})
 
@@ -377,6 +379,8 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		audit(r, "backup_saved_copy", map[string]any{"file": name, "dest": "file picker"})
 		recordBackupCopied(r.Context(), d)
+		// ut-docs#5615: the status-bar chip re-fetches now, not in 10 min.
+		w.Header().Set("HX-Trigger", "backup-copied")
 		w.WriteHeader(http.StatusNoContent)
 	})
 

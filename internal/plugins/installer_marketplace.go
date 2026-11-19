@@ -43,7 +43,24 @@ type MarketplaceInstallRequest struct {
 	// fulfilling; each state transition is reported back to it (story 1-1).
 	IntentID      string
 	OnStateChange func(InstallLifecycleState)
+	// CanonicalType is the listing's catalog type. On a channel that forbids
+	// code plugins (App Store, ADR-0194) only an asset-only type is fetched at
+	// all; an empty type is refused (fail closed) before any request is made.
+	CanonicalType string
+	// PreInstall, when set, runs on the VERIFIED manifest and the extracted
+	// bundle directory, after Ed25519 verification, compatibility and the
+	// executable check and BEFORE the live directory is touched or anything is
+	// persisted or activated; an error aborts the install with nothing left
+	// behind. It adds a gate to the one install path, it never replaces a
+	// check (ADR-0172 §2.4, §3: the auto-installed tax plugin's eligibility
+	// and first-load check).
+	PreInstall PreInstallCheck
 }
+
+// PreInstallCheck is a caller's extra gate on a verified bundle: manifest is
+// the signature-verified manifest, dir the extracted bundle (not yet in its
+// final place).
+type PreInstallCheck func(ctx context.Context, manifest *Manifest, dir string) error
 
 type MarketplaceInstallResult struct {
 	PluginID string
@@ -133,6 +150,11 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if i == nil || i.client == nil || i.db == nil {
 		return nil, fmt.Errorf("marketplace installer not configured")
 	}
+	// Before anything else, so not even the intent report leaves the till: a
+	// code listing is never fetched on appstore (ADR-0194).
+	if err := RefuseCodeCanonicalType(req.CanonicalType); err != nil {
+		return nil, err
+	}
 	// Report the terminal state to the marketplace intent: active on success,
 	// failed (with the error) otherwise. i is non-nil past the guard above.
 	defer func() {
@@ -216,6 +238,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		SourceURL:  tokenResp.BundleURL,
 		TrustTier:  req.TrustTier,
 		DeviceArch: req.DeviceArch,
+		PreInstall: req.PreInstall,
 	})
 }
 
@@ -228,6 +251,7 @@ type bundleInstallSpec struct {
 	SourceURL  string
 	TrustTier  string
 	DeviceArch string
+	PreInstall PreInstallCheck
 }
 
 // installBundleFile extracts, verifies (signature, compatibility, executable)
@@ -273,6 +297,11 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	if err := manifest.RefuseOnTill(); err != nil {
 		return nil, err
 	}
+	// App Store channel (ADR-0194): backstop on the verified manifest's own
+	// runtime, before the live dir is touched.
+	if err := RefuseCodeRuntime(manifest.Runtime); err != nil {
+		return nil, err
+	}
 	if manifest.Signature != spec.Signature {
 		return nil, fmt.Errorf("signature mismatch between marketplace metadata and manifest")
 	}
@@ -299,6 +328,14 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		}
 	default:
 		if err := i.verifier.VerifyExecutable(extractDir, executable); err != nil {
+			return nil, err
+		}
+	}
+
+	// The caller's extra gate (ADR-0172 §2.4/§3), still before the live
+	// directory is touched: a refusal leaves nothing behind.
+	if spec.PreInstall != nil {
+		if err := spec.PreInstall(ctx, manifest, extractDir); err != nil {
 			return nil, err
 		}
 	}
@@ -394,14 +431,7 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// without this, installed pages never surface in the menu. Manual imports
 	// stay ungranted for the operator to approve. What an update grants
 	// follows installGrantsPermission (ut-docs#4145, ADR-0153 Decision 5).
-	for _, perm := range manifest.Permissions {
-		if !installGrantsPermission(manifest, perm, prevErr != nil || previouslyDeclared[perm]) {
-			continue
-		}
-		if err := GrantPermission(ctx, i.db, manifest.ID, perm); err != nil {
-			logging.L().Warnf("[MarketplaceInstaller] grant declared permission %s to %s: %v", perm, manifest.ID, err)
-		}
-	}
+	GrantDeclaredPermissions(ctx, i.db, manifest, previouslyDeclared, prevErr)
 
 	return &MarketplaceInstallResult{
 		PluginID: manifest.ID,
@@ -477,13 +507,18 @@ func sanitizePathSegment(value string) string {
 	return replacer.Replace(value)
 }
 
+// marketplaceTrustTier maps the catalogue's trust tier to the local
+// plugins.trust_level label (ut-docs#6549). Official listings are signed by
+// the same marketplace key after first-party approval, so official, verified,
+// trusted and approved are all "trusted"; anything else (unverified, empty,
+// unknown) is "untrusted". Never "system": that is reserved for layouts built
+// into the till. The label is display-only; permissions are granted separately.
 func marketplaceTrustTier(tier string) string {
-	switch tier {
-	case "verified", "approved":
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "official", "verified", "trusted", "approved":
 		return "trusted"
-	default:
-		return "untrusted"
 	}
+	return "untrusted"
 }
 
 func (i *MarketplaceInstaller) upsertCatalogEntry(ctx context.Context, manifest *Manifest, bundleURL, checksum, signature string) error {

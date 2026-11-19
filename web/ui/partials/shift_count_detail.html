@@ -1,0 +1,28 @@
+{{/* ut-docs#1043: a closed shift's stored denomination count, swapped into
+     #shift-count-body on /shifts (.C = data.ShiftCount, .R = pos.CountReading,
+     .Mismatch). Read-only. The heading and hint live on the page. Notes are
+     muted text, never .error: a mismatch is information, not an alarm. */}}
+<div class="x-report-result">
+  <div class="x-report-bar">
+    <p><strong>{{ T "shifts.opened_at" }}</strong> {{ datetime .C.OpenedAt }} · <strong>{{ T "shifts.closed_at" }}</strong> {{ datetime .C.ClosedAt }}</p>
+    <div class="x-report-actions">
+      <button type="button" class="btn secondary" data-action="empty:shift-count-body focus:shift-count-title">{{ T "shifts.count_detail.hide" }}</button>
+    </div>
+  </div>
+  {{ if not .R.Recorded }}<p class="muted">{{ T "shifts.count_detail.none" }}</p>
+  {{ else if .R.Unreadable }}<p class="muted">{{ T "shifts.count_detail.unreadable" }}</p>
+  {{ else }}
+  <table class="table x-report-num" data-cards="off">
+    <thead><tr><th>{{ T "shifts.count_detail.denomination" }}</th><th>{{ T "shifts.count_detail.pieces" }}</th><th>{{ T "shifts.amount" }}</th></tr></thead>
+    <tbody>{{ range .R.Lines }}
+      <tr><td>{{ money .Denomination }}</td><td>{{ qty .Pieces }}</td><td>{{ money .Total }}</td></tr>{{ end }}
+    </tbody>
+    <tfoot>
+      <tr><th scope="row">{{ T "shifts.count_detail.total" }}</th><td></td><td>{{ money .R.Total }}</td></tr>
+      <tr><th scope="row">{{ T "shifts.counted" }}</th><td></td><td>{{ money .C.Counted }}</td></tr>
+    </tfoot>
+  </table>
+  {{ if .R.Partial }}<p class="muted">{{ T "shifts.count_detail.partial" }}</p>{{ end }}
+  {{ if .Mismatch }}<p class="muted">{{ T "shifts.count_detail.mismatch" }}</p>{{ end }}
+  {{ end }}
+</div>

@@ -3,9 +3,12 @@ package pages
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
@@ -65,6 +68,74 @@ func (a *followAttempt) set(v string) {
 	a.target = v
 }
 
+// update.fleet_follow (ADR-0114 §5, ut-docs#2739) is the shop-wide choice of
+// WHEN an additional till installs its main till's version. It is set on the
+// main till and replicates (the update. prefix is shop-wide). Unset means
+// next_idle, the default, stored as "" like update.auto_enabled; "nightly"
+// is the explicit choice; any other stored value reads as next_idle.
+const (
+	keyFleetFollow = "update.fleet_follow"
+
+	followPolicyNextIdle = "next_idle"
+	followPolicyNightly  = "nightly"
+)
+
+// followPolicyOf normalises a stored update.fleet_follow value.
+func followPolicyOf(stored string) string {
+	if strings.TrimSpace(stored) == followPolicyNightly {
+		return followPolicyNightly
+	}
+	return followPolicyNextIdle
+}
+
+// followMaxJitter bounds the random wait before a next_idle till first acts
+// on a new target, so a fleet that sees the same hello does not download
+// from GitHub (and restart) in the same second.
+const followMaxJitter = 120 * time.Second
+
+// followJitterDelay is a seam so tests pin the random wait (0–120 s).
+var followJitterDelay = func() time.Duration {
+	return time.Duration(rand.IntN(int(followMaxJitter/time.Second)+1)) * time.Second
+}
+
+// followJitterWait is the armed wait for one target, in memory on purpose (a
+// restart draws a new one). Only followTick arms it: followInputsOf runs on
+// every Settings render and chip poll and must not start the clock.
+var followJitterWait followWait
+
+type followWait struct {
+	mu        sync.Mutex
+	target    string
+	notBefore time.Time
+}
+
+// deadline is the armed notBefore for target, if one is armed.
+func (w *followWait) deadline(target string) (time.Time, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.target == "" || w.target != target {
+		return time.Time{}, false
+	}
+	return w.notBefore, true
+}
+
+// armIfNone arms notBefore for target unless target already has a deadline
+// (a later tick must not push an armed deadline out). A new target replaces
+// the old one's.
+func (w *followWait) armIfNone(target string, notBefore time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.target == target {
+		return
+	}
+	w.target, w.notBefore = target, notBefore
+}
+
+// shiftCloseInFlight counts CloseShift requests being handled right now
+// (cash count, totals, the next float). An unattended restart in the middle
+// would drop the close, so autoUpdateBusy reads it.
+var shiftCloseInFlight atomic.Int32
+
 // followForced is the target an operator's "Update now" asked for on the
 // main till's Tills page (ut-docs#2945): a fleet frame naming the version
 // the main till's own hello names. In memory on purpose — one attempt per
@@ -111,6 +182,11 @@ type followInputs struct {
 	LastAttempted    string // keyFollowAttempted
 	LastError        string // keyFollowError
 	Forced           bool   // an "Update now" press names Target (followForced)
+	Policy           string // update.fleet_follow, normalised: followPolicyNextIdle or followPolicyNightly
+	InNightlySlot    bool   // now is in the main till's update.auto_time window plus THIS till's offset
+	SlotDate         string // the autoUpdateSlot opening date while InNightlySlot, else ""
+	LastNightlySlot  string // update.auto_last_attempt: the slot date last acted in
+	JitterDue        bool   // the next_idle random wait for Target has been armed and has passed
 }
 
 // normVersion drops the optional leading v (updates.Newer compares bare
@@ -132,13 +208,22 @@ func followSettled(in followInputs) (failed, noEffect bool) {
 // newer release than this one (never a downgrade, never past it), the shop
 // hasn't switched updates off, this install can replace itself, no sale is
 // open, and this target hasn't already been tried — once per run, and not
-// again after an attempt that took effect without moving the version.
+// again after an attempt that took effect without moving the version. Under
+// the nightly policy the once-per-run guard is replaced by once per slot date
+// (update.auto_last_attempt, written before the apply), so a failed target is
+// retried at the next night's slot; a no-effect target is still never retried.
 //
 // An operator's "Update now" (Forced, ut-docs#2945) overrides only the
 // shop's automatic-updates switch and the once-per-run / no-effect guards —
 // a press is one more deliberate attempt. It never overrides a dev build,
 // a downgrade, UT_UPDATE_CHECK, an install that can't replace itself, or
 // an open sale.
+//
+// update.fleet_follow (ADR-0114 §5) decides when, once the checks above pass
+// and before the busy check: "nightly" acts only inside the nightly slot
+// (nightly_wait); the default "next_idle" acts after a random 0–120 s wait
+// for a new target (jitter_wait), then at the first tick with no open sale.
+// "Update now" skips both waits.
 func followDecision(in followInputs) (act bool, why string) {
 	switch {
 	case !in.Replica:
@@ -151,11 +236,27 @@ func followDecision(in followInputs) (act bool, why string) {
 		return false, "off"
 	case !in.Supported:
 		return false, "unsupported"
-	case !in.Forced && normVersion(in.AttemptedThisRun) == normVersion(in.Target):
+	case !in.Forced && in.Policy != followPolicyNightly && normVersion(in.AttemptedThisRun) == normVersion(in.Target):
 		return false, "attempted"
 	}
 	if _, noEffect := followSettled(in); noEffect && !in.Forced {
 		return false, "no_effect"
+	}
+	if !in.Forced {
+		if in.Policy == followPolicyNightly {
+			if !in.InNightlySlot {
+				return false, "nightly_wait"
+			}
+			// One automatic attempt per slot date, success or failure
+			// (ut-docs#6552): a failed target is retried at the next
+			// night's slot, never in a loop. A busy window is checked below
+			// and does not spend the slot; only acting writes the date.
+			if in.SlotDate != "" && in.SlotDate == in.LastNightlySlot {
+				return false, "attempted"
+			}
+		} else if !in.JitterDue {
+			return false, "jitter_wait"
+		}
 	}
 	if in.Busy {
 		return false, "busy"
@@ -226,7 +327,9 @@ func followCanInstall(in followInputs) bool {
 // followDecision's order: "main_off" (automatic updates off on the main
 // till), "checks_off" (UT_UPDATE_CHECK switched off on this till),
 // "manual" (behind, and this install can't replace itself) or "failed"
-// (behind, and the last attempt at this target failed or didn't take).
+// (behind, and the last attempt at this target failed or didn't take), or
+// "failed_nightly" (nightly policy, the last attempt failed and is retried
+// by itself at the next nightly slot).
 func followLine(in followInputs) string {
 	switch {
 	case in.AutoEnabled == "false":
@@ -239,6 +342,9 @@ func followLine(in followInputs) string {
 		return "manual"
 	}
 	if failed, noEffect := followSettled(in); failed || noEffect {
+		if failed && !noEffect && in.Policy == followPolicyNightly {
+			return "failed_nightly" // retried by itself at the next nightly slot (ut-docs#6552)
+		}
 		return "failed"
 	}
 	return "follows"
@@ -263,7 +369,10 @@ func followTarget(ctx context.Context, d *common.Deps) string {
 	return followTargetOf(d.LinkClient != nil, st, stored)
 }
 
-// autoUpdateBusy: an unattended restart would destroy an open basket. Both
+// autoUpdateBusy: an unattended restart would destroy an open basket. A
+// payment in flight is covered by this: the basket keeps its lines until the
+// tender completes. A shift close in flight (shiftCloseInFlight) counts too.
+// Both
 // engines (ut-docs#449) and table-QR sessions (ADR-0103, ut-docs#2261);
 // d.KioskEngine is nil in some test harnesses, HasItems is nil-safe.
 // HasItemsOrByHand(), not ItemCount() (ut-docs#3596): a resumed kiosk
@@ -271,7 +380,8 @@ func followTarget(ctx context.Context, d *common.Deps) string {
 // hand" ones (ut-docs#3586) — its held_sales row is already gone, so an
 // unattended restart that treats it as idle loses the order outright.
 func autoUpdateBusy(d *common.Deps) bool {
-	return d.Engine.HasItemsOrByHand() ||
+	return shiftCloseInFlight.Load() > 0 ||
+		d.Engine.HasItemsOrByHand() ||
 		(d.KioskEngine != nil && d.KioskEngine.HasItemsOrByHand()) ||
 		d.SelfOrderSessions.HasItems()
 }
@@ -283,8 +393,14 @@ func autoUpdateIdle(d *common.Deps) func() bool {
 	return func() bool { return !autoUpdateBusy(d) }
 }
 
-// followInputsOf reads the inputs for this till now.
+// followInputsOf reads the inputs for this till now. It never changes the
+// jitter state (the Settings page and the chip call it).
 func followInputsOf(ctx context.Context, d *common.Deps) followInputs {
+	return followInputsAt(ctx, d, time.Now())
+}
+
+// followInputsAt is followInputsOf for a given wall-clock time.
+func followInputsAt(ctx context.Context, d *common.Deps, now time.Time) followInputs {
 	get := func(key string) string {
 		v, _, _ := d.Settings.Get(ctx, key)
 		return strings.TrimSpace(v)
@@ -299,6 +415,14 @@ func followInputsOf(ctx context.Context, d *common.Deps) followInputs {
 		AttemptedThisRun: followRun.get(),
 		LastAttempted:    get(keyFollowAttempted),
 		LastError:        get(keyFollowError),
+		Policy:           followPolicyOf(get(keyFleetFollow)),
+	}
+	if in.Policy == followPolicyNightly {
+		_, hhmm := autoUpdateSchedule(get)
+		in.InNightlySlot, in.SlotDate = autoUpdateSlot(now, hhmm, autoUpdateJitter(ctx, d))
+		in.LastNightlySlot = get(keyAutoUpdateLastAttempt)
+	} else if at, ok := followJitterWait.deadline(normVersion(in.Target)); ok {
+		in.JitterDue = !now.Before(at)
 	}
 	if forced := followForced.get(); forced != "" {
 		if forced == normVersion(in.Target) {
@@ -322,9 +446,17 @@ func followInputsOf(ctx context.Context, d *common.Deps) followInputs {
 // instead of the nightly path. The attempt is recorded BEFORE applying (in
 // memory and per-till), so neither a failure nor a crash mid-download can
 // turn into a download loop.
-func followTick(ctx context.Context, d *common.Deps) {
-	in := followInputsOf(ctx, d)
-	if act, _ := followDecision(in); !act {
+func followTick(ctx context.Context, d *common.Deps, now time.Time) {
+	in := followInputsAt(ctx, d, now)
+	act, why := followDecision(in)
+	if why == "jitter_wait" {
+		// First time this target gets this far: draw its random wait, then
+		// look again, so a 0 s wait acts in this very tick.
+		followJitterWait.armIfNone(normVersion(in.Target), now.Add(followJitterDelay()))
+		in = followInputsAt(ctx, d, now)
+		act, _ = followDecision(in)
+	}
+	if !act {
 		return
 	}
 	target := normVersion(in.Target)
@@ -332,6 +464,11 @@ func followTick(ctx context.Context, d *common.Deps) {
 		followForced.set("") // one attempt per press
 	}
 	followRun.set(target)
+	if in.SlotDate != "" {
+		// Same per-till key and BEFORE-apply order as the main till's
+		// nightly path: one attempt per slot, even across a restart.
+		_ = d.Settings.Set(ctx, keyAutoUpdateLastAttempt, in.SlotDate)
+	}
 	_ = d.Settings.Set(ctx, keyFollowAttempted, target)
 	_ = d.Settings.Set(ctx, keyFollowError, followApplying)
 	logging.L().Infof("auto-update: following the main till to v%s", target)
@@ -358,7 +495,7 @@ func followErrorCode(err error) string {
 	switch {
 	case errors.As(err, &netErr):
 		return "network"
-	case strings.Contains(msg, "already being applied"):
+	case errors.Is(err, selfupdate.ErrApplyInProgress):
 		return "busy"
 	case strings.Contains(msg, "checksum"):
 		return "checksum"

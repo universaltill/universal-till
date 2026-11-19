@@ -1311,6 +1311,54 @@ func TestPluginSettingsPage_GET_RendersPermissionsWithGrantStatus(t *testing.T) 
 	}
 }
 
+// ut-docs#3553: the settings Permissions table shows the same plain-language
+// description as the store page, as visible text under the raw name; a
+// permission with no description renders the raw name only.
+func TestPluginSettingsPage_GET_PermissionsShowPlainLanguageDescriptions(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginPermissions(t, dp.Db, "p-desc", []string{"http:lan", "view:sales", "sales:read"}, "http:lan")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p-desc/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugins/p-desc/settings: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, tc := range []struct{ perm, key string }{
+		{"http:lan", "plugins.permissions.desc.http_lan"},
+		{"view:sales", "plugins.permissions.desc.view"},
+	} {
+		want := html.EscapeString(httpx.T("en", tc.key))
+		if want == tc.key || want == "" {
+			t.Fatalf("test setup: no English text for %s", tc.key)
+		}
+		nameAt := strings.Index(body, `<code dir="ltr">`+tc.perm+`</code>`)
+		if nameAt < 0 {
+			t.Fatalf("expected %s as <code dir=\"ltr\"> name, got:\n%s", tc.perm, body)
+		}
+		rowEnd := strings.Index(body[nameAt:], "</td>")
+		cell := body[nameAt : nameAt+rowEnd]
+		if !strings.Contains(cell, `<span class="perm-desc muted">`+want+`</span>`) {
+			t.Fatalf("expected %s description %q in its name cell, got cell:\n%s", tc.perm, want, cell)
+		}
+	}
+
+	// sales:read has no description: its own name cell renders the raw
+	// name only, no perm-desc line.
+	const plainCell = `<td style="font-family:monospace">sales:read</td>`
+	at := strings.Index(body, plainCell)
+	if at < 0 {
+		t.Fatalf("expected sales:read as a plain name cell %q, got:\n%s", plainCell, body)
+	}
+	cellEnd := strings.Index(body[at:], "</td>")
+	if strings.Contains(body[at:at+cellEnd], "perm-desc") {
+		t.Fatalf("sales:read has no description but rendered a perm-desc line:\n%s", body[at:at+cellEnd])
+	}
+}
+
 func TestPluginSettingsPage_GET_NoPermissionsShowsEmptyState(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newPluginSettingsTestDeps(t)
@@ -1520,12 +1568,12 @@ func TestBuildTaxOverrideRows_OutOfRangeStoredIsBlankWithNotice(t *testing.T) {
 		orphan bool
 		want   string
 	}{
-		{`{"gone":-500}`, "gone", true, "-5"},
-		{`{"gone":15000}`, "gone", true, "150"},
-		{`{"gone":0}`, "gone", true, "0"},
-		{`{"tax_a":0}`, "tax_a", false, "0"},
-		{`{"tax_a":-100}`, "tax_a", false, "-1"},
-		{`{"tax_a":10001}`, "tax_a", false, "100.01"},
+		{`{"gone":-500}`, "gone", true, "-5%"},
+		{`{"gone":15000}`, "gone", true, "150%"},
+		{`{"gone":0}`, "gone", true, "0%"},
+		{`{"tax_a":0}`, "tax_a", false, "0%"},
+		{`{"tax_a":-100}`, "tax_a", false, "-1%"},
+		{`{"tax_a":10001}`, "tax_a", false, "100.01%"},
 	}
 	for _, c := range cases {
 		rows, ok := buildTaxOverrideRows(c.stored, tcs, "en")
@@ -1552,8 +1600,12 @@ func TestBuildTaxOverrideRows_ValidValuesAreLocalized(t *testing.T) {
 	tb := int64(1050)
 	tcs := []data.TaxCodeView{{ID: "tax_a", Name: "A", RateBP: 1925, TakeawayRateBP: &tb}}
 	for _, c := range []struct{ locale, over, dine, ph string }{
-		{"de", "7,5", "19,25", "10,5"},
-		{"en", "7.5", "19.25", "10.5"},
+		{"de", "7,5", "19,25\u00a0%", "10,5"},
+		{"en", "7.5", "19.25%", "10.5"},
+		// ut-docs#4281: the read-only dine-in rate is on-screen text with the
+		// locale's sign and digits; the input values stay typeable.
+		{"tr", "7,5", "%19,25", "10,5"},
+		{"fa", "7.5", "\u06f1\u06f9\u066b\u06f2\u06f5\u066a", "10.5"},
 	} {
 		rows, _ := buildTaxOverrideRows(`{"tax_a":750}`, tcs, c.locale)
 		r := rows[0]
@@ -1661,6 +1713,21 @@ func TestAIImageModelUnsupportedHint_SaysBuiltinStaysOn(t *testing.T) {
 		}
 		if got := httpx.T(lang, "plugins.settings.ai.image_model_unsupported"); !strings.Contains(got, c) {
 			t.Errorf("%s hint must say the till keeps its built-in background removal (%q), got %q", lang, c, got)
+		}
+	}
+}
+
+// ut-docs#4281: a percent setting's min/max in a validation error is
+// on-screen text, so it carries the locale's sign placement and digits.
+func TestFormatSettingLimit_PercentIsLocaleDisplay(t *testing.T) {
+	for locale, want := range map[string]string{
+		"en": "50.00%",
+		"de": "50,00\u00a0%",
+		"tr": "%50,00",
+		"fa": "\u06f5\u06f0\u066b\u06f0\u06f0\u066a",
+	} {
+		if got := formatSettingLimit(plugins.SettingTypePercent, 5000, locale); got != want {
+			t.Errorf("%s: formatSettingLimit(percent, 5000) = %q, want %q", locale, got, want)
 		}
 	}
 }
