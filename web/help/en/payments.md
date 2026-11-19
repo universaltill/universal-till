@@ -5,7 +5,7 @@ section: Everyday selling
 order: 20
 public: true
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
-keywords: [cash, card, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
+keywords: [cash, card, card reader, which reader, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---
 
 # Payments
@@ -56,6 +56,20 @@ Once at least one payment method exists on the till (cash, card, gift card and v
 What can go wrong: a percent outside 0–100, or a negative fixed amount, is refused before it's saved — fix the number and try again.
 
 Changing either setting needs a manager's or admin's role — the same [manager-approval prompt](/help/elevation) as other settings changes.
+
+## Choosing a card reader
+
+When a till has more than one card reader set up (a manager adds them under **Settings → Payments → Card readers**, see [Card readers](/help/card-readers)), the payment panel shows one **Card** button instead of one button per provider. Under its name the till shows the reader used last, so you can see the default before you tap.
+
+1. Tap **Pay**, then **Card**. The till checks the readers for a moment (never longer than a few seconds, and you can tap **Choose another method** at any time) and shows **Which reader?**.
+2. The reader used last on this till is already selected. To use another one, tap it. Tapping a reader only selects it; nothing is charged yet.
+3. Tap **Pay** on the selected reader. The reader then asks the customer for their card as usual.
+
+Each reader shows what it is doing, in words and an icon: **Ready**, **Busy** (another payment is running on it), **Offline** (the till cannot reach it), **Needs setup** (ask a manager), or **Unknown** (the check did not answer; you can still try it). A reader that cannot be chosen stays in the list with the reason under its name. If only one reader is ready, the till uses it without asking, and says so. If none is ready, use another payment method or ask a manager.
+
+On a split payment, each card part has its own **Reader** choice, so two parts can go to two different readers.
+
+If a card payment could not be confirmed (see **When a card payment can't be confirmed** below), the retry is limited to the reader it was started on; the panel shows only that reader and says so. A card refund goes back through the provider and the reader the sale was paid on, and still works if that reader has since been removed or is switched off.
 
 ## Giving change on a cash sale
 

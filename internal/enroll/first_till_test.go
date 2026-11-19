@@ -406,3 +406,35 @@ func TestSettingsPairFailureProblemClearsOnSuccessfulPair_5098(t *testing.T) {
 		t.Fatalf("open problems after the successful pair = %+v, want none", open)
 	}
 }
+
+// ut-docs#6663 (ADR-0166 amendment 2026-11-18): store.receipt_prefix is the
+// cloud's letter prefix for a replacement main till. Only a string of 1-3
+// letters from the cloud alphabet plus "-" counts; absent (older cloud) or
+// anything else is "" and never fails the decode.
+func TestPairProfileReceiptPrefix(t *testing.T) {
+	cases := []struct{ name, store, want string }{
+		{"A", `{"name":"A","receipt_prefix":"A-"}`, "A-"},
+		{"AB", `{"name":"A","receipt_prefix":"AB-"}`, "AB-"},
+		{"absent (old cloud)", `{"name":"A"}`, ""},
+		{"digits are the till's own space", `{"name":"A","receipt_prefix":"2-"}`, ""},
+		{"M<hex> is local", `{"name":"A","receipt_prefix":"M3f2a9c1e-"}`, ""},
+		{"lower case", `{"name":"A","receipt_prefix":"a-"}`, ""},
+		{"excluded letter", `{"name":"A","receipt_prefix":"I-"}`, ""},
+		{"too long", `{"name":"A","receipt_prefix":"AAAA-"}`, ""},
+		{"no dash", `{"name":"A","receipt_prefix":"A"}`, ""},
+		{"number", `{"name":"A","receipt_prefix":7}`, ""},
+		{"null", `{"name":"A","receipt_prefix":null}`, ""},
+		{"injection", `{"name":"A","receipt_prefix":"A-'; DROP TABLE sales;--"}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p PairProfile
+			if err := json.Unmarshal([]byte(tc.store), &p); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if p.ReceiptPrefix != tc.want || p.Name != "A" {
+				t.Fatalf("ReceiptPrefix = %q (name %q), want %q", p.ReceiptPrefix, p.Name, tc.want)
+			}
+		})
+	}
+}

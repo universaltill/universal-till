@@ -106,12 +106,14 @@ func TestPOSRepo_NextReceiptNo_Sequencing(t *testing.T) {
 		t.Fatalf("NextReceiptNo(after 1 sale) = (%q,%v), want (000000002,nil)", got, err)
 	}
 
-	// Non-numeric legacy receipt casts to 0 and must not break the counter.
+	// Non-numeric legacy receipt must not break the counter. The counter is
+	// stored (ut-docs#6663): the number issued above was never used by a
+	// sale, but outside a transaction it is spent, so the next one is 3.
 	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at)
 VALUES ('sale-legacy', 'R-0099', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:00Z')`)
 	got, err = repo.NextReceiptNo(ctx, nil)
-	if err != nil || got != "000000002" {
-		t.Fatalf("NextReceiptNo(with legacy receipt) = (%q,%v), want (000000002,nil)", got, err)
+	if err != nil || got != "000000003" {
+		t.Fatalf("NextReceiptNo(with legacy receipt) = (%q,%v), want (000000003,nil)", got, err)
 	}
 
 	// ADR-0011 synced replica: the till prefix namespaces the counter, and
@@ -133,16 +135,17 @@ VALUES ('sale-t9', 'T9-000000042', 'completed', 'sale', 'GBP', 100, 100, '2026-0
 	}
 	defer tx.Rollback()
 	got, err = repo.NextReceiptNo(ctx, tx)
-	if err != nil || got != "T2-000000008" {
-		t.Fatalf("NextReceiptNo(in tx) = (%q,%v), want (T2-000000008,nil)", got, err)
+	if err != nil || got != "T2-000000009" {
+		// The previous call spent 8 (stored counter, ut-docs#6663).
+		t.Fatalf("NextReceiptNo(in tx) = (%q,%v), want (T2-000000009,nil)", got, err)
 	}
 }
 
-// ut-docs#1817: NextDisplayNo's own sequencing, mirroring
-// TestPOSRepo_NextReceiptNo_Sequencing's structure exactly (same prefix
-// reuse, same non-numeric-legacy-value tolerance) plus the two behaviours
-// that are NEW to this method: the trading-period-reset default actually
-// resets after an "eod" close, and the lifetime_no_reset scheme doesn't.
+// ut-docs#1817 / ut-docs#6663: NextDisplayNo's own sequencing. The order
+// number is a stored pointer inside the till's block, never a prefixed MAX:
+// it continues above what the period already issued, ignores legacy
+// prefixed and non-numeric values, restarts after an "eod" close under the
+// default scheme and only wraps under lifetime_no_reset.
 func TestPOSRepo_NextDisplayNo_Sequencing(t *testing.T) {
 	d := openBatch8DB(t, "display_no.db")
 	ctx := context.Background()
@@ -154,102 +157,59 @@ func TestPOSRepo_NextDisplayNo_Sequencing(t *testing.T) {
 	if err != nil || got != "1" {
 		t.Fatalf("NextDisplayNo(empty) = (%q,%v), want (1,nil)", got, err)
 	}
-
-	// Using the issued number advances the sequence.
-	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
-VALUES ('sale-dn-1', 'R1', '1', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:00:00Z')`)
+	// The pointer is stored: the next one is 2 even though no sale used 1.
 	got, err = repo.NextDisplayNo(ctx, nil)
 	if err != nil || got != "2" {
-		t.Fatalf("NextDisplayNo(after 1 sale) = (%q,%v), want (2,nil)", got, err)
+		t.Fatalf("NextDisplayNo(second) = (%q,%v), want (2,nil)", got, err)
 	}
 
-	// Non-numeric legacy display_no casts to 0 and must not break the counter.
-	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
-VALUES ('sale-dn-legacy', 'R-legacy', 'B12', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:00Z')`)
-	got, err = repo.NextDisplayNo(ctx, nil)
-	if err != nil || got != "2" {
-		t.Fatalf("NextDisplayNo(with legacy display_no) = (%q,%v), want (2,nil)", got, err)
-	}
-
-	// A NULL display_no (a sale predating migration 013) must not break the
-	// counter either -- COALESCE(MAX(...),0) already covers this, pinned
-	// here so a future refactor can't silently regress it.
-	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at)
-VALUES ('sale-dn-nulldisplay', 'R-nulldisplay', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:30Z')`)
-	got, err = repo.NextDisplayNo(ctx, nil)
-	if err != nil || got != "2" {
-		t.Fatalf("NextDisplayNo(with NULL display_no) = (%q,%v), want (2,nil)", got, err)
-	}
-
-	// ADR-0011 synced replica: the till prefix namespaces the counter, same
-	// sync.receipt_prefix NextReceiptNo already reads -- another till's
-	// display numbers (different prefix) never bleed into this max.
+	// A legacy prefixed display_no, a non-numeric one and a NULL one never
+	// break the counter; a joined till's block is 100..199, never 1..99.
 	mustExec(t, d, `INSERT INTO settings (key, value) VALUES ('sync.receipt_prefix', 'T2-')`)
 	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
 VALUES ('sale-dn-t2', 'T2-000000007', 'T2-5', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:02:00Z')`)
 	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
-VALUES ('sale-dn-t9', 'T9-000000042', 'T9-99', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:03:00Z')`)
+VALUES ('sale-dn-legacy', 'R-legacy', 'B12', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:00Z')`)
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-nulldisplay', 'R-nulldisplay', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:30Z')`)
 	got, err = repo.NextDisplayNo(ctx, nil)
-	if err != nil || got != "T2-6" {
-		t.Fatalf("NextDisplayNo(prefixed) = (%q,%v), want (T2-6,nil)", got, err)
+	if err != nil || got != "100" {
+		t.Fatalf("NextDisplayNo(till 2) = (%q,%v), want (100,nil): no prefix, own block", got, err)
 	}
 
-	// The checkout path calls it inside a transaction, same as NextReceiptNo.
+	// The checkout path calls it inside a transaction; a rollback gives the
+	// number back.
 	tx, err := d.DB.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err = repo.NextDisplayNo(ctx, tx)
-	if err != nil || got != "T2-6" {
-		t.Fatalf("NextDisplayNo(in tx) = (%q,%v), want (T2-6,nil)", got, err)
+	if err != nil || got != "101" {
+		t.Fatalf("NextDisplayNo(in tx) = (%q,%v), want (101,nil)", got, err)
 	}
 	tx.Rollback()
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "101" {
+		t.Fatalf("NextDisplayNo(after rollback) = (%q,%v), want (101,nil)", got, err)
+	}
 
-	// Trading-period-reset: after this till's first "eod" close, only sales
-	// created AFTER that close count -- the SAME boundary generateEOD's own
-	// LatestArchivedAt(ctx,"eod") call uses (ADR-0066 Decision 6), so this
-	// can never disagree with what the close report itself showed as "this
-	// period".
-	//
-	// report_archive.created_at is written in archiveTimestampFmt
-	// ("2006-01-02 15:04:05", SPACE-separated -- the schema's own
-	// datetime('now') DEFAULT and ArchiveReport's explicit write both use
-	// this shape), NOT time.RFC3339 like sales.created_at. Seeding it in
-	// RFC3339 here would have been a false-positive test: independent
-	// review (ut-docs#1817) caught that an earlier draft of this test used
-	// the WRONG format and so never actually exercised the real bug --
-	// 'T' (0x54) sorts after ' ' (0x20) in a bare string compare, so a
-	// same-calendar-day sale would ALWAYS read as "after the close"
-	// regardless of its real time, and the reset would silently never
-	// reset. Production's actual shape is what belongs here.
+	// Trading-period-reset: after this till's first "eod" close the pointer
+	// restarts at the block's first number. report_archive.created_at is
+	// written in archiveTimestampFmt (space-separated), NOT RFC3339 like
+	// sales.created_at (ut-docs#1817 review: a bare string compare never
+	// resets on the same calendar day), so seed the real shape.
 	mustExec(t, d, `INSERT INTO report_archive (id, kind, period, content_json, created_at)
 VALUES ('eod-1', 'eod', '2026-07-30', '{}', '2026-07-30 10:02:30')`)
 	got, err = repo.NextDisplayNo(ctx, nil)
-	// Only sale-dn-t2 (10:02:00Z) is before the close; sale-dn-t9 (10:03:00Z)
-	// is after -- but t9 uses a DIFFERENT prefix, so under the T2- prefix
-	// the post-close count is 0, next is 1. Both t2 and the close are on the
-	// SAME calendar day (2026-07-30), which is exactly the case a
-	// space-vs-'T' format mismatch would get wrong -- this assertion is the
-	// one that actually pins the fix, not just the concept of resetting.
-	if err != nil || got != "T2-1" {
-		t.Fatalf("NextDisplayNo(after eod close, T2- prefix, same calendar day) = (%q,%v), want (T2-1,nil)", got, err)
+	if err != nil || got != "100" {
+		t.Fatalf("NextDisplayNo(after eod close) = (%q,%v), want (100,nil)", got, err)
 	}
 
-	// A sale created AFTER the close, same prefix, must be counted --
-	// confirms the boundary isn't just excluding everything.
-	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
-VALUES ('sale-dn-t2-postclose', 'T2-postclose', 'T2-1', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T11:00:00Z')`)
-	got, err = repo.NextDisplayNo(ctx, nil)
-	if err != nil || got != "T2-2" {
-		t.Fatalf("NextDisplayNo(one sale after close) = (%q,%v), want (T2-2,nil)", got, err)
-	}
-
-	// lifetime_no_reset: ignores the close boundary entirely, keeps counting
-	// every sale ever recorded under this prefix.
+	// lifetime_no_reset ignores the close boundary: it only wraps.
 	mustExec(t, d, `INSERT OR REPLACE INTO settings (key, value) VALUES ('sale.display_no_scheme', 'lifetime_no_reset')`)
 	got, err = repo.NextDisplayNo(ctx, nil)
-	if err != nil || got != "T2-6" {
-		t.Fatalf("NextDisplayNo(lifetime_no_reset, ignores eod close) = (%q,%v), want (T2-6,nil)", got, err)
+	if err != nil || got != "101" {
+		t.Fatalf("NextDisplayNo(lifetime_no_reset) = (%q,%v), want (101,nil)", got, err)
 	}
 }
 

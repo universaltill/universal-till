@@ -2,13 +2,16 @@ package pages
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -31,6 +34,14 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
+		// ut-docs#5660: why a revocation turned a plugin off. A failure here
+		// must never take the page down; the cards just lose the notice.
+		revoked, rerr := data.NewPluginRepo(d.Db).RevocationNotices(ctx)
+		if rerr != nil {
+			logging.L().Warnf("[plugins] revocation notices: %v", rerr)
+			revoked = nil
+		}
+		loc := httpx.RequestLocale(r)
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
 
 		// Docs button targets (ADR-0037): a plugin registering a page entry
@@ -132,7 +143,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			if isBundled {
 				hasUpdate, versionUnknown, latest = false, false, ""
 			}
-			items = append(items, map[string]any{
+			item := map[string]any{
 				"bundled":          isBundled,
 				"mainControlled":   isBundled && d.SyncPrimaryURL(ctx) != "", // ADR-0194: on a satellite the main till switches it
 				"autoNote":         autoNote,
@@ -147,7 +158,19 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				"latest":           latest,
 				"versionUnknown":   versionUnknown,
 				"docsRoute":        docsRouteByPlugin[row.ID],
-			})
+				"revoked":          false,
+			}
+			if n, ok := revoked[row.ID]; ok {
+				item["revoked"] = true
+				item["revokedVersion"] = n.Version
+				item["revokedReason"] = n.Reason
+				item["revokedNotice"] = revocationNoticeText(loc, n)
+				item["revokedAt"] = ""
+				if !n.RevokedAt.IsZero() {
+					item["revokedAt"] = n.RevokedAt.UTC().Format(time.RFC3339)
+				}
+			}
+			items = append(items, item)
 		}
 
 		// "Built in" first (stable within each group: the rows are by name).
@@ -165,4 +188,17 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			"pluginsJSON": template.JS(raw),
 		})(w, r)
 	})
+}
+
+// revocationNoticeText formats the card notice server-side so the template
+// needs no JS string substitution. The version and the (untrusted, possibly
+// other-language) reason are wrapped in FSI/PDI so an RTL sentence cannot
+// scramble the punctuation around them. The template renders it with x-text.
+func revocationNoticeText(loc string, n data.RevocationNotice) string {
+	isolate := func(s string) string { return "\u2068" + s + "\u2069" }
+	reason := data.CapRevocationReason(n.Reason)
+	if reason == "" {
+		return fmt.Sprintf(httpx.T(loc, "plugins.manage.revoked_notice"), isolate(n.Version))
+	}
+	return fmt.Sprintf(httpx.T(loc, "plugins.manage.revoked_notice_reason"), isolate(n.Version), isolate(reason))
 }
