@@ -1,0 +1,14 @@
+{{/* ut-docs#5066: the shop's backup key, shown after the manager PIN, from
+     POST /api/offsite/key/show. Never cached (Cache-Control: no-store). The
+     download link is a data: URL built in the browser's own page: the key is
+     not fetched again and not logged. Print uses the page print dialog. */}}
+<div class="cloud-key-show" data-testid="cloud-key-show">
+  <p class="cloud-key-string" data-testid="cloud-key-string" dir="ltr" translate="no"><strong>{{ .key }}</strong></p>
+  <p class="muted">{{ T "backup.cloud.key.shown_warning" }}</p>
+  <div class="set-row set-below">
+    <button type="button" class="btn secondary" data-action="print" data-testid="cloud-key-print">{{ T "backup.cloud.key.print" }}</button>
+    <button type="button" class="btn secondary" hx-post="/api/offsite/key/print" hx-target="#cloud-key-print-msg" hx-swap="innerHTML" data-testid="cloud-key-print-receipt">{{ T "backup.cloud.key.print_receipt" }}</button>
+    <a class="btn secondary" hx-boost="false" download="universal-till-backup-key.txt" href="{{ .file }}" data-testid="cloud-key-download">{{ T "backup.cloud.key.download" }}</a>
+    <span id="cloud-key-print-msg" aria-live="polite"></span>
+  </div>
+</div>

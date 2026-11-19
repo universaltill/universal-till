@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
@@ -34,6 +35,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -372,6 +374,15 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
+	// ut-docs#6154: the Pi kiosk's cached `lpstat` probe (never on other tills).
+	if isPiKioskAppliance(windowCtl) {
+		sp := print.NewCachedProber(print.LpstatProber{}, 60*time.Second)
+		dp.SystemPrinters = sp
+		go func() { // warm-up; lpstat absent → instant
+			defer logging.RecoverAndLog("pages.init.printProbe")
+			sp.Refresh(context.Background())
+		}()
+	}
 	// ADR-0088 Decision J / ut-docs#1912: nav.html is a shared partial with
 	// no per-page data of its own, so its railEntries template func reads
 	// the rail-slot amendments through this PluginMu-locked accessor rather
@@ -385,6 +396,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ut-docs#4370: translate mode (ADR-0160 §7) — the T helper tags
 	// strings with their keys only for a request translateModeActive allows.
 	httpx.InitTranslateMode(func(r *http.Request) bool { return translateModeActive(dp, r) })
+	// ut-docs#3735: <body data-window-toggle> (F11 window toggle) per request.
+	httpx.InitWindowToggle(func(r *http.Request) bool { return windowToggleOffered(dp, r) })
+	// ut-docs#6154: a Pi kiosk with no OS print destination never opens the
+	// browser's PDF-only print dialog. Live per-request check; no probe or
+	// exec on any other till.
+	httpx.InitBrowserPrint(func(r *http.Request) bool { return browserPrintOff(dp, r) })
 	// ut-docs#3091: record this till's running version (and when it first
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())
@@ -517,6 +534,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPrintAPI(mux, dp)
 	registerKitchenPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)
+	registerOffsiteBackup(mux, dp)  // off-site encrypted backup: card + restore page (ut-docs#5066)
 	registerEntitlementAPI(mux, dp) // ADR-0060 read surface: cached plan + effective plan (ut-docs#2547)
 	registerSubscriptionUI(mux, dp) // status-bar subscription chip (ut-docs#2569)
 	registerDataAPI(mux, dp)
@@ -536,6 +554,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
+	registerNextStepsUI(mux, dp)                      // ut-docs#5058 UT-3: dismiss the "Next steps" card after a cloud setup
 	registerMoveApproval(mux, dp)                     // ut-docs#5127 UT-1b: approve or decline a move into another shop
 	registerSyncSales(mux, dp)
 	registerSyncSalesMirror(mux, dp)    // ut-docs#5074: the read-only sales copy's feed, main-till side (ships dark)
@@ -559,12 +578,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	dp.MainTillUnreachable = func(ctx context.Context) bool {
 		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).mainTillGone()
 	}
+	wireThemeAvailable(dp)       // personal theme validity for ResolvedTheme (ut-docs#3440)
 	registerSyncCatalog(mux, dp) // additional-till catalogue write-through, main-till side (ut-docs#2817); dispatches into the catalogue handlers on this same mux
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
 	// accepts requests; the revoke handler and every NudgeLink change point
 	// read dp.Link at request time.
 	dp.Link = newSyncLinkHub(dp, fleetlink.DefaultConfig(), syncAdminRepo)
+	// Always built: a till becomes a main till without restarting (a replica
+	// refuses the pending-link route before it is used).
+	dp.PendingLinks = fleetlink.NewPendingHub(fleetlink.DefaultConfig())
 	registerSyncLink(mux, dp)
 	registerSyncCloudDevice(mux, dp) // replica's own cloud device identity, main-till side (ut-docs#2730)
 	registerSyncAssets(mux, dp)
@@ -573,6 +596,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncBearerRotate(mux, dp)   // a replica swaps its LAN sync bearer, main-till side (ut-docs#5198)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
+	registerTaxAutoInstallChip(mux, dp) // automatic tax plugin install status (ADR-0172 §5, ut-docs#6287)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
 	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)
 	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
@@ -612,7 +636,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ADR-0117 (ut-docs#2824): the main till's cloud link. Set before the
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
+	// ADR-0200 (ut-docs#6559): once the background loop has registered this
+	// till, open the operator check-in window so the cloud sees its device
+	// report at once (ADR-0148 section 2), like every other registration.
+	enroll.SetRegisteredHook(func() { requestOperatorCheckin(dp, operatorCheckinWindow) })
 	dp.CloudLink = newCloudLinkClient(dp)
+	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
+	// host fn #6455) reaches the cloud with the live enrolment.
+	wirePayBroker(dp.Cfg)
 	// Network services start through netaccess.StartService, which skips them
 	// on the public demo till (ADR-0113 §1.6, ut-docs#2795); the local loops
 	// (EOD, sweeps, reconciles) and the main till's inbound link hub always run.
@@ -671,11 +702,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSelfOrderShop(mux, dp)       // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
 	registerAuditPage(mux, dp)           // manager-only audit-trail browse/filter page
 	registerChannelOrdersPage(mux, dp)   // manager-only read-only Online orders list (ADR-0169 §9, ut-docs#4768)
+	registerNoticesPages(mux, dp)        // notices from Universal Till/partners: bell, inbox, toast, critical strip (ADR-0176, ut-docs#5366)
+	registerMyDisplayPage(mux, dp)       // per-operator theme + browsing mode (ut-docs#3440)
 	registerIssueReportPage(mux, dp)     // manager-only "report an issue" capture (ADR-0022)
 	registerMyReportsPage(mux, dp)       // manager-only sent-report tracking list (ut-docs#348)
 	registerDiagnosticsSettings(mux, dp) // diagnostic mode: nav chip, code redemption, local stop (ADR-0092, ut-docs#2169)
 	emitDiagnosticsInventory(ctx, dp)    // no-op unless a session was restored above
 	registerHelp(mux, dp)
+	registerAbout(mux, dp) // About screen: privacy, terms, licences, delete-account links on every channel (ut-docs#6402)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
 	registerMenuLayoutSettings(mux, dp) // ADR-0088 Decision D: the hidden-tiles findability surface
@@ -838,6 +872,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 // leaves the published value as it was rather than resetting it.
 func publishCachedSettings(ctx context.Context, store *settings.Store, st common.RuntimeState, authDisabled bool) {
 	httpx.InitCurrency(st.Currency)
+	httpx.InitCurrencyDisplay(st.CurrencyDisplay) // ut-docs#5410
 	// ut-docs#2362: RenderError's cached theme — a themed till must render
 	// its error pages themed from the first request and after a theme sync.
 	httpx.InitTheme(st.Theme)

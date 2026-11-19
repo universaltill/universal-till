@@ -121,8 +121,11 @@ type pluginJobSnapshot struct {
 type pluginJobRegistry struct {
 	mu   sync.Mutex
 	jobs map[string]*pluginJob
-	// wg counts startPluginJob's goroutines so tests can wait them out
-	// (ut-docs#4517).
+	// wg counts startPluginJob's goroutines, the plugin ask included, so
+	// tests can wait them out (ut-docs#4517). A job that ends on its
+	// deadline returns before its ask does; the ask still writes audit rows,
+	// so a test that stopped waiting there removed the DB's folder under it
+	// (ut-docs#5117).
 	wg sync.WaitGroup
 }
 
@@ -387,8 +390,10 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 			err error
 		}
 		done := make(chan result, 1)
+		reg.wg.Add(1)
 		go func() {
 			defer logging.RecoverAndLog("pages.pluginJobAsk")
+			defer reg.wg.Done()
 			// Sent by a deferred call so a panicking handler still ends
 			// the job at once (it runs before RecoverAndLog recovers).
 			res := result{err: errors.New("plugin job panicked")}

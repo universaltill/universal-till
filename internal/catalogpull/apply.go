@@ -241,6 +241,14 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 			}
 		}
 	}
+	// A row this till already has keeps its till-owned fields
+	// (tillOwnedFields, ut-docs#6072): the cloud only ever holds their
+	// defaults. Outside the forced guard: a conflict answer keeps them too.
+	if linked {
+		for _, name := range tillOwnedFields[row.Kind] {
+			delete(f, name)
+		}
+	}
 	var created bool
 	var changed []string
 	var photos []replacedPhoto
@@ -471,11 +479,9 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 				return err
 			case !res.AlreadyDeleted:
 				what = "deleted"
-				if res.Voids > 0 {
-					// ut-docs#4746: the voids were detached with the item.
-					payload["voids"] = res.Voids
-					payload["note"] = fmt.Sprintf("item deleted with %d voids", res.Voids)
-				}
+				// ut-docs#4746, #4778: live voids, comps, wastes and ID
+				// checks were detached with the item.
+				res.AddDetachedToAudit(payload)
 			}
 		}
 		if deactivate {

@@ -21,7 +21,7 @@ import (
 // (internal/cloudsync's start-up check-in, not this window).
 
 const (
-	// operatorCheckinWindow follows Register now, a pairing, a registering
+	// operatorCheckinWindow follows an explicit operator registration, a pairing, a registering
 	// plugin install, managed-TSE setup and "Check for a paid plan".
 	operatorCheckinWindow = 2 * time.Minute
 	// claimCheckinWindow follows a claim code: the code's own lifetime.

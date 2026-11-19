@@ -3,6 +3,7 @@ id: invoices
 title: الفواتير والفاتورة الضريبية
 section: إدارة العمل
 order: 220
+public: true
 summary: أصدر فاتورة رسمية (ضريبية) لعملية بيع — للعملاء التجاريين أو حيثما تُطلب فاتورة معنونة.
 routes: [/invoices, /invoice/{display_no}]
 ---

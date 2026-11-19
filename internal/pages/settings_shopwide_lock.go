@@ -29,7 +29,8 @@ import (
 //
 // Deliberately left editable (per-till keys, or not a settings write):
 // theme (theme), the Display card (display.*, incl. display.effects_*,
-// window mode, launch on startup, exit to OS), the printer card
+// window mode, launch on startup, exit to OS), the Cloud record card
+// (registration.*, ADR-0200: per-till, a replica never reports itself; registration.stopped is shop-wide, written through to the main till), the printer card
 // (printer.*), this till's name and register (sync.till_name /
 // sync.till_register_id on an additional till), the Android update form and
 // "check for updates" (no settings key), enrolment (marketplace.device_*),
@@ -38,7 +39,6 @@ import (
 // the pending base-plugin dismiss (setup.pending_base_plugins, per-till).
 // The raw key editor (#settings-all) is out of scope.
 var shopWideLockRegions = map[string]string{
-	"settings-auto-register":                  common.KeyAutoRegisterOptIn,                // POST /api/settings/auto-register
 	"settings-update-schedule":                keyAutoUpdateEnabled,                       // POST /api/settings/update-schedule (update.auto_enabled + update.auto_time)
 	"settings-payments":                       "payments.default_method",                  // payments-default; payments-fee writes payments.fee.<method>
 	"settings-order-no":                       data.SaleDisplayNoSchemeKey,                // POST /api/settings/order-no-scheme
@@ -49,6 +49,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-sell-screen":                    common.KeyBrowsingMode,                     // POST /api/settings/browsing-mode
 	"settings-stock-tracking":                 common.KeyAllowNegativeInventory,           // POST /api/settings/allow-negative-inventory
 	"settings-retention":                      common.KeyReportRetentionMode,              // POST /api/settings/report-retention
+	"settings-cloud-staff":                    data.CloudStaffBreakdownKey,                // POST /api/settings/cloud-staff-breakdown
 	"settings-invoice":                        keyInvoiceSellerName,                       // POST /api/settings/invoice (invoice.seller_*)
 	"settings-idle-lock":                      common.KeyIdleLock,                         // POST /api/settings/idle-lock
 	"settings-kiosk-idle-reset":               common.KeyKioskIdleReset,                   // POST /api/settings/kiosk-idle-reset
@@ -56,6 +57,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-telemetry":                      "marketplace.telemetry_opt_in",             // POST /api/settings/telemetry
 	"settings-store-name":                     common.KeyStoreName,                        // POST /api/settings/store-name
 	"settings-currency":                       common.KeyCurrency,                         // POST /api/settings/save (currency form)
+	"settings-currency-display":               common.KeyCurrencyDisplay,                  // POST /api/settings/save (currency_display form)
 	"settings-language":                       common.KeyLocale,                           // POST /api/settings/save (locale form)
 	"settings-staff-languages":                common.KeyStaffLocales,                     // POST /api/settings/staff-languages
 	"settings-shop-type":                      common.KeyShopType,                         // POST /api/settings/shop-type

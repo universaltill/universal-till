@@ -4,7 +4,7 @@ package cloudsync
 // store. A till that is not registered, claimed and on a plan that allows
 // cloud_sync makes no background sync calls at all; it contacts sync only
 // inside an operator check-in window that an operator action on this till
-// opened (Register now, pairing, a registering plugin install, managed-TSE
+// opened (an explicit operator registration, pairing, a registering plugin install, managed-TSE
 // setup, "Check for a paid plan", a claim code). The window lives in memory
 // only: a restart closes it. A check-in inside it caches the response's
 // entitlement block, so a paid answer turns the loop on with no restart.
@@ -27,7 +27,9 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -92,6 +94,23 @@ var startupCheckinArmedAt atomic.Pointer[time.Time]
 // startupClock is the start-up hour's clock; tests pin it apart from
 // operatorNow (the wall clock the date comes from).
 var startupClock = time.Now
+
+// startupCheckinAllowed is whether this start may make its start-up check-in.
+// Stopped always says no. A till whose identity came from the automatic
+// register (enroll.AutoRegistered) must also pass every honesty guard of the
+// register itself (dev build, demo, never-register, country, notice, replica),
+// so it never reports before it would have registered. A till the operator
+// claimed or paired, or registered before ADR-0200, keeps today's rule.
+func startupCheckinAllowed(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo) bool {
+	if enroll.Stopped(ctx, settings) {
+		return false
+	}
+	if enroll.AutoRegistered(ctx, settings) {
+		ok, _ := enroll.ReportingAllowed(ctx, cfg, settings)
+		return ok
+	}
+	return true
+}
 
 // armStartupCheckin arms the start-up check-in (Start, before its goroutine).
 func armStartupCheckin() {

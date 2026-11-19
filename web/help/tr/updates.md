@@ -3,6 +3,7 @@ id: updates
 title: Yazılım güncellemeleri
 section: Bağlantı ve eklentiler
 order: 350
+public: true
 summary: Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda tek tıkla kendini günceller.
 ---
 
@@ -12,9 +13,15 @@ Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda
 
 ## Nasıl kullanılır
 
+<!-- plan-purchase -->
+
 1. Ayarlar → Yazılım güncellemesi → Şimdi denetle güncel olup olmadığınızı gösterir.
 2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar. Linux bilgisayarda masaüstü uygulaması, bir sistem yükseltmesi (apt) yeni bir sürüm kurduğunda yaklaşık bir dakika içinde kendini de yeniden başlatır; kasanın sayfası penceresinde görünmez olursa, kasa yeniden yanıt verene kadar sayfayı kendiliğinden yeniden yükler.
 3. Durum çubuğundaki güncelleme rozeti de aynısını gösterir. Kasanın güncellemeyi kendisi kuramadığı durumlarda (taşınabilir Windows zip'i veya Intel Mac) bunun yerine indirme sayfasını açar. Uygulama içi güncellemesi olmayan bir kioskta sadece bağlantısız bilgilendirme metni gösterilir. Otomatik güncellenen ama kendi kurulum klasörüne yazamayan bir Linux kasada rozet, kasanın güncellemeyi kendisi kuramadığını söyler ve bu sayfaya bağlantı verir: en son .deb paketini yeniden kurun — bu klasörü yeniden yazılabilir yapar (başka türlü bir kurulumda kasanın kullanıcısına klasörüne yazma izni verin) — ve ertesi gecenin güncellemesi her zamanki gibi çalışır.
+
+<!-- /plan-purchase -->
+
+<!-- plan-purchase -->
 
 ## Otomatik güncellemeler
 
@@ -26,6 +33,8 @@ Kasa, siz kapatmadıkça gece kendini günceller.
 4. Ek kasa ana kasayı izler: ana kasa daha yeni bir sürüm çalıştırdığında, ek kasa tam olarak o sürümü açık satışın olmadığı ilk anda kurar. Android ek kasalar ve taşınabilir Windows zip'inden kurulan ek kasalar, kendi başlarına kurabilene kadar bunun yerine bir 'gerekli' notu gösterir. Ek kasa kendiliğinden izlemeyeceği durumları da belirtir: o kasada güncelleme denetimi kapalıdır, güncellemeleri kendisi kuramaz ya da ana kasanın sürümünü kurma denemesi başarısız olmuştur. Bu durumda ana kasanın sürümünü o kasaya elle kurun ya da iki kasa bağlıyken ana kasanın Kasalar sayfasında onun için Şimdi güncelle'ye basın.
 5. Windows'ta kasa imzalı kurulum programını indirir ve denetler. Ardından kasa kapanır, güncellemeyi kurar ve kendiliğinden yeniden açılır. Bu yaklaşık bir dakika sürer. Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin. Windows yükleyicisini kendiniz çalıştırırsanız, Universal Till hâlâ açıksa önce onu kapatır; bu yüzden başlatmadan önce devam eden satışı tamamlayın.
 
+<!-- /plan-purchase -->
+
 ## Her sürümdeki yenilikler
 
 Bir güncellemeden sonra kasa neyin değiştiğini size anlatır — sade bir dille ve kasanın dilinde.
@@ -35,6 +44,8 @@ Bir güncellemeden sonra kasa neyin değiştiğini size anlatır — sade bir di
 3. Kasiyerler bu notu hiç görmez, self-servis kioskundaki müşteriler de görmez. Yeni kurulmuş bir kasa da bu notu göstermez.
 4. Notlar kasanın içinde yerleşiktir, bu yüzden internet bağlantısı olmadan da çalışır. Bir not henüz dilinize çevrilmediyse İngilizce gösterilir.
 5. Bir güncellemeyi kurmadan önce Ayarlar → Yazılım güncellemesi, yönetici veya admin'e yeni sürümün neler getirdiğini gösterir: güncellemenin içerdiği her sürümün notları, en yenisi önce; çevrildiyse kasanın dilinde, değilse İngilizce. Bu notlar yalnızca o sayfayı açtığınızda indirilir. Yüklenemezlerse kasa "Sürüm notları kullanılamıyor" der — Windows ve Mac'te sürüm sayfasına bir bağlantıyla birlikte — ve güncellemeyi yine her zamanki gibi kurabilirsiniz.
+
+<!-- plan-purchase -->
 
 ## Android kasalarda
 
@@ -50,3 +61,5 @@ Android uygulaması kendini masaüstü sürümleri gibi değiştiremez; bunun ye
 İki durumda yönetici PIN'i istenir: kasiyer olarak oturum açtıysanız ya da kasa self-servis sipariş modundaysa. Self-servis modda kurulum aynı zamanda kiosk kilidini açacağı için, orada yönetici olsanız bile PIN gerekir.
 
 İlk kurulum sırasında kasa bir güncelleme olduğunu söyler ama yüklemeyi önermez — önce kurulumu bitirin, sonra Ayarlar'dan güncelleyin.
+
+<!-- /plan-purchase -->

@@ -41,10 +41,12 @@ assert_fails() {
 
 good_gradle() {
   cat > "${GRADLE}" <<'KTS'
-val base = "https://example.test/"
-val a = base + "unitill-pos-android-arm64-latest.apk"
-val b = base + "unitill-pos-android-armv7-latest.apk"
-val c = base + "unitill-pos-android-latest.apk"
+val defaultUpdateApkUrlBase = "https://github.com/universaltill/universal-till/releases/latest/download/"
+val updateApkUrlBase = (project.findProperty("updateApkUrlBase") as String?) ?: defaultUpdateApkUrlBase
+require(isValidUpdateApkUrlBase(updateApkUrlBase)) { "updateApkUrlBase must be valid" }
+val a = updateApkUrlBase + "unitill-pos-android-arm64-latest.apk"
+val b = updateApkUrlBase + "unitill-pos-android-armv7-latest.apk"
+val c = updateApkUrlBase + "unitill-pos-android-latest.apk"
 android {
     productFlavors {
         create("arm64") { }
@@ -58,7 +60,7 @@ KTS
 
 good_release() {
   cat > "${RELEASE}" <<'YML'
-      - run: ./gradlew assembleArm64Release assembleArmv7Release assembleUniversalRelease
+      - run: ./gradlew assembleArm64Release assembleArmv7Release assembleUniversalRelease -PversionName=1 -PupdateApkUrlBase="$B"
       - run: |
           gh release upload "${TAG}" unitill-pos-android-latest.apk \
             unitill-pos-android-arm64-latest.apk unitill-pos-android-armv7-latest.apk --clobber
@@ -100,6 +102,36 @@ assert_fails "useLegacyPackaging off"
 good_gradle; good_release
 sed -i.bak 's/unitill-pos-android-arm64-latest.apk unitill-pos-android-armv7-latest.apk/unitill-pos-android-armv7-latest.apk/' "${RELEASE}"
 assert_fails "arm64 stable name never uploaded"
+
+# 7. ut-docs#5271: our default base literal changed (existing tills / our APKs move).
+good_gradle; good_release
+sed -i.bak 's#universaltill/universal-till/releases#someone/else/releases#' "${GRADLE}"
+assert_fails "default update base literal changed"
+
+# 8. The property is no longer read (a fork could not set it).
+good_gradle; good_release
+sed -i.bak 's/findProperty("updateApkUrlBase")/findProperty("other")/' "${GRADLE}"
+assert_fails "updateApkUrlBase property not read"
+
+# 9. The base is not validated.
+good_gradle; good_release
+sed -i.bak '/^require(/d' "${GRADLE}"
+assert_fails "updateApkUrlBase not validated by require()"
+
+# 10. A second hard-coded https URL (an UPDATE_APK_URL that bypasses the base).
+good_gradle; good_release
+echo 'val sneaky = "https://evil.example/unitill-pos-android-latest.apk"' >> "${GRADLE}"
+assert_fails "extra https literal in the Gradle code"
+
+# 11. release.yml builds without passing the property.
+good_gradle; good_release
+sed -i.bak 's/ -PupdateApkUrlBase=[^ ]*//' "${RELEASE}"
+assert_fails "release.yml does not pass -PupdateApkUrlBase"
+
+# 12. A URL built from the default base bypasses the property.
+good_gradle; good_release
+echo 'val bypass = defaultUpdateApkUrlBase + "unitill-pos-android-arm64-latest.apk"' >> "${GRADLE}"
+assert_fails "a URL derived from defaultUpdateApkUrlBase, not the property"
 
 if [ "${FAIL_COUNT}" -ne 0 ]; then
   echo "guard-android-abi-packages_test: ${FAIL_COUNT} failure(s)"

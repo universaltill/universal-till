@@ -118,7 +118,7 @@ func TestKitchenStationsPage_RendersDestinationSelectAndViewDisplayLink(t *testi
 	mux, d := newKitchenStationsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 
-	// Empty page: the create form already carries the select.
+	// Empty page: the dialog form already carries the select.
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/kitchen-stations", nil), manager)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -184,8 +184,8 @@ func TestKitchenStationsPage_RendersDestinationSelectAndViewDisplayLink(t *testi
 	if !strings.Contains(body, "View display") {
 		t.Fatal("link text must be the translated View display label")
 	}
-	// The per-row edit form pre-selects the station's current type.
-	if !strings.Contains(body, `value="both" selected`) || !strings.Contains(body, `value="display" selected`) {
-		t.Fatal("edit forms must pre-select each station's current destination type")
+	// The row carries the station's current type for the dialog prefill.
+	if !strings.Contains(body, `data-field-destination_type="both"`) || !strings.Contains(body, `data-field-destination_type="display"`) {
+		t.Fatal("rows must carry each station's current destination type for the dialog prefill")
 	}
 }

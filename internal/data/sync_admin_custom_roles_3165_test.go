@@ -78,7 +78,7 @@ func pullAdmin(t *testing.T, primary, replica *db.DB) {
 
 func TestAdminSync_CustomRoleCreateThenDeleteOnMain(t *testing.T) {
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 
 	primaryCreateCloudRole(t, primary, syncTestCloudRole, "Shift lead", []string{"refund", "audit"})
 	// A user on the main till holds the custom role; the bundle carries it.
@@ -146,7 +146,7 @@ func TestAdminSync_CustomRoleCreateThenDeleteOnMain(t *testing.T) {
 func TestAdminSync_OlderPrimaryBundleWithoutLabelOriginApplies(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	primaryCreateCloudRole(t, primary, syncTestCloudRole, "Shift lead", []string{"refund"})
 	pullAdmin(t, primary, replica)
 
@@ -182,7 +182,7 @@ func TestAdminSync_OlderPrimaryBundleWithoutLabelOriginApplies(t *testing.T) {
 func TestAdminSync_BundleWithoutRolesPrunesNoRole(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	primaryCreateCloudRole(t, primary, syncTestCloudRole, "Shift lead", []string{"refund"})
 	pullAdmin(t, primary, replica)
 
@@ -206,7 +206,7 @@ func TestAdminSync_BundleWithoutRolesPrunesNoRole(t *testing.T) {
 func TestAdminSync_EmptyRolesTablePrunesNoRole(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
-	replica := openMigratedDB(t, "replica.db")
+	replica := openReplicaDB(t, "replica.db")
 	primaryCreateCloudRole(t, primary, syncTestCloudRole, "Shift lead", []string{"refund"})
 	pullAdmin(t, primary, replica)
 

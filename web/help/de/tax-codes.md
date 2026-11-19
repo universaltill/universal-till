@@ -3,6 +3,7 @@ id: tax-codes
 title: Steuercodes
 section: Ihr Geschäft einrichten
 order: 111
+public: true
 summary: "Erstellen und bearbeiten Sie Steuercodes — den Vor-Ort-Satz und einen etwaigen Außer-Haus-Satz, der einem Artikel berechnet wird — und aktivieren oder deaktivieren Sie sie."
 routes: [/catalog/tax-codes]
 keywords: [steuer, mwst, satz, außer haus, steuercode]
