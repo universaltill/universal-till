@@ -1654,6 +1654,9 @@ func TestCloudSetQuickButtonLayout_HiddenRowKeepsSlotNoCollision(t *testing.T) {
 		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('h1','Hidden','itmH',1)`,
 		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b2','Beta','itm1',2)`,
 		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b3','Gamma','itm1',3)`,
+		// ut-docs#2562: an implicit tile after the hidden row is a quick
+		// button too, and part of the directive.
+		`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('itmZ','ZED','Zed',100,'tax_std',1)`,
 	} {
 		if _, err := dp.Db.Exec(s); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -1661,7 +1664,7 @@ func TestCloudSetQuickButtonLayout_HiddenRowKeepsSlotNoCollision(t *testing.T) {
 	}
 
 	// The directive lists every visible button — and only those.
-	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"}); err != nil {
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2", "ZED"}); err != nil {
 		t.Fatalf("cloudSetQuickButtonLayout: %v", err)
 	}
 
@@ -1689,6 +1692,9 @@ func TestCloudSetQuickButtonLayout_HiddenRowKeepsSlotNoCollision(t *testing.T) {
 	want := []string{"b3", "h1", "b1", "b2"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("order = %v, want %v", got, want)
+	}
+	if len(got) != len(seen) {
+		t.Fatalf("rows %v vs distinct sort_orders %d", got, len(seen))
 	}
 
 	// Edit mode (LoadGridButtons, hidden included) shows the same order.
@@ -1792,7 +1798,7 @@ func TestRemoteQuickButtonsReport_CarriesItemIDAndColor(t *testing.T) {
 		t.Fatalf("seed item colour: %v", err)
 	}
 
-	qb := remoteQuickButtonsReport(ctx, dp)
+	qb, _, _ := remoteQuickButtonsReport(ctx, dp)
 	if len(qb) != 3 {
 		t.Fatalf("quick_buttons length = %d, want 3", len(qb))
 	}
@@ -1810,7 +1816,7 @@ func TestRemoteQuickButtonsReport_CarriesItemIDAndColor(t *testing.T) {
 	if _, err := dp.Db.Exec(`UPDATE items SET color = NULL WHERE id = 'itm1'`); err != nil {
 		t.Fatalf("clear item colour: %v", err)
 	}
-	qb = remoteQuickButtonsReport(ctx, dp)
+	qb, _, _ = remoteQuickButtonsReport(ctx, dp)
 	if c, present := qb[0]["color"]; !present || c != "" {
 		t.Fatalf("uncoloured item: quick_buttons[0][\"color\"] = %#v (present=%v), want \"\"", c, present)
 	}
