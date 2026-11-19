@@ -482,8 +482,9 @@ func postWithBearer(ctx context.Context, url, token string, payload []byte) (int
 // device id (investigation §4.3), and forgets the rollup upload ledger so
 // the days re-key to the new shop. Caller holds the attempt slot.
 func adoptMoved(ctx context.Context, kv Settings, deviceID, storeID, merchantID, token string) {
-	resetIdentityForPair(ctx, kv, false, deviceID)
+	oldStore := resetIdentityForPair(ctx, kv, false, deviceID)
 	adoptPaired(ctx, kv, false, deviceID, storeID, merchantID, token)
+	storeLeft(oldStore, storeID)
 	if reset := currentMoveHooks().ResetUploadLedger; reset != nil {
 		if err := reset(ctx); err != nil {
 			logging.L().Warnf("enrolment: after the move, the sales rollup ledger was not reset (days may need a manual re-send): %v", err)

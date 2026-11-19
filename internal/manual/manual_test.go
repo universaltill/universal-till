@@ -635,15 +635,15 @@ func TestSearchSnippetKeepsOriginalCase(t *testing.T) {
 
 func TestParsePublicFlag(t *testing.T) {
 	for val, want := range map[string]bool{"true": true, "false": false} {
-		tp, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: " + val + "\n---\nbody\n"))
+		tp, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: "+val+"\n---\nbody\n"), nil, false)
 		if err != nil || tp.Public != want || !tp.PublicSet {
 			t.Errorf("public: %s -> %+v, %v", val, tp, err)
 		}
 	}
-	if tp, err := parseTopic([]byte("---\nid: a\ntitle: A\n---\nbody\n")); err != nil || tp.PublicSet {
+	if tp, err := parseTopic([]byte("---\nid: a\ntitle: A\n---\nbody\n"), nil, false); err != nil || tp.PublicSet {
 		t.Errorf("absent flag: %+v, %v", tp, err)
 	}
-	if _, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: yes\n---\nbody\n")); err == nil {
+	if _, err := parseTopic([]byte("---\nid: a\ntitle: A\npublic: yes\n---\nbody\n"), nil, false); err == nil {
 		t.Error("public: yes accepted")
 	}
 }
@@ -673,6 +673,27 @@ func TestShippedHelpDeclaresPublicAndLocalesAgree(t *testing.T) {
 	}
 }
 
+// The owner excluded these topics from the public website and the assistant
+// connector's help index (pairing, transfer and approval-key internals, plus
+// translation and fiscal internals; ut-website help-public-allowlist). None
+// may be `public: true`, in any language.
+func TestOwnerExcludedHelpTopicsNotPublic(t *testing.T) {
+	lib, err := Load(os.DirFS("../../web"), "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"claim", "support-partner", "translate-mode", "translations", "fiscal-device", "fiscal-register"} {
+		if _, ok := lib.byLocale[FallbackLocale][id]; !ok {
+			t.Errorf("excluded topic %q not found in English help", id)
+		}
+		for loc, topics := range lib.byLocale {
+			if tp, ok := topics[id]; ok && tp.Public {
+				t.Errorf("%s/%s.md is public: true, but the owner excluded it from the public site", loc, id)
+			}
+		}
+	}
+}
+
 // ut-docs#3434: <!-- plan-purchase --> blocks are dropped for a host that
 // may not offer plan purchase (the iOS app).
 const planPurchaseTopic = `---
@@ -695,7 +716,7 @@ After text.
 `
 
 func TestPlanPurchaseBlock_Dropped(t *testing.T) {
-	tp, err := parseTopic([]byte(planPurchaseTopic))
+	tp, err := parseTopic([]byte(planPurchaseTopic), nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,7 +752,7 @@ func TestPlanPurchaseBlock_Unbalanced(t *testing.T) {
 		"misspelt pair": "<!--plan-purchase-->\n\nx\n\n<!--/plan-purchase-->\n",
 		"with text":     "<!-- plan-purchase: iOS -->\n\nx\n\n<!-- /plan-purchase: iOS -->\n",
 	} {
-		if _, err := parseTopic([]byte(head + body)); err == nil {
+		if _, err := parseTopic([]byte(head+body), nil, false); err == nil {
 			t.Errorf("%s: want a parse error", name)
 		}
 	}

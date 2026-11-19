@@ -452,7 +452,7 @@ func TestVouchForReplicaRegistersDeviceWithoutHandingOverToken(t *testing.T) {
 	_ = kv.Set(context.Background(), keyDeviceRegistered, mainDeviceID) // no own-device registration racing the capture
 	initForTest(t, cfg, kv)
 
-	v, err := VouchForReplica(context.Background(), cfg, ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica", DeviceName: "Back office", Version: "0.23.0"})
+	v, err := VouchForReplica(context.Background(), cfg, newFakeKV(), ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica", DeviceName: "Back office", Version: "0.23.0"})
 	if err != nil {
 		t.Fatalf("vouch: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestVouchForReplicaRefusals(t *testing.T) {
 	// Not registered yet: nothing to vouch with.
 	unreg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: cloud.URL + "/api"}}
 	initForTest(t, unreg, newFakeKV())
-	if _, err := VouchForReplica(context.Background(), unreg, ReplicaRequest{TillID: "t2", DeviceID: "till-x"}); !errors.Is(err, ErrNotRegistered) {
+	if _, err := VouchForReplica(context.Background(), unreg, newFakeKV(), ReplicaRequest{TillID: "t2", DeviceID: "till-x"}); !errors.Is(err, ErrNotRegistered) {
 		t.Fatalf("unregistered main till: err = %v, want ErrNotRegistered", err)
 	}
 
@@ -495,7 +495,7 @@ func TestVouchForReplicaRefusals(t *testing.T) {
 		{TillID: "", DeviceID: "till-x"},
 		{TillID: "t2", DeviceID: strings.Repeat("x", 200)},
 	} {
-		if _, err := VouchForReplica(context.Background(), cfg, req); !errors.Is(err, ErrBadDeviceRequest) {
+		if _, err := VouchForReplica(context.Background(), cfg, newFakeKV(), req); !errors.Is(err, ErrBadDeviceRequest) {
 			t.Fatalf("request %+v: err = %v, want ErrBadDeviceRequest", req, err)
 		}
 	}
@@ -634,7 +634,7 @@ func TestVouchForReplicaReportsServiceRefusal(t *testing.T) {
 	}))
 	t.Cleanup(cloud.Close)
 	initForTest(t, mainTillCfg(cloud.URL), newFakeKV())
-	_, err := VouchForReplica(context.Background(), mainTillCfg(cloud.URL), ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica-1"})
+	_, err := VouchForReplica(context.Background(), mainTillCfg(cloud.URL), newFakeKV(), ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica-1"})
 	if !IsServiceRefused(err) {
 		t.Fatalf("VouchForReplica err = %v, want IsServiceRefused", err)
 	}

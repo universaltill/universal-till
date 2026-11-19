@@ -167,3 +167,72 @@ func TestParseXLSX_ReorderLevelMatchesCSV(t *testing.T) {
 		t.Errorf("1200 rejected: %+v", xres.Items[0])
 	}
 }
+
+// ut-docs#5959: "Reorder point" always means the threshold, so it outranks
+// every other reorder_level synonym whatever the column order.
+func TestHeaderIndex_ReorderPointOutranksOtherSynonyms(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers []string
+		want    int
+	}{
+		{"level then point", []string{"Name", "Reorder Level", "Reorder Point"}, 2},
+		{"point then level", []string{"Name", "Reorder Point", "Reorder Level"}, 1},
+		{"low stock then point", []string{"Name", "Low stock [Store]", "Reorder point"}, 2},
+		{"level then bracketed point", []string{"Name", "Reorder level", "Reorder Point [Main]"}, 2},
+		{"level alone", []string{"Name", "Reorder level"}, 1},
+		{"low stock alone", []string{"Name", "Low stock [Store]"}, 1},
+		{"stock alert alone", []string{"Name", "Stock Alert Count [Loc]"}, 1},
+		// B1 tier (ut-docs#587): a paren-stripped match never outranks a
+		// genuine exact one.
+		{"paren-stripped point loses to exact level", []string{"Name", "Reorder level", "Reorder point (x)"}, 1},
+		{"paren-stripped point beats paren-stripped level", []string{"Name", "Reorder level (a)", "Reorder point (b)"}, 2},
+	}
+	for _, c := range cases {
+		idx := headerIndex(c.headers)
+		if got, ok := idx["reorder_level"]; !ok || got != c.want {
+			t.Errorf("%s: reorder_level = %d (%v), want %d", c.name, got, ok, c.want)
+		}
+	}
+}
+
+func TestParse_ReorderPointWinsBothOrders(t *testing.T) {
+	for name, csv := range map[string]string{
+		"level first": "Name,SKU,Price,Reorder Level,Reorder Point\nA,S1,1.00,20,5\n",
+		"point first": "Name,SKU,Price,Reorder Point,Reorder Level\nA,S1,1.00,5,20\n",
+	} {
+		it := parseCSVForReorder(t, csv)[0]
+		if !it.HasReorderLevel || it.ReorderLevel != 5 {
+			t.Errorf("%s: reorder = %d/%v, want 5", name, it.ReorderLevel, it.HasReorderLevel)
+		}
+	}
+}
+
+func TestParseXLSX_ReorderPointWinsBothOrders(t *testing.T) {
+	for name, rows := range map[string][][2]string{
+		"level first": {{"Reorder Level", "Reorder Point"}, {"20", "5"}},
+		"point first": {{"Reorder Point", "Reorder Level"}, {"5", "20"}},
+	} {
+		f := excelize.NewFile()
+		hdr := []string{"Name", "SKU", "Price", rows[0][0], rows[0][1]}
+		val := []string{"A", "S1", "1.00", rows[1][0], rows[1][1]}
+		for i := range hdr {
+			c1, _ := excelize.CoordinatesToCellName(i+1, 1)
+			c2, _ := excelize.CoordinatesToCellName(i+1, 2)
+			mustXLSX(t, f.SetCellStr("Sheet1", c1, hdr[i]))
+			mustXLSX(t, f.SetCellStr("Sheet1", c2, val[i]))
+		}
+		var buf bytes.Buffer
+		if _, err := f.WriteTo(&buf); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		res, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Items) != 1 || !res.Items[0].HasReorderLevel || res.Items[0].ReorderLevel != 5 {
+			t.Errorf("%s: %+v", name, res.Items)
+		}
+	}
+}

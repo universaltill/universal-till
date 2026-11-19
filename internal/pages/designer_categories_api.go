@@ -39,8 +39,9 @@ import (
 //     by a hand-crafted request.
 //  2. Response shape. /api/categories/* answers with an HX-Redirect back to
 //     the full /categories page (record-dialog flow). The Designer never
-//     navigates: on success every route here answers 204 with
-//     `HX-Trigger: buttons-changed`, the same header /api/buttons/{add,
+//     navigates: on success every route here except reorder answers 204 with
+//     `HX-Trigger: buttons-changed` (reorder answers a bare 204 with no
+//     HX-Trigger; its caller is a fetch(), see its own comment), the same header /api/buttons/{add,
 //     remove,reorder} set, so the ONE listener buttons.html's root already
 //     has re-fetches the live preview in place (no new refresh pattern).
 //     On failure it answers a non-2xx localized text/html fragment that
@@ -149,8 +150,10 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 	// Go 1.22's mux picks the more specific literal pattern regardless of
 	// registration order (same pair categories_page.go registers). Body
 	// shape mirrors /api/categories/reorder and /api/buttons/reorder:
-	// repeated "ids" in display order, or one comma-joined field (what the
-	// Designer's own page script posts via htmx.ajax).
+	// repeated "ids" in display order (what list-reorder.js posts); one
+	// comma-joined field is still accepted for compatibility. Answers 204
+	// with no HX-Trigger: its only caller is list-reorder.js fetch(); the
+	// Designer updates in place off list-reorder:saved (ut-docs#3074, #2713).
 	mux.HandleFunc("POST /api/designer/categories/reorder", func(w http.ResponseWriter, r *http.Request) {
 		actor, allowed := gate(w, r)
 		if !allowed {
@@ -180,7 +183,7 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		audit(r, actor.ID, strings.Join(clean, ","), "category_reorder")
-		ok(w)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("POST /api/designer/categories/{id}", func(w http.ResponseWriter, r *http.Request) {

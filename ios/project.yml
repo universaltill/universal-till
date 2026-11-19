@@ -15,12 +15,23 @@ options:
   bundleIdPrefix: com.universaltill
   developmentLanguage: en
   deploymentTarget:
-    iOS: "15.0"
+    # 16.0 (owner, 2026-11-16, ut-docs#3049): Stripe Terminal iOS SDK 6.x
+    # needs iOS 16. This drops iPhone 6s/SE (1st gen)/7 and iPad Air 2/mini 4
+    # for the whole app; none of them can take Tap to Pay (iPhone XS+).
+    iOS: "16.0"
 settings:
   base:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
+# Stripe Terminal iOS SDK for Tap to Pay on iPhone (ut-docs#3049). Pinned to
+# an exact version, and Package.resolved is committed (see .gitignore): no
+# floating dependency in a public repo whose TestFlight job holds the App
+# Store Connect key. 6.0.0 needs iOS 16 and Xcode 16+.
+packages:
+  StripeTerminal:
+    url: https://github.com/stripe/stripe-terminal-ios-spm
+    exactVersion: 6.0.0
 targets:
   UniversalTill:
     type: application
@@ -32,8 +43,32 @@ targets:
       # gomobile builds a static framework: link it, never embed it.
       - framework: build/Mobile.xcframework
         embed: false
+      # Linked in every build, used only when the Tap to Pay flag is on: the
+      # code is always compiled (CI builds every line); only its
+      # registration is gated (TapToPayFeature.isEnabled).
+      - package: StripeTerminal
+    # Explicit, because the test target below declares its own scheme and
+    # Xcode then stops auto-creating this one (ios-ci.yml builds -scheme
+    # UniversalTill).
+    scheme: {}
     settings:
       base:
+        # Tap to Pay on iPhone (ut-docs#3049) — default OFF. YES only on a
+        # local dev-signed device build (ios/README.md); never in CI or
+        # TestFlight. scripts/ci/guard-ios-tap-to-pay-default-off.sh pins it.
+        UT_TAP_TO_PAY: "NO"
+        # What Info.plist's UTTapToPayEnabled (the switch the app reads)
+        # gets. Its own setting so Release can pin it: a flag passed on the
+        # xcodebuild command line beats a config's UT_TAP_TO_PAY, but not
+        # this.
+        UT_TAP_TO_PAY_INFO: $(UT_TAP_TO_PAY)
+        # YES = Stripe's simulated Tap to Pay reader (no card, no entitlement).
+        UT_TAP_TO_PAY_SIMULATED: "NO"
+        # CODE_SIGN_ENTITLEMENTS picks one of these by the flag's value.
+        # Not XcodeGen's `entitlements:` key: that sets it for every
+        # configuration, Release included.
+        UT_TTP_ENTITLEMENTS_YES: UniversalTill/UniversalTill.dev.entitlements
+        UT_TTP_ENTITLEMENTS_NO: ""
         PRODUCT_BUNDLE_IDENTIFIER: com.universaltill.pos
         PRODUCT_NAME: UniversalTill
         TARGETED_DEVICE_FAMILY: "1,2" # iPhone and iPad
@@ -44,6 +79,17 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         # Assets.xcassets/AppIcon.appiconset (ios/scripts/make-app-icon.sh).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: $(UT_TTP_ENTITLEMENTS_$(UT_TAP_TO_PAY))
+        Release:
+          # Apple's Tap to Pay grant is development-only (ut-docs#3047):
+          # Release (TestFlight) never carries the entitlement and never
+          # switches the bridge on, whatever is passed on the command line.
+          # Moves to Release only in #6460.
+          UT_TAP_TO_PAY: "NO"
+          UT_TAP_TO_PAY_INFO: "NO"
+          CODE_SIGN_ENTITLEMENTS: ""
     info:
       path: UniversalTill/Info.plist
       properties:
@@ -89,6 +135,15 @@ targets:
         # scripts/ci/guard-ios-usage-descriptions.sh ties web capture calls
         # to these keys.
         NSMicrophoneUsageDescription: Universal Till uses the microphone to record a voice note for a problem report.
+        # Stripe Terminal (Tap to Pay on iPhone, ut-docs#3049): card
+        # payments are disabled without location, and the SDK's discovery
+        # asserts without the Bluetooth key even for Tap to Pay. No
+        # UIBackgroundModes/bluetooth-central (Bluetooth readers only).
+        NSLocationWhenInUseUsageDescription: Universal Till uses your location to accept card payments, as card networks require.
+        NSBluetoothAlwaysUsageDescription: Universal Till uses Bluetooth to connect to supported card readers.
+        # The build's Tap to Pay switch, read by TapToPayFeature ("YES"/"NO").
+        UTTapToPayEnabled: $(UT_TAP_TO_PAY_INFO)
+        UTTapToPaySimulated: $(UT_TAP_TO_PAY_SIMULATED)
         # Export compliance, answered once here so App Store Connect doesn't
         # hold every TestFlight build on the questionnaire (ut-docs#3069).
         # The till uses only standard, published algorithms from Go's
@@ -97,3 +152,20 @@ targets:
         # (internal/hpke) — no proprietary crypto. Adding proprietary or
         # non-standard encryption means revisiting this answer.
         ITSAppUsesNonExemptEncryption: false
+  # Unit tests for the Tap to Pay state machine (ut-docs#3049): the pure
+  # Swift Core/ sources compiled straight into the bundle — no host app, no
+  # Mobile.xcframework, no StripeTerminal — so they run before gomobile bind
+  # in ios-ci.yml.
+  UniversalTillTapToPayTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: UniversalTillTests
+      - path: UniversalTill/TapToPay/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.universaltill.pos.taptopaytests
+        GENERATE_INFOPLIST_FILE: YES
+    scheme:
+      testTargets:
+        - UniversalTillTapToPayTests
