@@ -250,3 +250,27 @@ func TestTick_DeviceReportFollowUp402DoesNotFailTick(t *testing.T) {
 		t.Fatalf("sync POSTs = %d, want 2 and no retry", n)
 	}
 }
+
+// M1 (ut-docs#2562): the tick tells the host when the follow-up report POST
+// failed, since the tick itself still ends contacted=true err=nil.
+func TestTick_DeviceReportFollowUpFailureIsReportedToHooks(t *testing.T) {
+	fakeClock(t)
+	cloud, srv := newCheckinCloud(1)
+	defer srv.Close()
+	cloud.fakeCloud.directives = []map[string]any{setTillDirective("d1", "true")}
+	cloud.fakeCloud.syncStatus = func(n int) int {
+		if n == 2 {
+			return http.StatusInternalServerError
+		}
+		return 0
+	}
+	db := testDB(t)
+	st := &settingHooks{val: "false"}
+	hooks := st.hooks(nil)
+	failed := 0
+	hooks.ReportPostFailed = func() { failed++ }
+	mustTick(t, srv.URL, db, hooks)
+	if failed != 1 {
+		t.Fatalf("ReportPostFailed calls = %d, want 1", failed)
+	}
+}
