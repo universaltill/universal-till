@@ -244,7 +244,7 @@ func TestSettingsSubscriptionBanner_RegistrationFiltered(t *testing.T) {
 			}
 		}
 		// Degrades in place: the card's own controls are still there.
-		if !strings.Contains(reg, "/api/settings/auto-register") {
+		if !strings.Contains(reg, "/api/settings/registration-stop") {
 			t.Errorf("%s: #registration lost its own controls", seed)
 		}
 	}

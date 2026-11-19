@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/catimport"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	tillimport "github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
@@ -59,6 +60,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	settingsRepo := data.NewSettingsRepo(d.Db)
 	registerImportFromSystem(mux, d)
 	registerImportFromFile(mux, d)
+	registerImportPhotos(mux, d)
 
 	registerJoinSyncPoll(mux, d)
 
@@ -131,6 +133,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if systemErr != nil {
 			logging.L().Errorf("import page: list API importers: %v", systemErr)
 		}
+		photosMode := r.URL.Query().Get("mode") == "photos"
 		importData := map[string]any{
 			"showSystemCard":   systemErr == nil,
 			"systemImporters":  systemImporters,
@@ -139,6 +142,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"theme":            d.ResolvedTheme(r),
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
+			// ADR-0172 §5: the setup landing shows the automatic tax install.
+			"taxAutoInstall": taxAutoInstallWelcomeChip(r, d, welcome),
 			// ut-docs#5070: a replacement till restores its backup instead
 			// (Settings → Backups → Restore from a file, manager only).
 			"canRestoreBackup": canPerform(d, r, "data_management"),
@@ -150,6 +155,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// The wizard's pairing did not complete: a visible note, never
 			// a claim that the shop is syncing.
 			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",
+			// ut-docs#6527: bulk photo import card (catalog managers, main till).
+			// The card lives in its own view (?mode=photos) so the default
+			// page keeps exactly one file input (ut-docs#6527).
+			"showPhotosCard":  photosMode && canPerform(d, r, "catalog_management"),
+			"showPhotosLink":  !photosMode && canPerform(d, r, "catalog_management"),
+			"photosOnReplica": d.SyncPrimaryURL(r.Context()) != "",
 			"showSampleCard":  sampleErr == nil,
 			"sampleItemCount": sampleCount,
 			"sampleLoaded":    sampleLoaded,
@@ -999,7 +1010,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// — not a plain "ok" the operator only learns about after commit.
 			warnedPreview := false
 			if !commit && !skipped {
-				if ws := parseTimeImportWarnings(T, it); len(ws) > 0 {
+				if ws := parseTimeImportWarnings(T, locale, it); len(ws) > 0 {
 					status, warnedPreview = strings.Join(ws, "; "), true
 				}
 			}
@@ -1111,6 +1122,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				taxCodeCache[key] = id
 				return id, created, nil
 			}
+			// ut-docs#2654: placeholder icons match the shop's languages; one
+			// settings read for the whole import, not one per row.
+			iconMatcher := common.ShopIconMatcher(r.Context(), d.Settings)
 			for i := range rows {
 				if rows[i].Skipped {
 					continue
@@ -1283,6 +1297,21 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					failed++
 					continue
 				}
+				// ut-docs#2084: the file's reorder level is an item column, so
+				// it is written in this same transaction and a failure fails
+				// the row exactly like CreateItemTx (never a half-made item).
+				// Not carried by ItemInput: updateItemExec would then reset it
+				// on every item edit.
+				if it.HasReorderLevel && it.ItemType != catalogtypes.ItemTypeGiftVoucher {
+					if err := repo.SetItemReorderLevelTx(r.Context(), tx, itemID, it.ReorderLevel); err != nil {
+						_ = tx.Rollback()
+						log.Printf("[import] set reorder level for %q: %v", it.Name, err)
+						rows[i].Status = T("import.status.item_failed")
+						rows[i].Failed = true
+						failed++
+						continue
+					}
+				}
 				// stockWarning/stockRecorded are decided now (inside the
 				// transaction) but only turned into row status / a published
 				// event once tx.Commit() below actually lands them — same
@@ -1363,9 +1392,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// resolved from the .bkp archive's documents.zip is
 				// decoded/re-encoded and written exactly the way a manual
 				// upload does (POST /api/catalog/item/image), then recorded
-				// with the unconditional-overwrite SetItemThumbnail — this
-				// genuinely is "a real photo" (see that method's own doc
-				// comment for why that's the right one, not
+				// with SetItemPhoto — this genuinely is "a real photo": it
+				// overwrites the thumbnail and keeps the icon (ut-docs#3601;
+				// see SetItemThumbnail's doc comment for why that's the right
+				// kind of write, not
 				// EnsureDefaultThumbnail). Falls back to the ut-docs#1189
 				// placeholder icon whenever there's no image, or it fails to
 				// decode — same best-effort, never-fail-the-row spirit as
@@ -1418,7 +1448,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 								}
 								return fmt.Errorf("close thumbnail file: %w", closeErr)
 							}
-							return repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
+							return repo.SetItemPhoto(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
 						}()
 						if writeErr != nil {
 							// A resolvable photo that then failed to save
@@ -1435,7 +1465,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if !imageSet {
-					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, tillimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, iconMatcher.IconPath(it.Name, it.Category)); err != nil {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}
@@ -1457,7 +1487,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				// The parse-time issues — the same composer the Preview
 				// uses, so the two can't drift (ut-docs#4520).
-				warnings = append(warnings, parseTimeImportWarnings(T, it)...)
+				warnings = append(warnings, parseTimeImportWarnings(T, locale, it)...)
 				if takeawayOnlyNoDineIn {
 					warnings = append(warnings, T("import.status.tax_takeaway_only"))
 				}
@@ -1991,7 +2021,8 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// unit is CHECK-constrained by migration 060), so no csvSafe either.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
 		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
-		"Net quantity", "Net quantity unit", "Age restricted", "Item type"})
+		"Net quantity", "Net quantity unit", "Age restricted", "Item type",
+		"Reorder level"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -2010,11 +2041,17 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 		if e.NetQuantityValue != nil && e.NetQuantityUnit != nil {
 			nqValue, nqUnit = strconv.FormatInt(*e.NetQuantityValue, 10), *e.NetQuantityUnit
 		}
+		// "Reorder level" (ut-docs#2084): blank when 0 (= unset).
+		reorder := ""
+		if e.ReorderLevel > 0 {
+			reorder = strconv.Itoa(e.ReorderLevel)
+		}
 		_ = cw.Write([]string{
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
 			tax, takeaway, nqValue, nqUnit, yn(e.AgeRestricted), exportItemType(e.ItemType),
+			reorder,
 		})
 	}
 	cw.Flush()
@@ -2343,7 +2380,7 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 // decode/save, barcode attach conflict, stock) stay in the commit loop.
 // Each one is warned, never silent — the same defect class as the
 // dropped-barcode fix (ut-docs#293).
-func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []string {
+func parseTimeImportWarnings(T func(string) string, locale string, it catimport.ImportItem) []string {
 	var warnings []string
 	// The source referenced an image that never turned into usable bytes
 	// (dangling path, no documents.zip, oversized entry) — the row still
@@ -2376,6 +2413,12 @@ func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []s
 	// (ut-docs#3391).
 	if it.NetQuantityIssue != "" {
 		warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
+	}
+	// A present-but-invalid reorder level imports the item with none
+	// (ut-docs#2084). A gift voucher never stores the field (the commit
+	// skips it), so its invalid cell is noise (ut-docs#5959).
+	if it.ReorderLevelIssue != "" && it.ItemType != catalogtypes.ItemTypeGiftVoucher {
+		warnings = append(warnings, translateReorderLevelIssue(T, locale, it.ReorderLevelIssue, it.ReorderLevelIssueRaw))
 	}
 	return warnings
 }
@@ -2447,6 +2490,24 @@ func translateNetQuantityIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.net_quantity"), raw)
 	default:
 		log.Printf("[import] unrecognised net quantity issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateReorderLevelIssue is translateNetQuantityIssue's counterpart for
+// ReorderLevelIssue (ut-docs#2084, #5959): a dedicated message saying the
+// item was imported without the level, quoting the file's raw cell and the
+// allowed range (from catalogrules). Both bounds are printed in the
+// locale's digits but ungrouped: the message tells the operator to write
+// the number without thousands separators, so it must not show any.
+func translateReorderLevelIssue(T func(string) string, locale, code, raw string) string {
+	switch code {
+	case catimport.ReorderLevelIssueInvalid:
+		return fmt.Sprintf(T("import.issue.reorder_level_invalid"), raw,
+			httpx.LocalizeDigits("0", locale),
+			httpx.LocalizeDigits(strconv.Itoa(catalogrules.MaxReorderLevel), locale))
+	default:
+		log.Printf("[import] unrecognised reorder level issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }
@@ -2525,4 +2586,13 @@ func retireSeededGiftVoucherItem(ctx context.Context, d *common.Deps) (id, name 
 		return "", ""
 	}
 	return res.ID, res.Name
+}
+
+// taxAutoInstallWelcomeChip is the chip on the welcome page the setup wizard
+// lands on: only there, and only for a viewer who may open Settings.
+func taxAutoInstallWelcomeChip(r *http.Request, d *common.Deps, welcome bool) *taxChipView {
+	if !welcome || !canPerform(d, r, "settings") {
+		return nil
+	}
+	return taxAutoInstallChipView(r.Context(), d, httpx.RequestLocale(r))
 }

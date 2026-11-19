@@ -450,18 +450,20 @@ WHERE (column2 IS NULL OR EXISTS (SELECT 1 FROM items i WHERE i.id = column2))
   AND (column3 IS NULL OR EXISTS (SELECT 1 FROM item_variants v WHERE v.id = column3));
 
 -- shortcut_buttons
-INSERT OR IGNORE INTO shortcut_buttons (barcode, item_id, label, image_path)
-SELECT column1, column2, column3, column4
+-- image_path is deliberately not written (ut-docs#6097): tiles take their
+-- picture from the item's item_images thumbnail.
+INSERT OR IGNORE INTO shortcut_buttons (barcode, item_id, label)
+SELECT column1, column2, column3
 FROM (VALUES
-  ('2000010000012', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
-  ('2000010000029', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
-  ('2000010000036', 'itm003', 'Sparkling Water 500ml', '/public/assets/items/itm003/thumb.png'),
-  ('2000010000043', 'itm004', 'Still Water 1.5L', '/public/assets/items/itm004/thumb.png'),
-  ('2000010000050', 'itm005', 'Orange Juice 1L', '/public/assets/items/itm005/thumb.png'),
-  ('2000010000067', 'itm006', 'Apple Juice 1L', '/public/assets/items/itm006/thumb.png'),
-  ('2000010000074', 'itm007', 'Semi-Skimmed Milk 2L', '/public/assets/items/itm007/thumb.png'),
-  ('2000010000081', 'itm008', 'Whole Milk 1L', '/public/assets/items/itm008/thumb.png'),
-  ('2000010000098', 'itm009', 'Butter 250g', '/public/assets/items/itm009/thumb.png'),
-  ('2000010000104', 'itm010', 'Cheddar Cheese 400g', '/public/assets/items/itm010/thumb.png'))
+  ('2000010000012', 'itm001', 'Coca-Cola 330ml'),
+  ('2000010000029', 'itm002', 'Pepsi 330ml'),
+  ('2000010000036', 'itm003', 'Sparkling Water 500ml'),
+  ('2000010000043', 'itm004', 'Still Water 1.5L'),
+  ('2000010000050', 'itm005', 'Orange Juice 1L'),
+  ('2000010000067', 'itm006', 'Apple Juice 1L'),
+  ('2000010000074', 'itm007', 'Semi-Skimmed Milk 2L'),
+  ('2000010000081', 'itm008', 'Whole Milk 1L'),
+  ('2000010000098', 'itm009', 'Butter 250g'),
+  ('2000010000104', 'itm010', 'Cheddar Cheese 400g'))
 WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
 

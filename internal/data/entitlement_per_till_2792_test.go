@@ -23,6 +23,9 @@ func TestEntitlementSettingsArePerTill(t *testing.T) {
 		// ut-docs#4285: the renewal watch's markers are this till's own.
 		entitlement.KeyLastPaidAt,
 		entitlement.KeyLapsedSeenAt,
+		// ut-docs#3532: the cloud's claimed signal is this till's own too;
+		// a replica gets it on the vouch relay, never the admin bundle.
+		entitlement.KeyStoreClaimed,
 	} {
 		if !perTillSetting(k) {
 			t.Errorf("%s is admin-synced: every entitlement refresh on the main till would move the admin cursor", k)

@@ -68,7 +68,7 @@ func vouchFromCloud(t *testing.T, body string) Vouch {
 	kv := newFakeKV()
 	_ = kv.Set(context.Background(), keyDeviceRegistered, mainDeviceID)
 	initForTest(t, cfg, kv)
-	v, err := VouchForReplica(context.Background(), cfg, ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica", DeviceName: "Back office", Version: "0.23.0"})
+	v, err := VouchForReplica(context.Background(), cfg, newFakeKV(), ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica", DeviceName: "Back office", Version: "0.23.0"})
 	if err != nil {
 		t.Fatalf("vouch: %v", err)
 	}

@@ -1670,3 +1670,92 @@ func TestPostSettingsReportRetention_LapsedShopCanResaveCurrentMode(t *testing.T
 		t.Fatalf("mode = %q, want cloud unchanged", val)
 	}
 }
+
+// ut-docs#5068: the first Z after a backup restore carries the jump marker
+// (archived in its content_json), takes the jumped Z number, and clears the
+// marker; the next Z has none.
+func TestGenerateEOD_CarriesAndClearsRestoreMarker(t *testing.T) {
+	dp := newEODTestDeps(t)
+	ctx := t.Context()
+	repo := data.NewPOSRepo(dp.Db)
+	jump, err := repo.JumpNumbersAfterRestore(ctx, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rep, created, err := generateEOD(ctx, dp, "system", "", "")
+	if err != nil || !created {
+		t.Fatalf("generateEOD: created=%v err=%v", created, err)
+	}
+	if rep.RestoredFromBackup == nil || *rep.RestoredFromBackup != jump.Marker {
+		t.Fatalf("report marker = %+v, want %+v", rep.RestoredFromBackup, jump.Marker)
+	}
+	row := findEODRow(t, repo, rep.To)
+	if row.ZNumber != jump.Marker.NextZ {
+		t.Fatalf("z_number = %d, want %d", row.ZNumber, jump.Marker.NextZ)
+	}
+	if !strings.Contains(row.Content, `"restored_from_backup"`) {
+		t.Fatalf("archived content lacks the marker: %s", row.Content)
+	}
+	if m, err := repo.PendingRestoreMarker(ctx); err != nil || m != nil {
+		t.Fatalf("marker not cleared: %+v %v", m, err)
+	}
+
+	// The next Z (the same-day guard removed) has no marker.
+	if _, err := dp.Db.ExecContext(ctx, `DELETE FROM report_archive WHERE kind = 'eod'`); err != nil {
+		t.Fatal(err)
+	}
+	rep2, created, err := generateEOD(ctx, dp, "system", "", "")
+	if err != nil || !created {
+		t.Fatalf("second generateEOD: created=%v err=%v", created, err)
+	}
+	if rep2.RestoredFromBackup != nil {
+		t.Fatalf("second report still carries %+v", rep2.RestoredFromBackup)
+	}
+	if strings.Contains(findEODRow(t, repo, rep2.To).Content, "restored_from_backup") {
+		t.Fatal("second archived report carries the marker")
+	}
+}
+
+func findEODRow(t *testing.T, repo *data.POSRepo, period string) data.ArchivedReportRow {
+	t.Helper()
+	rows, err := repo.ListArchivedReports(t.Context(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Kind == "eod" && r.Period == period {
+			return r
+		}
+	}
+	t.Fatalf("no eod row for %q", period)
+	return data.ArchivedReportRow{}
+}
+
+func TestBuildEODDoc_PrintsRestoredLinesOnlyWithMarker(t *testing.T) {
+	rep := data.EODReport{Day: "2026-10-14", FirstReceipt: "000010001", LastReceipt: "000010003"}
+	plain := strings.Join(buildEODDoc(rep, "Shop", "", "", 0).Footer, "\n")
+	if strings.Contains(plain, "Restored from a backup") {
+		t.Fatalf("restored lines printed without a marker:\n%s", plain)
+	}
+	rep.RestoredFromBackup = &data.RestoreMarker{LastReceipt: "000000015", NextReceipt: "000011001", LastZ: 9, NextZ: 13}
+	footer := buildEODDoc(rep, "Shop", "", "", 0).Footer
+	joined := strings.Join(footer, "\n")
+	for _, want := range []string{
+		"Restored from a backup: receipts continue at 000011001 (last in the backup: 000000015)",
+		"Z numbers continue at 13 (last in the backup: 9)",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("footer lacks %q:\n%s", want, joined)
+		}
+	}
+	// Before the receipts range line.
+	if strings.Index(joined, "Z numbers continue") > strings.Index(joined, "000010001") {
+		t.Fatalf("restored lines must precede the receipts range:\n%s", joined)
+	}
+	rep.RestoredFromBackup.LastReceipt = ""
+	joined = strings.Join(buildEODDoc(rep, "Shop", "", "", 0).Footer, "\n")
+	if !strings.Contains(joined, "(last in the backup: -)") {
+		t.Fatalf("empty last receipt must print a dash:\n%s", joined)
+	}
+}

@@ -18,7 +18,7 @@ Messages from Universal Till and your partners arrive in a bell in the left-hand
 1. Open Settings and find the Notices card.
 2. Tick "Show notices on this till" and press Save.
 
-Notices are off by default. While they are off there is no bell and the till asks the cloud for nothing extra. Turning them off again removes the notices this till holds. A till only receives notices while it is connected to the cloud and its shop has an active plan.
+Notices are off by default. While they are off there is no bell and the till asks the cloud for nothing extra. Turning them off again removes the notices this till holds. A till only receives notices while it is connected to the cloud and its shop has an active plan. Notices are not available in the Google Play and App Store builds of Universal Till: there the Notices card, bell and inbox do not appear.
 
 ## Reading notices
 
