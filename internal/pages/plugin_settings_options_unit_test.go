@@ -178,7 +178,7 @@ func TestSettingsOptionsCache(t *testing.T) {
 		t.Fatal("hit on empty cache")
 	}
 	opts := []askedOption{{"a", "A"}}
-	c.put("p1", k, opts)
+	putFresh(c, "p1", k, opts)
 	got, ok := c.get("p1", k)
 	if !ok || !reflect.DeepEqual(got, opts) {
 		t.Fatalf("miss/mismatch: %v %v", got, ok)
@@ -207,8 +207,8 @@ func TestSettingsOptionsCache(t *testing.T) {
 		t.Error("not expired after TTL")
 	}
 	// dropPlugin
-	c.put("p1", k, opts)
-	c.put("p2", k, opts)
+	putFresh(c, "p1", k, opts)
+	putFresh(c, "p2", k, opts)
 	c.dropPlugin("p1")
 	if _, ok := c.get("p1", k); ok {
 		t.Error("p1 survived dropPlugin")
@@ -248,7 +248,7 @@ func TestSettingsOptionsCache_EvictsOldestAtCap(t *testing.T) {
 	for i := range keys {
 		keys[i] = settingsOptionsCacheKey("1", "m", map[string]string{"i": string(rune('A' + i))})
 		clk.t = clk.t.Add(time.Second)
-		c.put("p1", keys[i], []askedOption{{"v", "v"}})
+		putFresh(c, "p1", keys[i], []askedOption{{"v", "v"}})
 	}
 	if _, ok := c.get("p1", keys[0]); ok {
 		t.Error("oldest entry survived the 65th put")
@@ -370,5 +370,13 @@ func TestPickSettingRow_EmptyScopeIsGlobal(t *testing.T) {
 	}
 	if r := pickSettingRow(rows, "missing", ""); r != nil {
 		t.Errorf("unknown key picked %+v", r)
+	}
+}
+
+// putFresh stores through putIfGeneration at the plugin's current
+// generation, the only write path production uses (ut-docs#4160).
+func putFresh(c *settingsOptionsCache, pluginID, k string, opts []askedOption) {
+	if !c.putIfGeneration(pluginID, c.generation(pluginID), k, opts) {
+		panic("putIfGeneration refused a put at the current generation")
 	}
 }

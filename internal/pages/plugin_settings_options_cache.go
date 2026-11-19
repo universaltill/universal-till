@@ -37,7 +37,7 @@ func newSettingsOptionsCache(now func() time.Time) *settingsOptionsCache {
 }
 
 // sharedSettingsOptionsCache is the process-wide cache. Only installed
-// plugin ids reach put, which bounds the outer map.
+// plugin ids reach putIfGeneration, which bounds the outer map.
 var sharedSettingsOptionsCache = newSettingsOptionsCache(time.Now)
 
 func (c *settingsOptionsCache) expired(e cachedOptions) bool {
@@ -64,13 +64,6 @@ func (c *settingsOptionsCache) generation(pluginID string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.gen[pluginID]
-}
-
-// put stores a copy unconditionally (see putIfGeneration).
-func (c *settingsOptionsCache) put(pluginID, k string, opts []askedOption) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.putLocked(pluginID, k, opts)
 }
 
 // putIfGeneration stores only if no dropPlugin ran since gen was captured.

@@ -68,3 +68,15 @@ function / taxonomy / ut-cloud mirrors n/a (unchanged); follow-ups → epic #402
 checklist lines.
 
 Verdict: ship.
+
+## Addendum — PR sweep, 2026-11-19 (lane:cloud-41)
+
+`desktop-shell`'s whole-program deadcode guard (`guard-deadcode-baseline.sh`)
+flagged `settingsOptionsCache.put` as unreachable: production writes only
+through `putIfGeneration`, and `put` was called from the unit tests alone.
+Fix: `put` removed; the tests store through a `putFresh` helper that calls
+`putIfGeneration` at the plugin's current generation and panics if refused,
+so they exercise the one write path the handler uses. No behaviour change.
+[no-subagent: dead-code removal of one test-only method, no logic touched]
+Verified: `go test ./internal/pages/ -run 'SettingsOptions|PluginSettings'`
+passes; `guard-deadcode-baseline.sh` passes locally (GOTOOLCHAIN=go1.27.1).
