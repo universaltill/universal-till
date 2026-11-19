@@ -12,15 +12,15 @@
 # Bon, Plugins in German) legitimately matches English, so an identical
 # value is not automatically a bug — a human has to look. This script
 # produces a report to read, not a gate to satisfy. Run it by hand after
-# touching web/locales/en.json or a language-pack locale file, or
+# touching web/locales/en.json or a locale file, or
 # periodically as a sweep.
 #
 # Scope: nav.* and designer.title/journal.title (the two screen titles
 # that mirror a nav entry today) across every locale this checkout can
-# see — the core repo's own web/locales/*.json, plus any
-# ut-plugin-language-{de,es,pt} pack cloned as a SIBLING directory next to
-# this repo (best-effort: most checkouts won't have those, so their
-# absence is reported, not treated as a failure).
+# see — the core repo's own web/locales/*.json, plus every *.json in
+# $UT_TEST_I18N_OVERLAY_DIR when set (build one from ut-translations with
+# scripts/ci/build-locale-overlay.sh; best-effort: its absence is reported,
+# not treated as a failure).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -76,9 +76,14 @@ for f in web/locales/*.json; do
   audit_locale "$(basename "$f" .json)" "$f"
 done
 
-echo "-- sibling language packs (../ut-plugin-language-{de,es,pt}) --"
-audit_locale "de (pack)" "../ut-plugin-language-de/locales/de.json"
-audit_locale "es (pack)" "../ut-plugin-language-es/locales/es.json"
-audit_locale "pt (pack)" "../ut-plugin-language-pt/locales/pt.json"
+echo "-- locale overlay (UT_TEST_I18N_OVERLAY_DIR) --"
+if [[ -n "${UT_TEST_I18N_OVERLAY_DIR:-}" && -d "${UT_TEST_I18N_OVERLAY_DIR}" ]]; then
+  for f in "${UT_TEST_I18N_OVERLAY_DIR}"/*.json; do
+    [[ -f "$f" ]] || continue
+    audit_locale "$(basename "$f" .json) (overlay)" "$f"
+  done
+else
+  echo "  (skip) no overlay dir: set UT_TEST_I18N_OVERLAY_DIR (see scripts/ci/build-locale-overlay.sh)"
+fi
 
 echo "== done — review any ⚠ line above; add a reviewed ALLOWLIST entry only for a real loanword =="

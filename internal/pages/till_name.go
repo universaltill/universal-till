@@ -19,6 +19,13 @@ import (
 // use this one limit.
 const maxTillNameRunes = 60
 
+// keyTillNameTooLong is the 400 text for a till name over maxTillNameRunes
+// sent to the LAN enrol / pair-request routes (ut-docs#5875).
+const keyTillNameTooLong = "sync.error.name_too_long"
+
+// errTillNameTooLong: a till name over maxTillNameRunes (ut-docs#5875).
+var errTillNameTooLong = errors.New("till name is too long")
+
 // truncateTillName is the Settings form's rule: trimmed, cut to
 // maxTillNameRunes (the field's maxlength already stops a browser there).
 func truncateTillName(raw string) string {
@@ -49,9 +56,29 @@ func validateTillName(raw string) (string, error) {
 		return "", err
 	}
 	if n := utf8.RuneCountInString(name); n > maxTillNameRunes {
-		return "", fmt.Errorf("till name is %d characters; the limit is %d", n, maxTillNameRunes)
+		return "", fmt.Errorf("%w: %d characters; the limit is %d", errTillNameTooLong, n, maxTillNameRunes)
 	}
 	return name, nil
+}
+
+// tillNameRefusalKey is the 400 key for a till name a joining till sent
+// (POST /api/sync/enroll, /api/sync/pair-request; ut-docs#5862, #5875):
+// validateTillName's rule, except that a blank name is the caller's own
+// check (enroll defaults it to "till"; pair-request refuses it earlier).
+// "" means the name is acceptable.
+func tillNameRefusalKey(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	_, err := validateTillName(raw)
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errTillNameTooLong):
+		return keyTillNameTooLong
+	default: // data.ErrNameInvalidCharacters, or a refusal reason added later
+		return keyNameInvalidCharacters
+	}
 }
 
 // deviceNameOrDefault is the Settings till-name field's value: this till's

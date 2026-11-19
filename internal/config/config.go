@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -238,6 +240,20 @@ type Config struct {
 	// laptop. Parsed by internal/languard in pages.Init; an invalid entry
 	// drops the whole list (stricter, never wider).
 	UIAllowCIDRs string
+	// NeverRegister is UT_NEVER_REGISTER (ADR-0200, ut-docs#6559): a till that
+	// must never register itself in the cloud or send change events. Every CI,
+	// e2e, docs-shots and device-test harness sets it so throwaway tills do not
+	// inflate the fleet count (scripts/ci/guard-never-register.sh). Read here
+	// once; fails safe: any set value except an explicit false/0 means "never".
+	NeverRegister bool
+	// E2EAutoRegister is UT_E2E_AUTO_REGISTER (ADR-0200): a TEST-ONLY seam for
+	// the e2e tills that must really register against their in-process fake
+	// cloud. True only when the flag is truthy AND the marketplace endpoint is
+	// a loopback address; internal/enroll additionally honours it only on a
+	// source (non-release) build, and it waives only the dev-build and
+	// never-register guards, never demo/stopped/notice/country. See
+	// e2e/run-till-diagnostics.sh, the only launcher that sets it.
+	E2EAutoRegister bool
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -261,6 +277,16 @@ func Init() (*Config, error) {
 	if err != nil {
 		lanDiscovery = true
 	}
+	neverRegister := false
+	if v := strings.TrimSpace(os.Getenv("UT_NEVER_REGISTER")); v != "" {
+		b, perr := strconv.ParseBool(v)
+		neverRegister = perr != nil || b // unparseable: fail safe
+	}
+	endpointURL := getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api")
+	e2eAuto := false
+	if b, perr := strconv.ParseBool(strings.TrimSpace(os.Getenv("UT_E2E_AUTO_REGISTER"))); perr == nil && b {
+		e2eAuto = isLoopbackURL(endpointURL)
+	}
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
 
@@ -268,19 +294,21 @@ func Init() (*Config, error) {
 		StoreName:  getenv("UT_STORE_NAME", DefaultStoreName),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
-		DataDir:       dataDir,
-		DBPath:        getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
-		LogLevel:      getenv("UT_LOG_LEVEL", "info"),
-		Theme:         getenv("UT_THEME", "monarch"),
-		DevMode:       devMode,
-		Demo:          demo,
-		DemoToken:     os.Getenv("UT_DEMO_TOKEN"),
-		AuthDisabled:  auth.Disabled(os.Getenv("UT_AUTH")),
-		CSPReportOnly: cspReportOnly,
-		LANDiscovery:  lanDiscovery,
-		UIAllowCIDRs:  os.Getenv("UT_UI_ALLOW_CIDRS"),
+		DataDir:         dataDir,
+		DBPath:          getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
+		LogLevel:        getenv("UT_LOG_LEVEL", "info"),
+		Theme:           getenv("UT_THEME", "monarch"),
+		DevMode:         devMode,
+		Demo:            demo,
+		DemoToken:       os.Getenv("UT_DEMO_TOKEN"),
+		AuthDisabled:    auth.Disabled(os.Getenv("UT_AUTH")),
+		CSPReportOnly:   cspReportOnly,
+		LANDiscovery:    lanDiscovery,
+		UIAllowCIDRs:    os.Getenv("UT_UI_ALLOW_CIDRS"),
+		NeverRegister:   neverRegister,
+		E2EAutoRegister: e2eAuto,
 		Marketplace: MarketplaceConfig{
-			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
+			EndpointURL:           endpointURL,
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", DefaultStoreName)),
 			DeviceID:              getenv("UT_MARKETPLACE_DEVICE_ID", ""),
 			PublicKey:             getenv("UT_MARKETPLACE_PUBLIC_KEY", ""),
@@ -344,4 +372,19 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// isLoopbackURL reports whether raw is an http(s) URL whose host is exactly a
+// loopback name or address (never a lookalike or a LAN host).
+func isLoopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	h := u.Hostname()
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }

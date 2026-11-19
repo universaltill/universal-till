@@ -52,7 +52,8 @@ var exactPermissions = map[string]bool{
 	"ai.tool.provide.write": true,
 
 	// Grandfathered: dotted names published plugin repos declare
-	// (ut-plugin-language-* ui.locale, ut-plugin-theme*/themes ui.theme,
+	// (ui.locale: Weblate language bundles com.universaltill.language-*,
+	// tools/build_bundle.py; ut-plugin-theme*/themes ui.theme,
 	// ut-plugin-faq ui.page, ut-plugin-integration-ai ai.configure,
 	// ut-plugin-payment-* pos.tender). Core checks none of them, but refusing
 	// them would stop those plugins installing and make an installed one's

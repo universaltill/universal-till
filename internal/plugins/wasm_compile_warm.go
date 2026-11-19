@@ -176,6 +176,9 @@ func (w *WasmRuntime) warmCompileCache(rows []data.InstalledPluginRow) {
 		if err != nil {
 			continue // the serial load reports it
 		}
+		if !codeLoadAllowed(c.id, c.version, c.path, raw) {
+			continue // ADR-0194: never compiled on this channel; load reports it
+		}
 		sum := sha256.Sum256(raw)
 		mods = append(mods, module{c, raw, hex.EncodeToString(sum[:])})
 	}
