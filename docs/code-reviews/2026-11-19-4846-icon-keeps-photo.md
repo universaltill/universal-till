@@ -18,6 +18,18 @@ PickItemIcon reads the thumbnail and writes in one transaction; a photo item kee
 - Full `go test ./...` on the throwaway integration branch showed only merge artefacts (en.meta.json commas, I1 of the review file) plus slow-package timeouts in `internal/pages` and `internal/plugins`; the rerun is pending.
 - Not done: Playwright e2e and a driven run of the app; TDD claims verified by reading, not by reverting each fix.
 
+## Addendum: merge of main, Tester and spec fix (lane:cloud-41, 2026-11-19)
+
+- **Merge-damage check** (Sonnet subagent; the author was Opus, the first review Fable): CLEAN. After merging 213 commits of `main` (no conflicts), the change that lands is line-for-line the reviewed change (`git diff origin/main...678a2f3f` = `git diff origin/main HEAD`). `main` has no new callers of `PickItemIcon` or `iconid.IsLibraryTile`. The 4 new keys appear once each in `en.json` and in `en.meta.json`. **Medium:** the docs-shots hashes went stale after the merge, so the screenshots were regenerated with `make docs-shots`.
+- **Tester** (fresh subagent): the earlier record's gaps are now closed.
+  - `go test ./...`: 123 packages ok. `golangci-lint`: 0 issues. All 70 `build`-job guards pass.
+  - Revert check: with `main`'s `catalog_repo.go` and `handlers.go` in place, the new data tests fail (no `PickItemIcon`, so the package doesn't build) and 4 catalog tests fail. Forcing `PickItemIcon` back to overwrite fails the two keep-photo data tests.
+  - e2e: the touched icon-grid specs pass 30/30.
+  - Driven run: 17/17 checks, in English at 1280×800 and 1024×600 and Persian RTL at 1024×600. Covered: the notice, the badge, the sell tile still showing the photo, the generic tile writing nothing, and No image followed by an icon.
+- **D1 (high, fixed):** `e2e/tests/photo-cutout-3127.spec.ts:630` still asserted the old rule, "an icon pick removes the thumb", on a sample item whose monogram thumb now counts as a photo. That is the owner's decision C ("photo/initials thumbnail", 2026-11-12). The spec now clears the item with No image before checking that an icon gets no Remove background button. It also asserts that an icon over a photo keeps the button and gets the fallback badge. Result: 14 passed, 1 skipped (the screenshot-only test). Reviewed by the orchestrator: the test keeps its intent, and the only change is the rule it asserts.
+- **N1 (answered, no change):** sample-catalogue monograms count as photos. This follows the owner's wording on the card.
+- Not seen: dark theme (the forced media query didn't switch the app's theme), phone width, forced-colors.
+
 ## Verdict
 
 PASS once the findings above are dispositioned as listed.
@@ -26,4 +38,4 @@ PASS once the findings above are dispositioned as listed.
 
 - None.
 
-Pre-flight: help topic `updated`; docs-shots `stale on the merged tree, regenerate once per batch (I2)`; en.json keys `en.meta.json updated`; README / website `n/a (no plan, price or platform claim)`; ADR `n/a`; review record `this file`.
+Pre-flight: help topic `updated`; docs-shots `regenerated after the merge of main (make docs-shots)`; en.json keys `en.meta.json updated`; README / website `n/a (no plan, price or platform claim)`; ADR `n/a`; review record `this file`.
