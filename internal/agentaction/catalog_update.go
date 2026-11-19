@@ -74,9 +74,9 @@ func parseUpdate(raw []byte) (any, error) {
 			return nil, fmt.Errorf("%w: changes[%d] changes nothing", ErrInvalid, i)
 		}
 		if c.Name != nil {
-			n, ok := cleanText(*c.Name, itemNameMaxRunes)
-			if !ok {
-				return nil, fmt.Errorf("%w: changes[%d].name", ErrInvalid, i)
+			n, err := cleanName(*c.Name, itemNameMaxRunes)
+			if err != nil {
+				return nil, fmt.Errorf("changes[%d].name: %w", i, err)
 			}
 			c.Name = &n
 		}

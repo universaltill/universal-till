@@ -15,6 +15,8 @@ import (
 // departments are top-level categories that sub-categories nest under). The
 // lookup is parent-scoped and case-insensitive so re-running an import is
 // idempotent: the same department + category resolve to the same rows.
+// A name the single-line rule refuses (line break, tab, hidden character)
+// returns ErrNameInvalidCharacters and writes nothing (ut-docs#5908).
 func (r *CatalogRepo) EnsureCategoryUnder(ctx context.Context, name, parentID string) (string, error) {
 	return ensureCategoryUnderExec(ctx, r.db, name, parentID)
 }
@@ -27,14 +29,16 @@ func (r *CatalogRepo) EnsureCategoryUnderTx(ctx context.Context, tx *sql.Tx, nam
 }
 
 func ensureCategoryUnderExec(ctx context.Context, ex execer, name, parentID string) (string, error) {
-	name = strings.TrimSpace(name)
+	// ut-docs#5908: the same single-line name rule every other entry point
+	// applies (it trims, incl. CR/LF/TAB). Refused before any SELECT/INSERT.
+	name, err := CheckSingleLineName(name)
+	if err != nil {
+		return "", err
+	}
 	if name == "" {
 		return "", nil
 	}
-	var (
-		id  string
-		err error
-	)
+	var id string
 	if parentID == "" {
 		err = ex.QueryRowContext(ctx,
 			`SELECT id FROM categories WHERE name = ? COLLATE NOCASE AND parent_id IS NULL`,
