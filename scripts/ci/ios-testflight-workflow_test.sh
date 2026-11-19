@@ -137,8 +137,8 @@ check_wf() {
   local bind
   bind="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Bind the Go till server/)} p' "$wf")"
   # shellcheck disable=SC2016
-  if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}"' <<<"$bind"; then
-    echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=\${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=\${UT_MARKETPLACE_KEY_HEX}\")"
+  if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=appstore -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:appstore -X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}"' <<<"$bind"; then
+    echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Channel=appstore -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:appstore -X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=\${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=\${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=\${UT_RELEASE_KEYS_HEX}\")"
   fi
   # ut-docs#3217: a step after the export/upload (and before the key is
   # removed) runs the audience check against the app's bundle ID.
@@ -152,6 +152,18 @@ check_wf() {
     || ! grep -qF -- '-bundle-id com.universaltill.pos' <<<"$aud" \
     || [ "$aud_at" -lt "$export_at" ] || [ "$aud_at" -gt "$cleanup_at" ]; then
     echo "FAIL:no TestFlight audience check (scripts/asc-testflight-check) between the upload and the key cleanup"
+  fi
+  # ut-docs#6565 (finding 19): before the bind, a step runs the App Store
+  # no-code-fetch guard (which also runs the gate's tests) and the tagged
+  # test that the embedded set equals the lock.
+  local gate gate_at
+  gate="$(awk '/^      - name: /{p = ($0 ~ /^      - name: App Store build gate/)} p' "$wf")"
+  gate_at="$(awk '/^      - name: App Store build gate/{print NR; exit}' "$wf")"
+  if [ -z "$gate" ] || ! grep -qF 'bash scripts/ci/guard-appstore-no-code-fetch.sh' <<<"$gate" \
+    || ! grep -qF -- '-tags bundledplugins' <<<"$gate" || ! grep -qF 'TestEmbeddedSetMatchesLock' <<<"$gate" \
+    || [ -z "${gate_at}" ] || [ -z "$(awk '/^      - name: Bind the Go till server/{print NR; exit}' "$wf")" ] \
+    || [ "${gate_at}" -gt "$(awk '/^      - name: Bind the Go till server/{print NR; exit}' "$wf")" ]; then
+    echo "FAIL:no App Store build gate step (guard + tagged embedded-set test) before the gomobile bind"
   fi
   # ...and the version must be resolved before the bind runs.
   local resolve_at bind_at
@@ -190,7 +202,7 @@ bad="$(check_wf "$fixture")"
 for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-26' 'iOS SDK version check' 'self-hosted' \
   'timeout-minutes' 'write permission' 'concurrency' 'secrets expanded inside a run' 'RUNNER_TEMP' \
   'umask 077' 'if: always()' 'ASC_KEY_P8 printed' 'stamp buildinfo.Version' 'resolved after the gomobile bind' \
-  'no TestFlight audience check'; do
+  'no TestFlight audience check' 'no App Store build gate'; do
   if grep -qF -- "$want" <<<"$bad"; then
     pass "self-test: broken fixture trips '${want}'"
   else

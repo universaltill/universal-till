@@ -92,7 +92,7 @@ jobs:
           if [ -n "$INPUT_VERSION" ]; then
             version="$INPUT_VERSION"
           else
-            version="$(git describe --tags --abbrev=0 --match 'v*')"
+            version="$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*')"
           fi
           version="${version#v}"
           # CFBundleShortVersionString: one to three dot-separated integers.
@@ -122,14 +122,39 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
+      # ADR-0178: the release-signing public keys every release binary
+      # carries (repository variable; empty = signing not configured).
+      - name: Resolve release signing keys
+        env:
+          UT_RELEASE_PUBLIC_KEYS_PIN: ${{ vars.UT_RELEASE_PUBLIC_KEYS }}
+        run: bash scripts/ci/resolve-release-keys.sh
+      # ADR-0194 / Apple 2.5.2 (ut-docs#6565): the App Store build ships the
+      # first-party Stripe and SumUp payment plugins inside the app (switched
+      # on and off, never downloaded at runtime). The pinned release bundles
+      # are fetched HERE, at build time on this GitHub-hosted runner, and
+      # verified against internal/plugins/bundled/bundled.lock.json (fail
+      # closed); the bundledplugins tag below embeds them. Public repos, no
+      # token, no secret.
+      - name: Fetch the pinned first-party plugin bundles (lock-verified)
+        run: bash scripts/ci/fetch-bundled-plugins.sh
+      # Finding 19 (ut-docs#6565): a tagged build cannot compile with a bundle
+      # missing (every locked file is embedded by name), and the embedded bytes
+      # must equal the lock. The guard also RUNS the gate's tests, so a
+      # predicate forced to `return true` fails here, not only a missing token.
+      - name: App Store build gate (guard + embedded set equals the lock + gate behaviour)
+        run: |
+          set -euo pipefail
+          bash scripts/ci/guard-appstore-no-code-fetch.sh
+          go vet -tags bundledplugins ./internal/plugins/bundled
+          go test -tags bundledplugins -count=1 -run 'TestEmbeddedSetMatchesLock|TestEmbedOnNamesEveryLockedFile|TestRealBundles_InstallGrantsDeclaredPermissions_AppStore' ./internal/plugins/bundled
       - name: Bind the Go till server (gomobile bind -target=ios)
         run: |
           set -euo pipefail
           # Stamp the version the footer, the update check and support read; without
           # it buildinfo.Version stays "dev" (ut-docs#3221). BuildDate: ADR-0160 §6.
           BUILD_DATE="$(bash scripts/ci/build-date.sh)"
-          gomobile bind -target=ios \
-            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
+          gomobile bind -target=ios -tags bundledplugins \
+            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Channel=appstore -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:appstore -X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX} -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=${UT_RELEASE_KEYS_HEX}" \
             -o ios/build/Mobile.xcframework ./mobile
       - name: Generate the app icon asset catalog
         run: bash ios/scripts/make-app-icon.sh
@@ -152,6 +177,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/private_keys"
           printf '%s' "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
           chmod 600 "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+      # -onlyUsePackageVersionsFromResolvedFile (ut-docs#3049): this job holds
+      # the App Store Connect key, so the one SwiftPM dependency is built only
+      # at the revision pinned in the committed Package.resolved; a mismatch
+      # fails the archive instead of re-resolving.
       - name: Archive (unsigned; the export step signs)
         env:
           TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
@@ -164,6 +193,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/UniversalTill.xcarchive" \
             -derivedDataPath build/dd \
+            -onlyUsePackageVersionsFromResolvedFile \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \

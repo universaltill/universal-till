@@ -22,14 +22,18 @@ VERSION?=0.1.0-dev
 # ADR-0160 §6: the source commit's time, so a first-party language bundle
 # generated after it beats this build's built-in strings (internal/buildinfo).
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null)
-LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION) -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$(BUILD_DATE)
+LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Channel=sideload -X github.com/universaltill/universal-till/internal/buildinfo.ChannelStamp=ut-channel:sideload -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION) -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$(BUILD_DATE)
 # ADR-0158: `UT_MARKETPLACE_KEY_HEX=<hex> make build` compiles the marketplace
 # plugin-signing key in, as release builds do; unset = a source build.
+# ADR-0178: UT_RELEASE_KEYS_HEX (comma list of release public keys) arms the
+# self-updater's signature check; empty = SHA-256 only. Stamped with the
+# marketplace key (guard-release-key-stamped.sh pairs the two).
+UT_RELEASE_KEYS_HEX ?=
 ifneq ($(UT_MARKETPLACE_KEY_HEX),)
-LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX)
+LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX) -X github.com/universaltill/universal-till/internal/buildinfo.ReleasePublicKeys=$(UT_RELEASE_KEYS_HEX)
 endif
 
-.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees
+.PHONY: licenses licenses-check build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees gen-settings-registry
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -39,6 +43,11 @@ run: build
 
 test:
 	go test ./...
+
+# The till settings registry artefact ut-cloud pins (ut-docs#5349). A data
+# test fails when the committed file is stale.
+gen-settings-registry:
+	go run ./cmd/gen-settings-registry
 
 # internal/pages' own -race runtime sits with no margin against (or past)
 # the plain `go test` 600s per-package default (ut-docs#648) — this package
@@ -150,7 +159,7 @@ docs-shots-determinism:
 
 e2e:
 	@set -e; \
-	UT_LAN_DISCOVERY=0 UT_UPDATE_CHECK=0 UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=127.0.0.1:8080 go run . & \
+	UT_LAN_DISCOVERY=0 UT_UPDATE_CHECK=0 UT_NEVER_REGISTER=1 UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=127.0.0.1:8080 go run . & \
 	E2E_PID=$$!; \
 	trap 'kill $$E2E_PID' EXIT; \
 	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
@@ -159,3 +168,11 @@ e2e:
 		if [ $$i -eq 30 ]; then echo \"App did not start in time\" >&2; exit 1; fi; \
 	done; \
 	(cd tests/e2e && BASE_URL=http://127.0.0.1:8080 npm run test:e2e)
+
+# Open-source licences page for Settings -> About (ut-docs#6402), generated
+# from go.mod and the module cache (no network when the build already ran).
+licenses:
+	go run ./tools/gen-licenses
+
+licenses-check:
+	go run ./tools/gen-licenses -check

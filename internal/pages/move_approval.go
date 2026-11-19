@@ -15,8 +15,13 @@ package pages
 //     Only an elevated request reaches enroll.DecideMove, the one place that
 //     signs. Three wrong PINs on one move decline it (enroll.LockMove).
 //
-// The cashier never sees any of it: every route refuses a session without
-// the settings grant, server-side.
+//   - GET /ui/move-pending-chip: a status-bar chip (ut-docs#5287) on every
+//     page, the sale screen included, for every role: "Till move waiting for
+//     a manager". Anonymous (no shop, no deadline) and read-only; a link to
+//     the move page only for a viewer with the settings grant.
+//
+// Cashiers see only that anonymous status chip; every other route still
+// refuses a session without the settings grant, server-side.
 
 import (
 	"context"
@@ -36,6 +41,22 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// moveChipNow is the chip's clock; a var so tests can pin it.
+var moveChipNow = time.Now
+
+// openPendingMove is the earliest-expiring move not yet past its cloud
+// expiry. PendingMoves keeps a 24 h housekeeping grace; the chip must not
+// say "waiting" for a move the cloud has already expired (offline till).
+// list is sorted soonest expiry first.
+func openPendingMove(list []enroll.PendingMove, now time.Time) (enroll.PendingMove, bool) {
+	for _, p := range list {
+		if now.Before(p.ExpiresAt) {
+			return p, true
+		}
+	}
+	return enroll.PendingMove{}, false
+}
 
 func registerMoveApproval(mux *http.ServeMux, d *common.Deps) {
 	if d.Db != nil {
@@ -80,6 +101,31 @@ func registerMoveApproval(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// The status chip (ut-docs#5287): every role, every page, memory only (no
+	// network call). Self-order customer pages never use base.html, so the
+	// chip never reaches them. A viewer without the settings grant gets no
+	// move id, shop name or deadline: the markup is identical for every role.
+	mux.HandleFunc("GET /ui/move-pending-chip", func(w http.ResponseWriter, r *http.Request) {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		p, ok := openPendingMove(enroll.PendingMoves(d.Cfg), moveChipNow())
+		if !ok {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		canManage := canPerform(d, r, "settings")
+		moveID := ""
+		if canManage {
+			moveID = p.MoveID
+		}
+		httpx.RenderPartial("ui/partials/move_pending_chip.html", map[string]any{
+			"canManage": canManage,
+			"moveID":    moveID,
+		})(w, r)
+	})
+
 	mux.HandleFunc("GET /settings/cloud/move/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !requirePage(d, w, r, "settings") {
 			return
@@ -88,7 +134,7 @@ func registerMoveApproval(mux *http.ServeMux, d *common.Deps) {
 		id := r.PathValue("id")
 		page := map[string]any{
 			"title": httpx.T(locale, "page.title.move_till"),
-			"theme": d.CurrentState().Theme,
+			"theme": d.ResolvedTheme(r),
 		}
 		p, ok := enroll.PendingMoveByID(d.Cfg, id)
 		if !ok || d.SyncPrimaryURL(r.Context()) != "" {

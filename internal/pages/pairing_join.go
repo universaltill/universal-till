@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
@@ -372,6 +373,12 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			pairWaitView(w, r, statusURL, "error", "", "", msg)
 			return
 		}
+		// ut-docs#5862: one line, no hidden formatting characters; refused
+		// here, before any request to the main till.
+		if _, err := data.CheckSingleLineName(name); err != nil {
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, keyNameInvalidCharacters))
+			return
+		}
 		if !validPrimaryBaseURL(baseURL) {
 			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.invalid_address"))
 			return
@@ -429,7 +436,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			return
 		}
 		if resp.StatusCode != http.StatusOK {
-			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.refused"))
+			msg := httpx.T(locale, "tills.pairing.error.refused")
+			if k, ok := plainRefusalKind(resp); ok {
+				msg = httpx.T(locale, joinErrLocaleKey[k])
+			}
+			pairWaitView(w, r, statusURL, "error", "", "", msg)
 			return
 		}
 		var out struct {
@@ -534,6 +545,9 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		if resp.StatusCode != http.StatusOK {
 			next := *state
 			next.status, next.errMsg = "error", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unexpected_response_status"), resp.Status)
+			if k, ok := plainRefusalKind(resp); ok {
+				next.errMsg = httpx.T(locale, joinErrLocaleKey[k])
+			}
 			rp.active = &next
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return

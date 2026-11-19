@@ -56,7 +56,7 @@
   <h1>{{ T "open_orders.title" }}</h1>
   <a class="btn primary btn-touch" href="{{ .backToSaleURL }}"><span class="back-arrow" aria-hidden="true">←</span> {{ T "menu.back_to_sale" }}</a>
 </div>
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
 {{ if .msgKey }}
 <div class="pos-notice success" role="status" data-testid="open-orders-notice">
   <span class="notice-text">{{ T .msgKey }}</span>
@@ -107,7 +107,7 @@
                   aria-label="{{ printf (T "open_orders.cancel.action_named") .Label }}"
                   title="{{ printf (T "open_orders.cancel.action_named") .Label }}"
                   hx-post="/api/pos/held/cancel" hx-vals='{{ jsonVals "id" .ID "view" "page" "tab" $tab }}'
-                  hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}"
+                  hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}" data-confirm-ok="{{ T "open_orders.cancel.action" }}" data-confirm-dismiss="{{ T "confirm.keep_order" }}"
                   hx-target="#open-orders-hint" hx-swap="innerHTML">
             <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
           </button>

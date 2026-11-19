@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -137,6 +138,11 @@ type Deps struct {
 	// bare-Deps tests stay valid.
 	WindowCtl WindowController
 
+	// SystemPrinters reports whether this device's OS print system has a
+	// destination (ut-docs#6154). Set only on the Pi kiosk appliance; nil
+	// elsewhere = "unknown" = the browser's print dialog stays available.
+	SystemPrinters interface{ State() print.DestState }
+
 	// Shell is the server-authoritative live window-mode channel the
 	// desktop shell long-polls via GET /api/window-mode?control=live
 	// (ADR-0064, ut-docs#1039). Set once in pages.Init, seeded from the
@@ -177,6 +183,13 @@ type Deps struct {
 	// dirty flags, so a call is O(peers) and never blocks. Set once in
 	// pages.Init before the server accepts requests; nil in bare-Deps tests.
 	Link *fleetlink.Hub
+
+	// PendingLinks holds the joining tills' pending links on the main till
+	// (ADR-0114 §2 and its 2026-11-03 amendment, ut-docs#5297): one per
+	// pending pair request, resolved by approve/deny, closed on expiry and
+	// shutdown. Main till only (a replica refuses at the route). Set once in
+	// pages.Init; nil in bare-Deps tests, and every user nil-checks it.
+	PendingLinks *fleetlink.PendingHub
 
 	// LinkClient is this till's side of the main-till link when it is an
 	// additional till (ADR-0114 §2–§4, ut-docs#2735): it dials the main
@@ -288,6 +301,13 @@ type Deps struct {
 	// (ut-docs#2817) — the catalogue write-through refuses it either way.
 	MainTillUnreachable func(context.Context) bool
 
+	// ThemeAvailable reports whether a theme key is installed on this till
+	// (built-in stylesheet or an active plugin theme entry). pages.Init sets
+	// it; nil (tests, a bare Deps) means "don't check". ResolvedTheme uses
+	// it so an operator's personal theme that was since uninstalled falls
+	// back to the till theme instead of a page with no theme (ut-docs#3440).
+	ThemeAvailable func(ctx context.Context, key string) bool
+
 	// sellCacheOnce/sellCache back SellScreenCache below (ut-docs#2989).
 	sellCacheOnce sync.Once
 	sellCache     *ui.SellScreenCache
@@ -349,8 +369,11 @@ func (d *Deps) WaitForAsyncWork() {
 type RuntimeState struct {
 	Theme    string
 	Currency string
-	Country  string
-	Region   string
+	// CurrencyDisplay is store.currency_display (auto|symbol|code,
+	// ut-docs#5410); always valid after LoadState/SaveState (clamped).
+	CurrencyDisplay string
+	Country         string
+	Region          string
 	// Locale is the shop's default locale (ut-docs#861) — settable live via
 	// Settings' Language card, distinct from a manager's own per-browser
 	// ?lang=/ut_lang cookie preference. Empty means "use the compiled-in/

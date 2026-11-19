@@ -13,7 +13,7 @@ import { watchConsole } from './helpers';
 // are deliberately different strings, so asserting the error text here
 // distinguishes "failed" from "found nothing" and would fail on the old
 // code, which showed the latter.
-const PAGES = [
+const PAGES: { name: string; url: string; open?: string; button: string; message: string; error: string; noneFound: string }[] = [
   {
     name: 'Settings → Printer',
     url: '/settings#settings-printer', // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
@@ -27,6 +27,8 @@ const PAGES = [
   {
     name: 'Kitchen stations',
     url: '/kitchen-stations',
+    // ut-docs#5575: the button lives in the station dialog now.
+    open: '#kitchen-stations-new',
     button: '#discover-printers-btn',
     message: '#discover-printers-msg',
     // kitchenstations.discover.error
@@ -58,6 +60,7 @@ for (const page_ of PAGES) {
     });
 
     await page.goto(page_.url);
+    if (page_.open) await page.locator(page_.open).click();
 
     const btn = page.locator(page_.button);
     const msg = page.locator(page_.message);

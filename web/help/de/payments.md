@@ -3,6 +3,7 @@ id: payments
 title: Zahlungen
 section: Täglicher Verkauf
 order: 20
+public: true
 summary: Bargeld ist eingebaut; Karte und andere Zahlungsmethoden kommen als Plugins aus dem Store — zum Beispiel Stripe mit einem Kartenlesegerät (Terminal) oder QR-Code-Zahlung.
 keywords: [bargeld, karte, zahlung, wechselgeld, aufteilung]
 ---

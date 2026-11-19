@@ -1,0 +1,21 @@
+{{ define "content" }}
+{{/* ut-docs#5066: Settings > Backups > Cloud backups > Save your key. Manager or
+     admin only (the route refuses anyone else); showing the key asks for the
+     manager PIN. No modal. */}}
+<div class="page-head">
+  <h1>{{ T "backup.cloud.key.title" }} {{ helpLink "backups" }}</h1>
+</div>
+
+<div class="card cloud-key" data-testid="cloud-key-page">
+  {{ if not .hasKey }}
+  <p data-testid="cloud-key-none">{{ T "backup.cloud.key.none" }}</p>
+  {{ else }}
+  <p>{{ T "backup.cloud.key.page_intro" }}</p>
+  <form hx-post="/api/offsite/key/show" hx-target="#cloud-key-out" hx-swap="innerHTML">
+    <button class="btn primary" type="submit" data-testid="cloud-key-reveal">{{ T "backup.cloud.key.show" }}</button>
+  </form>
+  <div id="cloud-key-out" aria-live="polite"></div>
+  {{ end }}
+  <p><a href="/settings#settings-backup">{{ T "backup.cloud.restore.back_settings" }}</a></p>
+</div>
+{{ end }}

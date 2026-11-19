@@ -3,6 +3,7 @@ id: bluetooth-devices
 title: Bluetooth-Geräte
 section: Verbinden & erweitern
 order: 236
+public: true
 summary: Koppeln Sie einen Bluetooth-Barcode-Scanner oder eine Waage direkt aus der Kasse heraus mit der Kasse — scannen, auf Koppeln tippen, fertig — ohne jemals die Einstellungen des Betriebssystems zu öffnen.
 keywords: [bluetooth, scanner, barcode, waage, koppeln, pairing, HID, kabellos, vergessen]
 routes: [/bluetooth-devices]
