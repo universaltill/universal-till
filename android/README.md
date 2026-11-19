@@ -218,6 +218,19 @@ GitHub Releases API mechanism the other platforms already use).
   download fails on a 3-minute stall or a 60-minute cap; state goes to the
   page as `window.utAndroidUpdate({state, percent, error})` and to logcat as
   `update: …` lines (`adb logcat -s MainActivity`).
+- **Nightly pre-download (ut-docs#6551).** `SelfUpdateActivity` registers
+  `Mobile.setUpdateBridge` in `onResume` and clears it in `onPause` (sideload
+  only; the Play flavour has inert stubs). Go's nightly scheduler calls it
+  when an update is available and no basket is open: the shell downloads the
+  APK and runs the same ADR-0179 check, keeps the file as the verified ready
+  copy (`ready_version_code` / `ready_length` in `in_app_update`; the
+  `download_mode=prefetch` flag survives an Activity recreate so a finished
+  prefetch never installs) and reports `downloaded` to the page
+  (`AndroidKiosk.updateReady()` lets a freshly loaded page ask). It never
+  launches the installer, releases the kiosk lock or asks for the install
+  permission; a manager's tap re-copies and re-verifies the file first
+  (`UpdateLogic.afterCheck`, `UpdateLogic.prefetchReady`). Not run on a
+  device yet (TECLAST P50T / Fire OS follow-up).
 - **Verified on the API 36 emulator** (2026-10-14, a test build pointing at a
   throttled local server, not the real tablet): progress 0→94 % reported to the
   page, a repeat call mid-download logged "already in progress" and did not

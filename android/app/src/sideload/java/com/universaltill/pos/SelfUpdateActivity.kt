@@ -42,6 +42,33 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
 
     fun selfUpdateInstall() = runOnUiThread { downloadAndInstallUpdate() }
 
+    /** ut-docs#6551: the nightly pre-download (Go scheduler, via [GoUpdateBridge]); never installs. */
+    fun selfUpdatePrefetch() = runOnUiThread { downloadAndInstallUpdate(prefetch = true) }
+
+    /**
+     * ut-docs#6551: a verified prefetch is waiting. Runs on the JS binder
+     * thread: preference reads and one file stat only, no parsing.
+     */
+    fun selfUpdateReady(): Boolean {
+        val dest = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), UPDATE_APK_NAME)
+        val prefs = updatePrefs()
+        return UpdateLogic.prefetchReady(
+            prefs.getLong(UPDATE_PREF_READY_VC, -1L).takeIf { it >= 0 },
+            prefs.getLong(UPDATE_PREF_READY_LEN, -1L).takeIf { it >= 0 },
+            if (dest.isFile) dest.length() else 0L,
+            installedVersionCode(),
+        )
+    }
+
+    /** ut-docs#6551: the Go -> native half of the nightly prefetch (mobile.UpdateBridge). */
+    private inner class GoUpdateBridge : mobile.UpdateBridge {
+        override fun prefetchUpdate() {
+            selfUpdatePrefetch()
+        }
+    }
+
+    private val goUpdateBridge = GoUpdateBridge()
+
     fun selfUpdateCanInstall(): Boolean =
         UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } ==
             InstallPreflight.PROCEED
@@ -50,7 +77,14 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
 
     protected fun selfUpdateOnCreate() = pruneStaleUpdateCopy()
 
+    protected fun selfUpdateOnPause() {
+        // Only the foreground Activity answers the nightly prefetch; Go keeps
+        // the day's slot unspent while none is registered.
+        runCatching { Mobile.setUpdateBridge(null) }
+    }
+
     protected fun selfUpdateOnResume() {
+        runCatching { Mobile.setUpdateBridge(goUpdateBridge) }
         resumeUpdateWatch()
         // ut-docs#6551: back from the "install unknown apps" screen. Never
         // continues the install on its own: the page shows the install
@@ -126,17 +160,25 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
      * storage first and installs the verified copy (ut-docs#5436). Never
      * crashes the till — a failure leaves the operator able to retry.
      */
-    internal fun downloadAndInstallUpdate() {
+    internal fun downloadAndInstallUpdate(prefetch: Boolean = false) {
         if (updatePollRunnable != null || updateCheckingReuse || updateVerifyingApk) {
-            Log.i(TAG, "update: already in progress, re-reporting state")
-            lastUpdateState?.let { pushUpdateState(it) }
+            Log.i(TAG, "update: already in progress")
+            // ut-docs#6551: a manager's tap upgrades a running prefetch to
+            // install-on-finish; a repeat prefetch changes nothing.
+            if (!prefetch) {
+                updatePrefs().edit().remove(UPDATE_PREF_MODE).apply()
+                lastUpdateState?.let { pushUpdateState(it) }
+            }
             return
         }
         // ut-docs#6551: before spending a ~40 MB download, make sure Android
         // will let this app hand an APK to the installer. If not, tell the
         // page (it explains and offers the settings screen) instead of a
         // silent no-op later.
-        if (UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } == InstallPreflight.NEEDS_PERMISSION) {
+        // A prefetch never asks: the manager's tap runs this check (R3).
+        if (!prefetch &&
+            UpdateLogic.installPreflight(Build.VERSION.SDK_INT) { packageManager.canRequestPackageInstalls() } == InstallPreflight.NEEDS_PERMISSION
+        ) {
             Log.i(TAG, "update: install-unknown-apps not allowed for this app, asking the operator")
             reportUpdate(UpdateLogic.STATE_NEEDS_PERMISSION, null, null)
             return
@@ -151,12 +193,13 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
             val savedId = updatePrefs().getLong(UPDATE_PREF_ID, -1L)
             if (savedId >= 0 && isDownloadInFlight(manager, savedId)) {
                 Log.i(TAG, "update: download $savedId is still running, watching it")
+                if (!prefetch) updatePrefs().edit().remove(UPDATE_PREF_MODE).apply()
                 watchUpdateDownload(manager, savedId, dest)
                 return
             }
             val url = updateApkUrl()
             updateCheckingReuse = true
-            reportUpdate("downloading", null, null)
+            if (!prefetch) reportUpdate("downloading", null, null)
             // The size check is a network call (HEAD), so off the UI thread.
             Thread {
                 val (savedSuccessful, savedTotal) = savedDownloadOutcome(manager, savedId)
@@ -169,9 +212,9 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                     if (isDestroyed) return@runOnUiThread
                     if (UpdateLogic.canReuseDownloadedApk(fileLength, expected, archiveVersion, installedVersionCode())) {
                         Log.i(TAG, "update: reusing the complete APK already downloaded ($fileLength bytes, versionCode $archiveVersion)")
-                        verifyThenInstall(dest, savedId)
+                        verifyThenInstall(dest, savedId, prefetch)
                     } else {
-                        enqueueUpdateDownload(manager, dest, url, savedId)
+                        enqueueUpdateDownload(manager, dest, url, savedId, prefetch)
                     }
                 }
             }.apply {
@@ -201,6 +244,7 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
         dest: File,
         url: String,
         staleId: Long,
+        prefetch: Boolean,
     ) {
         try {
             // Only now is the old file worthless (partial, or an older
@@ -223,11 +267,18 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
             val id = manager.enqueue(request)
             // The enqueue time (wall clock) goes with the id, so the hard cap
             // counts from here in every later Activity (UpdateLogic.detectorStartMs).
-            updatePrefs()
-                .edit()
-                .putLong(UPDATE_PREF_ID, id)
-                .putLong(UPDATE_PREF_ENQUEUED_AT, System.currentTimeMillis())
-                .apply()
+            val editor =
+                updatePrefs()
+                    .edit()
+                    .putLong(UPDATE_PREF_ID, id)
+                    .putLong(UPDATE_PREF_ENQUEUED_AT, System.currentTimeMillis())
+                    // A new download invalidates any earlier ready record.
+                    .remove(UPDATE_PREF_READY_VC)
+                    .remove(UPDATE_PREF_READY_LEN)
+            // ut-docs#6551: persisted so a recreated Activity's resumeUpdateWatch
+            // still knows this download must not install on finish.
+            if (prefetch) editor.putString(UPDATE_PREF_MODE, UPDATE_MODE_PREFETCH) else editor.remove(UPDATE_PREF_MODE)
+            editor.apply()
             Log.i(TAG, "update: enqueued download $id from $url")
             watchUpdateDownload(manager, id, dest)
         } catch (e: Exception) {
@@ -327,8 +378,9 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                         // when HEAD fails, this record's total is the size
                         // (UpdateLogic.expectedApkLength). The next enqueue
                         // removes it.
-                        reportUpdate("ready", 100, null)
-                        verifyThenInstall(file, id)
+                        val prefetch = updatePrefs().getString(UPDATE_PREF_MODE, null) == UPDATE_MODE_PREFETCH
+                        if (!prefetch) reportUpdate("ready", 100, null)
+                        verifyThenInstall(file, id, prefetch)
                         return false
                     }
                     DownloadManager.STATUS_FAILED -> {
@@ -346,7 +398,11 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                 }
                 when (stall.observe(done, SystemClock.elapsedRealtime())) {
                     UpdateLogic.Verdict.OK -> {
-                        reportUpdate("downloading", pct, null)
+                        // ut-docs#6551: a prefetch reports 0 until the size is known,
+                        // so the page never says "Android will ask you to confirm"
+                        // for a download that will not open the installer.
+                        val prefetching = updatePrefs().getString(UPDATE_PREF_MODE, null) == UPDATE_MODE_PREFETCH
+                        reportUpdate("downloading", if (prefetching) (pct ?: 0) else pct, null)
                         return true
                     }
                     UpdateLogic.Verdict.STALLED -> {
@@ -400,6 +456,9 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
             .edit()
             .remove(UPDATE_PREF_ID)
             .remove(UPDATE_PREF_ENQUEUED_AT)
+            .remove(UPDATE_PREF_MODE)
+            .remove(UPDATE_PREF_READY_VC)
+            .remove(UPDATE_PREF_READY_LEN)
             .apply()
 
     private fun failUpdate(error: String) {
@@ -502,6 +561,7 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
     private fun verifyThenInstall(
         downloaded: File,
         downloadId: Long,
+        prefetch: Boolean,
     ) {
         updateVerifyingApk = true
         Thread {
@@ -529,7 +589,8 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                 }
             runOnUiThread {
                 updateVerifyingApk = false
-                if (verdict is ApkCheck.Refuse) {
+                val after = UpdateLogic.afterCheck(verdict, prefetch)
+                if (after == AfterCheck.CLEANUP && verdict is ApkCheck.Refuse) {
                     // Cleanup runs even if the Activity is gone (L2).
                     Log.w(
                         TAG,
@@ -554,6 +615,22 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
                 // refusal on the fleet roster, whether or not the Activity lives.
                 runCatching { Mobile.reportAndroidUpdateAccepted() }
                     .onFailure { Log.w(TAG, "update: could not report acceptance", it) }
+                if (after == AfterCheck.KEEP_READY) {
+                    // ut-docs#6551: a nightly prefetch stops here. No installer,
+                    // no kiosk release, no immersive change, no permission
+                    // screen: the manager's tap re-copies and re-verifies this
+                    // file (ADR-0179) before the installer.
+                    updatePrefs()
+                        .edit()
+                        .putLong(UPDATE_PREF_READY_VC, facts?.versionCode ?: -1L)
+                        .putLong(UPDATE_PREF_READY_LEN, downloaded.length())
+                        .remove(UPDATE_PREF_MODE)
+                        .apply()
+                    apk.delete() // the tap makes its own verified copy
+                    Log.i(TAG, "update: prefetched and verified versionCode ${facts?.versionCode}, waiting for a manager's tap")
+                    if (!isDestroyed) reportUpdate(UpdateLogic.STATE_DOWNLOADED, 100, null)
+                    return@runOnUiThread
+                }
                 if (isDestroyed) return@runOnUiThread
                 when (verdict) {
                     is ApkCheck.Accept -> {
@@ -685,6 +762,13 @@ abstract class SelfUpdateActivity : AppCompatActivity() {
         private const val UPDATE_PREFS = "in_app_update"
         private const val UPDATE_PREF_ID = "download_id"
         private const val UPDATE_PREF_ENQUEUED_AT = "download_enqueued_at_wall_ms"
+
+        // ut-docs#6551: "prefetch" while a nightly download must not install on
+        // finish (survives an Activity recreate); the verified-ready record.
+        private const val UPDATE_PREF_MODE = "download_mode"
+        private const val UPDATE_MODE_PREFETCH = "prefetch"
+        private const val UPDATE_PREF_READY_VC = "ready_version_code"
+        private const val UPDATE_PREF_READY_LEN = "ready_length"
         private val IN_FLIGHT_STATUSES =
             setOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PAUSED)
     }

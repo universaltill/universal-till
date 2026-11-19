@@ -786,6 +786,15 @@ class MainActivity : SelfUpdateActivity() {
         }
 
         /**
+         * ut-docs#6551: whether the nightly pre-download finished, passed the
+         * ADR-0179 check and is still that complete, newer file. No argument
+         * and a bare boolean back: the page cannot steer or read anything
+         * else. The chip then says "Update vX ready — tap to install".
+         */
+        @JavascriptInterface
+        fun updateReady(): Boolean = selfUpdateReady()
+
+        /**
          * Native screenshot for the bug-report panel (ut-docs#1435). Android's
          * WebView implements no `getDisplayMedia` at all, so the panel's
          * screenshot button — which every other platform backs with a one-
@@ -2109,6 +2118,8 @@ class MainActivity : SelfUpdateActivity() {
         // a remote unlock; Go reports no_shell until onResume registers the
         // bridge again.
         Mobile.setKioskBridge(null)
+        // ut-docs#6551: likewise the nightly update prefetch bridge.
+        selfUpdateOnPause()
     }
 
     override fun onResume() {
