@@ -658,9 +658,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#6551: on a main/standalone till the window THIS till's nightly
 		// step opens in (time + its own offset); the template shows it only on
 		// a sideload Android till, where that step is a download, not an
-		// install. Empty when auto-update is off or auto_time is invalid.
+		// install. Empty when auto-update is off or auto_time is not canonical HH:MM
+		// (the nightly tick ignores a legacy value like "3:05").
 		autoUpdateWindowFrom, autoUpdateWindowTo := "", ""
-		if !autoUpdateFollowsMain && autoUpdateEnabled {
+		if !autoUpdateFollowsMain && autoUpdateEnabled && eodTimeRe.MatchString(autoUpdateTime) {
 			autoUpdateWindowFrom, autoUpdateWindowTo, _ = followNightlyWindow(autoUpdateTime, autoUpdateJitter(r.Context(), d))
 		}
 		// Sample-data note (ut-docs#539, extended to customers/promos by

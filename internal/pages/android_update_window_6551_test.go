@@ -205,6 +205,9 @@ func TestSettingsPage_AndroidDownloadWindowHidden(t *testing.T) {
 		{"invalid stored time", true, func(t *testing.T, d *common.Deps) {
 			_ = d.Settings.Set(t.Context(), keyAutoUpdateTime, "25:99")
 		}, false},
+		{"legacy non-canonical time", true, func(t *testing.T, d *common.Deps) {
+			_ = d.Settings.Set(t.Context(), keyAutoUpdateTime, "3:05")
+		}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
