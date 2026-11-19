@@ -94,7 +94,7 @@
             <button type="submit" class="open-order-row-btn" data-testid="open-order-row">
               <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
               <span class="open-order-cell open-order-cell-label">{{ .Label }}{{ if .Items }}<small class="open-order-items">{{ .Items }}</small>{{ end }}</span>
-              <span class="open-order-cell open-order-cell-table">{{ .TableLabel }}</span>
+              <span class="open-order-cell open-order-cell-table">{{ .TableLabel }}{{ if .Takeaway }}<span class="held-chip-takeaway">{{ T "basket.order_type.takeaway" }}</span>{{ end }}</span>
               <span class="open-order-cell open-order-cell-lines">{{ .LineCount }}</span>
               <span class="open-order-cell open-order-cell-total">{{ if .TotalUnknown }}<small class="muted open-order-price-later">{{ T "open_orders.counter.priced_on_open" }}</small>{{ else }}{{ money .Total }}{{ end }}</span>
               <span class="open-order-cell open-order-cell-age">{{ .AgeText }}</span>

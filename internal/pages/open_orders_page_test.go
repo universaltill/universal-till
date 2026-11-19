@@ -301,3 +301,53 @@ func TestOpenOrdersPage_AgeCountsFromFirstPark(t *testing.T) {
 		t.Fatalf("expected the age to keep counting from the first park (~45 min), got: %s", body)
 	}
 }
+
+// TestOpenOrdersSurfaces_TakeawayChip (ut-docs#1387): a held order that is
+// all-takeaway carries a "Takeaway" chip on both live surfaces (the
+// sale-screen popup and the /open-orders page); dine-in, mixed and
+// undecodable payloads carry none, and the chip never sits beside a table
+// chip.
+func TestOpenOrdersSurfaces_TakeawayChip(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    bool
+	}{
+		{"header takeaway", `{"order_type":"takeaway"}`, true},
+		{"all lines takeaway", `{"lines":[{"order_type":"takeaway"},{"order_type":"takeaway"}]}`, true},
+		{"legacy header with untyped lines", `{"order_type":"takeaway","lines":[{}]}`, true},
+		{"empty payload", `{}`, false},
+		{"dine-in lines", `{"lines":[{"order_type":"dine_in"}]}`, false},
+		{"mixed lines", `{"order_type":"mixed","lines":[{"order_type":"takeaway"},{"order_type":"dine_in"}]}`, false},
+		{"corrupt payload", `not json`, false},
+	}
+	surfaces := map[string]string{"page": "/open-orders", "popup": "/ui/parked-orders"}
+	for _, tc := range cases {
+		for sname, path := range surfaces {
+			t.Run(tc.name+"/"+sname, func(t *testing.T) {
+				mux, d := newOpenOrdersTestMux(t)
+				if _, err := d.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at) VALUES ('h1','Order A',500,1,?,NULL,datetime('now'))`, tc.payload); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+				body := getBody(t, mux, path)
+				if !strings.Contains(body, `data-held-id="h1"`) {
+					t.Fatalf("row must still render, got: %s", body)
+				}
+				got := strings.Count(body, `class="held-chip-takeaway"`)
+				if tc.want {
+					if got != 1 {
+						t.Fatalf("want exactly one takeaway chip, got %d: %s", got, body)
+					}
+					if !strings.Contains(body, `class="held-chip-takeaway">`+template.HTMLEscapeString(httpx.T("en", "basket.order_type.takeaway"))+`</span>`) {
+						t.Fatalf("chip must carry the localised label, got: %s", body)
+					}
+					if strings.Contains(body, "held-chip-table") {
+						t.Fatalf("takeaway chip must not co-occur with a table chip: %s", body)
+					}
+				} else if got != 0 {
+					t.Fatalf("want no takeaway chip, got %d: %s", got, body)
+				}
+			})
+		}
+	}
+}
