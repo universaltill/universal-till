@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
+	"github.com/universaltill/universal-till/internal/readerlink"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -183,6 +184,10 @@ type Deps struct {
 	// dirty flags, so a call is O(peers) and never blocks. Set once in
 	// pages.Init before the server accepts requests; nil in bare-Deps tests.
 	Link *fleetlink.Hub
+
+	// ReaderPay is the remote collector for paired phone card readers
+	// (ut-docs#6538 R1b): set with Link in pages.Init, nil without a hub.
+	ReaderPay *readerlink.Service
 
 	// PendingLinks holds the joining tills' pending links on the main till
 	// (ADR-0114 §2 and its 2026-11-03 amendment, ut-docs#5297): one per

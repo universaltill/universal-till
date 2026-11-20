@@ -45,6 +45,8 @@ type HubOptions struct {
 	// uses it to keep tills.name in step with a joined till's own name
 	// (ut-docs#3294).
 	OnReport func(tillID string, r Report)
+	// OnReaderFrame is OnFrame for a reader link (ut-docs#6538).
+	OnReaderFrame func(readerID string)
 }
 
 // Hub is the main till's side of every link: at most one Peer per paired
@@ -58,7 +60,14 @@ type Hub struct {
 	reports  map[string]Report
 	handlers map[string]RequestHandler
 	closed   bool
-	wg       sync.WaitGroup
+
+	// The reader peer class (reader_hub.go): its own registry, state and
+	// handler table, sharing only the connection cap.
+	readers        map[string]*Peer
+	readerStatus   map[string]ReaderStatus
+	readerHandlers map[string]RequestHandler
+	readerSink     ReaderSink
+	wg             sync.WaitGroup
 }
 
 // NewHub builds a Hub; zero Config fields take ADR-0114's defaults.
@@ -70,6 +79,10 @@ func NewHub(opts HubOptions) *Hub {
 		peers:    map[string]*Peer{},
 		reports:  map[string]Report{},
 		handlers: map[string]RequestHandler{},
+
+		readers:        map[string]*Peer{},
+		readerStatus:   map[string]ReaderStatus{},
+		readerHandlers: map[string]RequestHandler{},
 	}
 }
 
@@ -176,7 +189,7 @@ func (h *Hub) admit(tillID string) bool {
 		return false
 	}
 	_, exists := h.peers[tillID]
-	return exists || len(h.peers) < h.cfg.MaxConns
+	return exists || h.total() < h.cfg.MaxConns
 }
 
 // Serve upgrades an already-authenticated request (the caller ran syncTill)
@@ -206,7 +219,7 @@ func (h *Hub) ServeConn(tillID string, conn Conn) {
 		return
 	}
 	old := h.peers[tillID]
-	if old == nil && len(h.peers) >= h.cfg.MaxConns {
+	if old == nil && h.total() >= h.cfg.MaxConns {
 		h.mu.Unlock()
 		conn.Close(CloseTryAgain, "too many till links")
 		return
@@ -438,6 +451,9 @@ func (h *Hub) Close() {
 	h.closed = true
 	peers := make([]*Peer, 0, len(h.peers))
 	for _, p := range h.peers {
+		peers = append(peers, p)
+	}
+	for _, p := range h.readers {
 		peers = append(peers, p)
 	}
 	h.mu.Unlock()

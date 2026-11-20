@@ -900,6 +900,17 @@ unresolved record, which unblocks other baskets (until then they are declined
 the stored approval and never charges again; the same key with another amount is
 `key_mismatch`. No card data is in any message; amounts are 1..9,999,999 minor units.
 
+## Reader mode: this phone as the card reader for a main till (ut-docs#6538, ADR-0198 §6, dark)
+
+`-PreaderMode=true` (default OFF, and it needs `-PtapToPay=true`: the collect runs on the Tap to Pay engine) enables
+`ReaderActivity`, a second launcher entry that runs in its own process (`:reader`): it never starts the till's Go server
+and stores no shop data. Package `com.universaltill.pos.reader`: `ReaderPairing` (TLS-only pair request, the code the
+manager compares), `SpkiPin` (trust exactly the pinned key; the bearer is never sent to another certificate),
+`ReaderLink` (WebSocket to `wss://<main>/api/sync/link`), `ReaderSession` (frames, one collect at a time, 30 s link-loss
+drop), `ReaderCloudApi` + `EnginePayments` (the SDK's connection token comes from the main over the link, the
+PaymentIntent is the one the main created). Frame fixtures are shared with Go: `internal/fleetlink/testdata/reader_*.json`.
+The bearer and pin live in the Android Keystore (AES-GCM); no card data is read, stored or logged (ADR-0127).
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)

@@ -1,10 +1,13 @@
 package pages
 
 import (
+	"context"
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/universaltill/universal-till/internal/discovery"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -977,4 +980,139 @@ func TestReaderSectionsLayout(t *testing.T) {
 func repoFile(parts ...string) string {
 	_, here, _, _ := runtime.Caller(0)
 	return filepath.Join(append([]string{filepath.Dir(here), "..", ".."}, parts...)...)
+}
+
+// --- review R-2/A-7 (ADR-0198 §6.2 "as for tills"): a reader survives a main
+// TLS key change by re-proof, without clearing app data ---
+
+func (g *readerRigT) readerProof(t *testing.T, readerID, nonce string, viaTLS bool) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"till_id":"` + readerID + `","nonce":"` + nonce + `"}`
+	req := httptest.NewRequest(http.MethodPost, discovery.ProofPath, strings.NewReader(body))
+	req.RemoteAddr = "192.0.2.50:5555"
+	req.Host = proofLocalAddr
+	la, err := net.ResolveTCPAddr("tcp", proofLocalAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, la))
+	if viaTLS {
+		req = g.asTLS(req)
+	}
+	return g.serve(req)
+}
+
+func TestReaderSurvivesAMainKeyChangeByReProof(t *testing.T) {
+	g := newReaderRig(t, true)
+	readerID, bearer := g.enrolReader(t, "Phone")
+	pinA := g.cert.Pin()
+	// The main's LAN key changes (rotation, reinstall of the same data).
+	newCert, err := lantls.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lantls.SetServing(newCert))
+	g.cert = newCert
+	pinB := newCert.Pin()
+	if pinA == pinB {
+		t.Fatal("test needs two keys")
+	}
+	creds := data.NewCardReaderCredentialRepo(g.d.Db)
+	if rec := g.serve(readerReq(g, http.MethodGet, "/api/sync/link", bearer, true)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a reader recorded under the old pin must not pass before it re-proved: %d", rec.Code)
+	}
+	// The phone's handshake with its old pin failed; it re-finds the main and asks for proof.
+	rec := g.readerProof(t, readerID, testNonce, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reader proof = %d %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Data discovery.ProofResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	// The phone verifies with the hash of ITS bearer, the id it asked for, the host it dialled and the pin it saw.
+	want := discovery.PrimaryProof(discovery.HashBearer(bearer), out.Data.PrimaryTillID, readerID, testNonce, proofLocalAddr, pinB)
+	if out.Data.Proof != want {
+		t.Fatalf("proof %q does not verify with the reader's bearer and the new pin (want %q)", out.Data.Proof, want)
+	}
+	if bad := discovery.PrimaryProof(discovery.HashBearer("another-bearer"), out.Data.PrimaryTillID, readerID, testNonce, proofLocalAddr, pinB); out.Data.Proof == bad {
+		t.Fatal("proof must be keyed by the reader's own bearer")
+	}
+	// Now the phone dials with the new pin and its bearer: accepted, and the new pin is recorded.
+	if rec := g.serve(readerReq(g, http.MethodGet, "/api/sync/link", bearer, true)); rec.Code == http.StatusUnauthorized {
+		t.Fatalf("a re-proved reader on the new pin = 401")
+	}
+	c, ok, err := creds.ByBearerHashAt(t.Context(), hashBearer(bearer), time.Now())
+	if err != nil || !ok {
+		t.Fatalf("credential lookup: %v %v", ok, err)
+	}
+	if c.PinSPKI != pinB || c.NextPin != "" {
+		t.Fatalf("after the first authenticated link pin=%q next=%q, want pin %q and no next pin", c.PinSPKI, c.NextPin, pinB)
+	}
+}
+
+func TestReaderProofRefusals(t *testing.T) {
+	g := newReaderRig(t, true)
+	readerID, bearer := g.enrolReader(t, "Phone")
+	if rec := g.readerProof(t, readerID, testNonce, false); rec.Code != http.StatusNotFound {
+		t.Errorf("reader proof over plain HTTP = %d, want 404 (a reader never talks plain HTTP)", rec.Code)
+	}
+	if rec := g.readerProof(t, "rd_unknown", testNonce, true); rec.Code != http.StatusNotFound {
+		t.Errorf("proof for an unknown reader = %d, want 404", rec.Code)
+	}
+	if rec := g.readerProof(t, readerID, "short", true); rec.Code != http.StatusBadRequest {
+		t.Errorf("proof with a bad nonce = %d, want 400", rec.Code)
+	}
+	// A proof asked by anyone only ever records the main's own served pin.
+	other, _ := lantls.LoadOrCreate(t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, discovery.ProofPath, strings.NewReader(`{"till_id":"`+readerID+`","nonce":"`+testNonce+`"}`))
+	req.Host = proofLocalAddr
+	la, _ := net.ResolveTCPAddr("tcp", proofLocalAddr)
+	req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, la))
+	req.TLS = &tls.ConnectionState{}
+	req = req.WithContext(lantls.ConnContext(other)(req.Context(), &tls.Conn{}))
+	g.serve(req)
+	c, _, _ := data.NewCardReaderCredentialRepo(g.d.Db).ByBearerHashAt(t.Context(), hashBearer(bearer), time.Now())
+	if c.NextPin != other.Pin() {
+		t.Fatalf("next pin = %q, want the pin the main served (%q) and nothing else", c.NextPin, other.Pin())
+	}
+	// A revoked reader gets no proof.
+	if err := data.NewCardReaderCredentialRepo(g.d.Db).Revoke(t.Context(), readerID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := g.readerProof(t, readerID, testNonce, true); rec.Code != http.StatusNotFound {
+		t.Errorf("proof for a revoked reader = %d, want 404", rec.Code)
+	}
+}
+
+// The Kotlin side reads the same fixture (internal/fleetlink/testdata/reader_proof.json).
+func TestReaderProofFixtureMatchesTheGoProof(t *testing.T) {
+	b, err := os.ReadFile(repoFile("internal", "fleetlink", "testdata", "reader_proof.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Bearer   string `json:"bearer"`
+		HostPort string `json:"host_port"`
+		PinSeen  string `json:"pin_seen"`
+		Request  struct {
+			TillID string `json:"till_id"`
+			Nonce  string `json:"nonce"`
+		} `json:"request"`
+		Response struct {
+			Data struct {
+				PrimaryTillID string `json:"primary_till_id"`
+				Proof         string `json:"proof"`
+			} `json:"data"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatal(err)
+	}
+	got := discovery.PrimaryProof(discovery.HashBearer(f.Bearer), f.Response.Data.PrimaryTillID, f.Request.TillID, f.Request.Nonce, f.HostPort, f.PinSeen)
+	if got != f.Response.Data.Proof {
+		t.Fatalf("fixture proof %q, Go computes %q", f.Response.Data.Proof, got)
+	}
 }

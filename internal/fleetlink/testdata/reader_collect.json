@@ -1,0 +1,1 @@
+{"v":1,"id":"m1-3","type":"reader.collect","payload":{"reader_id":"rd_0a1b2c3d4e5f","provider":"stripe","amount_minor":1250,"currency":"gbp","idempotency_key":"att_7:1:1","timeout_ms":110000,"client_secret":"pi_example_secret_example","location_id":"tml_example"}}

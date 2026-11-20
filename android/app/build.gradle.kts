@@ -137,6 +137,9 @@ gradle.taskGraph.whenReady {
 // it (scripts/ci/guard-android-tap-to-pay-flag.sh fails any workflow that
 // does, until a signed-off card adds android/tap-to-pay-release-approved.txt).
 val tapToPay = (project.findProperty("tapToPay") as String?) == "true"
+// ut-docs#6538 A2: reader mode (this phone as the card reader for a main till). COMPILE-TIME flag, default OFF, separate from
+// tapToPay (it needs it too: the collect runs on the same Stripe engine). Off = the activity is disabled in the manifest.
+val readerMode = (project.findProperty("readerMode") as String?) == "true"
 val stripeTerminalVersion = "6.0.0"
 
 android {
@@ -157,6 +160,8 @@ android {
         // The per-ABI digit is added by each product flavor below (#1541).
         versionCode = baseVersionCode * 10
         versionName = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
+        buildConfigField("boolean", "READER_MODE_ENABLED", "$readerMode")
+        manifestPlaceholders["readerModeEnabled"] = "$readerMode"
         // ut-docs#3466: runs src/androidTest (connectedArm64DebugAndroidTest,
         // on a device or emulator — not part of android-ci.yml's compile-only
         // assemble gate).
@@ -503,6 +508,8 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
+    // ut-docs#6538 A2: the reader link (WebSocket) and the pairing calls, both with an SPKI-pin-only trust manager.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // ut-docs#3466 (ADR-0142, #1508 AC3): the instrumented remote-unlock
     // regression test. Device/emulator only (connectedArm64DebugAndroidTest).
@@ -511,6 +518,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // #3048: the Android org.json is a stub on the JVM; the tap bridge's JSON tests need a real one.
     testImplementation("org.json:json:20240303")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
 
     // #3048: Stripe Terminal, arm64 + -PtapToPay=true ONLY. Exact versions, no ranges.
     if (tapToPay) {

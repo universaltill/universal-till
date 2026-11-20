@@ -11,4 +11,6 @@ object TapToPayPlatform {
     const val sdkCompiledIn = false
 
     fun create(appContext: Context, probe: DeviceProbe, ui: UiActions): TapToPayEngine? = null
+
+    fun create(appContext: Context, probe: DeviceProbe, ui: UiActions, cloud: CloudApi): TapToPayEngine? = null
 }

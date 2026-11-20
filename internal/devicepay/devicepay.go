@@ -160,8 +160,9 @@ func valid(req Request) bool {
 // the plugin settles it through the provider (session_status), never by
 // assuming a decline.
 func Collect(ctx context.Context, req Request) Result {
+	ref := readerFrom(ctx)
 	b := RegisteredBridge()
-	if b == nil {
+	if b == nil && ref == "" {
 		return Result{Status: StatusDeclined, Reason: ReasonNotForeground}
 	}
 	dl, hasDeadline := ctx.Deadline()
@@ -176,6 +177,9 @@ func Collect(ctx context.Context, req Request) Result {
 		return Result{Status: StatusPending, Reason: endReason(err)}
 	}
 	req.DeadlineUnixMs = dl.UnixMilli()
+	if ref != "" {
+		return collectRemote(ctx, ref, req)
+	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return Result{Status: StatusDeclined, Reason: ReasonBadRequest}

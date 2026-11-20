@@ -171,6 +171,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- ut-docs#6538 A2: reader mode. Dark: disabled unless built with -PreaderMode=true. Its own process, so it never
+             starts the till's Go server and holds no shop data. -->
+        <activity
+            android:name=".reader.ReaderActivity"
+            android:label="@string/reader_app_name"
+            android:process=":reader"
+            android:enabled="${readerModeEnabled}"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".TillService"
             android:exported="false"

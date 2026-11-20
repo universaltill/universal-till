@@ -162,6 +162,12 @@ class TapToPayEngine(
         return null
     }
 
+    /** Keys of attempts whose outcome nobody resolved (reader mode releases them, see EnginePayments). */
+    fun unresolvedKeys(): List<String> = unresolved().map { it.key }
+
+    /** Drops the SDK's reader connection (ADR-0198 6.4: revoke, link loss, background). The next collect reconnects. */
+    fun disconnectReader() = reader.disconnect()
+
     fun showEducation(cb: (Boolean) -> Unit) = ui.showEducation(cb)
 
     /**

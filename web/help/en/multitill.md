@@ -84,6 +84,10 @@ Where your shop has turned this on, a manager can pair a phone as a card reader 
 
 If the main till is not serving a secure connection, the section says card readers need HTTPS first. A cashier cannot see or change any of this.
 
+Each reader in the list shows what the phone last told the till: **Ready**, **Busy**, **Needs setup**, **Unavailable**, or **Not connected** when the phone is not linked to the till right now.
+
+Taking a payment on the phone: the cashier chooses the card tender and the phone reader. The till shows "Waiting for the customer to tap" with a countdown and a **Cancel** button, then "The phone is ready for the card" once the phone has the amount on screen. The customer taps their card on the phone. The till does not take the phone's word for the result: it asks the payment service itself and only records the sale when the payment is confirmed for exactly the sale amount. If the phone loses its connection to the till mid-tap, the till shows "Payment not confirmed" and says the customer may have been charged. It is never shown as declined; use **Check again** (or ask a manager) to find out what really happened.
+
 ## Additional tills and satellites
 
 Every joined till has a role. An additional till works offline and rings up sales like any other till; it is the default. A satellite is a kiosk, table-QR or order station that needs the main till to work.

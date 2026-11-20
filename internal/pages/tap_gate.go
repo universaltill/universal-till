@@ -32,7 +32,11 @@ const declineCodeTapStartFailed = "start_failed"
 
 // tapStartFailedError: the tap payment could not be started; nothing was
 // charged, the basket is not locked.
-type tapStartFailedError struct{ Method string }
+type tapStartFailedError struct {
+	Method string
+	// ReaderBusy: the paired phone reader said it was busy (ux A6 wording).
+	ReaderBusy bool
+}
 
 func (e *tapStartFailedError) Error() string { return "tap payment could not start: " + e.Method }
 
@@ -83,9 +87,18 @@ func tapAuthorize(ctx context.Context, d *common.Deps, method, requestID string,
 	if a, found, err := repo.Get(ctx, requestID); err == nil && found && a.State == data.AttemptApproved && a.AmountMinor == amount.Minor() && strings.EqualFold(a.Currency, currency) {
 		return nil, true, &pos.TapConfirmation{PIID: a.PIID, CardBrand: a.CardBrand, Last4: a.Last4}, nil
 	}
-	bound := paybroker.WithBinding(ctx, paybroker.Binding{
+	b := paybroker.Binding{
 		Kind: paybroker.BindAuthorize, AmountMinor: amount.Minor(), Provider: provider, AttemptKey: requestID, Currency: currency,
-	})
+	}
+	// A tender resolved to a paired phone reader is collected on that phone
+	// (ut-docs#6538): the reader ref comes from core's own reader resolution
+	// (the gate payload), never from the plugin or the page.
+	if kind, _ := payload["reader_kind"].(string); kind == data.CardReaderKindPhone {
+		if ref, _ := payload["reader_id"].(string); ref != "" {
+			b.ReaderRef = ref
+		}
+	}
+	bound := paybroker.WithBinding(ctx, b)
 	resp, dispatched, err := blockingPaymentEventDispatch(bound, d, method, "authorize", requestID, payload)
 	if err != nil {
 		return tapVerifyFailure(ctx, d, repo, requestID, resp, dispatched, err, method)
@@ -97,6 +110,13 @@ func tapAuthorize(ctx context.Context, d *common.Deps, method, requestID string,
 	}
 	conf, cerr := pos.ConfirmTap(ctx, repo, requestID)
 	if cerr != nil {
+		var pe *pos.PaymentPendingError
+		if d.ReaderPay != nil && errors.As(cerr, &pe) && b.ReaderRef != "" && d.ReaderPay.LostContact(requestID) {
+			// The phone's link dropped mid-tap: say so (the customer may have
+			// been charged). The broker's own pending verdict stays on the row.
+			settleAttempt(ctx, repo, requestID, data.AttemptUnknown, pos.PendingReaderLost)
+			cerr = &pos.PaymentPendingError{Reason: pos.PendingReaderLost}
+		}
 		return resp, dispatched, nil, cerr
 	}
 	return resp, dispatched, &conf, nil
@@ -114,7 +134,7 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 	startFailed := errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeTapStartFailed
 	original := err
 	if startFailed {
-		original = &tapStartFailedError{Method: method}
+		original = &tapStartFailedError{Method: method, ReaderBusy: d.ReaderPay != nil && d.ReaderPay.WasBusy(requestID)}
 	}
 	if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown {
 		return resp, dispatched, nil, err // already unknown: the gate locks it
