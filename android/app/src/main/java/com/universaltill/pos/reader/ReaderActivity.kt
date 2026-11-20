@@ -198,7 +198,7 @@ class ReaderActivity : AppCompatActivity(), ReaderUi {
     private fun run(c: ReaderCredentials) {
         val p = parts ?: return
         p.ui.target = this
-        if (ReaderProcess.link == null) ReaderProcess.link = ReaderLink(c, p.session, MainThread::post, MainThread::postDelayed)
+        if (ReaderProcess.link == null) ReaderProcess.link = ReaderLink(c, p.session, MainThread::post, MainThread::postDelayed, PinReProof(OkPairHttp(), nowMs = System::currentTimeMillis)) { store.save(it) }
         ReaderProcess.link?.start()
         show(p.ui.last)
     }

@@ -58,16 +58,22 @@ class OkPairHttp : PairHttp {
  * upgrade means the main removed this phone (revoked) and ends the loop.
  */
 class ReaderLink(
-    private val creds: ReaderCredentials,
+    private var creds: ReaderCredentials,
     private val session: ReaderSession,
     private val post: (() -> Unit) -> Unit,
     private val postDelayed: (Long, () -> Unit) -> Cancelable,
+    /** Pin-mismatch recovery (runs off the main thread); null = a mismatch is just a failed attempt. */
+    private val reProof: PinReProof? = null,
+    /** The adopted credentials (new pin) to persist; main thread. */
+    private val onAdopted: (ReaderCredentials) -> Unit = {},
 ) {
     private var ws: WebSocket? = null
     private var retry: Cancelable? = null
     private var attempts = 0
     private var wanted = false
-    private val http = client(SpkiPin.enforcing(creds.pin), 20).newBuilder().pingInterval(0, TimeUnit.SECONDS).build()
+    private var http = pinnedClient(creds.pin)
+
+    private fun pinnedClient(pin: String) = client(SpkiPin.enforcing(pin), 20).newBuilder().pingInterval(0, TimeUnit.SECONDS).build()
 
     /** Main thread. */
     fun start() {
@@ -107,27 +113,53 @@ class ReaderLink(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    post { ended(webSocket, gen, false, null) }
+                    post { ended(webSocket, gen, false, null, false) }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     // Only a 401 means "removed" (review A-6); 429 / 503 / the rest are retried, 429 by Retry-After.
                     val auth = LinkClose.isRevoked(response?.code)
                     val after = response?.header("Retry-After")?.trim()?.toIntOrNull()
-                    post { ended(webSocket, gen, auth, after) }
+                    val mismatch = reProof != null && LinkClose.isPinMismatch(t)
+                    post { ended(webSocket, gen, auth, after, mismatch) }
                 }
             },
         )
         ws = sock
     }
 
-    private fun ended(sock: WebSocket, gen: Int, authFailed: Boolean, retryAfterSec: Int?) {
+    private fun ended(sock: WebSocket, gen: Int, authFailed: Boolean, retryAfterSec: Int?, pinMismatch: Boolean) {
         if (sock !== ws) return
         ws = null
         session.onClosed(gen, authFailed)
         if (!wanted || authFailed) return
+        if (pinMismatch) { reProve(gen); return }
         val delay = LinkClose.retryDelayMs(attempts++, retryAfterSec)
         retry = postDelayed(delay) { retry = null; connect() }
+    }
+
+    /** The main's key changed: never wipe, never send the bearer there; ask for the proof (one try per 30 s). */
+    private fun reProve(gen: Int) {
+        val rp = reProof ?: return
+        val c = creds
+        Thread {
+            val r = rp.attempt(c)
+            post {
+                if (!wanted) return@post
+                when (r) {
+                    is ReProof.Adopted -> {
+                        creds = r.credentials
+                        http = pinnedClient(r.credentials.pin)
+                        onAdopted(r.credentials)
+                        attempts = 0
+                        connect()
+                    }
+                    // the main removed this phone: the same end as a 401 on the link
+                    ReProof.Revoked -> session.onClosed(gen, true)
+                    else -> retry = postDelayed(LinkClose.retryDelayMs(attempts++, 30)) { retry = null; connect() }
+                }
+            }
+        }.start()
     }
 }
 

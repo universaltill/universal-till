@@ -39,6 +39,16 @@ object LinkClose {
     /** Only a 401 says "the main removed this phone"; 403, 429, 503 and the rest are "try again later". */
     fun isRevoked(code: Int?) = code == 401
 
+    /** The pinned handshake failed because the main presented another key (not a timeout, not an HTTP answer). */
+    fun isPinMismatch(t: Throwable?): Boolean {
+        var e: Throwable? = t
+        while (e != null) {
+            if (e is java.security.cert.CertificateException) return true
+            e = e.cause
+        }
+        return false
+    }
+
     /** Back-off 1..15 s, or the main's Retry-After (bounded to 2 min). */
     fun retryDelayMs(attempt: Int, retryAfterSec: Int?): Long {
         if (retryAfterSec != null && retryAfterSec > 0) return minOf(120_000L, retryAfterSec * 1_000L)
