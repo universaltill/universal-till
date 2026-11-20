@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 // lockWaitSignals maps a lock key to a channel that receives the key each
@@ -31,6 +32,33 @@ func watchLockWaits(t *testing.T, key string) chan string {
 	return c
 }
 
+// testWaitTimeout is a hang guard, not ordering: tests wait on channels and
+// fail fast if a broken lock means the awaited event never comes.
+const testWaitTimeout = 10 * time.Second
+
+func recvWithin[T any](t *testing.T, c <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-c:
+		return v
+	case <-time.After(testWaitTimeout):
+		t.Fatalf("timed out after %s waiting for %s", testWaitTimeout, what)
+		panic("unreachable")
+	}
+}
+
+// recvEither waits for the first of two events (e.g. "B parked behind A" vs
+// "B reached the provider too") and fails fast if neither happens.
+func recvEither[T, U any](t *testing.T, a <-chan T, aWhat string, b <-chan U, bWhat string) {
+	t.Helper()
+	select {
+	case <-a:
+	case <-b:
+	case <-time.After(testWaitTimeout):
+		t.Fatalf("timed out after %s waiting for %s or %s", testWaitTimeout, aWhat, bWhat)
+	}
+}
+
 func TestKeyedLocks_SerialisesSameKeyAndFreesMapEntry(t *testing.T) {
 	l := &keyedLocks{m: map[string]*keyedLockEntry{}}
 	waits := make(chan string, 4)
@@ -45,7 +73,7 @@ func TestKeyedLocks_SerialisesSameKeyAndFreesMapEntry(t *testing.T) {
 		u, _ := l.lock(context.Background(), "k")
 		acquired <- u
 	}()
-	<-waits // the second caller is parked behind the first
+	recvWithin(t, waits, "second caller to park") // the second caller is parked behind the first
 	select {
 	case <-acquired:
 		t.Fatal("second lock acquired while the first is held")
@@ -53,7 +81,7 @@ func TestKeyedLocks_SerialisesSameKeyAndFreesMapEntry(t *testing.T) {
 	}
 	unlock1()
 	unlock1() // idempotent
-	unlock2 := <-acquired
+	unlock2 := recvWithin(t, acquired, "second lock to be acquired")
 	unlock2()
 	unlock2()
 	if n := l.size(); n != 0 {
@@ -96,9 +124,9 @@ func TestKeyedLocks_CancelledWaiterGivesUpAndDropsRef(t *testing.T) {
 		}
 		done <- e
 	}()
-	<-waits
+	recvWithin(t, waits, "waiter to park")
 	cancel()
-	if e := <-done; !errors.Is(e, context.Canceled) {
+	if e := recvWithin(t, done, "cancelled waiter to return"); !errors.Is(e, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", e)
 	}
 	holder()

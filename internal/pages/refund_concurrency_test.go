@@ -83,14 +83,12 @@ func TestRefundConcurrency_SplitTenderTwoRefundsCannotOverRefund(t *testing.T) {
 	gate := rig.gateRefundHook(t)
 
 	a := rig.postRefundAsync(context.Background(), receipt, 1)
-	<-gate.entered // A is inside the provider call
+	recvWithin(t, gate.entered, "A to reach the provider")
 	b := rig.postRefundAsync(context.Background(), receipt, 1)
-	select {
-	case <-waits: // serialised: B is parked behind A
-	case <-gate.entered: // unserialised: B is in the provider call too
-	}
+	recvEither(t, waits, "B to park behind A", gate.entered, "B to reach the provider")
 	gate.open()
-	ra, rb := <-a, <-b
+	ra := recvWithin(t, a, "refund A to finish")
+	rb := recvWithin(t, b, "refund B to finish")
 
 	if !((ra.Code == 200 && rb.Code == 409) || (ra.Code == 409 && rb.Code == 200)) {
 		t.Fatalf("codes = %d, %d; want one 200 and one 409 (%s | %s)", ra.Code, rb.Code, ra.Body.String(), rb.Body.String())
@@ -142,10 +140,11 @@ func TestRefundConcurrency_CashSameLineRefundedOnce(t *testing.T) {
 		return out
 	}
 	a, b := post(), post()
-	<-waits
-	<-waits // both requests are parked behind the held lock
+	recvWithin(t, waits, "first request to park")
+	recvWithin(t, waits, "second request to park") // both requests are parked behind the held lock
 	hold()
-	ra, rb := <-a, <-b
+	ra := recvWithin(t, a, "refund A to finish")
+	rb := recvWithin(t, b, "refund B to finish")
 	codes := []int{ra.Code, rb.Code}
 	if !((codes[0] == 200 && codes[1] == 409) || (codes[0] == 409 && codes[1] == 200)) {
 		t.Fatalf("codes = %v; want one 200 and one 409 (%s | %s)", codes, ra.Body.String(), rb.Body.String())
@@ -167,14 +166,12 @@ func TestRefundConcurrency_TwoRefundsThatFitBothSucceedInOrder(t *testing.T) {
 	gate := rig.gateRefundHook(t)
 
 	a := rig.postRefundAsync(context.Background(), receipt, 1)
-	<-gate.entered
+	recvWithin(t, gate.entered, "A to reach the provider")
 	b := rig.postRefundAsync(context.Background(), receipt, 1)
-	select {
-	case <-waits:
-	case <-gate.entered:
-	}
+	recvEither(t, waits, "B to park behind A", gate.entered, "B to reach the provider")
 	gate.open()
-	ra, rb := <-a, <-b
+	ra := recvWithin(t, a, "refund A to finish")
+	rb := recvWithin(t, b, "refund B to finish")
 	if ra.Code != 200 || rb.Code != 200 {
 		t.Fatalf("codes = %d, %d; want both 200 (%s | %s)", ra.Code, rb.Code, ra.Body.String(), rb.Body.String())
 	}
@@ -198,7 +195,7 @@ func TestRefundConcurrency_OtherSaleNotDelayed(t *testing.T) {
 	gate := rig.gateRefundHook(t)
 
 	a := rig.postRefundAsync(context.Background(), rig.receiptNo(t, 1), 1)
-	<-gate.entered // sale 1's refund is parked in the provider
+	recvWithin(t, gate.entered, "sale 1 refund to reach the provider")
 	req := httptest.NewRequest(http.MethodPost, "/api/refund",
 		strings.NewReader("receipt="+rig.receiptNo(t, 2)+"&qty_0=1&method=cash"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -208,7 +205,7 @@ func TestRefundConcurrency_OtherSaleNotDelayed(t *testing.T) {
 		t.Fatalf("other sale refund = %d: %s", rec.Code, rec.Body.String())
 	}
 	gate.open()
-	if ra := <-a; ra.Code != 200 {
+	if ra := recvWithin(t, a, "first refund to finish"); ra.Code != 200 {
 		t.Fatalf("first refund = %d: %s", ra.Code, ra.Body.String())
 	}
 }
@@ -255,9 +252,9 @@ func TestRefundConcurrency_CancelledWaiterRecordsNothing(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	res := rig.postRefundAsync(ctx, receipt, 1)
-	<-waits
+	recvWithin(t, waits, "waiter to park")
 	cancel()
-	rec := <-res
+	rec := recvWithin(t, res, "cancelled refund to return")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("cancelled waiter = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -270,5 +267,40 @@ func TestRefundConcurrency_CancelledWaiterRecordsNothing(t *testing.T) {
 	}
 	if rec := rig.postRefundQty(t, receipt, 1); rec.Code != 200 {
 		t.Fatalf("next refund = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// AC1 (per-leg cap path): sale paid 100 cash + 70 + 70 demopay. Two
+// concurrent one-unit refunds must not both pass the per-method cap; the
+// loser is refused with method_exhausted and the provider is called once.
+func TestRefundConcurrency_LegCapRaceRefusesLoserAsMethodExhausted(t *testing.T) {
+	rig := newDemoRig(t)
+	if _, err := rig.dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	rig.sell(t, `[{"method":"cash","amount":100},{"method":"demopay","amount":70},{"method":"demopay","amount":70}]`)
+	receipt, saleID := rig.receiptNo(t, 1), rig.saleID(t, 1)
+	waits := watchLockWaits(t, saleID)
+	gate := rig.gateRefundHook(t)
+
+	a := rig.postRefundAsync(context.Background(), receipt, 1)
+	recvWithin(t, gate.entered, "A to reach the provider")
+	b := rig.postRefundAsync(context.Background(), receipt, 1)
+	recvEither(t, waits, "B to park behind A", gate.entered, "B to reach the provider")
+	gate.open()
+	ra := recvWithin(t, a, "refund A to finish")
+	rb := recvWithin(t, b, "refund B to finish")
+
+	if !((ra.Code == 200 && rb.Code == 409) || (ra.Code == 409 && rb.Code == 200)) {
+		t.Fatalf("codes = %d, %d; want one 200 and one 409 (%s | %s)", ra.Code, rb.Code, ra.Body.String(), rb.Body.String())
+	}
+	if body := ra.Body.String() + rb.Body.String(); !strings.Contains(body, refundErrorText(t, "refund.error.method_exhausted")) {
+		t.Errorf("409 is not method_exhausted: %s", body)
+	}
+	if n := rig.count(t, `SELECT COUNT(*) FROM sales WHERE sale_type='return'`); n != 1 {
+		t.Errorf("return sales = %d, want 1", n)
+	}
+	if n := len(rig.refunds()); n != 1 {
+		t.Errorf("provider refund calls = %d, want 1", n)
 	}
 }
