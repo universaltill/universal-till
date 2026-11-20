@@ -693,3 +693,34 @@ func TestReaderTokenNeverOverHTTP(t *testing.T) {
 		t.Fatal("something asked the broker for a token over HTTP")
 	}
 }
+
+// ux A6 / review: a phone that answers busy shows the reader-busy wording
+// ("Reader is busy. Nothing was charged."), not the generic start failure.
+func TestPhoneBusyAnswerShowsTheReaderBusyWording(t *testing.T) {
+	g := newPhoneRig(t)
+	g.ob.set(func(b *opBroker) { b.status = piStatus("canceled", 120) }) // the main cancelled the unused PaymentIntent
+	// What a real tap plugin prints for a collect that never started.
+	g.plugin.answer = func(int) string {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if n := len(g.collects); n > 0 && g.collects[n-1].DeclineCode == "start_failed" {
+			return "START_FAILED"
+		}
+		return ""
+	}
+	ph := g.connect(t, fleetlink.ReaderReady)
+	done := g.tenderAsync(t)
+	f := ph.next(t)
+	if f.Type != fleetlink.TypeReaderCollect {
+		t.Fatalf("phone saw %q, want reader.collect", f.Type)
+	}
+	ph.send(t, fleetlink.TypeError, f.ID, fleetlink.ErrorPayload{Code: fleetlink.CodeReaderBusy, Retryable: true})
+	rec := waitRes(t, done)
+	if g.sales(t) != 0 || g.dp.Engine.TenderLock() != "" {
+		t.Fatalf("a busy phone moves no money and locks nothing: lock=%q", g.dp.Engine.TenderLock())
+	}
+	g.wantText(t, rec, "tap.reader.busy_result")
+	if strings.Contains(bodyText(rec), enText(t, "tap.start_failed")) {
+		t.Fatalf("busy must not show the generic start failure: %s", rec.Body.String())
+	}
+}

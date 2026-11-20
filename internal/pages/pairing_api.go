@@ -72,6 +72,7 @@ type pairRateLimiter struct {
 	window time.Duration
 	max    int
 	hits   map[string][]time.Time
+	clock  func() time.Time // nil = time.Now
 }
 
 func newPairRateLimiter(window time.Duration, max int) *pairRateLimiter {
@@ -93,6 +94,9 @@ func (l *pairRateLimiter) allow(source string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	if l.clock != nil {
+		now = l.clock()
+	}
 	cutoff := now.Add(-l.window)
 
 	if len(l.hits) >= pairRateLimiterSweepThreshold {
@@ -163,11 +167,29 @@ func derivedVerificationCode(commitment, primaryTillID, pin string) string {
 	return fmt.Sprintf("%06d", code)
 }
 
+// The phone's approval poll (GET pair-requests/{id}) is not a pair request: it
+// repeats every ~2 s for as long as the manager takes to type a PIN
+// (ut-docs#6538 F1). It has its own limits, never counted against the
+// request limiter: one poll per pairPollGap per (source, request), and a
+// generous per-source cap that still stops id enumeration.
+const (
+	pairPollGap       = 1500 * time.Millisecond // phone cadence is 2 s; slack for jitter
+	pairPollRetrySecs = "2"
+	pairPollSourceMax = 120 // per source per minute, across all ids
+)
+
+// pairPollNow is the poll limiters' clock; a var so tests simulate minutes.
+var pairPollNow = time.Now
+
 func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, tokens *enrolTokens) {
 	repo := data.NewPairingRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	tillsRepo := data.NewTillsRepo(d.Db)
 	limiter := newPairRateLimiter(time.Minute, 5)
+	// The approval poll's own limiters (see pairPollGap); never the request one.
+	pollClock := func() time.Time { return pairPollNow() }
+	pollEach := &pairRateLimiter{window: pairPollGap, max: 1, hits: map[string][]time.Time{}, clock: pollClock}
+	pollSource := &pairRateLimiter{window: time.Minute, max: pairPollSourceMax, hits: map[string][]time.Time{}, clock: pollClock}
 
 	// Replica-initiated, unauthenticated by design (ADR-0033 §8 — the
 	// manager approval step is the trust boundary for this direction);
@@ -416,13 +438,17 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 	// The 32-byte secret makes guessing infeasible either way, but this
 	// is the exact endpoint an unbounded guessing/enumeration attempt
 	// would hit, and it also drives a DB read per call — rate-limit it
-	// the same as the request endpoint, defence in depth either way.
+	// (own limits, above), defence in depth either way.
 	mux.HandleFunc("GET /api/sync/pair-requests/{id}", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#4411: the token never leaves over plain HTTP once closed.
 		if refusePlainSyncWhenClosed(w, r, tillsRepo) {
 			return
 		}
-		if !limiter.allow(sourceOf(r)) {
+		// Not the pair-request limiter (ut-docs#6538 F1): the phone polls
+		// every 2 s, that limiter allows 5 a minute. 429 + Retry-After tells
+		// the phone to wait, not that it was refused.
+		if !pollSource.allow(sourceOf(r)) || !pollEach.allow(sourceOf(r)+"|"+r.PathValue("id")) {
+			w.Header().Set("Retry-After", pairPollRetrySecs)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "too many requests"})

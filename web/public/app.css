@@ -8377,3 +8377,18 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 
 /* ut-docs#5989: stand-alone link rows meet the 44px touch floor. */
 .manual-about-link a, a[data-testid="photo-import-link"] { display: inline-flex; align-items: center; min-block-size: 44px; }
+
+/* ut-docs#6538 (tester F5/F6): Tills page "Card reader requests" and "Card
+   readers" cards. Own cards, no list bullet, 56 px targets, a real gap between
+   the PIN field, Deny and Approve, a visible label on every field. */
+.reader-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1rem; }
+.reader-row, .reader-request { display: flex; flex-direction: column; gap: .75rem; padding-block: .75rem; border-block-start: 1px solid var(--border); }
+.reader-row:first-child, .reader-request:first-of-type { border-block-start: 0; }
+.reader-field { display: flex; flex-direction: column; gap: .35rem; }
+.reader-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .75rem; }
+.reader-form .reader-field { flex: 1 1 12rem; }
+.reader-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.reader-actions form { flex: 1 1 8rem; display: flex; }
+#card-readers-list .btn, #reader-requests .btn { min-block-size: 56px; inline-size: auto; justify-content: center; }
+.reader-actions .btn { inline-size: 100%; }
+#card-readers-list input, #reader-requests input { min-block-size: 56px; margin: 0; }

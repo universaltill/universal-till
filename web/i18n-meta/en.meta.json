@@ -1218,6 +1218,7 @@
   "tap.resolve.nothing_to_approve": {"description": "Error when a manager tries to approve a payment the payment service says was not charged.", "review": "standard"},
   "tap.resolve.bad_choice": {"description": "Error when a manager's settle choice is not one of the allowed ones.", "review": "standard"},
   "tap.reader.pick": {"description": "Heading of the panel where the cashier picks which card reader takes this payment, shown on the sale screen when the till has several readers.", "review": "standard"},
+  "tap.reader.busy_result": {"description": "Title of the panel the cashier sees when a payment could not start because the paired phone reader answered that it was busy with another payment. Nothing was charged.", "review": "standard"},
   "tap.reason.reader_busy": {"description": "One line under a card reader that cannot be chosen right now because another payment is running on it.", "review": "standard"},
   "tap.reason.reader_unreachable": {"description": "One line under a card reader that cannot be chosen because the till cannot reach it (switched off, offline, out of range).", "review": "standard"},
   "tap.reason.reader_needs_setup": {"description": "One line under a card reader that cannot be chosen because it is not set up yet; staff are told to ask a manager.", "review": "standard"},

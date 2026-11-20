@@ -63,7 +63,7 @@
       <p class="tap-amount">{{ money $p.Amount }}</p>
       {{ if and $p.Brand $p.Last4 }}<p>{{ printf (T "tap.result.card") $p.Brand $p.Last4 }}</p>{{ end }}
       {{ else if eq $p.State "start_failed" }}
-      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9888;</span> {{ T "tap.start_failed" }}</h3>
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9888;</span> {{ if eq $p.Reason "reader_busy" }}{{ T "tap.reader.busy_result" }}{{ else }}{{ T "tap.start_failed" }}{{ end }}</h3>
       {{ end }}
     </div>
     <div class="tap-actions">

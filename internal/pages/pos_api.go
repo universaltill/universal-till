@@ -2884,7 +2884,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			var tapStart *tapStartFailedError
 			if errors.As(err, &tapStart) {
 				log.Printf("tender: %v", err)
-				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Amount: d.Engine.Basket().Total}, http.StatusOK)
+				reason := ""
+				if tapStart.ReaderBusy {
+					reason = "reader_busy"
+				}
+				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Reason: reason, Amount: d.Engine.Basket().Total}, http.StatusOK)
 				return
 			}
 			var declined *paymentDeclinedError
