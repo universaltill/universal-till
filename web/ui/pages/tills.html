@@ -163,12 +163,14 @@
     <h3>{{ T "tills.pairing.title" }}</h3>
     <p class="muted">{{ T "tills.pairing.help" }}</p>
     <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
-    {{/* ut-docs#6538: phone card readers pair to the main till only. */}}
-    {{ if not .SyncPrimary }}
-    <div hx-get="/ui/tills/reader-requests" hx-trigger="load" hx-swap="outerHTML"></div>
-    <div hx-get="/ui/tills/readers" hx-trigger="load" hx-swap="outerHTML"></div>
-    {{ end }}
   </div>
+
+  {{/* ut-docs#6538: phone card readers pair to the main till only. Each
+       fragment renders its own card (a flag-off answer is 204: no empty card). */}}
+  {{ if not .SyncPrimary }}
+  <div hx-get="/ui/tills/reader-requests" hx-trigger="load" hx-swap="outerHTML"></div>
+  <div hx-get="/ui/tills/readers" hx-trigger="load" hx-swap="outerHTML"></div>
+  {{ end }}
 
   {{/* ut-docs#5074 M5: the read-only sales copy (its own partial). */}}
   <div id="tills-sales-mirror" hx-get="/ui/tills/sales-mirror" hx-trigger="load" hx-swap="outerHTML"></div>

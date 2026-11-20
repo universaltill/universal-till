@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -925,4 +926,55 @@ func TestOnlyAnInvalidOrRevokedReaderBearerIs401(t *testing.T) {
 	if rec := g.serve(readerReq(g, http.MethodGet, "/api/sync/link", bearer, true)); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked bearer = %d, want 401", rec.Code)
 	}
+}
+
+// F5/F6 (tester-batch): the reader sections are their own cards, with no
+// bullet, a visible label on each field, Deny and Approve in their own row,
+// and 56 px targets.
+func TestReaderSectionsLayout(t *testing.T) {
+	g := newReaderRig(t, true)
+	g.request(t, "Counter phone", "s-lay", "card_reader", true, "")
+	g.enrolReader(t, "Second phone")
+	req := g.serve(httptest.NewRequest(http.MethodGet, "/ui/tills/reader-requests", nil)).Body.String()
+	lst := g.serve(httptest.NewRequest(http.MethodGet, "/ui/tills/readers", nil)).Body.String()
+	for name, body := range map[string]string{"requests": req, "readers": lst} {
+		if !strings.Contains(body, `class="card"`) {
+			t.Errorf("%s fragment is not its own card", name)
+		}
+		if strings.Contains(body, `placeholder=`) {
+			t.Errorf("%s fragment labels a field by placeholder only", name)
+		}
+		if strings.Count(body, "<label") == 0 {
+			t.Errorf("%s fragment has no visible field label", name)
+		}
+	}
+	if !strings.Contains(req, `class="reader-actions"`) {
+		t.Error("Deny and Approve must sit in their own spaced row")
+	}
+	if strings.Contains(lst, `<li class="card"`) {
+		t.Error("reader rows must not be nested cards")
+	}
+	css, err := os.ReadFile(repoFile("web", "public", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{".reader-list { list-style: none", "#card-readers-list input, #reader-requests input { min-block-size: 56px", "#card-readers-list .btn, #reader-requests .btn { min-block-size: 56px", ".reader-actions { display: flex; flex-wrap: wrap; gap: .75rem"} {
+		if !strings.Contains(string(css), want) {
+			t.Errorf("app.css lacks %q", want)
+		}
+	}
+	page, err := os.ReadFile(repoFile("web", "ui", "pages", "tills.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := string(page)
+	if i, j := strings.Index(pc, `id="tills-pairing-card"`), strings.Index(pc, "/ui/tills/reader-requests"); j < i || strings.Index(pc[i:j], "\n  </div>") < 0 {
+		t.Error("the reader sections must sit after, not inside, the pairing card")
+	}
+}
+
+// repoFile is a path under the repository root, independent of the test's cwd.
+func repoFile(parts ...string) string {
+	_, here, _, _ := runtime.Caller(0)
+	return filepath.Join(append([]string{filepath.Dir(here), "..", ".."}, parts...)...)
 }
