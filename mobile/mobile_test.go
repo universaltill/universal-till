@@ -1097,6 +1097,12 @@ func TestSetTapToPayResolver_RegistersWithDevicepay(t *testing.T) {
 	if got := devicepay.ResolveUnknown(ctx, managerActor(false), "stripe", "k1"); got.OK || len(stub.keys) != 0 {
 		t.Fatalf("cashier resolve = %+v, keys %v", got, stub.keys)
 	}
+	if got := devicepay.Resolve(ctx, managerActor(false), "stripe", "k1", devicepay.OutcomeCharged); got.OK || got.Reason != devicepay.ReasonForbidden || len(stub.keys) != 0 {
+		t.Fatalf("cashier charged resolve = %+v, keys %v", got, stub.keys)
+	}
+	if got := devicepay.Resolve(ctx, managerActor(true), "stripe", "k1", "refund"); got.OK || len(stub.keys) != 0 {
+		t.Fatalf("unknown outcome = %+v, keys %v", got, stub.keys)
+	}
 	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); !got.OK || len(stub.keys) != 1 || stub.keys[0] != "k1" || stub.outcomes[0] != "not_charged" {
 		t.Fatalf("manager resolve = %+v, keys %v outcomes %v", got, stub.keys, stub.outcomes)
 	}

@@ -89,11 +89,11 @@ class DevicepayBridgeCore(
         return cell.await(setupBackstopMs) ?: DevicepayCodec.setup("timeout")
     }
 
-    /** Role-checked in Go (devicepay.ResolveUnknown) before this is reached. */
-    fun resolveUnknown(idempotencyKey: String?): String {
-        if (idempotencyKey.isNullOrEmpty()) return DevicepayCodec.setup("bad_request")
+    /** Role-checked in Go (devicepay.Resolve, manager only) before this is reached; outcome is validated again here. */
+    fun resolve(idempotencyKey: String?, outcome: String?): String {
+        if (idempotencyKey.isNullOrEmpty() || outcome == null) return DevicepayCodec.setup("bad_request")
         val cell = ResultCell<String>()
-        main.post { cell.set(DevicepayCodec.setup(engine.resolveUnknown(idempotencyKey))) }
+        main.post { cell.set(DevicepayCodec.setup(engine.resolve(idempotencyKey, outcome))) }
         return cell.await(backstopMs) ?: DevicepayCodec.setup("timeout")
     }
 }
