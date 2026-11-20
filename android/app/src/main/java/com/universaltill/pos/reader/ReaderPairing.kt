@@ -19,6 +19,9 @@ sealed class PairStart {
 
 sealed class PairPoll {
     object Waiting : PairPoll()
+
+    /** The main said "not now" (429 / 503): ask again after [afterMs]. Never a failed pairing (review A-6). */
+    data class Later(val afterMs: Long) : PairPoll()
     object Expired : PairPoll()
     data class Approved(val credentials: ReaderCredentials) : PairPoll()
     data class Failed(val reason: String) : PairPoll()
@@ -26,7 +29,7 @@ sealed class PairPoll {
 
 /** HTTPS only. status -1 = no answer (not found), -2 = the pin did not match; [pin] = the leaf key pin the handshake saw. */
 interface PairHttp {
-    class Answer(val status: Int, val body: String, val pin: String?)
+    class Answer(val status: Int, val body: String, val pin: String?, val retryAfterSec: Int = 0)
 
     fun post(url: String, body: String, expectPin: String?): Answer
 
@@ -95,6 +98,7 @@ class ReaderPairing(
         val a = http.get("$base/api/sync/pair-requests/$requestId", mapOf(SECRET_HEADER to secret), pin)
         return when {
             a.status == 404 || a.status == -1 -> PairPoll.Waiting
+            a.status == 429 || a.status == 503 -> PairPoll.Later(if (a.retryAfterSec > 0) minOf(60_000L, a.retryAfterSec * 1_000L) else 2_000L)
             a.status != 200 -> PairPoll.Failed("refused") // -2 (another certificate), a limit, no reader method
             else -> {
                 val d = try { JSONObject(a.body).getJSONObject("data") } catch (_: Exception) { return PairPoll.Failed("refused") }

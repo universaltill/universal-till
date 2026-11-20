@@ -36,7 +36,7 @@ class OkPairHttp : PairHttp {
         val learn = if (expectPin == null) SpkiPin.learning() else null
         val tm = learn ?: SpkiPin.enforcing(expectPin!!)
         return try {
-            client(tm, 15).newCall(req).execute().use { r -> PairHttp.Answer(r.code, r.body?.string().orEmpty().take(8192), learn?.pin ?: expectPin) }
+            client(tm, 15).newCall(req).execute().use { r -> PairHttp.Answer(r.code, r.body?.string().orEmpty().take(8192), learn?.pin ?: expectPin, r.header("Retry-After")?.trim()?.toIntOrNull() ?: 0) }
         } catch (e: javax.net.ssl.SSLException) {
             PairHttp.Answer(if (expectPin != null) -2 else -1, "", null)
         } catch (_: Exception) {
@@ -107,24 +107,26 @@ class ReaderLink(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    post { ended(webSocket, gen, false) }
+                    post { ended(webSocket, gen, false, null) }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    val auth = response?.code == 401 || response?.code == 403
-                    post { ended(webSocket, gen, auth) }
+                    // Only a 401 means "removed" (review A-6); 429 / 503 / the rest are retried, 429 by Retry-After.
+                    val auth = LinkClose.isRevoked(response?.code)
+                    val after = response?.header("Retry-After")?.trim()?.toIntOrNull()
+                    post { ended(webSocket, gen, auth, after) }
                 }
             },
         )
         ws = sock
     }
 
-    private fun ended(sock: WebSocket, gen: Int, authFailed: Boolean) {
+    private fun ended(sock: WebSocket, gen: Int, authFailed: Boolean, retryAfterSec: Int?) {
         if (sock !== ws) return
         ws = null
         session.onClosed(gen, authFailed)
         if (!wanted || authFailed) return
-        val delay = minOf(15_000L, 1_000L shl minOf(attempts++, 4))
+        val delay = LinkClose.retryDelayMs(attempts++, retryAfterSec)
         retry = postDelayed(delay) { retry = null; connect() }
     }
 }

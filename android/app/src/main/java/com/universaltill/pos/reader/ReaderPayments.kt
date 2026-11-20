@@ -5,6 +5,7 @@ import com.universaltill.pos.tap.CloudApi
 import com.universaltill.pos.tap.CloudException
 import com.universaltill.pos.tap.CollectEnd
 import com.universaltill.pos.tap.MainExecutor
+import com.universaltill.pos.tap.Outcome
 import com.universaltill.pos.tap.ResultCell
 import com.universaltill.pos.tap.StartRequest
 import com.universaltill.pos.tap.TapToPayEngine
@@ -55,18 +56,52 @@ class ReaderCloudApi(private val main: MainExecutor, private val session: () -> 
     }
 }
 
-/** [ReaderPayments] on the shared Tap to Pay engine (#6533): a `reader.collect` is the same payment a till's devicepay request is. */
-class EnginePayments(private val engine: TapToPayEngine, private val cloud: ReaderCloudApi) : ReaderPayments {
+/**
+ * [ReaderPayments] on the shared Tap to Pay engine (#6533): a `reader.collect` is the same payment a till's devicepay request is.
+ *
+ * Recovery (review A-2): the engine blocks every later key behind an attempt whose outcome is unknown, and a reader
+ * phone has no manager to resolve it. The main already holds such an attempt pending and refuses a NEW sale while it
+ * does, so a `reader.collect` for a different key means the main resolved the old one: its local record is dropped
+ * here (local state only; the phone never says whether it was charged, the main decides from the payment service).
+ * The same key stays refused as pending, and is dropped after [UNKNOWN_TTL_MS] since this process first refused it.
+ */
+class EnginePayments(
+    private val engine: TapToPayEngine,
+    private val cloud: ReaderCloudApi,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) : ReaderPayments {
+    companion object {
+        const val UNKNOWN_TTL_MS = 30 * 60_000L
+    }
+
     private var n = 0
+    private val firstRefused = HashMap<String, Long>()
 
     override fun capability(): Capability = engine.capability()
 
     override fun setup(cb: (String?) -> Unit) = engine.setup(cb)
 
+    override fun onForeground() = engine.onForeground()
+
+    override fun onBackground() = engine.onBackground()
+
+    override fun disconnect() = engine.disconnectReader()
+
+    private fun release(key: String) {
+        for (k in engine.unresolvedKeys()) {
+            val since = firstRefused[k]
+            if (k != key || (since != null && nowMs() - since >= UNKNOWN_TTL_MS)) {
+                if (engine.resolve(k, Outcome.NOT_CHARGED) == null) firstRefused.remove(k)
+            }
+        }
+    }
+
     override fun collect(c: ReaderCollect, remainingMs: Long, end: (CollectEnd) -> Unit) {
+        release(c.key)
         cloud.arm(c)
         engine.collect(StartRequest("rd-${++n}", c.amountMinor, c.currency, c.key), remainingMs) { e ->
             cloud.disarm()
+            if (e is CollectEnd.Refused && (e.token == "outcome_unknown" || e.token == "unknown_pending")) firstRefused.putIfAbsent(c.key, nowMs())
             end(e)
         }
     }

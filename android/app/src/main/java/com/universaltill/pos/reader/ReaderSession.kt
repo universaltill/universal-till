@@ -24,6 +24,26 @@ interface ReaderPayments {
     fun collect(c: ReaderCollect, remainingMs: Long, end: (CollectEnd) -> Unit)
 
     fun cancel(key: String): Boolean
+
+    /** The app is on screen (the engine refuses every collect until it is told so). */
+    fun onForeground()
+
+    fun onBackground()
+
+    /** Drops the Stripe SDK's reader connection (ADR-0198 6.4). */
+    fun disconnect()
+}
+
+/** What the main's upgrade answer means for the phone (review A-6). */
+object LinkClose {
+    /** Only a 401 says "the main removed this phone"; 403, 429, 503 and the rest are "try again later". */
+    fun isRevoked(code: Int?) = code == 401
+
+    /** Back-off 1..15 s, or the main's Retry-After (bounded to 2 min). */
+    fun retryDelayMs(attempt: Int, retryAfterSec: Int?): Long {
+        if (retryAfterSec != null && retryAfterSec > 0) return minOf(120_000L, retryAfterSec * 1_000L)
+        return minOf(15_000L, 1_000L shl minOf(attempt, 4))
+    }
 }
 
 enum class ReaderResultKind { DONE, CANCELLED, CARD_REFUSED, EXPIRED, LINK_LOST }
@@ -111,21 +131,26 @@ class ReaderSession(
         gen++
         helloed = false
         pingTimer?.cancel(); pingTimer = null
-        lossTimer?.cancel(); lossTimer = null
+        // The 30 s link-loss clock is NOT touched here: a reconnect attempt is not contact (review A-3).
         old?.close()
         failTokens("offline")
         if (live == null) ui.show(ReaderScreen.Connecting)
         return gen
     }
 
+    /** The Activity came to the front: the engine must hear it too, or it refuses every collect (review A-1). */
     fun onForeground() {
         foreground = true
+        payments.onForeground()
         if (helloed) reportStatus()
         if (live == null && resultTimer == null) showIdle()
     }
 
     fun onBackground() {
         foreground = false
+        payments.onBackground()
+        // Backgrounded and idle: no token-holding Terminal session stays open (ADR-0198 6.4).
+        if (live == null) payments.disconnect()
         if (helloed) reportStatus()
         if (live == null && resultTimer == null) ui.show(ReaderScreen.Paused)
     }
@@ -138,19 +163,22 @@ class ReaderSession(
         failTokens("offline")
         if (authFailed) {
             isRevoked = true
+            lossTimer?.cancel(); lossTimer = null
             live?.let { payments.cancel(it.key) }
             live = null
+            payments.disconnect()
             ui.revoked()
             ui.show(ReaderScreen.Revoked)
             return
         }
         val l = live
         if (l != null) {
-            lossTimer?.cancel()
-            lossTimer = scheduler.postDelayed(LINK_LOSS_DROP_MS) {
+            // Anchored to the FIRST loss: back-off attempts that fail again do not restart it (review A-3).
+            if (lossTimer == null) lossTimer = scheduler.postDelayed(LINK_LOSS_DROP_MS) {
                 lossTimer = null
                 if (live === l) {
                     payments.cancel(l.key)
+                    payments.disconnect()
                     ui.show(ReaderScreen.Result(ReaderResultKind.LINK_LOST))
                 }
             }
@@ -182,6 +210,7 @@ class ReaderSession(
             return
         }
         helloed = true
+        // Real contact with the main again: the loss clock ends.
         lossTimer?.cancel(); lossTimer = null
         send("hello", ReaderFrames.helloPayload(appVersion))
         reportStatus()
@@ -226,6 +255,17 @@ class ReaderSession(
                 else -> ReaderScreen.Idle
             },
         )
+    }
+
+    /** A fresh enrolment succeeded: the revoked state (and its stale link) of the earlier enrolment is gone (review A-5). */
+    fun enrolled() {
+        isRevoked = false
+        helloed = false
+        pingTimer?.cancel(); pingTimer = null
+        lossTimer?.cancel(); lossTimer = null
+        transport?.close()
+        transport = null
+        gen++
     }
 
     /** The customer's or cashier's Cancel on the phone itself: stops the live collect (the verdict then goes out as cancelled). */

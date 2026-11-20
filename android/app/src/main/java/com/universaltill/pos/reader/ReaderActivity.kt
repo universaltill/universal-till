@@ -171,10 +171,12 @@ class ReaderActivity : AppCompatActivity(), ReaderUi {
                     if (cancelled) return@post
                     when (r) {
                         PairPoll.Waiting -> pairing = MainThread.postDelayed(2_000) { poll() }
+                        is PairPoll.Later -> pairing = MainThread.postDelayed(maxOf(2_000L, r.afterMs)) { poll() }
                         PairPoll.Expired -> failed(R.string.reader_expired_request)
                         is PairPoll.Failed -> failed(R.string.reader_err_refused)
                         is PairPoll.Approved -> {
                             store.save(r.credentials)
+                            parts?.session?.enrolled() // a revoke of the earlier enrolment must not outlive it (review A-5)
                             run(r.credentials)
                             ReaderProcess.link?.start()
                         }
