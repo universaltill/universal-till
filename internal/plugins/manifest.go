@@ -821,6 +821,10 @@ var reservedPageRoutePrefixes = []string{
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders", "/notices",
 	"/shifts", "/reports", "/backups", "/about",
+	// ut-docs#6455: tap-to-pay "Check again" (POST /pay/tap/check) and the
+	// manager's resolve (POST /manager/pay/tap/resolve) are literal-child
+	// routes with no catch-all of their own.
+	"/pay", "/manager",
 }
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under

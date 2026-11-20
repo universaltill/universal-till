@@ -175,6 +175,11 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /settings/card-readers/{id}":        true,
 	"POST /settings/card-readers/{id}/remove": true,
 	"GET /csp-report":                         true,
+	// Tap to Pay (ut-docs#6455): settling a card payment against a real
+	// payment provider; a demo till has no provider and takes no card.
+	"POST /pay/tap/check":           true,
+	"GET /ui/pay/tap/resolve":       true,
+	"POST /manager/pay/tap/resolve": true,
 	// Online orders (ADR-0169 §9, ut-docs#4768): a demo till has no sales
 	// channel; the pages are shop data a public visitor has no use for.
 	// Slice D (accept/pick/pack/ship/cancel): also writes to a cloud sales channel.

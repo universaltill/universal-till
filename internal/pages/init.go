@@ -738,6 +738,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerUsers(mux, dp, authSvc)
 	registerPermissionSettings(mux, dp) // super_admin-only role→action grant matrix editor (ut-docs#556)
 	registerCardReaders(mux, dp)        // ut-docs#6566: per-till card reader registry: picker + manager page
+	registerTapPay(mux, dp)             // ut-docs#6455: tap payment Check again + manager resolve
 	registerLocations(mux, dp)
 	registerRegisters(mux, dp)        // registers admin: create/rename/deactivate tills (ut-docs#651)
 	registerFiscalRegisterDE(mux, dp) // §146a Abs. 4 AO fiscal register (ut-docs#665)
