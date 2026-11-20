@@ -36,7 +36,7 @@ class OkPairHttp : PairHttp {
         val learn = if (expectPin == null) SpkiPin.learning() else null
         val tm = learn ?: SpkiPin.enforcing(expectPin!!)
         return try {
-            client(tm, 15).newCall(req).execute().use { r -> PairHttp.Answer(r.code, r.body?.string().orEmpty().take(8192), learn?.pin ?: expectPin, r.header("Retry-After")?.trim()?.toIntOrNull() ?: 0) }
+            client(tm, 15).newCall(req).execute().use { r -> PairHttp.Answer(r.code, r.body?.source()?.let { src -> src.request(PairHttp.MAX_BODY.toLong()); src.buffer.readUtf8(minOf(src.buffer.size, PairHttp.MAX_BODY.toLong())) }.orEmpty(), learn?.pin ?: expectPin, r.header("Retry-After")?.trim()?.toIntOrNull() ?: 0) }
         } catch (e: javax.net.ssl.SSLException) {
             PairHttp.Answer(if (expectPin != null) -2 else -1, "", null)
         } catch (_: Exception) {
@@ -133,13 +133,13 @@ class ReaderLink(
         ws = null
         session.onClosed(gen, authFailed)
         if (!wanted || authFailed) return
-        if (pinMismatch) { reProve(gen); return }
+        if (pinMismatch) { reProve(); return }
         val delay = LinkClose.retryDelayMs(attempts++, retryAfterSec)
         retry = postDelayed(delay) { retry = null; connect() }
     }
 
     /** The main's key changed: never wipe, never send the bearer there; ask for the proof (one try per 30 s). */
-    private fun reProve(gen: Int) {
+    private fun reProve() {
         val rp = reProof ?: return
         val c = creds
         Thread {
@@ -154,8 +154,7 @@ class ReaderLink(
                         attempts = 0
                         connect()
                     }
-                    // the main removed this phone: the same end as a 401 on the link
-                    ReProof.Revoked -> session.onClosed(gen, true)
+                    // anything but a verified proof (a 404 included) is unverified: keep the pairing, back off (A-12)
                     else -> retry = postDelayed(LinkClose.retryDelayMs(attempts++, 30)) { retry = null; connect() }
                 }
             }

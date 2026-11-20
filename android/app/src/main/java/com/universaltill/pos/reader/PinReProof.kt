@@ -13,9 +13,11 @@ sealed class ReProof {
     /** Wrong or missing proof: keep the old pin. */
     object Mismatch : ReProof()
 
-    /** 404: the main removed this phone. The only case that offers "re-pair". */
-    object Revoked : ReProof()
-
+    /**
+     * No proof from the unverified connection: no answer, any status other than 200 (a 404 included), a body that
+     * does not verify. The word of an unauthenticated peer never clears the pairing (review A-12): keep the pairing
+     * and the old pin and back off. A revoke is learned only on an authenticated path (401 on the pinned link).
+     */
     object Unreachable : ReProof()
 
     /** Less than 30 s since the last attempt. */
@@ -58,7 +60,6 @@ class PinReProof(
         val nonce = rand()
         val body = JSONObject().put("till_id", c.readerId).put("nonce", nonce).toString()
         val a = http.post("https://$hostPort/api/sync/primary-proof", body, null)
-        if (a.status == 404) return ReProof.Revoked
         if (a.status != 200) return ReProof.Unreachable
         val seen = a.pin
         if (seen.isNullOrEmpty()) return ReProof.Mismatch
