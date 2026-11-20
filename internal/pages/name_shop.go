@@ -215,7 +215,7 @@ func registerNameShop(mux *http.ServeMux, d *common.Deps) {
 		if shop {
 			view.ShopValue = r.PostForm.Get("store_name")
 			var nerr error
-			if name, nerr = config.NormalizeStoreName(view.ShopValue); nerr != nil {
+			if name, nerr = config.CheckStoreName(view.ShopValue); nerr != nil {
 				view.ShopErr = storeNameErrorKey(nerr)
 				bad = true
 			}

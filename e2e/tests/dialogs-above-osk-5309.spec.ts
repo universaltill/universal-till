@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { ensureOperator, markTourDone, deactivateAllTables, createTable, setOskMode } from './helpers';
+import { ensureOperator, markTourDone, setOskMode, DIALOGS, openOsk, actionsClearance } from './helpers';
+import type { Dlg } from './helpers';
 
 // ut-docs#5309: same bug class as #5304 (manager-PIN dialog). On a 1024x600
 // till with the on-screen keyboard open, the OSK (z 1000, fixed to the bottom)
@@ -14,59 +15,6 @@ import { ensureOperator, markTourDone, deactivateAllTables, createTable, setOskM
 // no per-dialog toggle) and restored to 'auto' afterwards.
 
 test.use({ hasTouch: true, viewport: { width: 1024, height: 600 } });
-
-type Dlg = { id: string; open: (page: Page) => Promise<void>; field: string };
-
-const DIALOGS: Dlg[] = [
-  {
-    id: 'hold-modal',
-    field: '#hold-label-input',
-    open: async (page) => {
-      await page.request.post('/api/pos/reset');
-      await page.goto('/');
-      await page.waitForSelector('.pos-container');
-      await page.getByRole('textbox').first().fill('5000000000012');
-      await Promise.all([
-        page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-        page.locator('.scan-row button[type=submit]').click(),
-      ]);
-      await expect(page.locator('#basket')).toContainText('Coca-Cola');
-      await page.getByTestId('payment-open').click();
-      await page.getByTestId('payment-overlay-hold').click();
-      await expect(page.locator('#hold-modal')).toBeVisible();
-    },
-  },
-  {
-    id: 'pfand-modal',
-    field: '#pfand-amount',
-    open: async (page) => {
-      await page.goto('/menu');
-      await page.waitForSelector('.menu-grid');
-      await page.locator('[data-testid="menu-pfand-open"]').click();
-      await expect(page.locator('#pfand-modal')).toBeVisible();
-    },
-  },
-  {
-    id: 'table-add-modal',
-    field: '#table-add-label',
-    open: async (page) => {
-      await deactivateAllTables(page);
-      await createTable(page, 'E2E 5309');
-      await page.goto('/tables');
-      await page.locator('#tables-edit-toggle').click();
-      const bg = page.locator('.floorplan-bg');
-      const box = await bg.boundingBox();
-      await bg.click({ position: { x: box!.width * 0.15, y: box!.height * 0.2 } });
-      await expect(page.locator('#table-add-modal')).toHaveAttribute('open', '');
-    },
-  },
-];
-
-async function openOsk(page: Page, d: Dlg) {
-  await page.locator(d.field).tap();
-  await expect(page.locator('#osk.osk-open')).toBeVisible();
-  await expect(page.locator('body')).toHaveClass(/osk-padded/);
-}
 
 // Dialog, Cancel and the submit button lie wholly above the OSK, inside the
 // viewport, and are what elementFromPoint finds at their centre.
@@ -100,7 +48,7 @@ test.describe('hold / pfand / table-add dialogs stay above the OSK at 1024x600 (
     await page.request.post('/api/pos/reset');
   });
 
-  for (const d of DIALOGS) {
+  for (const d of DIALOGS.filter((x) => x.id !== 'elevation-modal')) {
     test.describe(`#${d.id}`, () => {
       test.beforeEach(async ({ page }) => {
         await ensureOperator(page);
@@ -117,14 +65,12 @@ test.describe('hold / pfand / table-add dialogs stay above the OSK at 1024x600 (
         await expect(dlg).not.toHaveAttribute('open', '');
       });
 
-      test('focused field is in view above the OSK', async ({ page }) => {
+      test('focused field is in view above the OSK and clear of the action row', async ({ page }) => {
+        // ut-docs#5334 R5: assert osk.js's own centring of the tapped field (no
+        // scrollIntoViewIfNeeded, which would let Playwright do the scrolling).
         await d.open(page);
         await openOsk(page, d);
-        await page.locator(d.field).scrollIntoViewIfNeeded();
-        const r = await page.locator(d.field).boundingBox();
-        const oskTop = (await page.locator('#osk').boundingBox())!.y;
-        expect(r!.y).toBeGreaterThanOrEqual(0);
-        expect(r!.y + r!.height).toBeLessThanOrEqual(oskTop);
+        await expect.poll(() => actionsClearance(page, d.id, d.field), { message: `#${d.id} ${d.field}` }).toEqual({ ok: true });
       });
 
       test('closing the OSK restores 8vh; reopening is clear again', async ({ page }) => {
@@ -145,7 +91,7 @@ test.describe('hold / pfand / table-add dialogs stay above the OSK at 1024x600 (
     await ensureOperator(page);
     await markTourDone(page);
     await setOskMode(page, 'on');
-    const d = DIALOGS[2];
+    const d = DIALOGS.find((x) => x.id === 'table-add-modal')!;
     await d.open(page);
     await openOsk(page, d);
     const m = await page.locator('#table-add-modal').evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight, oy: getComputedStyle(el).overflowY }));
@@ -157,7 +103,7 @@ test.describe('hold / pfand / table-add dialogs stay above the OSK at 1024x600 (
     await ensureOperator(page);
     await markTourDone(page);
     await setOskMode(page, 'on');
-    const d = DIALOGS[0];
+    const d = DIALOGS.find((x) => x.id === 'hold-modal')!;
     await d.open(page);
     await openOsk(page, d);
     const m = await page.evaluate(() => {
