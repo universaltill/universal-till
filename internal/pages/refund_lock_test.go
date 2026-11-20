@@ -134,3 +134,10 @@ func TestKeyedLocks_CancelledWaiterGivesUpAndDropsRef(t *testing.T) {
 		t.Fatalf("size after holder unlock = %d, want 0", n)
 	}
 }
+
+// size is the number of keys currently held or waited for.
+func (l *keyedLocks) size() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.m)
+}

@@ -69,10 +69,3 @@ func (l *keyedLocks) drop(key string, e *keyedLockEntry) {
 		delete(l.m, key)
 	}
 }
-
-// size is the number of keys currently held or waited for (tests).
-func (l *keyedLocks) size() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.m)
-}
