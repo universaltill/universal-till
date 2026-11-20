@@ -54,6 +54,7 @@ internal/buildinfo/channel.go: unreachable func: OverrideChannelForTest
 internal/buildinfo/channel.go: unreachable func: RequireExplicitChannel
 internal/buildinfo/channel.go: unreachable func: SetChannelOnce
 internal/config/i18n.go: unreachable func: NewI18n
+internal/data/card_reader_credential_repo.go: unreachable func: CardReaderCredentialRepo.Revoke
 internal/data/pairing_repo.go: unreachable func: PairingRepo.Approve
 internal/data/pairing_repo.go: unreachable func: PairingRepo.CreatePendingRequest
 internal/data/payment_attempt_repo.go: unreachable func: PaymentAttemptRepo.Mark
@@ -98,6 +99,7 @@ internal/manual/manual.go: unreachable func: Library.Locales
 internal/manual/manual.go: unreachable func: Library.MissingTranslations
 internal/manual/manual.go: unreachable func: Library.RouteCovered
 internal/netaccess/netaccess.go: unreachable func: ObserveServices
+internal/pages/bearer_failures.go: unreachable func: bearerFailureLimiter.locked
 internal/pages/common/deps.go: unreachable func: Deps.WaitForAsyncWork
 internal/pages/eod_method_tax_bands.go: unreachable func: attachEODMethodTaxBands
 internal/pages/eod_method_tax_bands.go: unreachable func: computeEODMethodTaxBands
