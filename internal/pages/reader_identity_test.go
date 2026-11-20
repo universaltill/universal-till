@@ -730,3 +730,89 @@ func TestPhoneReaderPairingShipsDark(t *testing.T) {
 		t.Fatalf("till pair request with the reader feature off = %d", rec.Code)
 	}
 }
+
+// --- F1 (tester-batch): the phone's approval poll is not the pair request ---
+
+// pollFrom polls from one fixed source, as a real phone does.
+func (g *readerRigT) pollFrom(id, secret, remote string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests/"+id, nil)
+	req.Header.Set(fleetlink.HeaderPairRequestSecret, secret)
+	req.RemoteAddr = remote
+	return g.serve(g.asTLS(req))
+}
+
+func TestPhoneApprovalPollEvery2sForTenMinutesIsNeverRefused(t *testing.T) {
+	g := newReaderRig(t, true)
+	now := time.Now()
+	pairPollNow = func() time.Time { return now }
+	t.Cleanup(func() { pairPollNow = testPollClock })
+	const phone = "192.0.2.60:7000"
+	secret := "s-poll"
+	id := idOf(t, g.request(t, "Phone", secret, "card_reader", true, phone))
+	for i := 0; i < 300; i++ { // 10 minutes at the phone's 2 s cadence
+		if i == 299 {
+			if rec := g.approve(id, ""); rec.Code != http.StatusOK {
+				t.Fatalf("approve = %d", rec.Code)
+			}
+		}
+		rec := g.pollFrom(id, secret, phone)
+		want := http.StatusNotFound
+		if i == 299 {
+			want = http.StatusOK
+		}
+		if rec.Code != want {
+			t.Fatalf("poll %d (t+%ds) = %d, want %d: the phone's poll must never be limited at its own cadence", i, 2*i, rec.Code, want)
+		}
+		now = now.Add(2 * time.Second)
+	}
+	// The polls did not eat the pair-request budget of this source.
+	if rec := g.request(t, "Phone 2", "s-poll-2", "card_reader", true, phone); rec.Code != http.StatusOK {
+		t.Fatalf("pair request after 300 polls = %d, want 200", rec.Code)
+	}
+}
+
+func TestPollFasterThanTheGapIs429WithRetryAfterAndRequestsStayStrict(t *testing.T) {
+	g := newReaderRig(t, true)
+	now := time.Now()
+	pairPollNow = func() time.Time { return now }
+	t.Cleanup(func() { pairPollNow = testPollClock })
+	const phone = "192.0.2.61:7000"
+	id := idOf(t, g.request(t, "Phone", "s-fast", "card_reader", true, phone))
+	if rec := g.pollFrom(id, "s-fast", phone); rec.Code != http.StatusNotFound {
+		t.Fatalf("first poll = %d", rec.Code)
+	}
+	rec := g.pollFrom(id, "s-fast", phone)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "2" {
+		t.Fatalf("immediate re-poll = %d Retry-After %q, want 429 + 2", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	now = now.Add(2 * time.Second)
+	if rec := g.pollFrom(id, "s-fast", phone); rec.Code != http.StatusNotFound {
+		t.Fatalf("poll after the gap = %d", rec.Code)
+	}
+	// The request side stays strict: the 6th request in a minute from one source is refused.
+	got429 := false
+	for i := 0; i < 8; i++ {
+		if g.request(t, "P", fmt.Sprintf("sx%d", i), "card_reader", true, phone).Code == http.StatusTooManyRequests {
+			got429 = true
+		}
+	}
+	if !got429 {
+		t.Fatal("pair requests lost their strict limit")
+	}
+}
+
+func TestPollPerSourceCapStopsIdEnumerationAcrossIds(t *testing.T) {
+	g := newReaderRig(t, true)
+	now := time.Now()
+	pairPollNow = func() time.Time { return now }
+	t.Cleanup(func() { pairPollNow = testPollClock })
+	refused := 0
+	for i := 0; i < pairPollSourceMax+30; i++ {
+		if g.pollFrom(fmt.Sprintf("guess-%d", i), "x", "192.0.2.62:1").Code == http.StatusTooManyRequests {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("one source could poll unboundedly many distinct ids in a minute")
+	}
+}
