@@ -645,6 +645,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ut-docs#3049: the payment broker (iOS Tap to Pay, later the plugin
 	// host fn #6455) reaches the cloud with the live enrolment.
 	wirePayBroker(dp.Cfg)
+	wirePayAttempts(db) // ut-docs#6455: native session_create must equal core's attempt row
 	// Network services start through netaccess.StartService, which skips them
 	// on the public demo till (ADR-0113 §1.6, ut-docs#2795); the local loops
 	// (EOD, sweeps, reconciles) and the main till's inbound link hub always run.

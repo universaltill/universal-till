@@ -404,6 +404,7 @@ var nonAdminTables = map[string]string{
 	"cloud_notices":      "notices the cloud sent THIS till (ADR-0176, ut-docs#5366): pulled per authenticated device, read state is per device, and a mirror of the cloud's own set — a replica pulls for itself, nothing here is shop admin config",
 	"sessions":           "till-local login sessions — meaningless off the issuing till",
 	"item_images":        "item photos — files don't travel over this bundle (D2 limit)",
+	"payment_attempts":   "this till's own record of one card-present payment attempt (ut-docs#6455, ADR-0198 §2.3): written before the tap, settled against the provider; till-local, so no journal, snapshot, bundle or roster — it travels in a full backup only",
 	"card_readers":       "this till's own card reader registry (ut-docs#6566): provider reader ids are device specific, so it never leaves the till — no journal, snapshot, bundle or roster; it travels in a full backup only",
 	"refund_leg_refunds": "what each refund sent back to each original payment leg (ut-docs#6649): till-local netting state, written after the provider approved; a sale without rows falls back to netting the method's earlier refunds, so nothing needs to leave the till",
 

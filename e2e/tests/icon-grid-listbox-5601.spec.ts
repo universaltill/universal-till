@@ -9,7 +9,7 @@ import { watchConsole } from './helpers';
 // arrow keys (web/public/radiogroup.js, data-roving-listbox): arrows never
 // choose, Enter/Space/click does. That is what keeps arrowing over the
 // catalog grid from POSTing /api/catalog/item/icon once per keypress and
-// replacing an uploaded photo. The keyboard tests fail with the listbox
+// writing to an uploaded photo item. The keyboard tests fail with the listbox
 // branch of radiogroup.js removed; the role/markup tests and the
 // category-photo test check the template, not that branch.
 //
@@ -41,6 +41,16 @@ async function openItemWithPhoto(page: Page, name: string, query = '') {
   await page.locator('#image-file').setInputFiles(ICON_PNG);
   await page.locator('#image-form button[type=submit]').click();
   await expect(page.locator('#image-msg')).toContainText('updated');
+}
+
+// A test-own item with NO photo, opened on its image tab: a pick here becomes
+// the shown picture (aria-selected), unlike on a photo item (ut-docs#4846).
+async function openItemNoPhoto(page: Page, name: string, query = '') {
+  const created = await page.request.post('/api/catalog/item', { form: { name, price: '199' } });
+  expect(created.ok()).toBeTruthy();
+  await page.goto(`/catalog${query}`);
+  await page.locator('.catalog-row', { hasText: name }).first().click();
+  await page.locator('#item-form-tab-image').click();
 }
 
 const focusedIcon = (page: Page) =>
@@ -100,7 +110,7 @@ test.describe('icon grids are focus-only listboxes (ut-docs#5601)', () => {
         await openCategory(page);
       } else {
         grid = ITEM; search = ITEM_SEARCH;
-        await openItemWithPhoto(page, `Listbox5601 Tab ${RUN}`);
+        await openItemNoPhoto(page, `Listbox5601 Tab ${RUN}`);
       }
       const stops = page.locator(`${grid} [tabindex="0"]`);
       await expect(stops).toHaveCount(1); // photo (catalog) / new (category): nothing selected
@@ -221,7 +231,7 @@ test.describe('icon grids are focus-only listboxes (ut-docs#5601)', () => {
     await expect(tiles.nth(2)).toBeFocused();
   });
 
-  test('catalog: arrowing over an item with an uploaded photo writes nothing; Enter chooses', async ({ page }) => {
+  test('catalog: arrowing over an item with an uploaded photo writes nothing; Enter keeps the photo and saves the pick under it', async ({ page }) => {
     const assertClean = watchConsole(page);
     const name = `Listbox5601 Photo ${RUN}`;
     await openItemWithPhoto(page, name);
@@ -256,8 +266,13 @@ test.describe('icon grids are focus-only listboxes (ut-docs#5601)', () => {
     await page.keyboard.press('Enter');
     await resp;
     expect(posts).toHaveLength(1);
-    await expect(grid.locator(`[data-icon="${target}"]`)).toHaveAttribute('aria-selected', 'true');
-    await expect(grid.locator('[aria-selected="true"]')).toHaveCount(1);
+    // ut-docs#4846 (decision C): the photo stays the shown picture, so no
+    // tile is selected; the pick is marked as the fallback under the photo.
+    await expect(grid.locator('[aria-selected="true"]')).toHaveCount(0);
+    await expect(grid.locator(`[data-icon="${target}"]`)).toHaveClass(/builtin-icon-fallback/);
+    await expect(grid.locator('.builtin-icon-fallback')).toHaveCount(1);
+    await expect(page.locator('#builtin-icon-msg')).toContainText('Saved under your photo');
+    expect(await page.locator('#image-current').getAttribute('src').catch(() => null)).toBe(previewBefore);
     assertClean();
   });
 
@@ -268,7 +283,7 @@ test.describe('icon grids are focus-only listboxes (ut-docs#5601)', () => {
   // inside the grid instead of leaving it.
   test('catalog: a late selection repaint keeps the stop on the focused tile', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await openItemWithPhoto(page, `Listbox5601 Late ${RUN}`);
+    await openItemNoPhoto(page, `Listbox5601 Late ${RUN}`);
     const grid = page.locator(ITEM);
     const tiles = grid.locator('.builtin-icon-tile');
     let release: () => void = () => {};

@@ -1046,13 +1046,20 @@ func TestTapToPayCloud(t *testing.T) {
 	if err != nil || out != `{"secret":"pst_1"}` {
 		t.Fatalf("TapToPayCloud = %q, %v", out, err)
 	}
-	cases := map[[2]string]string{
-		{"stripe", "session_create"}: "not_onboarded",
-		{"stripe", "payouts"}:        "op_not_allowed",
+	paybroker.SetAttemptLookup(func(_ context.Context, key string) (paybroker.AttemptView, bool) {
+		return paybroker.AttemptView{Key: "k1", Provider: "stripe", AmountMinor: 500, Currency: "gbp", Pending: key == "k1"}, key == "k1"
+	})
+	t.Cleanup(func() { paybroker.SetAttemptLookup(nil) })
+	create := `{"idempotency_key":"k1","amount_minor":500,"currency":"gbp"}`
+	cases := []struct{ provider, op, body, want string }{
+		{"stripe", "session_create", create, "not_onboarded"},
+		{"stripe", "session_create", `{"idempotency_key":"k1","amount_minor":999,"currency":"gbp"}`, "no_attempt"},
+		{"stripe", "payouts", "{}", "op_not_allowed"},
+		{"stripe", "refund", `{"payment_intent_id":"pi_1","amount_minor":5}`, "op_not_allowed"},
 	}
-	for c, want := range cases {
-		if _, err := TapToPayCloud(c[0], c[1], "{}"); err == nil || err.Error() != want {
-			t.Fatalf("TapToPayCloud(%s/%s) err = %v, want %q", c[0], c[1], err, want)
+	for _, c := range cases {
+		if _, err := TapToPayCloud(c.provider, c.op, c.body); err == nil || err.Error() != c.want {
+			t.Fatalf("TapToPayCloud(%s/%s) err = %v, want %q", c.provider, c.op, err, c.want)
 		}
 	}
 	paybroker.SetTargetResolver(nil)
@@ -1067,10 +1074,11 @@ var (
 	_ TapToPayResolver   = devicepay.Resolver(nil)
 )
 
-type stubResolver struct{ keys []string }
+type stubResolver struct{ keys, outcomes []string }
 
-func (s *stubResolver) ResolveUnknown(k string) string {
+func (s *stubResolver) Resolve(k, outcome string) string {
 	s.keys = append(s.keys, k)
+	s.outcomes = append(s.outcomes, outcome)
 	return `{"ok":true}`
 }
 
@@ -1089,8 +1097,17 @@ func TestSetTapToPayResolver_RegistersWithDevicepay(t *testing.T) {
 	if got := devicepay.ResolveUnknown(ctx, managerActor(false), "stripe", "k1"); got.OK || len(stub.keys) != 0 {
 		t.Fatalf("cashier resolve = %+v, keys %v", got, stub.keys)
 	}
-	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); !got.OK || len(stub.keys) != 1 || stub.keys[0] != "k1" {
-		t.Fatalf("manager resolve = %+v, keys %v", got, stub.keys)
+	if got := devicepay.Resolve(ctx, managerActor(false), "stripe", "k1", devicepay.OutcomeCharged); got.OK || got.Reason != devicepay.ReasonForbidden || len(stub.keys) != 0 {
+		t.Fatalf("cashier charged resolve = %+v, keys %v", got, stub.keys)
+	}
+	if got := devicepay.Resolve(ctx, managerActor(true), "stripe", "k1", "refund"); got.OK || len(stub.keys) != 0 {
+		t.Fatalf("unknown outcome = %+v, keys %v", got, stub.keys)
+	}
+	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); !got.OK || len(stub.keys) != 1 || stub.keys[0] != "k1" || stub.outcomes[0] != "not_charged" {
+		t.Fatalf("manager resolve = %+v, keys %v outcomes %v", got, stub.keys, stub.outcomes)
+	}
+	if got := devicepay.Resolve(ctx, managerActor(true), "stripe", "k2", devicepay.OutcomeCharged); !got.OK || stub.outcomes[1] != "charged" {
+		t.Fatalf("manager charged resolve = %+v, outcomes %v", got, stub.outcomes)
 	}
 	SetTapToPayResolver(nil)
 	if got := devicepay.ResolveUnknown(ctx, managerActor(true), "stripe", "k1"); got.Reason != devicepay.ReasonNotForeground {

@@ -48,6 +48,11 @@ type FakeHost struct {
 	HTTP  func(HTTPRequest) (HTTPResponse, error)
 	TCP   func(host string, port int) (io.ReadWriteCloser, error)
 	Views func(name string, args json.RawMessage) (json.RawMessage, error)
+	// PaymentCall answers payment_provider_call and TapToPay answers
+	// tap_to_pay_request (ut-docs#6455); nil → ErrDenied, as without the
+	// permission or outside a bound payment dispatch.
+	PaymentCall func(provider, op string, body json.RawMessage) (json.RawMessage, error)
+	TapToPay    func(body json.RawMessage) (json.RawMessage, error)
 	// Propose answers action_propose with a proposal id (nil: ErrDenied).
 	Propose func(name string, args json.RawMessage) (string, error)
 
@@ -951,4 +956,39 @@ func rawDeviceTimezoneGet(dst []byte) int32 {
 	h, _ := enter("device_timezone_get")
 	defer h.mu.Unlock()
 	return h.deviceInfo("device_timezone_get", func() []byte { return []byte(h.DeviceTimezone) }, dst)
+}
+
+func rawPaymentProviderCall(provider, op, body, dst []byte) int32 {
+	h, denied := enter("payment_provider_call")
+	defer h.mu.Unlock()
+	if denied || h.PaymentCall == nil {
+		return ErrDenied.Code
+	}
+	if len(provider) == 0 || len(op) == 0 || len(body) > 64<<10 {
+		return ErrInvalid.Code
+	}
+	var out json.RawMessage
+	var err error
+	call, p, o, b := h.PaymentCall, string(provider), string(op), bytes.Clone(body)
+	h.unlocked(func() { out, err = call(p, o, b) })
+	if err != nil {
+		return hookCode(err)
+	}
+	return fill(dst, out)
+}
+
+func rawTapToPayRequest(body, dst []byte) int32 {
+	h, denied := enter("tap_to_pay_request")
+	defer h.mu.Unlock()
+	if denied || h.TapToPay == nil {
+		return ErrDenied.Code
+	}
+	var out json.RawMessage
+	var err error
+	call, b := h.TapToPay, bytes.Clone(body)
+	h.unlocked(func() { out, err = call(b) })
+	if err != nil {
+		return hookCode(err)
+	}
+	return fill(dst, out)
 }
