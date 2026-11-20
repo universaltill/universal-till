@@ -101,7 +101,7 @@ test.describe.serial('Plugin store detail page actions (ut-docs#4228)', () => {
     const terms = page.locator('#store-accept-terms');
     await expect(terms, 'cloud-terms box shown on an unregistered till').toHaveCount(1);
     await download(page).click();
-    await expect(page.locator('#store-msg')).toContainText('Accept the Universal Till cloud service terms');
+    await expect(page.locator('#store-msg')).toContainText('Accept the Universal Till Merchant Terms');
     await page.waitForTimeout(500);
     expect(posts, 'unticked terms box sends nothing').toHaveLength(0);
     await terms.check();
