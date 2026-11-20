@@ -1057,7 +1057,13 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// own PaymentIntent and to the amount core is refunding; with several
 		// payments of the method there is no single PaymentIntent, so it is
 		// left unbound (the host function then refuses).
-		refundCtx := r.Context()
+		// ut-docs#6784: the dispatch itself runs detached from the client. A real
+		// WASM provider call is bound to its ctx (wasm_runtime.go WithTimeout +
+		// WithCloseOnContextDone), so a tab closed after the provider has
+		// refunded would kill the guest, return "declined" and leave money out
+		// with no record. It stays bounded by the plugin's own call timeout
+		// (wasm_runtime.go: timeout, paymentGateTimeout floor for refunds).
+		refundCtx := context.WithoutCancel(r.Context())
 		if len(originalPayments) == 1 && requestID != "" {
 			pi, _ := originalPayments[0]["transaction_ref"].(string)
 			refundCtx = tapRefundContext(refundCtx, d, method, pi, refundTotal.Minor(), detail.Currency, "refund:"+detail.ID+":"+method+":"+requestID)
@@ -1103,14 +1109,27 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.fiscal_device_no_receipt", "refund", errors.New("fiscal device approved refund with no receipt evidence"))
 			return
 		}
+		// ut-docs#6784: recordCtx keeps the request's values (session, locale)
+		// but may drop its cancellation. When a refund hook really moved money
+		// (refundDelivered) the whole recording runs detached: a client that
+		// disconnects (tab closed, LAN blip) must not leave money out with no
+		// return sale and no per-leg row. Cash / hookless methods moved nothing
+		// yet, so until the return commits a gone client still records nothing
+		// (ADR-0146 D1: the cashier hands cash over only after this request
+		// succeeds). pos.CompleteSale is the irreversible step: once it has
+		// committed, everything after it runs detached for every method.
+		recordCtx := r.Context()
+		if refundDelivered {
+			recordCtx = context.WithoutCancel(recordCtx)
+		}
 		// ut-docs#5803: record THIS till's register on the return exactly as the
 		// sale path does (pos_api.go completeTender: this till's identity, then
 		// EnsureRegister for the ambiguous case; "" stays NULL), otherwise the
 		// shift's expected-cash window (sales.register_id = shift register)
 		// never sees the cash refund.
-		refundRegisterID := tillRegisterIDBestEffort(r.Context(), d)
+		refundRegisterID := tillRegisterIDBestEffort(recordCtx, d)
 		if refundRegisterID == "" {
-			if regID, rerr := repo.EnsureRegister(r.Context()); rerr == nil {
+			if regID, rerr := repo.EnsureRegister(recordCtx); rerr == nil {
 				refundRegisterID = regID
 			}
 		}
@@ -1163,7 +1182,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// same amount — the exact gap that blocked the first attempt at
 		// this dispatch (universal-till PR #594, closed unmerged; see
 		// docs/code-reviews/2026-09-03-fiscal-sign-refund-return-dispatch-1405.md).
-		signRes := dispatchFiscalSignAsk(r.Context(), d, &saleInput)
+		signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
 
 		// ADR-0146 Decision 1 (ut-docs#3408, amends ADR-0136 Decision 0): a
 		// cannot-sign answer is a property of this refund's own data, not an
@@ -1179,7 +1198,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
+		saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 		if err != nil {
 			// Same underlying call pos_api.go's completeTender wraps --
 			// classifyTenderError already maps its failure modes (insufficient
@@ -1189,11 +1208,14 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, classifyTenderError(err), "refund", err)
 			return
 		}
+		// The return is committed: nothing after this may be lost to a gone
+		// client, cash included (ut-docs#6784).
+		recordCtx = context.WithoutCancel(recordCtx)
 		// ut-docs#6649: remember what each original leg just got back, so the
 		// next refund of this sale nets it. The provider already approved and
 		// the return is committed, so a failed write is logged, never unwinds
 		// the refund (the method-level fallback still nets it).
-		if err := repo.InsertRefundLegRefunds(r.Context(), detail.ID, saleID, legRefunds); err != nil {
+		if err := repo.InsertRefundLegRefunds(recordCtx, detail.ID, saleID, legRefunds); err != nil {
 			log.Printf("refund %s: recording per-leg refund amounts failed: %v", saleID, err)
 		}
 		// Same per-completion audit marker completeTender writes for a sale
@@ -1203,7 +1225,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// the fact, same as completeTender's own: the return is already
 		// committed, so a failed marker write is logged, never unwinds it.
 		if gate.Decision == fiscal.AllowedWithOverride {
-			if auditErr := repo.InsertAudit(r.Context(), nil, actorID, "sale", saleID, "unsigned_override", map[string]any{
+			if auditErr := repo.InsertAudit(recordCtx, nil, actorID, "sale", saleID, "unsigned_override", map[string]any{
 				"override_actor":  gate.OverrideActor,
 				"override_reason": gate.OverrideReason,
 				"override_until":  gate.OverrideUntil.UTC().Format(time.RFC3339),
@@ -1219,30 +1241,30 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#839). Best-effort, log-only on failure, same as the
 		// unsigned_override block above.
 		if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
-			declareUnsignedFiscalSale(r.Context(), repo, saleID, actorID, signRes)
+			declareUnsignedFiscalSale(recordCtx, repo, saleID, actorID, signRes)
 		}
 		// ut-docs#585 (contract v1.1.0): an approved answer that carried the
 		// §6 KassenSichV evidence gets it persisted against the refund's own
 		// sale row, same as completeTender does for a sale. Evidence is only
 		// ever non-nil on approved.
 		if signRes.Outcome == fiscalSignApproved {
-			recordFiscalTSEEvidence(r.Context(), repo, saleID, actorID, signRes.Evidence)
-			recordFiscalReceiptEvidence(r.Context(), repo, saleID, actorID, signRes.Receipt)
+			recordFiscalTSEEvidence(recordCtx, repo, saleID, actorID, signRes.Evidence)
+			recordFiscalReceiptEvidence(recordCtx, repo, saleID, actorID, signRes.Receipt)
 		}
 		// A fiscal DEVICE's refund slip (Turkey's ÖKC iade fişi), when the
 		// refund's payment leg went through a device plugin: persisted
 		// against the return's own sale row, same as completeTender does
 		// for a sale (fiscal_device_hook.go).
-		recordFiscalDeviceEvidence(r.Context(), d, repo, saleID, actorID, pickDeviceEvidence(nil, method, refundResp))
+		recordFiscalDeviceEvidence(recordCtx, d, repo, saleID, actorID, pickDeviceEvidence(nil, method, refundResp))
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
-		publishStockAdjustedForSale(r.Context(), d, saleInput)
+		publishStockAdjustedForSale(recordCtx, d, saleInput)
 		// The cloud link's live view (ADR-0117 §4/§8, ut-docs#2894): a
 		// refund is a completed "return" sale like any other, so it gets
 		// the same summary frame the tender path sends — refund:true and a
 		// negative total_minor (cloudLinkSaleOf's own sign flip). Best-
 		// effort: a failed re-read of the just-committed return only skips
 		// the frame, never the refund itself.
-		if refundDetail, ok, err := repo.GetSaleDetailByID(r.Context(), saleID); err == nil && ok {
+		if refundDetail, ok, err := repo.GetSaleDetailByID(recordCtx, saleID); err == nil && ok {
 			publishCloudLinkSale(d, refundDetail, "")
 		}
 		// A replica's refund is a journaled sale like any other (ADR-0011
@@ -1251,19 +1273,19 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// the next 30s tick. On a main till it is the `stock` nudge to its
 		// linked tills instead (ADR-0114 §2), so it is never gated.
 		d.RequestSyncPush()
-		newReceipt, _, _, _, _ := repo.SaleTotals(r.Context(), saleID)
+		newReceipt, _, _, _, _ := repo.SaleTotals(recordCtx, saleID)
 		refundAuditPayload := map[string]any{"original": detail.ReceiptNo, "amount": refundTotal.Minor(), "method": method}
 		refundAuditAt := time.Now().UTC().Format(time.RFC3339)
 		if blockedActorID != "" {
-			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, blockedActorID, "sale", newReceipt, "refund",
+			_ = repo.InsertAuditElevated(recordCtx, nil, actorID, blockedActorID, "sale", newReceipt, "refund",
 				refundAuditPayload, refundAuditAt, "")
 		} else {
-			_ = repo.InsertAudit(r.Context(), nil, actorID, "sale", newReceipt, "refund",
+			_ = repo.InsertAudit(recordCtx, nil, actorID, "sale", newReceipt, "refund",
 				refundAuditPayload, refundAuditAt, "")
 		}
 		printReceiptAsync(d, newReceipt, actorID, "")
 		// Invoiced sale? A credit note follows automatically (G31).
-		maybeIssueCreditNote(r.Context(), d, newReceipt, detail.ID, actorID)
+		maybeIssueCreditNote(recordCtx, d, newReceipt, detail.ID, actorID)
 		w.Header().Set("HX-Redirect", "/journal/"+newReceipt)
 		w.WriteHeader(http.StatusOK)
 	})
