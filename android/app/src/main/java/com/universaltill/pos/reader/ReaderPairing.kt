@@ -34,6 +34,11 @@ interface PairHttp {
     fun post(url: String, body: String, expectPin: String?): Answer
 
     fun get(url: String, headers: Map<String, String>, expectPin: String?): Answer
+
+    companion object {
+        /** The most of a response body ever read from the wire (review A-10). */
+        const val MAX_BODY = 8192
+    }
 }
 
 /**

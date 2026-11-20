@@ -12,6 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Reader re-proof after a main LAN key change (ADR-0198 §6.2), against the Go fixture reader_proof.json. */
+private const val ReProofCadence = PinReProof.MIN_GAP_MS
+
 class ReaderReProofTest {
     private val fx: JSONObject = Goldens.file("proof")
     private val bearer = fx.getString("bearer")
@@ -98,11 +100,35 @@ class ReaderReProofTest {
         assertEquals(ReProof.Mismatch, proof(http(PairHttp.Answer(200, """{"data":{"primary_till_id":"p","proof":""}}""", pinSeen))).attempt(creds))
     }
 
-    @Test fun `only a 404 means revoked, no answer and server errors mean unreachable`() {
-        assertEquals(ReProof.Revoked, proof(http(PairHttp.Answer(404, "", pinSeen))).attempt(creds))
-        assertEquals(ReProof.Unreachable, proof(http(PairHttp.Answer(-1, "", null))).attempt(creds))
-        assertEquals(ReProof.Unreachable, proof(http(PairHttp.Answer(500, "", pinSeen))).attempt(creds))
-        assertEquals(ReProof.Unreachable, proof(http(PairHttp.Answer(429, "", pinSeen))).attempt(creds))
+    @Test fun `no status from the unverified connection is a revoke, a 404 included (A-12)`() {
+        for (code in listOf(404, 401, 403, 410, 500, 429, -1)) {
+            val r = proof(http(PairHttp.Answer(code, "", pinSeen))).attempt(creds)
+            assertEquals("status $code", ReProof.Unreachable, r)
+        }
+    }
+
+    @Test fun `a spoofing host answering 404 changes nothing and the old pin stays`() {
+        val h = http(PairHttp.Answer(404, """{"data":null,"error":"not found"}""", "d".repeat(64)))
+        val r = proof(h).attempt(creds)
+        assertFalse(r is ReProof.Adopted)
+        assertEquals(oldPin, creds.pin)
+        assertEquals(bearer, creds.bearer)
+    }
+
+    @Test fun `a 404 then a later valid proof still adopts`() {
+        var t = 1_000L
+        val h = http(PairHttp.Answer(404, "", pinSeen))
+        val p = proof(h) { t }
+        assertEquals(ReProof.Unreachable, p.attempt(creds))
+        t += ReProofCadence
+        h.postAnswer = PairHttp.Answer(200, fx.getJSONObject("response").toString(), pinSeen)
+        val r = p.attempt(creds)
+        r as ReProof.Adopted
+        assertEquals(pinSeen, r.credentials.pin)
+    }
+
+    @Test fun `the response body is read at most 8 KiB from the source`() {
+        assertEquals(8192, PairHttp.MAX_BODY)
     }
 
     @Test fun `at most one attempt per 30 seconds, whatever the outcome`() {
