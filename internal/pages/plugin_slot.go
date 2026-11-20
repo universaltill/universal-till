@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -103,9 +102,10 @@ func pluginSlotPanelPrefix(slot string) string {
 	return "plugin-slot-" + strings.ReplaceAll(slot, ".", "-") + "-"
 }
 
-// pluginSlotPanelSuffixRe is what follows the prefix: a whole-slot panel's
-// index (one digit, pluginSlotMaxEntries <= 10) or a per-entry panel's
-// pluginSlotEntryID (16 hex). It has no "-", so "<panel>-alert" and
+// pluginSlotPanelSuffixRe is what follows the prefix: an entry's
+// pluginSlotEntryID (16 hex), or a one-digit index (the form whole-slot
+// panels had before ut-docs#6687, still accepted so an open page keeps
+// working across an update). It has no "-", so "<panel>-alert" and
 // "<panel>-pos" never match.
 var pluginSlotPanelSuffixRe = regexp.MustCompile(`^(?:[0-9]|[0-9a-f]{16})$`)
 
@@ -125,11 +125,6 @@ func pluginSlotPanelOf(slot, target string) bool {
 	}
 	rest, ok := strings.CutPrefix(target, pluginSlotPanelPrefix(slot))
 	return ok && pluginSlotPanelSuffixRe.MatchString(rest)
-}
-
-// pluginSlotPanelID is panel i's container id in slot.
-func pluginSlotPanelID(slot string, i int) string {
-	return fmt.Sprintf("%s%d", pluginSlotPanelPrefix(slot), i)
 }
 
 // contentSlotEntries returns the entries filling slot for this render, in
@@ -252,7 +247,10 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 		if v == nil {
 			continue
 		}
-		id := pluginSlotPanelID(slot, len(out))
+		// Keyed by the entry, not its position (ut-docs#6687): a late answer
+		// for entry A can never land in the alert of the entry that now sits
+		// at A's old index after a reload.
+		id := pluginSlotEntryPanelID(slot, fill[i])
 		out = append(out, pluginSlotPanel{ID: id, Body: pluginViewBody{Route: fill[i].Route, View: *v, Target: id}})
 	}
 	return out

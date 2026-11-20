@@ -158,7 +158,7 @@ var errPluginNoAnswer = errors.New("plugin gave no answer")
 // not the entry's (ut-docs#4114). The plugin is not asked. The header and
 // query are untrusted, so they are logged quoted.
 func refusePanelGet(w http.ResponseWriter, entry data.PageEntryRow, target, slot string) {
-	logging.L().Warnf("plugin view %s %q: refused panel GET (target %q, slot %q)", entry.PluginID, entry.Route, target, slot)
+	logging.L().Warnf("plugin view %s %q: refused panel request (target %q, slot %q)", entry.PluginID, entry.Route, target, slot)
 	http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 }
 
@@ -177,7 +177,13 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	// never point the answer at core markup.
 	inSlot := false
 	target := r.Header.Get("HX-Target")
+	// ut-docs#6687: a panel-shaped target must be a panel of THIS entry's
+	// slot (as for the paging GET below), else 400 before any ask.
 	if t := target; htmx && (r.Method == http.MethodPost || (isPoll && fragment)) && pluginSlotPanelIDRe.MatchString(t) {
+		if !pluginSlotPanelOf(entry.Slot, t) {
+			refusePanelGet(w, entry, t, "")
+			return
+		}
 		body.Target = t
 		inSlot = true
 	}

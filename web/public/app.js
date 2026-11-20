@@ -1335,9 +1335,31 @@ document.addEventListener('htmx:afterRequest', function (evt) {
   var d = evt.detail || {};
   var rec = d.xhr && pagingFocus.get(d.xhr);
   if (!rec) return;
-  pagingFocus.delete(d.xhr);
+  // Not deleted here: htmx fires sendError/timeout after afterRequest and the
+  // handler below still needs the record. The WeakMap key (xhr) is collected
+  // with the request.
   if (d.elt && d.elt.removeAttribute) d.elt.removeAttribute('data-ut-busy');
   if (rec.panel && rec.panel.removeAttribute) rec.panel.removeAttribute('aria-busy');
+});
+
+// ut-docs#6687: a network failure or timeout of a paging link swaps nothing
+// and, being no HTTP answer, carries no server-rendered notice. The panel's
+// nav holds the existing translated plugin.view.page_failed notice in a
+// <template> (no string here); copy it into the panel's own alert slot. The
+// slot sits outside the panel, so the next successful answer's OOB clear
+// removes it. Focus stays on the link, the page stays as it was.
+['htmx:sendError', 'htmx:timeout'].forEach(function (name) {
+  document.addEventListener(name, function (evt) {
+    var d = evt.detail || {};
+    var rec = d.xhr && pagingFocus.get(d.xhr);
+    if (!rec || !rec.panel || !rec.panel.id || !rec.panel.querySelector) return;
+    var tpl = rec.panel.querySelector('.plugin-view-paging-failed');
+    var box = document.getElementById(rec.panel.id + '-alert');
+    if (tpl && box && tpl.content) box.replaceChildren(tpl.content.cloneNode(true));
+    // Backstop if afterRequest has not run yet for this xhr.
+    if (rec.panel.removeAttribute) rec.panel.removeAttribute('aria-busy');
+    if (d.elt && d.elt.removeAttribute) d.elt.removeAttribute('data-ut-busy');
+  });
 });
 
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders

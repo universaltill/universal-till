@@ -9,7 +9,7 @@
      <button> (the label wraps its input), dir="auto" on an <option>,
      which holds text only. */}}
 {{ define "pluginview_action" }}
-<form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML">
+<form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-sync="#{{ .Target }}:drop">
   <input type="hidden" name="_action" value="{{ .Action }}">
   <button type="submit" class="btn btn-touch {{ .Style }}"><bdi>{{ .Label }}</bdi></button>
 </form>
@@ -17,7 +17,7 @@
 
 {{ define "pluginview_form" }}
 {{- $c := .C }}
-<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML"{{ if $c.Multipart }} enctype="multipart/form-data" hx-encoding="multipart/form-data"{{ end }}>
+<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-sync="#{{ .Target }}:drop"{{ if $c.Multipart }} enctype="multipart/form-data" hx-encoding="multipart/form-data"{{ end }}>
   <input type="hidden" name="_action" value="{{ $c.Action }}">
   {{- range $c.Fields }}
   {{- if eq .Kind "toggle" }}
@@ -102,7 +102,7 @@
   <div class="plugin-view-notice warn" role="status">{{ T "plugin.view.action_failed" }}</div>
   {{- end }}
   {{- if and (not .Poll) (not .RO) }}
-  <form class="plugin-chat-ask" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]">
+  <form class="plugin-chat-ask" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-sync="#{{ .Target }}:drop" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="_action" value="{{ $c.Action }}">
     <input type="hidden" name="_turns" value="{{ $c.History }}">
     <label class="visually-hidden" for="{{ .Target }}-chat-q">{{ T "plugin.chat.question_label" }}</label>

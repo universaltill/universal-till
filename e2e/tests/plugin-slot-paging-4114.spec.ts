@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { test, expect } from './fixtures';
 import type { BrowserContext, Page } from '@playwright/test';
 import { startWorkerTill, type WorkerTill } from './worker-till';
@@ -19,8 +20,13 @@ const VIEWPORTS = [
   { w: 360, h: 740 },
 ];
 const LANGS = ['en', 'fa'];
-const A = '#plugin-slot-reports-panels-0';
-const B = '#plugin-slot-reports-panels-1';
+// ut-docs#6687: a whole-slot panel's id comes from its entry (sha256 of
+// plugin id, NUL, entry key; first 8 bytes in hex), not its position.
+const panelId = (key: string) =>
+  'plugin-slot-reports-panels-' + createHash('sha256').update(`com.example.e2e-views\0${key}`).digest('hex').slice(0, 16);
+const A_ID = panelId('paged_a');
+const A = `#${A_ID}`;
+const B = `#${panelId('paged_b')}`;
 const SHOTS = process.env.UT_4114_SHOTS || ''; // a directory: keep screenshots for the review record
 
 let till: WorkerTill;
@@ -187,9 +193,32 @@ test('a failed page keeps the page, focus and retry (ut-docs#4114)', async () =>
   await expect(page.locator(A)).not.toHaveAttribute('aria-busy', 'true');
   await expect(rowText(page, A)).toHaveText('A row p.1');
   expect(await activeIs(page, A, 'next')).toBe(true);
+  // ut-docs#6687: no HTTP answer to carry a notice, so app.js copies the
+  // server-rendered plugin.view.page_failed template into the panel's alert.
+  await expect(page.locator(`${A}-alert .plugin-view-notice`)).toHaveText(en['plugin.view.page_failed']);
   await page.unroute('**/plugin/e2e-views/paged_a?*');
   await page.keyboard.press('Enter'); // retry
   await expect(rowText(page, A)).toHaveText('A row p.2');
+  await expect(page.locator(`${A}-alert .plugin-view-notice`)).toHaveCount(0); // cleared by the next answer
+});
+
+test('a timed-out page fills the panel alert (ut-docs#6687)', async () => {
+  await openReports(page, 'en', VIEWPORTS[0]);
+  await page.evaluate(() => { (window as any).__utPromptTimeoutMs = 300; }); // read per request; gone on the next navigation
+  await page.route('**/plugin/e2e-views/paged_a?*', async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.abort().catch(() => {});
+  });
+  await link(page, A, 'next').click();
+  await expect(page.locator(`${A}-alert .plugin-view-notice`)).toHaveText(en['plugin.view.page_failed'], { timeout: 10_000 });
+  await expect(rowText(page, A)).toHaveText('A row p.1');
+  await expect(page.locator(A)).not.toHaveAttribute('aria-busy', 'true');
+  await page.unroute('**/plugin/e2e-views/paged_a?*');
+});
+
+test('panel ids belong to the entry, not its position (ut-docs#6687)', async () => {
+  await openReports(page, 'en', VIEWPORTS[0]);
+  await expect(page.locator('[id^="plugin-slot-reports-panels-"][id$="-0"], [id^="plugin-slot-reports-panels-"][id$="-1"]')).toHaveCount(0);
 });
 
 test('a server-side failure fills only the panel alert (ut-docs#4114)', async () => {
@@ -199,7 +228,7 @@ test('a server-side failure fills only the panel alert (ut-docs#4114)', async ()
       status: 502,
       contentType: 'text/html; charset=utf-8',
       headers: { 'HX-Reswap': 'none' },
-      body: `<div id="plugin-slot-reports-panels-0-alert" class="plugin-view-alert" aria-live="polite" hx-swap-oob="innerHTML"><div class="plugin-view-notice warn">${en['plugin.view.page_failed']}</div></div>`,
+      body: `<div id="${A_ID}-alert" class="plugin-view-alert" aria-live="polite" hx-swap-oob="innerHTML"><div class="plugin-view-notice warn">${en['plugin.view.page_failed']}</div></div>`,
     }),
   );
   await link(page, A, 'next').click();
