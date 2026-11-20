@@ -3,14 +3,17 @@ package pages
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
@@ -85,7 +88,8 @@ func TestPluginSlotPanelOf_4114(t *testing.T) {
 			continue
 		}
 		for i := 0; i < pluginSlotMaxEntries; i++ {
-			if id := pluginSlotPanelID(slot, i); !pluginSlotPanelOf(slot, id) {
+			e := data.PageEntryRow{PluginID: "p", EntryKey: fmt.Sprint("k", i)}
+			if id := pluginSlotEntryPanelID(slot, e); !pluginSlotPanelOf(slot, id) {
 				t.Errorf("generated id %q is not a panel of %q", id, slot)
 			}
 		}
@@ -101,17 +105,18 @@ func TestPluginSlot_PanelPagingLinks_4114(t *testing.T) {
 		t.Fatalf("GET = %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
+	pid := pluginSlotEntryPanelID("reports.panels", data.PageEntryRow{PluginID: viewPluginID, EntryKey: "panel"})
 	const u = "/plugin/views/panel?days=7&amp;page=2&amp;slot=reports.panels"
 	for _, want := range []string{
 		`href="` + u + `" rel="next"`,
 		`hx-get="` + u + `"`,
-		`hx-target="#` + panel0 + `"`,
+		`hx-target="#` + pid + `"`,
 		`hx-swap="innerHTML"`,
 		`hx-push-url="false"`,
-		`hx-sync="#` + panel0 + `:drop"`,
-		`hx-indicator="#` + panel0 + `"`,
-		`aria-describedby="` + panel0 + `-pos0"`,
-		`id="` + panel0 + `-pos0"`,
+		`hx-sync="#` + pid + `:drop"`,
+		`hx-indicator="#` + pid + `"`,
+		`aria-describedby="` + pid + `-pos0"`,
+		`id="` + pid + `-pos0"`,
 		"Page 1 of 3",
 	} {
 		if !strings.Contains(body, want) {
@@ -433,5 +438,112 @@ func TestPluginSlot_EntryRouteSlotParamFromCore_4114(t *testing.T) {
 	params, _ := h.lastPay["params"].(map[string]any)
 	if params["slot"] != "settings.sections" {
 		t.Errorf("params.slot = %v, want settings.sections set by core", params["slot"])
+	}
+}
+
+// ut-docs#6687 L2: a whole-slot panel's container id comes from its entry,
+// not its position, so an answer addressed to entry A never lands in the
+// alert of whatever entry now sits at A's old index.
+func TestContentSlotPanelIDsStableAcrossReorder_6687(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("VIEWS"))
+	h.otherWith(slotDoc("OTHER"), 0)
+	const slot = "reports.panels"
+	idRe := regexp.MustCompile(`<div id="(plugin-slot-[a-z0-9-]+)" class="plugin-view"`)
+	render := func() []string {
+		t.Helper()
+		rec := h.do(http.MethodGet, "/ui/slot/"+slot, nil, true)
+		var ids []string
+		for _, m := range idRe.FindAllStringSubmatch(rec.Body.String(), -1) {
+			ids = append(ids, m[1])
+		}
+		return ids
+	}
+	rows := contentSlotEntries(t.Context(), h.d, slot)
+	if len(rows) != 2 {
+		t.Fatalf("entries = %d, want 2", len(rows))
+	}
+	before := render()
+	if len(before) != 2 {
+		t.Fatalf("panels = %v, want 2", before)
+	}
+	// Sorted by (plugin id, key): the other plugin first. Each id is its
+	// entry's own, and a core panel id.
+	for i, row := range rows {
+		if want := pluginSlotEntryPanelID(slot, row); before[i] != want {
+			t.Errorf("panel %d id = %q, want %q", i, before[i], want)
+		}
+		if !pluginSlotPanelOf(slot, before[i]) {
+			t.Errorf("panel id %q is not a panel of %q", before[i], slot)
+		}
+	}
+	// Drop the first entry: the second keeps its id (it used to shift to -0).
+	if _, err := h.d.Db.Exec(`DELETE FROM plugin_entries WHERE route = ?`, rows[0].Route); err != nil {
+		t.Fatal(err)
+	}
+	after := render()
+	if len(after) != 1 || after[0] != before[1] {
+		t.Fatalf("ids after removing the first entry = %v, want [%s]", after, before[1])
+	}
+}
+
+// ut-docs#6687: a panel-shaped HX-Target on a POST or a job poll must be a
+// panel of THIS entry's slot, like the paging GET: else 400, plugin not asked.
+func TestPluginSlot_ActionAndPollTargetBoundToSlot_6687(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("SAVED"))
+	own := pluginSlotEntryPanelID("reports.panels", data.PageEntryRow{PluginID: viewPluginID, EntryKey: "panel"})
+	post := func(path, target string) *httptest.ResponseRecorder {
+		return h.doAs(http.MethodPost, path, url.Values{"_action": {"refresh"}}, nil, map[string]string{"HX-Request": "true", "HX-Target": target})
+	}
+	poll := func(path, target string) *httptest.ResponseRecorder {
+		return h.doAs(http.MethodGet, path+"?"+pluginJobParam+"=nojob", nil, nil, map[string]string{"HX-Request": "true", "HX-Target": target})
+	}
+	for name, send := range map[string]func(string, string) *httptest.ResponseRecorder{"POST": post, "poll": poll} {
+		for _, c := range []struct{ what, path, target string }{
+			{"another slot's panel", "/plugin/views/panel", "plugin-slot-eod-footer-0"},
+			{"alert id", "/plugin/views/panel", own + "-alert"},
+			{"a slot with no panels", "/plugin/views/panel", "plugin-slot-setup-wizard-steps-0"},
+			{"admin.pages", "/plugin/views/panel", "plugin-slot-admin-pages-0"},
+			{"entry without a slot", "/plugin/views", own},
+		} {
+			h.lastEv = plugins.Event{}
+			rec := send(c.path, c.target)
+			if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "SAVED") || h.lastEv.Type != "" {
+				t.Errorf("%s with %s = %d (asked %q), want 400 and no ask", name, c.what, rec.Code, h.lastEv.Type)
+			}
+		}
+	}
+	// Its own panel still works, by entry id and by the legacy index form.
+	for _, target := range []string{own, panel0} {
+		if rec := post("/plugin/views/panel", target); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `hx-target="#`+target+`"`) {
+			t.Errorf("POST own panel %q = %d:\n%s", target, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// ut-docs#6687: a paged panel carries the failure notice as inert, translated
+// markup for app.js to copy on a network failure (no JS string), and its
+// action forms share the paging links' hx-sync scope so a Next tap during a
+// POST (and a submit during paging) is dropped, not queued.
+func TestPluginSlot_PagingFailureTemplateAndSync_6687(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(`{"document":{"version":1,"title":{"literal":"PAGED title"},"components":[
+		{"type":"button","action":"refresh","label":{"literal":"Refresh"}},
+		{"type":"table","columns":[{"label":{"literal":"Item"},"kind":"text"}],"rows":[["Tea"]],"paging":{"page":1,"pages":3}}]}}`)
+	h.otherWith(slotDoc("OTHER"), 0) // not paged: no template
+	body := h.do(http.MethodGet, "/ui/slot/reports.panels?days=7", nil, true).Body.String()
+	want := html.EscapeString(httpx.T("en", "plugin.view.page_failed"))
+	tpl := `<template class="plugin-view-paging-failed"><div class="plugin-view-notice warn">` + want + `</div></template>`
+	if strings.Count(body, tpl) != 1 {
+		t.Errorf("want exactly one failure template (the paged panel's):\n%s", body)
+	}
+	if strings.Contains(body, "plugin.view.page_failed") {
+		t.Error("the failure notice key was not translated")
+	}
+	own := pluginSlotEntryPanelID("reports.panels", data.PageEntryRow{PluginID: viewPluginID, EntryKey: "panel"})
+	sync := `hx-sync="#` + own + `:drop"`
+	if n := strings.Count(body, sync); n != 2 { // the refresh form + the Next link (page 1 has no Prev)
+		t.Errorf("hx-sync %q count = %d, want 2 (action form + next link):\n%s", sync, n, body)
 	}
 }
