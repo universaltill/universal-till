@@ -97,12 +97,7 @@ func tapAuthorize(ctx context.Context, d *common.Deps, method, requestID string,
 	bound := paybroker.WithBinding(ctx, b)
 	resp, dispatched, err := blockingPaymentEventDispatch(bound, d, method, "authorize", requestID, payload)
 	if err != nil {
-		var exitErr *plugins.HandlerExitError
-		if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeTapStartFailed {
-			settleAttempt(ctx, repo, requestID, data.AttemptCancelled, "start_failed")
-			return nil, dispatched, nil, &tapStartFailedError{Method: method}
-		}
-		return resp, dispatched, nil, err
+		return tapVerifyFailure(ctx, d, repo, requestID, resp, dispatched, err, method)
 	}
 	if !dispatched {
 		// A tap entry nobody was asked about took no payment: completing the
@@ -121,6 +116,59 @@ func tapAuthorize(ctx context.Context, d *common.Deps, method, requestID string,
 		return resp, dispatched, nil, cerr
 	}
 	return resp, dispatched, &conf, nil
+}
+
+// tapVerifyFailure decides what a plugin failure (start_failed, a decline, a
+// timeout) means for a tap leg. With no attempt row no PaymentIntent exists,
+// so only then is start_failed "nothing charged" and a decline final. Once a
+// row exists a tap may have happened and the plugin's word is not enough
+// (ADR-0198 3.9, 3.10): the broker decides. Paid is confirmed (the sale
+// completes), not paid is cancelled and the original failure stands, anything
+// else is pending and locks the tender.
+func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAttemptRepo, requestID string, resp json.RawMessage, dispatched bool, err error, method string) (json.RawMessage, bool, *pos.TapConfirmation, error) {
+	var exitErr *plugins.HandlerExitError
+	startFailed := errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeTapStartFailed
+	original := err
+	if startFailed {
+		original = &tapStartFailedError{Method: method}
+	}
+	if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown {
+		return resp, dispatched, nil, err // already unknown: the gate locks it
+	}
+	f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: requestID})
+	if !f.HaveRow && f.ErrCode == "" {
+		// No attempt row: nothing was started through core.
+		return resp, dispatched, nil, original
+	}
+	f = tapCancelThenAssess(ctx, d, f)
+	switch f.Verdict {
+	case tapNotPaid:
+		reason := "declined"
+		state := data.AttemptDeclined
+		if startFailed {
+			reason, state = "start_failed", data.AttemptCancelled
+		}
+		settleAttempt(ctx, repo, requestID, state, reason)
+		return resp, dispatched, nil, original
+	case tapPaid:
+		conf, cerr := pos.ConfirmTap(ctx, repo, requestID)
+		var pe *pos.PaymentPendingError
+		if cerr == nil {
+			return nil, true, &conf, nil
+		}
+		if errors.As(cerr, &pe) && pe.Reason == pos.PendingAlreadySettled {
+			return nil, true, &pos.TapConfirmation{PIID: f.Attempt.PIID, CardBrand: f.Attempt.CardBrand, Last4: f.Attempt.Last4}, nil
+		}
+		return resp, dispatched, nil, cerr
+	}
+	reason := f.Reason
+	if reason == "" {
+		reason = pos.PendingNotConfirmed
+	}
+	if f.HaveRow {
+		settleAttempt(ctx, repo, requestID, data.AttemptUnknown, reason)
+	}
+	return resp, dispatched, nil, &pos.PaymentPendingError{Reason: reason}
 }
 
 // settleAttempt closes an attempt row core knows nothing was charged for;

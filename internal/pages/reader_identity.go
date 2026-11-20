@@ -72,63 +72,73 @@ func readerRepoFor(d *common.Deps) *data.CardReaderCredentialRepo {
 	return data.NewCardReaderCredentialRepo(d.Db)
 }
 
-// syncReader authenticates a card reader's call by its bearer, the reader
-// twin of syncTill (design-batch2 §3). It reads ONLY card_reader_credentials
-// (joined to the active registry row), never tills, so a till-only handler
-// that calls syncTill refuses a reader by construction, and a reader is
-// accepted only by the handlers that call this. Beyond the bearer:
-//   - TLS only: a reader never talks plain HTTP;
-//   - the connection must have served the pin recorded at pairing (or the
-//     announced next pin), so a bearer replayed through another certificate
-//     is refused;
-//   - a revoked credential or a removed row never matches.
-//
-// Failures feed the same per-IP limiter as syncTill.
-func syncReader(w http.ResponseWriter, r *http.Request, repo *data.CardReaderCredentialRepo) (data.ReaderCredential, bool) {
-	if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == "" {
-		return data.ReaderCredential{}, false
+// bearerDenial says why a bearer was not accepted. The reader phone wipes its
+// stored credentials on a 401, so 401 must mean exactly "this bearer is
+// invalid or revoked" (review R-1/A-6): a lockout is 429 and a failed lookup
+// 503, both with Retry-After, and the phone keeps its pairing.
+type bearerDenial int
+
+const (
+	denyInvalid     bearerDenial = iota // no/unknown/revoked bearer or wrong pin: 401
+	denyLockedOut                       // per-IP lockout: 429, Retry-After already set
+	denyUnavailable                     // credential lookup failed: 503
+)
+
+// status is the HTTP status and message for a denial.
+func (d bearerDenial) status(w http.ResponseWriter) (int, string) {
+	switch d {
+	case denyLockedOut:
+		return http.StatusTooManyRequests, "too many failed attempts"
+	case denyUnavailable:
+		w.Header().Set("Retry-After", "5")
+		return http.StatusServiceUnavailable, "temporarily unavailable"
 	}
-	if bearerLockedOut(w, r) {
-		return data.ReaderCredential{}, false
-	}
-	c, ok := authReader(r, repo)
-	if !ok {
-		recordBearerFailure(r)
-	}
-	return c, ok
+	return http.StatusUnauthorized, "unauthorized"
 }
 
-func authReader(r *http.Request, repo *data.CardReaderCredentialRepo) (data.ReaderCredential, bool) {
+// authReader is the reader bearer check itself. dbErr reports a failed lookup,
+// which is neither a valid nor an invalid bearer.
+func authReader(r *http.Request, repo *data.CardReaderCredentialRepo) (c data.ReaderCredential, ok, dbErr bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" || repo == nil || r.TLS == nil {
-		return data.ReaderCredential{}, false
+		return data.ReaderCredential{}, false, false
 	}
 	c, ok, err := repo.ByBearerHashAt(r.Context(), hashBearer(h), time.Now())
-	if err != nil || !ok {
-		return data.ReaderCredential{}, false
+	if err != nil {
+		return data.ReaderCredential{}, false, true
+	}
+	if !ok {
+		return data.ReaderCredential{}, false, false
 	}
 	served := lantls.ServedPin(r.Context())
 	if served == "" || (served != c.PinSPKI && (c.NextPin == "" || served != c.NextPin)) {
-		return data.ReaderCredential{}, false
+		return data.ReaderCredential{}, false, false
 	}
-	return c, true
+	return c, true, false
 }
 
 // syncTillOrReader is for the three handlers a reader may reach. It tries
 // the till lookup first and only if that says "not a till bearer" the reader
 // lookup (the two lookups are never merged); a failure of both counts ONCE.
-func syncTillOrReader(w http.ResponseWriter, r *http.Request, tills *data.TillsRepo, readers *data.CardReaderCredentialRepo) (till data.TillRow, reader data.ReaderCredential, isReader, ok bool) {
+func syncTillOrReader(w http.ResponseWriter, r *http.Request, tills *data.TillsRepo, readers *data.CardReaderCredentialRepo) (till data.TillRow, reader data.ReaderCredential, isReader, ok bool, deny bearerDenial) {
 	if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == "" {
 		return
 	}
 	if bearerLockedOut(w, r) {
+		deny = denyLockedOut
 		return
 	}
-	if t, tok := authTill(w, r, tills); tok {
-		return t, data.ReaderCredential{}, false, true
+	t, tok, tdbErr := authTillEx(w, r, tills)
+	if tok {
+		return t, data.ReaderCredential{}, false, true, denyInvalid
 	}
-	if c, rok := authReader(r, readers); rok {
-		return data.TillRow{}, c, true, true
+	c, rok, rdbErr := authReader(r, readers)
+	if rok {
+		return data.TillRow{}, c, true, true, denyInvalid
+	}
+	if tdbErr || rdbErr {
+		deny = denyUnavailable // a failed lookup is not a wrong bearer: not counted
+		return
 	}
 	recordBearerFailure(r)
 	return

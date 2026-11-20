@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -729,4 +731,250 @@ func TestPhoneReaderPairingShipsDark(t *testing.T) {
 	if rec := g.request(t, "Till 2", "s2", "additional", true, "192.0.2.9:1"); rec.Code != http.StatusOK {
 		t.Fatalf("till pair request with the reader feature off = %d", rec.Code)
 	}
+}
+
+// --- F1 (tester-batch): the phone's approval poll is not the pair request ---
+
+// pollFrom polls from one fixed source, as a real phone does.
+func (g *readerRigT) pollFrom(id, secret, remote string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/pair-requests/"+id, nil)
+	req.Header.Set(fleetlink.HeaderPairRequestSecret, secret)
+	req.RemoteAddr = remote
+	return g.serve(g.asTLS(req))
+}
+
+func TestPhoneApprovalPollEvery2sForTenMinutesIsNeverRefused(t *testing.T) {
+	g := newReaderRig(t, true)
+	now := time.Now()
+	pairPollNow = func() time.Time { return now }
+	t.Cleanup(func() { pairPollNow = testPollClock })
+	const phone = "192.0.2.60:7000"
+	secret := "s-poll"
+	id := idOf(t, g.request(t, "Phone", secret, "card_reader", true, phone))
+	for i := 0; i < 300; i++ { // 10 minutes at the phone's 2 s cadence
+		if i == 299 {
+			if rec := g.approve(id, ""); rec.Code != http.StatusOK {
+				t.Fatalf("approve = %d", rec.Code)
+			}
+		}
+		rec := g.pollFrom(id, secret, phone)
+		want := http.StatusNotFound
+		if i == 299 {
+			want = http.StatusOK
+		}
+		if rec.Code != want {
+			t.Fatalf("poll %d (t+%ds) = %d, want %d: the phone's poll must never be limited at its own cadence", i, 2*i, rec.Code, want)
+		}
+		now = now.Add(2 * time.Second)
+	}
+	// The polls did not eat the pair-request budget of this source.
+	if rec := g.request(t, "Phone 2", "s-poll-2", "card_reader", true, phone); rec.Code != http.StatusOK {
+		t.Fatalf("pair request after 300 polls = %d, want 200", rec.Code)
+	}
+}
+
+func TestPollFasterThanTheGapIs429WithRetryAfterAndRequestsStayStrict(t *testing.T) {
+	g := newReaderRig(t, true)
+	now := time.Now()
+	pairPollNow = func() time.Time { return now }
+	t.Cleanup(func() { pairPollNow = testPollClock })
+	const phone = "192.0.2.61:7000"
+	id := idOf(t, g.request(t, "Phone", "s-fast", "card_reader", true, phone))
+	if rec := g.pollFrom(id, "s-fast", phone); rec.Code != http.StatusNotFound {
+		t.Fatalf("first poll = %d", rec.Code)
+	}
+	rec := g.pollFrom(id, "s-fast", phone)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "2" {
+		t.Fatalf("immediate re-poll = %d Retry-After %q, want 429 + 2", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	now = now.Add(2 * time.Second)
+	if rec := g.pollFrom(id, "s-fast", phone); rec.Code != http.StatusNotFound {
+		t.Fatalf("poll after the gap = %d", rec.Code)
+	}
+	// The request side stays strict: the 6th request in a minute from one source is refused.
+	got429 := false
+	for i := 0; i < 8; i++ {
+		if g.request(t, "P", fmt.Sprintf("sx%d", i), "card_reader", true, phone).Code == http.StatusTooManyRequests {
+			got429 = true
+		}
+	}
+	if !got429 {
+		t.Fatal("pair requests lost their strict limit")
+	}
+}
+
+func TestPollPerSourceCapStopsIdEnumerationAcrossIds(t *testing.T) {
+	g := newReaderRig(t, true)
+	now := time.Now()
+	pairPollNow = func() time.Time { return now }
+	t.Cleanup(func() { pairPollNow = testPollClock })
+	refused := 0
+	for i := 0; i < pairPollSourceMax+30; i++ {
+		if g.pollFrom(fmt.Sprintf("guess-%d", i), "x", "192.0.2.62:1").Code == http.StatusTooManyRequests {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("one source could poll unboundedly many distinct ids in a minute")
+	}
+}
+
+// F3 (tester-batch): two simultaneous polls of one approved pairing make ONE
+// reader and ONE bearer; the loser gets the same 404 as any replay.
+func TestConcurrentDoublePollOfAnApprovedPairingMakesOneReader(t *testing.T) {
+	g := newReaderRig(t, true)
+	secret := "s-race"
+	id := idOf(t, g.request(t, "Race phone", secret, "card_reader", true, ""))
+	if rec := g.approve(id, ""); rec.Code != http.StatusOK {
+		t.Fatalf("approve = %d", rec.Code)
+	}
+	const n = 8
+	codes := make([]int, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			codes[i] = g.pollFrom(id, secret, fmt.Sprintf("192.0.2.%d:7000", 150+i)).Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	ok := 0
+	for _, c := range codes {
+		if c == http.StatusOK {
+			ok++
+		}
+	}
+	var readers, creds int
+	if err := g.d.Db.QueryRow(`SELECT COUNT(*) FROM card_readers`).Scan(&readers); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.d.Db.QueryRow(`SELECT COUNT(*) FROM card_reader_credentials`).Scan(&creds); err != nil {
+		t.Fatal(err)
+	}
+	if ok != 1 || readers != 1 || creds != 1 {
+		t.Fatalf("codes %v: %d handovers, %d readers, %d credentials; want exactly 1 of each", codes, ok, readers, creds)
+	}
+}
+
+// --- review R-1/A-6: the phone wipes its credentials on 401, so 401 means
+// exactly "this bearer is invalid or revoked" and nothing else ---
+
+var readerBearerRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/api/sync/link"},
+	{http.MethodPost, "/api/sync/bearer/rotate"},
+	{http.MethodPost, "/api/sync/enroll/withdraw"},
+}
+
+func TestReaderLockoutIs429WithRetryAfterNever401(t *testing.T) {
+	g := newReaderRig(t, true)
+	_, bearer := g.enrolReader(t, "Phone")
+	now := time.Now()
+	syncBearerFailures = newBearerFailureLimiter(3, time.Minute, time.Minute, func() time.Time { return now })
+	for i := 0; i < 3; i++ {
+		rq := readerReq(g, http.MethodGet, "/api/sync/link", "wrong", true)
+		rq.RemoteAddr = "198.51.100.20:1"
+		if rec := g.serve(rq); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("a wrong bearer = %d, want 401", rec.Code)
+		}
+	}
+	for _, rt := range readerBearerRoutes {
+		rq := readerReq(g, rt.method, rt.path, bearer, true) // the VALID bearer
+		rq.RemoteAddr = "198.51.100.20:2"
+		rec := g.serve(rq)
+		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+			t.Errorf("%s %s from a locked-out source = %d Retry-After %q, want 429 + Retry-After (a 401 makes the phone forget its pairing)", rt.method, rt.path, rec.Code, rec.Header().Get("Retry-After"))
+		}
+	}
+}
+
+func TestReaderLookupErrorIs503AndIsNotCountedAsABearerFailure(t *testing.T) {
+	g := newReaderRig(t, true)
+	_, bearer := g.enrolReader(t, "Phone")
+	if _, err := g.d.Db.Exec(`ALTER TABLE card_reader_credentials RENAME TO card_reader_credentials_gone`); err != nil {
+		t.Fatal(err)
+	}
+	for _, rt := range readerBearerRoutes {
+		for i := 0; i < 25; i++ { // more than the lockout cap
+			rq := readerReq(g, rt.method, rt.path, bearer, true)
+			rq.RemoteAddr = "198.51.100.21:1"
+			rec := g.serve(rq)
+			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+				t.Fatalf("%s %s with the credential lookup failing = %d Retry-After %q, want 503 + Retry-After", rt.method, rt.path, rec.Code, rec.Header().Get("Retry-After"))
+			}
+		}
+	}
+	if d := syncBearerFailures.retryAfter("198.51.100.21"); d != 0 {
+		t.Fatalf("a database error locked the source out for %v; only a wrong bearer counts", d)
+	}
+}
+
+func TestOnlyAnInvalidOrRevokedReaderBearerIs401(t *testing.T) {
+	g := newReaderRig(t, true)
+	id, bearer := g.enrolReader(t, "Phone")
+	for _, rt := range readerBearerRoutes {
+		if rec := g.serve(readerReq(g, rt.method, rt.path, "never-issued", true)); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s unknown bearer = %d, want 401", rt.method, rt.path, rec.Code)
+		}
+	}
+	if _, err := g.d.Db.Exec(`UPDATE card_reader_credentials SET revoked_at = datetime('now') WHERE reader_id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if rec := g.serve(readerReq(g, http.MethodGet, "/api/sync/link", bearer, true)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked bearer = %d, want 401", rec.Code)
+	}
+}
+
+// F5/F6 (tester-batch): the reader sections are their own cards, with no
+// bullet, a visible label on each field, Deny and Approve in their own row,
+// and 56 px targets.
+func TestReaderSectionsLayout(t *testing.T) {
+	g := newReaderRig(t, true)
+	g.request(t, "Counter phone", "s-lay", "card_reader", true, "")
+	g.enrolReader(t, "Second phone")
+	req := g.serve(httptest.NewRequest(http.MethodGet, "/ui/tills/reader-requests", nil)).Body.String()
+	lst := g.serve(httptest.NewRequest(http.MethodGet, "/ui/tills/readers", nil)).Body.String()
+	for name, body := range map[string]string{"requests": req, "readers": lst} {
+		if !strings.Contains(body, `class="card"`) {
+			t.Errorf("%s fragment is not its own card", name)
+		}
+		if strings.Contains(body, `placeholder=`) {
+			t.Errorf("%s fragment labels a field by placeholder only", name)
+		}
+		if strings.Count(body, "<label") == 0 {
+			t.Errorf("%s fragment has no visible field label", name)
+		}
+	}
+	if !strings.Contains(req, `class="reader-actions"`) {
+		t.Error("Deny and Approve must sit in their own spaced row")
+	}
+	if strings.Contains(lst, `<li class="card"`) {
+		t.Error("reader rows must not be nested cards")
+	}
+	css, err := os.ReadFile(repoFile("web", "public", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{".reader-list { list-style: none", "#card-readers-list input, #reader-requests input { min-block-size: 56px", "#card-readers-list .btn, #reader-requests .btn { min-block-size: 56px", ".reader-actions { display: flex; flex-wrap: wrap; gap: .75rem"} {
+		if !strings.Contains(string(css), want) {
+			t.Errorf("app.css lacks %q", want)
+		}
+	}
+	page, err := os.ReadFile(repoFile("web", "ui", "pages", "tills.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := string(page)
+	if i, j := strings.Index(pc, `id="tills-pairing-card"`), strings.Index(pc, "/ui/tills/reader-requests"); j < i || strings.Index(pc[i:j], "\n  </div>") < 0 {
+		t.Error("the reader sections must sit after, not inside, the pairing card")
+	}
+}
+
+// repoFile is a path under the repository root, independent of the test's cwd.
+func repoFile(parts ...string) string {
+	_, here, _, _ := runtime.Caller(0)
+	return filepath.Join(append([]string{filepath.Dir(here), "..", ".."}, parts...)...)
 }
