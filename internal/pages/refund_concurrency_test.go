@@ -127,6 +127,7 @@ func TestRefundConcurrency_CashSameLineRefundedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(hold) // idempotent; frees the lock if a guard fatals first
 	post := func() <-chan *httptest.ResponseRecorder {
 		out := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
@@ -249,6 +250,7 @@ func TestRefundConcurrency_CancelledWaiterRecordsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(hold) // idempotent; frees the lock if a guard fatals first
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	res := rig.postRefundAsync(ctx, receipt, 1)
