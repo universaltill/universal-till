@@ -1342,3 +1342,80 @@ func TestRunDailyBackup_UnusableRetentionSettingPrunesNothing(t *testing.T) {
 		t.Fatalf("an old backup was pruned although the setting was unusable: %v", err)
 	}
 }
+
+// putFutureMtimeBackup writes a backup file named delta from now whose mtime
+// is mtimeDelta from now (positive = future) and returns its path.
+func putFutureMtimeBackup(t *testing.T, dbPath string, now time.Time, nameDelta, mtimeDelta time.Duration) (string, string) {
+	t.Helper()
+	dir := filepath.Join(filepath.Dir(dbPath), "backups")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "unitill-pos-" + now.UTC().Add(nameDelta).Format("20060102-150405") + ".db"
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	at := now.Add(mtimeDelta)
+	if err := os.Chtimes(p, at, at); err != nil {
+		t.Fatal(err)
+	}
+	return name, dir
+}
+
+func openDailyTestDB(t *testing.T) (*appdb.DB, string, string) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d, dbPath, assetsRoot
+}
+
+// ut-docs#5523: a future-mtime file with a past name is 3 days old, so the
+// daily backup must still write a snapshot.
+func TestRunDailyBackupFutureMtimePastNameWritesSnapshot(t *testing.T) {
+	d, dbPath, assetsRoot := openDailyTestDB(t)
+	now := time.Now()
+	putFutureMtimeBackup(t, dbPath, now, -72*time.Hour, time.Hour)
+	runDailyBackupAt(d.DB, dbPath, assetsRoot, now)
+	list, err := appdb.ListBackups(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("%d backups, want 2 (a new snapshot beside the future-mtime one)", len(list))
+	}
+}
+
+func TestRunDailyBackupOnlyUnknownAgeStillSnapshots(t *testing.T) {
+	d, dbPath, assetsRoot := openDailyTestDB(t)
+	now := time.Now()
+	putFutureMtimeBackup(t, dbPath, now, 2*time.Hour, time.Hour)
+	runDailyBackupAt(d.DB, dbPath, assetsRoot, now)
+	list, err := appdb.ListBackups(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("%d backups, want 2", len(list))
+	}
+}
+
+func TestRunDailyBackupFreshCheckSkipsFutureFile(t *testing.T) {
+	d, dbPath, assetsRoot := openDailyTestDB(t)
+	now := time.Now()
+	putFutureMtimeBackup(t, dbPath, now, -2*time.Hour, -2*time.Hour)
+	putFutureMtimeBackup(t, dbPath, now, 2*time.Hour, time.Hour)
+	runDailyBackupAt(d.DB, dbPath, assetsRoot, now)
+	list, err := appdb.ListBackups(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("%d backups, want 2 (fresh real backup -> no new snapshot)", len(list))
+	}
+}

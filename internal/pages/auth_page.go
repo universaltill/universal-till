@@ -136,7 +136,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		// ut-docs#3116: the first-boot form keeps a typed shop name across a
 		// PIN error, like the wizard; a refused name is not echoed back.
-		if firstBoot && r.Method == http.MethodPost && errKey != keyStoreNameRequired {
+		if firstBoot && r.Method == http.MethodPost && errKey != keyStoreNameRequired && errKey != keyStoreNameInvalidChars {
 			data["storeName"] = strings.TrimSpace(r.PostFormValue("store_name"))
 		}
 		httpx.RenderPartial("ui/pages/login.html", data)(w, r)
@@ -331,10 +331,22 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ut-docs#3116: name the shop here too, never finishing first boot
 		// on migration 001's seeded "My Store" — the wizard's rule (#3096).
 		// Checked before any write, so a refusal saves nothing.
-		storeName := strings.TrimSpace(r.PostFormValue("store_name"))
-		if isRefusedStoreName(r, storeName) {
-			renderLogin(w, r, keyStoreNameRequired, "")
+		storeName, storeErrKey := firstBootStoreName(r, r.PostFormValue("store_name"))
+		if storeErrKey != "" {
+			renderLogin(w, r, storeErrKey, "")
 			return
+		}
+		// ut-docs#4391: an optional till name, the wizard's rule
+		// (validateTillName). Absent: unchanged (the name-shop gate asks
+		// later); present but invalid: refused, nothing saved.
+		tillName := ""
+		if _, sent := r.PostForm["till_name"]; sent {
+			tn, err := validateTillName(r.PostFormValue("till_name"))
+			if err != nil {
+				renderLogin(w, r, keyTillNameRequired, "")
+				return
+			}
+			tillName = tn
 		}
 		hash, err := auth.HashPIN(pin)
 		if err != nil {
@@ -364,6 +376,13 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
 			loginUnavailable(w, r, "", err)
 			return
+		}
+		if tillName != "" {
+			// settings-write:allow first boot runs before this till follows a main till (as setup_page.go)
+			if err := d.Settings.Set(r.Context(), "till.name", tillName); err != nil {
+				loginUnavailable(w, r, "", err)
+				return
+			}
 		}
 		token, err := svc.CreateSession(r.Context(), adminID)
 		if err != nil {

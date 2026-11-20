@@ -550,6 +550,9 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				// report, same-gate, nil-when-absent as Operators.
 				NoSaleCount     int
 				NoSaleOperators []data.NoSaleOperator
+				// LateNote (ut-docs#5776): same archived-report, same-gate
+				// (CanRunEOD), nil-when-absent as NoSaleCount.
+				LateNote *eodLateView
 				// OrderTypes (ut-docs#1015) is the same archived-report,
 				// same-gate, same-nil-when-absent breakdown as the three
 				// above.
@@ -596,6 +599,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.Operators = rep.Operators
 							row.NoSaleCount = rep.NoSaleCount
 							row.NoSaleOperators = rep.NoSaleOperators
+							row.LateNote = eodLateNoteView(rep.LateEntries)
 							row.OrderTypes = eodOrderTypesForDisplay(rep.OrderTypes) // ut-docs#3632
 							row.FiscalDevice = rep.FiscalDevice
 							if rep.Day == "" {
@@ -811,7 +815,7 @@ func renderTipsTab(repo *data.POSRepo, d *common.Deps, r *http.Request, window r
 	}
 
 	return httpx.RenderPartial("ui/partials/reports_tab_tips.html", map[string]any{
-		"StoreName":     storeNameOrDefault(ctx, d),
+		"StoreName":     shopNameOrEmpty(ctx, d),
 		"CanView":       canView,
 		"CanRecord":     canRecord,
 		"CashierFilter": cashierFilter,
@@ -930,7 +934,7 @@ func renderYuzdeUsuluTab(repo *data.POSRepo, d *common.Deps, r *http.Request, wi
 	}
 
 	return httpx.RenderPartial("ui/partials/reports_tab_yuzde_usulu.html", map[string]any{
-		"StoreName":     storeNameOrDefault(ctx, d),
+		"StoreName":     shopNameOrEmpty(ctx, d),
 		"CanView":       canView,
 		"CanRecord":     canRecord,
 		"CashierFilter": cashierFilter,

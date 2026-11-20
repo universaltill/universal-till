@@ -218,6 +218,19 @@ GitHub Releases API mechanism the other platforms already use).
   download fails on a 3-minute stall or a 60-minute cap; state goes to the
   page as `window.utAndroidUpdate({state, percent, error})` and to logcat as
   `update: …` lines (`adb logcat -s MainActivity`).
+- **Nightly pre-download (ut-docs#6551).** `SelfUpdateActivity` registers
+  `Mobile.setUpdateBridge` in `onResume` and clears it in `onPause` (sideload
+  only; the Play flavour has inert stubs). Go's nightly scheduler calls it
+  when an update is available and no basket is open: the shell downloads the
+  APK and runs the same ADR-0179 check, keeps the file as the verified ready
+  copy (`ready_version_code` / `ready_length` in `in_app_update`; the
+  `download_mode=prefetch` flag survives an Activity recreate so a finished
+  prefetch never installs) and reports `downloaded` to the page
+  (`AndroidKiosk.updateReady()` lets a freshly loaded page ask). It never
+  launches the installer, releases the kiosk lock or asks for the install
+  permission; a manager's tap re-copies and re-verifies the file first
+  (`UpdateLogic.afterCheck`, `UpdateLogic.prefetchReady`). Not run on a
+  device yet (TECLAST P50T / Fire OS follow-up).
 - **Verified on the API 36 emulator** (2026-10-14, a test build pointing at a
   throttled local server, not the real tablet): progress 0→94 % reported to the
   page, a repeat call mid-download logged "already in progress" and did not
@@ -886,6 +899,17 @@ unresolved record, which unblocks other baskets (until then they are declined
 `unknown_pending`; the same key is `pending/outcome_unknown`). Repeating a paid key returns
 the stored approval and never charges again; the same key with another amount is
 `key_mismatch`. No card data is in any message; amounts are 1..9,999,999 minor units.
+
+## Reader mode: this phone as the card reader for a main till (ut-docs#6538, ADR-0198 §6, dark)
+
+`-PreaderMode=true` (default OFF, and it needs `-PtapToPay=true`: the collect runs on the Tap to Pay engine) enables
+`ReaderActivity`, a second launcher entry that runs in its own process (`:reader`): it never starts the till's Go server
+and stores no shop data. Package `com.universaltill.pos.reader`: `ReaderPairing` (TLS-only pair request, the code the
+manager compares), `SpkiPin` (trust exactly the pinned key; the bearer is never sent to another certificate),
+`ReaderLink` (WebSocket to `wss://<main>/api/sync/link`), `ReaderSession` (frames, one collect at a time, 30 s link-loss
+drop), `ReaderCloudApi` + `EnginePayments` (the SDK's connection token comes from the main over the link, the
+PaymentIntent is the one the main created). Frame fixtures are shared with Go: `internal/fleetlink/testdata/reader_*.json`.
+The bearer and pin live in the Android Keystore (AES-GCM); no card data is read, stored or logged (ADR-0127).
 
 ## Not yet done
 

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
@@ -59,6 +60,9 @@ var (
 	updateCheckNow = updates.CheckNow
 	// autoUpdateGOOS is runtime.GOOS for the stuck decision (ut-docs#2733).
 	autoUpdateGOOS = runtime.GOOS
+	// autoUpdatePrefetcher is the Android shell's prefetch bridge, nil when
+	// none is registered (ut-docs#6551).
+	autoUpdatePrefetcher = apkprefetch.RegisteredPrefetcher
 	// autoUpdateInstallUnwritable: the .deb-fixable cause (ut-docs#2733).
 	autoUpdateInstallUnwritable = selfupdate.LinuxInstallUnwritable
 	// GET /api/update/notes (ut-docs#3940): the cached release status, the
@@ -208,6 +212,14 @@ func autoUpdateDue(now time.Time, enabled bool, hhmm string, offset time.Duratio
 // button already uses (Current() can be up to 24h stale by design). Apply
 // itself refuses a second concurrent caller (selfupdate.applyMu), so this
 // never races the manual button.
+//
+// Android (ut-docs#6551) cannot self-swap (Supported() is false by design),
+// so its nightly step is a pre-download instead: through the registered
+// shell bridge it asks SelfUpdateActivity to download and verify the APK,
+// never to install it — a manager installs with one tap. The same gates
+// apply (due, available, not dev, not busy), plus: a store build never
+// prefetches (ADR-0194 §2.3) and with no shell registered the day's slot is
+// kept so a later tick in the window retries.
 func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	get := func(key string) string {
 		v, _, _ := d.Settings.Get(ctx, key)
@@ -226,7 +238,11 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if !autoUpdateDue(now, enabled, hhmm, offset, lastAttempt) {
 		return
 	}
-	if !autoUpdateCurrent().Available || !autoUpdateSupported() {
+	if !autoUpdateCurrent().Available {
+		return
+	}
+	android := selfupdate.InstallBridgeAvailable(autoUpdateGOOS)
+	if !android && !autoUpdateSupported() {
 		return
 	}
 	// A "dev" build is a developer/hotfix build (ldflags -X never stamped a
@@ -236,6 +252,9 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if autoUpdateBuildVersion() == "dev" {
 		return
 	}
+	if android && !buildinfo.CurrentChannel().InAppUpdateAllowed() {
+		return // ADR-0194 §2.3: store builds are updated by the store
+	}
 	// Both engines (ut-docs#449): the kiosk basket is a separate instance
 	// from the cashier's, so an unattended update mid-kiosk-order must be
 	// blocked too, not just a cashier's mid-sale basket. Since ADR-0103
@@ -243,6 +262,14 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	// (update_follow.go) is shared with the replica follow (ut-docs#2738).
 	if autoUpdateBusy(d) {
 		return
+	}
+	var pf apkprefetch.Prefetcher
+	if android {
+		// No shell answering (Activity not in front): keep today's slot so a
+		// later tick in the window retries.
+		if pf = autoUpdatePrefetcher(); pf == nil {
+			return
+		}
 	}
 	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache
 	// miss below) never retries twice in one day — repeated large downloads
@@ -252,6 +279,12 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	st := autoUpdateCheckNow(ctx)
 	if !st.Available {
 		return
+	}
+	if android {
+		if err := pf.PrefetchUpdate(); err != nil {
+			logging.L().Errorf("auto-update: android prefetch: %v", err)
+		}
+		return // never Apply on Android, never install
 	}
 	if err := autoUpdateApply(ctx, autoUpdateIdle(d)); err != nil {
 		logging.L().Errorf("auto-update: %v", err)
@@ -369,7 +402,7 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 		at := func(key string) string { return html.EscapeString(httpx.T(locale, key)) }
 		return fmt.Sprintf(`<span>⬆ %s v%s — <button type="button" class="btn secondary" data-android-update-install data-testid="android-update-install"`+
 			` data-downloading="%s" data-progress="%s" data-installing="%s" data-retry="%s" data-again="%s"`+
-			` data-failed="%s" data-locked="%s" data-uptodate="%s" data-nobridge="%s">%s</button></span>`,
+			` data-failed="%s" data-locked="%s" data-uptodate="%s" data-nobridge="%s" data-busy="%s" data-downloaded="%s">%s</button></span>`,
 			at("status.update_available"),
 			html.EscapeString(latest),
 			at("settings.update.android.downloading"),
@@ -381,6 +414,8 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 			at("auth.error.locked"),
 			at("settings.update.up_to_date"),
 			at("settings.update.android.no_bridge"),
+			at("settings.update.android.busy"),
+			html.EscapeString(fmt.Sprintf(httpx.T(locale, "settings.update.android.downloaded"), latest)),
 			at("settings.update.download"))
 	}
 	if selfupdate.DownloadLinkActionable(goos) {
@@ -652,6 +687,15 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			respondUpdateApplyError(w, r, http.StatusForbidden, "settings.update.android.pin_needed", "update_android_install", nil)
 			return
 		}
+		// ut-docs#6551: installing replaces the app process, which drops the
+		// in-memory basket (cashier, kiosk or table-QR) or a shift close in
+		// flight — the same gate the nightly update waits on. Before the
+		// network freshness call and before AuthorizeManager, so a PIN is
+		// never spent.
+		if autoUpdateBusy(d) {
+			respondUpdateApplyError(w, r, http.StatusConflict, "settings.update.android.busy", "update_android_install", nil)
+			return
+		}
 		if st := androidInstallCheckNow(r.Context()); !st.Available {
 			respondUpdateApplyCurrent(w, httpx.ResolveLocale(w, r))
 			return
@@ -780,7 +824,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			updates.SetAutoUpdateStuck(false) // ut-docs#2733: fixed since the last tick
 			// The status-bar update button also appears on the next page
 			// load; this inline one applies immediately.
-			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s">%s</button>`,
+			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s" data-confirm-ok="%s" data-confirm-tone="neutral">%s</button>`,
 				html.EscapeString(st.Latest),
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
 				html.EscapeString(httpx.T(locale, "status.update_now")),
@@ -822,7 +866,10 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		hhmm := strings.TrimSpace(r.Form.Get("time"))
 		enabled := r.Form.Get("enabled") == "on" || r.Form.Get("enabled") == "1"
-		if enabled && !eodTimeRe.MatchString(hhmm) {
+		// Enabled needs a time; a non-empty time must be HH:MM either way, so
+		// the shop-wide stored value is never garbage (ut-docs#6551). Empty
+		// while disabled is still allowed (the default applies if re-enabled).
+		if (enabled || hhmm != "") && !eodTimeRe.MatchString(hhmm) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
 		}

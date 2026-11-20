@@ -44,15 +44,26 @@ const (
 	TillRoleSatellite  = "satellite"
 )
 
+// TillRoleCardReader is a PAIRING role only (ut-docs#6538, ADR-0198 §6.2): a
+// phone that takes card taps and holds no shop data. It is never a till role
+// (tills.role stays additional|satellite), so it can never enrol a till.
+const TillRoleCardReader = "card_reader"
+
 // ValidTillRole reports whether role is one of the two till roles.
 func ValidTillRole(role string) bool {
 	return role == TillRoleAdditional || role == TillRoleSatellite
 }
 
+// ValidPairingRole reports whether role is a role a pairing request can ask
+// for: a till role or card_reader. The empty role is never valid here.
+func ValidPairingRole(role string) bool {
+	return ValidTillRole(role) || role == TillRoleCardReader
+}
+
 // InsertTill enrols a replica as an additional till, granting it the next
-// receipt prefix (EnrolTill); the caller hashes the bearer.
+// receipt prefix (EnrolTillPrefix); the caller hashes the bearer.
 func (r *TillsRepo) InsertTill(ctx context.Context, name, bearerHash string) (string, error) {
-	id, _, err := r.EnrolTill(ctx, name, bearerHash, TillRoleAdditional, "")
+	id, _, _, err := r.EnrolTillPrefix(ctx, name, bearerHash, TillRoleAdditional, "")
 	return id, err
 }
 

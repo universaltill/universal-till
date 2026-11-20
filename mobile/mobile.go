@@ -28,9 +28,9 @@
 // surface is deliberately minimal for that reason: three lifecycle
 // functions plus a few setters and reporters (SetKioskPinned,
 // ReportAndroidUpdateRefused/Accepted); SetBluetoothBridge, SetDiscoveryBridge and
-// SetKioskBridge take the exported interface types declared IN this package,
+// SetKioskBridge and SetUpdateBridge take the exported interface types declared IN this package,
 // BluetoothBridge (ADR-0080), DiscoveryBridge (ut-docs#3218), KioskBridge
-// (ut-docs#3466) and TapToPayBridge (ut-docs#3049, with TapToPayCloud). Each must
+// (ut-docs#3466), UpdateBridge (ut-docs#6551) and TapToPayBridge (ut-docs#3049, with TapToPayCloud). Each must
 // be declared here rather than merely referenced from its internal
 // package (internal/bluetooth, internal/discovery): gobind only binds
 // types from the package named on its command line, so a type from an unbound package compiles and builds a
@@ -70,9 +70,11 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/androidupdate"
+	"github.com/universaltill/universal-till/internal/androidupdate/apkprefetch"
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/cardreaders"
 	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -604,6 +606,27 @@ func SetKioskBridge(b KioskBridge) {
 	kiosk.SetBridge(b) // a nil KioskBridge converts to a nil kiosk.Bridge
 }
 
+// UpdateBridge is the gobind-visible mirror of apkprefetch.Prefetcher
+// (ut-docs#6551) — declared here for BluetoothBridge's reason; kept
+// structurally identical so SetUpdateBridge passes it straight through.
+type UpdateBridge interface {
+	// PrefetchUpdate downloads and verifies the update APK without
+	// launching the installer; it returns once the work is handed over.
+	PrefetchUpdate() error
+}
+
+// SetUpdateBridge registers SelfUpdateActivity's prefetch bridge (sideload
+// flavours only; onResume) and clears it with nil (onPause). The nightly
+// scheduler keeps the day's slot unspent while none is registered.
+func SetUpdateBridge(b UpdateBridge) {
+	if b == nil {
+		apkprefetch.Current.Store(nil)
+		return
+	}
+	var p apkprefetch.Prefetcher = b
+	apkprefetch.Current.Store(&p)
+}
+
 // SetKioskPinned records the self-order pin state MainActivity now intends
 // (ut-docs#3466, ADR-0142 D5), mirroring SetDeviceModel's shape: Kotlin
 // calls it from engageKioskLock (true) and releaseKioskLock (false), and
@@ -654,14 +677,18 @@ type TapToPayBridge interface {
 // sheets cause mid-payment.
 func SetTapToPayBridge(b TapToPayBridge) {
 	devicepay.SetBridge(b) // a nil TapToPayBridge converts to a nil devicepay.Bridge
+	// ut-docs#6566: the card reader registry offers a tap_to_pay reader only
+	// while a bridge is registered; core never imports devicepay itself.
+	cardreaders.TapToPayAvailable = func() bool { return devicepay.RegisteredBridge() != nil }
 }
 
 // TapToPayResolver is the gomobile-bind-visible mirror of
 // devicepay.Resolver (ut-docs#6533): the Android shell's "the operator says
-// the earlier payment was not charged". Separate from TapToPayBridge so the
-// iOS protocol is unchanged. One string in, a JSON SetupResult out.
+// the earlier payment was / was not charged". Separate from TapToPayBridge so
+// the iOS protocol is unchanged. outcome is "not_charged" or "charged"
+// (devicepay.OutcomeNotCharged / OutcomeCharged); a JSON SetupResult comes back.
 type TapToPayResolver interface {
-	ResolveUnknown(idempotencyKey string) string
+	Resolve(idempotencyKey, outcome string) string
 }
 
 // SetTapToPayResolver registers the Android resolver with internal/devicepay;
@@ -679,12 +706,13 @@ func SetTapToPayResolver(r TapToPayResolver) {
 // A failure's error text is a stable code Swift maps to a capability or
 // decline reason: the cloud's own error code (e.g. not_onboarded,
 // invalid_request, provider_unavailable), else http_<status>, or one of
-// op_not_allowed, not_enrolled, offline, response_too_large,
-// request_too_large, insecure_endpoint, failed.
+// op_not_allowed (the shell may not refund), no_attempt (a session_create
+// that is not core's in-flight attempt), not_enrolled, offline,
+// response_too_large, request_too_large, insecure_endpoint, failed.
 func TapToPayCloud(provider, op, bodyJSON string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), paybroker.Timeout)
 	defer cancel()
-	out, err := paybroker.Call(ctx, provider, op, []byte(bodyJSON))
+	out, err := paybroker.Call(ctx, paybroker.CallerNative, provider, op, []byte(bodyJSON))
 	if err != nil {
 		return "", errors.New(tapToPayErrorCode(err))
 	}
@@ -711,6 +739,8 @@ func tapToPayErrorCode(err error) string {
 		return "request_too_large"
 	case errors.Is(err, paybroker.ErrInsecureEndpoint):
 		return "insecure_endpoint"
+	case errors.Is(err, paybroker.ErrNoAttempt):
+		return "no_attempt"
 	default:
 		return "failed"
 	}

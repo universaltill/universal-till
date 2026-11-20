@@ -9,6 +9,12 @@ sealed class CollectEnd {
     data class Verdict(val result: TapResult) : CollectEnd()
 }
 
+/** The two outcomes a manager can give an unresolved payment; mirrors devicepay.OutcomeNotCharged / OutcomeCharged. */
+object Outcome {
+    const val NOT_CHARGED = "not_charged"
+    const val CHARGED = "charged"
+}
+
 /**
  * The payment engine behind the devicepay bridge (design section 1). Pure
  * Kotlin, no Android types. Everything runs on the main thread (the bridge
@@ -34,6 +40,9 @@ class TapToPayEngine(
 
         /** Go cancels at the request's deadline; the verdict is due this long before it. */
         const val DEADLINE_MARGIN_MS = 3_000L
+
+        /** Declined intents kept for a same-key retry (#3048 R3). */
+        const val MAX_LIVE_INTENTS = 64
     }
 
     private class Live(val intentId: String, val amountMinor: Long, val currency: String)
@@ -46,7 +55,25 @@ class TapToPayEngine(
     private var preparing = false
 
     /** key -> a PaymentIntent still usable in this process (declined, or unknown). */
-    private val liveIntents = HashMap<String, Live>()
+    private val liveIntents = LinkedHashMap<String, Live>()
+
+    /** Test hook: how many intents are held for a same-key retry. */
+    internal fun liveIntentCount() = liveIntents.size
+
+    /**
+     * Bounded (#3048 R3 recheck): the oldest DECLINED intent goes first; one whose record is unresolved (unknown,
+     * confirming) is never evicted, so a possibly charged payment is never forgotten. Dropping a declined entry only
+     * means its retry creates a fresh intent; the paid write does not depend on this map (it lives in the sink).
+     */
+    private fun remember(key: String, live: Live) {
+        liveIntents.remove(key)
+        liveIntents[key] = live
+        val it = liveIntents.entries.iterator()
+        while (liveIntents.size > MAX_LIVE_INTENTS && it.hasNext()) {
+            val k = it.next().key
+            if (k != key && store.load(k)?.let { r -> PendingState.unresolved(r.state) } != true) it.remove()
+        }
+    }
 
     /**
      * One sink per payment: it knows ITS key, amount and currency, so a late success is persisted no matter
@@ -82,7 +109,7 @@ class TapToPayEngine(
                         done.put(DoneRecord(key, r.requestId, pi, amountMinor, currency, r.chargeId))
                         liveIntents.remove(key)
                     }
-                    TapStatus.DECLINED, TapStatus.UNKNOWN -> liveIntents[key] = Live(pi, amountMinor, currency)
+                    TapStatus.DECLINED, TapStatus.UNKNOWN -> remember(key, Live(pi, amountMinor, currency))
                     TapStatus.CANCELLED -> liveIntents.remove(key)
                 }
             }
@@ -119,17 +146,27 @@ class TapToPayEngine(
     }
 
     /**
-     * The operator states the earlier payment for [key] was NOT charged; only then may another sale start.
-     * null = resolved, else a token (no_such_payment, busy). WHO may say it is decided in Go
-     * (devicepay.ResolveUnknown), before this is reached.
+     * The manager states what the provider shows for the earlier payment [key] (ut-docs#6533, Go's Resolve): [Outcome.NOT_CHARGED]
+     * frees the till for another sale; [Outcome.CHARGED] keeps the key paid (a repeat of it is answered, never charged again)
+     * and frees the till too, Go records the tender. null = resolved, else a token (bad_request, no_such_payment, busy).
+     * WHO may say it, and that the provider was asked first, is decided in Go (devicepay.Resolve), before this is reached.
      */
-    fun resolveUnknown(key: String): String? {
+    fun resolve(key: String, outcome: String): String? {
+        if (outcome != Outcome.NOT_CHARGED && outcome != Outcome.CHARGED) return "bad_request"
         val p = unresolved().firstOrNull { it.key == key } ?: return "no_such_payment"
         if (flow?.isLive == true && flow?.key == key) return "busy"
+        // paid first, then the record goes: a crash in between leaves the key blocked, never free-and-unpaid
+        if (outcome == Outcome.CHARGED) done.put(DoneRecord(p.key, p.requestId, p.intentId, p.amountMinor, p.currency, null))
         store.remove(p.key)
         liveIntents.remove(p.key)
         return null
     }
+
+    /** Keys of attempts whose outcome nobody resolved (reader mode releases them, see EnginePayments). */
+    fun unresolvedKeys(): List<String> = unresolved().map { it.key }
+
+    /** Drops the SDK's reader connection (ADR-0198 6.4: revoke, link loss, background). The next collect reconnects. */
+    fun disconnectReader() = reader.disconnect()
 
     fun showEducation(cb: (Boolean) -> Unit) = ui.showEducation(cb)
 

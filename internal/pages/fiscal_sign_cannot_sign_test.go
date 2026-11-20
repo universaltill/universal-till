@@ -96,9 +96,21 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 			case "payment.demopay.refund":
 				var p map[string]any
 				_ = json.Unmarshal(ev.Payload, &p)
+				p["_event_id"] = ev.ID // test-only: the refund request id (ut-docs#6601)
 				mu.Lock()
 				gotRefunds = append(gotRefunds, p)
 				mu.Unlock()
+				if g, ok := refundHookGates.Load(dp.Db); ok {
+					g.(func())() // ut-docs#6742: lets a test hold the provider call open
+				}
+				// ut-docs#6784: like a real WASM guest (WithCloseOnContextDone), a
+				// handler whose request ctx is gone fails instead of approving.
+				if cerr := ctx.Err(); cerr != nil {
+					return nil, cerr
+				}
+				if v, ok := refundErrOverrides.Load(dp.Db); ok {
+					return nil, v.(error)
+				}
 				if refundErr != nil {
 					return nil, refundErr
 				}

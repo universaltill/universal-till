@@ -16,7 +16,7 @@ Registering connects your till to the Universal Till marketplace; claiming links
 ## How to use it
 
 1. Settings → Till registration shows the store identity. There is no Register button: once setup is finished the till registers itself in the background (see below). On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
-2. The cloud service terms are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till cloud service terms (version v0.1-draft)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
+2. The Universal Till Merchant Terms (version merchant-terms-v1.0) are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till Merchant Terms (version merchant-terms-v1.0)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
 3. Click Claim this store to get a short code (valid 15 minutes).
 4. Sign in to your Universal Till account on another device and enter the code there.
 
@@ -28,15 +28,15 @@ Alongside the code, the till shows a QR code and a link to the claim page: scan 
 
 The Google Play and App Store versions of the app show the code as text only: type it in on another device.
 
-## Automatic registration and the Cloud record
+## Automatic registration and the Privacy card
 
-Every till registers itself once setup is finished, with no question to answer and no button to press. It does this in the background, never during a sale, and keeps trying (waiting longer between tries, up to ten minutes) until the cloud answers; a till that is offline at the end of setup carries on selling and registers when it is back online. The setup wizard's last screen, and Settings → Till registration → **Cloud record**, say exactly what the till tells Universal Till:
+Every till registers itself once setup is finished, with no question to answer and no button to press. It does this in the background, never during a sale, and keeps trying (waiting longer between tries, up to ten minutes) until the cloud answers; a till that is offline at the end of setup carries on selling and registers when it is back online. The setup wizard's last screen, and Settings → **Privacy**, say exactly what the till tells Universal Till:
 
-- Each time the till starts: its software version, system type, country, language, the shop name you chose, a random till code and when it last started. Your address is not sent.
+- Each time the till starts: its software version, release channel (how this copy was installed), system type, country, language, the shop name you chose, a random till code and when it last started. Your address is not sent.
 - When the till updates itself, or a plugin is installed, updated or removed: which version or plugin changed, and when. The till keeps these in a short queue and sends them with its next check-in; it never sends anything when it is switched off.
 - Never your sales, customers, staff or items.
 
-A till set up before this existed shows the same notice once, in Settings → Till registration → Cloud record; a link in the status bar points there, and the till registers only after the notice was shown. A manager can press **Stop sending** there: the till then registers nothing and reports nothing about itself (cloud features you use still connect), and the card says **Paused** until you press **Resume sending**. Stopping does not delete what the cloud already holds; ask us to delete it. The card also shows whether the till is registered and when the cloud last answered it. The notice wording is awaiting final approval.
+A till set up before this existed shows the same notice once, in Settings → Privacy; a link in the status bar points there, and the till registers only after the notice was shown. A manager can switch off **Send usage facts** there: the till then registers nothing and reports nothing about itself (cloud features you use still connect), and the card says **Paused** until you switch it on again. Stopping does not delete what the cloud already holds; ask us to delete it. The card also shows whether the till is registered and when the cloud last answered it.
 
 ## Subscription
 
@@ -77,8 +77,8 @@ A manager can tap the chip to open Settings → Till registration, straight to P
 
 The card says what went wrong in one line; selling is never affected:
 
-- **Accept the Universal Till cloud service terms to register this till**: the terms box on the plugin's page was not ticked, so nothing was sent. Tick it and try again.
-- **Tick the box to accept the Universal Till cloud service terms**: on an already registered till, Accept terms was pressed without ticking the box, so nothing was recorded or sent. Tick it and press Accept terms again.
+- **Accept the Universal Till Merchant Terms to register this till**: the terms box on the plugin's page was not ticked, so nothing was sent. Tick it and try again.
+- **Tick the box to accept the Universal Till Merchant Terms**: on an already registered till, Accept terms was pressed without ticking the box, so nothing was recorded or sent. Tick it and press Accept terms again.
 - **Couldn't reach the cloud. Your acceptance is saved on this till**: the acceptance is kept on the till; check the internet connection and press Send to the cloud again.
 - **The Universal Till cloud is not available for this shop**: the cloud does not serve this shop. On a joined till this comes from the main till. The till keeps working offline.
 - **No cloud address is set up on this till**: the till was installed without a cloud address, so it can't register. Ask whoever installed it to set one up.

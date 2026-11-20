@@ -45,4 +45,38 @@
     <string name="tap_enable_location_title">Turn on location</string>
     <string name="tap_enable_location_body">Location is switched off. Turn it on in Settings to take tap payments.</string>
     <string name="tap_settings_open">Open settings</string>
+    <!-- ut-docs#6538 A2: reader mode (a phone as the card reader for a main till). English only; Weblate adds the rest.
+         Wording rule (ux C5): the phone never says charged or not charged. -->
+    <string name="reader_app_name">Card reader</string>
+    <string name="reader_offer_title">Use this phone as a card reader</string>
+    <string name="reader_offer_body">This phone only takes card taps. It holds no shop data.</string>
+    <string name="reader_name_label">Name for this phone</string>
+    <string name="reader_request_btn">Request to pair</string>
+    <string name="reader_finding_main">Looking for the main till…</string>
+    <string name="reader_pick_main">Choose the main till</string>
+    <string name="reader_err_refused">The main till did not accept this request.</string>
+    <string name="reader_err_needs_tls">The main till must be reached over a secure link.</string>
+    <string name="reader_err_not_found">Could not find the main till.</string>
+    <string name="reader_waiting">Waiting for a manager to approve</string>
+    <string name="reader_waiting_hint">Show this code to a manager. It must match the one on the till.</string>
+    <string name="reader_code_label">Code</string>
+    <string name="reader_cancel">Cancel</string>
+    <string name="reader_expired_request">The request timed out. Try again.</string>
+    <string name="reader_try_again">Try again</string>
+    <string name="reader_idle">Ready for a payment</string>
+    <string name="reader_offline">Looking for the main till…</string>
+    <string name="reader_paused">Open this app to take payments</string>
+    <string name="reader_needs_setup">This phone needs setting up before it can take cards.</string>
+    <string name="reader_setup_btn">Set up this phone</string>
+    <string name="reader_incoming">Payment requested: %1$s</string>
+    <string name="reader_hold">Hold card near the top of the phone</string>
+    <string name="reader_time_left">Time left: %1$d s</string>
+    <string name="reader_done">Done</string>
+    <string name="reader_cancelled">Cancelled</string>
+    <string name="reader_card_refused">Card not accepted. Try another card.</string>
+    <string name="reader_time_up">Time is up. Ask the cashier.</string>
+    <string name="reader_link_lost">Lost contact with the till.</string>
+    <string name="reader_revoked">This reader was removed by a manager.</string>
+    <string name="reader_lock_required">Set a screen lock on this phone to use it as a card reader.</string>
+    <string name="reader_unsupported">This phone cannot be used as a card reader.</string>
 </resources>

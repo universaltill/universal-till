@@ -113,7 +113,7 @@ func registerShiftXReportPrint(mux *http.ServeMux, d *common.Deps) {
 			writeXReportError(w, r, http.StatusBadGateway, "print_failed", "shifts.x_report.print_failed", cerr)
 			return
 		}
-		doc := buildXReportDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
+		doc := buildXReportDoc(rep, shopNameOrEmpty(ctx, d), cfg.Charset)
 		pctx, cancel := context.WithTimeout(ctx, xPrintTimeout)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {

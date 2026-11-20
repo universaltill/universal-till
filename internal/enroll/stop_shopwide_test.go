@@ -9,7 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 )
 
-// ut-docs#6618: "Stop sending" is shop-wide (ADR-0200 decision 6). Every path
+// ut-docs#6618: "Send usage facts" off is shop-wide (ADR-0200 decision 6). Every path
 // that tells the cloud about an automatically registered till honours it.
 
 // A stopped main till does not register a newly joined till in the cloud.

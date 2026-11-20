@@ -22,6 +22,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
@@ -71,11 +72,14 @@ type WasmRuntime struct {
 	netTimeout     time.Duration   // wider deadline for plugins holding net:*
 	hasNet         map[string]bool // plugin id → granted net:* permission
 	hasTCP         map[string]bool // plugin id → granted tcp:* permission (raw device transport)
-	httpClient     *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
-	db             *sql.DB         // for host functions; set by Sync
-	baseDir        string
-	unsubGen       int           // bumped per sync so stale handlers no-op
-	calls          *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
+	// tapEntries is plugin id → payment entry keys declaring tap: true
+	// (ut-docs#6455); their authorize/refund dispatches get TapGateTimeout.
+	tapEntries map[string]map[string]bool
+	httpClient *http.Client // http_request egress client; nil → defaultPluginHTTPClient
+	db         *sql.DB      // for host functions; set by Sync
+	baseDir    string
+	unsubGen   int           // bumped per sync so stale handlers no-op
+	calls      *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
 	// publishRate is event_publish's per-plugin token bucket (ut-docs#3871).
 	publishRate *publishRateLimiter
 	// bus, when set (tests), receives published events instead of SharedBus.
@@ -195,6 +199,9 @@ func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 	if netPermitted && isPaymentGateClassEvent(eventType) && timeout < paymentGateTimeout {
 		timeout = paymentGateTimeout
 	}
+	if w.isTapGateEvent(pluginID, eventType) && timeout < TapGateTimeout {
+		timeout = TapGateTimeout
+	}
 	if isExportClassEvent(eventType) && timeout < exportTimeout {
 		timeout = exportTimeout
 	}
@@ -202,6 +209,54 @@ func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 		timeout = importTimeout
 	}
 	return timeout
+}
+
+// TapGateTimeout is the deadline of a payment.<key>.authorize/.refund
+// dispatch of an entry declaring tap: true (ADR-0125 §3d, ut-docs#6455): a
+// customer holding a card to a phone, and the cloud round-trips around it,
+// outlast the 30 s of a chip-and-PIN terminal. It applies to those entries
+// only; every other payment entry keeps its own deadline.
+const TapGateTimeout = 120 * time.Second
+
+// isTapGateEvent reports whether eventType is the authorize/refund event of
+// one of pluginID's tap entries.
+func (w *WasmRuntime) isTapGateEvent(pluginID, eventType string) bool {
+	if !isPaymentGateClassEvent(eventType) {
+		return false
+	}
+	rest, ok := strings.CutPrefix(eventType, "payment.")
+	if !ok {
+		return false
+	}
+	key := rest[:strings.LastIndex(rest, ".")]
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.tapEntries[pluginID][key]
+}
+
+// refreshTapEntries re-reads which active payment entries declare tap: true.
+// Sync calls it after every plugin change; a failed read keeps the last good
+// set (an entry is never silently downgraded to the short deadline by a
+// transient error).
+func (w *WasmRuntime) refreshTapEntries(ctx context.Context, db *sql.DB) {
+	rows, err := data.NewPluginRepo(db).ListPaymentEntries(ctx)
+	if err != nil {
+		logging.L().Warnf("wasm: tap entries: %v", err)
+		return
+	}
+	next := map[string]map[string]bool{}
+	for _, r := range rows {
+		if !IsTapEntryConfig(r.ConfigJSON) {
+			continue
+		}
+		if next[r.PluginID] == nil {
+			next[r.PluginID] = map[string]bool{}
+		}
+		next[r.PluginID][r.EntryKey] = true
+	}
+	w.mu.Lock()
+	w.tapEntries = next
+	w.mu.Unlock()
 }
 
 // baseTimeout is pluginID's deadline before any event-class floor: w.timeout,
@@ -251,6 +306,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		netTimeout:  10 * time.Second,
 		hasNet:      map[string]bool{},
 		hasTCP:      map[string]bool{},
+		tapEntries:  map[string]map[string]bool{},
 		eventGates:  map[string]eventGate{},
 		baseDir:     baseDir,
 		calls:       newWasmCallGate(wasmConcurrencyLimits(goruntime.GOOS)),
@@ -328,6 +384,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		w.hasTCP[id] = pluginHasTCPPermission(ctx, db, id)
 	}
 	w.mu.Unlock()
+	w.refreshTapEntries(ctx, db)
 
 	// Compile the cache misses concurrently first (ut-docs#3921); the loop
 	// below then reads them back from the cache.
@@ -413,7 +470,10 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			// waits on the plugin's decline/approve answer before letting the
 			// refund proceed (ut-docs#434).
 			for _, evName := range events {
-				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
+				// ut-docs#6566: payment.<key>.readers, the card reader registry's
+				// read-only state op, is awaited by the reader picker.
+				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") ||
+					(strings.HasPrefix(evName, "payment.") && strings.HasSuffix(evName, ".readers")) {
 					bus.SetEventMode(evName, Blocking)
 				}
 			}
@@ -823,6 +883,12 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient, hop: ev.Hop, publishRate: w.publishRate}
 	if isPaymentGateClassEvent(ev.Type) {
 		hs.gateDeadline = time.Now().Add(timeout)
+		// A binding counts only on a core-raised gate event of its own kind.
+		if b, ok := paybroker.BindingFrom(ctx); ok && ev.Hop == 0 && !ev.Scheduled &&
+			((b.Kind == paybroker.BindAuthorize && strings.HasSuffix(ev.Type, ".authorize")) ||
+				(b.Kind == paybroker.BindRefund && strings.HasSuffix(ev.Type, ".refund"))) {
+			hs.binding, hs.bound = b, true
+		}
 	}
 	if isJob {
 		hs.jobProgress = job.Progress
@@ -894,7 +960,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		// charged). Keep the stdout on the error so core can tell that apart
 		// from a plain decline; the line is logged through the same redaction.
 		var exitErr *sys.ExitError
-		if strings.HasSuffix(ev.Type, ".authorize") && errors.As(runErr, &exitErr) {
+		if (strings.HasSuffix(ev.Type, ".authorize") || strings.HasSuffix(ev.Type, ".refund")) && errors.As(runErr, &exitErr) {
 			if out := strings.TrimSpace(stdout.buf.String()); out != "" {
 				logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
 				return nil, &HandlerExitError{Code: int(exitErr.ExitCode()), Stdout: json.RawMessage(out), err: runErr}
@@ -910,7 +976,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 }
 
 // HandlerExitError is a wasm handler that exited non-zero after printing an
-// answer (ut-docs#6600). Only produced for ".authorize" events, where the
+// answer (ut-docs#6600, #6647). Only produced for ".authorize" and ".refund" events, where the
 // stdout carries a decline_code core must read.
 type HandlerExitError struct {
 	Code   int

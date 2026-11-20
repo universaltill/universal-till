@@ -3,6 +3,7 @@ package com.universaltill.pos.tap
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -118,15 +119,38 @@ class DevicepayBridgeCoreTest {
         assertEquals("timeout", JSONObject(c.setup("stripe")).getString("reason"))
     }
 
-    @Test fun resolveUnknownClearsTheRecordAndUnblocksOtherKeys() {
+    @Test fun resolveNotChargedClearsTheRecordAndUnblocksOtherKeys() {
         store.put(PendingRecord("old", "k1", "pi_77", "unknown", 500L, "gbp"))
         assertEquals("unknown_pending", collect(request(key = "k2")).getString("reason"))
-        assertTrue(JSONObject(core.resolveUnknown("k1")).getBoolean("ok"))
+        assertTrue(JSONObject(core.resolve("k1", "not_charged")).getBoolean("ok"))
         assertEquals("approved", collect(request(key = "k2")).getString("status"))
-        val gone = JSONObject(core.resolveUnknown("k1"))
+        val gone = JSONObject(core.resolve("k1", "not_charged"))
         assertFalse(gone.getBoolean("ok")); assertEquals("no_such_payment", gone.getString("reason"))
-        assertEquals("bad_request", JSONObject(core.resolveUnknown("")).getString("reason"))
-        assertEquals("bad_request", JSONObject(core.resolveUnknown(null)).getString("reason"))
+        assertEquals("bad_request", JSONObject(core.resolve("", "not_charged")).getString("reason"))
+        assertEquals("bad_request", JSONObject(core.resolve(null, "not_charged")).getString("reason"))
+    }
+
+    @Test fun resolveChargedIsAcceptedAndMarksTheKeyPaid() {
+        store.put(PendingRecord("old", "k1", "pi_77", "unknown", 500L, "gbp"))
+        assertTrue(JSONObject(core.resolve("k1", "charged")).getBoolean("ok"))
+        assertEquals("pi_77", done.load("k1")?.intentId)
+        assertNull(store.load("k1"))
+    }
+
+    @Test fun resolveWithAnUnknownOrMissingOutcomeClearsNothing() {
+        store.put(PendingRecord("old", "k1", "pi_77", "unknown", 500L, "gbp"))
+        for (bad in listOf(null, "", "refund", "Charged")) {
+            assertEquals("bad_request", JSONObject(core.resolve("k1", bad)).getString("reason"))
+        }
+        assertEquals("unknown", store.load("k1")?.state)
+        assertNull(done.load("k1"))
+    }
+
+    // The role gate lives in Go (devicepay.Resolve refuses a non-manager before the native side; see the Go tests
+    // TestResolve_UnknownOutcomeAndCashierNeverReachNative and mobile TestSetTapToPayResolver_*). This class has no role.
+    @Test fun theBridgeMirrorHasNoResolveUnknownLeftToCallAroundTheOutcomeCheck() {
+        assertTrue(GoDevicepayBridge::class.java.methods.none { it.name == "resolveUnknown" })
+        assertTrue(GoDevicepayBridge::class.java.methods.any { it.name == "resolve" })
     }
 
     @Test fun sameKeyAfterAnUnresolvedRecordIsPendingNotDeclined() {

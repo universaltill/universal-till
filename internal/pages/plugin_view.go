@@ -137,6 +137,9 @@ type pluginViewAlert struct {
 	OOB    bool
 	Failed bool // plugin.view.action_failed
 	Busy   bool // plugin.job.busy
+	// PageFailed: a panel's paging request failed (plugin.view.page_failed,
+	// ut-docs#4114); the panel still shows the page it had.
+	PageFailed bool
 }
 
 // pluginJobPoll is what pluginview_poll renders.
@@ -149,6 +152,15 @@ type pluginJobPoll struct {
 
 // errPluginNoAnswer: the plugin is not subscribed, or declined to answer.
 var errPluginNoAnswer = errors.New("plugin gave no answer")
+
+// refusePanelGet answers 400 to a GET that contradicts its entry: a panel
+// target that is not a panel of the entry's slot, or a "slot" param that is
+// not the entry's (ut-docs#4114). The plugin is not asked. The header and
+// query are untrusted, so they are logged quoted.
+func refusePanelGet(w http.ResponseWriter, entry data.PageEntryRow, target, slot string) {
+	logging.L().Warnf("plugin view %s %q: refused panel request (target %q, slot %q)", entry.PluginID, entry.Route, target, slot)
+	http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+}
 
 func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.PageEntryRow) {
 	locale := httpx.ResolveLocale(w, r)
@@ -164,9 +176,37 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	// the whole page -- is the page's own container, so a request can
 	// never point the answer at core markup.
 	inSlot := false
-	if t := r.Header.Get("HX-Target"); htmx && (r.Method == http.MethodPost || (isPoll && fragment)) && pluginSlotPanelIDRe.MatchString(t) {
+	target := r.Header.Get("HX-Target")
+	// ut-docs#6687: a panel-shaped target must be a panel of THIS entry's
+	// slot (as for the paging GET below), else 400 before any ask.
+	if t := target; htmx && (r.Method == http.MethodPost || (isPoll && fragment)) && pluginSlotPanelIDRe.MatchString(t) {
+		if !pluginSlotPanelOf(entry.Slot, t) {
+			refusePanelGet(w, entry, t, "")
+			return
+		}
 		body.Target = t
 		inSlot = true
+	}
+	// ut-docs#4114: "slot" is core's own param for a slot entry. A GET/HEAD
+	// (not a poll) of a slot entry naming another slot is refused before
+	// any ask.
+	if q := r.URL.Query(); entry.Slot != "" && r.Method != http.MethodPost && !isPoll && q.Has(pluginview.SlotParam) && q.Get(pluginview.SlotParam) != entry.Slot {
+		refusePanelGet(w, entry, target, q.Get(pluginview.SlotParam))
+		return
+	}
+	// A paging link in a content slot panel (ut-docs#4114): an htmx
+	// fragment GET whose HX-Target is a panel id. It must be a panel of THIS
+	// entry's slot, else 400 (no ask). Anything not panel-shaped stays a
+	// page GET. The panel is asked as the slot draws it (ui:slot:<slot>).
+	panelGet := false
+	if htmx && fragment && r.Method == http.MethodGet && !isPoll && pluginSlotPanelIDRe.MatchString(target) {
+		if !pluginSlotPanelOf(entry.Slot, target) {
+			refusePanelGet(w, entry, target, "")
+			return
+		}
+		panelGet = true
+		inSlot = true
+		body.Target = target
 	}
 	// The sell-screen overlay (ADR-0149 §6, ut-docs#3699) is drawn like a
 	// slot panel -- the body alone, its actions and poll targeting the
@@ -263,6 +303,8 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		default:
 			doc, redirect = ans.Document, ans.Redirect
 		}
+	case panelGet:
+		doc, err = askSlotDocument(r.Context(), d, entry.Slot, entry, locale, pluginViewParams(r))
 	default:
 		doc, err = askPluginView(r.Context(), d, entry, locale, pluginViewParams(r))
 	}
@@ -284,11 +326,15 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	case doc != nil:
 		body.View = doc.Prepare(locale)
 		resolveAgentConfirms(r.Context(), d, &body.View, entry.PluginID, locale)
-		if !inSlot && !inOverlay {
+		switch {
+		case panelGet:
+			// A panel's own paging (ut-docs#4114): links that swap the next
+			// page into this panel.
+			body.View.LinkPagingPanel(entry.Route, pluginViewParams(r), entry.Slot, body.Target)
+		case !inSlot && !inOverlay:
 			// A paged table's links (ut-docs#3874): this route with the
-			// query the view was asked with. A slot panel (or the overlay)
-			// has no GET swap of its own, so it shows the page indicator
-			// alone.
+			// query the view was asked with. An action's answer in a panel,
+			// or the overlay, shows the page indicator alone.
 			body.View.LinkPaging(entry.Route, pluginViewParams(r))
 		}
 	}
@@ -299,16 +345,21 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	}
 	// A failed action (ut-docs#3879): the notice goes to #plugin-view-alert
 	// and the view stays — untouched (htmx) or re-asked and refilled (no JS).
-	actionFailed := failed && r.Method == http.MethodPost
+	// A failed panel page (ut-docs#4114) is kept the same way: the panel
+	// keeps the page it shows and only its alert is filled.
+	keepFailed := failed && (r.Method == http.MethodPost || panelGet)
 	alertID := ""
 	if inSlot || inOverlay {
 		alertID = body.Target + "-alert"
 	}
 	alert := pluginViewAlert{ID: alertID}
-	if actionFailed {
+	if keepFailed {
 		alert = pluginViewAlert{ID: alertID, Busy: body.JobBusy, Failed: !body.JobBusy}
+		if panelGet {
+			alert = pluginViewAlert{ID: alertID, PageFailed: true}
+		}
 	}
-	if actionFailed && !htmx {
+	if keepFailed && !htmx {
 		var posted map[string][]string
 		action := ""
 		if formRead {
@@ -343,13 +394,13 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	}
 	funcs := httpx.FuncsFor(locale)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if isPoll {
+	if isPoll || panelGet {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 
-	if htmx && (r.Method == http.MethodPost || (isPoll && fragment) || inOverlay) {
+	if htmx && (r.Method == http.MethodPost || (isPoll && fragment) || inOverlay || panelGet) {
 		render := httpx.RenderWith(pluginViewFiles, funcs)
-		if actionFailed {
+		if keepFailed {
 			// Swap nothing (the form keeps the operator's input, file and
 			// password fields included; submitting again is the retry) —
 			// only the alert, out of band. htmx 1.9 still runs OOB swaps
@@ -570,33 +621,12 @@ func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	// ADR-0153 "Who is asking" (ut-docs#2838): the operator, from the
 	// session, for action_propose — never from the payload.
 	ctx = withAgentOperator(ctx)
-	actx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	type result struct {
-		raw []byte
-		ok  bool
-		err error
+	raw, ok, err := boundedAskPlugin(ctx, d, "pages.pluginViewAsk", entry.PluginID, event, payload, timeout)
+	switch {
+	case err != nil:
+		return nil, vctx, err
+	case !ok:
+		return nil, vctx, errPluginNoAnswer
 	}
-	done := make(chan result, 1)
-	go func() {
-		defer logging.RecoverAndLog("pages.pluginViewAsk")
-		// Sent by a deferred call so a panicking handler still answers at
-		// once (it runs before RecoverAndLog recovers).
-		res := result{err: errors.New("plugin ask panicked")}
-		defer func() { done <- res }()
-		raw, ok, err := plugins.SharedBus(d.Db).AskPlugin(actx, entry.PluginID, event, payload)
-		res = result{raw, ok, err}
-	}()
-	select {
-	case res := <-done:
-		switch {
-		case res.err != nil:
-			return nil, vctx, res.err
-		case !res.ok:
-			return nil, vctx, errPluginNoAnswer
-		}
-		return res.raw, vctx, nil
-	case <-actx.Done():
-		return nil, vctx, fmt.Errorf("%s: %w", event, actx.Err())
-	}
+	return raw, vctx, nil
 }

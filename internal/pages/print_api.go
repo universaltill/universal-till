@@ -386,7 +386,7 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 	}
 
 	doc := print.Doc{
-		StoreName: storeNameOrDefault(ctx, d),
+		StoreName: shopNameOrEmpty(ctx, d),
 		Logo:      receiptLogoRaster(rd),
 		Header:    rd.Header,
 		Meta: []string{
@@ -396,15 +396,17 @@ func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLoca
 		Charset:   cfg.Charset,
 		DrawerPin: cfg.DrawerPin,
 	}
-	// ut-docs#1817: the short, customer-facing order number is an ADDITIONAL
-	// line, never a replacement for "Receipt " above — receipt_no stays the
-	// printed fiscal identity and the scan-to-refund barcode target
-	// (sibling card ut-docs#1818). Only printed when it actually differs
-	// from receipt_no (a configured scheme resolved to something shorter);
-	// a legacy sale with no display_no would otherwise print the same
-	// number twice.
-	if detail.DisplayNo != "" && detail.DisplayNo != detail.ReceiptNo {
-		doc.Meta = append([]string{Tf("receipt.paper.order_no", detail.DisplayNo)}, doc.Meta...)
+	// ut-docs#1817 / ut-docs#6663: the short order number is an ADDITIONAL
+	// identity, never a replacement for "Receipt " above (receipt_no stays
+	// the printed legal identity and the scan-to-refund barcode target).
+	// Always printed when the sale has one, big, under the store header, a
+	// reprint included; a legacy sale with no display_no prints none.
+	if detail.DisplayNo != "" {
+		doc.OrderNo = detail.DisplayNo
+		// The already-translated "Order %s" with the number left out: a short
+		// label for the line above the big number (42 columns, so no long
+		// translated phrase), translated in every installed language.
+		doc.OrderLabel = strings.TrimSpace(Tf("receipt.paper.order_no", ""))
 	}
 	if rd.ShowBarcode {
 		// Scan-to-refund (G28): the receipt number as a barcode.
@@ -999,7 +1001,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		if err == nil {
 			doc := print.Doc{
-				StoreName: storeNameOrDefault(ctx, d),
+				StoreName: shopNameOrEmpty(ctx, d),
 				Meta:      []string{"TEST PRINT", httpx.FormatDateTimeLatin(time.Now(), httpx.DefaultLocale())},
 				Totals:    []print.KV{{Label: "Printer", Amount: "OK", Strong: true}},
 				Footer:    []string{"Universal Till"},

@@ -86,7 +86,7 @@
       <button type="button" id="tills-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="tills-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
     </div>
     <label>{{ T "tills.pairing.your_till_name" }}
-      <input type="text" id="pairing-till-name" name="name" placeholder="Till 2" required></label>
+      <input type="text" id="pairing-till-name" name="name" placeholder="Till 2" required maxlength="60"></label>
     {{/* Independent review, ut-docs#1548: NOT tills.pairing.error.name_required
          — that key's copy names the discover tab's action in every locale
          ("…before you can request pairing" / "…قبل إرسال طلب الإقران" /
@@ -164,6 +164,13 @@
     <p class="muted">{{ T "tills.pairing.help" }}</p>
     <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
   </div>
+
+  {{/* ut-docs#6538: phone card readers pair to the main till only. Each
+       fragment renders its own card (a flag-off answer is 204: no empty card). */}}
+  {{ if not .SyncPrimary }}
+  <div hx-get="/ui/tills/reader-requests" hx-trigger="load" hx-swap="outerHTML"></div>
+  <div hx-get="/ui/tills/readers" hx-trigger="load" hx-swap="outerHTML"></div>
+  {{ end }}
 
   {{/* ut-docs#5074 M5: the read-only sales copy (its own partial). */}}
   <div id="tills-sales-mirror" hx-get="/ui/tills/sales-mirror" hx-trigger="load" hx-swap="outerHTML"></div>

@@ -342,4 +342,43 @@ class UpdateLogicTest {
     }
 
     private fun c64() = "c".repeat(64)
+
+    // --- nightly prefetch (ut-docs#6551) ---------------------------------------
+
+    private val pinnedAccept = ApkCheck.Accept("abc123")
+    private val refuse = ApkCheck.Refuse(RefuseClass.NOT_NEWER, "not newer")
+
+    @Test
+    fun aPrefetchKeepsAVerifiedApkReadyAndNeverInstalls() {
+        assertEquals(AfterCheck.KEEP_READY, UpdateLogic.afterCheck(pinnedAccept, prefetch = true))
+        assertEquals(AfterCheck.KEEP_READY, UpdateLogic.afterCheck(ApkCheck.AcceptUnpinned, prefetch = true))
+    }
+
+    @Test
+    fun aManagersTapInstallsAVerifiedApk() {
+        assertEquals(AfterCheck.INSTALL, UpdateLogic.afterCheck(pinnedAccept, prefetch = false))
+        assertEquals(AfterCheck.INSTALL, UpdateLogic.afterCheck(ApkCheck.AcceptUnpinned, prefetch = false))
+    }
+
+    @Test
+    fun aRefusedApkIsCleanedUpInBothModes() {
+        assertEquals(AfterCheck.CLEANUP, UpdateLogic.afterCheck(refuse, prefetch = true))
+        assertEquals(AfterCheck.CLEANUP, UpdateLogic.afterCheck(refuse, prefetch = false))
+    }
+
+    @Test
+    fun prefetchIsReadyOnlyForTheSameCompleteNewerFile() {
+        assertTrue(UpdateLogic.prefetchReady(200L, 1000L, 1000L, 100L))
+        // nothing saved, or a half-saved record
+        assertFalse(UpdateLogic.prefetchReady(null, 1000L, 1000L, 100L))
+        assertFalse(UpdateLogic.prefetchReady(200L, null, 1000L, 100L))
+        // the file is partial or was replaced
+        assertFalse(UpdateLogic.prefetchReady(200L, 1000L, 999L, 100L))
+        assertFalse(UpdateLogic.prefetchReady(200L, 1000L, 1001L, 100L))
+        // the file is gone
+        assertFalse(UpdateLogic.prefetchReady(200L, 1000L, 0L, 100L))
+        // already installed, or older than what runs now
+        assertFalse(UpdateLogic.prefetchReady(100L, 1000L, 1000L, 100L))
+        assertFalse(UpdateLogic.prefetchReady(99L, 1000L, 1000L, 100L))
+    }
 }

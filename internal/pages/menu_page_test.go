@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -526,5 +527,23 @@ func TestMenuPage_AdminTileRendersRegardlessOfGroupAmendment(t *testing.T) {
 	body := getMenu(t, mux)
 	if !strings.Contains(body, `href="/admin"`) {
 		t.Fatalf("expected /admin to still render on /menu even when regrouped into its own group, got: %s", body)
+	}
+}
+
+// ut-docs#5823: the Pfand confirmation lands in a page-level live region that
+// must exist (empty) outside the dialog, which closes on success.
+func TestMenuPage_HasEmptyPfandNoticeLiveRegionOutsideDialog(t *testing.T) {
+	mux, _ := newMenuPageTestDeps(t, nil)
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	m := regexp.MustCompile(`<div id="pfand-notice"[^>]*aria-live="polite"[^>]*></div>`).FindStringIndex(body)
+	if m == nil {
+		t.Fatalf("expected an empty #pfand-notice aria-live=polite region, got: %s", body)
+	}
+	dlg := strings.Index(body, `<dialog id="pfand-modal"`)
+	if dlg < 0 || m[0] > dlg {
+		t.Fatalf("#pfand-notice must come before (outside) the dialog; notice at %d, dialog at %d", m[0], dlg)
 	}
 }

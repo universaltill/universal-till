@@ -40,7 +40,12 @@ const DOCS_VOUCHER_ID = 'DOCS-GV-0001';
 const routeOverride: Record<string, string> = { vouchers: '/vouchers/' + DOCS_VOUCHER_ID };
 // Selector that must be visible before the shot, so a regression (404, hint
 // gone because a printer is configured) fails the capture, not the picture.
-const mustShow: Record<string, string> = { vouchers: '[data-testid="voucher-slip-browser-hint"]' };
+// ut-docs#6566: the card-readers topic pictures the manager page WITH its seeded
+// readers (e2e/seed_card_readers), never the empty state.
+const mustShow: Record<string, string> = {
+  vouchers: '[data-testid="voucher-slip-browser-hint"]',
+  'card-readers': '#card-reader-list-settings [data-testid="card-reader-row"]:first-child',
+};
 
 const pinnedQuery: Record<string, string> = {
   reports: 'period=month&anchor=2025-12-15',

@@ -21,12 +21,22 @@
 </table>
 {{- with .Paging }}
 {{/* ut-docs#3874: the plugin serves one page per view ask; the links are
-     the entry's own route with the table's page param (LinkPaging). A
-     content slot panel or the read-only wizard has no links: indicator only. */}}
+     the entry's own route with the table's page param (LinkPaging). In a
+     content slot panel (.Target set, LinkPagingPanel, ut-docs#4114) the
+     same href still opens the entry's page, and htmx swaps the answer into
+     the panel instead: hx-sync drops a second tap while one ask runs (both
+     links share the panel's scope), hx-indicator puts .htmx-request on the
+     panel, and the links point at the page indicator so a screen reader
+     hears "Page n of m" after the swap. The read-only wizard, the overlay
+     and an action's answer have no links: indicator only. */}}
 <nav class="plugin-view-paging" aria-label="{{ T "plugin.view.paging_label" }}">
-  {{- if .PrevURL }}<a class="btn btn-touch secondary" href="{{ .PrevURL }}" rel="prev">{{ T "plugin.view.page_prev" }}</a>{{ end }}
-  <span class="plugin-view-paging-pos">{{ .Text }}</span>
-  {{- if .NextURL }}<a class="btn btn-touch secondary" href="{{ .NextURL }}" rel="next">{{ T "plugin.view.page_next" }}</a>{{ end }}
+  {{- if .PrevURL }}<a class="btn btn-touch secondary" href="{{ .PrevURL }}" rel="prev"{{ if .Target }} hx-get="{{ .PrevURL }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-push-url="false" hx-sync="#{{ .Target }}:drop" hx-indicator="#{{ .Target }}" aria-describedby="{{ .PosID }}"{{ end }}>{{ T "plugin.view.page_prev" }}</a>{{ end }}
+  <span class="plugin-view-paging-pos"{{ if .Target }} id="{{ .PosID }}" tabindex="-1"{{ end }}>{{ .Text }}</span>
+  {{- if .NextURL }}<a class="btn btn-touch secondary" href="{{ .NextURL }}" rel="next"{{ if .Target }} hx-get="{{ .NextURL }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-push-url="false" hx-sync="#{{ .Target }}:drop" hx-indicator="#{{ .Target }}" aria-describedby="{{ .PosID }}"{{ end }}>{{ T "plugin.view.page_next" }}</a>{{ end }}
+  {{- if .Target }}
+  {{- /* ut-docs#6687: what app.js copies into the panel's alert slot when a paging request fails at the network (no HTTP answer to carry the OOB notice). Inert markup; same key as the server-side failure notice. */}}
+  <template class="plugin-view-paging-failed"><div class="plugin-view-notice warn">{{ T "plugin.view.page_failed" }}</div></template>
+  {{- end }}
 </nav>
 {{- end }}
 </div>

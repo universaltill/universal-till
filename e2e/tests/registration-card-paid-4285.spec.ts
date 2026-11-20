@@ -116,6 +116,8 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
     const refresh = page.getByTestId('registration-refresh');
     await expect(refresh).toHaveCount(1);
     await expect(refresh).toHaveAttribute('hx-target', '#registration');
+    // The Privacy card's status line rides the same single GET, out of band.
+    await expect(refresh).toHaveAttribute('hx-select-oob', '#settings-privacy');
     expect(await refresh.evaluate((el) => !!el.closest('#registration'))).toBe(false);
     assertClean();
   });

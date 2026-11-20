@@ -16,7 +16,7 @@ import (
 )
 
 // ut-docs#6613 / #6618 (PR #2581): the check-in of an auto-registered, unpaid
-// till, and of a till whose shop pressed "Stop sending", is built from an
+// till, and of a till whose shop switched off "Send usage facts", is built from an
 // ALLOW-LIST. The golden list below is the only thing that may ride the device
 // record besides `events`; a new key fails this test and forces a review of
 // the notice text and enroll.NoticeVersion.
@@ -126,7 +126,7 @@ func TestAutoRegisteredUnpaidStartCheckinCarriesOnlyAllowListedKeys(t *testing.T
 	}
 }
 
-// #6618: a till that pressed "Stop sending" and then does something that opens
+// #6618: a till that switched off "Send usage facts" and then does something that opens
 // the operator window (claim code, check for a plan) sends the minimal report,
 // never the full one.
 func TestStoppedTillOperatorWindowSendsMinimalReport(t *testing.T) {

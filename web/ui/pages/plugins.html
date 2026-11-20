@@ -57,6 +57,11 @@
           <span class="tag" x-show="p.state === 'broken'"
                 style="background:rgba(220,38,38,.12); color:var(--danger)"
                 title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
+          {{/* ut-docs#5660: the marketplace withdrew the installed version and
+               this till turned it off. Stays after a manual re-enable (the
+               next check turns it off again). Same word as the notice. */}}
+          <span class="tag" x-show="p.revoked"
+                style="background:rgba(220,38,38,.12); color:var(--danger)">{{ T "plugins.manage.revoked" }} ⚠</span>
           <span class="tag" x-text="p.trust"></span>
           <span class="tag" x-show="p.mainControlled" data-testid="plugin-main-controlled">{{ T "plugins.manage.main_till_controls" }}</span>
           <span class="tag warn" x-show="p.hasUpdate" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
@@ -69,12 +74,20 @@
                ever true when a catalog match was actually found. */}}
           <span class="tag" x-show="p.versionUnknown" title="{{ T "plugins.manage.update_unknown_hint" }}">{{ T "plugins.manage.update_unknown" }}</span>
         </div>
+        {{/* ut-docs#5660: revokedNotice is formatted server-side; x-text only,
+             never x-html (the reason is untrusted feed text). */}}
+        <div class="notice-block-warn" x-show="p.revoked" role="note" style="overflow-wrap:anywhere">
+          <p style="margin:0" x-text="p.revokedNotice"></p>
+          <p style="margin:.3rem 0 0" x-show="p.hasUpdate">{{ T "plugins.manage.revoked_hint_update" }}</p>
+          <p style="margin:.3rem 0 0" x-show="!p.hasUpdate && !p.versionUnknown">{{ T "plugins.manage.revoked_hint_no_update" }}</p>
+          <p style="margin:.3rem 0 0" x-show="!p.hasUpdate && p.versionUnknown">{{ T "plugins.revoked.hint_unknown" }}</p>
+        </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
           <a class="btn secondary" x-show="p.enabled || p.bundled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>
           <a class="btn secondary" x-show="p.docsRoute" :href="p.docsRoute">{{ T "plugins.manage.action.docs" }}</a>
           <button class="btn secondary" x-show="p.enabled && !p.mainControlled"
                   @click="act('/api/plugins/' + p.id + '/disable', 'POST')">{{ T "plugins.manage.action.disable" }}</button>
-          <button class="btn" x-show="!p.enabled && !p.mainControlled"
+          <button :class="p.revoked ? 'btn secondary' : 'btn'" x-show="!p.enabled && !p.mainControlled"
                   @click="act('/api/plugins/' + p.id + '/enable', 'POST')">{{ T "plugins.manage.action.enable" }}</button>
           <button class="btn" x-show="p.hasUpdate"
                   @click="act('/api/plugins/' + p.id + '/update', 'POST')">{{ T "plugins.manage.action.update" }}</button>
@@ -125,7 +138,7 @@
                   <li style="display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap; padding:.3rem 0">
                     <span x-text="v.version"></span>
                     <button class="btn secondary"
-                            @click="actAfterConfirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?', $event.currentTarget, '/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version })">{{ T "plugins.manage.action.rollback_to" }}</button>
+                            @click="actAfterConfirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?', $event.currentTarget, '/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version }, '{{ T "plugins.manage.confirm_rollback" }}')">{{ T "plugins.manage.action.rollback_to" }}</button>
                   </li>
                 </template>
               </ul>
@@ -167,7 +180,7 @@
   // act() runs only on an explicit Confirm.
   window.actAfterConfirm = function (question, opener, url, method, body, okLabel) {
     var ask = (window.UT && typeof window.UT.confirm === 'function')
-      ? window.UT.confirm(question, okLabel ? { opener: opener, ok: okLabel } : { opener: opener })
+      ? window.UT.confirm(question, { opener: opener, ok: okLabel })
       : Promise.resolve(window.confirm(question)); // native-confirm:allow till-confirm.js not loaded: still ask, never act unconfirmed
     ask.then(function (ok) { if (ok === true) window.act(url, method, body); });
   };

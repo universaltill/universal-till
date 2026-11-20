@@ -11,18 +11,63 @@ type CapturedLeg struct {
 	Amount         money.Money // exactly what the authorize captured (incl. reader tip)
 	TransactionRef string      // provider ref (ADR-0196), may be ""
 	TipAmount      money.Money
+	// ReaderRef is the provider reader id the authorize ran on (ut-docs#6566),
+	// "" for a method with no registry reader; a reversal sends it back.
+	ReaderRef string
 }
 
 // UnknownLeg is a leg whose authorize answered outcome_unknown (ut-docs#6600).
 type UnknownLeg struct {
 	MethodID, Currency, RequestID string
 	Amount                        money.Money
+	// ReaderRowID is the card reader registry row the authorize ran on (ut-docs#6566),
+	// "" for a method with no registry reader: the picker shows it pinned.
+	ReaderRowID string
+	// Tap marks a card-present (Tap to Pay) leg whose payment attempt core
+	// recorded (ut-docs#6455); RequestID is then also the attempt's key.
+	// TapReason is why it is pending (PendingProcessing, PendingLookupFailed,
+	// PendingAmountMismatch, ..., or "" when the plugin itself said unknown).
+	Tap       bool
+	TapReason string
+	// TapPaid: core confirmed the payment with the broker after the till had
+	// locked (Check again, manager approve); the tender is then finished by
+	// paying again, which does not charge twice. TapBrand/TapLast4 are what
+	// the provider reported (ADR-0127: nothing more about the card).
+	TapPaid            bool
+	TapBrand, TapLast4 string
+}
+
+// TapPanel is the tap-to-pay screen state the till page shows in place of the
+// toast (ut-docs#6455, ux A1-A4). Per render only, like ToastMessage: never
+// stored; the engine derives State "pending" from a locked tap leg.
+type TapPanel struct {
+	// State: pending | not_paid | paid_already | start_failed | mismatch.
+	State string
+	// Method is the tender method the screen's buttons pay again with.
+	Method string
+	Amount money.Money
+	Reason string // pending reason, see UnknownLeg.TapReason
+	Brand  string // paid_already: card brand as the provider reports it
+	Last4  string
+	// Still is set when a check found it still pending.
+	Still bool
 }
 
 // PendingTender is what a locked tender leaves behind on the engine.
 type PendingTender struct {
 	Captured []CapturedLeg
 	Unknown  []UnknownLeg
+}
+
+// TapUnknownLeg returns the first locked tap leg and its index among the
+// unknown legs.
+func (p PendingTender) TapUnknownLeg() (UnknownLeg, int, bool) {
+	for i, l := range p.Unknown {
+		if l.Tap {
+			return l, i, true
+		}
+	}
+	return UnknownLeg{}, 0, false
 }
 
 // IsZero reports whether nothing is pending.
@@ -35,6 +80,9 @@ const (
 	AbandonCleared  AbandonReason = "the basket was cleared"
 	AbandonParked   AbandonReason = "the basket was parked"
 	AbandonReplaced AbandonReason = "another order was opened over it"
+	// Table-QR session baskets (ut-docs#6601).
+	AbandonSessionExpired AbandonReason = "the table order session expired"
+	AbandonSessionEnded   AbandonReason = "the table order session ended"
 )
 
 // AbandonResult is what the handler did; kept as a one-shot notice for the UI.
@@ -61,6 +109,23 @@ func (s *Service) TakeAbandonNotice() (AbandonResult, bool) {
 	r := *s.abandonNotice
 	s.abandonNotice = nil
 	return r, true
+}
+
+// AbandonTender drops the tender state only (the basket stays, no recompute)
+// and hands what it held to the handler (ut-docs#6601). Handler runs after
+// s.mu is released.
+func (s *Service) AbandonTender(r AbandonReason) {
+	s.mu.Lock()
+	p := s.dropTenderLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(r, p)
+}
+
+// HasPendingTender reports whether a tender is locked or holds legs.
+func (s *Service) HasPendingTender() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tenderLock != "" || !s.pendingTender.IsZero()
 }
 
 // handOffAbandoned runs the registered handler. Caller must NOT hold s.mu.

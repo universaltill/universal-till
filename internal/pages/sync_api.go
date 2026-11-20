@@ -336,13 +336,38 @@ func displayPrimaryAddress(primaryURL string) string {
 // back, so a plain request with a pinned till's bearer is a stolen bearer or
 // a downgrade. A till that has never used TLS keeps plain HTTP (§11).
 func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
+	if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == "" {
+		return data.TillRow{}, false
+	}
+	// ut-docs#6538: a source locked out for repeated bad bearers gets nothing,
+	// a valid bearer included (the caller answers 401; Retry-After is set).
+	if bearerLockedOut(w, r) {
+		return data.TillRow{}, false
+	}
+	t, ok := authTill(w, r, repo)
+	if !ok {
+		recordBearerFailure(r)
+	}
+	return t, ok
+}
+
+// authTill is the till bearer check itself (syncTill without the per-IP
+// failure accounting, which callers that try two tables must do once).
+func authTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
+	t, ok, _ := authTillEx(w, r, repo)
+	return t, ok
+}
+
+// authTillEx is authTill that also reports a failed lookup (dbErr), so a
+// caller that must tell "wrong bearer" from "database trouble" can.
+func authTillEx(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" {
-		return data.TillRow{}, false
+		return data.TillRow{}, false, false
 	}
 	t, ok, err := repo.TillByBearerHashAt(r.Context(), hashBearer(h), syncBearerNow())
 	if err != nil {
-		return data.TillRow{}, false
+		return data.TillRow{}, false, true
 	}
 	if !ok {
 		if t.ID != "" {
@@ -351,12 +376,12 @@ func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (dat
 			// one. The repo cleared it, so this is said once per rotation.
 			logging.L().Warnf("sync: an old sync credential for till %s was used after its rotation and was refused", t.ID)
 		}
-		return data.TillRow{}, false
+		return data.TillRow{}, false, false
 	}
 	switch {
 	case r.TLS == nil && t.TLSPinned:
 		warnPlainHTTPRefused(t.ID)
-		return data.TillRow{}, false
+		return data.TillRow{}, false, false
 	case r.TLS != nil && !t.TLSPinned:
 		// Best effort: a failed write only means the next TLS request
 		// records it; the request itself is authenticated either way.
@@ -373,7 +398,7 @@ func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (dat
 	if t.RotateDue {
 		w.Header().Set(lantls.BearerRotateHeader, "1")
 	}
-	return t, true
+	return t, true, false
 }
 
 // syncBearerNow is the clock bearer rotation runs on -- a seam for tests.
@@ -665,6 +690,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			in.Token, in.Name, in.Role = r.Form.Get("token"), r.Form.Get("name"), r.Form.Get("role")
 			in.ReceiptPrefix = r.Form.Get("receipt_prefix")
 		}
+		// ut-docs#6538: a card reader is never enrolled by a QR token or a
+		// short code (they prove possession of a code, not a manager's
+		// approval of a phone): it asks by request. Refused before the token
+		// is spent.
+		if strings.TrimSpace(in.Role) == data.TillRoleCardReader {
+			writeReaderError(w, http.StatusBadRequest, readerErrNeedsRequest)
+			return
+		}
 		// Validated before the one-time token is spent below.
 		role, ok := tillRoleFromForm(in.Role)
 		if !ok {
@@ -764,7 +797,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// 2, and a number once granted is never granted to another till
 		// (revoked, withdrawn or promoted tills included). A re-joining till
 		// keeps its own when it is free (ut-docs#5058 UT-5).
-		tillID, tillNo, err := repo.EnrolTill(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
+		tillID, tillNo, tillPrefix, err := repo.EnrolTillPrefix(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -821,12 +854,15 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
-				"till_id":     tillID,
-				"bearer":      bearer,
-				"shop_name":   storeNameOrDefault(r.Context(), d),
-				"till_no":     tillNo,
-				"register_id": registerID,
-				"role":        role,
+				"till_id":   tillID,
+				"bearer":    bearer,
+				"shop_name": shopNameOrEmpty(r.Context(), d),
+				"till_no":   tillNo,
+				// The prefix the till adopts (ut-docs#6663): "2-", or its own
+				// T<n>- on a re-join. An older till ignores it and builds T<n>-.
+				"receipt_prefix": tillPrefix,
+				"register_id":    registerID,
+				"role":           role,
 			},
 			"error": nil,
 		})
@@ -844,9 +880,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "withdraw must be done on the primary till", http.StatusConflict)
 			return
 		}
-		till, ok := syncTill(w, r, repo)
+		till, reader, isReader, ok, deny := syncTillOrReader(w, r, repo, readerRepoFor(d))
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			status, msg := deny.status(w)
+			http.Error(w, msg, status)
+			return
+		}
+		if isReader {
+			withdrawReader(w, r, d, reader)
 			return
 		}
 		if !withinJoinWithdrawWindow(till.EnrolledAt, time.Now()) {
@@ -922,7 +963,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			// link: this main till serves GET /api/sync/link at this level
 			// (ADR-0114 §11) — a replica dials only when advertised.
 			// version: what a replica without the link follows (ut-docs#2738).
-			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": link,
+			"data": map[string]any{"till_id": till.ID, "shop_name": shopNameOrEmpty(r.Context(), d), "link": link,
 				"version": buildinfo.Version},
 			"error": nil,
 		})
@@ -1194,6 +1235,8 @@ const (
 	// ut-docs#5862: this till's name has control or invisible characters;
 	// refused locally, before the main till is contacted.
 	joinErrNameInvalid
+	// ut-docs#5898: this till's name is longer than maxTillNameRunes.
+	joinErrNameTooLong
 	// ut-docs#4451: the main till refused a plain-HTTP handshake and said
 	// why (plainRefusedHeader).
 	joinErrTLSOnly
@@ -1223,6 +1266,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
 	joinErrMainReplaced:           "tills.join_error.replaced",
 	joinErrNameInvalid:            keyNameInvalidCharacters,
+	joinErrNameTooLong:            keyTillNameTooLong,
 	joinErrTLSOnly:                "tills.join_error.tls_only",
 	joinErrSatelliteTLSOnly:       "tills.join_error.satellite_tls_only",
 	joinErrSatelliteNoTLS:         "tills.join_error.main_no_tls",
@@ -1350,7 +1394,13 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	// ut-docs#5862: a till name is one line with no hidden formatting
 	// characters. Checked first — nothing is sent to the main till and no
 	// one-time token is spent for a name it would only have to refuse.
-	if _, err := data.CheckSingleLineName(name); err != nil {
+	// ut-docs#5898: and no longer than maxTillNameRunes (the main till
+	// refuses a longer one too).
+	switch tillNameRefusalKey(name) {
+	case "":
+	case keyTillNameTooLong:
+		return "", &joinError{kind: joinErrNameTooLong}
+	default:
 		return "", &joinError{kind: joinErrNameInvalid}
 	}
 	// ut-docs#5058 UT-5 (rejoin_replay.go): a joined till re-joining sends
@@ -1447,6 +1497,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 			Bearer   string `json:"bearer"`
 			ShopName string `json:"shop_name"`
 			TillNo   int    `json:"till_no"`
+			// The receipt prefix the main till granted (ut-docs#6663);
+			// empty from an older main till, which grants T<till_no>-.
+			ReceiptPrefix string `json:"receipt_prefix"`
 			// The register the primary auto-provisioned for this till
 			// (ut-docs#894); empty from an older primary.
 			RegisterID string `json:"register_id"`
@@ -1529,7 +1582,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		PrimaryURL:    primaryURL,
 		TillID:        out.Data.TillID,
 		Bearer:        out.Data.Bearer,
-		ReceiptPrefix: fmt.Sprintf("T%d-", out.Data.TillNo),
+		ReceiptPrefix: joinedReceiptPrefix(out.Data.ReceiptPrefix, out.Data.TillNo),
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 		RegisterID:    out.Data.RegisterID,
@@ -1622,4 +1675,14 @@ func withdrawEnrolment(ctx context.Context, client *http.Client, base, bearer st
 	if resp.StatusCode != http.StatusNoContent {
 		logging.L().Warnf("join: withdraw the enrolment on the main till: %s", resp.Status)
 	}
+}
+
+// joinedReceiptPrefix is the prefix a joining till adopts: the one its main
+// till granted when it is a valid joined-till prefix (<n>- or T<n>-), else
+// T<n>- as an older main till grants (ut-docs#6663).
+func joinedReceiptPrefix(granted string, tillNo int) string {
+	if data.TillNumberOfPrefix(granted) > 1 {
+		return granted
+	}
+	return fmt.Sprintf("T%d-", tillNo)
 }

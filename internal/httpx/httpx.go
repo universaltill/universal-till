@@ -124,7 +124,7 @@ var baseFuncs = template.FuncMap{
 	"releasenoticeversion": releasenotes.NoticeVersion,
 	// registrationnoticepending: a set-up till has not shown the "what this
 	// till tells us" notice yet (ADR-0200, ut-docs#6559): the status bar
-	// offers a link to Settings, Cloud record, where it is shown. Cleared the
+	// offers a link to Settings > Privacy, where it is shown. Cleared the
 	// moment the notice is shown.
 	"registrationnoticepending": enroll.NoticePending,
 	// updatedownloadlink: whether the status-bar chip's fallback (when
@@ -1558,6 +1558,9 @@ var renderFiles = []string{
 	// httpx.Render("ui/pages/items.html", ...) call site, with no bespoke
 	// RenderWith file set of its own.
 	"ui/partials/items_rail.html",
+	// ut-docs#6566: the card readers page and its htmx row/add/remove answers
+	// render the same list body (card_reader_settings_body.html).
+	"ui/partials/card_reader_settings_body.html",
 	// ut-docs#1957: modifiers.html's own "content"/"modifiers_list" templates
 	// call {{ template "modifier_group_admin" ... }} — riding along here is
 	// what lets that resolve through the plain httpx.Render("ui/pages/

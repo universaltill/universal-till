@@ -120,6 +120,7 @@ func releaseSelfOrderSession(w http.ResponseWriter, d *common.Deps, token string
 // /backoffice) — the mode only controls whether "/" redirects here for an
 // already-authenticated visitor.
 func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
+	wireAbandonedTenderReversal(d) // table sessions hand off a dropped tender (ut-docs#6601)
 	// selfOrderSessionMintLimiter caps NEW-session minting per source IP
 	// (ut-docs#2432): GET /self-order?table=<id> mints a fresh session on
 	// every cookieless hit the busy guard doesn't block, and this route is
@@ -288,13 +289,17 @@ func withoutSelfOrderLocale(r *http.Request) *http.Request {
 // (a rename in Settings, from my. or in the setup wizard shows on the next
 // page load, ut-docs#3020), falling back to the boot-time cfg.StoreName
 // while the setting is unset, unreadable or still a placeholder (migration
-// 001 seeds "My Store", which must not hide a UT_STORE_NAME name). Not storeNameOrDefault: its
-// untranslated "this shop" fallback must never reach a customer screen.
+// 001 seeds "My Store", which must not hide a UT_STORE_NAME name). A
+// placeholder UT_STORE_NAME too (its default is "My Store") yields "": the
+// kiosk then shows no name rather than an English placeholder (ut-docs#5773).
 func kioskShopName(ctx context.Context, d *common.Deps) string {
-	if v, ok, err := d.Settings.Get(ctx, common.KeyStoreName); err == nil && ok && !config.IsPlaceholderStoreName(v) {
+	if v := shopNameOrEmpty(ctx, d); v != "" {
 		return v
 	}
-	return d.Cfg.StoreName
+	if !config.IsPlaceholderStoreName(d.Cfg.StoreName) {
+		return strings.TrimSpace(d.Cfg.StoreName)
+	}
+	return ""
 }
 
 // bindSelfOrderTableSession is the ?table= half of GET /self-order

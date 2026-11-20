@@ -53,6 +53,9 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 		}
 		rows := make([]row, 0, len(list))
 		for _, p := range list {
+			if p.RequestedRole == data.TillRoleCardReader {
+				continue // ut-docs#6538: reader requests have their own card
+			}
 			rows = append(rows, row{
 				ID:               p.ID,
 				DeviceName:       p.DeviceName,

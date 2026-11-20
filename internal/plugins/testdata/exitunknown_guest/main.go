@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -19,6 +20,10 @@ func main() {
 	}
 	fmt.Println(`{"outcome":"declined","decline_code":"outcome_unknown","transaction_ref":"txn-SECRET-123","ref":"ref-SECRET-456","recent":[{"ref":"ref-SECRET-789"}]}`)
 	if strings.HasSuffix(ev, ".authorize") {
+		os.Exit(2)
+	}
+	// ut-docs#6647: a ".refund" whose payload asks for it exits non-zero too.
+	if in, _ := io.ReadAll(os.Stdin); strings.HasSuffix(ev, ".refund") && strings.Contains(string(in), "EXIT_NONZERO") {
 		os.Exit(2)
 	}
 }

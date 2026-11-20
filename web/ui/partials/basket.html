@@ -15,9 +15,13 @@
      piece the interception needs, WHICH placement is configured, is not
      here: it never changes basket-to-basket, so it lives on the one
      element that survives every #basket swap instead, <body>'s own
-     data-order-type-prompt-mode (base.html, httpx.InitOrderTypePromptMode). -->
+     data-order-type-prompt-mode (base.html, httpx.InitOrderTypePromptMode).
+     data-item-counts/data-in-basket-label (ut-docs#3241): same bridge, read
+     by app.js's phone tile badges -- the per-item counts are computed
+     server-side (Basket.ItemCountsByItem); JS only copies them onto tiles. -->
 <div class="basket" id="basket" data-voucher-id="{{ .VoucherID }}" data-voucher-balance-minor="{{ .VoucherBalance.Minor }}"
-     data-lines-count="{{ len .Lines }}" data-order-type-chosen="{{ .OrderTypeChosen }}">
+     data-lines-count="{{ len .Lines }}" data-order-type-chosen="{{ .OrderTypeChosen }}"
+     data-item-counts="{{ .ItemCountsJSON }}" data-in-basket-label="{{ T "basket.tile_in_basket" }}">
   {{ if .ToastMessage }}
     {{ if eq .ToastLevel "error" }}
     <div class="pos-notice error" id="toast-message" role="alert">
@@ -30,6 +34,61 @@
       <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
     </div>
     {{ end }}
+  {{ end }}
+  {{/* ut-docs#6455 (ux A1-A4): the card-present (tap) payment screen. One
+       aria-live region carries icon + words (never colour alone); buttons
+       are 56 px and keep their slot. The words never say "declined" for a
+       pending or start failure. The attempt key never appears here: the
+       server resolves it from the locked tender. */}}
+  {{/* ut-docs#6538 (ux A6): the phone reader's progress. Idle, it only waits for
+       a tender request to start; the server fragment then polls itself. */}}
+  <div id="tap-remote" hx-get="/ui/pay/tap/remote" hx-trigger="htmx:beforeRequest[detail.pathInfo.requestPath=='/api/pos/tender'] from:body delay:600ms" hx-swap="outerHTML"></div>
+  {{ if .TapPanel }}{{ $p := .TapPanel }}
+  <section id="tap-panel" class="tap-panel tap-{{ $p.State }}" aria-labelledby="tap-title" data-testid="tap-panel">
+    <div role="status" aria-live="assertive" aria-atomic="true">
+      {{ if eq $p.State "pending" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9719;</span> {{ T "tap.pending.title" }}</h3>
+      <p class="tap-amount">{{ money $p.Amount }}</p>
+      <p>{{ T "tap.pending.body" }}</p>
+      {{ if eq $p.Reason "processing" }}<p class="muted">{{ T "tap.pending.reason.processing" }}</p>{{ end }}
+      {{ if eq $p.Reason "lookup_failed" }}<p class="muted">{{ T "tap.pending.reason.lookup_failed" }}</p>{{ end }}
+      {{ if eq $p.Reason "reader_lost" }}<p class="muted">{{ T "tap.pending.lan" }}</p>{{ end }}
+      {{ if eq $p.Reason "amount_mismatch" }}<p class="muted">{{ T "tap.amount_mismatch" }}</p>{{ end }}
+      {{ if $p.Still }}<p>{{ T "tap.pending.still" }}</p>{{ end }}
+      <p class="muted">{{ T "tap.pending.locked" }}</p>
+      {{ else if eq $p.State "not_paid" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#8505;</span> {{ T "tap.not_paid" }}</h3>
+      {{ else if eq $p.State "paid_already" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#10003;</span> {{ T "tap.paid_already" }}</h3>
+      <p class="tap-amount">{{ money $p.Amount }}</p>
+      {{ if and $p.Brand $p.Last4 }}<p>{{ printf (T "tap.result.card") $p.Brand $p.Last4 }}</p>{{ end }}
+      {{ else if eq $p.State "start_failed" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9888;</span> {{ if eq $p.Reason "reader_busy" }}{{ T "tap.reader.busy_result" }}{{ else }}{{ T "tap.start_failed" }}{{ end }}</h3>
+      {{ end }}
+    </div>
+    <div class="tap-actions">
+      {{ if eq $p.State "pending" }}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-check-again"
+              hx-post="/pay/tap/check" hx-vals='{"leg":"0"}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this" hx-indicator="this">{{ T "tap.check_again" }}</button>
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-cancel-payment"
+              hx-post="/pay/tap/check" hx-vals='{"leg":"0","cancel":"1"}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.cancel_payment" }}</button>
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-ask-manager"
+              hx-get="/ui/pay/tap/resolve" hx-target="#tap-panel" hx-swap="outerHTML">{{ T "tap.ask_manager" }}</button>
+      {{ else if eq $p.State "paid_already" }}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-continue"
+              hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.continue" }}</button>
+      {{ else }}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-try-again"
+              hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.result.try_again" }}</button>
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-other-method"
+              hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "tap.result.other_method" }}</button>
+      {{ end }}
+    </div>
+  </section>
   {{ end }}
   {{/* ut-docs#4344: the scanned code matched more than one kind (an item
        AND a voucher, ...). Nothing was added; each row re-posts the scan

@@ -1,0 +1,91 @@
+{{/* ut-docs#6566: body of Settings > Payments > Card readers. Rendered inside
+     the page and standalone (htmx outerHTML swap) by the add / rename / move /
+     self-order / remove routes, so the page never reloads mid-edit. The
+     readers are saved on THIS till only. Reader ids are device identifiers,
+     not secrets, shown in full to the manager. Text inputs carry the OSK
+     inputmode guard; nothing autofocuses. */}}
+{{ define "card_reader_settings_body.html" }}
+<div id="card-reader-settings-body" data-testid="card-reader-settings">
+  <p class="muted">{{ T "card_reader.settings.help" }}</p>
+  <p id="card-reader-count" class="muted" data-testid="card-reader-count">{{ printf (T "card_reader.settings.count") .Count .Max }}</p>
+  <p id="card-reader-msg" class="card-reader-msg{{ if eq .MsgKind "error" }} error{{ end }}" aria-live="polite" role="status" data-testid="card-reader-msg">{{ if .Msg }}{{ if eq .Msg "card_reader.settings.limit_reached" }}{{ printf (T .Msg) .Max }}{{ else }}{{ T .Msg }}{{ end }}{{ end }}</p>
+
+  {{ range .NeedsUpdate }}
+  <p class="muted" data-testid="card-reader-needs-update">{{ printf (T "card_reader.needs_plugin_update") (T .Name) }}</p>
+  {{ end }}
+
+  {{ if not .Rows }}
+  <p class="muted" data-testid="card-reader-empty">{{ T "card_reader.settings.empty" }}</p>
+  {{ else }}
+  <div id="card-reader-list-settings" role="list">
+    {{ range .Rows }}
+    <div class="card-reader-settings-row" role="listitem" data-testid="card-reader-row" data-reader-id="{{ .ID }}">
+      <div class="card-reader-main">
+        <strong class="card-reader-name">{{ .Name }}</strong>
+        <span class="muted">{{ T (printf "card_reader.kind.%s" .Kind) }}{{ if .ProviderName }} · {{ T .ProviderName }}{{ end }}</span>
+        <span class="muted">{{ T "card_reader.settings.reader_id" }}: <span class="card-reader-id" dir="ltr"><bdi>{{ .ReaderRef }}</bdi></span></span>
+        <span>
+          {{ if eq .Source "migrated" }}<span class="card-reader-tag">{{ T "card_reader.settings.source_migrated" }}</span>{{ end }}
+          {{ if .UnattendedDefault }}<span class="card-reader-tag" data-testid="card-reader-unattended-tag">{{ T "card_reader.settings.unattended_tag" }}</span>{{ end }}
+          {{ if .NeedsUpdate }}<span class="card-reader-tag">{{ printf (T "card_reader.needs_plugin_update") (T .ProviderName) }}</span>{{ end }}
+        </span>
+      </div>
+      <div class="card-reader-settings-actions">
+        {{ if not .NeedsUpdate }}
+        <form class="card-reader-rename-form" hx-post="/settings/card-readers/{{ .ID }}" hx-target="#card-reader-settings-body" hx-swap="outerHTML">
+          <input type="text" name="name" value="{{ .Name }}" maxlength="40" required autocomplete="off" aria-label="{{ T "card_reader.settings.name" }}"
+                 {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}>
+          <button class="btn secondary" type="submit" data-testid="card-reader-rename">{{ T "card_reader.settings.rename" }}</button>
+        </form>
+        {{ end }}
+        <button class="btn secondary" type="button" data-testid="card-reader-up" aria-label="{{ T "card_reader.settings.move_up" }}: {{ .Name }}"
+                hx-post="/settings/card-readers/{{ .ID }}" hx-vals='{{ jsonVals "move" "up" }}' hx-target="#card-reader-settings-body" hx-swap="outerHTML">▲</button>
+        <button class="btn secondary" type="button" data-testid="card-reader-down" aria-label="{{ T "card_reader.settings.move_down" }}: {{ .Name }}"
+                hx-post="/settings/card-readers/{{ .ID }}" hx-vals='{{ jsonVals "move" "down" }}' hx-target="#card-reader-settings-body" hx-swap="outerHTML">▼</button>
+        {{ if and (not .NeedsUpdate) (ne .Kind "tap_to_pay") }}
+        <label>
+          <input type="checkbox" data-testid="card-reader-unattended" {{ if .UnattendedDefault }}checked{{ end }}
+                 hx-post="/settings/card-readers/{{ .ID }}" hx-vals='{{ if .UnattendedDefault }}{{ jsonVals "unattended" "0" }}{{ else }}{{ jsonVals "unattended" "1" }}{{ end }}' hx-trigger="change"
+                 hx-target="#card-reader-settings-body" hx-swap="outerHTML">
+          {{ T "card_reader.settings.unattended_default" }}
+        </label>
+        {{ end }}
+        <button class="btn danger" type="button" data-testid="card-reader-remove" aria-label="{{ T "card_reader.settings.remove" }}: {{ .Name }}"
+                hx-post="/settings/card-readers/{{ .ID }}/remove" hx-target="#card-reader-settings-body" hx-swap="outerHTML"
+                hx-confirm="{{ if .LegacyKey }}{{ printf (T "card_reader.settings.remove_confirm_legacy") .Name .PluginName }}{{ else }}{{ printf (T "card_reader.settings.remove_confirm") .Name }}{{ end }}"
+                data-confirm-ok="{{ T "card_reader.settings.remove" }}">{{ T "card_reader.settings.remove" }}</button>
+      </div>
+    </div>
+    {{ end }}
+  </div>
+  {{ end }}
+
+  {{ if not .Providers }}
+  <p class="muted" data-testid="card-reader-no-providers">{{ T "card_reader.settings.no_providers" }}</p>
+  {{ else }}
+  <form id="card-reader-add-form" class="card-reader-add-form" data-testid="card-reader-add-form" hx-post="/settings/card-readers"
+        hx-target="#card-reader-settings-body" hx-swap="outerHTML">
+    <fieldset{{ if .AtLimit }} disabled{{ end }} style="border:0;padding:0;margin:0;display:grid;gap:.6rem">
+      <label>{{ T "card_reader.settings.name" }}
+        <input type="text" id="card-reader-name" name="name" maxlength="40" required autocomplete="off" aria-describedby="card-reader-name-help"
+               {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}>
+        <span id="card-reader-name-help" class="muted">{{ T "card_reader.settings.name_help" }}</span>
+      </label>
+      <label>{{ T "card_reader.settings.provider" }}
+        <select id="card-reader-provider" name="method_key" required>
+          {{ range .Providers }}<option value="{{ .Key }}">{{ T .Name }}</option>{{ end }}
+        </select>
+      </label>
+      <label>{{ T "card_reader.settings.reader_id" }}
+        <input type="text" id="card-reader-ref" name="reader_ref" maxlength="128" required pattern="[A-Za-z0-9_.:\-]{1,128}"
+               autocomplete="off" spellcheck="false" class="card-reader-id" dir="ltr" aria-describedby="card-reader-ref-help"
+               {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}>
+        <span id="card-reader-ref-help" class="muted">{{ T "card_reader.settings.reader_id_help" }}</span>
+      </label>
+      <button class="btn" type="submit" data-testid="card-reader-add">{{ T "card_reader.settings.add" }}</button>
+    </fieldset>
+    {{ if .AtLimit }}<p class="error" data-testid="card-reader-limit">{{ printf (T "card_reader.settings.limit_reached") .Max }}</p>{{ end }}
+  </form>
+  {{ end }}
+</div>
+{{ end }}

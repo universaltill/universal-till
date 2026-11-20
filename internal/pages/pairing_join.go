@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -417,10 +416,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			pairWaitView(w, r, statusURL, "error", "", "", msg)
 			return
 		}
-		// ut-docs#5862: one line, no hidden formatting characters; refused
-		// here, before any request to the main till.
-		if _, err := data.CheckSingleLineName(name); err != nil {
-			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, keyNameInvalidCharacters))
+		// ut-docs#5862, #5898: one line, no hidden formatting characters, at
+		// most maxTillNameRunes; refused here, before any request to the
+		// main till.
+		if key := tillNameRefusalKey(name); key != "" {
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, key))
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {

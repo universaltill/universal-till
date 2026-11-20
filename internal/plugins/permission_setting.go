@@ -235,6 +235,8 @@ func netGrantMatch(ctx context.Context, db *sql.DB, pluginID, host string) (exac
 			if h, ok := settingBoundNetHost(ctx, db, pluginID, keys[0]); ok && h == want {
 				return true, wildcard, nil
 			}
+		case p == BrokerNetPermission:
+			// a name, not a host (ut-docs#6455)
 		case strings.HasPrefix(p, "net:"):
 			if normGrantHost(strings.TrimPrefix(p, "net:")) == want {
 				return true, wildcard, nil

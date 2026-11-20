@@ -61,6 +61,8 @@ func PluginNetworkNeeds(ctx context.Context, db *sql.DB, pluginID string) (Netwo
 			n.Unprobeable = true
 		case strings.HasPrefix(p, netValidationPrefix), strings.HasPrefix(p, "net:@"):
 			n.Any, n.Unprobeable = true, true
+		case p == BrokerNetPermission:
+			// net:payment_broker is a name, not a host: no egress (ut-docs#6455).
 		case strings.HasPrefix(p, "net:"):
 			n.Any = true
 			if h := strings.TrimPrefix(p, "net:"); h == "*" || strings.HasPrefix(h, "{") || strings.HasPrefix(h, "@") {

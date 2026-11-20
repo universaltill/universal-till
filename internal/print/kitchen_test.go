@@ -9,7 +9,7 @@ import (
 func sampleTicket() KitchenTicket {
 	return KitchenTicket{
 		Station:   "KITCHEN",
-		OrderNo:   "R-0042",
+		OrderNo:   "42",
 		OrderType: "takeaway",
 		Table:     "Table 5",
 		Timestamp: "2026-07-16 18:30",
@@ -31,7 +31,8 @@ func TestRenderKitchenTicketStructure(t *testing.T) {
 	if bytes.Contains(out, cmdKickDrawer) {
 		t.Error("kitchen ticket must never kick the drawer")
 	}
-	if !bytes.Contains(out, []byte("ORDER R-0042")) {
+	// ut-docs#6663: the label is its own line, the number double size below.
+	if !bytes.Contains(out, []byte("ORDER\n")) || !bytes.Contains(out, append(append([]byte{}, cmdDoubleOn...), []byte("42\n")...)) {
 		t.Error("order number missing")
 	}
 	if !bytes.Contains(out, []byte("2 x Cheeseburger")) {
