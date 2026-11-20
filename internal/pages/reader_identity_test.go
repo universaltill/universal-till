@@ -858,3 +858,71 @@ func TestConcurrentDoublePollOfAnApprovedPairingMakesOneReader(t *testing.T) {
 		t.Fatalf("codes %v: %d handovers, %d readers, %d credentials; want exactly 1 of each", codes, ok, readers, creds)
 	}
 }
+
+// --- review R-1/A-6: the phone wipes its credentials on 401, so 401 means
+// exactly "this bearer is invalid or revoked" and nothing else ---
+
+var readerBearerRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/api/sync/link"},
+	{http.MethodPost, "/api/sync/bearer/rotate"},
+	{http.MethodPost, "/api/sync/enroll/withdraw"},
+}
+
+func TestReaderLockoutIs429WithRetryAfterNever401(t *testing.T) {
+	g := newReaderRig(t, true)
+	_, bearer := g.enrolReader(t, "Phone")
+	now := time.Now()
+	syncBearerFailures = newBearerFailureLimiter(3, time.Minute, time.Minute, func() time.Time { return now })
+	for i := 0; i < 3; i++ {
+		rq := readerReq(g, http.MethodGet, "/api/sync/link", "wrong", true)
+		rq.RemoteAddr = "198.51.100.20:1"
+		if rec := g.serve(rq); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("a wrong bearer = %d, want 401", rec.Code)
+		}
+	}
+	for _, rt := range readerBearerRoutes {
+		rq := readerReq(g, rt.method, rt.path, bearer, true) // the VALID bearer
+		rq.RemoteAddr = "198.51.100.20:2"
+		rec := g.serve(rq)
+		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+			t.Errorf("%s %s from a locked-out source = %d Retry-After %q, want 429 + Retry-After (a 401 makes the phone forget its pairing)", rt.method, rt.path, rec.Code, rec.Header().Get("Retry-After"))
+		}
+	}
+}
+
+func TestReaderLookupErrorIs503AndIsNotCountedAsABearerFailure(t *testing.T) {
+	g := newReaderRig(t, true)
+	_, bearer := g.enrolReader(t, "Phone")
+	if _, err := g.d.Db.Exec(`ALTER TABLE card_reader_credentials RENAME TO card_reader_credentials_gone`); err != nil {
+		t.Fatal(err)
+	}
+	for _, rt := range readerBearerRoutes {
+		for i := 0; i < 25; i++ { // more than the lockout cap
+			rq := readerReq(g, rt.method, rt.path, bearer, true)
+			rq.RemoteAddr = "198.51.100.21:1"
+			rec := g.serve(rq)
+			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+				t.Fatalf("%s %s with the credential lookup failing = %d Retry-After %q, want 503 + Retry-After", rt.method, rt.path, rec.Code, rec.Header().Get("Retry-After"))
+			}
+		}
+	}
+	if d := syncBearerFailures.retryAfter("198.51.100.21"); d != 0 {
+		t.Fatalf("a database error locked the source out for %v; only a wrong bearer counts", d)
+	}
+}
+
+func TestOnlyAnInvalidOrRevokedReaderBearerIs401(t *testing.T) {
+	g := newReaderRig(t, true)
+	id, bearer := g.enrolReader(t, "Phone")
+	for _, rt := range readerBearerRoutes {
+		if rec := g.serve(readerReq(g, rt.method, rt.path, "never-issued", true)); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s unknown bearer = %d, want 401", rt.method, rt.path, rec.Code)
+		}
+	}
+	if _, err := g.d.Db.Exec(`UPDATE card_reader_credentials SET revoked_at = datetime('now') WHERE reader_id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if rec := g.serve(readerReq(g, http.MethodGet, "/api/sync/link", bearer, true)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked bearer = %d, want 401", rec.Code)
+	}
+}

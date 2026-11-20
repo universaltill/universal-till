@@ -228,9 +228,10 @@ func registerSyncLinkWith(mux *http.ServeMux, d *common.Deps, tills *data.TillsR
 			servePendingLink(w, r, d, pairings, pendingLimiter)
 			return
 		}
-		till, reader, isReader, ok := syncTillOrReader(w, r, tills, readerRepoFor(d))
+		till, reader, isReader, ok, deny := syncTillOrReader(w, r, tills, readerRepoFor(d))
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			status, msg := deny.status(w)
+			http.Error(w, msg, status)
 			return
 		}
 		if isReader {
