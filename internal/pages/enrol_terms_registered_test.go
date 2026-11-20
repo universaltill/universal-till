@@ -85,7 +85,7 @@ func TestEnrolTerms_NoTickRecordsAndSendsNothing(t *testing.T) {
 	rec := postForm(mux, "/api/enrol/terms", url.Values{}, &mgrUser)
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) ||
-		!strings.Contains(body, "Tick the box to accept the Universal Till cloud service terms.") {
+		!strings.Contains(body, "Tick the box to accept the Universal Till Merchant Terms.") {
 		t.Fatalf("untick = %d %s, want 200 with the translated error", rec.Code, body)
 	}
 	if cloud.termsCalls.Load() != 0 || settingVal(t, d, "marketplace.terms_version") != "" {

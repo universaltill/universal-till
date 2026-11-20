@@ -16,7 +16,7 @@ Registering connects your till to the Universal Till marketplace; claiming links
 ## How to use it
 
 1. Settings → Till registration shows the store identity. There is no Register button: once setup is finished the till registers itself in the background (see below). On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
-2. The cloud service terms are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till cloud service terms (version v0.1-draft)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
+2. The Universal Till Merchant Terms (version merchant-terms-v1.0) are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till Merchant Terms (version merchant-terms-v1.0)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
 3. Click Claim this store to get a short code (valid 15 minutes).
 4. Sign in to your Universal Till account on another device and enter the code there.
 
@@ -77,8 +77,8 @@ A manager can tap the chip to open Settings → Till registration, straight to P
 
 The card says what went wrong in one line; selling is never affected:
 
-- **Accept the Universal Till cloud service terms to register this till**: the terms box on the plugin's page was not ticked, so nothing was sent. Tick it and try again.
-- **Tick the box to accept the Universal Till cloud service terms**: on an already registered till, Accept terms was pressed without ticking the box, so nothing was recorded or sent. Tick it and press Accept terms again.
+- **Accept the Universal Till Merchant Terms to register this till**: the terms box on the plugin's page was not ticked, so nothing was sent. Tick it and try again.
+- **Tick the box to accept the Universal Till Merchant Terms**: on an already registered till, Accept terms was pressed without ticking the box, so nothing was recorded or sent. Tick it and press Accept terms again.
 - **Couldn't reach the cloud. Your acceptance is saved on this till**: the acceptance is kept on the till; check the internet connection and press Send to the cloud again.
 - **The Universal Till cloud is not available for this shop**: the cloud does not serve this shop. On a joined till this comes from the main till. The till keeps working offline.
 - **No cloud address is set up on this till**: the till was installed without a cloud address, so it can't register. Ask whoever installed it to set one up.
