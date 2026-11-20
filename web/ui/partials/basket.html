@@ -35,6 +35,57 @@
     </div>
     {{ end }}
   {{ end }}
+  {{/* ut-docs#6455 (ux A1-A4): the card-present (tap) payment screen. One
+       aria-live region carries icon + words (never colour alone); buttons
+       are 56 px and keep their slot. The words never say "declined" for a
+       pending or start failure. The attempt key never appears here: the
+       server resolves it from the locked tender. */}}
+  {{ if .TapPanel }}{{ $p := .TapPanel }}
+  <section id="tap-panel" class="tap-panel tap-{{ $p.State }}" aria-labelledby="tap-title" data-testid="tap-panel">
+    <div role="status" aria-live="assertive" aria-atomic="true">
+      {{ if eq $p.State "pending" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9719;</span> {{ T "tap.pending.title" }}</h3>
+      <p class="tap-amount">{{ money $p.Amount }}</p>
+      <p>{{ T "tap.pending.body" }}</p>
+      {{ if eq $p.Reason "processing" }}<p class="muted">{{ T "tap.pending.reason.processing" }}</p>{{ end }}
+      {{ if eq $p.Reason "lookup_failed" }}<p class="muted">{{ T "tap.pending.reason.lookup_failed" }}</p>{{ end }}
+      {{ if eq $p.Reason "amount_mismatch" }}<p class="muted">{{ T "tap.amount_mismatch" }}</p>{{ end }}
+      {{ if $p.Still }}<p>{{ T "tap.pending.still" }}</p>{{ end }}
+      <p class="muted">{{ T "tap.pending.locked" }}</p>
+      {{ else if eq $p.State "not_paid" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#8505;</span> {{ T "tap.not_paid" }}</h3>
+      {{ else if eq $p.State "paid_already" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#10003;</span> {{ T "tap.paid_already" }}</h3>
+      <p class="tap-amount">{{ money $p.Amount }}</p>
+      {{ if and $p.Brand $p.Last4 }}<p>{{ printf (T "tap.result.card") $p.Brand $p.Last4 }}</p>{{ end }}
+      {{ else if eq $p.State "start_failed" }}
+      <h3 id="tap-title" class="tap-title"><span class="tap-icon" aria-hidden="true">&#9888;</span> {{ T "tap.start_failed" }}</h3>
+      {{ end }}
+    </div>
+    <div class="tap-actions">
+      {{ if eq $p.State "pending" }}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-check-again"
+              hx-post="/pay/tap/check" hx-vals='{"leg":"0"}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this" hx-indicator="this">{{ T "tap.check_again" }}</button>
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-cancel-payment"
+              hx-post="/pay/tap/check" hx-vals='{"leg":"0","cancel":"1"}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.cancel_payment" }}</button>
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-ask-manager"
+              hx-get="/ui/pay/tap/resolve" hx-target="#tap-panel" hx-swap="outerHTML">{{ T "tap.ask_manager" }}</button>
+      {{ else if eq $p.State "paid_already" }}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-continue"
+              hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.continue" }}</button>
+      {{ else }}
+      <button type="button" class="btn primary tap-btn" data-testid="tap-try-again"
+              hx-post="/api/pos/tender" hx-vals='{{ jsonVals "amount" 0 "method" $p.Method }}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-disabled-elt="this">{{ T "tap.result.try_again" }}</button>
+      <button type="button" class="btn secondary tap-btn" data-testid="tap-other-method"
+              hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "tap.result.other_method" }}</button>
+      {{ end }}
+    </div>
+  </section>
+  {{ end }}
   {{/* ut-docs#4344: the scanned code matched more than one kind (an item
        AND a voucher, ...). Nothing was added; each row re-posts the scan
        with its kind fixed. Not a .pos-notice: those fade out on their own

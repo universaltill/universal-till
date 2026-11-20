@@ -360,11 +360,11 @@ func registerResolver(t *testing.T, r Resolver) {
 func TestResolveUnknown_CashierRefusedBeforeTheNativeSide(t *testing.T) {
 	fr := &fakeResolver{reply: `{"ok":true}`}
 	registerResolver(t, fr)
-	got := ResolveUnknown(deadlineCtx(t, time.Second), actor(false), "stripe", "k1")
+	got := Resolve(deadlineCtx(t, time.Second), actor(false), "stripe", "k1", OutcomeNotCharged)
 	if got.OK || got.Reason != ReasonForbidden {
 		t.Fatalf("cashier ResolveUnknown = %+v, want forbidden", got)
 	}
-	if got := ResolveUnknown(deadlineCtx(t, time.Second), nil, "stripe", "k1"); got.OK || got.Reason != ReasonForbidden {
+	if got := Resolve(deadlineCtx(t, time.Second), nil, "stripe", "k1", OutcomeNotCharged); got.OK || got.Reason != ReasonForbidden {
 		t.Fatalf("anonymous ResolveUnknown = %+v, want forbidden", got)
 	}
 	if len(fr.keys) != 0 {
@@ -375,7 +375,7 @@ func TestResolveUnknown_CashierRefusedBeforeTheNativeSide(t *testing.T) {
 func TestResolveUnknown_ManagerReachesTheNativeSide(t *testing.T) {
 	fr := &fakeResolver{reply: `{"ok":true}`}
 	registerResolver(t, fr)
-	got := ResolveUnknown(deadlineCtx(t, time.Second), actor(true), "stripe", "k1")
+	got := Resolve(deadlineCtx(t, time.Second), actor(true), "stripe", "k1", OutcomeNotCharged)
 	if !got.OK || len(fr.keys) != 1 || fr.keys[0] != "k1" {
 		t.Fatalf("manager ResolveUnknown = %+v keys %v", got, fr.keys)
 	}
@@ -383,19 +383,19 @@ func TestResolveUnknown_ManagerReachesTheNativeSide(t *testing.T) {
 
 func TestResolveUnknown_Validation(t *testing.T) {
 	ctx := deadlineCtx(t, time.Second)
-	if got := ResolveUnknown(ctx, actor(true), "stripe", "k1"); got.OK || got.Reason != ReasonNotForeground {
+	if got := Resolve(ctx, actor(true), "stripe", "k1", OutcomeNotCharged); got.OK || got.Reason != ReasonNotForeground {
 		t.Fatalf("no resolver = %+v, want not_foreground", got)
 	}
 	fr := &fakeResolver{reply: `{"ok":true}`}
 	registerResolver(t, fr)
-	if got := ResolveUnknown(ctx, actor(true), "sumup", "k1"); got.OK || got.Reason != ReasonBadRequest {
+	if got := Resolve(ctx, actor(true), "sumup", "k1", OutcomeNotCharged); got.OK || got.Reason != ReasonBadRequest {
 		t.Fatalf("unknown provider = %+v, want bad_request", got)
 	}
-	if got := ResolveUnknown(ctx, actor(true), "stripe", ""); got.OK || got.Reason != ReasonBadRequest {
+	if got := Resolve(ctx, actor(true), "stripe", "", OutcomeNotCharged); got.OK || got.Reason != ReasonBadRequest {
 		t.Fatalf("empty key = %+v, want bad_request", got)
 	}
 	fr.reply = `{"ok":true,"extra":1}`
-	if got := ResolveUnknown(ctx, actor(true), "stripe", "k1"); got.OK || got.Reason != ReasonBadNativeResult {
+	if got := Resolve(ctx, actor(true), "stripe", "k1", OutcomeNotCharged); got.OK || got.Reason != ReasonBadNativeResult {
 		t.Fatalf("unreadable native reply = %+v, want bad_native_result", got)
 	}
 	if len(fr.keys) != 1 {
@@ -407,7 +407,7 @@ func TestResolveUnknown_ContextEnds(t *testing.T) {
 	release := make(chan struct{})
 	registerResolver(t, resolverFunc(func(string) string { <-release; return `{"ok":true}` }))
 	t.Cleanup(func() { close(release) })
-	got := ResolveUnknown(deadlineCtx(t, 30*time.Millisecond), actor(true), "stripe", "k1")
+	got := Resolve(deadlineCtx(t, 30*time.Millisecond), actor(true), "stripe", "k1", OutcomeNotCharged)
 	if got.OK || got.Reason != ReasonTimeout {
 		t.Fatalf("ResolveUnknown after the deadline = %+v, want timeout", got)
 	}
@@ -418,7 +418,6 @@ type resolverFunc func(string) string
 func (f resolverFunc) Resolve(k, _ string) string { return f(k) }
 
 // Resolve(key, outcome) carries the manager's answer to the native side;
-// ResolveUnknown stays a shim for "not_charged" until Android migrates.
 func TestResolve_OutcomeReachesTheNativeSide(t *testing.T) {
 	fr := &fakeResolver{reply: `{"ok":true}`}
 	registerResolver(t, fr)
@@ -428,8 +427,8 @@ func TestResolve_OutcomeReachesTheNativeSide(t *testing.T) {
 			t.Fatalf("Resolve(%s) = %+v", out, got)
 		}
 	}
-	if got := ResolveUnknown(ctx, actor(true), "stripe", "k2"); !got.OK {
-		t.Fatalf("ResolveUnknown = %+v", got)
+	if got := Resolve(ctx, actor(true), "stripe", "k2", OutcomeNotCharged); !got.OK {
+		t.Fatalf("Resolve = %+v", got)
 	}
 	want := []string{"not_charged", "charged", "not_charged"}
 	for i, w := range want {
@@ -459,15 +458,15 @@ func TestResolve_UnknownOutcomeAndCashierNeverReachNative(t *testing.T) {
 	}
 }
 
-// TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne documents the
-// open review item A3 (ut-docs#6533/#3048): the only legitimate caller is the
-// plugin host fn of #6455 (it holds the signed-in auth.User, which is what
-// satisfies Actor). Until that lands there is deliberately NO production caller:
-// a mobile.* method or an HTTP route cannot know who is asking, and a wrong
-// "not charged" answer can double-charge a customer. Whoever adds the caller
-// updates `allowed` below with the file and confirms it passes a real auth.User.
-func TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne(t *testing.T) {
-	allowed := map[string]bool{} // slash-separated repo-relative paths of the #6455 host fn
+// TestResolveHasOnlyTheManagerResolveCaller pins review item A3
+// (ut-docs#6533/#3048): a wrong "not charged" answer can double-charge a
+// customer, so the only production caller of Resolve is the manager resolve
+// route of #6455 K1b, which holds the signed-in auth.User (what satisfies
+// Actor) AFTER the manager PIN and the broker's own answer. A mobile.* method
+// or any other route cannot know who is asking. Whoever adds a caller updates
+// `allowed` below with the file and confirms it passes a real auth.User.
+func TestResolveHasOnlyTheManagerResolveCaller(t *testing.T) {
+	allowed := map[string]bool{"internal/pages/tap_pending.go": true} // slash-separated repo-relative paths
 	root := filepath.Join("..", "..")
 	var found []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -488,7 +487,7 @@ func TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne(t *testing.T) 
 		if rerr != nil {
 			return rerr
 		}
-		if strings.Contains(string(b), "devicepay.ResolveUnknown(") || strings.Contains(string(b), "devicepay.Resolve(") {
+		if strings.Contains(string(b), "devicepay.Resolve(") {
 			rel, _ := filepath.Rel(root, p)
 			if rel = filepath.ToSlash(rel); !allowed[rel] {
 				found = append(found, rel)
@@ -500,6 +499,6 @@ func TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne(t *testing.T) 
 		t.Fatal(err)
 	}
 	if len(found) > 0 {
-		t.Fatalf("devicepay.ResolveUnknown is called from %v: add it to `allowed` only once the caller passes the signed-in auth.User (manager-gated, never an HTTP route)", found)
+		t.Fatalf("devicepay.Resolve is called from %v: add it to `allowed` only once the caller passes the signed-in auth.User (manager-gated, never an HTTP route)", found)
 	}
 }

@@ -1053,7 +1053,16 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// payment.<key>.refund subscriber really ran, i.e. whether money has
 		// already moved electronically by the time fiscal.sign.ask answers
 		// below. Only then can a cannot-sign answer not be refused.
-		refundResp, refundDelivered, blocked := blockingPaymentEventDispatch(r.Context(), d, method, "refund", requestID, refundPayload)
+		// ut-docs#6455: a tap entry's refund is bound to the original payment's
+		// own PaymentIntent and to the amount core is refunding; with several
+		// payments of the method there is no single PaymentIntent, so it is
+		// left unbound (the host function then refuses).
+		refundCtx := r.Context()
+		if len(originalPayments) == 1 && requestID != "" {
+			pi, _ := originalPayments[0]["transaction_ref"].(string)
+			refundCtx = tapRefundContext(refundCtx, d, method, pi, refundTotal.Minor(), detail.Currency, "refund:"+detail.ID+":"+method+":"+requestID)
+		}
+		refundResp, refundDelivered, blocked := blockingPaymentEventDispatch(refundCtx, d, method, "refund", requestID, refundPayload)
 		if blocked != nil {
 			// ut-docs#950: `blocked` is a plugin-originated error -- whatever
 			// text a third-party payment plugin's payment.<key>.refund hook

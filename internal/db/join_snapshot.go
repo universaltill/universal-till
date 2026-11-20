@@ -113,6 +113,19 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		execErr = DeleteTillCloudIdentity(cdb)
 	}
 	if execErr == nil {
+		// ut-docs#6538: nor the identity of this till's paired card readers
+		// (bearer hashes, TLS pins) or the reader rows themselves: a reader
+		// belongs to the main till it was approved on, never to a joining till.
+		for _, q := range []string{
+			`DELETE FROM card_reader_credentials`,
+			`DELETE FROM card_readers WHERE source = 'paired'`,
+		} {
+			if _, execErr = cdb.Exec(q); execErr != nil {
+				break
+			}
+		}
+	}
+	if execErr == nil {
 		// ut-docs#5074: nor this till's sales-copy bookkeeping. A main till
 		// that was once an additional till (promoted) still holds its copy
 		// cursor, and every main till holds its change log and the other
@@ -161,7 +174,7 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 // version and date of this till's last answered unpaid check-in: what the
 // cloud last saw of this device. Copied to a joining replica, the main
 // till's markers would cancel the replica's own first-run check-in.
-var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "marketplace.paired_at", "marketplace.terms_", "till_identity.", "cloudsync.unpaid_checkin."}
+var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.endpoint", "marketplace.enrolled_at", "marketplace.paired_at", "marketplace.terms_", "till_identity.", "cloudsync.unpaid_checkin."}
 
 // DeleteTillCloudIdentity removes every TillCloudIdentityPrefixes row from
 // the settings table behind exec: the join-snapshot copy served to a joining

@@ -44,7 +44,7 @@ func TestOpMatrixPerCaller(t *testing.T) {
 	want := map[Caller]map[string]bool{
 		CallerNative: {"connection_token": true, "onboarding_status": true, "session_create": true, "session_status": true, "session_cancel": true},
 		CallerHostFn: {"onboarding_status": true, "session_status": true, "session_cancel": true, "refund": true},
-		CallerCore:   {"connection_token": true, "onboarding_status": true, "session_create": true, "session_status": true},
+		CallerCore:   {"connection_token": true, "onboarding_status": true, "session_create": true, "session_status": true, "session_cancel": true},
 	}
 	for c, row := range want {
 		for _, op := range ops {
@@ -134,6 +134,25 @@ func TestHostFnRefundCappedByTender(t *testing.T) {
 	}
 	if strings.Contains(got, "plugin-chosen") || strings.Contains(got, `"note"`) {
 		t.Fatalf("plugin-supplied fields were forwarded: %q", got)
+	}
+}
+
+// F2 (tester-batch): each of the three refund binding checks (kind, PI, key)
+// alone must refuse the refund before anything reaches the cloud.
+func TestHostFnRefundRequiresKindPIAndKey(t *testing.T) {
+	hits, _ := counting(t, `{"refund_id":"re_1","status":"succeeded"}`)
+	for name, b := range map[string]Binding{
+		"authorize kind":   {Kind: BindAuthorize, Provider: "stripe", PI: "pi_9", MaxRefundMinor: 500, RefundKey: "k"},
+		"empty PI":         {Kind: BindRefund, Provider: "stripe", PI: "", MaxRefundMinor: 500, RefundKey: "k"},
+		"empty refund key": {Kind: BindRefund, Provider: "stripe", PI: "pi_9", MaxRefundMinor: 500, RefundKey: ""},
+	} {
+		ctx := WithBinding(context.Background(), b)
+		if _, err := Call(ctx, CallerHostFn, "stripe", "refund", []byte(`{"amount_minor":10}`)); !errors.Is(err, ErrNoDispatch) {
+			t.Fatalf("%s: err = %v, want ErrNoDispatch", name, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("an unbound refund reached the cloud %d times", hits.Load())
 	}
 }
 

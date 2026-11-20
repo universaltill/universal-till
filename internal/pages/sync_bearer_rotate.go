@@ -41,9 +41,14 @@ func registerSyncBearerRotate(mux *http.ServeMux, d *common.Deps) {
 			writeProofError(w, http.StatusConflict, "this till follows a main till and has no tills to rotate")
 			return
 		}
-		till, ok := syncTill(w, r, tills)
+		till, reader, isReader, ok, deny := syncTillOrReader(w, r, tills, readerRepoFor(d))
 		if !ok {
-			writeProofError(w, http.StatusUnauthorized, "unauthorized")
+			status, msg := deny.status(w)
+			writeProofError(w, status, msg)
+			return
+		}
+		if isReader {
+			rotateReaderBearer(w, r, d, reader)
 			return
 		}
 		// The previous bearer, once the new one is in use, is on its way

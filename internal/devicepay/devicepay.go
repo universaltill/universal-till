@@ -70,7 +70,7 @@ const (
 	ReasonTimeout         = "timeout"           // the caller's context ended first
 	ReasonContextCanceled = "context_cancelled" // the caller cancelled its context
 	ReasonBadNativeResult = "bad_native_result" // the native reply was not a verdict this package recognises
-	ReasonForbidden       = "forbidden"         // the caller is not a manager (ResolveUnknown)
+	ReasonForbidden       = "forbidden"         // the caller is not a manager (Resolve)
 )
 
 // ProviderStripe is the one provider with a device integration today
@@ -326,12 +326,6 @@ func SetResolver(r Resolver) {
 	mu.Lock()
 	defer mu.Unlock()
 	resolver = r
-}
-
-// ResolveUnknown is Resolve(..., OutcomeNotCharged): the shim the first
-// Android resolver was written against.
-func ResolveUnknown(ctx context.Context, who Actor, provider, idempotencyKey string) SetupResult {
-	return Resolve(ctx, who, provider, idempotencyKey, OutcomeNotCharged)
 }
 
 // Resolve tells the native side how the earlier payment for idempotencyKey

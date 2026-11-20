@@ -87,34 +87,12 @@ func ConfirmTap(ctx context.Context, store TapAttempts, key string) (TapConfirma
 		return pending(PendingContextCancelled)
 	}
 
-	req := map[string]string{"idempotency_key": a.Key}
-	if a.PIID != "" {
-		req["payment_intent_id"] = a.PIID
-	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return pending(PendingLookupFailed)
-	}
-	out, err := paybroker.Call(ctx, paybroker.CallerCore, a.Provider, "session_status", body)
+	st, err := TapBrokerStatus(ctx, a)
 	if err != nil {
 		if ctx.Err() != nil {
 			return pending(PendingContextCancelled)
 		}
 		logging.L().Warnf("tap confirm: session_status: %v", err)
-		return pending(PendingLookupFailed)
-	}
-	// The cloud's wire names (payment_intent_id, nested card) are mapped to
-	// the neutral envelope of ADR-0198 §3.5 by the broker package.
-	var st struct {
-		PaymentIntentID     string `json:"id"`
-		IdempotencyKey      string `json:"idempotency_key"`
-		Status              string `json:"status"`
-		AmountReceivedMinor int64  `json:"amount_received_minor"`
-		Currency            string `json:"currency"`
-		CardBrand           string `json:"card_brand"`
-		Last4               string `json:"last4"`
-	}
-	if !json.Valid(out) || json.Unmarshal(paybroker.Neutral(out), &st) != nil {
 		return pending(PendingLookupFailed)
 	}
 	if (st.IdempotencyKey != "" && st.IdempotencyKey != a.Key) || (a.PIID != "" && st.PaymentIntentID != "" && st.PaymentIntentID != a.PIID) {
@@ -153,4 +131,71 @@ func ConfirmTap(ctx context.Context, store TapAttempts, key string) (TapConfirma
 		return TapConfirmation{}, fmt.Errorf("tap confirm: %w", &PaymentPendingError{Reason: PendingLookupFailed})
 	}
 	return c, nil
+}
+
+// TapStatus is the broker's neutral answer about one attempt's PaymentIntent
+// (ADR-0198 §3.5), nothing else.
+type TapStatus struct {
+	PaymentIntentID     string `json:"id"`
+	IdempotencyKey      string `json:"idempotency_key"`
+	Status              string `json:"status"`
+	AmountReceivedMinor int64  `json:"amount_received_minor"`
+	Currency            string `json:"currency"`
+	CardBrand           string `json:"card_brand"`
+	Last4               string `json:"last4"`
+}
+
+// brokerRef is the body core sends for an attempt: its own key (and the
+// PaymentIntent core already recorded), never anything from a request.
+func brokerRef(a data.PaymentAttempt) ([]byte, error) {
+	req := map[string]string{"idempotency_key": a.Key}
+	if a.PIID != "" {
+		req["payment_intent_id"] = a.PIID
+	}
+	return json.Marshal(req)
+}
+
+// TapBrokerStatus asks the broker (as CallerCore) for attempt a's real state.
+// It changes nothing locally: callers decide what the answer means.
+func TapBrokerStatus(ctx context.Context, a data.PaymentAttempt) (TapStatus, error) {
+	body, err := brokerRef(a)
+	if err != nil {
+		return TapStatus{}, err
+	}
+	out, err := paybroker.Call(ctx, paybroker.CallerCore, a.Provider, "session_status", body)
+	if err != nil {
+		return TapStatus{}, err
+	}
+	// The cloud's wire names (payment_intent_id, nested card) are mapped to
+	// the neutral envelope of ADR-0198 §3.5 by the broker package.
+	var st TapStatus
+	if !json.Valid(out) || json.Unmarshal(paybroker.Neutral(out), &st) != nil {
+		return TapStatus{}, errors.New("tap status: unreadable broker answer")
+	}
+	return st, nil
+}
+
+// TapBrokerCancel asks the broker (as CallerCore) to cancel attempt a's
+// PaymentIntent so a late tap cannot charge it after the till moved on.
+func TapBrokerCancel(ctx context.Context, a data.PaymentAttempt) error {
+	body, err := brokerRef(a)
+	if err != nil {
+		return err
+	}
+	_, err = paybroker.Call(ctx, paybroker.CallerCore, a.Provider, "session_cancel", body)
+	return err
+}
+
+// SafeCardFacts returns brand and last four digits only when they have the
+// shape ADR-0127 allows (a lower-case scheme word, exactly four digits); a
+// value that does not is dropped, never stored.
+func SafeCardFacts(brand, last4 string) (string, string) {
+	b := strings.ToLower(strings.TrimSpace(brand))
+	if !brandRE.MatchString(b) {
+		b = ""
+	}
+	if !last4RE.MatchString(last4) {
+		last4 = ""
+	}
+	return b, last4
 }

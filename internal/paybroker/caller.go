@@ -34,7 +34,7 @@ var matrix = map[string]map[Caller]bool{
 	"onboarding_status": {CallerNative: true, CallerHostFn: true, CallerCore: true},
 	"session_create":    {CallerNative: true, CallerCore: true},
 	"session_status":    {CallerNative: true, CallerHostFn: true, CallerCore: true},
-	"session_cancel":    {CallerNative: true, CallerHostFn: true},
+	"session_cancel":    {CallerNative: true, CallerHostFn: true, CallerCore: true},
 	"refund":            {CallerHostFn: true},
 }
 

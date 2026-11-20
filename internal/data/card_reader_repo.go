@@ -39,6 +39,9 @@ const (
 	CardReaderSourceManual   = "manual"
 	CardReaderSourceMigrated = "migrated"
 	CardReaderSourceDevice   = "device"
+	// CardReaderSourcePaired is a phone reader enrolled through the pairing
+	// flow (ut-docs#6538); its identity is in card_reader_credentials.
+	CardReaderSourcePaired = "paired"
 )
 
 var (
@@ -200,51 +203,64 @@ func nameTaken(ctx context.Context, x cardReaderExec, name, exceptID string) (bo
 // It enforces the 32-active cap, name 1-40 chars unique among active rows,
 // and the strict reader id format.
 func (r *CardReaderRepo) Create(ctx context.Context, in CardReader) (CardReader, error) {
-	name, ok := cleanReaderName(in.Name)
-	if !ok {
-		return CardReader{}, ErrCardReaderName
-	}
-	if !ValidCardReaderRef(in.ReaderRef) || strings.TrimSpace(in.MethodKey) == "" || strings.TrimSpace(in.PluginID) == "" {
-		return CardReader{}, ErrCardReaderRef
-	}
-	if in.Kind == "" {
-		in.Kind = CardReaderKindCloud
-	}
-	if !validCardReaderKind(in.Kind) {
-		return CardReader{}, ErrCardReaderKind
-	}
-	if in.Source == "" {
-		in.Source = CardReaderSourceManual
-	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return CardReader{}, cardReaderObs.wrap("create", err)
 	}
 	defer tx.Rollback()
+	id, err := r.createTx(ctx, tx, in)
+	if err != nil {
+		return CardReader{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CardReader{}, cardReaderObs.wrap("create", err)
+	}
+	return r.Get(ctx, id)
+}
+
+// createTx is Create inside the caller's transaction: it validates, applies
+// the cap and name rules, inserts (or revives) the row and returns its id.
+func (r *CardReaderRepo) createTx(ctx context.Context, tx *sql.Tx, in CardReader) (string, error) {
+	name, ok := cleanReaderName(in.Name)
+	if !ok {
+		return "", ErrCardReaderName
+	}
+	if !ValidCardReaderRef(in.ReaderRef) || strings.TrimSpace(in.MethodKey) == "" || strings.TrimSpace(in.PluginID) == "" {
+		return "", ErrCardReaderRef
+	}
+	if in.Kind == "" {
+		in.Kind = CardReaderKindCloud
+	}
+	if !validCardReaderKind(in.Kind) {
+		return "", ErrCardReaderKind
+	}
+	if in.Source == "" {
+		in.Source = CardReaderSourceManual
+	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM card_readers WHERE removed_at IS NULL`).Scan(&active); err != nil {
-		return CardReader{}, cardReaderObs.wrap("create", err)
+		return "", cardReaderObs.wrap("create", err)
 	}
 	if active >= MaxActiveCardReaders {
-		return CardReader{}, ErrCardReaderLimit
+		return "", ErrCardReaderLimit
 	}
 	var existingID, existingRemoved sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT id, removed_at FROM card_readers WHERE method_key = ? AND reader_ref = ?`, in.MethodKey, in.ReaderRef).Scan(&existingID, &existingRemoved)
+	err := tx.QueryRowContext(ctx, `SELECT id, removed_at FROM card_readers WHERE method_key = ? AND reader_ref = ?`, in.MethodKey, in.ReaderRef).Scan(&existingID, &existingRemoved)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return CardReader{}, cardReaderObs.wrap("create", err)
+		return "", cardReaderObs.wrap("create", err)
 	}
 	if err == nil && !existingRemoved.Valid {
-		return CardReader{}, ErrCardReaderRef // already an active reader
+		return "", ErrCardReaderRef // already an active reader
 	}
 	id := existingID.String
 	if taken, err := nameTaken(ctx, tx, name, id); err != nil {
-		return CardReader{}, cardReaderObs.wrap("create", err)
+		return "", cardReaderObs.wrap("create", err)
 	} else if taken {
-		return CardReader{}, ErrCardReaderName
+		return "", ErrCardReaderName
 	}
 	var maxSort sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(sort_order) FROM card_readers WHERE removed_at IS NULL`).Scan(&maxSort); err != nil {
-		return CardReader{}, cardReaderObs.wrap("create", err)
+		return "", cardReaderObs.wrap("create", err)
 	}
 	sort := 0
 	if maxSort.Valid {
@@ -259,12 +275,9 @@ func (r *CardReaderRepo) Create(ctx context.Context, in CardReader) (CardReader,
 			id, name, in.MethodKey, in.PluginID, in.ReaderRef, in.Kind, in.Source, sort)
 	}
 	if err != nil {
-		return CardReader{}, cardReaderObs.wrap("create", err)
+		return "", cardReaderObs.wrap("create", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return CardReader{}, cardReaderObs.wrap("create", err)
-	}
-	return r.Get(ctx, id)
+	return id, nil
 }
 
 // Rename changes the display name.
@@ -406,6 +419,10 @@ func (r *CardReaderRepo) SoftRemove(ctx context.Context, id string) (cleared boo
 		return false, cardReaderObs.wrap("remove", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE card_readers SET removed_at = datetime('now'), unattended_default = 0, updated_at = datetime('now') WHERE id = ?`, id); err != nil {
+		return false, cardReaderObs.wrap("remove", err)
+	}
+	// ut-docs#6538: a removed reader must stop authenticating in the same step.
+	if err := revokeReaderCredentialTx(ctx, tx, id); err != nil {
 		return false, cardReaderObs.wrap("remove", err)
 	}
 	srows, err := tx.QueryContext(ctx, `SELECT id, key, value_json FROM plugin_settings WHERE plugin_id = ? AND scope = 'register' AND key LIKE '%\_reader\_id' ESCAPE '\'`, c.PluginID)

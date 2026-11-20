@@ -551,6 +551,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerDiscoveryAPI(mux, dp)                     // ADR-0033 part 1/3
 	registerPairingJoinAPI(mux, dp)                   // ADR-0033 part 3/3 (replica side)
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
+	registerReaderManagement(mux, dp)                 // phone card readers: pair requests, list, rename, revoke (ut-docs#6538)
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerNameShop(mux, dp)                         // ut-docs#4391: ask a manager on an unnamed main till for the shop/till name
@@ -738,6 +739,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerUsers(mux, dp, authSvc)
 	registerPermissionSettings(mux, dp) // super_admin-only role→action grant matrix editor (ut-docs#556)
 	registerCardReaders(mux, dp)        // ut-docs#6566: per-till card reader registry: picker + manager page
+	registerTapPay(mux, dp)             // ut-docs#6455: tap payment Check again + manager resolve
 	registerLocations(mux, dp)
 	registerRegisters(mux, dp)        // registers admin: create/rename/deactivate tills (ut-docs#651)
 	registerFiscalRegisterDE(mux, dp) // §146a Abs. 4 AO fiscal register (ut-docs#665)
