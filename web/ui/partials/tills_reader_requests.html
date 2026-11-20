@@ -1,0 +1,39 @@
+{{/* ut-docs#6538 (UX B1): manager-only "Card reader requests" on the Tills
+     page. A reader request is NOT a till request: it says in words that the
+     phone takes card taps only and gets no shop data, shows the code to
+     compare, and offers no role choice (the role is fixed by the request).
+     Approve and Deny reuse the pairing API; Approve asks the manager PIN. */}}
+<div id="reader-requests" class="card" role="region" aria-labelledby="reader-requests-title"
+     hx-get="/ui/tills/reader-requests" hx-trigger="every 3s [!utPairingBusy()], tills-changed[!utPairingBusy()] from:body" hx-target="this" hx-swap="outerHTML">
+  <h4 id="reader-requests-title">{{ T "tap.pair.requests_title" }}</h4>
+  {{ if .NeedsTLS }}
+  <p class="muted" role="status">{{ T "tap.pair.needs_tls" }}</p>
+  {{ else if .Requests }}
+  <div role="status" aria-live="polite" class="muted">{{ T "tap.pair.new_request" }}</div>
+  {{ range .Requests }}
+  <div class="reader-request" data-reader-request="{{ .ID }}">
+    <h5 tabindex="-1">{{ .DeviceName }}</h5>
+    <p>{{ T "tap.pair.role_words" }}</p>
+    <p>{{ T "tills.pairing.code_label" }}: <strong dir="ltr" class="pairing-code">{{ .VerificationCode }}</strong></p>
+    <p class="muted">{{ T "tap.pair.verify" }}</p>
+    <label class="reader-field" for="rpin-{{ .ID }}">{{ T "tills.pairing.manager_pin" }}
+      <input type="password" name="manager_pin" id="rpin-{{ .ID }}" inputmode="numeric" autocomplete="off"></label>
+    <div class="reader-actions">
+      <form hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#rpin-{{ .ID }}" hx-swap="none"
+            hx-disabled-elt="find button[type=submit]"
+            data-after-request="ok refresh-region:tills-pairing-card; fail unhide:rpin-error-{{ .ID }}">
+        <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
+      </form>
+      <form hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#rpin-{{ .ID }}" hx-swap="none"
+            hx-disabled-elt="find button[type=submit]"
+            data-after-request="ok refresh-region:tills-pairing-card; fail unhide:rpin-error-{{ .ID }}">
+        <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
+      </form>
+    </div>
+    <p id="rpin-error-{{ .ID }}" class="muted" role="alert" hidden>{{ T "tap.pair.error.approve_failed" }}</p>
+  </div>
+  {{ end }}
+  {{ else }}
+  <p class="muted">{{ T "tap.pair.none" }}</p>
+  {{ end }}
+</div>

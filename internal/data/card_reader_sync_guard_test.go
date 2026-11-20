@@ -20,6 +20,13 @@ func TestCardReaders_NotInSyncPaths(t *testing.T) {
 	allowed := map[string]bool{
 		"card_reader_repo.go": true, // the repository itself
 		"sync_admin_repo.go":  true, // classifies the table as NOT synced (nonAdminTables, with the reason)
+		// ut-docs#6538: joins card_readers to card_reader_credentials for the
+		// bearer lookup; the credentials table has its own guard test.
+		"card_reader_credential_repo.go": true,
+		// ut-docs#6538: the join snapshot DELETES the paired reader rows (and
+		// every credential) from its throwaway copy, so a joining till never
+		// receives them. It removes, never reads or sends.
+		"join_snapshot.go": true,
 	}
 	root := ".." // internal/
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

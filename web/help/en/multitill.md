@@ -74,6 +74,16 @@ Do this on the **main till**, as a manager.
 
 The joining till then finishes joining. If you deny the request, the joining till is not told: it keeps showing **Waiting for approval…** until the request expires, 10 minutes after it was sent. It then shows **No response — the request may have been declined or it expired. Try again.** and can send a new request. The same message appears if nobody answers within 10 minutes.
 
+## Using a phone as a card reader
+
+Where your shop has turned this on, a manager can pair a phone as a card reader for the main till. The phone only takes card taps: it gets no sales, items, customers or settings. A card reader pairs only to the main till (or a single standalone till), over the secure connection, never by QR code or short code.
+
+1. On the main till open **Tills**. Under **Card reader requests** a phone that asked to connect shows its name and a **Verification code**. The card says "Card reader: takes card taps only, gets no shop data", so you can tell it apart from a till.
+2. Check that the code matches the one on the phone, enter your **Manager PIN** and tap **Approve**. Tap **Deny** if you do not recognise the phone. The card has no role choice: a request for a card reader can only be approved as a card reader.
+3. Approved readers appear under **Card readers**. To rename one, change its name and save. To remove one, enter your **Manager PIN** and tap **Remove reader**: the phone stops taking payments at once and must be paired again to come back.
+
+If the main till is not serving a secure connection, the section says card readers need HTTPS first. A cashier cannot see or change any of this.
+
 ## Additional tills and satellites
 
 Every joined till has a role. An additional till works offline and rings up sales like any other till; it is the default. A satellite is a kiosk, table-QR or order station that needs the main till to work.

@@ -419,6 +419,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/tables/state":                true,
 	"/ui/tills/roster":                true,
 	"/ui/tills/pending-pairings":      true,
+	"/ui/tills/reader-requests":       true, // card reader requests, every 3 s (ut-docs#6538)
 	"/ui/settings/window-mode-status": true,
 	"/api/sync/pair-status":           true,
 	// Renew panel's QR re-check, every 20 s for ≤10 min (ut-docs#4286): an

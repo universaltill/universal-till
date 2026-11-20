@@ -336,13 +336,38 @@ func displayPrimaryAddress(primaryURL string) string {
 // back, so a plain request with a pinned till's bearer is a stolen bearer or
 // a downgrade. A till that has never used TLS keeps plain HTTP (§11).
 func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
+	if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == "" {
+		return data.TillRow{}, false
+	}
+	// ut-docs#6538: a source locked out for repeated bad bearers gets nothing,
+	// a valid bearer included (the caller answers 401; Retry-After is set).
+	if bearerLockedOut(w, r) {
+		return data.TillRow{}, false
+	}
+	t, ok := authTill(w, r, repo)
+	if !ok {
+		recordBearerFailure(r)
+	}
+	return t, ok
+}
+
+// authTill is the till bearer check itself (syncTill without the per-IP
+// failure accounting, which callers that try two tables must do once).
+func authTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
+	t, ok, _ := authTillEx(w, r, repo)
+	return t, ok
+}
+
+// authTillEx is authTill that also reports a failed lookup (dbErr), so a
+// caller that must tell "wrong bearer" from "database trouble" can.
+func authTillEx(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" {
-		return data.TillRow{}, false
+		return data.TillRow{}, false, false
 	}
 	t, ok, err := repo.TillByBearerHashAt(r.Context(), hashBearer(h), syncBearerNow())
 	if err != nil {
-		return data.TillRow{}, false
+		return data.TillRow{}, false, true
 	}
 	if !ok {
 		if t.ID != "" {
@@ -351,12 +376,12 @@ func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (dat
 			// one. The repo cleared it, so this is said once per rotation.
 			logging.L().Warnf("sync: an old sync credential for till %s was used after its rotation and was refused", t.ID)
 		}
-		return data.TillRow{}, false
+		return data.TillRow{}, false, false
 	}
 	switch {
 	case r.TLS == nil && t.TLSPinned:
 		warnPlainHTTPRefused(t.ID)
-		return data.TillRow{}, false
+		return data.TillRow{}, false, false
 	case r.TLS != nil && !t.TLSPinned:
 		// Best effort: a failed write only means the next TLS request
 		// records it; the request itself is authenticated either way.
@@ -373,7 +398,7 @@ func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (dat
 	if t.RotateDue {
 		w.Header().Set(lantls.BearerRotateHeader, "1")
 	}
-	return t, true
+	return t, true, false
 }
 
 // syncBearerNow is the clock bearer rotation runs on -- a seam for tests.
@@ -665,6 +690,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			in.Token, in.Name, in.Role = r.Form.Get("token"), r.Form.Get("name"), r.Form.Get("role")
 			in.ReceiptPrefix = r.Form.Get("receipt_prefix")
 		}
+		// ut-docs#6538: a card reader is never enrolled by a QR token or a
+		// short code (they prove possession of a code, not a manager's
+		// approval of a phone): it asks by request. Refused before the token
+		// is spent.
+		if strings.TrimSpace(in.Role) == data.TillRoleCardReader {
+			writeReaderError(w, http.StatusBadRequest, readerErrNeedsRequest)
+			return
+		}
 		// Validated before the one-time token is spent below.
 		role, ok := tillRoleFromForm(in.Role)
 		if !ok {
@@ -847,9 +880,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "withdraw must be done on the primary till", http.StatusConflict)
 			return
 		}
-		till, ok := syncTill(w, r, repo)
+		till, reader, isReader, ok, deny := syncTillOrReader(w, r, repo, readerRepoFor(d))
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			status, msg := deny.status(w)
+			http.Error(w, msg, status)
+			return
+		}
+		if isReader {
+			withdrawReader(w, r, d, reader)
 			return
 		}
 		if !withinJoinWithdrawWindow(till.EnrolledAt, time.Now()) {

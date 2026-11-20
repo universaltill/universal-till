@@ -228,9 +228,14 @@ func registerSyncLinkWith(mux *http.ServeMux, d *common.Deps, tills *data.TillsR
 			servePendingLink(w, r, d, pairings, pendingLimiter)
 			return
 		}
-		till, ok := syncTill(w, r, tills)
+		till, reader, isReader, ok, deny := syncTillOrReader(w, r, tills, readerRepoFor(d))
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			status, msg := deny.status(w)
+			http.Error(w, msg, status)
+			return
+		}
+		if isReader {
+			serveReaderLink(w, r, d, reader)
 			return
 		}
 		// Links terminate on the main till only; a replica's tills table
