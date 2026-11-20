@@ -515,7 +515,7 @@
   {{/* ut-docs#5417: the refused edit's line is gone, so there is no row to
        carry the note: show it here instead. */}}
   {{ if $.LineChangedKey }}{{ $found := false }}{{ range .Lines }}{{ if eq .LineKey $.LineChangedKey }}{{ $found = true }}{{ end }}{{ end }}{{ if not $found }}
-  <div class="line-discount-error" role="alert" data-line-changed>{{ T "basket.line_changed" }}</div>
+  <div class="line-discount-error" role="alert" data-line-changed>{{ if or (eq $.LineChangedKey "sale") (eq $.LineChangedKey "reset") }}{{ T "basket.sale_changed" }}{{ else }}{{ T "basket.line_changed" }}{{ end }}</div>
   {{ end }}{{ end }}
   <div class="totals">
     <!-- Own full-width row, like .total below: a real customer name (CRM

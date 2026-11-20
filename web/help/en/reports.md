@@ -146,7 +146,9 @@ none.
 
 A basket that is cleared with **New sale** before anyone pays — it had at
 least one item on it, and it wasn't an open order going back on hold — is
-counted too: on a day with at least one, the printed report shows a section
+counted too (a cashier needs a manager's PIN to clear a basket that holds
+anything with a price; the approver is recorded in the audit log, Reports →
+Audit): on a day with at least one, the printed report shows a section
 headed **CLEARED BEFORE PAYMENT** with how many baskets were cleared and
 what they added up to at the moment they were cleared. On a shop with
 several tills, the main till's report includes baskets cleared on every

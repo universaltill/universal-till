@@ -50,7 +50,8 @@ async function setup(page: Page) {
   expect(itemResp.ok(), 'create catalog item').toBe(true);
   await createCashier(page);
   await loginAsCashier(page);
-  await page.request.post('/api/pos/reset');
+  // ut-docs#5416: New sale on a priced basket needs a manager PIN from a cashier.
+  await page.request.post('/api/pos/reset', { form: { override_pin: MANAGER_PIN } });
   await page.goto('/');
   await page.waitForSelector('.pos-container');
   await page.locator('.scan-row input[name="code"]').fill(SKU);
@@ -83,7 +84,8 @@ async function lowerQtyToOne(page: Page) {
 
 test.describe('line reduction hint survives the resync (ut-docs#5417)', () => {
   test.afterEach(async ({ page }) => {
-    await page.request.post('/api/pos/reset');
+    // ut-docs#5416: New sale on a priced basket needs a manager PIN from a cashier.
+    await page.request.post('/api/pos/reset', { form: { override_pin: MANAGER_PIN } });
   });
 
   test('hint stays, qty box is restored, Cancel clears the hint', async ({ page }) => {

@@ -248,6 +248,9 @@
     'ut-ok': function (ctx) { return header(ctx, 'X-UT-Response') === 'ok'; },
     // ut-docs#6152: X-UT-Response equals the argument (e.g. print-slip).
     'ut-response': function (ctx, arg) { return header(ctx, 'X-UT-Response') === arg; },
+    // ut-docs#5416: the inverse, e.g. New sale answered with a manager-PIN
+    // prompt (200) must not close the payment overlay it was tapped in.
+    'not-ut-response': function (ctx, arg) { return header(ctx, 'X-UT-Response') !== arg; },
     // A settings save that answered with HTML (an elevation prompt) must
     // not reload over it.
     'not-html': function (ctx) { return header(ctx, 'Content-Type').indexOf('text/html') === -1; },

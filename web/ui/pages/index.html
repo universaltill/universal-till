@@ -508,7 +508,7 @@
               title="{{ T "kiosk.checkout_start" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               data-action="refocus-scan"
-              data-after-request="ok no-error-toast close:payment-overlay">
+              data-after-request="ok not-ut-response:elevation-prompt no-error-toast close:payment-overlay">
         <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span><span class="visually-hidden">{{ T "kiosk.checkout_start" }}</span></button>
       <!-- ut-docs#2137: the parked-orders popup. Always rendered (a control
            that appears and disappears under the cashier's finger is worse
@@ -1073,7 +1073,7 @@
               aria-label="{{ T "tender.overlay_new_sale_action" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               data-action="refocus-scan"
-              data-after-request="ok no-error-toast close:payment-overlay">
+              data-after-request="ok not-ut-response:elevation-prompt no-error-toast close:payment-overlay">
         <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button" data-testid="payment-overlay-hold"
               aria-label="{{ T "tender.overlay_hold_action" }}"
@@ -1095,7 +1095,7 @@
            (POST /api/pos/reset) is unchanged. -->
       <button class="btn secondary"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.new_customer" }}</button>
+              data-after-request="ok not-ut-response:elevation-prompt no-error-toast close:payment-overlay">{{ T "tender.new_customer" }}</button>
     </div>
       </div>
     </dialog>

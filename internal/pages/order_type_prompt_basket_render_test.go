@@ -17,6 +17,8 @@ var linesCountAttrRE = regexp.MustCompile(`data-lines-count="(\d+)"`)
 var orderTypeChosenAttrRE = regexp.MustCompile(`data-order-type-chosen="(true|false)"`)
 
 func TestBasketRender_LinesCountAndOrderTypeChosenAttributes(t *testing.T) {
+	// ut-docs#5416: New sale on a priced basket is gated; this test is about the rendered attributes
+	t.Setenv("UT_AUTH", "off")
 	mux, _ := newPOSTestDeps(t)
 
 	// Fresh basket: no lines, never asked.
