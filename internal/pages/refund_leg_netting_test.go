@@ -186,6 +186,10 @@ func TestSaleDetailPayments_StableOrderWhenPaidAtTies(t *testing.T) {
 // to payment.demopay.refund after the rig is built (keyed by the till DB).
 var refundErrOverrides sync.Map
 
+// refundHookGates: a test-set func called before the fake plugin answers a
+// refund (keyed by the till DB), so it can block the provider call (#6742).
+var refundHookGates sync.Map
+
 func (r *refCardRig) setRefundError(err error) { refundErrOverrides.Store(r.dp.Db, err) }
 
 func refundErrorText(t *testing.T, key string) string {
