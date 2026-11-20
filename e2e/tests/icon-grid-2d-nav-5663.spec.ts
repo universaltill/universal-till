@@ -298,7 +298,10 @@ for (const which of ['category', 'catalog'] as const) {
       expect(at).not.toBe('none');
       await page.waitForTimeout(IDLE);
       await page.keyboard.press('Space');
-      await expect(page.locator(`${grid} [data-icon="${at}"]`)).toHaveAttribute('aria-selected', 'true');
+      // ut-docs#4846: on the catalog's photo item the pick is kept under the
+      // photo (fallback badge), not selected; the category grid selects it.
+      if (which === 'catalog') await expect(page.locator(`${grid} [data-icon="${at}"]`)).toHaveClass(/builtin-icon-fallback/);
+      else await expect(page.locator(`${grid} [data-icon="${at}"]`)).toHaveAttribute('aria-selected', 'true');
     });
 
     test('Up/Down/PageUp/PageDown/type-ahead never choose or POST; Enter then does once', async ({ page }) => {
