@@ -1,0 +1,9 @@
+{
+  "_comment": "Reader re-proof after a main LAN key change (ADR-0198 §6.2). The phone POSTs request to https://<main>/api/sync/primary-proof (TLS, certificate NOT yet trusted: it records the SPKI pin it saw), then verifies response.proof as HMAC-SHA256 keyed by the ASCII of sha256hex(bearer), over the lines label (the text ut-primary-proof-v1), primary_till_id, reader_id, nonce, host_port, pin, each followed by LF. Match = adopt pin_seen as the new pin.",
+  "bearer": "reader-bearer-fixture",
+  "bearer_hash_hex": "fd50cf23313493855109e8df7af40afc22b02c59c194798a4e5459b738349d93",
+  "host_port": "192.0.2.20:8080",
+  "pin_seen": "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b",
+  "request": {"till_id": "rd_fixture", "nonce": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"},
+  "response": {"data": {"primary_till_id": "primary-fixture", "proof": "6a99d378297e912c617e077976d239e1a006d3be7fe153b6cac09b729d2a400f"}, "error": null}
+}

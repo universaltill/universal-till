@@ -149,6 +149,13 @@ func syncTillOrReader(w http.ResponseWriter, r *http.Request, tills *data.TillsR
 // till class: it has its own registry, vocabulary and handlers. Without a hub
 // (a bare test deps) the link is unavailable.
 func serveReaderLink(w http.ResponseWriter, r *http.Request, d *common.Deps, c data.ReaderCredential) {
+	// A reader that authenticated on the announced next pin (it re-proved
+	// after a main key change) now owns that pin.
+	if served := lantls.ServedPin(r.Context()); served != "" && served == c.NextPin {
+		if err := readerRepoFor(d).PromotePin(r.Context(), c.ReaderID, served); err != nil {
+			logging.L().Warnf("reader %s: promote next pin: %v", c.ReaderID, err)
+		}
+	}
 	if d.SyncPrimaryURL(r.Context()) != "" {
 		http.Error(w, "connect to the main till", http.StatusConflict)
 		return

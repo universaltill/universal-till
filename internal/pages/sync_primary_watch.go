@@ -68,8 +68,13 @@ func registerPrimaryProof(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !ok {
-			http.NotFound(w, r)
-			return
+			// ut-docs#6538 (ADR-0198 §6.2 "as for tills"): a paired card
+			// reader re-proves the same way after the main's LAN key changed.
+			// TLS only; till_id then carries the reader id.
+			hash, prevHash, ok = readerProofHashes(w, r, d, req.TillID)
+			if !ok {
+				return
+			}
 		}
 		primaryID, err := discovery.TillID(r.Context(), settingsRepo)
 		if err != nil {
@@ -250,4 +255,33 @@ func resolveReplicaSyncProblems() {
 	if n > 0 {
 		logging.L().Infof("sync: this till is no longer a replica — %d earlier sync problem(s) resolved", n)
 	}
+}
+
+// readerProofHashes is the reader branch of the primary proof. It answers
+// false after writing the response (404 for anything that is not an active
+// reader reached over TLS, 500 on a failed lookup). On success it records the
+// pin THIS main serves as the reader's next accepted pin: the value comes
+// from the connection's own certificate, never from the request, so an
+// unauthenticated caller can only make the main write down its own pin.
+func readerProofHashes(w http.ResponseWriter, r *http.Request, d *common.Deps, readerID string) (hash, prev string, ok bool) {
+	served := lantls.ServedPin(r.Context())
+	if r.TLS == nil || served == "" {
+		http.NotFound(w, r)
+		return "", "", false
+	}
+	repo := readerRepoFor(d)
+	hash, prev, ok, err := repo.ProofHashesByID(r.Context(), readerID, time.Now())
+	if err != nil {
+		common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_primary_proof", err)
+		return "", "", false
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return "", "", false
+	}
+	if err := repo.SetNextPin(r.Context(), readerID, served); err != nil {
+		common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_primary_proof", err)
+		return "", "", false
+	}
+	return hash, prev, true
 }

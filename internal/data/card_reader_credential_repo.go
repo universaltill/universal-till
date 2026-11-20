@@ -169,3 +169,50 @@ func (r *CardReaderCredentialRepo) Active(ctx context.Context, readerID string) 
 	}
 	return n > 0
 }
+
+// ProofHashesByID returns the hashes a main-till proof for this reader is
+// keyed by (ADR-0198 §6.2 "as for tills", ut-docs#2722/#4410): the current
+// bearer hash and, while its grace lasts, the previous one. Only an active
+// reader (not revoked, not removed) has any.
+func (r *CardReaderCredentialRepo) ProofHashesByID(ctx context.Context, readerID string, now time.Time) (current, prev string, ok bool, err error) {
+	err = r.db.QueryRowContext(ctx, `
+SELECT k.bearer_hash,
+  CASE WHEN k.bearer_prev_expires_at > ? THEN COALESCE(k.bearer_prev_hash, '') ELSE '' END
+FROM card_reader_credentials k JOIN card_readers c ON c.id = k.reader_id
+WHERE k.reader_id = ? AND k.revoked_at IS NULL AND c.removed_at IS NULL`,
+		now.UTC().Format(readerCredTS), readerID).Scan(&current, &prev)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && current == "") {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, cardReaderCredObs.wrap("proof_hashes", err)
+	}
+	return current, prev, true, nil
+}
+
+// SetNextPin records the pin this main now serves as the reader's next
+// accepted pin (a re-proof after a main key change). The caller passes only
+// the main's OWN served pin, never a value from the request.
+func (r *CardReaderCredentialRepo) SetNextPin(ctx context.Context, readerID, pin string) error {
+	if pin == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE card_reader_credentials SET next_pin = ? WHERE reader_id = ? AND revoked_at IS NULL AND pin_spki <> ?`, pin, readerID, pin)
+	if err != nil {
+		return cardReaderCredObs.wrap("set_next_pin", err)
+	}
+	return nil
+}
+
+// PromotePin makes the announced next pin the reader's pin once the reader
+// authenticated on it (compare-and-set on the next pin).
+func (r *CardReaderCredentialRepo) PromotePin(ctx context.Context, readerID, pin string) error {
+	if pin == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE card_reader_credentials SET pin_spki = ?, next_pin = '' WHERE reader_id = ? AND next_pin = ?`, pin, readerID, pin)
+	if err != nil {
+		return cardReaderCredObs.wrap("promote_pin", err)
+	}
+	return nil
+}
