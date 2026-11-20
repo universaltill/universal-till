@@ -137,6 +137,25 @@ func TestHostFnRefundCappedByTender(t *testing.T) {
 	}
 }
 
+// F2 (tester-batch): each of the three refund binding checks (kind, PI, key)
+// alone must refuse the refund before anything reaches the cloud.
+func TestHostFnRefundRequiresKindPIAndKey(t *testing.T) {
+	hits, _ := counting(t, `{"refund_id":"re_1","status":"succeeded"}`)
+	for name, b := range map[string]Binding{
+		"authorize kind":   {Kind: BindAuthorize, Provider: "stripe", PI: "pi_9", MaxRefundMinor: 500, RefundKey: "k"},
+		"empty PI":         {Kind: BindRefund, Provider: "stripe", PI: "", MaxRefundMinor: 500, RefundKey: "k"},
+		"empty refund key": {Kind: BindRefund, Provider: "stripe", PI: "pi_9", MaxRefundMinor: 500, RefundKey: ""},
+	} {
+		ctx := WithBinding(context.Background(), b)
+		if _, err := Call(ctx, CallerHostFn, "stripe", "refund", []byte(`{"amount_minor":10}`)); !errors.Is(err, ErrNoDispatch) {
+			t.Fatalf("%s: err = %v, want ErrNoDispatch", name, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("an unbound refund reached the cloud %d times", hits.Load())
+	}
+}
+
 func TestHostFnForeignPIRefused(t *testing.T) {
 	hits, _ := counting(t, `{}`)
 	ref := WithBinding(context.Background(), Binding{Kind: BindRefund, Provider: "stripe", PI: "pi_mine", MaxRefundMinor: 500, RefundKey: "k"})
