@@ -40,6 +40,14 @@ class FakePayments : ReaderPayments {
     val cancelled = mutableListOf<String>()
     private var end: ((CollectEnd) -> Unit)? = null
     var setups = 0
+    var foreground = false
+    var disconnects = 0
+
+    override fun onForeground() { foreground = true }
+
+    override fun onBackground() { foreground = false }
+
+    override fun disconnect() { disconnects++ }
 
     override fun capability() = cap
 
@@ -293,6 +301,107 @@ class ReaderSessionTest {
         connect()
         sched.advance(60_000)
         assertTrue(pay.cancelled.isEmpty())
+    }
+
+    // ---- review A-3: the 30 s is anchored to the FIRST loss ----
+
+    @Test fun `reconnect attempts that never reach the main do not restart the 30 s`() {
+        collect()
+        s.onClosed(gen, authFailed = false)
+        sched.advance(10_000)
+        for (i in 1..4) { // back-off attempts: attach, fail, attach, fail (no hello)
+            gen = s.attach(FakeTransport())
+            s.onClosed(gen, authFailed = false)
+            sched.advance(4_000)
+        }
+        // 26 s since the first loss
+        assertTrue(pay.cancelled.isEmpty())
+        sched.advance(4_100)
+        assertEquals(listOf("att_7:1:1"), pay.cancelled)
+        assertEquals(ReaderScreen.Result(ReaderResultKind.LINK_LOST), ui.last())
+    }
+
+    @Test fun `a loss after a real hello starts a new 30 s`() {
+        collect()
+        s.onClosed(gen, authFailed = false)
+        sched.advance(20_000)
+        connect() // hello: contact is back
+        sched.advance(5_000)
+        s.onClosed(gen, authFailed = false)
+        sched.advance(29_000)
+        assertTrue(pay.cancelled.isEmpty())
+        sched.advance(1_500)
+        assertEquals(1, pay.cancelled.size)
+    }
+
+    // ---- review A-1: the engine's foreground state follows the session's lifecycle ----
+
+    @Test fun `foreground and background reach the payments`() {
+        assertTrue(pay.foreground)
+        s.onBackground()
+        assertFalse(pay.foreground)
+        s.onForeground()
+        assertTrue(pay.foreground)
+    }
+
+    // ---- review A-4: the Stripe connection is dropped (ADR-0198 6.4) ----
+
+    @Test fun `backgrounded while idle drops the SDK connection, mid-collect it does not`() {
+        s.onBackground()
+        assertEquals(1, pay.disconnects)
+        s.onForeground()
+        collect()
+        s.onBackground()
+        assertEquals(1, pay.disconnects)
+    }
+
+    @Test fun `a 30 s link loss cancels the collect and drops the SDK connection`() {
+        collect()
+        s.onClosed(gen, authFailed = false)
+        sched.advance(30_100)
+        assertEquals(1, pay.cancelled.size)
+        assertEquals(1, pay.disconnects)
+    }
+
+    @Test fun `revoke drops the SDK connection at once`() {
+        collect()
+        s.onClosed(gen, authFailed = true)
+        assertEquals(listOf("att_7:1:1"), pay.cancelled)
+        assertEquals(1, pay.disconnects)
+    }
+
+    @Test fun `revoke while idle drops the SDK connection too`() {
+        s.onClosed(gen, authFailed = true)
+        assertEquals(1, pay.disconnects)
+    }
+
+    // ---- review A-5: re-pairing after a revoke ----
+
+    @Test fun `after a revoke a fresh enrolment works without a restart`() {
+        s.onClosed(gen, authFailed = true)
+        assertTrue(s.isRevoked)
+        s.enrolled()
+        assertFalse(s.isRevoked)
+        connect()
+        assertEquals(ReaderScreen.Idle, ui.last())
+        assertEquals("reader.status", t.types().last())
+        collect()
+        assertEquals(1, pay.collected.size)
+    }
+
+    // ---- review A-6: which close means revoked ----
+
+    @Test fun `only a 401 on the upgrade is a revoke`() {
+        assertTrue(LinkClose.isRevoked(401))
+        for (c in listOf(403, 429, 503, 500, 502, 404, 200, null)) assertFalse("$c", LinkClose.isRevoked(c))
+    }
+
+    @Test fun `429 and 503 back off by Retry-After, bounded`() {
+        assertEquals(1_000L, LinkClose.retryDelayMs(attempt = 0, retryAfterSec = null))
+        assertEquals(15_000L, LinkClose.retryDelayMs(attempt = 9, retryAfterSec = null))
+        assertEquals(42_000L, LinkClose.retryDelayMs(attempt = 0, retryAfterSec = 42))
+        assertEquals(120_000L, LinkClose.retryDelayMs(attempt = 0, retryAfterSec = 99_999))
+        assertEquals(1_000L, LinkClose.retryDelayMs(attempt = 0, retryAfterSec = 0))
     }
 
     @Test fun `a closed link while idle shows offline, not an error`() {

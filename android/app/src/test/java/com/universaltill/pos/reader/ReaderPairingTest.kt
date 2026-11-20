@@ -121,4 +121,33 @@ class ReaderPairingTest {
         h.getAnswers += PairHttp.Answer(409, """{"data":null,"error":"reader_limit"}""", "b".repeat(64))
         assertEquals(PairPoll.Failed("refused"), p.poll())
     }
+
+    // ---- review A-6 / tester F1: a limit or a busy main is "ask again later", never a failed pairing ----
+
+    @Test fun `429 with Retry-After and 503 on the approval poll mean wait, not refused`() {
+        val h = FakePairHttp()
+        val p = newPairing(h)
+        p.start("1.2.3.4:8080", "till-1", "x")
+        h.getAnswers += PairHttp.Answer(429, "", "b".repeat(64), retryAfterSec = 7)
+        assertEquals(PairPoll.Later(7_000), p.poll())
+        h.getAnswers += PairHttp.Answer(429, "", "b".repeat(64))
+        assertEquals(PairPoll.Later(2_000), p.poll())
+        h.getAnswers += PairHttp.Answer(503, "", "b".repeat(64), retryAfterSec = 3)
+        assertEquals(PairPoll.Later(3_000), p.poll())
+        h.getAnswers += PairHttp.Answer(429, "", "b".repeat(64), retryAfterSec = 99_999)
+        assertEquals(PairPoll.Later(60_000), p.poll())
+    }
+
+    @Test fun `30 polls in a minute against a main that answers 429 after 4 never fail the pairing`() {
+        val h = FakePairHttp()
+        var now = 0L
+        val p = newPairing(h) { now }
+        p.start("1.2.3.4:8080", "till-1", "x")
+        repeat(30) { i ->
+            h.getAnswers += if (i < 4) PairHttp.Answer(404, "", "b".repeat(64)) else PairHttp.Answer(429, "", "b".repeat(64), retryAfterSec = 1)
+            val r = p.poll()
+            assertTrue("poll $i: $r", r == PairPoll.Waiting || r is PairPoll.Later)
+            now += 2_000
+        }
+    }
 }
