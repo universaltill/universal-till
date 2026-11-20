@@ -4161,6 +4161,10 @@ window.utTabBarFade = function (el) {
     if (!x || x.status < 200 || x.status >= 300) return;
     if (x.getResponseHeader('X-UT-Response') === 'elevation-prompt') return;
     dismissedThisSale = false;
+    // The approved retry is submitted from the elevation dialog's own form, so
+    // the New sale buttons' close:payment-overlay never runs (#1386 regression).
+    var ov = document.getElementById('payment-overlay');
+    if (ov && ov.open) ov.close();
   });
 
   // "before_item": intercept the very first item landing in an empty

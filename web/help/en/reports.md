@@ -521,7 +521,7 @@ now records **why** whenever the line was worth anything: pick **Void**
 customer free of charge as a goodwill gesture), or **Waste** (spoiled,
 dropped, or a kitchen mistake). A manager or admin can pick a reason
 directly; a cashier is asked for a manager's PIN first, unless their
-role holds the Void/comp/waste permission. A free/$0 promotional line skips this
+role holds the Void, comp & waste permission. A free/$0 promotional line skips this
 entirely — there's no loss to categorize. This is separate from a
 refund: a refund returns money on a sale that already completed, while
 this covers only what never got that far.

@@ -635,3 +635,26 @@ func TestCheckOrElevateAll_ApproverMissingOneActionRefused(t *testing.T) {
 		t.Fatalf("approver missing one action must be refused: %+v", got)
 	}
 }
+
+// A session holding exactly ONE of the two actions must still be prompted when
+// one post both lowers the qty and raises the discount: checkOrElevateAll has
+// to check every action, not just the first.
+func TestPOSLine_ReduceAndRaise_SessionHoldsOnlyOneAction_Prompted(t *testing.T) {
+	for _, held := range []string{"void_comp_waste", "price_override"} {
+		t.Run("holds_only_"+held, func(t *testing.T) {
+			e := newGateEnv(t)
+			if _, err := e.dp.Db.Exec(`INSERT OR REPLACE INTO role_permissions(role,action,granted) VALUES('cashier',?,1)`, held); err != nil {
+				t.Fatal(err)
+			}
+			key := e.seedLine(t, 3)
+			form := url.Values{"key": {key}, "qty": {"1"}, "discount": {"10"}}
+			rec := postForm(e.mux, "/api/pos/line", form, e.cashier)
+			if !isElevationPrompt(rec) {
+				t.Fatalf("holding only %s must still be prompted, got %d: %s", held, rec.Code, rec.Body.String())
+			}
+			if l := e.dp.Engine.Basket().Lines[0]; l.Qty != 3 || l.LineDiscount != 0 {
+				t.Fatalf("nothing may apply before approval: %+v", l)
+			}
+		})
+	}
+}
