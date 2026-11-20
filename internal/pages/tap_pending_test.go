@@ -55,6 +55,19 @@ type fakeBroker struct {
 	mu     sync.Mutex
 	status string // JSON answered to session_status ("" = provider unavailable)
 	calls  []string
+	// seq, when set, answers successive session_status calls in order (the
+	// last answer repeats); cancelCode/cancelBody override the session_cancel
+	// answer (default 200 canceled).
+	seq        []string
+	cancelCode int
+	cancelBody string
+}
+
+func (b *fakeBroker) setSeq(s ...string) { b.mu.Lock(); b.seq = s; b.mu.Unlock() }
+func (b *fakeBroker) setCancel(code int, body string) {
+	b.mu.Lock()
+	b.cancelCode, b.cancelBody = code, body
+	b.mu.Unlock()
 }
 
 func (b *fakeBroker) setStatus(s string) { b.mu.Lock(); b.status = s; b.mu.Unlock() }
@@ -81,8 +94,20 @@ func newFakeBroker(t *testing.T) *fakeBroker {
 		b.mu.Lock()
 		b.calls = append(b.calls, r.URL.Path+" "+string(body))
 		st := b.status
+		if len(b.seq) > 0 && !strings.HasSuffix(r.URL.Path, "/session_cancel") {
+			st = b.seq[0]
+			if len(b.seq) > 1 {
+				b.seq = b.seq[1:]
+			}
+		}
+		cc, cb := b.cancelCode, b.cancelBody
 		b.mu.Unlock()
 		if strings.HasSuffix(r.URL.Path, "/session_cancel") {
+			if cc != 0 {
+				w.WriteHeader(cc)
+				_, _ = io.WriteString(w, cb)
+				return
+			}
 			_, _ = io.WriteString(w, `{"status":"canceled"}`)
 			return
 		}
@@ -114,6 +139,7 @@ type tapEnv struct {
 	manager  auth.User
 	mu       sync.Mutex
 	bindings []paybroker.Binding
+	noRow    bool // the plugin stub creates no attempt row (a payment that never started)
 }
 
 func (e *tapEnv) lastBinding(t *testing.T) paybroker.Binding {
@@ -149,6 +175,9 @@ func tapRig(t *testing.T) *tapEnv {
 		e.bindings = append(e.bindings, b)
 		e.mu.Unlock()
 		// What tap_to_pay_request does before the tap (K1a).
+		if e.noRow {
+			return
+		}
 		_, _ = data.NewPaymentAttemptRepo(dp.Db).Begin(ctx, data.PaymentAttempt{
 			Key: b.AttemptKey, Provider: b.Provider, AmountMinor: b.AmountMinor, Currency: b.Currency, Deadline: time.Now().Add(2 * time.Minute),
 		})
@@ -273,8 +302,9 @@ func TestTapGate_PluginApprovedBrokerNotSucceededLocksTender(t *testing.T) {
 	}
 }
 
-func TestTapGate_StartFailureIsNotDeclinedAndUnlocks(t *testing.T) {
+func TestTapGate_StartFailureWithNoAttemptRowIsNotDeclinedAndUnlocks(t *testing.T) {
 	e := tapRig(t)
+	e.noRow = true
 	e.plugin.answer = func(int) string {
 		return "START_FAILED"
 	}
@@ -285,6 +315,59 @@ func TestTapGate_StartFailureIsNotDeclinedAndUnlocks(t *testing.T) {
 	e.wantText(t, rec, "tap.start_failed")
 	if strings.Contains(strings.ToLower(rec.Body.String()), "declin") {
 		t.Fatalf("a start failure is never 'declined': %s", rec.Body.String())
+	}
+	if e.broker.count("session_status") != 0 {
+		t.Fatal("no attempt row means no PaymentIntent: the broker has nothing to be asked")
+	}
+}
+
+// K-2 (review-batch): once an attempt row exists a tap may have happened, so a
+// plugin's start_failed or decline is verified with the broker first.
+func TestTapGate_FailureAfterAttemptRowIsVerifiedWithBroker(t *testing.T) {
+	for _, ans := range []string{"START_FAILED", "DECLINE"} {
+		t.Run(ans+" broker says paid completes the sale", func(t *testing.T) {
+			e := tapRig(t)
+			e.plugin.answer = func(int) string { return ans }
+			e.broker.setStatus(piStatus("succeeded", 120))
+			e.tender(t)
+			if e.sales(t) != 1 {
+				t.Fatalf("the broker says the card was charged: the sale must complete (sales=%d)", e.sales(t))
+			}
+			if a := e.attempt(t); a.State != data.AttemptApproved {
+				t.Fatalf("attempt = %+v", a)
+			}
+		})
+		t.Run(ans+" broker unsure locks as pending", func(t *testing.T) {
+			e := tapRig(t)
+			e.plugin.answer = func(int) string { return ans }
+			e.broker.setStatus(piStatus("processing", 0))
+			rec := e.tender(t)
+			if e.sales(t) != 0 || e.dp.Engine.TenderLock() == "" {
+				t.Fatalf("an unverified failure must lock as pending (lock=%q)", e.dp.Engine.TenderLock())
+			}
+			e.wantText(t, rec, "tap.pending.title", "tap.check_again")
+			if strings.Contains(rec.Body.String(), enText(t, "tap.start_failed")) {
+				t.Fatal("must not say nothing was charged")
+			}
+		})
+		t.Run(ans+" broker down locks as pending", func(t *testing.T) {
+			e := tapRig(t)
+			e.plugin.answer = func(int) string { return ans }
+			e.broker.setStatus("")
+			e.tender(t)
+			if e.dp.Engine.TenderLock() == "" {
+				t.Fatal("broker unreachable after a possible tap must lock")
+			}
+		})
+		t.Run(ans+" broker says not paid cancels and unlocks", func(t *testing.T) {
+			e := tapRig(t)
+			e.plugin.answer = func(int) string { return ans }
+			e.broker.setStatus(piStatus("requires_payment_method", 0))
+			e.tender(t)
+			if e.dp.Engine.TenderLock() != "" || e.broker.count("session_cancel") != 1 {
+				t.Fatalf("not paid: cancel once and unlock (lock=%q cancels=%d)", e.dp.Engine.TenderLock(), e.broker.count("session_cancel"))
+			}
+		})
 	}
 }
 
@@ -378,6 +461,57 @@ func TestTapCheck_RequiresPaymentMethodCancelsThenUnlocks(t *testing.T) {
 	}
 	if a := e.attempt(t); a.State != data.AttemptCancelled {
 		t.Fatalf("attempt = %+v", a)
+	}
+}
+
+// K-1 (review-batch): the cancel answers already_succeeded (the customer tapped
+// between status and cancel): the till must show Paid, never "Not paid".
+func TestTapCheck_CancelAlreadySucceededIsPaidNotNotPaid(t *testing.T) {
+	e := tapRig(t)
+	e.pending(t)
+	e.broker.setSeq(piStatus("requires_payment_method", 0), piStatus("succeeded", 120))
+	e.broker.setCancel(http.StatusConflict, `{"error":{"code":"already_succeeded"}}`)
+	rec := e.do(t, e.cashier, http.MethodPost, "/pay/tap/check", url.Values{"leg": {"0"}})
+	e.wantText(t, rec, "tap.paid_already")
+	if strings.Contains(rec.Body.String(), enText(t, "tap.not_paid")) {
+		t.Fatal("must not show Not paid for a payment that succeeded")
+	}
+	if a := e.attempt(t); a.State != data.AttemptApproved {
+		t.Fatalf("attempt must be approved: %+v", a)
+	}
+}
+
+func TestTapCheck_CancelFailureStaysPending(t *testing.T) {
+	e := tapRig(t)
+	e.pending(t)
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	e.broker.setCancel(http.StatusServiceUnavailable, `{"error":{"code":"provider_unavailable"}}`)
+	rec := e.do(t, e.cashier, http.MethodPost, "/pay/tap/check", url.Values{"leg": {"0"}})
+	if e.dp.Engine.TenderLock() == "" {
+		t.Fatal("an uncancelled payment intent may still be tapped: stay locked")
+	}
+	if strings.Contains(rec.Body.String(), enText(t, "tap.not_paid")) {
+		t.Fatal("must not show Not paid when the cancel failed")
+	}
+	if a := e.attempt(t); a.State == data.AttemptCancelled {
+		t.Fatalf("attempt must not be closed: %+v", a)
+	}
+}
+
+func TestTapResolve_NotChargedCancelAlreadySucceededIsRefused(t *testing.T) {
+	e := tapRig(t)
+	e.pending(t)
+	e.broker.setSeq(piStatus("requires_payment_method", 0), piStatus("succeeded", 120))
+	e.broker.setCancel(http.StatusConflict, `{"error":{"code":"already_succeeded"}}`)
+	rec := e.resolve(t, e.manager, url.Values{"decision": {"not_charged"}, "override_pin": {dataAPITestManagerPIN}})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("a payment that succeeded cannot be resolved as not charged: %d %s", rec.Code, rec.Body.String())
+	}
+	if e.dp.Engine.TenderLock() == "" {
+		t.Fatal("must stay locked")
+	}
+	if a := e.attempt(t); a.State == data.AttemptResolvedNotCharged || a.State == data.AttemptCancelled {
+		t.Fatalf("attempt must not be closed as not charged: %+v", a)
 	}
 }
 
