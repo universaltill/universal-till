@@ -162,6 +162,31 @@ func tapAssess(ctx context.Context, d *common.Deps, leg pos.UnknownLeg) tapFacts
 	return f
 }
 
+// tapCancelThenAssess closes the PaymentIntent of a leg the broker said was
+// not paid, and only lets "not paid" stand when the cancel took or the broker
+// says the intent is gone. A cancel that fails (e.g. already_succeeded: the
+// customer tapped between status and cancel) re-reads the broker and returns
+// those facts: paid stays paid, anything else is pending (ADR-0198 3.6.4).
+func tapCancelThenAssess(ctx context.Context, d *common.Deps, f tapFacts) tapFacts {
+	if f.Verdict != tapNotPaid || !f.HaveRow || !f.BrokerOK || f.Attempt.State == data.AttemptCancelled {
+		return f
+	}
+	err := pos.TapBrokerCancel(ctx, f.Attempt)
+	if err == nil {
+		return f
+	}
+	logging.L().Warnf("tap: session_cancel: %s", paybroker.ErrorCode(err))
+	f2 := tapAssess(ctx, d, f.Leg)
+	if f2.Verdict == tapNotPaid && (f2.Status.Status == "canceled" || f2.ErrCode == "payment_not_found") {
+		return f2
+	}
+	if f2.Verdict == tapNotPaid {
+		// Not paid yet, but the intent is still open to a late tap.
+		f2.Verdict, f2.Reason = tapPending, pos.PendingNotConfirmed
+	}
+	return f2
+}
+
 // brokerWord is the neutral status the resolve screen shows.
 func (f tapFacts) brokerWord() string {
 	switch {
@@ -256,6 +281,7 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 				f = tapAssess(r.Context(), d, leg)
 			}
 		}
+		f = tapCancelThenAssess(r.Context(), d, f)
 		switch f.Verdict {
 		case tapPaid:
 			conf, err := pos.ConfirmTap(r.Context(), repo, leg.RequestID)
@@ -273,12 +299,6 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			}
 			renderTapBasket(w, r, d, nil, http.StatusOK)
 		case tapNotPaid:
-			if f.HaveRow && f.BrokerOK && f.Attempt.State != data.AttemptCancelled {
-				// Close the PaymentIntent so a late tap cannot charge it.
-				if err := pos.TapBrokerCancel(r.Context(), f.Attempt); err != nil {
-					logging.L().Warnf("tap check: session_cancel: %s", paybroker.ErrorCode(err))
-				}
-			}
 			tapUnlock(r.Context(), d, leg, data.AttemptCancelled, "not_paid")
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "not_paid", Method: leg.MethodID, Amount: leg.Amount}, http.StatusOK)
 		default:
@@ -366,6 +386,11 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			}
 			settingsAudit(r, data.NewPOSRepo(d.Db), elev, "payment_attempt", leg.RequestID, "tap_resolve", p)
 		}
+		if decision == "not_charged" {
+			// Close the PaymentIntent before letting go; a cancel that finds
+			// it paid turns the verdict to paid and the choice is refused.
+			f = tapCancelThenAssess(r.Context(), d, f)
+		}
 		override := !f.BrokerOK || f.Verdict == tapPending
 		switch {
 		case f.Verdict == tapPaid && decision == "approve":
@@ -393,9 +418,6 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			audit("manager_override", "approved_mismatch")
 			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeCharged)
 		case f.Verdict == tapNotPaid && decision == "not_charged":
-			if f.HaveRow && f.BrokerOK && f.Attempt.State != data.AttemptCancelled {
-				_ = pos.TapBrokerCancel(r.Context(), f.Attempt)
-			}
 			tapUnlock(r.Context(), d, leg, data.AttemptResolvedNotCharged, "manager_resolved")
 			audit("broker", "not_charged")
 			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeNotCharged)
