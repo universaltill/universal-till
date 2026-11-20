@@ -127,6 +127,12 @@ func utDeviceLocalIPsGet(dstPtr, dstCap uint32) int32
 //go:wasmimport ut device_timezone_get
 func utDeviceTimezoneGet(dstPtr, dstCap uint32) int32
 
+//go:wasmimport ut payment_provider_call
+func utPaymentProviderCall(pPtr, pLen, oPtr, oLen, rPtr, rLen, dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut tap_to_pay_request
+func utTapToPayRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
+
 // ptr is the guest address and length of b; (0, 0) for an empty slice. The
 // caller keeps b alive across the host call with runtime.KeepAlive.
 func ptr(b []byte) (uint32, uint32) {
@@ -389,6 +395,28 @@ func rawDeviceLocalIPsGet(dst []byte) int32 {
 func rawDeviceTimezoneGet(dst []byte) int32 {
 	dp, dc := ptr(dst)
 	r := utDeviceTimezoneGet(dp, dc)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawPaymentProviderCall(provider, op, body, dst []byte) int32 {
+	pp, pl := ptr(provider)
+	op2, ol := ptr(op)
+	rp, rl := ptr(body)
+	dp, dc := ptr(dst)
+	r := utPaymentProviderCall(pp, pl, op2, ol, rp, rl, dp, dc)
+	runtime.KeepAlive(provider)
+	runtime.KeepAlive(op)
+	runtime.KeepAlive(body)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawTapToPayRequest(body, dst []byte) int32 {
+	rp, rl := ptr(body)
+	dp, dc := ptr(dst)
+	r := utTapToPayRequest(rp, rl, dp, dc)
+	runtime.KeepAlive(body)
 	runtime.KeepAlive(dst)
 	return r
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
+	"github.com/universaltill/universal-till/internal/paybroker"
 )
 
 // Host functions v2 (docs: architecture/wasm-runtime.md). Guests import
@@ -64,6 +65,12 @@ type hostState struct {
 	// stalled call cannot eat the time the plugin needs to cancel the reader
 	// (ut-docs#6439).
 	gateDeadline time.Time
+	// binding is the payment dispatch core bound for this event, when it is
+	// an authorize/refund gate event with one of the matching kind
+	// (ut-docs#6455); bound says it is set. The payment host fns act only
+	// through it.
+	binding paybroker.Binding
+	bound   bool
 
 	// httpCacheReq/httpCacheResp cache the most recently completed
 	// hostHTTPRequest call for THIS event (ut-docs#754). WasmRuntime.HandleEvent
@@ -238,6 +245,8 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostDeviceIDGet).Export("device_id_get").
 		NewFunctionBuilder().WithFunc(hostDeviceLocalIPsGet).Export("device_local_ips_get").
 		NewFunctionBuilder().WithFunc(hostDeviceTimezoneGet).Export("device_timezone_get").
+		NewFunctionBuilder().WithFunc(hostPaymentProviderCall).Export("payment_provider_call").
+		NewFunctionBuilder().WithFunc(hostTapToPayRequest).Export("tap_to_pay_request").
 		Instantiate(ctx)
 	return err
 }
@@ -572,7 +581,7 @@ func pluginHasNetPermission(ctx context.Context, db *sql.DB, pluginID string) bo
 		return false
 	}
 	for _, p := range perms {
-		if p.Granted && strings.HasPrefix(p.Permission, "net:") {
+		if p.Granted && p.Permission != BrokerNetPermission && strings.HasPrefix(p.Permission, "net:") {
 			return true
 		}
 	}

@@ -533,3 +533,35 @@ func DeviceTimezone() (string, error) {
 	v, err := bufCall("device_timezone_get", defaultBuf, rawDeviceTimezoneGet)
 	return string(v), err
 }
+
+// PaymentProviderCall asks the till's payment broker for one op of a payment
+// provider (permission "net:payment_broker", ut-docs#6455). It works only
+// inside a payment.<key>.authorize or .refund dispatch: the till fixes the
+// payment, key and PaymentIntent from the dispatch, and the plugin supplies at
+// most a refund's amount_minor. Ops: onboarding_status, session_status,
+// session_cancel, refund. The answer is the neutral envelope (id, status,
+// amount_minor, amount_received_minor, currency, idempotency_key, card_brand,
+// last4); a failed call is an answer with {"error":{"code":...}}, which means
+// "could not ask", never "declined".
+func PaymentProviderCall(provider, op string, body any) (json.RawMessage, error) {
+	b := []byte("{}")
+	if body != nil {
+		var err error
+		if b, err = json.Marshal(body); err != nil {
+			return nil, err
+		}
+	}
+	p, o := []byte(provider), []byte(op)
+	out, err := bufCall("payment_provider_call", defaultBuf, func(dst []byte) int32 { return rawPaymentProviderCall(p, o, b, dst) })
+	return json.RawMessage(out), err
+}
+
+// TapToPayRequest starts the phone's tap sheet for the payment being
+// authorized (permission "device:tap_to_pay", inside payment.<key>.authorize
+// only). The till uses ITS amount, currency and key, not the plugin's, and
+// records the attempt before the tap. The answer is advisory: the till
+// confirms with the provider itself before the sale counts as paid.
+func TapToPayRequest() (json.RawMessage, error) {
+	out, err := bufCall("tap_to_pay_request", defaultBuf, func(dst []byte) int32 { return rawTapToPayRequest([]byte("{}"), dst) })
+	return json.RawMessage(out), err
+}

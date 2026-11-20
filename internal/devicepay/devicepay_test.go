@@ -333,12 +333,14 @@ type fakeResolver struct {
 	mu    sync.Mutex
 	reply string
 	keys  []string
+	outs  []string
 }
 
-func (f *fakeResolver) ResolveUnknown(key string) string {
+func (f *fakeResolver) Resolve(key, outcome string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.keys = append(f.keys, key)
+	f.outs = append(f.outs, outcome)
 	return f.reply
 }
 
@@ -413,7 +415,49 @@ func TestResolveUnknown_ContextEnds(t *testing.T) {
 
 type resolverFunc func(string) string
 
-func (f resolverFunc) ResolveUnknown(k string) string { return f(k) }
+func (f resolverFunc) Resolve(k, _ string) string { return f(k) }
+
+// Resolve(key, outcome) carries the manager's answer to the native side;
+// ResolveUnknown stays a shim for "not_charged" until Android migrates.
+func TestResolve_OutcomeReachesTheNativeSide(t *testing.T) {
+	fr := &fakeResolver{reply: `{"ok":true}`}
+	registerResolver(t, fr)
+	ctx := deadlineCtx(t, time.Second)
+	for _, out := range []string{OutcomeNotCharged, OutcomeCharged} {
+		if got := Resolve(ctx, actor(true), "stripe", "k1", out); !got.OK {
+			t.Fatalf("Resolve(%s) = %+v", out, got)
+		}
+	}
+	if got := ResolveUnknown(ctx, actor(true), "stripe", "k2"); !got.OK {
+		t.Fatalf("ResolveUnknown = %+v", got)
+	}
+	want := []string{"not_charged", "charged", "not_charged"}
+	for i, w := range want {
+		if fr.outs[i] != w {
+			t.Fatalf("outcomes = %v, want %v", fr.outs, want)
+		}
+	}
+}
+
+func TestResolve_UnknownOutcomeAndCashierNeverReachNative(t *testing.T) {
+	fr := &fakeResolver{reply: `{"ok":true}`}
+	registerResolver(t, fr)
+	ctx := deadlineCtx(t, time.Second)
+	for _, out := range []string{"", "refunded", "NOT_CHARGED", "charged "} {
+		if got := Resolve(ctx, actor(true), "stripe", "k1", out); got.OK || got.Reason != ReasonBadRequest {
+			t.Fatalf("outcome %q = %+v, want bad_request", out, got)
+		}
+	}
+	if got := Resolve(ctx, actor(false), "stripe", "k1", OutcomeCharged); got.OK || got.Reason != ReasonForbidden {
+		t.Fatalf("cashier = %+v, want forbidden", got)
+	}
+	if got := Resolve(ctx, nil, "stripe", "k1", OutcomeCharged); got.OK || got.Reason != ReasonForbidden {
+		t.Fatalf("no actor = %+v, want forbidden", got)
+	}
+	if len(fr.keys) != 0 {
+		t.Fatalf("refused calls reached native: %v", fr.keys)
+	}
+}
 
 // TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne documents the
 // open review item A3 (ut-docs#6533/#3048): the only legitimate caller is the
@@ -444,7 +488,7 @@ func TestResolveUnknownHasNoCallerYetAndNeverAnUnauthenticatedOne(t *testing.T) 
 		if rerr != nil {
 			return rerr
 		}
-		if strings.Contains(string(b), "devicepay.ResolveUnknown(") {
+		if strings.Contains(string(b), "devicepay.ResolveUnknown(") || strings.Contains(string(b), "devicepay.Resolve(") {
 			rel, _ := filepath.Rel(root, p)
 			if rel = filepath.ToSlash(rel); !allowed[rel] {
 				found = append(found, rel)

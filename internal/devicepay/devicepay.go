@@ -293,15 +293,23 @@ func setupCall(ctx context.Context, provider string, call func(Bridge) string) S
 	}
 }
 
-// Resolver is the native side of "the operator says an earlier payment was
-// NOT charged" (ut-docs#6533): it drops the native side's unresolved-payment
-// record for one idempotency key, which unblocks the next sale. It is
-// registered separately from Bridge because Bridge is a gobind protocol the
-// iOS shell already implements; Android registers both while in the
-// foreground (mobile.SetTapToPayResolver).
+// Outcomes a manager can give an unresolved payment (ut-docs#6533).
+const (
+	OutcomeNotCharged = "not_charged" // the provider shows no charge: the next sale may start
+	OutcomeCharged    = "charged"     // the provider shows the customer was charged
+)
+
+// Resolver is the native side of "the operator settled an earlier payment
+// whose outcome was unknown" (ut-docs#6533): it drops (not_charged) or keeps
+// as paid (charged) the native side's unresolved-payment record for one
+// idempotency key, which unblocks the next sale. It is registered separately
+// from Bridge because Bridge is a gobind protocol the iOS shell already
+// implements; Android registers both while in the foreground
+// (mobile.SetTapToPayResolver).
 type Resolver interface {
-	// ResolveUnknown answers a SetupResult as JSON.
-	ResolveUnknown(idempotencyKey string) string
+	// Resolve answers a SetupResult as JSON. outcome is OutcomeNotCharged or
+	// OutcomeCharged.
+	Resolve(idempotencyKey, outcome string) string
 }
 
 // Actor is who is asking; auth.User satisfies it. Declared here so this
@@ -320,13 +328,18 @@ func SetResolver(r Resolver) {
 	resolver = r
 }
 
-// ResolveUnknown asks the native side to forget the unresolved payment for
-// idempotencyKey. The caller states the earlier payment was not charged
-// (checked in the provider's dashboard), after which another sale may
-// start: a wrong answer can double-charge a customer, so only a manager is
-// let through and a cashier (or no actor) is refused here, before the native
-// side is reached, whatever the web layer did.
+// ResolveUnknown is Resolve(..., OutcomeNotCharged): the shim the first
+// Android resolver was written against.
 func ResolveUnknown(ctx context.Context, who Actor, provider, idempotencyKey string) SetupResult {
+	return Resolve(ctx, who, provider, idempotencyKey, OutcomeNotCharged)
+}
+
+// Resolve tells the native side how the earlier payment for idempotencyKey
+// turned out, after which another sale may start. A wrong answer can
+// double-charge a customer, so only a manager is let through and a cashier
+// (or no actor) is refused here, before the native side is reached, whatever
+// the web layer did. The caller checks the provider's own answer first.
+func Resolve(ctx context.Context, who Actor, provider, idempotencyKey, outcome string) SetupResult {
 	if who == nil || !who.IsManager() {
 		return SetupResult{Reason: ReasonForbidden}
 	}
@@ -336,13 +349,13 @@ func ResolveUnknown(ctx context.Context, who Actor, provider, idempotencyKey str
 	if r == nil {
 		return SetupResult{Reason: ReasonNotForeground}
 	}
-	if !supportedProviders[provider] || idempotencyKey == "" {
+	if !supportedProviders[provider] || idempotencyKey == "" || (outcome != OutcomeNotCharged && outcome != OutcomeCharged) {
 		return SetupResult{Reason: ReasonBadRequest}
 	}
 	replies := make(chan string, 1)
 	go func() {
-		defer logging.RecoverAndLog("devicepay resolve unknown")
-		replies <- r.ResolveUnknown(idempotencyKey)
+		defer logging.RecoverAndLog("devicepay resolve")
+		replies <- r.Resolve(idempotencyKey, outcome)
 	}()
 	select {
 	case raw := <-replies:

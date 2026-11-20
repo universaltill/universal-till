@@ -177,3 +177,30 @@ func TestDeviceInfo(t *testing.T) {
 		t.Fatalf("no interfaces: ips=%#v err=%v, want an empty non-nil list", ips, err)
 	}
 }
+
+// payment_provider_call and tap_to_pay_request (ut-docs#6455).
+func TestPaymentHostFunctions(t *testing.T) {
+	h := NewFakeHost()
+	UseFakeHost(t, h)
+	if _, err := PaymentProviderCall("stripe", "session_status", nil); !errors.Is(err, ErrDenied) {
+		t.Fatalf("no hook: err=%v, want ErrDenied", err)
+	}
+	if _, err := TapToPayRequest(); !errors.Is(err, ErrDenied) {
+		t.Fatalf("no hook: err=%v, want ErrDenied", err)
+	}
+	h.PaymentCall = func(provider, op string, body json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(`{"id":"pi_1","status":"succeeded","op":"` + provider + "/" + op + `"}`), nil
+	}
+	h.TapToPay = func(json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{"status":"pending"}`), nil }
+	out, err := PaymentProviderCall("stripe", "session_status", map[string]any{"amount_minor": 5})
+	if err != nil || string(out) != `{"id":"pi_1","status":"succeeded","op":"stripe/session_status"}` {
+		t.Fatalf("out=%s err=%v", out, err)
+	}
+	if out, err := TapToPayRequest(); err != nil || string(out) != `{"status":"pending"}` {
+		t.Fatalf("out=%s err=%v", out, err)
+	}
+	h.Deny["tap_to_pay_request"] = true
+	if _, err := TapToPayRequest(); !errors.Is(err, ErrDenied) {
+		t.Fatalf("denied: err=%v", err)
+	}
+}
