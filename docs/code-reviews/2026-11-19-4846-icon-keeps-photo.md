@@ -30,6 +30,12 @@ PickItemIcon reads the thumbnail and writes in one transaction; a photo item kee
 - **N1 (answered, no change):** sample-catalogue monograms count as photos. This follows the owner's wording on the card.
 - Not seen: dark theme (the forced media query didn't switch the app's theme), phone width, forced-colors.
 
+## Addendum 2: second merge of main (PR sweep, lane:cloud-41, 2026-11-20)
+
+- `main` moved again and `web/help/img/manifest.json` conflicted (only `surface_sha256`). Resolved by running `make docs-shots` on the merged tree (204 shots passed); `guard-docs-shots.sh` passes.
+- **Merge-damage check** (Sonnet subagent; author and first reviewers were other models): CLEAN. Excluding `web/help/img/**`, `git diff origin/main...c80d16e7` and `git diff origin/main 988d531a` cover the same 16 files with identical `+`/`-` lines; only index and hunk-offset lines differ. `en.json` and `en.meta.json` parse with no duplicate keys. `main` has no callers of `PickItemIcon` or `iconid.IsLibraryTile`.
+- Local gate on the merge: `gofmt` clean, `go build ./...` ok, build-job guards pass except four that need tools this container lacks (qemu-arm, shellcheck, deadcode's Go version; catimport passes once tags are fetched). CI is the gate for those.
+
 ## Verdict
 
 PASS once the findings above are dispositioned as listed.
