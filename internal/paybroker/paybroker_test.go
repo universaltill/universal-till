@@ -53,7 +53,7 @@ func TestCall_PostsWithBearerToTheOpPath(t *testing.T) {
 	defer srv.Close()
 	target(t, srv.URL+"/api/")
 
-	out, err := Call(context.Background(), "stripe", "connection_token", []byte(`{}`))
+	out, err := Call(context.Background(), CallerNative, "stripe", "connection_token", []byte(`{}`))
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestCall_EmptyBodyIsEmptyObject(t *testing.T) {
 	}))
 	defer srv.Close()
 	target(t, srv.URL)
-	if _, err := Call(context.Background(), "stripe", "onboarding_status", nil); err != nil {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "onboarding_status", nil); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody != `{}` {
@@ -102,13 +102,8 @@ func TestCall_AllowListRefusesWithoutARequest(t *testing.T) {
 		{"sumup", "connection_token"},
 		{"", "refund"},
 	} {
-		if _, err := Call(context.Background(), c[0], c[1], []byte(`{}`)); !errors.Is(err, ErrNotAllowed) {
+		if _, err := Call(context.Background(), CallerNative, c[0], c[1], []byte(`{}`)); !errors.Is(err, ErrNotAllowed) {
 			t.Fatalf("Call(%q,%q) err = %v, want ErrNotAllowed", c[0], c[1], err)
-		}
-	}
-	for _, op := range []string{"connection_token", "onboarding_status", "session_create", "session_status", "session_cancel", "refund"} {
-		if !Allowed("stripe", op) {
-			t.Fatalf("stripe/%s must be allowed", op)
 		}
 	}
 	if hits != 0 {
@@ -118,16 +113,16 @@ func TestCall_AllowListRefusesWithoutARequest(t *testing.T) {
 
 func TestCall_NotEnrolled(t *testing.T) {
 	SetTargetResolver(nil)
-	if _, err := Call(context.Background(), "stripe", "connection_token", nil); !errors.Is(err, ErrNotEnrolled) {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "connection_token", nil); !errors.Is(err, ErrNotEnrolled) {
 		t.Fatalf("no resolver: err = %v, want ErrNotEnrolled", err)
 	}
 	SetTargetResolver(func(context.Context) (Target, bool) { return Target{}, false })
 	t.Cleanup(func() { SetTargetResolver(nil) })
-	if _, err := Call(context.Background(), "stripe", "connection_token", nil); !errors.Is(err, ErrNotEnrolled) {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "connection_token", nil); !errors.Is(err, ErrNotEnrolled) {
 		t.Fatalf("unenrolled: err = %v, want ErrNotEnrolled", err)
 	}
 	SetTargetResolver(func(context.Context) (Target, bool) { return Target{BaseURL: "https://x"}, true })
-	if _, err := Call(context.Background(), "stripe", "connection_token", nil); !errors.Is(err, ErrNotEnrolled) {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "connection_token", nil); !errors.Is(err, ErrNotEnrolled) {
 		t.Fatalf("no bearer: err = %v, want ErrNotEnrolled", err)
 	}
 }
@@ -137,7 +132,7 @@ func TestCall_Offline(t *testing.T) {
 	base := srv.URL
 	srv.Close() // nothing listens there now
 	target(t, base)
-	if _, err := Call(context.Background(), "stripe", "connection_token", nil); !errors.Is(err, ErrOffline) {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "connection_token", nil); !errors.Is(err, ErrOffline) {
 		t.Fatalf("err = %v, want ErrOffline", err)
 	}
 }
@@ -149,7 +144,7 @@ func TestCall_HTTPErrorCarriesTheCloudCode(t *testing.T) {
 	}))
 	defer srv.Close()
 	target(t, srv.URL)
-	_, err := Call(context.Background(), "stripe", "session_create", []byte(`{}`))
+	_, err := Call(context.Background(), CallerCore, "stripe", "session_create", []byte(`{}`))
 	var he *HTTPError
 	if !errors.As(err, &he) || he.Status != http.StatusConflict || he.Code != "not_onboarded" {
 		t.Fatalf("err = %#v, want HTTPError{409, not_onboarded}", err)
@@ -161,7 +156,7 @@ func TestCall_HTTPErrorCarriesTheCloudCode(t *testing.T) {
 	}))
 	defer srv2.Close()
 	target(t, srv2.URL)
-	_, err = Call(context.Background(), "stripe", "session_create", []byte(`{}`))
+	_, err = Call(context.Background(), CallerCore, "stripe", "session_create", []byte(`{}`))
 	if !errors.As(err, &he) || he.Status != http.StatusBadGateway || he.Code != "" {
 		t.Fatalf("err = %#v, want HTTPError{502, \"\"}", err)
 	}
@@ -173,7 +168,7 @@ func TestCall_ResponseCap(t *testing.T) {
 	}))
 	defer srv.Close()
 	target(t, srv.URL)
-	if _, err := Call(context.Background(), "stripe", "session_status", []byte(`{}`)); !errors.Is(err, ErrResponseTooLarge) {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "session_status", []byte(`{}`)); !errors.Is(err, ErrResponseTooLarge) {
 		t.Fatalf("err = %v, want ErrResponseTooLarge", err)
 	}
 
@@ -182,7 +177,7 @@ func TestCall_ResponseCap(t *testing.T) {
 	}))
 	defer exact.Close()
 	target(t, exact.URL)
-	if _, err := Call(context.Background(), "stripe", "session_status", []byte(`{}`)); err != nil {
+	if _, err := Call(context.Background(), CallerNative, "stripe", "session_status", []byte(`{}`)); err != nil {
 		t.Fatalf("a response of exactly the cap: %v", err)
 	}
 }
@@ -203,10 +198,10 @@ func TestCall_NeverLogsABody(t *testing.T) {
 	}))
 	defer srv.Close()
 	target(t, srv.URL)
-	if _, err := Call(context.Background(), "stripe", "session_create", []byte(`{"description":"SECRET-REQUEST"}`)); err != nil {
+	if _, err := Call(context.Background(), CallerCore, "stripe", "session_create", []byte(`{"description":"SECRET-REQUEST"}`)); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = Call(context.Background(), "stripe", "refund", []byte(`{"note":"SECRET-REQUEST"}`))
+	_, _ = Call(WithBinding(context.Background(), Binding{Kind: BindRefund, Provider: "stripe", PI: "pi_1", MaxRefundMinor: 100, RefundKey: "k"}), CallerHostFn, "stripe", "refund", []byte(`{"amount_minor":5}`))
 	got := logs.String()
 	for _, s := range []string{"SECRET-RESPONSE", "SECRET2", "SECRET-REQUEST", "SECRET-ERR-BODY", "dev-cred-1"} {
 		if strings.Contains(got, s) {
@@ -238,7 +233,7 @@ func TestCall_RedirectIsNotFollowedAndBearerNeverForwarded(t *testing.T) {
 	defer first.Close()
 	target(t, first.URL)
 
-	out, err := Call(context.Background(), "stripe", "connection_token", []byte(`{}`))
+	out, err := Call(context.Background(), CallerNative, "stripe", "connection_token", []byte(`{}`))
 	if err == nil {
 		t.Fatalf("Call followed a redirect and returned %q, want an error", out)
 	}
@@ -260,7 +255,7 @@ func TestCall_RedirectIsNotFollowedAndBearerNeverForwarded(t *testing.T) {
 func TestCall_PlainHTTPEndpointIsRefused(t *testing.T) {
 	for _, base := range []string{"http://cloud.example.invalid/api", "ftp://cloud.example.invalid", "cloud.example.invalid/api", "://bad"} {
 		target(t, base)
-		if _, err := Call(context.Background(), "stripe", "connection_token", nil); !errors.Is(err, ErrInsecureEndpoint) {
+		if _, err := Call(context.Background(), CallerNative, "stripe", "connection_token", nil); !errors.Is(err, ErrInsecureEndpoint) {
 			t.Fatalf("endpoint %q: err = %v, want ErrInsecureEndpoint", base, err)
 		}
 	}
@@ -278,14 +273,14 @@ func TestCall_RequestCap(t *testing.T) {
 	defer srv.Close()
 	target(t, srv.URL)
 	big := []byte(`{"description":"` + strings.Repeat("x", MaxRequestBytes) + `"}`)
-	if _, err := Call(context.Background(), "stripe", "session_create", big); !errors.Is(err, ErrRequestTooLarge) {
+	if _, err := Call(context.Background(), CallerCore, "stripe", "session_create", big); !errors.Is(err, ErrRequestTooLarge) {
 		t.Fatalf("oversized body: err = %v, want ErrRequestTooLarge", err)
 	}
 	if hits != 0 {
 		t.Fatalf("an oversized body reached the cloud %d times", hits)
 	}
 	ok := []byte(`{"description":"` + strings.Repeat("x", 1024) + `"}`)
-	if _, err := Call(context.Background(), "stripe", "session_create", ok); err != nil {
+	if _, err := Call(context.Background(), CallerCore, "stripe", "session_create", ok); err != nil {
 		t.Fatalf("a 1 KiB body: err = %v, want nil", err)
 	}
 }

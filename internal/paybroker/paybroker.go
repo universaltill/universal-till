@@ -3,9 +3,11 @@
 // ut-docs#6454): POST <enrolment endpoint>/v1/payments/{provider}/{op}
 // with this till's ADR-0116 device credential as the Bearer.
 //
-// Two callers share it: the iOS shell (mobile.TapToPayCloud, in-process —
-// never an HTTP route, so the 0.0.0.0-bound server exposes nothing new) and,
-// from ut-docs#6455, the WASM host fn payment_provider_call. Core never
+// Three callers share it, each with its own op set (Caller, ADR-0198 §3.2):
+// the native shell (mobile.TapToPayCloud, in-process — never an HTTP route,
+// so the 0.0.0.0-bound server exposes nothing new), the WASM host fn
+// payment_provider_call (ut-docs#6455, only inside a bound payment dispatch)
+// and core's own post-tap confirmation. Core never
 // parses provider JSON beyond the cloud's error code, and never logs a
 // body: bodies carry the Terminal connection-token secret and the
 // PaymentIntent client secret. The cloud derives the store from the token,
@@ -39,19 +41,6 @@ const MaxResponseBytes = 64 << 10
 // MaxRequestBytes caps a request body; anything larger is refused with no
 // request.
 const MaxRequestBytes = 64 << 10
-
-// allowed is the fixed op allow-list per provider (readiness §3d; #6454
-// fixes the cloud paths). Any other pair is refused with no request.
-var allowed = map[string]map[string]bool{
-	"stripe": { // core-neutral:allow broker op allow-list is a security boundary keyed by provider; unknown provider/op is refused with no request (ut-docs#3049, ADR #6453)
-		"connection_token":  true,
-		"onboarding_status": true,
-		"session_create":    true,
-		"session_status":    true,
-		"session_cancel":    true,
-		"refund":            true,
-	},
-}
 
 var (
 	// ErrNotAllowed: the provider/op pair is not on the allow-list.
@@ -113,16 +102,31 @@ func SetTargetResolver(fn func(context.Context) (Target, bool)) {
 	resolver = fn
 }
 
-// Allowed reports whether provider/op is on the allow-list.
-func Allowed(provider, op string) bool {
-	return allowed[provider][op]
+// Allowed reports whether caller may use provider/op (ADR-0198 §3.2). Any
+// other caller, provider or op is refused with no request.
+func Allowed(caller Caller, provider, op string) bool {
+	return provider == "stripe" && matrix[op][caller] // core-neutral:allow broker op allow-list is a security boundary keyed by provider; unknown provider/op is refused with no request (ut-docs#3049, ADR #6453)
 }
 
 // Call forwards body to the broker's provider/op and returns its 2xx
-// response body unchanged. A nil or empty body is sent as {}.
-func Call(ctx context.Context, provider, op string, body []byte) ([]byte, error) {
-	if !Allowed(provider, op) {
+// response body unchanged, except to a plugin (CallerHostFn), which gets
+// only the neutral fields and a body core built from its dispatch's
+// Binding. A nil or empty body is sent as {}.
+func Call(ctx context.Context, caller Caller, provider, op string, body []byte) ([]byte, error) {
+	if !Allowed(caller, provider, op) {
 		return nil, ErrNotAllowed
+	}
+	switch {
+	case caller == CallerHostFn:
+		built, err := hostBody(ctx, provider, op, body)
+		if err != nil {
+			return nil, err
+		}
+		body = built
+	case caller == CallerNative && op == "session_create":
+		if err := checkCreate(ctx, provider, body); err != nil {
+			return nil, err
+		}
 	}
 	mu.RLock()
 	resolve := resolver
@@ -195,6 +199,9 @@ func Call(ctx context.Context, provider, op string, body []byte) ([]byte, error)
 		return nil, he
 	}
 	logging.L().Infof("paybroker: %s/%s status=%d in %s", provider, op, resp.StatusCode, took)
+	if caller == CallerHostFn {
+		return FilterForWASM(out), nil
+	}
 	return out, nil
 }
 

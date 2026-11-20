@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -36,6 +37,13 @@ var exactPermissions = map[string]bool{
 	"cloud:directive": true,
 	"secret:write":    true,
 	"ui:page":         true,
+
+	// ut-docs#6455 (ADR-0198 §3.1): a payment plugin's two broker
+	// permissions, granted only by a manager. Exact names so the net: host
+	// rule never sees "payment_broker" as a host, and no net: host or
+	// wildcard grant implies either.
+	BrokerNetPermission: true,
+	TapDevicePermission: true,
 
 	// ADR-0140 (ut-docs#3862): ★ review-gated, read-only device identity —
 	// wasm_device_info.go device_id_get / device_local_ips_get /
@@ -167,6 +175,9 @@ func isKnownPermission(perm string) bool {
 // not recognise. Called by ParseManifest and, for the marketplace install
 // path that never goes through ParseManifest, ManifestVerifier.VerifyManifest.
 func validatePermissions(m *Manifest) error {
+	if err := validateTapFields(m); err != nil {
+		return err
+	}
 	for _, p := range m.Permissions {
 		// net:{account} (ADR-0169): a channel plugin's one permission, bound
 		// by the cloud channel host to the connection's verified account.
@@ -177,6 +188,59 @@ func validatePermissions(m *Manifest) error {
 		}
 		if !isKnownPermission(p) {
 			return fmt.Errorf("manifest permission %q is not a recognized permission shape", p)
+		}
+	}
+	return nil
+}
+
+// Payment broker permissions (ut-docs#6455, ADR-0198 §3.1).
+const (
+	// BrokerNetPermission lets a payment plugin call the till's payment
+	// broker (payment_provider_call). It names no host and grants no egress.
+	BrokerNetPermission = "net:payment_broker"
+	// TapDevicePermission lets a payment plugin start the phone's tap sheet
+	// (tap_to_pay_request).
+	TapDevicePermission = "device:tap_to_pay"
+)
+
+// IsTapEntryConfig reports whether an entry's persisted config JSON declares
+// `"tap": true` (the boolean; a string or number is not a declaration).
+func IsTapEntryConfig(configJSON string) bool {
+	if configJSON == "" {
+		return false
+	}
+	var c map[string]any // exact key: encoding/json would match "TAP" to a tag
+	if json.Unmarshal([]byte(configJSON), &c) != nil {
+		return false
+	}
+	return c["tap"] == true
+}
+
+// validateTapFields enforces the tap declaration rules: the broker
+// permissions belong to payment plugins only, and an entry declaring
+// tap: true must be a payment entry of a plugin declaring device:tap_to_pay.
+func validateTapFields(m *Manifest) error {
+	has := func(p string) bool { return slices.Contains(m.Permissions, p) }
+	for _, p := range []string{BrokerNetPermission, TapDevicePermission} {
+		if has(p) && m.CanonicalType != "payment" {
+			return fmt.Errorf("manifest permission %q is only allowed on a plugin of canonical_type %q", p, "payment")
+		}
+	}
+	for _, e := range m.Entries {
+		v, declared := e.Config["tap"]
+		if !declared {
+			continue
+		}
+		if b, ok := v.(bool); !ok {
+			return fmt.Errorf("manifest entry %q: config tap must be the boolean true or false", e.Key)
+		} else if !b {
+			continue
+		}
+		if e.Type != "payment" {
+			return fmt.Errorf("manifest entry %q: tap is only allowed on a payment entry", e.Key)
+		}
+		if !has(TapDevicePermission) {
+			return fmt.Errorf("manifest entry %q declares tap but the plugin lacks the %s permission", e.Key, TapDevicePermission)
 		}
 	}
 	return nil
