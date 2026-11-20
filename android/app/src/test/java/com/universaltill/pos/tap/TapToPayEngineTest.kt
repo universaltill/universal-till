@@ -210,7 +210,7 @@ class TapToPayEngineTest {
         collect("r2", "k2")
         assertEquals("unknown_pending", refusal("r2"))
         assertEquals(1, reader.createCalls.size)
-        assertNull(engine.resolveUnknown("k1"))
+        assertNull(engine.resolve("k1", Outcome.NOT_CHARGED))
         collect("r3", "k2")
         assertEquals(TapStatus.SUCCEEDED, verdict("r3").status)
         assertEquals(2, reader.createCalls.size)
@@ -220,7 +220,7 @@ class TapToPayEngineTest {
         reader.autoConfirm = null
         collect("r1", "k1")
         sched.advance(24_001)
-        assertEquals("no_such_payment", engine.resolveUnknown("nope"))
+        assertEquals("no_such_payment", engine.resolve("nope", Outcome.NOT_CHARGED))
         assertEquals("unknown", store.load("k1")?.state)
     }
 
@@ -231,8 +231,56 @@ class TapToPayEngineTest {
         reader.autoConfirm = null
         reader.autoCollect = null
         collect("r2", "k1") // the retry is collecting
-        assertEquals("busy", engine.resolveUnknown("k1"))
+        assertEquals("busy", engine.resolve("k1", Outcome.NOT_CHARGED))
         assertEquals("unknown", store.load("k1")?.state)
+    }
+
+    @Test fun resolveChargedKeepsTheKeyPaidSoItIsNeverChargedAgain() {
+        reader.autoConfirm = null
+        collect("r1", "k1")
+        sched.advance(24_001)
+        assertNull(engine.resolve("k1", Outcome.CHARGED))
+        assertNull(store.load("k1"))
+        assertEquals("pi_1", done.load("k1")?.intentId)
+        assertEquals(500L, done.load("k1")?.amountMinor)
+        // the till is free for another basket, and the paid key answers its stored approval without a second intent
+        reader.autoConfirm = ConfirmOutcome.Succeeded(null, null, null)
+        collect("r2", "k1")
+        assertEquals(TapStatus.SUCCEEDED, verdict("r2").status)
+        assertEquals(1, reader.createCalls.size)
+    }
+
+    @Test fun resolveWithAnythingButTheTwoOutcomesChangesNothing() {
+        reader.autoConfirm = null
+        collect("r1", "k1")
+        sched.advance(24_001)
+        for (bad in listOf("", "refunded", "NOT_CHARGED", "charged ")) assertEquals("bad_request", engine.resolve("k1", bad))
+        assertEquals("unknown", store.load("k1")?.state)
+        assertNull(done.load("k1"))
+    }
+
+    @Test fun resolveChargedRefusesWhileThatPaymentIsStillLive() {
+        reader.autoConfirm = null
+        collect("r1", "k1")
+        sched.advance(24_001)
+        reader.autoCollect = null
+        collect("r2", "k1")
+        assertEquals("busy", engine.resolve("k1", Outcome.CHARGED))
+        assertNull(done.load("k1"))
+    }
+
+    @Test fun declinedIntentsAreBoundedAndALatePaidWriteSurvivesTheEviction() {
+        // Recheck of #3048 R3: liveIntents holds declined and unknown intents; it must not grow with the sale count.
+        reader.autoConfirm = null
+        collect("r1", "k1")
+        sched.advance(24_001)
+        val lateConfirm = reader.confirmCb!!
+        assertNull(engine.resolve("k1", Outcome.NOT_CHARGED))
+        reader.autoConfirm = ConfirmOutcome.Declined("card_declined")
+        for (i in 2..150) collect("r$i", "k$i")
+        assertTrue("live intents ${engine.liveIntentCount()}", engine.liveIntentCount() <= TapToPayEngine.MAX_LIVE_INTENTS)
+        lateConfirm(ConfirmOutcome.Succeeded("ch_late", null, null))
+        assertEquals("ch_late", done.load("k1")?.chargeId)
     }
 
     @Test fun unknownRecordFromAnEarlierProcessBlocksOtherKeysToo() {
@@ -266,7 +314,7 @@ class TapToPayEngineTest {
         sched.advance(24_001)
         val lateConfirm = reader.confirmCb!!
         assertEquals(TapStatus.UNKNOWN, verdict("r1").status)
-        assertNull(engine.resolveUnknown("k1")) // the operator frees the till; the first payment is still in flight at Stripe
+        assertNull(engine.resolve("k1", Outcome.NOT_CHARGED)) // the operator frees the till; the first payment is still in flight at Stripe
         reader.autoConfirm = ConfirmOutcome.Succeeded(null, null, null)
         for (i in 2..70) collect("r$i", "k$i")
         lateConfirm(ConfirmOutcome.Succeeded("ch_late", null, null))
