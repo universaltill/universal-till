@@ -49,10 +49,6 @@ func phoneReaderPairingOn(ctx context.Context, d *common.Deps) bool {
 	return v == "on" || v == "1" || v == "true"
 }
 
-// readerJoinWithdrawWindow is how long after pairing a reader may withdraw its
-// own enrolment (the same window a joining till has).
-const readerJoinWithdrawWindow = joinWithdrawWindow
-
 func writeReaderError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
