@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -814,5 +815,46 @@ func TestPollPerSourceCapStopsIdEnumerationAcrossIds(t *testing.T) {
 	}
 	if refused == 0 {
 		t.Fatal("one source could poll unboundedly many distinct ids in a minute")
+	}
+}
+
+// F3 (tester-batch): two simultaneous polls of one approved pairing make ONE
+// reader and ONE bearer; the loser gets the same 404 as any replay.
+func TestConcurrentDoublePollOfAnApprovedPairingMakesOneReader(t *testing.T) {
+	g := newReaderRig(t, true)
+	secret := "s-race"
+	id := idOf(t, g.request(t, "Race phone", secret, "card_reader", true, ""))
+	if rec := g.approve(id, ""); rec.Code != http.StatusOK {
+		t.Fatalf("approve = %d", rec.Code)
+	}
+	const n = 8
+	codes := make([]int, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			codes[i] = g.pollFrom(id, secret, fmt.Sprintf("192.0.2.%d:7000", 150+i)).Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	ok := 0
+	for _, c := range codes {
+		if c == http.StatusOK {
+			ok++
+		}
+	}
+	var readers, creds int
+	if err := g.d.Db.QueryRow(`SELECT COUNT(*) FROM card_readers`).Scan(&readers); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.d.Db.QueryRow(`SELECT COUNT(*) FROM card_reader_credentials`).Scan(&creds); err != nil {
+		t.Fatal(err)
+	}
+	if ok != 1 || readers != 1 || creds != 1 {
+		t.Fatalf("codes %v: %d handovers, %d readers, %d credentials; want exactly 1 of each", codes, ok, readers, creds)
 	}
 }
