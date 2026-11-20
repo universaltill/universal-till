@@ -587,6 +587,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// accepts requests; the revoke handler and every NudgeLink change point
 	// read dp.Link at request time.
 	dp.Link = newSyncLinkHub(dp, fleetlink.DefaultConfig(), syncAdminRepo)
+	wireReaderLink(dp) // ut-docs#6538 R1b: paired phone card readers ride the same hub (dark behind card_readers.phone_pairing)
 	// Always built: a till becomes a main till without restarting (a replica
 	// refuses the pending-link route before it is used).
 	dp.PendingLinks = fleetlink.NewPendingHub(fleetlink.DefaultConfig())

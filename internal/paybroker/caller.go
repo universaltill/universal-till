@@ -75,6 +75,10 @@ type Binding struct {
 	MaxRefundMinor int64  // refund: the most this tender can still give back
 	Currency       string
 	RefundKey      string // refund: refund:<sale>:<tender>:<n>
+	// ReaderRef is the registry reader (rd_<hex>) a tender was resolved to
+	// when that reader is a paired phone (ut-docs#6538): tap_to_pay_request
+	// then collects on the phone instead of this device. From the gate only.
+	ReaderRef string
 }
 
 type bindingKey struct{}

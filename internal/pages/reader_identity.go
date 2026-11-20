@@ -12,11 +12,15 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paybroker"
+	"github.com/universaltill/universal-till/internal/readerlink"
 )
 
 // ut-docs#6538 R1a (ADR-0198 §6.2/6.3): a phone as a card reader for this
@@ -136,11 +140,18 @@ func syncTillOrReader(w http.ResponseWriter, r *http.Request, tills *data.TillsR
 	return
 }
 
-// serveReaderLink answers an authenticated reader's link upgrade. The hub
-// that carries reader frames is R1b; until then the reader is authenticated
-// and told the link is not available yet, and is never handed to the till
-// hub (a reader must not become a till peer).
+// serveReaderLink answers an authenticated reader's link upgrade: the hub's
+// reader class carries it (ut-docs#6538 R1b). A reader is never handed to the
+// till class: it has its own registry, vocabulary and handlers. Without a hub
+// (a bare test deps) the link is unavailable.
 func serveReaderLink(w http.ResponseWriter, r *http.Request, d *common.Deps, c data.ReaderCredential) {
+	// A reader that authenticated on the announced next pin (it re-proved
+	// after a main key change) now owns that pin.
+	if served := lantls.ServedPin(r.Context()); served != "" && served == c.NextPin {
+		if err := readerRepoFor(d).PromotePin(r.Context(), c.ReaderID, served); err != nil {
+			logging.L().Warnf("reader %s: promote next pin: %v", c.ReaderID, err)
+		}
+	}
 	if d.SyncPrimaryURL(r.Context()) != "" {
 		http.Error(w, "connect to the main till", http.StatusConflict)
 		return
@@ -151,15 +162,17 @@ func serveReaderLink(w http.ResponseWriter, r *http.Request, d *common.Deps, c d
 	if repo := readerRepoFor(d); repo != nil {
 		repo.Touch(r.Context(), c.ReaderID, sourceOf(r))
 	}
-	writeReaderError(w, http.StatusServiceUnavailable, readerLinkUnavailableErr)
+	if d.Link == nil {
+		writeReaderError(w, http.StatusServiceUnavailable, readerLinkUnavailableErr)
+		return
+	}
+	d.Link.ServeReader(w, r, c.ReaderID)
 }
 
 // disconnectReaderLink closes a reader's live link at once (revoke, withdraw).
-// A seam: R1b's hub registers readers under their reader id, which the till
-// hub's Disconnect already keys on.
 var disconnectReaderLink = func(d *common.Deps, readerID string) {
 	if d != nil && d.Link != nil {
-		d.Link.Disconnect(readerID)
+		d.Link.DisconnectReader(readerID)
 	}
 }
 
@@ -345,7 +358,7 @@ func pairedPhoneReaders(ctx context.Context, d *common.Deps) ([]readerListRow, e
 		if c.Kind != data.CardReaderKindPhone || c.Source != data.CardReaderSourcePaired {
 			continue
 		}
-		out = append(out, readerListRow{ID: c.ID, Name: c.Name, State: "offline", LastUsed: c.LastUsedAt})
+		out = append(out, readerListRow{ID: c.ID, Name: c.Name, State: readerPresence(d, c.ID), LastUsed: c.LastUsedAt})
 	}
 	return out, nil
 }
@@ -474,4 +487,68 @@ func registerReaderManagement(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("HX-Trigger", "tills-changed")
 		renderList(w, r, http.StatusOK, "tap.reader.revoked")
 	})
+}
+
+// wireReaderLink builds the remote collector for paired phone readers, hangs
+// it on the link hub (reader.result sink, reader.token handler) and registers
+// it with devicepay (ut-docs#6538 R1b, ADR-0198 §6.4). The broker is called as
+// CallerCore: only the main till creates PaymentIntents and mints tokens.
+func wireReaderLink(d *common.Deps) *readerlink.Service {
+	if d == nil || d.Db == nil || d.Link == nil {
+		return nil
+	}
+	readers := data.NewCardReaderRepo(d.Db)
+	creds := readerRepoFor(d)
+	lookup := func(ctx context.Context, match func(c data.CardReader) bool) (readerlink.Reader, bool) {
+		rows, err := readers.ListActive(ctx)
+		if err != nil {
+			return readerlink.Reader{}, false
+		}
+		for _, c := range rows {
+			if c.Kind != data.CardReaderKindPhone || c.Source != data.CardReaderSourcePaired || !match(c) {
+				continue
+			}
+			provider, isTap := tapEntry(ctx, d, c.MethodKey)
+			if !isTap || provider == "" {
+				return readerlink.Reader{}, false
+			}
+			return readerlink.Reader{ID: c.ID, Ref: c.ReaderRef, Name: c.Name, Provider: provider, Active: creds.Active(ctx, c.ID)}, true
+		}
+		return readerlink.Reader{}, false
+	}
+	svc := readerlink.New(readerlink.Config{
+		Link: d.Link,
+		ByRef: func(ctx context.Context, ref string) (readerlink.Reader, bool) {
+			return lookup(ctx, func(c data.CardReader) bool { return c.ReaderRef == ref })
+		},
+		ByID: func(ctx context.Context, id string) (readerlink.Reader, bool) {
+			return lookup(ctx, func(c data.CardReader) bool { return c.ID == id })
+		},
+		Attempts: data.NewPaymentAttemptRepo(d.Db),
+		Broker: func(ctx context.Context, provider, op string, body []byte) ([]byte, error) {
+			return paybroker.Call(ctx, paybroker.CallerCore, provider, op, body)
+		},
+	})
+	d.Link.SetReaderSink(svc)
+	d.Link.HandleReader(fleetlink.TypeReaderToken, svc.TokenHandler)
+	devicepay.SetRemote(svc)
+	d.ReaderPay = svc
+	return svc
+}
+
+// readerPresence is a reader's state for the manager's list: what the phone
+// last reported on its live link, "offline" with no link.
+func readerPresence(d *common.Deps, readerID string) string {
+	if d == nil || d.Link == nil {
+		return "offline"
+	}
+	st, linked := d.Link.ReaderState(readerID)
+	if !linked {
+		return "offline"
+	}
+	switch st.State {
+	case fleetlink.ReaderReady, fleetlink.ReaderNeedsSetup, fleetlink.ReaderBusy, fleetlink.ReaderUnavailable:
+		return st.State
+	}
+	return fleetlink.ReaderUnavailable // linked but has not reported yet
 }
