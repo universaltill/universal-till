@@ -69,6 +69,14 @@ func IDForAssetPath(path string) string {
 	return libraryPaths[path]
 }
 
+// IsLibraryTile reports whether path is any library tile, including the
+// id-less generic one: what a thumbnail row holds when it is not an uploaded
+// photo (ut-docs#4846).
+func IsLibraryTile(path string) bool {
+	_, ok := libraryPaths[path]
+	return ok
+}
+
 // Resolve applies the one-picture rule (ut-docs#2717) to a category's two
 // columns: path is an image to show — an uploaded photo, or the id-less
 // generic tile — and id the icon to draw when path is "" or this till

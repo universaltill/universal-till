@@ -5905,6 +5905,20 @@ body.login-screen {
    :focus-visible's own outline. */
 .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
 
+/* ut-docs#4846: under an uploaded photo, the tile saved as its fallback icon
+   carries a small solid square badge in the top inline-end corner (shape, not
+   colour, plus the tile's title/aria-description). Not aria-selected: the
+   photo is the shown picture. A filled --text square with an inner --surface
+   square reads in light, dark and grayscale; background-only, so
+   html.fx-light keeps it. Decorative, never over the focus outline. */
+.builtin-icon-tile.builtin-icon-fallback::after {
+  content: ""; position: absolute; box-sizing: border-box; pointer-events: none;
+  inset-block-start: 3px; inset-inline-end: 3px;
+  inline-size: .8rem; block-size: .8rem;
+  background: var(--surface); border: 2px solid var(--text);
+  box-shadow: inset 0 0 0 2px var(--text);
+}
+
 /* Item color swatch picker (ut-docs#1901): same .picker-grid/.picker-tile
    pattern as the built-in icon grid just above (whose selected tile is
    aria-selected since ut-docs#5601, a listbox; this one is aria-pressed), one small dot + translated name per tile rather than an image.
@@ -8215,6 +8229,7 @@ html[dir="rtl"] .pos-notice.important::after { transform-origin: right center; }
   /* ut-docs#5736: the tile is Highlight here, so the badge inverts: HighlightText circle, Highlight check. */
   .builtin-icon-tile[aria-selected="true"]::after { forced-color-adjust: none; background: HighlightText; }
   .builtin-icon-tile[aria-selected="true"]::before { forced-color-adjust: none; background: Highlight; }
+  .builtin-icon-tile.builtin-icon-fallback::after { forced-color-adjust: none; background: Canvas; border-color: CanvasText; box-shadow: inset 0 0 0 2px CanvasText; }
   .order-type-option { border: 1px solid ButtonText; }
   .order-type-option[aria-checked="true"],
   body:not(.pos-sheet-open) .basket .order-type-option[aria-checked="true"] {

@@ -99,3 +99,18 @@ func TestPicture(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4846: a thumbnail row that is any library tile (named or the
+// id-less generic one) is not a photo; anything else is.
+func TestIsLibraryTile(t *testing.T) {
+	for _, p := range []string{PublicDir + "beer.svg", PublicDir + "generic.svg"} {
+		if !IsLibraryTile(p) {
+			t.Errorf("IsLibraryTile(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{"", "/public/assets/items/i1/thumb.png", PublicDir + "nope.svg"} {
+		if IsLibraryTile(p) {
+			t.Errorf("IsLibraryTile(%q) = true, want false", p)
+		}
+	}
+}
