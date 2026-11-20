@@ -9,7 +9,7 @@ import org.junit.Test
 
 class ReaderFramesTest {
     private fun sortedEq(a: JSONObject, b: JSONObject): Boolean =
-        a.keySet().toSet() == b.keySet().toSet() && a.keySet().all { a.get(it).toString() == b.get(it).toString() }
+        a.keys().asSequence().toSet() == b.keys().asSequence().toSet() && a.keys().asSequence().all { a.get(it).toString() == b.get(it).toString() }
 
     private fun assertPayload(golden: String, got: JSONObject) {
         val want = Goldens.payload(golden)
@@ -98,7 +98,7 @@ class ReaderFramesTest {
         assertPayload("result_declined", ReaderFrames.resultPayload("att_7:1:1", ReaderResult.Declined("card_declined")))
         assertPayload("result_pending", ReaderFrames.resultPayload("att_7:1:1", ReaderResult.Pending("amount_mismatch")))
         val cancelled = ReaderFrames.resultPayload("k", ReaderResult.Cancelled)
-        assertEquals(setOf("idempotency_key", "status"), cancelled.keySet().toSet())
+        assertEquals(setOf("idempotency_key", "status"), cancelled.keys().asSequence().toSet())
     }
 
     @Test fun `a decline code or reason outside the allowed shape is dropped`() {

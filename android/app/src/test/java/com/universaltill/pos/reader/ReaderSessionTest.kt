@@ -111,7 +111,7 @@ class ReaderSessionTest {
     private fun collect() = s.onText(gen, Goldens.text("collect"))
 
     private fun same(want: JSONObject, got: JSONObject) =
-        assertTrue("$got != $want", want.keySet().toSet() == got.keySet().toSet() && want.keySet().all { want.get(it).toString() == got.get(it).toString() })
+        assertTrue("$got != $want", want.keys().asSequence().toSet() == got.keys().asSequence().toSet() && want.keys().asSequence().all { want.get(it).toString() == got.get(it).toString() })
 
     @Test fun `hello then ready status, nothing before the main spoke`() {
         val fresh = FakeTransport()
