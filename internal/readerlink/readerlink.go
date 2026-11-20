@@ -111,6 +111,7 @@ type Service struct {
 	inflight map[string]*collect // by reader id: one collect per reader
 	byKey    map[string]*collect // by idempotency key, while it can still take a result
 	lost     []string
+	busy     []string // keys the phone refused as busy (bounded, maxLost)
 	dropped  int
 	tokens   map[string][]time.Time
 }
@@ -236,6 +237,7 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 			reason := devicepay.ReasonReaderUnreachable
 			if re != nil && re.Code == fleetlink.CodeReaderBusy {
 				reason = devicepay.ReasonReaderBusy
+				s.markBusy(a.Key)
 			}
 			return startFailed(reason)
 		default:
@@ -249,6 +251,7 @@ func (s *Service) CollectRemote(ctx context.Context, ref string, req devicepay.R
 	var ack fleetlink.ReaderCollectAck
 	if json.Unmarshal(raw, &ack) != nil || !ack.Accepted {
 		s.cancelIntent(a, pi.ID)
+		s.markBusy(a.Key)
 		return startFailed(devicepay.ReasonReaderBusy)
 	}
 	s.setPhase(c, PhaseOnPhone)
@@ -308,6 +311,28 @@ func (s *Service) markLost(key string) {
 		s.lost = s.lost[1:]
 	}
 	s.lost = append(s.lost, key)
+}
+
+func (s *Service) markBusy(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.busy) >= maxLost {
+		s.busy = s.busy[1:]
+	}
+	s.busy = append(s.busy, key)
+}
+
+// WasBusy reports that the phone refused the collect for key because it was
+// busy (nothing was started: ux A6 "Reader is busy. Nothing was charged.").
+func (s *Service) WasBusy(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range s.busy {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 // brokerStatus asks the broker (as core) for the PaymentIntent's state; "" when

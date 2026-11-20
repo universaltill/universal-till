@@ -32,7 +32,11 @@ const declineCodeTapStartFailed = "start_failed"
 
 // tapStartFailedError: the tap payment could not be started; nothing was
 // charged, the basket is not locked.
-type tapStartFailedError struct{ Method string }
+type tapStartFailedError struct {
+	Method string
+	// ReaderBusy: the paired phone reader said it was busy (ux A6 wording).
+	ReaderBusy bool
+}
 
 func (e *tapStartFailedError) Error() string { return "tap payment could not start: " + e.Method }
 
@@ -130,7 +134,7 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 	startFailed := errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeTapStartFailed
 	original := err
 	if startFailed {
-		original = &tapStartFailedError{Method: method}
+		original = &tapStartFailedError{Method: method, ReaderBusy: d.ReaderPay != nil && d.ReaderPay.WasBusy(requestID)}
 	}
 	if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown {
 		return resp, dispatched, nil, err // already unknown: the gate locks it

@@ -3461,6 +3461,7 @@
   "tap.resolve.bad_choice": "That choice is not available.",
   "tap.reader.pick": "Which reader?",
   "tap.reason.reader_busy": "Reader is busy with another payment.",
+  "tap.reader.busy_result": "Reader is busy. Nothing was charged.",
   "tap.reason.reader_needs_setup": "Reader needs setup. Ask a manager.",
   "tap.reason.reader_unreachable": "Reader not reachable.",
   "taxcodes.col.active": "Active",
