@@ -12,6 +12,9 @@ object Goldens {
 
     fun text(name: String): String = File(dir, "reader_$name.json").readText().trim()
 
+    /** A fixture that is not a frame (no envelope), e.g. reader_proof.json. */
+    fun file(name: String) = JSONObject(text(name))
+
     fun json(name: String) = JSONObject(text(name))
 
     fun payload(name: String): JSONObject = json(name).getJSONObject("payload")
