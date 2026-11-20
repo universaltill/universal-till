@@ -632,27 +632,28 @@ test('a built-in icon is not a photo: no Remove background button on item or cat
   const item = 'Still Water 1.5L';
   const btn = page.locator('#image-current-cutout-btn');
   await openItemImageTab(page, item);
-  const tile = page.locator('#builtin-icon-grid .builtin-icon-tile:not([data-icon="none"])').first();
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/api/catalog/item/') && r.request().method() === 'POST'),
-    tile.click(),
-  ]);
+  const grid = page.locator('#builtin-icon-grid');
+  const tile = grid.locator('.builtin-icon-tile:not([data-icon="none"])').first();
+  const picked = () => page.waitForResponse((r) => r.url().includes('/api/catalog/item/') && r.request().method() === 'POST');
+  // The sample item ships with a monogram thumb, which counts as a photo
+  // (ut-docs#4846): clear it with No image first so only an icon remains.
+  await Promise.all([picked(), grid.locator('[data-icon="none"]').click()]);
+  await Promise.all([picked(), tile.click()]);
   await page.reload();
   await page.locator('.catalog-row', { hasText: item }).first().click();
   await page.locator('#item-form-tab-image').click();
   await expect(page.locator('#image-current')).toBeVisible(); // the icon is shown…
   await expect(btn).toBeHidden(); // …but is not offered for cutout
-  // A photo uploaded later brings the button; picking an icon over it removes it.
+  // A photo uploaded later brings the button; picking an icon over it keeps
+  // the photo (and the button) and marks the pick as the fallback.
   await uploadItemPhoto(page, item, 'then-photo.png');
   await page.reload();
   await page.locator('.catalog-row', { hasText: item }).first().click();
   await page.locator('#item-form-tab-image').click();
   await expect(btn).toBeVisible();
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/api/catalog/item/') && r.request().method() === 'POST'),
-    tile.click(),
-  ]);
-  await expect(btn).toBeHidden();
+  await Promise.all([picked(), tile.click()]);
+  await expect(btn).toBeVisible();
+  await expect(grid.locator('.builtin-icon-fallback')).toHaveCount(1);
 
   // Category: a dialog opened for a category with an icon, then an icon tapped.
   const name = `Cutout Icon Cat ${RUN}`;

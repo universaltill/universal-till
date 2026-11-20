@@ -782,6 +782,20 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#6742: one refund per original sale at a time on this till.
+		// Everything below (guard state, leg caps, provider call, the
+		// recorded return and its leg rows) is a read-then-write; without
+		// this two concurrent requests both pass every cap and over-refund.
+		// A waiter re-reads state after acquiring, so it either fits what is
+		// left or gets the existing 409s. Cross-till races stay ADR-0011's
+		// flag. Preview and GET take no lock.
+		unlock, lockErr := refundSaleLocks.lock(r.Context(), detail.ID)
+		if lockErr != nil { // client gone / shutdown while waiting: nothing recorded
+			common.LogAndLocalizedError(w, r, http.StatusServiceUnavailable, "refund.error.server", "refund", lockErr)
+			return
+		}
+		defer unlock()
+
 		// loadRefundGuardState/EnsureStockLocation extracted (ut-docs#1217)
 		// so POST /api/refund/preview below can compute from IDENTICAL
 		// guard state without duplicating these repo reads -- no behavior
