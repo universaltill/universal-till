@@ -76,7 +76,7 @@ func TestTermsURLMapsLocaleToRegionTaggedPath(t *testing.T) {
 		"tr": "tr-tr", "tr-TR": "tr-tr",
 		"en": "en-gb", "en-US": "en-gb", "ar": "en-gb", "fa": "en-gb", "": "en-gb", "xx": "en-gb",
 	} {
-		want := "https://universaltill.com/" + site + "/legal/cloud-terms/"
+		want := "https://universaltill.com/" + site + "/legal/merchant-terms/"
 		if got := TermsURL(in); got != want {
 			t.Errorf("TermsURL(%q) = %q, want %q", in, got, want)
 		}
@@ -241,5 +241,36 @@ func TestRegisterSendingTermsSetsSentMarker(t *testing.T) {
 	}
 	if !TermsSent(context.Background(), kv) {
 		t.Fatal("registration that sent terms_version did not set the sent marker")
+	}
+}
+
+// ut-docs#6449 (legal B3, C8): the till records the published identifier and
+// links the published page; both are pinned so neither drifts silently.
+func TestTermsVersionIsThePublishedIdentifier(t *testing.T) {
+	if TermsVersion != "merchant-terms-v1.0" {
+		t.Fatalf("TermsVersion = %q, want merchant-terms-v1.0", TermsVersion)
+	}
+	if got, want := TermsURL("en"), "https://universaltill.com/en-gb/legal/merchant-terms/"; got != want {
+		t.Fatalf("TermsURL(en) = %q, want %q", got, want)
+	}
+	if got, want := TermsURLChromeless("de"), "https://universaltill.com/de-de/app/legal/merchant-terms/"; got != want {
+		t.Fatalf("TermsURLChromeless(de) = %q, want %q", got, want)
+	}
+}
+
+// A till that recorded the draft is asked again, and the old draft stays
+// unsent.
+func TestDraftAcceptanceIsAskedAgain(t *testing.T) {
+	ctx := context.Background()
+	kv := newFakeKV()
+	kv.m[keyTermsVersion] = "v0.1-draft"
+	kv.m[keyTermsLocale] = "en"
+	kv.m[keyTermsAcceptedAt] = "2026-10-22T10:00:00Z"
+	kv.m[keyTermsSentVersion] = "v0.1-draft"
+	if _, _, _, ok := AcceptedTerms(ctx, kv); ok {
+		t.Fatal("v0.1-draft acceptance must not count as merchant-terms-v1.0")
+	}
+	if TermsSent(ctx, kv) {
+		t.Fatal("v0.1-draft sent marker must not count as sent")
 	}
 }

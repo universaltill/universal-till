@@ -100,6 +100,9 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 				mu.Lock()
 				gotRefunds = append(gotRefunds, p)
 				mu.Unlock()
+				if g, ok := refundHookGates.Load(dp.Db); ok {
+					g.(func())() // ut-docs#6742: lets a test hold the provider call open
+				}
 				if v, ok := refundErrOverrides.Load(dp.Db); ok {
 					return nil, v.(error)
 				}
