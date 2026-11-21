@@ -1022,8 +1022,18 @@ label:has(> textarea[name="voucher_slip_text"]) textarea { resize: vertical; }
 .x-report-num tfoot th { text-align: start; font-weight: 600; }
 .x-report-tenders { display: block; overflow-x: auto; inline-size: max-content; max-inline-size: 100%; }
 /* ut-docs#6691: the late-entries table nested in an EOD detail cell never becomes phone cards (table-cards.js skips nested tables); it scrolls in its own box, and a long till name wraps. */
-.eod-late-scroll { display: block; overflow-x: auto; max-inline-size: 100%; }
-.eod-late-scroll .eod-late-till { overflow-wrap: anywhere; min-inline-size: 6rem; }
+.eod-late-scroll { display: block; overflow-x: auto; inline-size: 0; min-inline-size: 100%; }
+.eod-late-scroll .eod-late-till { overflow-wrap: break-word; min-inline-size: 8rem; }
+/* The outer .t-cards phone-card rules are descendant selectors and also match this nested table; keep its normal table layout (and the scroll box) at <=480px. */
+@media (max-width: 480px) {
+  table.t-cards .eod-late-scroll table { display: table; inline-size: 100%; }
+  table.t-cards .eod-late-scroll table > thead { display: table-header-group; position: static; inline-size: auto; block-size: auto; margin: 0; overflow: visible; clip-path: none; white-space: normal; }
+  table.t-cards .eod-late-scroll table > tbody { display: table-row-group; inline-size: auto; }
+  table.t-cards .eod-late-scroll table tr:not(.t-cards-row) { display: table-row; }
+  table.t-cards .eod-late-scroll table tr > :is(td, th) { display: table-cell; padding: .4rem .5rem; overflow-wrap: normal; }
+  table.t-cards .eod-late-scroll table tr > td.eod-late-till { overflow-wrap: break-word; }
+  table.t-cards .eod-late-scroll table tr > :is(td, th):not(:first-child) { text-align: end !important; }
+}
 .x-report-reason { overflow-wrap: anywhere; }
 .x-report-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
 .x-report-bar p { margin: 0; }
