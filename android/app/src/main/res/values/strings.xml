@@ -61,7 +61,7 @@
     <string name="reader_waiting_hint">Show this code to a manager. It must match the one on the till.</string>
     <string name="reader_code_label">Code</string>
     <string name="reader_cancel">Cancel</string>
-    <string name="reader_denied_request">A manager declined this request.</string>
+    <string name="reader_denied_request">A manager turned down this request. Ask a manager, then try again.</string>
     <string name="reader_expired_request">The request timed out. Try again.</string>
     <string name="reader_try_again">Try again</string>
     <string name="reader_idle">Ready for a payment</string>
