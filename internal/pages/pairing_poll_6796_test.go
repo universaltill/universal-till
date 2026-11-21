@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 )
 
 // ut-docs#6796: secret x state x role for GET /api/sync/pair-requests/{id}.
@@ -51,10 +52,14 @@ func TestPairPoll_SecretStateRoleMatrix(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, url, nil)
 		switch mode {
 		case "wrong":
-			req.Header.Set("X-Pair-Request-Secret", "nope")
+			req.Header.Set(fleetlink.HeaderPairRequestSecret, "nope")
 			req.URL.RawQuery = "request_secret=nope"
+		case "wrong-header":
+			req.Header.Set(fleetlink.HeaderPairRequestSecret, "nope")
 		case "right":
 			req.URL.RawQuery = "request_secret=" + secret
+		case "right-header":
+			req.Header.Set(fleetlink.HeaderPairRequestSecret, secret)
 		}
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -65,7 +70,7 @@ func TestPairPoll_SecretStateRoleMatrix(t *testing.T) {
 	var want404 string
 	for _, role := range []string{"additional", data.TillRoleCardReader} {
 		for _, state := range []string{"pending", "approved", "denied", "expired"} {
-			for _, mode := range []string{"absent", "wrong"} {
+			for _, mode := range []string{"absent", "wrong", "wrong-header"} {
 				rec := get(mk(t, role, state), mode)
 				if rec.Code != http.StatusNotFound {
 					t.Fatalf("%s/%s/%s: want 404, got %d", role, state, mode, rec.Code)
@@ -110,9 +115,11 @@ func TestPairPoll_SecretStateRoleMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		rec := get(id, "right")
-		if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), `"error":"`+code+`"`) {
-			t.Fatalf("reader %s: want 410 %s, got %d %s", state, code, rec.Code, rec.Body.String())
+		for _, mode := range []string{"right", "right-header"} {
+			rec := get(id, mode)
+			if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), `"error":"`+code+`"`) {
+				t.Fatalf("reader %s (%s): want 410 %s, got %d %s", state, mode, code, rec.Code, rec.Body.String())
+			}
 		}
 	}
 	// Expired-but-approved reader never consumes the approval.
