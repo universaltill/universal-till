@@ -49,18 +49,24 @@ func hasPerTillEarliest(le *data.EODLateEntries) bool {
 }
 
 // eodLateNoteFooter is the paper section, starting with the blank separator
-// line; nil when there is nothing late. every line is clipped or built with
-// footerRow, so none can pass print.Width and an amount is never cut.
+// line; nil when there is nothing late. Explanation lines and labels wrap
+// (ut-docs#6691); footerRow lines keep the amount. None can pass print.Width.
 func eodLateNoteFooter(le *data.EODLateEntries, T func(string) string, money func(int64) string, when func(rfc3339 string) string) []string {
 	if le == nil || len(le.Tills) == 0 {
 		return nil
 	}
-	clip := func(s string) string { return truncateRunes(s, print.Width) }
-	out := []string{"",
-		clip(T("reports.zpaper.late_title")),
-		clip(T("reports.zpaper.late_made_before")),
-		clip(T("reports.zpaper.late_included")),
+	// wrap word-wraps s to the paper width; every continuation row keeps indent.
+	wrap := func(indent, s string) []string {
+		rows := print.WrapWords(s, print.Width-print.DisplayWidth(indent))
+		for i := range rows {
+			rows[i] = indent + rows[i]
+		}
+		return rows
 	}
+	out := []string{""}
+	out = append(out, wrap("", T("reports.zpaper.late_title"))...)
+	out = append(out, wrap("", T("reports.zpaper.late_made_before"))...)
+	out = append(out, wrap("", T("reports.zpaper.late_included"))...)
 	perTill := hasPerTillEarliest(le)
 	if !perTill {
 		if w := when(le.EarliestOrigin); w != "" {
@@ -68,7 +74,8 @@ func eodLateNoteFooter(le *data.EODLateEntries, T func(string) string, money fun
 		}
 	}
 	for _, t := range le.Tills {
-		out = append(out, clip(lateTillLabel(t, T)),
+		out = append(out, wrap("", lateTillLabel(t, T))...)
+		out = append(out,
 			footerRow("  "+T("reports.zpaper.late_entries"), strconv.Itoa(lateTillEntries(t))))
 		if t.SalesCount > 0 {
 			out = append(out, footerRow("  "+fmt.Sprintf(T("reports.zpaper.late_sales"), t.SalesCount), money(t.Gross)))
@@ -77,11 +84,11 @@ func eodLateNoteFooter(le *data.EODLateEntries, T func(string) string, money fun
 			out = append(out, footerRow("  "+fmt.Sprintf(T("reports.zpaper.late_refunds"), t.RefundCount), "-"+money(t.RefundTotal)))
 		}
 		if t.ClearedBasketCount > 0 {
-			label := "  " + fmt.Sprintf(T("reports.zpaper.late_cleared"), t.ClearedBasketCount)
+			text := fmt.Sprintf(T("reports.zpaper.late_cleared"), t.ClearedBasketCount)
 			if t.ClearedBasketTotal != nil {
-				out = append(out, footerRow(label, money(*t.ClearedBasketTotal)))
+				out = append(out, footerRow("  "+text, money(*t.ClearedBasketTotal)))
 			} else { // archived before ut-docs#5776: a count, never a made-up 0.00
-				out = append(out, clip(label))
+				out = append(out, wrap("  ", text)...)
 			}
 		}
 		if t.NoSaleCount > 0 {
@@ -100,6 +107,7 @@ type eodLateTillView struct {
 	Name, ShortID  string
 	Entries        int
 	Gross          int64
+	SalesCount     int
 	RefundCount    int
 	RefundTotal    int64
 	ClearedCount   int
@@ -112,6 +120,7 @@ type eodLateTillView struct {
 type eodLateView struct {
 	EarliestOrigin     string // overall; shown only when !HasPerTillEarliest
 	Tills              []eodLateTillView
+	HasSales           bool // some till has sales; else the Sales column is absent
 	HasRefunds         bool
 	HasCleared         bool
 	HasNoSale          bool
@@ -128,7 +137,7 @@ func eodLateNoteView(le *data.EODLateEntries) *eodLateView {
 	}
 	v := &eodLateView{EarliestOrigin: le.EarliestOrigin, HasPerTillEarliest: hasPerTillEarliest(le)}
 	for _, t := range le.Tills {
-		tv := eodLateTillView{Entries: lateTillEntries(t), Gross: t.Gross, RefundCount: t.RefundCount, RefundTotal: t.RefundTotal,
+		tv := eodLateTillView{Entries: lateTillEntries(t), Gross: t.Gross, SalesCount: t.SalesCount, RefundCount: t.RefundCount, RefundTotal: t.RefundTotal,
 			ClearedCount: t.ClearedBasketCount, NoSaleCount: t.NoSaleCount, EarliestOrigin: t.EarliestOrigin,
 			Name: t.Name, ShortID: lateTillShortID(t.TillID)}
 		if t.ClearedBasketTotal != nil {
@@ -136,6 +145,7 @@ func eodLateNoteView(le *data.EODLateEntries) *eodLateView {
 		} else if t.ClearedBasketCount > 0 {
 			v.ClearedAsCount = true
 		}
+		v.HasSales = v.HasSales || t.SalesCount > 0
 		v.HasRefunds = v.HasRefunds || t.RefundCount > 0
 		v.HasCleared = v.HasCleared || t.ClearedBasketCount > 0
 		v.HasNoSale = v.HasNoSale || t.NoSaleCount > 0

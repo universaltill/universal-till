@@ -89,11 +89,13 @@
           <strong>{{ T "reports.eod.late_title" }}</strong>
           <p class="muted" style="margin:.2rem 0">{{ T "reports.eod.late_note" }}</p>
           {{ if and (not .HasPerTillEarliest) .EarliestOrigin }}<p class="muted" style="margin:.2rem 0">{{ printf (T "reports.eod.late_earliest") (datetime .EarliestOrigin) }}</p>{{ end }}
-          <table class="table" style="margin:.3rem 0 .8rem">
+          <!-- ut-docs#6691: table-cards.js skips this nested table, so it scrolls inside its own box. -->
+          <div class="eod-late-scroll" style="margin-block:.3rem .8rem">
+          <table class="table">
             <thead><tr>
               <th>{{ T "reports.eod.late_till" }}</th>
               <th style="text-align:end">{{ T "reports.eod.late_entries" }}</th>
-              <th style="text-align:end">{{ T "reports.sales" }}</th>
+              {{ if .HasSales }}<th style="text-align:end">{{ T "reports.sales" }}</th>{{ end }}
               {{ if .HasRefunds }}<th style="text-align:end">{{ T "reports.refunds" }}</th>{{ end }}
               {{ if .HasCleared }}<th style="text-align:end">{{ T "reports.eod.late_cleared" }}</th>{{ end }}
               {{ if .HasNoSale }}<th style="text-align:end">{{ T "reports.eod.late_no_sale" }}</th>{{ end }}
@@ -103,9 +105,9 @@
               {{ $n := . }}
               {{ range .Tills }}
               <tr>
-                <td>{{ if .Name }}{{ .Name }}{{ else }}{{ printf (T "reports.eod.late_other_till") .ShortID }}{{ end }}</td>
+                <td class="eod-late-till">{{ if .Name }}{{ .Name }}{{ else }}{{ printf (T "reports.eod.late_other_till") .ShortID }}{{ end }}</td>
                 <td style="text-align:end">{{ qty .Entries }}</td>
-                <td style="text-align:end">{{ money .Gross }}</td>
+                {{ if $n.HasSales }}<td style="text-align:end">{{ if .SalesCount }}{{ money .Gross }}{{ end }}</td>{{ end }}
                 {{ if $n.HasRefunds }}<td style="text-align:end">{{ if .RefundCount }}-{{ money .RefundTotal }}{{ end }}</td>{{ end }}
                 {{ if $n.HasCleared }}<td style="text-align:end">{{ if .ClearedCount }}{{ if $n.ClearedAsCount }}{{ qty .ClearedCount }}{{ else }}{{ money .ClearedTotal }}{{ end }}{{ end }}</td>{{ end }}
                 {{ if $n.HasNoSale }}<td style="text-align:end">{{ if .NoSaleCount }}{{ qty .NoSaleCount }}{{ end }}</td>{{ end }}
@@ -114,6 +116,7 @@
               {{ end }}
             </tbody>
           </table>
+          </div>
           {{ end }}
           {{ if .ArticleGroups }}
           <strong>{{ T "reports.eod.by_article_group" }}</strong>
