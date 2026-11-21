@@ -242,6 +242,8 @@ func Run(ctx context.Context) error {
 	// Owed by every applied backup restore (a file, so a crash after the
 	// swap still jumps); a no-op on every other boot (ut-docs#5068).
 	jumpNumbersAfterRestore(ctx, database.DB, cfg.DBPath, time.Now(), log)
+	// ut-docs#6795: card payments the last run left pending need a manager.
+	markOrphanedTapAttempts(ctx, database.DB, time.Now(), log)
 
 	// Public-demo start gate (ADR-0113 §1.2, ut-docs#2687): after the
 	// database is open and migrated, before anything else touches it or

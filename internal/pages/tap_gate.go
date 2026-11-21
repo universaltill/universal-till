@@ -36,6 +36,9 @@ type tapStartFailedError struct {
 	Method string
 	// ReaderBusy: the paired phone reader said it was busy (ux A6 wording).
 	ReaderBusy bool
+	// NeedsAttention: an earlier tap payment on this provider needs a
+	// manager (ut-docs#6795); nothing was started.
+	NeedsAttention bool
 }
 
 func (e *tapStartFailedError) Error() string { return "tap payment could not start: " + e.Method }

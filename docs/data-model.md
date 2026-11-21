@@ -97,6 +97,31 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   `cleared_basket_count` / `cleared_basket_total_minor` per business date and
   till, never as part of net sales (ut-docs#4721)
 
+**`payment_attempts`** (migration 111; ut-docs#6455, ut-docs#6795, ADR-0198
+§6.8) is core's till-local record of one card-present (Tap to Pay) attempt,
+keyed by the authorize request id. States: `pending` (written before the
+tap), `approved`, `declined`, `cancelled`, `unknown`, `resolved_not_charged`;
+only `pending`/`unknown` rows move and they are never pruned. No card data
+beyond brand and last four (ADR-0127).
+
+A row **needs attention** when it is `unknown`, or `pending` with its
+`deadline_at` passed (the collect that owned it is over); a `pending` row with
+a future deadline is in flight and is neither listed nor gating. Boot
+(`markOrphanedTapAttempts`, no broker call) turns every `pending` row into
+`unknown` with reason `till_restarted`: the basket, tender lock and attempt id
+are memory only. Reason `charged_no_sale` marks a row a manager settled as
+charged with no sale (state `approved`, refund at the provider; nothing reads
+such a row as a sale). While any row needs attention for a provider, core
+refuses to start another tap payment on that provider (start-failed panel, key
+`tap.attention.start_refused`; cash and other methods are never refused),
+except a retry of the register's own locked leg. A manager (permission
+`refund`) lists them with `GET /api/pay/attempts/attention` and settles one by
+key with `POST /api/pay/attempts/attention/resolve` (`decision`
+`not_charged` | `charged_refund_at_provider`, fresh PIN, broker asked first,
+audited as `tap_resolve` with `context: needs_attention`); the row of a live
+locked leg is excluded and not resolvable there. No migration: `reason` is
+free text.
+
 ### 5. Shifts & audit
 
 - `shifts`
