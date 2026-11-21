@@ -1394,7 +1394,6 @@ permissions.action.issue_reporting
 permissions.action.permission_management
 permissions.action.personal_display
 permissions.action.plugin_management
-permissions.action.price_override
 permissions.action.refund
 permissions.action.reports
 permissions.action.settings

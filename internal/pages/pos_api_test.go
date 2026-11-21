@@ -158,6 +158,8 @@ func TestRemoveHandler_RequiresKeyOrCode(t *testing.T) {
 }
 
 func TestLineHandler_UpdatesQtyAndDiscount(t *testing.T) {
+	// ut-docs#5416: a discount raise and New sale on a priced basket are gated; auth off exercises the mechanics only
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -190,6 +192,8 @@ func TestLineHandler_UpdatesQtyAndDiscount(t *testing.T) {
 // or the discount silently resets to 0 with no error shown to the
 // operator.
 func TestLineHandler_QtyChangeDoesNotClearDiscount(t *testing.T) {
+	// ut-docs#5416: a discount raise and New sale on a priced basket are gated; auth off exercises the mechanics only
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -292,6 +296,8 @@ func TestLineHandler_DeltaClampsAtZeroAndVoids(t *testing.T) {
 // resubmits the row's current discount box value — otherwise a qty step
 // would silently zero out an existing discount.
 func TestLineHandler_DeltaPreservesDiscount(t *testing.T) {
+	// ut-docs#5416: a discount raise and New sale on a priced basket are gated; auth off exercises the mechanics only
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -407,6 +413,8 @@ func TestLineHandler_RequiresKeyOrCode(t *testing.T) {
 }
 
 func TestDiscountHandler_SetsSaleDiscount(t *testing.T) {
+	// ut-docs#5416: a discount raise and New sale on a priced basket are gated; auth off exercises the mechanics only
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -499,6 +507,8 @@ func TestTableHandler_UnknownTableIDIgnored(t *testing.T) {
 }
 
 func TestResetHandler_ClearsBasket(t *testing.T) {
+	// ut-docs#5416: a discount raise and New sale on a priced basket are gated; auth off exercises the mechanics only
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
@@ -3181,6 +3191,8 @@ func TestTenderHandler_AmbiguousRegisterIdentityStillSellsFromMain(t *testing.T)
 // — the line keeps its previous qty and discount — and says why on that
 // line.
 func TestLineHandler_DiscountAboveLineTotalRefused(t *testing.T) {
+	// ut-docs#5416: a discount raise and New sale on a priced basket are gated; auth off exercises the mechanics only
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil { // £1.00
 		t.Fatalf("seed scan: %v", err)

@@ -559,7 +559,7 @@ func TestPermissionSettingsPage_GET_HiddenActionsNotRendered(t *testing.T) {
 		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, a := range []string{"void", "price_override"} {
+	for _, a := range []string{"void"} {
 		if strings.Contains(body, `&#34;action&#34;:&#34;`+a+`&#34;`) {
 			t.Errorf("hidden action %q still renders a checkbox", a)
 		}
@@ -567,7 +567,8 @@ func TestPermissionSettingsPage_GET_HiddenActionsNotRendered(t *testing.T) {
 	if strings.Contains(body, ">Other<") {
 		t.Error("hidden actions must not fall into the Other group")
 	}
-	for _, a := range []string{"refund", "cash_adjustment"} {
+	// price_override is enforced since ut-docs#5416 (discount raises).
+	for _, a := range []string{"refund", "cash_adjustment", "price_override"} {
 		if !strings.Contains(body, `&#34;action&#34;:&#34;`+a+`&#34;`) {
 			t.Errorf("enforced action %q must still render", a)
 		}

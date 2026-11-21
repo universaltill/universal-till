@@ -1795,6 +1795,23 @@ func (s *Service) ResetAndSnapshot() BasketSnapshot {
 	return snap
 }
 
+// ResetAndSnapshotIf is ResetAndSnapshot as a compare-and-set (ut-docs#5416):
+// it clears only if the basket still holds fromLines lines (priced lines plus
+// add-by-hand entries) at fromTotal, the basket a New sale approval was given
+// for. Otherwise ErrLineChanged and nothing is reset.
+func (s *Service) ResetAndSnapshotIf(fromLines int, fromTotal money.Money) (BasketSnapshot, error) {
+	s.mu.Lock()
+	snap := s.snapshotLocked()
+	if len(snap.Lines)+len(snap.AddByHand) != fromLines || snap.Total != fromTotal {
+		s.mu.Unlock()
+		return BasketSnapshot{}, ErrLineChanged
+	}
+	p := s.resetLocked()
+	s.mu.Unlock()
+	s.handOffAbandoned(AbandonCleared, p)
+	return snap, nil
+}
+
 // TenderAttemptID returns a stable id for the current basket's tender
 // attempt, minting one on first call after the last reset (ut-docs#1762).
 // Every retried tender POST against the SAME basket (the operator re-
@@ -1962,7 +1979,7 @@ func (s *Service) clearCacheForCode(code string) {
 	}
 }
 
-// LineDiscountTooLargeError (ut-docs#4627) is UpdateLineByKey / UpdateLineByKeyIfQty
+// LineDiscountTooLargeError (ut-docs#4627) is UpdateLineByKey / UpdateLineByKeyIf
 // refusing a discount above the line's total at the requested qty: Limit
 // is that total, the most the discount can be. The line is left as it was.
 type LineDiscountTooLargeError struct {
@@ -1997,8 +2014,9 @@ func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (floa
 	return 1, 0
 }
 
-// ErrLineChanged (ut-docs#5417): the line is gone or its qty is no longer
-// the one the caller read; nothing was changed.
+// ErrLineChanged (ut-docs#5417): the line is gone or its qty/discount is no
+// longer the one the caller read (or, for ResetAndSnapshotIf, the basket is
+// no longer the one the caller saw); nothing was changed.
 var ErrLineChanged = errors.New("basket line changed since it was read")
 
 // UpdateLineByKey sets qty/discount for the single line matching key
@@ -2015,18 +2033,18 @@ func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money)
 	return nil
 }
 
-// UpdateLineByKeyIfQty is UpdateLineByKey as a compare-and-set
-// (ut-docs#5417): it applies only if the line still has the qty the caller
-// read (fromQty — the value its gate decision was made against). A line that
-// is gone, or whose qty changed meanwhile, returns ErrLineChanged and
-// nothing is modified. The comparison is exact: both sides are the same
-// stored float64.
-func (s *Service) UpdateLineByKeyIfQty(key string, fromQty, qty float64, discount money.Money) error {
+// UpdateLineByKeyIf is UpdateLineByKey as a compare-and-set (ut-docs#5417,
+// #5416): it applies only if the line still has the qty and line discount the
+// caller read (fromQty/fromDiscount: the values its gate decision was made
+// against). A line that is gone, or whose qty or discount changed meanwhile,
+// returns ErrLineChanged and nothing is modified. The comparison is exact:
+// both sides are the same stored values.
+func (s *Service) UpdateLineByKeyIf(key string, fromQty float64, fromDiscount money.Money, qty float64, discount money.Money) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.lines {
 		if s.lines[i].LineKey == key {
-			if s.lines[i].Qty != fromQty {
+			if s.lines[i].Qty != fromQty || s.lines[i].LineDiscount != fromDiscount {
 				return ErrLineChanged
 			}
 			return s.updateLineAtLocked(i, qty, discount)

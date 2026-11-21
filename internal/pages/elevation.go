@@ -116,7 +116,29 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 	if canPerform(dp, r, action) {
 		return elevationCheck{Outcome: allowed, ActorID: actorID}
 	}
-	return verifyElevationPIN(dp, r, action, actorID, pin)
+	return verifyElevationPIN(dp, r, actorID, pin, action)
+}
+
+// checkOrElevateAll is checkOrElevate for a request that needs several
+// actions at once (ut-docs#5416: one post that both lowers a line's qty and
+// raises its discount). allowed only if the session holds EVERY action;
+// otherwise ONE PIN verification, whose approver must hold every action too
+// (errApproverInsufficientRole if any is missing). The PIN is checked once,
+// so a wrong PIN counts one failed attempt toward the shared lockout, not one
+// per action.
+func checkOrElevateAll(dp *common.Deps, r *http.Request, pin string, actions ...string) elevationCheck {
+	actorID := getSessionUserID(r)
+	all := true
+	for _, a := range actions {
+		if !canPerform(dp, r, a) {
+			all = false
+			break
+		}
+	}
+	if all {
+		return elevationCheck{Outcome: allowed, ActorID: actorID}
+	}
+	return verifyElevationPIN(dp, r, actorID, pin, actions...)
 }
 
 // checkStepUp is checkOrElevate's step-up sibling (ut-docs#1841, ADR-0087):
@@ -172,7 +194,7 @@ func checkStepUp(dp *common.Deps, r *http.Request, action, pin string) elevation
 			return refuse(errStepUpSessionNotPermitted)
 		}
 	}
-	return verifyElevationPIN(dp, r, action, actorID, pin)
+	return verifyElevationPIN(dp, r, actorID, pin, action)
 }
 
 // verifyElevationPIN is the PIN-verification leg checkOrElevate and
@@ -180,7 +202,7 @@ func checkStepUp(dp *common.Deps, r *http.Request, action, pin string) elevation
 // needed — factored out so the two never duplicate (and risk drifting)
 // the AuthorizeManager/Can sequence, the lockout-sharing behaviour, or the
 // error-to-Outcome mapping. Never called directly by a handler.
-func verifyElevationPIN(dp *common.Deps, r *http.Request, action, actorID, pin string) elevationCheck {
+func verifyElevationPIN(dp *common.Deps, r *http.Request, actorID, pin string, actions ...string) elevationCheck {
 	if pin == "" {
 		return elevationCheck{Outcome: needsElevation, ActorID: actorID}
 	}
@@ -202,14 +224,16 @@ func verifyElevationPIN(dp *common.Deps, r *http.Request, action, actorID, pin s
 
 	// AuthorizeManager only confirmed "some manager/admin/super_admin PIN" —
 	// re-check the APPROVER (not the session user canPerform would read)
-	// actually holds THIS action, exactly as fiscal_api.go re-checks the
-	// PIN owner's role before trusting it.
-	can, err := svc.Can(r.Context(), approver, action)
-	if err != nil {
-		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: err}
-	}
-	if !can {
-		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApproverInsufficientRole}
+	// actually holds EVERY gated action, exactly as fiscal_api.go re-checks
+	// the PIN owner's role before trusting it.
+	for _, action := range actions {
+		can, err := svc.Can(r.Context(), approver, action)
+		if err != nil {
+			return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: err}
+		}
+		if !can {
+			return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: errApproverInsufficientRole}
+		}
 	}
 
 	return elevationCheck{Outcome: elevated, ActorID: actorID, ApproverID: approver.ID}

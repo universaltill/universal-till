@@ -19,7 +19,7 @@ type permissionGroup struct {
 // permissionOtherGroup group, so a grantable permission is never lost. Display only: grouping changes no
 // grant, no gate and no stored data.
 var permissionGroups = []permissionGroup{
-	{Key: "sales", Actions: []string{"void_comp_waste", "refund", "cash_adjustment", "worker_allocation", "fiscal_tse_override"}},
+	{Key: "sales", Actions: []string{"void_comp_waste", "price_override", "refund", "cash_adjustment", "worker_allocation", "fiscal_tse_override"}},
 	{Key: "catalog", Actions: []string{"catalog_management", "tax_code_management", "import_export"}},
 	{Key: "stock", Actions: []string{"stock_management", "stock_location_management"}},
 	{Key: "reports", Actions: []string{"reports", "eod_report", "audit"}},
@@ -39,8 +39,7 @@ var permissionGroups = []permissionGroup{
 // TestPermissionGroups_EveryActionInExactlyOneGroup holds every action to
 // exactly one of: a group in permissionGroups, or this table.
 var permissionHiddenActions = map[string]string{
-	"void":           "no whole-sale void in the till; line voids use void_comp_waste",
-	"price_override": "the till has no price-override feature",
+	"void": "no whole-sale void in the till; line voids use void_comp_waste",
 }
 
 // permissionOtherGroup is the runtime fallback group for an action
