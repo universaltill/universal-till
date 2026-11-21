@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
@@ -66,38 +67,102 @@ type ExportStockRow struct {
 // (ArchivedReportRow.Content, json-unmarshaled), never recomputed fresh,
 // so a generated batch can never disagree with the Z-report a merchant
 // already has in hand. ZNumber is the document key (DATEV Belegfeld1).
+//
+// ClosedAt is the close instant (RFC3339, the shop's local offset, the same
+// form as Report.To; "" only if the archive timestamp is unparseable).
+// TradingDate is the YYYY-MM-DD day the close counts for in an accounting
+// export: the local date of (close instant - reports.business_day_start),
+// or a legacy close's own bare-date period (ADR-0066 amendment 2026-11-21,
+// ut-docs#6313). Neither is omitempty: always on the wire.
 type EODCloseExport struct {
-	ZNumber int64     `json:"z_number"`
-	Report  EODReport `json:"report"`
+	ZNumber     int64     `json:"z_number"`
+	ClosedAt    string    `json:"closed_at"`
+	TradingDate string    `json:"trading_date"`
+	Report      EODReport `json:"report"`
 }
 
-// EODClosesForExport returns every archived day-close ("eod" kind) that was
-// CLOSED in the local calendar days [from, to], oldest first, as
-// export-payload closes — ArchivedReportsInRange plus the
-// EODClosesFromArchive conversion. Same caller-bounds-the-range division of
-// responsibility as ArchivedReportsInRange itself. Bounded on the row's own
-// created_at, not its period string, since ADR-0066 (a "eod" period is the
-// close instant now, not a "YYYY-MM-DD" date) — see ArchivedReportsInRange's
-// own doc comment.
+// eodExportRow is an archived row plus the trading date the query computed.
+type eodExportRow struct {
+	ArchivedReportRow
+	TradingDate string
+}
+
+// EODClosesForExport returns every archived day-close ("eod" kind) whose
+// TRADING date is in [from, to] (inclusive local YYYY-MM-DD dates), oldest
+// close first, as export-payload closes. The trading date is the local
+// calendar date of (created_at - reports.business_day_start) -- wall-clock
+// subtraction like SalesByDay, no "-1 second" -- so with the default 00:00
+// (also unset/empty/malformed) it is the calendar day of the close, exactly
+// the filter ArchivedReportsInRange applies. A legacy close (bare
+// YYYY-MM-DD period, pre-ADR-0066) is never shifted: its trading date is its
+// period. ArchivedReportsInRange itself (the Settings archive export) is
+// deliberately NOT changed: it keeps ADR-0066 Decision 5's calendar day.
+// A settings read error fails the export rather than falling back to 00:00,
+// which would silently bucket VAT differently. Same caller-bounds-the-range
+// division of responsibility as ArchivedReportsInRange.
 func (r *POSRepo) EODClosesForExport(ctx context.Context, from, to string) ([]EODCloseExport, error) {
-	rows, err := r.ArchivedReportsInRange(ctx, from, to)
+	v, _, err := NewSettingsRepo(r.db).Get(ctx, "reports.business_day_start")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("eod closes for export: read business day start: %w", err)
 	}
-	return EODClosesFromArchive(rows), nil
+	hh, mm := ParseBusinessDayStart(v)
+	hourMod := fmt.Sprintf("%d hours", -hh) // same construction as SalesByDay
+	minMod := fmt.Sprintf("%d minutes", -mm)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, kind, period, content_json, created_at,
+       z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt,
+       trading_date
+FROM (
+  SELECT ra.*,
+    CASE WHEN ra.period GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+         THEN ra.period
+         ELSE date(ra.created_at, 'localtime', ?, ?)
+    END AS trading_date
+  FROM report_archive ra
+  WHERE ra.kind = 'eod'
+)
+WHERE trading_date >= ? AND trading_date <= ?
+ORDER BY datetime(created_at), z_number`, hourMod, minMod, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("eod closes for export: %w", err)
+	}
+	defer rows.Close()
+	var out []eodExportRow
+	for rows.Next() {
+		var td string
+		a, err := scanArchivedReport(rows, &td)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, eodExportRow{ArchivedReportRow: a, TradingDate: td})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("eod closes for export: %w", err)
+	}
+	return eodClosesFromRows(out), nil
 }
 
-// EODClosesFromArchive converts archived report rows (any kind — e.g. an
-// ArchivedReportsInRange result) to export closes, keeping only
-// Kind=="eod" rows. A row whose Content fails to unmarshal is SKIPPED with
-// a warning log, never an error: one corrupt archive row must not take
-// every other close's export down with it (the export plugin sees, and can
-// refuse on, whatever gaps matter to its own format — e.g. a missing
-// Z-number in the sequence).
-func EODClosesFromArchive(rows []ArchivedReportRow) []EODCloseExport {
+// closedAtLocal renders an ArchivedReportRow.CreatedAt (UTC RFC3339) as the
+// close instant in the shop's local offset, second precision -- the same
+// form as a new-style report's own `to`. "" (and a warning) if unparseable.
+func closedAtLocal(s string) string {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		logging.L().Warnf("pos: eod closes for export: unparseable created_at %q: %v", s, err)
+		return ""
+	}
+	return t.Local().Format(time.RFC3339)
+}
+
+// eodClosesFromRows converts the export query's rows to export closes,
+// keeping only Kind=="eod" rows. A row whose Content fails to unmarshal is
+// SKIPPED with a warning log, never an error: one corrupt archive row must
+// not take every other close's export down with it (the export plugin sees,
+// and can refuse on, whatever gaps matter to its own format -- e.g. a
+// missing Z-number in the sequence).
+func eodClosesFromRows(rows []eodExportRow) []EODCloseExport {
 	// Empty (not nil): the slice is JSON-encoded into the plugin payload,
-	// and "[]" vs "null" is a wire-visible difference — same reasoning as
-	// ArchivedReportsInRange's own non-nil result.
+	// and "[]" vs "null" is a wire-visible difference.
 	out := []EODCloseExport{}
 	for _, row := range rows {
 		if row.Kind != "eod" {
@@ -108,7 +173,12 @@ func EODClosesFromArchive(rows []ArchivedReportRow) []EODCloseExport {
 			logging.L().Warnf("pos: eod closes for export: skipping archived report %s (period %s): content_json unparseable: %v", row.ID, row.Period, err)
 			continue
 		}
-		out = append(out, EODCloseExport{ZNumber: row.ZNumber, Report: rep})
+		out = append(out, EODCloseExport{
+			ZNumber:     row.ZNumber,
+			ClosedAt:    closedAtLocal(row.CreatedAt),
+			TradingDate: row.TradingDate,
+			Report:      rep,
+		})
 	}
 	return out
 }

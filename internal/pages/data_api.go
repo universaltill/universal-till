@@ -85,7 +85,8 @@ type exportRequestPayload struct {
 	// permission name. Read from the ALREADY-ARCHIVED, immutable Z-report
 	// rows (data.EODClosesForExport), never recomputed fresh, so an
 	// accounting batch built from it reconciles to the merchant's Z-reports
-	// by construction.
+	// by construction. Closes are selected by trading date (ADR-0066
+	// amendment 2026-11-21, ut-docs#6313), not by calendar day of closing.
 	//
 	// Deliberately NO omitempty: EODClosesForExport returns a non-nil empty
 	// slice specifically so "[]" (supported host, zero archived closes in

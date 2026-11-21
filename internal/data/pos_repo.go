@@ -3841,12 +3841,16 @@ type ArchivedReportRow struct {
 // scanArchivedReport scans the shared SELECT column list of
 // ListArchivedReports / ArchivedReportsInRange, mapping the nullable
 // columns to their Go representations (see ArchivedReportRow's doc).
-func scanArchivedReport(rows *sql.Rows) (ArchivedReportRow, error) {
+//
+// extra are additional destinations appended after the shared columns, for a
+// query that selects more (EODClosesForExport's trading_date).
+func scanArchivedReport(rows *sql.Rows, extra ...any) (ArchivedReportRow, error) {
 	var a ArchivedReportRow
 	var zNum, prevZ sql.NullInt64
 	var prevClosed, firstR, lastR sql.NullString
-	if err := rows.Scan(&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt,
-		&zNum, &prevZ, &prevClosed, &firstR, &lastR); err != nil {
+	dest := append([]any{&a.ID, &a.Kind, &a.Period, &a.Content, &a.CreatedAt,
+		&zNum, &prevZ, &prevClosed, &firstR, &lastR}, extra...)
+	if err := rows.Scan(dest...); err != nil {
 		return a, fmt.Errorf("scan report: %w", err)
 	}
 	a.CreatedAt = formatArchiveTimestamp(a.CreatedAt)

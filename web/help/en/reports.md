@@ -115,6 +115,11 @@ just after midnight can show under a pre-midnight hour label (e.g. 22:00)
 rather than its real clock time, consistent with Day/Week/Month/Year
 already counting that sale as part of the previous business day.
 
+The same setting decides which day a day-end (Z) report counts for in
+accounting and VAT exports from Data → Export: a Z closed at 00:30 with a
+business day start of 04:00 counts for the previous day. The report archive
+export in Settings still lists reports by the date they were closed.
+
 ## Gift vouchers on the day-end (Z) report
 
 When your shop sells or accepts multi-purpose gift vouchers, the printed

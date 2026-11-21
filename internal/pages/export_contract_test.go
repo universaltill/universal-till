@@ -82,11 +82,12 @@ func TestExportTaxCodeViewSchema_PinnedFields(t *testing.T) {
 }
 
 func TestExportEODCloseExportSchema_PinnedFields(t *testing.T) {
-	// Only the two fields this event's own contract owns -- report's
+	// Only the four fields this event's own contract owns -- report's
 	// internal shape is the archived Z-report format, out of scope here
-	// (see the file-level doc comment above).
+	// (see the file-level doc comment above). closed_at / trading_date:
+	// ADR-0066 amendment 2026-11-21 (ut-docs#6313).
 	assertJSONFields(t, "data.EODCloseExport", reflect.TypeOf(data.EODCloseExport{}), []string{
-		"z_number", "report",
+		"z_number", "closed_at", "trading_date", "report",
 	})
 }
 

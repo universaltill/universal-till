@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1267,7 +1268,10 @@ func TestExportDispatch_RequiresManager(t *testing.T) {
 // once ArchivedReportsInRange moved off a `period BETWEEN` text compare.
 func seedArchivedEODClose(t *testing.T, db *sql.DB, period string, closedAt time.Time) {
 	t.Helper()
-	if _, err := data.NewPOSRepo(db).ArchiveReport(context.Background(), "eod", period,
+	// The archive period is the close instant (new-style, ADR-0066); a bare
+	// date would be a LEGACY close, whose trading date is that period and so
+	// not tied to closedAt (ut-docs#6313). `period` is only the content day.
+	if _, err := data.NewPOSRepo(db).ArchiveReport(context.Background(), "eod", closedAt.Local().Format(time.RFC3339),
 		[]byte(`{"day":"`+period+`","gross":11900,"method_tax_bands":[{"method":"cash","rate_bp":1900,"net":10000,"tax":1900,"gross":11900}]}`),
 		"R-1", "R-9", closedAt); err != nil {
 		t.Fatalf("archive eod close %s: %v", period, err)
@@ -1322,8 +1326,10 @@ func TestExportDispatch_PayloadIncludesEODClosesData(t *testing.T) {
 
 	var payload struct {
 		EODCloses []struct {
-			ZNumber int64 `json:"z_number"`
-			Report  struct {
+			ZNumber     int64  `json:"z_number"`
+			ClosedAt    string `json:"closed_at"`
+			TradingDate string `json:"trading_date"`
+			Report      struct {
 				Day            string `json:"day"`
 				MethodTaxBands []struct {
 					Method string `json:"method"`
@@ -1341,6 +1347,12 @@ func TestExportDispatch_PayloadIncludesEODClosesData(t *testing.T) {
 	got := payload.EODCloses[0]
 	if got.ZNumber != 1 || got.Report.Day != "2026-08-21" {
 		t.Fatalf("unexpected close: %+v", got)
+	}
+	if _, err := time.Parse(time.RFC3339, got.ClosedAt); err != nil {
+		t.Fatalf("closed_at %q must be RFC3339: %v", got.ClosedAt, err)
+	}
+	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(got.TradingDate) {
+		t.Fatalf("trading_date %q must be YYYY-MM-DD", got.TradingDate)
 	}
 	if len(got.Report.MethodTaxBands) != 1 || got.Report.MethodTaxBands[0].Gross != 11900 {
 		t.Fatalf("close should carry its archived cross-tab, got %+v", got.Report.MethodTaxBands)
@@ -1837,5 +1849,48 @@ func TestExportDispatch_PayloadCarriesLocale(t *testing.T) {
 	}
 	if !strings.Contains(string(captured.Payload), `"locale":"tr"`) {
 		t.Fatalf("payload lacks locale tr: %s", captured.Payload)
+	}
+}
+
+// TestExportDispatch_EODClosesSettingsReadError500: if the business-day-start
+// setting cannot be read the export fails closed (500) and nothing is
+// dispatched -- it must never fall back to 00:00 and silently bucket VAT.
+func TestExportDispatch_EODClosesSettingsReadError500(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp13", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp13", "sales:read")
+	closedAt, from, to := edcAnchor()
+	seedArchivedEODClose(t, dp.Db, "2026-08-21", closedAt)
+
+	captured := 0
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp13", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured++
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// Precondition: the export works while the setting is readable.
+	if rec := postForm(mux, "/api/data/export", url.Values{"from": {from}, "to": {to}}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("precondition: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	captured = 0
+
+	// Break only the settings read the closes query performs.
+	if _, err := dp.Db.ExecContext(t.Context(), `ALTER TABLE settings RENAME TO settings_x`); err != nil {
+		t.Fatalf("break settings: %v", err)
+	}
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {from}, "to": {to}}, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if captured != 0 {
+		t.Fatalf("plugin must not be dispatched on a settings read error, got %d dispatches", captured)
 	}
 }

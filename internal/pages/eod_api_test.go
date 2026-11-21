@@ -1759,3 +1759,47 @@ func TestBuildEODDoc_PrintsRestoredLinesOnlyWithMarker(t *testing.T) {
 		t.Fatalf("empty last receipt must print a dash:\n%s", joined)
 	}
 }
+
+// TestReportArchiveExport_IgnoresBusinessDayStart: the Settings archive export
+// keeps ADR-0066 Decision 5's calendar-day filter whatever
+// reports.business_day_start says -- only the plugin eod_closes ledger groups
+// by trading date (ADR-0066 amendment 2026-11-21, ut-docs#6313).
+func TestReportArchiveExport_IgnoresBusinessDayStart(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	repo := data.NewPOSRepo(dp.Db)
+	d1 := time.Date(2025, 6, 10, 23, 0, 0, 0, time.Local)
+	d2 := time.Date(2025, 6, 11, 0, 30, 0, 0, time.Local)
+	for _, at := range []time.Time{d1, d2} {
+		if _, err := repo.ArchiveReport(t.Context(), "eod", at.Format(time.RFC3339), []byte(`{}`), "", "", at); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	export := func(format string) string {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export",
+			strings.NewReader("from=2025-06-10&to=2025-06-10&format="+format))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s export: %d %s", format, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	before := map[string]string{"json": export("json"), "csv": export("csv")}
+	if err := data.NewSettingsRepo(dp.Db).Set(t.Context(), "reports.business_day_start", "04:00"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"json", "csv"} {
+		after := export(f)
+		if after != before[f] {
+			t.Fatalf("%s export bytes changed with business_day_start:\nbefore %s\nafter  %s", f, before[f], after)
+		}
+		if strings.Contains(after, d2.Format(time.RFC3339)) {
+			t.Fatalf("%s export for [D,D] must not contain the D+1 00:30 close: %s", f, after)
+		}
+		if !strings.Contains(after, d1.Format(time.RFC3339)) {
+			t.Fatalf("%s export for [D,D] must contain the D 23:00 close: %s", f, after)
+		}
+	}
+}
