@@ -27,8 +27,13 @@ import (
 //     and settle such an attempt by key without the register's lock (the
 //     existing /manager/pay/tap/resolve works on the locked leg only).
 //
-// The row of a live locked leg (any engine) is owned by the sale screen's own
-// pending panel: it is neither gating, listed nor resolvable here.
+// The row of the cashier register's live locked leg is owned by the sale
+// screen's own pending panel: it is neither listed nor resolvable here, and
+// never gates that register's own retry. An unattended engine's locked leg
+// (self-order kiosk, table-QR basket) has no staff panel — its customer was
+// sent to the counter — so it gates the cashier and is listed and resolvable
+// here (review R2); tapAuthorize refuses to treat a charged_no_sale key as a
+// payment, so a retry on that engine can never turn it into a sale (R1).
 
 // attentionListMax bounds the manager list.
 const attentionListMax = 100
@@ -46,29 +51,29 @@ func liveLockedKeys(engine *pos.Service) map[string]bool {
 	return keys
 }
 
-// allLiveLockedKeys is liveLockedKeys over the cashier's and the kiosk's engine.
-func allLiveLockedKeys(d *common.Deps) map[string]bool {
-	out := map[string]bool{}
-	for _, e := range []*pos.Service{d.Engine, d.KioskEngine} {
-		for k := range liveLockedKeys(e) {
-			out[k] = true
-		}
-	}
-	return out
-}
+// staffLockedKeys is liveLockedKeys of the cashier register's engine, the
+// only one with a staff pending panel that owns its locked leg.
+func staffLockedKeys(d *common.Deps) map[string]bool { return liveLockedKeys(d.Engine) }
 
 // tapAttentionGate refuses to START a tap payment on a provider while a
 // payment needing attention exists for it (ut-docs#6795). Runs before any
 // reader resolution, fiscal start, attempt row, plugin dispatch,
 // session_create or reader.collect. Non-tap legs are never looked at, so cash
-// and other methods are never refused. A DB error refuses the tap leg (fail
-// closed), nothing else.
+// and other methods are never refused by it. A DB error on the attempt
+// table refuses the tap leg; one on the plugin list refuses the tender, as the
+// authorize loop's own read of it would (fail closed).
 func tapAttentionGate(ctx context.Context, d *common.Deps, engine *pos.Service, payments []pos.PaymentInput) error {
 	own := liveLockedKeys(engine)
 	repo := data.NewPaymentAttemptRepo(d.Db)
 	checked := map[string]bool{}
 	for _, p := range payments {
-		provider, isTap := tapEntry(ctx, d, p.MethodID)
+		provider, isTap, err := tapEntryErr(ctx, d, p.MethodID)
+		if err != nil {
+			// Fail closed (review R4): not knowing whether a leg is a tap
+			// refuses the tender, as the authorize loop's own read would.
+			logging.L().Errorf("tap gate: %v", err)
+			return &paymentDeclinedError{Method: p.MethodID}
+		}
 		if !isTap || provider == "" || checked[provider] {
 			continue
 		}
@@ -129,7 +134,7 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			writeAttentionError(w, http.StatusInternalServerError, locale, "attempts_unreadable", "common.error.server")
 			return
 		}
-		live := allLiveLockedKeys(d)
+		live := staffLockedKeys(d)
 		out := make([]attentionAttemptDTO, 0, len(rows))
 		for _, a := range rows {
 			if !live[a.Key] {
@@ -173,7 +178,7 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		switch {
-		case allLiveLockedKeys(d)[key]:
+		case staffLockedKeys(d)[key]:
 			fail(http.StatusConflict, "in_progress", "tap.attention.in_progress")
 			return
 		case a.State != data.AttemptPending && a.State != data.AttemptUnknown:

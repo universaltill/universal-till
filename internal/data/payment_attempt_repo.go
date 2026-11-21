@@ -37,6 +37,13 @@ const (
 	AttemptReasonChargedNoSale = "charged_no_sale"
 )
 
+// AttemptSettleGrace is how long past its deadline a pending attempt still
+// belongs to the request that started it: after the collect returns at its
+// deadline, core still confirms with the broker (and may cancel then re-ask,
+// paybroker.Timeout each) before it marks the row. Inside the grace a
+// pending row is neither an orphan nor resolvable (ut-docs#6795 review R3).
+const AttemptSettleGrace = 60 * time.Second
+
 // attentionScanMax is the hard cap on rows ListNeedingAttention reads.
 const attentionScanMax = 500
 
@@ -84,17 +91,17 @@ type PaymentAttempt struct {
 }
 
 // NeedsAttention reports whether the attempt is a payment needing a manager's
-// attention (ut-docs#6795): unknown, or pending with its deadline passed (the
-// collect that owned it is over and never settled it). A pending attempt with
-// a future deadline is in flight in this process and is neither listed nor
-// gating. The deadline is compared on the parsed time, never in SQL: the
-// stored RFC3339Nano strings do not sort lexically.
+// attention (ut-docs#6795): unknown, or pending with its deadline plus
+// AttemptSettleGrace passed (the collect that owned it is over and never
+// settled it). A pending attempt before that is in flight in this process
+// and is neither listed nor gating. The deadline is compared on the parsed
+// time, never in SQL: the stored RFC3339Nano strings do not sort lexically.
 func (a PaymentAttempt) NeedsAttention(now time.Time) bool {
 	switch a.State {
 	case AttemptUnknown:
 		return true
 	case AttemptPending:
-		return !a.Deadline.After(now)
+		return !a.Deadline.Add(AttemptSettleGrace).After(now)
 	}
 	return false
 }

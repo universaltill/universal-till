@@ -308,8 +308,12 @@ func TestPaymentAttempt_NeedsAttention(t *testing.T) {
 		want bool
 	}{
 		{"unknown", PaymentAttempt{State: AttemptUnknown, Deadline: now.Add(time.Hour)}, true},
-		{"pending past deadline", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-time.Second)}, true},
-		{"pending at deadline", PaymentAttempt{State: AttemptPending, Deadline: now}, true},
+		{"pending past deadline and grace", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-AttemptSettleGrace - time.Second)}, true},
+		{"pending at deadline plus grace", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-AttemptSettleGrace)}, true},
+		// Review R3: just past its deadline the collect's own request may still
+		// be confirming with the broker; not an orphan yet.
+		{"pending at deadline", PaymentAttempt{State: AttemptPending, Deadline: now}, false},
+		{"pending within settle grace", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-time.Second)}, false},
 		{"pending sub-second future", PaymentAttempt{State: AttemptPending, Deadline: now.Add(500 * time.Millisecond)}, false},
 		{"pending future", PaymentAttempt{State: AttemptPending, Deadline: now.Add(time.Minute)}, false},
 		{"approved", PaymentAttempt{State: AttemptApproved, Deadline: now.Add(-time.Hour)}, false},
@@ -330,13 +334,14 @@ func TestListNeedingAttention_FiltersAndOrders(t *testing.T) {
 	now := time.Now()
 	seedAttempt(t, r, "a-unk", "stripe", now.Add(time.Hour))
 	time.Sleep(2 * time.Millisecond)
-	seedAttempt(t, r, "b-pend-past", "stripe", now.Add(-time.Second))
+	past := now.Add(-AttemptSettleGrace - time.Second)
+	seedAttempt(t, r, "b-pend-past", "stripe", past)
 	time.Sleep(2 * time.Millisecond)
 	seedAttempt(t, r, "c-pend-future", "stripe", now.Add(time.Minute))
 	time.Sleep(2 * time.Millisecond)
-	seedAttempt(t, r, "d-other", "other", now.Add(-time.Second))
+	seedAttempt(t, r, "d-other", "other", past)
 	time.Sleep(2 * time.Millisecond)
-	seedAttempt(t, r, "e-ok", "stripe", now.Add(-time.Second))
+	seedAttempt(t, r, "e-ok", "stripe", past)
 	if err := r.Mark(ctx, "a-unk", AttemptUnknown, AttemptUpdate{Reason: "processing"}); err != nil {
 		t.Fatal(err)
 	}

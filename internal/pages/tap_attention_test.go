@@ -12,6 +12,8 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // ut-docs#6795 (K-8/A-13): a tap attempt a restart, New sale or park left
@@ -362,5 +364,64 @@ func TestTapAttentionResolve_SettledUnknownOrLiveKey(t *testing.T) {
 	}
 	if e.dp.Engine.TenderLock() == "" {
 		t.Fatal("the live lock was touched")
+	}
+}
+
+// --- review findings (ut-docs#6795 review) ---
+
+// R1: a key a manager settled as charged with no sale is never a sale's
+// payment: a live engine that still holds the key (a kiosk or table-QR
+// basket's lock, a lock dropped with its attempt id kept) must not have
+// tapAuthorize hand back the row's approval as confirmation.
+func TestTapAuthorize_ChargedNoSaleKeyNeverConfirmsASale(t *testing.T) {
+	e := tapRig(t)
+	e.orphan(t, "k-cns", "stripe")
+	if err := data.NewPaymentAttemptRepo(e.dp.Db).Mark(context.Background(), "k-cns", data.AttemptApproved, data.AttemptUpdate{PIID: "pi_x", Reason: data.AttemptReasonChargedNoSale}); err != nil {
+		t.Fatal(err)
+	}
+	e.broker.setStatus(piStatus("succeeded", 120))
+	_, _, conf, err := tapAuthorize(context.Background(), e.dp, "tapstripe", "k-cns", money.FromMinor(120), "gbp", map[string]any{"method": "tapstripe", "amount": int64(120)})
+	if err == nil || conf != nil {
+		t.Fatalf("a charged_no_sale key confirmed a payment: conf=%v err=%v", conf, err)
+	}
+	if e.bindingCount() != 0 {
+		t.Fatalf("a charged_no_sale key reached the plugin: bindings=%d", e.bindingCount())
+	}
+}
+
+// R2 (Tester point 1): an unattended engine's locked tap leg (self-order
+// kiosk, table-QR basket) gates the cashier's taps on its provider, so it
+// must be listed and resolvable by a manager — the customer was sent to the
+// counter and there is no staff pending panel for it.
+func TestTapAttention_KioskLockedLegListedAndResolvable(t *testing.T) {
+	e := tapRig(t)
+	e.dp.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, nil)
+	e.orphan(t, "kiosk-leg", "stripe")
+	e.dp.KioskEngine.LockTender("kiosk-sig", pos.PendingTender{Unknown: []pos.UnknownLeg{{MethodID: "tapstripe", Currency: "gbp", RequestID: "kiosk-leg", Amount: money.FromMinor(120), Tap: true}}})
+	e.wantRefusedForAttention(t, e.tender(t), 0)
+	if _, l := e.list(t, e.manager); l.Data.Count != 1 || l.Data.Attempts[0]["key"] != "kiosk-leg" {
+		t.Fatalf("the kiosk's locked leg gates the cashier but is not listed: %+v", l.Data)
+	}
+	e.broker.setStatus(piStatus("requires_payment_method", 0))
+	if rec := e.resolveAttn(t, e.manager, "kiosk-leg", "not_charged", "", dataAPITestManagerPIN); rec.Code != http.StatusOK {
+		t.Fatalf("resolve = %d %s", rec.Code, rec.Body.String())
+	}
+	e.tender(t)
+	if e.bindingCount() != 1 {
+		t.Fatal("the gate did not lift after the kiosk leg was settled")
+	}
+}
+
+// R4 (Tester point 2): an unreadable plugin list must refuse at the gate
+// (fail closed), never skip it: a transient error that clears before
+// tapAuthorize reads the list again would start a tap past the gate.
+func TestTapAttentionGate_PluginListErrorFailsClosed(t *testing.T) {
+	e := tapRig(t)
+	e.orphan(t, "orphan-1", "stripe")
+	if _, err := e.dp.Db.Exec(`ALTER TABLE plugin_entries RENAME TO plugin_entries_x`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tapAttentionGate(context.Background(), e.dp, e.dp.Engine, []pos.PaymentInput{{MethodID: "tapstripe", Amount: money.FromMinor(120)}}); err == nil {
+		t.Fatal("the gate let a tender through with the plugin list unreadable")
 	}
 }
