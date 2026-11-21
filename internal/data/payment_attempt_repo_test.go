@@ -251,3 +251,124 @@ func TestPaymentAttempt_NoCardDataColumns(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6795: attempts a restart (or New sale / park) left behind.
+
+func seedAttempt(t *testing.T, r *PaymentAttemptRepo, key, provider string, deadline time.Time) {
+	t.Helper()
+	a := baseAttempt(key)
+	a.Provider = provider
+	a.Deadline = deadline
+	if _, err := r.Begin(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarkPendingUnknownAtBoot_OnlyPendingChanges(t *testing.T) {
+	db := newAttemptTestDB(t, ":memory:")
+	r := NewPaymentAttemptRepo(db)
+	ctx := context.Background()
+	future := time.Now().Add(time.Minute)
+	seedAttempt(t, r, "pend", "stripe", future)
+	seedAttempt(t, r, "unk", "stripe", future)
+	seedAttempt(t, r, "ok", "stripe", future)
+	seedAttempt(t, r, "dec", "stripe", future)
+	if err := r.Mark(ctx, "unk", AttemptUnknown, AttemptUpdate{Reason: "processing"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Mark(ctx, "ok", AttemptApproved, AttemptUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Mark(ctx, "dec", AttemptDeclined, AttemptUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := r.MarkPendingUnknownAtBoot(ctx, time.Now())
+	if err != nil || n != 1 {
+		t.Fatalf("MarkPendingUnknownAtBoot = %d, %v; want 1", n, err)
+	}
+	want := map[string][2]string{
+		"pend": {AttemptUnknown, AttemptReasonTillRestarted},
+		"unk":  {AttemptUnknown, "processing"},
+		"ok":   {AttemptApproved, ""},
+		"dec":  {AttemptDeclined, ""},
+	}
+	for k, w := range want {
+		a, _, _ := r.Get(ctx, k)
+		if a.State != w[0] || a.Reason != w[1] {
+			t.Errorf("%s = %s/%q, want %s/%q", k, a.State, a.Reason, w[0], w[1])
+		}
+	}
+}
+
+func TestPaymentAttempt_NeedsAttention(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, c := range []struct {
+		name string
+		a    PaymentAttempt
+		want bool
+	}{
+		{"unknown", PaymentAttempt{State: AttemptUnknown, Deadline: now.Add(time.Hour)}, true},
+		{"pending past deadline and grace", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-AttemptSettleGrace - time.Second)}, true},
+		{"pending at deadline plus grace", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-AttemptSettleGrace)}, true},
+		// Review R3: just past its deadline the collect's own request may still
+		// be confirming with the broker; not an orphan yet.
+		{"pending at deadline", PaymentAttempt{State: AttemptPending, Deadline: now}, false},
+		{"pending within settle grace", PaymentAttempt{State: AttemptPending, Deadline: now.Add(-time.Second)}, false},
+		{"pending sub-second future", PaymentAttempt{State: AttemptPending, Deadline: now.Add(500 * time.Millisecond)}, false},
+		{"pending future", PaymentAttempt{State: AttemptPending, Deadline: now.Add(time.Minute)}, false},
+		{"approved", PaymentAttempt{State: AttemptApproved, Deadline: now.Add(-time.Hour)}, false},
+		{"declined", PaymentAttempt{State: AttemptDeclined, Deadline: now.Add(-time.Hour)}, false},
+		{"cancelled", PaymentAttempt{State: AttemptCancelled, Deadline: now.Add(-time.Hour)}, false},
+		{"resolved", PaymentAttempt{State: AttemptResolvedNotCharged, Deadline: now.Add(-time.Hour)}, false},
+	} {
+		if got := c.a.NeedsAttention(now); got != c.want {
+			t.Errorf("%s: NeedsAttention = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestListNeedingAttention_FiltersAndOrders(t *testing.T) {
+	db := newAttemptTestDB(t, ":memory:")
+	r := NewPaymentAttemptRepo(db)
+	ctx := context.Background()
+	now := time.Now()
+	seedAttempt(t, r, "a-unk", "stripe", now.Add(time.Hour))
+	time.Sleep(2 * time.Millisecond)
+	past := now.Add(-AttemptSettleGrace - time.Second)
+	seedAttempt(t, r, "b-pend-past", "stripe", past)
+	time.Sleep(2 * time.Millisecond)
+	seedAttempt(t, r, "c-pend-future", "stripe", now.Add(time.Minute))
+	time.Sleep(2 * time.Millisecond)
+	seedAttempt(t, r, "d-other", "other", past)
+	time.Sleep(2 * time.Millisecond)
+	seedAttempt(t, r, "e-ok", "stripe", past)
+	if err := r.Mark(ctx, "a-unk", AttemptUnknown, AttemptUpdate{Reason: "processing"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Mark(ctx, "e-ok", AttemptApproved, AttemptUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	keys := func(p string, limit int) []string {
+		rows, err := r.ListNeedingAttention(ctx, now, p, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, a := range rows {
+			out = append(out, a.Key)
+		}
+		return out
+	}
+	if got := keys("stripe", 0); len(got) != 2 || got[0] != "a-unk" || got[1] != "b-pend-past" {
+		t.Errorf("stripe = %v", got)
+	}
+	if got := keys("", 0); len(got) != 3 || got[2] != "d-other" {
+		t.Errorf("all = %v", got)
+	}
+	if got := keys("other", 0); len(got) != 1 || got[0] != "d-other" {
+		t.Errorf("other = %v", got)
+	}
+	if got := keys("", 1); len(got) != 1 || got[0] != "a-unk" {
+		t.Errorf("limit 1 = %v", got)
+	}
+}

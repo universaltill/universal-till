@@ -36,6 +36,9 @@ type tapStartFailedError struct {
 	Method string
 	// ReaderBusy: the paired phone reader said it was busy (ux A6 wording).
 	ReaderBusy bool
+	// NeedsAttention: an earlier tap payment on this provider needs a
+	// manager (ut-docs#6795); nothing was started.
+	NeedsAttention bool
 }
 
 func (e *tapStartFailedError) Error() string { return "tap payment could not start: " + e.Method }
@@ -47,9 +50,16 @@ var tapProviderRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 // none or a malformed one, which tapAuthorize refuses). A lookup failure is
 // "not a tap entry": the ordinary gate then fails closed itself.
 func tapEntry(ctx context.Context, d *common.Deps, method string) (string, bool) {
+	provider, isTap, _ := tapEntryErr(ctx, d, method)
+	return provider, isTap
+}
+
+// tapEntryErr is tapEntry reporting a failed plugin-list read, for a caller
+// that must fail closed on it (the ut-docs#6795 gate).
+func tapEntryErr(ctx context.Context, d *common.Deps, method string) (string, bool, error) {
 	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	for _, e := range entries {
 		if e.EntryKey != method || !plugins.IsTapEntryConfig(e.ConfigJSON) {
@@ -62,9 +72,9 @@ func tapEntry(ctx context.Context, d *common.Deps, method string) (string, bool)
 		if json.Unmarshal([]byte(e.ConfigJSON), &c) == nil && tapProviderRE.MatchString(c.Provider) {
 			provider = c.Provider
 		}
-		return provider, true
+		return provider, true, nil
 	}
-	return "", false
+	return "", false, nil
 }
 
 // tapAuthorize is blockingPaymentEventDispatch for a tender leg. For a tap
@@ -84,7 +94,14 @@ func tapAuthorize(ctx context.Context, d *common.Deps, method, requestID string,
 		return nil, false, nil, fmt.Errorf("payment gate: tap entry %q declares no valid provider", method)
 	}
 	repo := data.NewPaymentAttemptRepo(d.Db)
-	if a, found, err := repo.Get(ctx, requestID); err == nil && found && a.State == data.AttemptApproved && a.AmountMinor == amount.Minor() && strings.EqualFold(a.Currency, currency) {
+	a, found, err := repo.Get(ctx, requestID)
+	if err == nil && found && a.State == data.AttemptApproved && a.Reason == data.AttemptReasonChargedNoSale {
+		// ut-docs#6795 review R1: a manager settled this key as charged with
+		// no sale (refund at the provider); it is never a sale's payment.
+		// Refused before any plugin runs: nothing new is charged.
+		return nil, false, nil, &tapStartFailedError{Method: method, NeedsAttention: true}
+	}
+	if err == nil && found && a.State == data.AttemptApproved && a.AmountMinor == amount.Minor() && strings.EqualFold(a.Currency, currency) {
 		return nil, true, &pos.TapConfirmation{PIID: a.PIID, CardBrand: a.CardBrand, Last4: a.Last4}, nil
 	}
 	b := paybroker.Binding{
@@ -137,7 +154,12 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 		original = &tapStartFailedError{Method: method, ReaderBusy: d.ReaderPay != nil && d.ReaderPay.WasBusy(requestID)}
 	}
 	if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown {
-		return resp, dispatched, nil, err // already unknown: the gate locks it
+		// Already unknown: the gate locks it. The request ends here, so its
+		// row must not stay pending: a pending row gates nothing until its
+		// deadline plus AttemptSettleGrace, and a New sale would let a fresh
+		// tap on the provider through (ut-docs#6795 round 2).
+		settleAttempt(ctx, repo, requestID, data.AttemptUnknown, pos.PendingNotConfirmed)
+		return resp, dispatched, nil, err
 	}
 	f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: requestID})
 	if !f.HaveRow && f.ErrCode == "" {
@@ -161,6 +183,17 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 			return nil, true, &conf, nil
 		}
 		if errors.As(cerr, &pe) && pe.Reason == pos.PendingAlreadySettled {
+			// Settled by whom? A manager may have settled this key as charged
+			// with no sale while the plugin ran (tapAuthorize's entry check
+			// saw it unsettled): read the row again, never the stale facts
+			// (ut-docs#6795 round 2).
+			a, found, gerr := repo.Get(ctx, requestID)
+			if gerr != nil || !found {
+				return resp, dispatched, nil, &pos.PaymentPendingError{Reason: pos.PendingLookupFailed}
+			}
+			if a.State == data.AttemptApproved && a.Reason == data.AttemptReasonChargedNoSale {
+				return nil, false, nil, &tapStartFailedError{Method: method, NeedsAttention: true}
+			}
 			return nil, true, &pos.TapConfirmation{PIID: f.Attempt.PIID, CardBrand: f.Attempt.CardBrand, Last4: f.Attempt.Last4}, nil
 		}
 		return resp, dispatched, nil, cerr

@@ -27,6 +27,26 @@ const (
 	AttemptResolvedNotCharged = "resolved_not_charged"
 )
 
+// Reasons core itself writes (ut-docs#6795).
+const (
+	// AttemptReasonTillRestarted: boot found the attempt pending; the collect
+	// that owned it died with the last process.
+	AttemptReasonTillRestarted = "till_restarted"
+	// AttemptReasonChargedNoSale: a manager settled an orphaned attempt as
+	// charged with no sale; the refund is made at the provider.
+	AttemptReasonChargedNoSale = "charged_no_sale"
+)
+
+// AttemptSettleGrace is how long past its deadline a pending attempt still
+// belongs to the request that started it: after the collect returns at its
+// deadline, core still confirms with the broker (and may cancel then re-ask,
+// paybroker.Timeout each) before it marks the row. Inside the grace a
+// pending row is neither an orphan nor resolvable (ut-docs#6795 review R3).
+const AttemptSettleGrace = 60 * time.Second
+
+// attentionScanMax is the hard cap on rows ListNeedingAttention reads.
+const attentionScanMax = 500
+
 // AttemptRetention is how long a settled attempt is kept.
 const AttemptRetention = 90 * 24 * time.Hour
 
@@ -68,6 +88,22 @@ type PaymentAttempt struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	Deadline    time.Time
+}
+
+// NeedsAttention reports whether the attempt is a payment needing a manager's
+// attention (ut-docs#6795): unknown, or pending with its deadline plus
+// AttemptSettleGrace passed (the collect that owned it is over and never
+// settled it). A pending attempt before that is in flight in this process
+// and is neither listed nor gating. The deadline is compared on the parsed
+// time, never in SQL: the stored RFC3339Nano strings do not sort lexically.
+func (a PaymentAttempt) NeedsAttention(now time.Time) bool {
+	switch a.State {
+	case AttemptUnknown:
+		return true
+	case AttemptPending:
+		return !a.Deadline.Add(AttemptSettleGrace).After(now)
+	}
+	return false
 }
 
 // AttemptUpdate is what a state change may record. Empty fields keep what the
@@ -210,4 +246,47 @@ func (r *PaymentAttemptRepo) PruneSettled(ctx context.Context, now time.Time) (i
 		return 0, fmt.Errorf("prune payment attempts: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// MarkPendingUnknownAtBoot turns every attempt still pending at boot into
+// unknown/till_restarted (ut-docs#6795): its collect, basket and attempt id
+// lived in the last process only. Unknown rows keep their reason; settled
+// rows are untouched. Call only before this process starts any collect.
+func (r *PaymentAttemptRepo) MarkPendingUnknownAtBoot(ctx context.Context, now time.Time) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `UPDATE payment_attempts SET state = ?, reason = ?, updated_at = ? WHERE state = ?`,
+		AttemptUnknown, AttemptReasonTillRestarted, ts(now), AttemptPending)
+	if err != nil {
+		return 0, fmt.Errorf("mark pending payment attempts unknown: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// ListNeedingAttention returns the attempts that NeedAttention, oldest first,
+// at most limit (<= 0 or above the scan cap means the cap). provider "" is
+// every provider. A settled attempt is never returned.
+func (r *PaymentAttemptRepo) ListNeedingAttention(ctx context.Context, now time.Time, provider string, limit int) ([]PaymentAttempt, error) {
+	if limit <= 0 || limit > attentionScanMax {
+		limit = attentionScanMax
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT `+attemptCols+` FROM payment_attempts
+WHERE state IN ('pending','unknown') AND (? = '' OR provider = ?)
+ORDER BY created_at, idempotency_key LIMIT ?`, provider, provider, attentionScanMax)
+	if err != nil {
+		return nil, fmt.Errorf("list payment attempts needing attention: %w", err)
+	}
+	defer rows.Close()
+	var out []PaymentAttempt
+	for rows.Next() {
+		a, err := scanAttempt(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan payment attempt: %w", err)
+		}
+		if a.NeedsAttention(now) && len(out) < limit {
+			out = append(out, a)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list payment attempts needing attention: %w", err)
+	}
+	return out, nil
 }

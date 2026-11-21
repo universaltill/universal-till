@@ -162,6 +162,7 @@ func tapRigWith(t *testing.T, withReadersHook bool) *tapEnv {
 	t.Helper()
 	mux, dp := authRig(t)
 	registerTapPay(mux, dp)
+	registerTapAttention(mux, dp)
 	tapCheckInterval = 0
 	t.Cleanup(func() { tapCheckInterval = 2 * time.Second })
 	e := &tapEnv{mux: mux, dp: dp, broker: newFakeBroker(t)}

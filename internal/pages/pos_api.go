@@ -377,6 +377,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", err
 	}
 
+	// ut-docs#6795: refused before any reader, fiscal start or authorize:
+	// nothing is started or charged.
+	if err := tapAttentionGate(ctx, d, engine, payments); err != nil {
+		return "", err
+	}
+
 	// ut-docs#6566: which registry reader each card leg is paid on is decided
 	// (and refused) here, before any fiscal dispatch or authorize, so a
 	// missing/invalid/busy reader never has moved money. The in-flight marks
@@ -2887,6 +2893,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				reason := ""
 				if tapStart.ReaderBusy {
 					reason = "reader_busy"
+				}
+				if tapStart.NeedsAttention {
+					reason = "needs_attention"
 				}
 				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Reason: reason, Amount: d.Engine.Basket().Total}, http.StatusOK)
 				return

@@ -97,6 +97,38 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   `cleared_basket_count` / `cleared_basket_total_minor` per business date and
   till, never as part of net sales (ut-docs#4721)
 
+**`payment_attempts`** (migration 111; ut-docs#6455, ut-docs#6795, ADR-0198
+§6.8) is core's till-local record of one card-present (Tap to Pay) attempt,
+keyed by the authorize request id. States: `pending` (written before the
+tap), `approved`, `declined`, `cancelled`, `unknown`, `resolved_not_charged`;
+only `pending`/`unknown` rows move and they are never pruned. No card data
+beyond brand and last four (ADR-0127).
+
+A row **needs attention** when it is `unknown`, or `pending` more than
+`AttemptSettleGrace` (60 s) past its `deadline_at` (the collect that owned it
+is over and its request has stopped confirming); a `pending` row before that
+is in flight and is neither listed nor gating. Boot
+(`markOrphanedTapAttempts`, no broker call) turns every `pending` row into
+`unknown` with reason `till_restarted`: the basket, tender lock and attempt id
+are memory only. Reason `charged_no_sale` marks a row a manager settled as
+charged with no sale (state `approved`, refund at the provider; nothing reads
+such a row as a sale, and core refuses a tap leg whose key is one, also when
+it was settled while that leg's plugin ran). A tap leg the plugin itself reports
+as outcome-unknown leaves its row `unknown`, not `pending`, when its request
+ends. While any row needs attention for a provider, core
+refuses to start another tap payment on that provider (start-failed panel, key
+`tap.attention.start_refused`; cash and other methods are never refused by
+it, though an unreadable plugin list refuses the tender as authorize would),
+except a retry of the register's own locked leg. A manager (permission
+`refund`) lists them with `GET /api/pay/attempts/attention` and settles one by
+key with `POST /api/pay/attempts/attention/resolve` (`decision`
+`not_charged` | `charged_refund_at_provider`, fresh PIN, broker asked first,
+audited as `tap_resolve` with `context: needs_attention`); the cashier
+register's live locked leg is excluded and not resolvable there (its sale
+screen owns it), while a self-order kiosk's or table-QR basket's locked leg is
+listed and resolvable (it gates the cashier and has no staff panel). No migration: `reason` is
+free text.
+
 ### 5. Shifts & audit
 
 - `shifts`
