@@ -63,6 +63,7 @@ type ReaderHello struct {
 	Role           string `json:"role"` // "main" to the phone; "card_reader" from it
 	ReaderProtocol int    `json:"reader_protocol"`
 	ReaderID       string `json:"reader_id,omitempty"` // main -> phone: the id this link is authenticated as
+	NextPin        string `json:"next_pin,omitempty"`  // main -> phone: pin of the key served next, during a rotation only (ut-docs#6796)
 	AppVersion     string `json:"app_version,omitempty"`
 	Platform       string `json:"platform,omitempty"`
 }

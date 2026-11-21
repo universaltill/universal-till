@@ -23,6 +23,7 @@ sealed class PairPoll {
     /** The main said "not now" (429 / 503): ask again after [afterMs]. Never a failed pairing (review A-6). */
     data class Later(val afterMs: Long) : PairPoll()
     object Expired : PairPoll()
+    object Denied : PairPoll() // a manager declined this request (ut-docs#6796)
     data class Approved(val credentials: ReaderCredentials) : PairPoll()
     data class Failed(val reason: String) : PairPoll()
 }
@@ -103,6 +104,12 @@ class ReaderPairing(
         val a = http.get("$base/api/sync/pair-requests/$requestId", mapOf(SECRET_HEADER to secret), pin)
         return when {
             a.status == 404 || a.status == -1 -> PairPoll.Waiting
+            // 410 reaches only the holder of the request secret (ut-docs#6796)
+            a.status == 410 -> when (errorOf(a.body)) {
+                "pairing_denied" -> PairPoll.Denied
+                "pairing_expired" -> PairPoll.Expired
+                else -> PairPoll.Failed("refused")
+            }
             a.status == 429 || a.status == 503 -> PairPoll.Later(if (a.retryAfterSec > 0) minOf(60_000L, a.retryAfterSec * 1_000L) else 2_000L)
             a.status != 200 -> PairPoll.Failed("refused") // -2 (another certificate), a limit, no reader method
             else -> {

@@ -88,6 +88,7 @@ func TestReaderFrameGoldens(t *testing.T) {
 		into      func() any
 	}{
 		{"reader_hello_main.json", TypeHello, func() any { return &ReaderHello{} }},
+		{"reader_hello_main_rotating.json", TypeHello, func() any { return &ReaderHello{} }},
 		{"reader_hello_phone.json", TypeHello, func() any { return &ReaderHello{} }},
 		{"reader_status_ready.json", TypeReaderStatus, func() any { return &ReaderStatus{} }},
 		{"reader_status_needs_setup.json", TypeReaderStatus, func() any { return &ReaderStatus{} }},
@@ -465,4 +466,30 @@ func reflectFieldNames(v any) map[string]bool {
 		out[t.Field(i).Name] = true
 	}
 	return out
+}
+
+// ut-docs#6796: the reader hello carries the pin of the key this till serves
+// next during a rotation only; nil option or "" omit it.
+func TestReaderHello_NextPin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fn   func() string
+		want string
+	}{
+		{"nil", nil, ""},
+		{"empty", func() string { return "" }, ""},
+		{"rotating", func() string { return "abc123" }, "abc123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rh := readerHost{h: &Hub{opts: HubOptions{ReaderNextPin: tc.fn}}}
+			h, ok := rh.helloFor(context.Background(), "rid").(ReaderHello)
+			if !ok || h.NextPin != tc.want {
+				t.Fatalf("hello = %+v ok=%v", h, ok)
+			}
+			b, _ := json.Marshal(h)
+			if has := strings.Contains(string(b), "next_pin"); has != (tc.want != "") {
+				t.Fatalf("next_pin presence wrong in %s", b)
+			}
+		})
+	}
 }

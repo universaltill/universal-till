@@ -85,6 +85,24 @@ class ReaderPairingTest {
         assertTrue(!url.contains("s".repeat(64)))
     }
 
+    @Test fun `410 tells the secret holder denied or expired, any other 410 is a refusal`() {
+        for ((body, want) in listOf(
+            """{"data":null,"error":"pairing_denied"}""" to PairPoll.Denied,
+            """{"data":null,"error":"pairing_expired"}""" to PairPoll.Expired,
+        )) {
+            val h = FakePairHttp()
+            val p = newPairing(h)
+            p.start("1.2.3.4:8080", "t", "n")
+            h.getAnswers += PairHttp.Answer(410, body, "b".repeat(64))
+            assertEquals(want, p.poll())
+        }
+        val h = FakePairHttp()
+        val p = newPairing(h)
+        p.start("1.2.3.4:8080", "t", "n")
+        h.getAnswers += PairHttp.Answer(410, """{"data":null,"error":"other"}""", "b".repeat(64))
+        assertEquals(PairPoll.Failed("refused"), p.poll())
+    }
+
     @Test fun `approval returns the credentials, bound to the pin seen at the request`() {
         val h = FakePairHttp()
         val p = newPairing(h)

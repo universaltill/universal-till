@@ -37,6 +37,8 @@ const (
 	readerErrLimit           = "reader_limit"
 	readerLinkUnavailableErr = "reader_link_unavailable"
 	readerErrPairingOff      = "reader_pairing_off"
+	readerErrPairingDenied   = "pairing_denied"  // 410 to the request's secret holder (ut-docs#6796)
+	readerErrPairingExpired  = "pairing_expired" // 410 to the request's secret holder (ut-docs#6796)
 )
 
 // settingPhoneReaderPairing turns the phone-as-card-reader feature on. It

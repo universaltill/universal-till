@@ -173,6 +173,7 @@ class ReaderActivity : AppCompatActivity(), ReaderUi {
                         PairPoll.Waiting -> pairing = MainThread.postDelayed(2_000) { poll() }
                         is PairPoll.Later -> pairing = MainThread.postDelayed(maxOf(2_000L, r.afterMs)) { poll() }
                         PairPoll.Expired -> failed(R.string.reader_expired_request)
+                        PairPoll.Denied -> failed(R.string.reader_denied_request)
                         is PairPoll.Failed -> failed(R.string.reader_err_refused)
                         is PairPoll.Approved -> {
                             store.save(r.credentials)

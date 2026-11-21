@@ -40,6 +40,10 @@ type HubOptions struct {
 	// linked instead of polling.
 	OnFrame      func(tillID string)
 	OnFrameEvery time.Duration
+	// ReaderNextPin, when set, gives the pin of the key this till will serve
+	// next during a rotation ("" otherwise); it goes in the reader hello,
+	// sent only on an already authenticated link (ut-docs#6796).
+	ReaderNextPin func() string
 	// OnReport, when set, is called on the reader goroutine with each
 	// report from tillID's live link, before it is stored — the main till
 	// uses it to keep tills.name in step with a joined till's own name

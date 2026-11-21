@@ -82,6 +82,14 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 			}
 			return h
 		},
+		// The key served next during a rotation, for the reader hello
+		// (ut-docs#6796); "" when none.
+		ReaderNextPin: func() string {
+			if c := lantls.Serving(); c != nil {
+				return c.NextPin()
+			}
+			return ""
+		},
 		// A linked till may poll far less (#2735's 5-min floor), but
 		// table-claim TTLs read tills.last_seen_at: keep it fresh from the
 		// link, at most every 30 s per till.
@@ -334,6 +342,8 @@ func servePendingLink(w http.ResponseWriter, r *http.Request, d *common.Deps, pa
 			return ""
 		case found && cur.Status == "approved":
 			return fleetlink.PairingApproved
+		case found && cur.Status == "denied": // a reader tombstone (ut-docs#6796)
+			return fleetlink.PairingDenied
 		case found:
 			return ""
 		case !time.Now().Before(expiresAt):
