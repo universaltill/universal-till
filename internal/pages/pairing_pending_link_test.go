@@ -27,19 +27,19 @@ import (
 // 2026-11-03, ut-docs#5330 slice B2). T-numbers are the Architect's; P13 is
 // the UX gate's no-op poll.
 
-// syncBuf is a goroutine-safe log sink.
-type syncBuf struct {
+// pendingLogBuf is a goroutine-safe log sink.
+type pendingLogBuf struct {
 	mu sync.Mutex
 	b  bytes.Buffer
 }
 
-func (s *syncBuf) Write(p []byte) (int, error) {
+func (s *pendingLogBuf) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.Write(p)
 }
 
-func (s *syncBuf) String() string {
+func (s *pendingLogBuf) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
@@ -235,7 +235,7 @@ func (r *realRig) pendingID(t *testing.T) string {
 }
 
 func TestPendingJoin_P1_P2_ApprovalReachesJoinerWithinTwoSeconds(t *testing.T) {
-	var logs syncBuf
+	var logs pendingLogBuf
 	defer logging.CaptureForTest(&logs)()
 	r := newRealRig(t)
 	body := pairStartVia(t, r.rh, r.f.base, r.tillID)
@@ -292,7 +292,7 @@ func TestPendingJoin_P1_P2_ApprovalReachesJoinerWithinTwoSeconds(t *testing.T) {
 }
 
 func TestPendingJoin_P5_DenyShowsNoResponseAtOnce(t *testing.T) {
-	var logs syncBuf
+	var logs pendingLogBuf
 	defer logging.CaptureForTest(&logs)()
 	r := newRealRig(t)
 	body := pairStartVia(t, r.rh, r.f.base, r.tillID)
@@ -520,18 +520,28 @@ func TestPendingJoin_P8_SecondPairStartStopsTheFirstWatch(t *testing.T) {
 	seams(t)
 	var mu sync.Mutex
 	var stopped []chan struct{}
+	// The runner starts each watch on its own goroutine, so pairStartVia
+	// returns before the watch func has run: wait for each start by event
+	// (never read the slice straight away, never sleep).
+	started := make(chan struct{}, 2)
 	fakeWatch(t, func(ctx context.Context, o fleetlink.PendingOptions) fleetlink.PendingResult {
 		ch := make(chan struct{})
 		mu.Lock()
 		stopped = append(stopped, ch)
 		mu.Unlock()
+		started <- struct{}{}
 		defer close(ch)
 		return holdUp(ctx, o)
 	})
 	fm := newFakeMain(t, true, true)
 	rh := newJoiner(t)
 	pairStartVia(t, rh, fm.base, "till-x")
+	// The first watch must have run before the second attempt starts its own
+	// (the runner launches the new watch before it stops the old one), or
+	// stopped[0] could be the new attempt's watch.
+	waitCh(t, started, "first watch to start")
 	pairStartVia(t, rh, fm.base, "till-x")
+	waitCh(t, started, "second watch to start")
 	mu.Lock()
 	defer mu.Unlock()
 	if len(stopped) != 2 {

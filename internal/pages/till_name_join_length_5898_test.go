@@ -34,7 +34,7 @@ func TestPairStart_OverLongNameRefusedLocally(t *testing.T) {
 	srv := tcPrimaryNeverHit(t)
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	for label, name := range map[string]string{"bare": tcLongName(), "padded": "  " + tcLongName() + "  "} {
 		t.Run(label, func(t *testing.T) {
 			rec := postPairStart(t, rmux, srv.URL, "some-till-id", name)
@@ -61,7 +61,7 @@ func TestPairStart_SixtyRuneNameNotRefusedForLength(t *testing.T) {
 	t.Cleanup(main.Close)
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	name := "  " + strings.Repeat("é", maxTillNameRunes) + "  "
 	rec := postPairStart(t, rmux, main.URL, "some-till-id", name)
 	tcWantNotTooLong(t, rec.Body.String())
