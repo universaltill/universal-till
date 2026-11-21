@@ -11,7 +11,7 @@ keywords: [promo, promotion, discount, coupon, code]
 
 # Promotions & promo codes
 
-Create, edit and deactivate the promo codes cashiers scan or type at checkout to apply a discount.
+Create, edit and deactivate the promo codes cashiers scan or type at checkout to apply a discount. Scanning or typing a promo code never asks for a manager's PIN, even for a cashier; only a discount typed by hand into a line's discount box asks (see **Sell screen** → Discounts).
 
 ## How to use it
 

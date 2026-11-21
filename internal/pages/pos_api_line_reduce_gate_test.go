@@ -136,8 +136,9 @@ func TestLineHandler_CashierNonReductionsStayFree(t *testing.T) {
 	if lines()[0].Qty != 3 {
 		t.Fatalf("plus: qty=%v", lines()[0].Qty)
 	}
-	// same-qty re-post (the discount field posts the row's qty) is no reduction
-	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}, "discount": {"10"}}, &cashier); isElevationPrompt(rec) || rec.Code != http.StatusOK {
+	// same-qty re-post (the discount field posts the row's qty) is no reduction;
+	// lowering a discount is free too (ut-docs#5416 gates only a raise).
+	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "qty": {"3"}, "discount": {"0"}}, &cashier); isElevationPrompt(rec) || rec.Code != http.StatusOK {
 		t.Fatalf("same-qty discount edit: %d", rec.Code)
 	}
 	if lines()[0].Qty != 3 || shrink() != 0 {

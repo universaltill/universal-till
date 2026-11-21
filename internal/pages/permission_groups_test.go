@@ -221,6 +221,23 @@ func collectGatedActions(t *testing.T) (sites []gatedActionSite, unresolved []st
 	forEachFunc(func(fd *ast.FuncDecl, consts map[string]string) {
 		params := paramIndex(fd)
 		forwardIdx, isGate := gateArg[fd.Name.Name]
+		// ut-docs#5416: checkOrElevateAll/verifyElevationPIN take a variadic
+		// list of actions and gate on each in a loop. A loop variable ranging
+		// over such a parameter is a forwarded action, like a plain forwarded
+		// parameter, not a computed one; their callers pass literals.
+		rangeVars := map[string]bool{}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if rs, ok := n.(*ast.RangeStmt); ok {
+				x, xok := rs.X.(*ast.Ident)
+				v, vok := rs.Value.(*ast.Ident)
+				if xok && vok {
+					if _, isParam := params[x.Name]; isParam {
+						rangeVars[v.Name] = true
+					}
+				}
+			}
+			return true
+		})
 		ast.Inspect(fd.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -247,6 +264,9 @@ func collectGatedActions(t *testing.T) (sites []gatedActionSite, unresolved []st
 				// A gate forwarding its own action parameter is the
 				// wrapper itself, not a call site.
 				if pi, ok := params[a.Name]; ok && isGate && pi == forwardIdx {
+					return true
+				}
+				if rangeVars[a.Name] {
 					return true
 				}
 			}
@@ -397,15 +417,14 @@ func TestPermissionGroups_EveryActionInExactlyOneGroup(t *testing.T) {
 	}
 }
 
-// ut-docs#3134: the till has no whole-sale void and no price override, so
-// those two boxes would promise something nothing checks — they are hidden.
+// ut-docs#3134: the till has no whole-sale void, so that box would promise
+// something nothing checks — it is hidden. price_override was hidden too until
+// ut-docs#5416 gave it a feature (raising a discount), so it is shown now.
 func TestPermissionHiddenActions_VoidAndPriceOverride(t *testing.T) {
-	for _, a := range []string{"void", "price_override"} {
-		if _, ok := permissionHiddenActions[a]; !ok {
-			t.Errorf("%q must be in permissionHiddenActions (ut-docs#3134)", a)
-		}
+	if _, ok := permissionHiddenActions["void"]; !ok {
+		t.Errorf("%q must be in permissionHiddenActions (ut-docs#3134)", "void")
 	}
-	for _, a := range []string{"refund", "cash_adjustment", "void_comp_waste"} {
+	for _, a := range []string{"refund", "cash_adjustment", "void_comp_waste", "price_override"} {
 		if _, ok := permissionHiddenActions[a]; ok {
 			t.Errorf("%q is enforced by the till and must stay on the page", a)
 		}

@@ -105,7 +105,8 @@ test.describe('All grid jiggle edit mode is not for a cashier (ut-docs#2534)', (
       await expect(page.locator('#buttons-grid')).not.toHaveClass(/jiggle-mode/);
       await expect(grid.locator('[data-testid="tile-badge-edit"]')).toHaveCount(0);
       await expect(page.locator('.basket .line-name', { hasText: ITEMS[0].name })).toHaveCount(1);
-      await page.request.post('/api/pos/reset');
+      // ut-docs#5416: a cashier clears a priced basket only with a manager PIN.
+      await page.request.post('/api/pos/reset', { form: { override_pin: ADMIN_PIN } });
 
       // The server refuses a hand-made subset reorder: elevation prompt,
       // nothing saved.
@@ -125,7 +126,8 @@ test.describe('All grid jiggle edit mode is not for a cashier (ut-docs#2534)', (
       ]);
       await expect.poll(() => namesIn(page)).toEqual(ITEMS.map((i) => i.name));
     } finally {
-      await page.request.post('/api/pos/reset');
+      // ut-docs#5416: a cashier clears a priced basket only with a manager PIN.
+      await page.request.post('/api/pos/reset', { form: { override_pin: ADMIN_PIN } });
       await loginWithPin(page, ADMIN_PIN); // back to the admin for cleanup
       await setBrowsingMode(page, 'category_tabs');
       await page.goto('/catalog');

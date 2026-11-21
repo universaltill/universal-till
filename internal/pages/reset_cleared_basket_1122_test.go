@@ -43,6 +43,8 @@ func clearedBasketRows(t *testing.T, db *sql.DB) []clearedBasketRow {
 }
 
 func TestResetHandler_ClearedBasketIsRecorded(t *testing.T) {
+	// ut-docs#5416: New sale on a priced basket is gated; auth off keeps the cashier as actor without a PIN
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	for _, code := range []string{"PLAIN", "PLAIN", "ABC"} {
 		if _, err := dp.Engine.Scan(code); err != nil {
@@ -108,6 +110,8 @@ func TestResetHandler_ResumedOrderReParkRecordsNoClearedBasket(t *testing.T) {
 
 // Offline-first: a failed insert never blocks New sale.
 func TestResetHandler_ClearedBasketInsertFailureStillResets(t *testing.T) {
+	// ut-docs#5416: New sale on a priced basket is gated; auth off skips the PIN.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("PLAIN"); err != nil {
 		t.Fatalf("seed scan: %v", err)
