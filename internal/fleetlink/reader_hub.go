@@ -28,7 +28,11 @@ type ReaderSink interface {
 type readerHost struct{ h *Hub }
 
 func (rh readerHost) helloFor(_ context.Context, readerID string) any {
-	return ReaderHello{Role: "main", ReaderProtocol: ReaderProtocol, ReaderID: readerID}
+	h := ReaderHello{Role: "main", ReaderProtocol: ReaderProtocol, ReaderID: readerID}
+	if f := rh.h.opts.ReaderNextPin; f != nil {
+		h.NextPin = f()
+	}
+	return h
 }
 
 func (rh readerHost) onFrame() (func(string), time.Duration) {

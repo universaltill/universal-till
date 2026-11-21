@@ -346,6 +346,10 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.Error(w, "pending pairing not found", http.StatusNotFound)
 			return
 		}
+		if pending.Status != "pending" { // a denied tombstone (ut-docs#6796)
+			http.Error(w, "pending pairing already resolved", http.StatusConflict)
+			return
+		}
 		// ut-docs#6538: the role is fixed by the request, both ways.
 		isReader := pending.RequestedRole == data.TillRoleCardReader
 		if finalRole != "" && (finalRole == data.TillRoleCardReader) != isReader {
@@ -408,8 +412,9 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "approved"}, "error": nil})
 	})
 
-	// Deny just removes the row — a later request from the same replica
-	// is a brand new row, not a resurrection of the denied one.
+	// Deny removes a till request's row; a card_reader request keeps a denied
+	// tombstone until expiry so the phone can be told (ut-docs#6796). Either
+	// way a later request from the same device is a brand new row.
 	mux.HandleFunc("POST /api/sync/pair-requests/{id}/deny", func(w http.ResponseWriter, r *http.Request) {
 		actorID, ok := authorizePairingManager(w, r, svc)
 		if !ok {
@@ -435,6 +440,10 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 	// impersonation gap ADR-0033's review caught). A wrong/absent secret,
 	// an unapproved row, or an unknown/expired id all get an identical
 	// 404 so the response can't be used to enumerate pending requests.
+	// ut-docs#6796: ONLY to the secret holder, a card_reader request that was
+	// denied or expired answers 410 {"error":"pairing_denied"|"pairing_expired"}
+	// (denied wins); a pending one still 404s (keep waiting). Till requests
+	// keep today's answers byte for byte.
 	// The 32-byte secret makes guessing infeasible either way, but this
 	// is the exact endpoint an unbounded guessing/enumeration attempt
 	// would hit, and it also drives a DB read per call — rate-limit it
@@ -461,17 +470,36 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		if secret == "" {
 			secret = r.URL.Query().Get("request_secret")
 		}
-		row, ok, err := repo.GetByID(r.Context(), r.PathValue("id"))
+		row, expired, ok, err := repo.GetByIDForPoll(r.Context(), r.PathValue("id"))
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
-		if !ok || row.Status != "approved" || secret == "" || !commitmentMatches(secret, row.Commitment) {
+		commitment := unknownCommitment
+		if ok {
+			commitment = row.Commitment
+		}
+		match := commitmentMatches(secret, commitment) // always run, known id or not
+		if !ok || secret == "" || !match {
 			http.NotFound(w, r)
 			return
 		}
-		if row.RequestedRole == data.TillRoleCardReader {
-			completeReaderPairing(w, r, d, repo, row)
+		if row.RequestedRole != data.TillRoleCardReader {
+			if expired || row.Status != "approved" {
+				http.NotFound(w, r)
+				return
+			}
+		} else {
+			switch {
+			case row.Status == "denied":
+				writeReaderError(w, http.StatusGone, readerErrPairingDenied)
+			case expired:
+				writeReaderError(w, http.StatusGone, readerErrPairingExpired)
+			case row.Status != "approved":
+				http.NotFound(w, r)
+			default:
+				completeReaderPairing(w, r, d, repo, row)
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

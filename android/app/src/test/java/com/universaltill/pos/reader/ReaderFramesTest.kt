@@ -23,6 +23,13 @@ class ReaderFramesTest {
         assertEquals(1, e.payload.getInt("reader_protocol"))
     }
 
+    @Test fun `the main hello golden during a rotation still parses and carries next_pin (ignored by the phone, ut-docs#6796)`() {
+        val e = ReaderFrames.parse(Goldens.text("hello_main_rotating"))!!
+        assertEquals("main", e.payload.getString("role"))
+        assertEquals(1, e.payload.getInt("reader_protocol"))
+        assertTrue(e.payload.getString("next_pin").isNotEmpty())
+    }
+
     @Test fun `the phone hello is exactly the golden`() {
         assertPayload("hello_phone", ReaderFrames.helloPayload("0.36.2"))
     }

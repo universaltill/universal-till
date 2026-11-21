@@ -158,6 +158,24 @@ FROM pending_pairings WHERE id = ? AND expires_at >= ?`,
 	return p, true, nil
 }
 
+// GetByIDForPoll is GetByID without the expiry filter: expired reports
+// expires_at < now. Only for the possession-gated poll -- callers act on
+// expired/status only after the request secret matched, so an expired or
+// denied row is never revealed to a non-holder.
+func (r *PairingRepo) GetByIDForPoll(ctx context.Context, id string) (row PendingPairingRow, expired, ok bool, err error) {
+	err = r.db.QueryRowContext(ctx, `
+SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin
+FROM pending_pairings WHERE id = ?`, id).
+		Scan(&row.ID, &row.DeviceName, &row.Commitment, &row.Token, &row.RequestedAt, &row.ExpiresAt, &row.Status, &row.RequestedRole, &row.ServedPin)
+	if err == sql.ErrNoRows {
+		return PendingPairingRow{}, false, false, nil
+	}
+	if err != nil {
+		return PendingPairingRow{}, false, false, fmt.Errorf("pending pairing by id (poll): %w", err)
+	}
+	return row, row.ExpiresAt < r.now().UTC().Format(time.RFC3339), true, nil
+}
+
 // Approve marks a pending row approved, associates the freshly-issued
 // enrolment token with it (possession-gated retrieval hands this back),
 // and extends expires_at by extendTTL from now — approving a request that
@@ -238,11 +256,21 @@ WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
 	return role, true, nil
 }
 
-// Deny removes the row outright — a later request from the same replica
-// is a brand new row, not a resurrection of the denied one.
+// Deny resolves a request as refused. A till request is deleted outright (a
+// later request from the same replica is a brand new row). A card_reader
+// request instead keeps a `denied` tombstone with its token cleared and its
+// expires_at unchanged, so the phone's poll can tell its holder "denied" for
+// the request's remaining TTL (ut-docs#6796, ADR-0033 §4 amendment); the
+// tombstone is swept by ListPending's expired-row DELETE. Both statements are
+// idempotent. A denied row is never listed, approved or consumed.
 func (r *PairingRepo) Deny(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM pending_pairings WHERE id = ?`, id)
-	if err != nil {
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE pending_pairings SET status = 'denied', token = ''
+WHERE id = ? AND requested_role = 'card_reader' AND status IN ('pending', 'approved')`, id); err != nil {
+		return fmt.Errorf("deny pending pairing: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`DELETE FROM pending_pairings WHERE id = ? AND requested_role <> 'card_reader'`, id); err != nil {
 		return fmt.Errorf("deny pending pairing: %w", err)
 	}
 	return nil

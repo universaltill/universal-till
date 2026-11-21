@@ -38,8 +38,12 @@ type HubOptions struct {
 	// frame at most once per OnFrameEvery (default 30 s) per link — the
 	// main till uses it to keep tills.last_seen_at fresh while a replica is
 	// linked instead of polling.
-	OnFrame      func(tillID string)
-	OnFrameEvery time.Duration
+	OnFrame func(tillID string)
+	// ReaderNextPin, when set, gives the pin of the key this till will serve
+	// next during a rotation ("" otherwise); it goes in the reader hello,
+	// sent only on an already authenticated link (ut-docs#6796).
+	ReaderNextPin func() string
+	OnFrameEvery  time.Duration
 	// OnReport, when set, is called on the reader goroutine with each
 	// report from tillID's live link, before it is stored — the main till
 	// uses it to keep tills.name in step with a joined till's own name
