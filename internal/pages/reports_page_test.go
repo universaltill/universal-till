@@ -2430,3 +2430,50 @@ func TestReportsPage_EODRowLateNoteHiddenWithoutEODReport(t *testing.T) {
 		t.Fatalf("late note must stay behind eod_report, got: %s", body)
 	}
 }
+
+// ut-docs#6691: the late table scrolls in its own box, and a till with no
+// late sales leaves the Sales cell blank.
+func lateNoteBody(t *testing.T, tillsJSON string) string {
+	t.Helper()
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2001-01-01',
+'{"day":"2001-01-01","sales_count":0,"net":0,"late_entries":{"tills":`+tillsJSON+`}}')`); err != nil {
+		t.Fatal(err)
+	}
+	return getReportsTab(t, mux, "eod", "").Body.String()
+}
+
+func TestReportsPage_LateNoteWrapperAndBlankSales6691(t *testing.T) {
+	body := lateNoteBody(t, `[{"till_id":"a","name":"Alpha","sales_count":2,"gross":750},{"till_id":"b","name":"Bravo","no_sale_count":1}]`)
+	for _, want := range []string{`class="eod-late-scroll"`, `class="eod-late-till"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q: %s", want, body)
+		}
+	}
+	i := strings.Index(body, "Bravo")
+	row := body[i : i+strings.Index(body[i:], "</tr>")]
+	if !strings.Contains(row, `<td style="text-align:end"></td>`) || strings.Contains(row, "0.00") {
+		t.Fatalf("Bravo's Sales cell must be blank: %s", row)
+	}
+}
+
+func TestReportsPage_LateNoteNoSalesColumn6691(t *testing.T) {
+	body := lateNoteBody(t, `[{"till_id":"b","name":"Bravo","no_sale_count":1}]`)
+	i := strings.Index(body, "eod-late-scroll")
+	if i < 0 {
+		t.Fatal("no late table")
+	}
+	if strings.Contains(body[i:i+strings.Index(body[i:], "</thead>")], ">Sales<") {
+		t.Fatalf("no till has sales, so no Sales header: %s", body[i:])
+	}
+}
+
+func TestReportsPage_LateNoteZeroGrossSale6691(t *testing.T) {
+	body := lateNoteBody(t, `[{"till_id":"a","name":"Alpha","sales_count":1,"gross":0}]`)
+	i := strings.Index(body, "Alpha")
+	row := body[i : i+strings.Index(body[i:], "</tr>")]
+	if !strings.Contains(row, "0.00") {
+		t.Fatalf("a sale with zero gross shows 0.00: %s", row)
+	}
+}

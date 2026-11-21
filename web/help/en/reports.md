@@ -191,7 +191,10 @@ tills is shown as "Other till" followed by a short id. On a report closed
 before this section existed, the cleared baskets show as a number only and
 the time of the oldest row is shown once for all tills. The section is absent
 when nothing arrived late, and on a till's first close. The same figures appear
-in that report's detail on the **Day-end (EOD)** tab of Reports.
+in that report's detail on the **Day-end (EOD)** tab of Reports. A long
+heading or till name wraps onto the next printed line instead of being cut
+short; on screen, a till with no late sales leaves the Sales cell blank, and the
+Sales column is left out when no till had late sales.
 
 ## Article group, article and operator breakdowns
 

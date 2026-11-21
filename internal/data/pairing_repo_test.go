@@ -225,3 +225,105 @@ func TestPairingRepo_ServedPinRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#6796: a denied card_reader request leaves a tombstone until expiry
+// so the phone can be told; a till request is still deleted outright.
+func TestPairingRepo_DenyReaderLeavesTombstone(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+	for _, approve := range []bool{false, true} {
+		id, err := repo.CreatePendingRequestWithRole(ctx, "Phone", "c1", TillRoleCardReader, "", 10*time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if approve {
+			if err := repo.ApproveWithRole(ctx, id, "tok", "", time.Minute); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := repo.Deny(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Deny(ctx, id); err != nil { // idempotent
+			t.Fatal(err)
+		}
+		row, ok, err := repo.GetByID(ctx, id)
+		if err != nil || !ok {
+			t.Fatalf("tombstone missing: ok=%v err=%v", ok, err)
+		}
+		if row.Status != "denied" || row.Token != "" {
+			t.Fatalf("want denied with empty token, got %q %q", row.Status, row.Token)
+		}
+		if err := repo.ApproveWithRole(ctx, id, "tok2", "", time.Minute); !errors.Is(err, ErrNotPending) {
+			t.Fatalf("approve on denied: want ErrNotPending, got %v", err)
+		}
+		if ok, _ := repo.Consume(ctx, id); ok {
+			t.Fatal("a denied row must not be consumable")
+		}
+	}
+	if l, _ := repo.ListPending(ctx); len(l) != 0 {
+		t.Fatalf("denied row listed: %v", l)
+	}
+	if l, _ := repo.ListPendingReadOnly(ctx); len(l) != 0 {
+		t.Fatalf("denied row listed read-only: %v", l)
+	}
+}
+
+func TestPairingRepo_DenyTillRowIsDeleted(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+	id, err := repo.CreatePendingRequestWithRole(ctx, "Till", "c1", "additional", "", 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Deny(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := repo.GetByID(ctx, id); ok {
+		t.Fatal("till row should be deleted")
+	}
+}
+
+func TestPairingRepo_TombstoneSweptAfterExpiry(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+	now := time.Now()
+	repo.now = func() time.Time { return now }
+	id, _ := repo.CreatePendingRequestWithRole(ctx, "Phone", "c1", TillRoleCardReader, "", time.Minute)
+	if err := repo.Deny(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	repo.now = func() time.Time { return now.Add(2 * time.Minute) }
+	if _, _, ok, _ := repo.GetByIDForPoll(ctx, id); !ok {
+		t.Fatal("expired-unswept row should still be visible to the poll")
+	}
+	if _, err := repo.ListPending(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := repo.GetByIDForPoll(ctx, id); ok {
+		t.Fatal("tombstone should be swept after expiry")
+	}
+}
+
+func TestPairingRepo_GetByIDForPollReportsExpired(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+	now := time.Now()
+	repo.now = func() time.Time { return now }
+	id, _ := repo.CreatePendingRequestWithRole(ctx, "Phone", "c1", TillRoleCardReader, "", time.Minute)
+	row, expired, ok, err := repo.GetByIDForPoll(ctx, id)
+	if err != nil || !ok || expired || row.ID != id {
+		t.Fatalf("live row: ok=%v expired=%v err=%v", ok, expired, err)
+	}
+	repo.now = func() time.Time { return now.Add(2 * time.Minute) }
+	_, expired, ok, _ = repo.GetByIDForPoll(ctx, id)
+	if !ok || !expired {
+		t.Fatalf("want ok+expired, got ok=%v expired=%v", ok, expired)
+	}
+	if _, ok, _ := repo.GetByID(ctx, id); ok {
+		t.Fatal("GetByID must still hide expired rows")
+	}
+	if _, _, ok, _ := repo.GetByIDForPoll(ctx, "nope"); ok {
+		t.Fatal("unknown id")
+	}
+}

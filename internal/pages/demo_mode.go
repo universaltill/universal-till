@@ -180,6 +180,9 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /pay/tap/check":           true,
 	"GET /ui/pay/tap/resolve":       true,
 	"POST /manager/pay/tap/resolve": true,
+	// ut-docs#6795: list and settle tap attempts left open; a demo till has none.
+	"GET /api/pay/attempts/attention":          true,
+	"POST /api/pay/attempts/attention/resolve": true,
 	// ut-docs#6538: a phone card reader's progress and cancel; a demo till has no readers.
 	"GET /ui/pay/tap/remote":      true,
 	"POST /pay/tap/remote/cancel": true,
