@@ -89,7 +89,7 @@ func TestLateNoteFooter_HardWrapsLongWord6691(t *testing.T) {
 
 func TestLateNoteFooter_ZeroWidthByDisplayWidth6691(t *testing.T) {
 	// 20 words of "ab‌cd" joined by spaces would be long; build one that is
-	// over 42 runes but at most 42 columns: 15 ZWNJ-joined words of 4 letters.
+	// over 42 runes but at most 42 columns: 8 ZWNJ-joined words (4+ZWNJ+5 letters each).
 	var ws []string
 	for i := 0; i < 8; i++ {
 		ws = append(ws, "باقی‌مانده") // 4+1+5 runes, 9 columns
