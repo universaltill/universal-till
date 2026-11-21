@@ -79,7 +79,7 @@ The joining till then finishes joining. If you deny the request, the joining til
 Where your shop has turned this on, a manager can pair a phone as a card reader for the main till. The phone only takes card taps: it gets no sales, items, customers or settings. A card reader pairs only to the main till (or a single standalone till), over the secure connection, never by QR code or short code.
 
 1. On the main till open **Tills**. Under **Card reader requests** a phone that asked to connect shows its name and a **Verification code**. The card says "Card reader: takes card taps only, gets no shop data", so you can tell it apart from a till.
-2. Check that the code matches the one on the phone, enter your **Manager PIN** and tap **Approve**. Tap **Deny** if you do not recognise the phone. The card has no role choice: a request for a card reader can only be approved as a card reader.
+2. Check that the code matches the one on the phone, enter your **Manager PIN** and tap **Approve**. Tap **Deny** if you do not recognise the phone. A denied phone shows **A manager declined this request.** and can send a new request. The card has no role choice: a request for a card reader can only be approved as a card reader.
 3. Approved readers appear under **Card readers**. To rename one, change its name and save. To remove one, enter your **Manager PIN** and tap **Remove reader**: the phone stops taking payments at once and must be paired again to come back.
 
 If the main till is not serving a secure connection, the section says card readers need HTTPS first. A cashier cannot see or change any of this.
