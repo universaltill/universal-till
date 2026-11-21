@@ -29,4 +29,5 @@ Tester found the Dev's matrix used a wrong header name (`X-Pair-Request-Secret`)
 - False-pass: reverting `pairing_api.go`, `Deny`, `reader_hub.go` or the `omitempty` each fails the new tests (Tester).
 - Driven run on the real binary with loopback TLS: reader denied → 410 `pairing_denied` (header or query secret), 404 for wrong/missing/unknown; expired → 410 `pairing_expired`; approve on denied → 409; till role unchanged (404 pending/denied, token once approved).
 - `go build ./...`, `golangci-lint` clean; `go test ./...` 123 packages ok (internal/plugins timed out under load, passes alone); touched packages re-run after the review fixes: ok; `guard-docs-shots` green after regeneration.
-- Not run: Kotlin unit tests (no Android SDK in this container); a real phone; `next_pin` across a real key rotation.
+- CI `compile` (Android unit tests) caught the first wording "A manager declined this request.": `ReaderGateTest` forbids "declined" in reader strings (a phone screen must never read like a card decline). Reworded to "A manager turned down this request. Ask a manager, then try again." (string + help).
+- Not run locally: Kotlin unit tests (no Android SDK in this container); a real phone; `next_pin` across a real key rotation.
