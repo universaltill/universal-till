@@ -33,3 +33,10 @@ func DisplayWidth(s string) int { return displayWidth(s) }
 // max printer columns without cutting a combining mark off its base
 // (ut-docs#4689).
 func Clip(s string, max int) string { return clip(s, max) }
+
+// WrapWords is wrapWords for callers outside this package: it splits s into
+// rows of at most max printer columns, breaking at spaces and hard-wrapping a
+// single word longer than max, keeping every non-space character — so a
+// translated explanation line in a Z report wraps instead of being cut short
+// (ut-docs#6691).
+func WrapWords(s string, max int) []string { return wrapWords(s, max) }

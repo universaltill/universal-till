@@ -2,6 +2,7 @@ package print
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -193,5 +194,40 @@ func TestExportedDisplayWidthAndClip(t *testing.T) {
 	}
 	if got := DisplayWidth("باقی‌مانده"); got != 9 {
 		t.Errorf("DisplayWidth(fa ZWNJ label) = %d, want 9", got)
+	}
+}
+
+// ut-docs#6691: WrapWords is wrapWords for callers outside this package.
+func TestWrapWords_ExportedMatchesInternal(t *testing.T) {
+	fa := strings.Repeat("می‌خواهم ", 6) // ZWNJ words
+	cases := []struct {
+		name, in string
+		max      int
+	}{
+		{"en 70 columns", "Already included in the totals above, not added to anything here", 42},
+		{"50-rune word", strings.Repeat("x", 50), 42},
+		{"fa ZWNJ", strings.TrimSpace(fa), 20},
+	}
+	for _, c := range cases {
+		rows := WrapWords(c.in, c.max)
+		if !reflect.DeepEqual(rows, wrapWords(c.in, c.max)) {
+			t.Errorf("%s: WrapWords differs from wrapWords", c.name)
+		}
+		for _, r := range rows {
+			if DisplayWidth(r) > c.max {
+				t.Errorf("%s: row %q is %d columns, max %d", c.name, r, DisplayWidth(r), c.max)
+			}
+			if r != strings.TrimSpace(r) {
+				t.Errorf("%s: row %q has edge spaces", c.name, r)
+			}
+		}
+		if got := strings.Join(rows, " "); strings.Join(strings.Fields(got), " ") != strings.Join(strings.Fields(c.in), " ") {
+			if strings.Join(rows, "") != c.in {
+				t.Errorf("%s: text lost: %q", c.name, rows)
+			}
+		}
+	}
+	if rows := WrapWords(strings.Repeat("x", 50), 42); len(rows) != 2 || len(rows[0]) != 42 || len(rows[1]) != 8 {
+		t.Errorf("50-rune word = %q, want 42+8", rows)
 	}
 }
