@@ -478,7 +478,7 @@ func TestReaderHello_NextPin(t *testing.T) {
 	}{
 		{"nil", nil, ""},
 		{"empty", func() string { return "" }, ""},
-		{"rotating", func() string { return "sha256:abc" }, "sha256:abc"},
+		{"rotating", func() string { return "abc123" }, "abc123"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rh := readerHost{h: &Hub{opts: HubOptions{ReaderNextPin: tc.fn}}}

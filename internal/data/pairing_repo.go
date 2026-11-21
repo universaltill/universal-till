@@ -227,7 +227,10 @@ WHERE id = ? AND status = 'pending' AND expires_at >= ?
 // over, so an approval can be collected once only (ut-docs#6538). It reports
 // whether this call removed it.
 func (r *PairingRepo) Consume(ctx context.Context, id string) (bool, error) {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM pending_pairings WHERE id = ? AND status = 'approved'`, id)
+	// An expired approval is never consumed, whatever the caller checked
+	// (#6796 review): the bearer is minted only inside the TTL.
+	res, err := r.db.ExecContext(ctx, `DELETE FROM pending_pairings WHERE id = ? AND status = 'approved' AND expires_at >= ?`,
+		id, r.now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return false, fmt.Errorf("consume pairing: %w", err)
 	}
