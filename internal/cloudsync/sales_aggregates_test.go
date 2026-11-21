@@ -691,3 +691,82 @@ func TestSalesAggregateFingerprint_EverySaltInputMovesIt(t *testing.T) {
 		t.Error("a new build version left the fingerprint unchanged")
 	}
 }
+
+// ut-docs#6381: pins today's behaviour after a till moves to another shop.
+// Every day of the 14-day window is re-sent ONCE under the new store id,
+// because the fingerprint is salted with the store id and the payload hash
+// includes store_id; later rounds skip because the ledger then holds the
+// new store-keyed values. Days outside the window are never sent. The
+// ledger reset adoptMoved also runs (ResetSalesAggregateUploads) is
+// belt-and-braces and pinned elsewhere: enroll/move_5127_test.go (hook
+// called once) and data/move_history_5127_test.go (rows deleted).
+func TestPushSalesAggregates_AfterMoveEachDayResentOnceToNewShop(t *testing.T) {
+	noAggThrottle(t)
+	cloud := &aggCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedAggFixture(t, "agg-move-resend.db")
+	ctx := context.Background()
+
+	threeBackT := f.todayT.AddDate(0, 0, -3)
+	aggSeedSale(t, f.db, "s-3back", threeBackT, 190, 1190)
+	aggSeedSale(t, f.db, "s-20back", f.todayT.AddDate(0, 0, -20), 190, 1190)
+	threeBack := aggDay(t, f.db, threeBackT)
+	outside := aggDay(t, f.db, f.todayT.AddDate(0, 0, -20))
+	want := []string{f.today + "/reg-A", f.prevDay + "/reg-A", threeBack + "/reg-A"}
+	sort.Strings(want)
+
+	oldCfg := testCfg(srv.URL)
+	newCfg := testCfg(srv.URL)
+	newCfg.Marketplace.StoreID = "store-2"
+	newCfg.Marketplace.MerchantToken = "tok-2"
+
+	push := func(useNew bool) []aggPost {
+		t.Helper()
+		n := cloud.count()
+		salesAggregateLastNS.Store(0)
+		if useNew {
+			pushSalesAggregates(ctx, newCfg, f.db)
+		} else {
+			pushSalesAggregates(ctx, oldCfg, f.db)
+		}
+		return cloud.since(n)
+	}
+	assertDays := func(name string, posts []aggPost, wantDays []string) {
+		t.Helper()
+		got := postedDays(posts)
+		if strings.Join(got, ",") != strings.Join(wantDays, ",") {
+			t.Fatalf("%s posted days = %v, want %v", name, got, wantDays)
+		}
+	}
+	assertStore := func(name string, posts []aggPost, store, tok string) {
+		t.Helper()
+		for _, p := range posts {
+			if p.body["store_id"] != store {
+				t.Fatalf("%s: store_id = %v, want %q (body %s)", name, p.body["store_id"], store, p.raw)
+			}
+			if p.auth != "Bearer "+tok {
+				t.Fatalf("%s: Authorization = %q, want token %q", name, p.auth, tok)
+			}
+			if p.body["business_date"] == outside {
+				t.Fatalf("%s: out-of-window day %s was sent", name, outside)
+			}
+		}
+	}
+
+	r1 := push(false)
+	assertDays("round 1 (old shop)", r1, want)
+	assertStore("round 1 (old shop)", r1, "store-1", "tok-1")
+	assertDays("round 2 (old shop)", push(false), nil)
+
+	// The move: adoptMoved calls this hook, then the config carries the new shop.
+	if err := data.NewPOSRepo(f.db).ResetSalesAggregateUploads(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r3 := push(true)
+	assertDays("round 3 (after move)", r3, want)
+	assertStore("round 3 (after move)", r3, "store-2", "tok-2")
+	assertDays("round 4 (new shop)", push(true), nil)
+	assertDays("round 5 (new shop)", push(true), nil)
+}
