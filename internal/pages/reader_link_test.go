@@ -397,7 +397,7 @@ func TestReaderLinkRequiresPinnedTLS(t *testing.T) {
 		t.Fatalf("reader link over plain HTTP: err=%v resp=%v, want 401", err, resp)
 	}
 	// A certificate with another pin: the phone refuses before sending the bearer.
-	if _, _, err := g.dial(g.bearer, "00"+g.cert.Pin()[2:]); err == nil {
+	if _, _, err := g.dial(g.bearer, otherPin(t, g.cert.Pin())); err == nil {
 		t.Fatal("the phone accepted a certificate that does not match its pin")
 	}
 	// A bearer nobody enrolled.
@@ -722,5 +722,29 @@ func TestPhoneBusyAnswerShowsTheReaderBusyWording(t *testing.T) {
 	g.wantText(t, rec, "tap.reader.busy_result")
 	if strings.Contains(bodyText(rec), enText(t, "tap.start_failed")) {
 		t.Fatalf("busy must not show the generic start failure: %s", rec.Body.String())
+	}
+}
+
+// otherPin is pin with its first hex digit changed, so it never equals pin.
+// Overwriting the first two digits with "00" matched the real pin whenever a
+// fresh test certificate's pin already began with "00" (1 run in 256).
+func otherPin(t *testing.T, pin string) string {
+	t.Helper()
+	first := "0"
+	if pin[0] == '0' {
+		first = "1"
+	}
+	other := first + pin[1:]
+	if other == pin {
+		t.Fatalf("otherPin(%q) returned the same pin", pin)
+	}
+	return other
+}
+
+func TestOtherPinNeverMatches(t *testing.T) {
+	for _, pin := range []string{"00ab", "0fff", "1234", "ffff"} {
+		if got := otherPin(t, pin); got == pin || len(got) != len(pin) {
+			t.Fatalf("otherPin(%q) = %q", pin, got)
+		}
 	}
 }
