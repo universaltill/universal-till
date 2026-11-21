@@ -90,3 +90,34 @@ guards listed in Pre-flight are green.
   same card covers the screen, chip, help topic and per-reader gating (`reader_ref`).
 
 Verdict: **approve after the fixes above** (made in the working tree, not committed by the reviewer).
+
+## Round 2 (Fable, fix-scoped)
+
+Scope: `git diff 4dca79d8e..HEAD` only (the R1-R4 fixes). Each round-1 test was re-run with its fix
+reverted in a throwaway worktree and failed with the claimed message (R1 `conf=&{pi_x}`, R2
+`Count:0`, R3 the two grace cases, R4 "let a tender through"); the worktree was removed.
+
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| R2-1 | **Major** (money, race) | R1 guards only `tapAuthorize`'s entry. R2 made a kiosk or table-QR basket's locked leg resolvable while that engine can still retry it (its own locked key is exempt from the gate, and `Begin` leaves an `unknown` row unchanged, so the row stays resolvable for the whole retry). Manager settles it `charged_refund_at_provider` after the retry passed the entry check; the plugin then fails (its `Begin` now answers `ErrAttemptSettled`, or any timeout or decline); `tapVerifyFailure` (`internal/pages/tap_gate.go`, the `PendingAlreadySettled` branch) read the approved row as "paid" and **completed the sale on the payment the manager was told to refund**. | Fixed. That branch reads the row again: `approved`/`charged_no_sale` is refused like R1 (`tapStartFailedError{NeedsAttention}`), an unreadable row is pending. TDD: `TestTapAuthorize_ChargedNoSaleSettledMidFlightNeverConfirmsASale` failed first (`conf=&{pi_x}`, err nil), then passed. |
+| R2-2 | Moderate (double charge) | A tap leg whose plugin exits `outcome_unknown` returned from `tapVerifyFailure` with its row still `pending`. With R3 a pending row gates nothing until deadline + 60 s (and never did before the deadline), so "plugin times out, cashier presses New sale, rings again and taps" started a second tap on the provider with a new key, the case the gate exists for. | Fixed at the source: that branch marks the row `unknown` (`not_confirmed`) before returning, so no finished request leaves a `pending` row and the grace only ever covers a request still running. TDD: `TestTapGate_PluginOutcomeUnknownThenNewSaleStillGates` failed first (row `pending`), then passed. |
+
+Checked with no finding:
+- R1, other paths: the plugin-approved path ends in `ConfirmTap`, which answers `already_settled` as
+  pending (no sale); the retry is then refused at entry. `/pay/tap/check` and
+  `/manager/pay/tap/resolve` act on the cashier engine's locked leg only, which the attention resolve
+  refuses, so they cannot meet a `charged_no_sale` key. A cashier key kept after a lock drop is
+  unlocked, so the gate refuses its retry until it is settled, and R1 after that.
+- R2: the cashier lock is held for the whole retry and check, so its leg stays hidden and
+  unresolvable; a row only turns `unknown` at the end of its request, milliseconds before the lock.
+- R4: correct. The refusal is `paymentDeclinedError`, as the authorize loop answers.
+- The R1 refusal goes through `SettleTender`, so a kiosk basket is unlocked and its next try is a
+  fresh attempt, not "refused until idle reset" as the gaps list says. Harmless: the first payment
+  is refunded at the provider, the second pays the sale.
+
+Verification: `go test ./internal/pages/... -run 'Tap|Attention|Attempt|Tender|SelfOrder|Kiosk|Reader'`,
+`go test ./internal/data/... ./internal/pos/...`, `gofmt -l .` empty, `go build ./...` ok. The
+docs-shots surface hash was refreshed again (Go failure paths only, no rendered pixel).
+`docs/data-model.md` updated. Not committed by the reviewer.
+
+Verdict: **approve with the two fixes above.**

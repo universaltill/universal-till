@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -424,4 +425,52 @@ func TestTapAttentionGate_PluginListErrorFailsClosed(t *testing.T) {
 	if err := tapAttentionGate(context.Background(), e.dp, e.dp.Engine, []pos.PaymentInput{{MethodID: "tapstripe", Amount: money.FromMinor(120)}}); err == nil {
 		t.Fatal("the gate let a tender through with the plugin list unreadable")
 	}
+}
+
+// --- round 2 (fix-scoped) findings ---
+
+// R2-1: R1's refusal sits at tapAuthorize's entry only. A kiosk or table-QR
+// basket retrying its own locked leg passes the entry check while the row is
+// still unknown; a manager who settles the (now listed) leg as charged with
+// no sale while that retry is in flight must not have the plugin's failure
+// path hand the row's approval back as the sale's payment.
+func TestTapAuthorize_ChargedNoSaleSettledMidFlightNeverConfirmsASale(t *testing.T) {
+	e := tapRig(t)
+	e.orphan(t, "k-mid", "stripe")
+	e.plugin.onAuth = func(ctx context.Context, _ plugins.Event) {
+		// The manager's resolve lands while the retry is in flight.
+		if err := data.NewPaymentAttemptRepo(e.dp.Db).Mark(ctx, "k-mid", data.AttemptApproved, data.AttemptUpdate{PIID: "pi_x", Reason: data.AttemptReasonChargedNoSale}); err != nil {
+			t.Error(err)
+		}
+	}
+	// What the plugin answers once Begin refuses the settled key.
+	e.plugin.answer = func(int) string { return "START_FAILED" }
+	_, _, conf, err := tapAuthorize(context.Background(), e.dp, "tapstripe", "k-mid", money.FromMinor(120), "gbp", map[string]any{"method": "tapstripe", "amount": int64(120)})
+	if err == nil || conf != nil {
+		t.Fatalf("a key settled charged_no_sale mid-flight confirmed a payment: conf=%v err=%v", conf, err)
+	}
+}
+
+// R2-2: a tap leg the plugin itself reports as outcome_unknown ends its
+// request with the row still pending. With the settle grace (R3) such a row
+// would not gate for a minute past its deadline (and never before it), so
+// New sale followed by a fresh tap on the provider went straight through. A
+// request that ends without settling its row must leave it unknown.
+func TestTapGate_PluginOutcomeUnknownThenNewSaleStillGates(t *testing.T) {
+	e := tapRig(t)
+	e.plugin.answer = func(int) string { return "UNKNOWN" }
+	e.tender(t)
+	if e.dp.Engine.TenderLock() == "" {
+		t.Fatal("an outcome_unknown tap leg must lock the tender")
+	}
+	if a := e.attempt(t); a.State != data.AttemptUnknown {
+		t.Fatalf("the request ended with its attempt row %q, want unknown", a.State)
+	}
+	before := e.bindingCount()
+	if rec := e.do(t, e.cashier, http.MethodPost, "/api/pos/reset", url.Values{}); rec.Code >= 400 {
+		t.Fatalf("reset = %d %s", rec.Code, rec.Body.String())
+	}
+	scan(t, e.dp)
+	e.plugin.answer = nil
+	e.wantRefusedForAttention(t, e.tender(t), before)
 }

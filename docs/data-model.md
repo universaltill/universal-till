@@ -112,7 +112,10 @@ is in flight and is neither listed nor gating. Boot
 `unknown` with reason `till_restarted`: the basket, tender lock and attempt id
 are memory only. Reason `charged_no_sale` marks a row a manager settled as
 charged with no sale (state `approved`, refund at the provider; nothing reads
-such a row as a sale, and core refuses a tap leg whose key is one). While any row needs attention for a provider, core
+such a row as a sale, and core refuses a tap leg whose key is one, also when
+it was settled while that leg's plugin ran). A tap leg the plugin itself reports
+as outcome-unknown leaves its row `unknown`, not `pending`, when its request
+ends. While any row needs attention for a provider, core
 refuses to start another tap payment on that provider (start-failed panel, key
 `tap.attention.start_refused`; cash and other methods are never refused by
 it, though an unreadable plugin list refuses the tender as authorize would),
