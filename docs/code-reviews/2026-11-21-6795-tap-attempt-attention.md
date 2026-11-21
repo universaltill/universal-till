@@ -2,7 +2,7 @@
 
 Branch `fix/6795-tap-attempt-attention` (Dev commit `4dca79d8e` on `origin/main` `4f64cab0b`), plus
 the ADR-0198 §6.8 implementation note on ut-docs `docs/6795-adr0198-restart-note`. Part of
-ut-docs#6795. The card stays open: the manager screen, status chip and help topic are a follow-up.
+ut-docs#6795, which this slice closes: the manager screen, status chip and help topic are the follow-up ut-docs#6848.
 
 Pre-flight: branch `fix/6795-tap-attempt-attention`, merge-base = `origin/main` `4f64cab0b`; read BA,
 Architect, Dev and Tester notes and both diffs in full. Before and after the fixes: `gofmt -l .`
