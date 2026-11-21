@@ -1880,6 +1880,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			staleFromQty = cur == nil || cur.Qty != fromQty
 		}
+		// ut-docs#5416: the same replay guard for a discount raise: from_discount
+		// is the line discount the approver saw in "Discount X from <old> to
+		// <new>". A line whose discount moved since is a different approval.
+		staleFromDiscount := false
+		if v := strings.TrimSpace(r.Form.Get("from_discount")); v != "" {
+			fromDisc, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || fromDisc < 0 {
+				http.Error(w, "invalid from_discount", http.StatusBadRequest)
+				return
+			}
+			staleFromDiscount = cur == nil || cur.LineDiscount.Minor() != fromDisc
+		}
+		stale := staleFromQty || staleFromDiscount
 		qty := 0.0
 		if cur != nil {
 			qty = cur.Qty
@@ -1926,30 +1939,66 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// loss is the line-total delta so micro-steps sum to the real loss.
 		// A discount the engine will refuse (LineDiscountTooLargeError)
 		// changes nothing, so it is neither gated nor recorded.
-		reduction := !staleFromQty && cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
+		reduction := !stale && cur != nil && cur.GiftVoucher == nil && qty < cur.Qty && !cur.PriceCents.IsZero() &&
 			!(qty > 0 && pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount)))
+		// ut-docs#5416: raising a priced line's discount takes value off the
+		// sale by hand, so it needs price_override (or a manager PIN); a
+		// lowered, cleared or re-posted discount (the steppers re-send the
+		// current one) stays free. Gift voucher and zero-price lines carry
+		// no discount box. Raising it on a line that is going away (qty 0)
+		// changes nothing, and a discount the engine refuses is neither
+		// gated nor recorded.
+		raise := !stale && cur != nil && cur.GiftVoucher == nil && !cur.PriceCents.IsZero() && qty > 0 &&
+			discount > cur.LineDiscount.Minor() &&
+			!pos.LineDiscountExceeds(cur.PriceCents, qty, money.FromMinor(discount))
 		reason := r.Form.Get("reason")
 		var elev elevationCheck
 		if reduction {
-			locale := httpx.ResolveLocale(w, r)
 			if reason == "" {
 				reason = pos.ShrinkageReasonVoid
 			}
 			if !pos.ValidShrinkageReason(reason) {
-				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "shrinkage.error.invalid_reason"), http.StatusBadRequest)
 				return
 			}
-			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+		}
+		if reduction || raise {
+			locale := httpx.ResolveLocale(w, r)
+			// Literal action names at each call (permission_groups_test.go's
+			// gate scan reads them). A reduce-and-raise post checks both in
+			// ONE PIN verification, so the approver must hold both and a
+			// wrong PIN counts once.
+			pin := r.Form.Get("override_pin")
+			switch {
+			case reduction && raise:
+				elev = checkOrElevateAll(d, r, pin, "void_comp_waste", "price_override")
+			case reduction:
+				elev = checkOrElevate(d, r, "void_comp_waste", pin)
+			default:
+				elev = checkOrElevate(d, r, "price_override", pin)
+			}
 			if elev.Outcome == needsElevation {
 				// Replay the ABSOLUTE target qty (not delta): the approver
 				// confirms the exact result shown in the summary.
 				hidden := []elevationHiddenField{
-					{Name: "reason", Value: reason},
 					{Name: "qty", Value: strconv.FormatFloat(qty, 'f', -1, 64)},
 					// ut-docs#6113: also replay the qty the summary shows as the
 					// starting point, so the retry is refused if the line moved.
 					{Name: "from_qty", Value: strconv.FormatFloat(cur.Qty, 'f', -1, 64)},
 					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+					// ut-docs#5416: and the discount the summary starts from.
+					{Name: "from_discount", Value: strconv.FormatInt(cur.LineDiscount.Minor(), 10)},
+				}
+				var summary []string
+				if reduction {
+					hidden = append(hidden, elevationHiddenField{Name: "reason", Value: reason})
+					summary = append(summary, fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
+						strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
+						httpx.T(locale, "shrinkage.reason."+reason)))
+				}
+				if raise {
+					summary = append(summary, fmt.Sprintf(httpx.T(locale, "elevation.summary.line_discount"), cur.Name,
+						httpx.FormatMoneyDisplay(cur.LineDiscount.Minor(), locale), httpx.FormatMoneyDisplay(discount, locale)))
 				}
 				if key != "" {
 					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
@@ -1965,11 +2014,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// hint slot included; it must run once the hint is in the
 				// DOM so app.js can carry it across.
 				w.Header().Set("HX-Trigger-After-Settle", "ut-basket-resync")
-				renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint",
-					fmt.Sprintf(httpx.T(locale, "elevation.summary.reduce_line_qty"), cur.Name,
-						strconv.FormatFloat(cur.Qty, 'f', -1, 64), strconv.FormatFloat(qty, 'f', -1, 64),
-						httpx.T(locale, "shrinkage.reason."+reason)),
-					hidden, elev)
+				renderElevationPrompt(w, r, "/api/pos/line", "#shrinkage-hint", strings.Join(summary, " "), hidden, elev)
 				return
 			}
 		}
@@ -1982,14 +2027,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// turn the post into an ungated reduction. No lock is held across the
 		// elevation round trip; the retry is a fresh request.
 		var updateErr error
-		if staleFromQty {
+		if stale {
 			// ut-docs#6113: nothing applied; same 409 + note as a lost CAS.
 			updateErr = pos.ErrLineChanged
 		} else if cur != nil {
 			// qty→0 voids the line; if it was the last dine-in line the
 			// table clears (ADR-0073 D5) and its claim must go (ut-docs#1390).
 			prevTable := d.Engine.TableID()
-			updateErr = d.Engine.UpdateLineByKeyIfQty(cur.LineKey, cur.Qty, qty, money.FromMinor(discount))
+			updateErr = d.Engine.UpdateLineByKeyIf(cur.LineKey, cur.Qty, cur.LineDiscount, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
@@ -2016,6 +2061,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			} else if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", cur.LineKey, reason, detail, now, ""); err != nil {
 				logging.L().Errorf("insert line-reduction audit: %v", err)
 			}
+		}
+		// ut-docs#5416: a changed line discount (raised with approval, or
+		// lowered/cleared freely) is audited. Not shrinkage: no stock moved.
+		// A line that left (qty 0) or a voucher line carries no discount.
+		if updateErr == nil && cur != nil && cur.GiftVoucher == nil && qty > 0 && discount != cur.LineDiscount.Minor() {
+			auditValueGate(r.Context(), repo, r, elev, "pos_line", cur.LineKey, "line_discount",
+				map[string]any{"key": key, "code": code, "from_discount": cur.LineDiscount.Minor(), "to_discount": discount})
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -2054,8 +2106,64 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
-		d.Engine.SetDiscount(money.FromMinor(discount))
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		// ut-docs#5416: raising the sale discount by hand needs price_override
+		// or a manager PIN; lowering or clearing it is free. Promo/coupon
+		// scans reach SetDiscount through /api/pos/scan, not here, and stay
+		// ungated. The retry replays from_discount, the amount the approver
+		// saw; a basket whose discount moved since is refused before the PIN
+		// check, like a changed line.
+		locale := httpx.ResolveLocale(w, r)
+		from := d.Engine.SaleDiscount()
+		to := money.FromMinor(discount)
+		w.Header().Set("HX-Retarget", "#basket")
+		w.Header().Set("HX-Reswap", "outerHTML")
+		if v := strings.TrimSpace(r.Form.Get("from_discount")); v != "" {
+			fromDisc, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || fromDisc < 0 {
+				http.Error(w, "invalid from_discount", http.StatusBadRequest)
+				return
+			}
+			if fromDisc != from.Minor() {
+				b := d.Engine.Basket()
+				b.LineChangedKey = "sale"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusConflict)
+				_ = basketView.Render(w, b)
+				return
+			}
+		}
+		var elev elevationCheck
+		if to.Minor() > from.Minor() {
+			// A non-htmx client cannot answer the PIN prompt: refuse it as
+			// the tender path does (JSON 403) rather than a 200 HTML prompt.
+			if r.Header.Get("HX-Request") == "" && !canPerform(d, r, "price_override") {
+				writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
+					"code": "forbidden", "message": httpx.T(locale, "pos.error.discount_not_permitted"),
+				}})
+				return
+			}
+			elev = checkOrElevate(d, r, "price_override", r.Form.Get("override_pin"))
+			if elev.Outcome == needsElevation {
+				w.Header().Set("HX-Retarget", "#shrinkage-hint")
+				w.Header().Set("HX-Reswap", "innerHTML")
+				hidden := []elevationHiddenField{
+					{Name: "discount", Value: strconv.FormatInt(discount, 10)},
+					{Name: "from_discount", Value: strconv.FormatInt(from.Minor(), 10)},
+				}
+				renderElevationPrompt(w, r, "/api/pos/discount", "#shrinkage-hint",
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.sale_discount"),
+						httpx.FormatMoneyDisplay(from.Minor(), locale), httpx.FormatMoneyDisplay(discount, locale)),
+					hidden, elev)
+				return
+			}
+		}
+		d.Engine.SetDiscount(to)
+		if to != from {
+			auditValueGate(r.Context(), repo, r, elev, "pos_discount", "sale", "sale_discount",
+				map[string]any{"from": from.Minor(), "to": discount})
+		}
+		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
@@ -2234,12 +2342,83 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = basketView.Render(w, b)
 			return
 		}
+		// ut-docs#5416: clearing a basket that still holds priced value is a
+		// whole-basket void, so it takes void_comp_waste or a manager PIN. An
+		// empty or zero-value basket (the post-payment New customer) has
+		// nothing to lose and stays free. The retry replays from_lines and
+		// from_total, the basket the approver saw; a basket that changed since
+		// is refused (409) and nothing is cleared.
+		snap := d.Engine.Snapshot()
+		lineCount := len(snap.Lines) + len(snap.AddByHand)
+		_ = r.ParseForm()
+		// Only the approval retry (posted from the elevation dialog's form,
+		// which targets #shrinkage-hint) needs steering back to the basket; a
+		// plain New sale already targets #basket, and any other caller keeps
+		// the target it asked for.
+		if r.Form.Get("override_pin") != "" || r.Form.Get("from_lines") != "" || r.Form.Get("from_total") != "" {
+			w.Header().Set("HX-Retarget", "#basket")
+			w.Header().Set("HX-Reswap", "outerHTML")
+		}
+		conflict := func() {
+			b := d.Engine.Basket()
+			b.LineChangedKey = "reset"
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			_ = basketView.Render(w, b)
+		}
+		if fl, ft := strings.TrimSpace(r.Form.Get("from_lines")), strings.TrimSpace(r.Form.Get("from_total")); fl != "" || ft != "" {
+			wantLines, errL := strconv.Atoi(fl)
+			wantTotal, errT := strconv.ParseInt(ft, 10, 64)
+			if errL != nil || errT != nil {
+				http.Error(w, "invalid from_lines/from_total", http.StatusBadRequest)
+				return
+			}
+			if wantLines != lineCount || wantTotal != snap.Total.Minor() {
+				conflict()
+				return
+			}
+		}
+		// Priced = any line has a non-zero unit price. The total is not the
+		// test: a promo or sale discount (no PIN) can bring it to 0 while the
+		// basket still holds value a clear would destroy.
+		priced := false
+		for _, l := range snap.Lines {
+			if !l.PriceCents.IsZero() {
+				priced = true
+				break
+			}
+		}
+		var elev elevationCheck
+		if priced {
+			elev = checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+			if elev.Outcome == needsElevation {
+				w.Header().Set("HX-Retarget", "#shrinkage-hint")
+				w.Header().Set("HX-Reswap", "innerHTML")
+				renderElevationPrompt(w, r, "/api/pos/reset", "#shrinkage-hint",
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.clear_sale"), lineCount, httpx.FormatMoneyDisplay(snap.Total.Minor(), locale)),
+					[]elevationHiddenField{
+						{Name: "from_lines", Value: strconv.Itoa(lineCount)},
+						{Name: "from_total", Value: strconv.FormatInt(snap.Total.Minor(), 10)},
+					}, elev)
+				return
+			}
+		}
 		tableToRelease := d.Engine.TableID()
 		// ut-docs#1122: a basket with lines cleared here (no tender, no
 		// re-park) is recorded in cleared_baskets for the Z report. Read
-		// and cleared under one lock; recorded best-effort after it.
-		cleared := d.Engine.ResetAndSnapshot()
+		// and cleared under one lock; recorded best-effort after it. Always
+		// the compare-and-set form (ut-docs#5416), so a scan landing after
+		// the check above is never wiped without approval.
+		cleared, err := d.Engine.ResetAndSnapshotIf(lineCount, snap.Total)
+		if errors.Is(err, pos.ErrLineChanged) {
+			conflict()
+			return
+		}
 		recordClearedBasket(r.Context(), d, r, cleared)
+		if priced {
+			auditValueGate(r.Context(), repo, r, elev, "pos_reset", "basket", "clear_sale",
+				map[string]any{"line_count": lineCount, "total": snap.Total.Minor()})
+		}
 		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		b, _ := d.Engine.Scan("")
 		if key, ok := abandonToastKey(d.Engine); ok {
@@ -2302,6 +2481,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		} else {
 			_ = r.ParseForm()
 		}
+
+		// ut-docs#5416: the JSON `discount` overrides the basket's own sale
+		// discount, so a value above it takes value off the sale like
+		// /api/pos/discount does. A JSON API cannot sit through a PIN round
+		// trip: a session without price_override is refused here, before any
+		// payment, sale row or fiscal call. Equal or lower is accepted.
+		if in.Discount > d.Engine.SaleDiscount().Minor() && !canPerform(d, r, "price_override") {
+			writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
+				"code": "forbidden", "message": httpx.T(httpx.ResolveLocale(w, r), "pos.error.discount_not_permitted"),
+			}})
+			return
+		}
+		engineDiscount := d.Engine.SaleDiscount().Minor()
 
 		offline := false
 		offlineSet := false
@@ -3006,6 +3198,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusOK)
 			_ = basketView.Render(w, b)
 			return
+		}
+
+		// ut-docs#5416: a permitted raise of the tender discount is audited
+		// once the sale is committed.
+		if in.Discount > engineDiscount {
+			auditValueGate(r.Context(), repo, r, elevationCheck{}, "pos_sale", saleID, "sale_discount",
+				map[string]any{"from": engineDiscount, "to": in.Discount})
 		}
 
 		// load receipt_no and totals from DB for rendering

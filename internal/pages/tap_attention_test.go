@@ -131,7 +131,14 @@ func TestTapGate_RefusedAfterNewSaleOrPark(t *testing.T) {
 			if path == "/api/pos/hold" {
 				registerHoldAPI(e.mux, e.dp) // not part of the tap rig
 			}
-			if rec := e.do(t, e.cashier, http.MethodPost, path, url.Values{}); rec.Code >= 400 {
+			// ut-docs#5416: New sale on a priced basket needs void_comp_waste
+			// (a cashier gets the PIN prompt and nothing clears), so the
+			// manager presses it; park stays the cashier's.
+			u := e.cashier
+			if path == "/api/pos/reset" {
+				u = e.manager
+			}
+			if rec := e.do(t, u, http.MethodPost, path, url.Values{}); rec.Code >= 400 {
 				t.Fatalf("%s = %d %s", path, rec.Code, rec.Body.String())
 			}
 			if e.dp.Engine.TenderLock() != "" {
@@ -467,7 +474,8 @@ func TestTapGate_PluginOutcomeUnknownThenNewSaleStillGates(t *testing.T) {
 		t.Fatalf("the request ended with its attempt row %q, want unknown", a.State)
 	}
 	before := e.bindingCount()
-	if rec := e.do(t, e.cashier, http.MethodPost, "/api/pos/reset", url.Values{}); rec.Code >= 400 {
+	// ut-docs#5416: New sale on a priced basket needs void_comp_waste.
+	if rec := e.do(t, e.manager, http.MethodPost, "/api/pos/reset", url.Values{}); rec.Code >= 400 || isElevationPrompt(rec) {
 		t.Fatalf("reset = %d %s", rec.Code, rec.Body.String())
 	}
 	scan(t, e.dp)

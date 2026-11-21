@@ -37,7 +37,7 @@ func TestLineHandler_ConcurrentRaiseRefusesStaleUpdate(t *testing.T) {
 		form func(key string) url.Values
 	}{
 		{"manager reduction", auth.User{ID: "mgr-cas", Role: "manager"}, func(k string) url.Values { return url.Values{"key": {k}, "qty": {"1"}} }},
-		{"cashier same-qty discount", auth.User{ID: "cashier-1", Role: "cashier"}, func(k string) url.Values { return url.Values{"key": {k}, "qty": {"2"}, "discount": {"10"}} }},
+		{"manager same-qty discount", auth.User{ID: "mgr-cas", Role: "manager"}, func(k string) url.Values { return url.Values{"key": {k}, "qty": {"2"}, "discount": {"10"}} }},
 		{"cashier plus stepper", auth.User{ID: "cashier-1", Role: "cashier"}, func(k string) url.Values { return url.Values{"key": {k}, "delta": {"1"}} }},
 	}
 	for _, tc := range cases {
@@ -144,7 +144,9 @@ func seedWeighedLine(t *testing.T) (*http.ServeMux, *common.Deps, string) {
 // ("0.12" for 0.125), which read as a reduction.
 func TestLineHandler_WeighedDiscountEditIsNotReduction(t *testing.T) {
 	mux, dp, key := seedWeighedLine(t)
-	cashier := &auth.User{ID: "cashier-1", Role: "cashier"}
+	// ut-docs#5416: raising a discount needs price_override, which a manager holds.
+	mgrID, _ := newElevationTestPrincipals(t, dp, "mgr-weigh", "cashier-weigh", "445566")
+	cashier := &auth.User{ID: mgrID, Role: "manager"}
 
 	rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "discount": {"10"}}, cashier)
 	if rec.Code != http.StatusOK || isElevationPrompt(rec) {
@@ -158,7 +160,8 @@ func TestLineHandler_WeighedDiscountEditIsNotReduction(t *testing.T) {
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM shrinkage_events`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("shrinkage = %d", n)
 	}
-	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='pos_line'`).Scan(&n); err != nil || n != 0 {
+	// The discount change itself is audited (ut-docs#5416), not as a reduction.
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='pos_line' AND action='line_discount'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("audit = %d", n)
 	}
 
@@ -184,6 +187,11 @@ func TestLineHandler_WeighedTwoDecimalQtyPostIsGated(t *testing.T) {
 func TestLineHandler_WeighedStepperAndTypedQty(t *testing.T) {
 	mux, dp, key := seedWeighedLine(t)
 	cashier := &auth.User{ID: "cashier-1", Role: "cashier"}
+	// The stepper re-sends the line's current discount (ut-docs#5416: an
+	// unchanged discount is not a raise, so it stays free).
+	if err := dp.Engine.UpdateLineByKey(key, 0.125, 10); err != nil {
+		t.Fatal(err)
+	}
 	if rec := postForm(mux, "/api/pos/line", url.Values{"key": {key}, "delta": {"1"}, "discount": {"10"}}, cashier); rec.Code != http.StatusOK {
 		t.Fatalf("stepper: %d", rec.Code)
 	}

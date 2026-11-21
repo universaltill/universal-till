@@ -287,7 +287,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 }
 
 // snapshotLocked is Snapshot's lock-free core — also called by
-// ResetAndSnapshot. Caller must hold s.mu.
+// ResetAndSnapshotIf. Caller must hold s.mu.
 func (s *Service) snapshotLocked() BasketSnapshot {
 	s.recomputeTotals()
 	snap := BasketSnapshot{

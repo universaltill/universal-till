@@ -4147,7 +4147,37 @@ window.utTabBarFade = function (el) {
   document.body.addEventListener('htmx:beforeRequest', function (evt) {
     var d = evt.detail || {};
     var p = (d.pathInfo && d.pathInfo.requestPath) || (d.requestConfig && d.requestConfig.path) || '';
-    if (p === '/api/pos/reset' || p === '/api/pos/tender') dismissedThisSale = false;
+    if (p === '/api/pos/tender') dismissedThisSale = false;
+  });
+  // ut-docs#5416: New sale on a priced basket first answers with a manager-PIN
+  // prompt and clears nothing, so the flag resets only once the clear has
+  // actually happened. beforeSwap runs ahead of the swap and settle, same as
+  // the ordering above relies on; the approved retry posts here too.
+  document.body.addEventListener('htmx:beforeSwap', function (evt) {
+    var d = evt.detail || {};
+    var p = (d.pathInfo && d.pathInfo.requestPath) || (d.requestConfig && d.requestConfig.path) || '';
+    if (p !== '/api/pos/reset') return;
+    var x = d.xhr;
+    if (!x || x.status < 200 || x.status >= 300) return;
+    if (x.getResponseHeader('X-UT-Response') === 'elevation-prompt') return;
+    dismissedThisSale = false;
+  });
+  // The approved retry is submitted from the elevation dialog's own form, so
+  // the New sale buttons' close:payment-overlay never runs (#1386 regression).
+  // Closed on afterRequest, i.e. after the swap and settle, so a response that
+  // carried an error toast keeps the overlay open (#1624) -- the same
+  // no-error-toast gate as inline-actions.js.
+  document.body.addEventListener('htmx:afterRequest', function (evt) {
+    var d = evt.detail || {};
+    var p = (d.pathInfo && d.pathInfo.requestPath) || (d.requestConfig && d.requestConfig.path) || '';
+    if (p !== '/api/pos/reset') return;
+    var x = d.xhr;
+    if (!x || x.status < 200 || x.status >= 300) return;
+    if (x.getResponseHeader('X-UT-Response') === 'elevation-prompt') return;
+    var t = document.getElementById('toast-message');
+    if (t && t.classList.contains('error')) return;
+    var ov = document.getElementById('payment-overlay');
+    if (ov && ov.open) ov.close();
   });
 
   // "before_item": intercept the very first item landing in an empty

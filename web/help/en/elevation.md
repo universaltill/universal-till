@@ -37,6 +37,25 @@ PIN prompt right there.
    it again. Nothing is retried for you. A backup or restore you approve
    here is never cut off this way: it waits for the till's answer.
 
+## Prompts on the sell screen
+
+Three things on the sell screen ask for a manager's PIN when the signed-in
+person's role doesn't allow them. The prompt says exactly what is being
+approved, and the sale is left alone until the PIN is entered:
+
+- **Lowering a line's quantity** (the − button, a smaller number, or 0): needs
+  the Void, comp & waste permission.
+- **Raising a line's discount** (the discount box under the quantity): needs
+  the Discounts permission. Lowering or clearing a discount never asks.
+- **New Sale** on a basket that holds anything with a price: needs the Void,
+  comp & waste permission. An empty basket, a basket of free items and **New
+  Customer** after a payment never ask, and neither does putting a recalled
+  order back on hold.
+
+If the sale changes (a line is edited or a scan comes in) while the PIN
+prompt is open, the approval is not applied: the basket says it changed and
+you start again. Scanning a promo code never asks for a PIN.
+
 ## What gets recorded
 
 The action is journaled as done by the approving manager or admin — the same
