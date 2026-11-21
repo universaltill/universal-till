@@ -31,7 +31,7 @@ func setupPairingHarness(t *testing.T) (http.Handler, *auth.Service, *http.Serve
 	t.Helper()
 	mux, svc, d := newFullAuthDeps(t)
 	registerDiscoveryAPI(mux, d)
-	registerPairingJoinAPI(mux, d)
+	registerPairingJoinAPIT(t, mux, d)
 	return auth.Middleware(mux, svc), svc, mux
 }
 
@@ -303,7 +303,7 @@ func TestSetupPairStatusFullFlowCompletesJoin(t *testing.T) {
 		t.Fatalf("harness premise broken: replica must be in first-boot state (fb=%v err=%v)", fb, err)
 	}
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	rh := auth.Middleware(rmux, rsvc)
 
 	rec := doPostForm(t, rh, "/api/setup/pair-start", url.Values{

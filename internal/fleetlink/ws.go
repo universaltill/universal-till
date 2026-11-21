@@ -98,14 +98,22 @@ func (e *DialError) Error() string {
 // Authorization header of the upgrade request, never in the URL. ctx
 // bounds the handshake only.
 func dial(ctx context.Context, url, bearer string, readLimit int64) (Conn, error) {
-	hc := lantls.NewPeerClient(0)
-	// The bearer must reach the main till only; a redirect is never
-	// followed (Go would drop the header across hosts, but a same-host
-	// redirect would not).
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return dialWith(ctx, url, lantls.NewPeerClient(0),
+		http.Header{"Authorization": {"Bearer " + bearer}}, readLimit)
+}
+
+// dialWith opens a link with hdr on the upgrade request. It never mutates
+// hc: it takes a shallow copy with Timeout = 0 (the handshake is bounded by
+// ctx; coder/websocket must not see a client deadline on the hijacked conn)
+// and CheckRedirect = http.ErrUseLastResponse (credentials never follow a
+// redirect, not even a same-host one). A refused upgrade is a *DialError.
+func dialWith(ctx context.Context, url string, hc *http.Client, hdr http.Header, readLimit int64) (Conn, error) {
+	cp := *hc
+	cp.Timeout = 0
+	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPClient:      hc,
-		HTTPHeader:      http.Header{"Authorization": {"Bearer " + bearer}},
+		HTTPClient:      &cp,
+		HTTPHeader:      hdr,
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err != nil {

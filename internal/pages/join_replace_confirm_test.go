@@ -76,7 +76,7 @@ func TestPairStart_RefusesWithoutReplaceConfirmWhenTillHasSales(t *testing.T) {
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	seedCompletedSaleForStatus(t, replica.Db, "sale-4507")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStartForm(t, rmux, url.Values{"base_url": {stub.srv.URL}, "till_id": {"main-1"}, "name": {"Bar Till"}})
 	if rec.Code != http.StatusOK {
@@ -98,7 +98,7 @@ func TestPairStart_SendsWithReplaceConfirmWhenTillHasSales(t *testing.T) {
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	seedCompletedSaleForStatus(t, replica.Db, "sale-4507")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStartForm(t, rmux, url.Values{"base_url": {stub.srv.URL}, "till_id": {"main-1"}, "name": {"Bar Till"}, "replace_local_data": {"1"}})
 	if !strings.Contains(rec.Body.String(), `hx-trigger="every 15s"`) {
@@ -114,7 +114,7 @@ func TestPairStart_SendsWithoutConfirmWhenTillHasNoSales(t *testing.T) {
 	stub := newCountingPairStub(t)
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	rec := postPairStart(t, rmux, stub.srv.URL, "main-1", "Bar Till")
 	if strings.Contains(rec.Body.String(), replaceWarningHTML()) {
@@ -133,7 +133,7 @@ func TestPairStatus_RefusesToCompleteWhenFirstSaleLandedAfterPairStart(t *testin
 	stub := newCountingPairStub(t)
 	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	if rec := postPairStart(t, rmux, stub.srv.URL, "main-1", "Bar Till"); !strings.Contains(rec.Body.String(), `hx-trigger="every 15s"`) {
 		t.Fatalf("pair-start: expected waiting, got: %s", rec.Body.String())
@@ -173,7 +173,7 @@ func TestPairStatus_CompletesWhenConfirmedAtPairStart(t *testing.T) {
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	seedCompletedSaleForStatus(t, replica.Db, "sale-4507")
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 
 	postPairStartForm(t, rmux, url.Values{"base_url": {stub.srv.URL}, "till_id": {"main-1"}, "name": {"Bar Till"}, "replace_local_data": {"1"}})
 	body := getPairStatus(t, rmux).Body.String()
@@ -476,7 +476,7 @@ func TestPairStatus_UnstagesWhenSaleLandsDuringJoin(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	if rec := postPairStart(t, rmux, srv.URL, "main-1", "Bar Till"); !strings.Contains(rec.Body.String(), `hx-trigger="every 15s"`) {
 		t.Fatalf("pair-start: expected waiting, got: %s", rec.Body.String())
 	}

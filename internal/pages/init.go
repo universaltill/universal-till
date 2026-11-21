@@ -549,7 +549,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	enrolTokens := registerSyncAPI(mux, dp)
 	registerPairingAPI(mux, dp, authSvc, enrolTokens) // ADR-0033 part 2/3
 	registerDiscoveryAPI(mux, dp)                     // ADR-0033 part 1/3
-	registerPairingJoinAPI(mux, dp)                   // ADR-0033 part 3/3 (replica side)
+	registerPairingJoinAPI(mux, dp, bgCtx, wg)        // ADR-0033 part 3/3 (replica side)
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerReaderManagement(mux, dp)                 // phone card readers: pair requests, list, rename, revoke (ut-docs#6538)
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)

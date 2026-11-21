@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -108,7 +109,7 @@ func TestPairing_TLSMainTillBindsThePinAndStagesIt(t *testing.T) {
 	rsvc := auth.NewService(replica.Db)
 	replica.AuthSvc = rsvc
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	rh := auth.Middleware(rmux, rsvc)
 
 	rec := doPostForm(t, rh, "/api/setup/pair-start", url.Values{
@@ -139,7 +140,16 @@ func TestPairing_TLSMainTillBindsThePinAndStagesIt(t *testing.T) {
 	if arec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", arec.Code, arec.Body.String())
 	}
-	rec = doGet(t, rh, "/api/setup/pair-status")
+	// With the pending link up the approval reaches this till as a pushed
+	// frame (ut-docs#5330): the tick that collects the token follows it
+	// within the link's round trip, not at once.
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		rec = doGet(t, rh, "/api/setup/pair-status")
+		if strings.Contains(rec.Body.String(), "Corner Shop") || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if !strings.Contains(rec.Body.String(), "Corner Shop") || !appdb.PendingRestore(replicaPath) {
 		t.Fatalf("join did not complete over the pinned link: %s", rec.Body.String())
 	}
@@ -187,7 +197,7 @@ func TestPairing_MITMCertificateChangesTheCode(t *testing.T) {
 	rsvc := auth.NewService(replica.Db)
 	replica.AuthSvc = rsvc
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	rec := doPostForm(t, auth.Middleware(rmux, rsvc), "/api/setup/pair-start", url.Values{
 		"base_url": {relayBase}, "till_id": {primaryTillID}, "name": {"Bar Till"},
 	})
@@ -269,7 +279,7 @@ func TestPairStatus_PollRefusesAnotherCertificate(t *testing.T) {
 	rsvc := auth.NewService(replica.Db)
 	replica.AuthSvc = rsvc
 	rmux := http.NewServeMux()
-	registerPairingJoinAPI(rmux, replica)
+	registerPairingJoinAPIT(t, rmux, replica)
 	rh := auth.Middleware(rmux, rsvc)
 	doPostForm(t, rh, "/api/setup/pair-start", url.Values{
 		"base_url": {"http://" + addr}, "till_id": {primaryTillID}, "name": {"Bar Till"},

@@ -335,12 +335,17 @@ func (c *Client) setLinked(v bool) {
 
 // backoff is ADR-0114 §4's full jitter: uniform in [0, min(max, min·2^(n-1))].
 func (c *Client) backoff(attempt int) time.Duration {
-	ceil := c.opts.BackoffMax
+	return fullJitter(attempt, c.opts.BackoffMin, c.opts.BackoffMax)
+}
+
+// fullJitter is ADR-0114 §4's backoff: uniform in [0, min(max, min·2^(n-1))].
+func fullJitter(attempt int, minD, maxD time.Duration) time.Duration {
+	ceil := maxD
 	if attempt < 1 {
 		attempt = 1
 	}
 	if attempt <= 30 {
-		if d := c.opts.BackoffMin << (attempt - 1); d > 0 && d < ceil {
+		if d := minD << (attempt - 1); d > 0 && d < ceil {
 			ceil = d
 		}
 	}

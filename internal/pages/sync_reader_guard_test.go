@@ -130,7 +130,7 @@ func TestReaderBearerRefusedOnEverySyncRoute(t *testing.T) {
 	registerSyncAssets(g.mux, g.d)
 	registerTillRole(g.mux, g.d)
 	registerDiscoveryAPI(g.mux, g.d)
-	registerPairingJoinAPI(g.mux, g.d)
+	registerPairingJoinAPIT(t, g.mux, g.d)
 
 	_, bearer := g.enrolReader(t, "Guard phone")
 	// Real session middleware in front, auth ON, exactly as served.

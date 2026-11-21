@@ -277,7 +277,7 @@ func TestPairStart_InvisibleCharsNameRefusedLocally(t *testing.T) {
 			srv := tcPrimaryNeverHit(t)
 			replica, _ := newSyncDepsWithPath(t, "replica.db")
 			rmux := http.NewServeMux()
-			registerPairingJoinAPI(rmux, replica)
+			registerPairingJoinAPIT(t, rmux, replica)
 			rec := postPairStart(t, rmux, srv.URL, "some-till-id", bad)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (htmx does not swap non-2xx): %s", rec.Code, rec.Body.String())
