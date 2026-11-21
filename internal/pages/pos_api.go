@@ -2350,8 +2350,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// is refused (409) and nothing is cleared.
 		snap := d.Engine.Snapshot()
 		lineCount := len(snap.Lines) + len(snap.AddByHand)
-		w.Header().Set("HX-Retarget", "#basket")
-		w.Header().Set("HX-Reswap", "outerHTML")
+		_ = r.ParseForm()
+		// Only the approval retry (posted from the elevation dialog's form,
+		// which targets #shrinkage-hint) needs steering back to the basket; a
+		// plain New sale already targets #basket, and any other caller keeps
+		// the target it asked for.
+		if r.Form.Get("override_pin") != "" || r.Form.Get("from_lines") != "" || r.Form.Get("from_total") != "" {
+			w.Header().Set("HX-Retarget", "#basket")
+			w.Header().Set("HX-Reswap", "outerHTML")
+		}
 		conflict := func() {
 			b := d.Engine.Basket()
 			b.LineChangedKey = "reset"
@@ -2359,7 +2366,6 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusConflict)
 			_ = basketView.Render(w, b)
 		}
-		_ = r.ParseForm()
 		if fl, ft := strings.TrimSpace(r.Form.Get("from_lines")), strings.TrimSpace(r.Form.Get("from_total")); fl != "" || ft != "" {
 			wantLines, errL := strconv.Atoi(fl)
 			wantTotal, errT := strconv.ParseInt(ft, 10, 64)

@@ -1783,20 +1783,10 @@ func (s *Service) ResetBecause(r AbandonReason) {
 	s.handOffAbandoned(r, p)
 }
 
-// ResetAndSnapshot clears the basket like Reset and returns what it held,
-// under one lock (ut-docs#1122): a scan landing between a separate
-// Snapshot and Reset would be wiped without being in the snapshot.
-func (s *Service) ResetAndSnapshot() BasketSnapshot {
-	s.mu.Lock()
-	snap := s.snapshotLocked()
-	p := s.resetLocked()
-	s.mu.Unlock()
-	s.handOffAbandoned(AbandonCleared, p)
-	return snap
-}
-
-// ResetAndSnapshotIf is ResetAndSnapshot as a compare-and-set (ut-docs#5416):
-// it clears only if the basket still holds fromLines lines (priced lines plus
+// ResetAndSnapshotIf clears the basket like Reset and returns what it held,
+// under one lock (ut-docs#1122: a scan landing between a separate Snapshot
+// and Reset would be wiped without being in the snapshot), as a
+// compare-and-set (ut-docs#5416): it clears only if the basket still holds fromLines lines (priced lines plus
 // add-by-hand entries) at fromTotal, the basket a New sale approval was given
 // for. Otherwise ErrLineChanged and nothing is reset.
 func (s *Service) ResetAndSnapshotIf(fromLines int, fromTotal money.Money) (BasketSnapshot, error) {

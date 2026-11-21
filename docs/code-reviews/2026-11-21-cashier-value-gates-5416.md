@@ -78,3 +78,50 @@ Pre-flight: help topics `sell`/`elevation`/`users`/`reports`/`promotions` update
 A custom role without `price_override` now needs a manager PIN for every
 discount raise; a cashier needs one for New sale on a priced basket.
 "Price overrides" is now labelled "Discounts".
+
+## Round 3 — CI fixes on head 56195953 (2026-11-21, lane:cloud-41 PR sweep)
+
+CI on `56195953` was red for three reasons, all caused by this branch:
+
+1. **deadcode guard (`desktop-shell`).** `pos.Service.ResetAndSnapshot` had no
+   production caller left once reset moved to `ResetAndSnapshotIf`. It is
+   removed, not baselined. Its test callers now go through the test helper
+   `resetAndSnapshotNow` (it reads the snapshot and passes the matching
+   count/total to `ResetAndSnapshotIf`), with the same assertions.
+2. **e2e `new-customer-error-keeps-overlay-open-1624`.** The new
+   `htmx:beforeSwap` hook closed `#payment-overlay` on any 2xx reset, even one
+   carrying `#toast-message.error`. Now `beforeSwap` only resets
+   `dismissedThisSale`. An `htmx:afterRequest` hook closes the overlay on a 2xx
+   whose `X-UT-Response` is not `elevation-prompt`, when no error toast is
+   showing. This is the buttons' own `ok not-ut-response:elevation-prompt
+   no-error-toast` gate.
+3. **e2e `page-transitions-2223`.** `/api/pos/reset` sent `HX-Retarget: #basket`
+   and `HX-Reswap: outerHTML` on every response, which overrode a caller's own
+   `hx-target`. The headers are now sent only on the approval retry (the form
+   carries `override_pin`, `from_lines` or `from_total`). The elevation
+   prompt's own `#shrinkage-hint` target is unchanged.
+
+Dev: Sonnet subagent. Review: independent Opus 5.5 subagent. **Verdict: ship.**
+- The reviewer reversed the `pos_api.go` hunk and saw
+  `TestPOSReset_PlainRequest_DoesNotRetarget` fail (`got "#basket"`), then
+  restored it and saw it pass.
+- The approved retry still retargets to `#basket`
+  (`TestPOSReset_Elevated_*`).
+- The PIN gate is unchanged. The clear always goes through the
+  compare-and-set call.
+- Dev reproduced the 2223 failure before the fix. It passes after, as do 1624,
+  1386 (default project) and 5416 (auth project).
+- `go test ./internal/pos/... ./internal/pages/...` passes, as do gofmt,
+  `golangci-lint` (0 issues), `guard-i18n` and `guard-no-showmodal`.
+- The deadcode guard cannot run in this sandbox (the guard's go1.26-built tool
+  refuses the module's go1.27). A manual `deadcode` built with go1.27.1 found
+  nothing outside the baseline. CI is the final check.
+
+Not fixed in this round:
+- **Nits, not taken:** a long comment line in `service.go`, and no
+  `HX-Retarget` assertion on the stale-retry 409.
+- **Follow-up, added to #6858:** `/api/pos/discount` still retargets
+  unconditionally (`pos_api.go` ~2118). It has no htmx caller today, so this is
+  a latent risk only.
+
+Pre-flight (round 3): no user-facing string, help, docs-shots or reference change (behaviour unchanged for users).

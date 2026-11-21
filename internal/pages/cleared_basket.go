@@ -12,7 +12,7 @@ import (
 
 // recordClearedBasket (ut-docs#1122) records a live cashier basket cleared
 // with New sale before any tender and without a re-park. snap is what
-// Engine.ResetAndSnapshot returned. An empty basket records nothing. Best-effort:
+// Engine.ResetAndSnapshotIf returned. An empty basket records nothing. Best-effort:
 // offline-first, so a failed insert is logged and never blocks the reset.
 func recordClearedBasket(ctx context.Context, d *common.Deps, r *http.Request, snap pos.BasketSnapshot) {
 	lines := len(snap.Lines) + len(snap.AddByHand)

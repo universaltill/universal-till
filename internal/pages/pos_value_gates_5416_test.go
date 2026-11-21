@@ -533,6 +533,20 @@ func TestPOSReset_Elevated_ClearsRecordsClearedBasketAndElevatedAudit(t *testing
 	}
 }
 
+// A plain New sale / New customer keeps the target its caller asked for
+// (page-transitions-2223's probe swaps into its own element); only the
+// approval retry from the elevation dialog is steered back to #basket.
+func TestPOSReset_PlainRequest_DoesNotRetarget(t *testing.T) {
+	e := newGateEnv(t)
+	rec := postForm(e.mux, "/api/pos/reset", url.Values{}, e.cashier)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("HX-Retarget"); got != "" {
+		t.Fatalf("plain reset must not retarget, got %q", got)
+	}
+}
+
 func TestPOSReset_StaleRetry_409NothingCleared(t *testing.T) {
 	e := newGateEnv(t)
 	e.seedLine(t, 2)

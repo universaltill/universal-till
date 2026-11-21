@@ -85,6 +85,17 @@ func seedResetBasket(t *testing.T) *Service {
 	return s
 }
 
+// resetAndSnapshotNow clears the basket as it stands, via the compare-and-set.
+func resetAndSnapshotNow(t *testing.T, s *Service) BasketSnapshot {
+	t.Helper()
+	seen := s.Snapshot()
+	snap, err := s.ResetAndSnapshotIf(len(seen.Lines)+len(seen.AddByHand), seen.Total)
+	if err != nil {
+		t.Fatalf("ResetAndSnapshotIf: %v", err)
+	}
+	return snap
+}
+
 func TestResetAndSnapshotIf_RefusesWhenBasketChanged(t *testing.T) {
 	s := seedResetBasket(t)
 	seen := s.Snapshot()

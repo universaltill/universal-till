@@ -59,9 +59,9 @@ func TestLockTender_ResetHandsOffStashOnce(t *testing.T) {
 	}
 }
 
-func TestResetAndSnapshot_HandsOffCleared(t *testing.T) {
+func TestResetAndSnapshotIf_HandsOffCleared(t *testing.T) {
 	s, h := newLockedService(t)
-	snap := s.ResetAndSnapshot()
+	snap := resetAndSnapshotNow(t, s)
 	if len(h.got) != 1 || h.reasons[0] != AbandonCleared {
 		t.Fatalf("want one Cleared hand-off, got %v", h.reasons)
 	}
