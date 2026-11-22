@@ -711,6 +711,14 @@ var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_track
 // backup's identity is then kept as it is (the pre-#5069 behaviour), so the
 // recovered till stays paired instead of having to pair again. An error
 // means the staged file itself is not a usable till database.
+//
+// The restore number floors are the exception to "the live till's rows
+// win" (ut-docs#6293): they are max-merged (mergeRestoreFloors), never
+// replaced. The jump at boot sees only the restored file, so a second
+// restore would otherwise forget the floors and the numbers this till issued
+// since the first one, and issue them again. The live floors and the live
+// DB's real maxima are folded into the staged floors, raising them only.
+// restore.marker and restore.jump_token stay the staged file's.
 func keepLiveCloudIdentity(dbPath, pending string) error {
 	keep, readable, err := liveIdentityRows(dbPath)
 	if err != nil {
@@ -720,6 +728,7 @@ func keepLiveCloudIdentity(dbPath, pending string) error {
 	if err != nil {
 		return fmt.Errorf("open staged restore: %w", err)
 	}
+	var carried [][2]string
 	werr := func() error {
 		// A trigger the file brought along must not act on the rewrite
 		// (ut-docs#5070 review: one could re-insert the backup's token).
@@ -753,6 +762,25 @@ func keepLiveCloudIdentity(dbPath, pending string) error {
 				return fmt.Errorf("clear %s: %w", k, err)
 			}
 		}
+		if readable {
+			// Floors are max-merged, not replaced (ut-docs#6293): the
+			// jump at boot starts from what this till already issued.
+			var e string // the receipt prefix the restored till will use
+			if err := tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, receiptPrefixKey).Scan(&e); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("read %s: %w", receiptPrefixKey, err)
+			}
+			ln, maxErr, lerr := readLiveNumbers(dbPath, e)
+			if lerr != nil {
+				logging.L().Warnf("restore: the current database's number floors could not be read (%v); the backup's are kept", lerr)
+			} else {
+				if maxErr != nil {
+					logging.L().Warnf("restore: the current database's highest numbers could not be read (%v); only its floors are carried", maxErr)
+				}
+				if carried, err = mergeRestoreFloors(tx, ln, e); err != nil {
+					return err
+				}
+			}
+		}
 		return tx.Commit()
 	}()
 	if cerr := pd.Close(); werr == nil {
@@ -763,6 +791,9 @@ func keepLiveCloudIdentity(dbPath, pending string) error {
 	}
 	if readable {
 		logging.L().Infof("restore: kept this till's own cloud identity (%d setting(s)); the backup's was dropped", len(keep))
+	}
+	if len(carried) > 0 {
+		logging.L().Infof("restore: carried this till's number floors so no number is issued twice: %v", carried)
 	}
 	return nil
 }
