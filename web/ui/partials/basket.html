@@ -22,6 +22,10 @@
 <div class="basket" id="basket" data-voucher-id="{{ .VoucherID }}" data-voucher-balance-minor="{{ .VoucherBalance.Minor }}"
      data-lines-count="{{ len .Lines }}" data-order-type-chosen="{{ .OrderTypeChosen }}"
      data-item-counts="{{ .ItemCountsJSON }}" data-in-basket-label="{{ T "basket.tile_in_basket" }}">
+  {{/* ut-docs#6909: shown by app.js's tender gate while a payment runs and a scan or basket edit was held back; part of #basket, so the tender's own swap clears it. */}}
+  <div class="pos-notice info" id="tender-busy-notice" role="status" data-reusable hidden>
+    <span class="notice-text">{{ T "pos.tender.busy" }}</span>
+  </div>
   {{ if .ToastMessage }}
     {{ if eq .ToastLevel "error" }}
     <div class="pos-notice error" id="toast-message" role="alert">

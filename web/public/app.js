@@ -222,6 +222,8 @@ window.utCurrency = (function(){
     if (srcInput) srcInput.value = src || "";
     if (window.htmx) { window.htmx.trigger(form, 'submit'); } else { form.submit(); }
     setTimeout(function(){
+      // ut-docs#6909: the tender gate refused this scan; keep the code visible.
+      if (document.body.dataset.utTender === '1' || (window.utTenderPending && window.utTenderPending())) return;
       codeInput.value = "";
       if (srcInput) srcInput.value = "";
     }, 0);
@@ -318,7 +320,11 @@ window.utCurrency = (function(){
   document.addEventListener('submit', function (e) {
     var input = scanCodeInput();
     if (input && e.target === input.form) {
-      setTimeout(function(){ input.value = ""; }, 0);
+      setTimeout(function(){
+        // ut-docs#6909: the gate refused it
+        if (document.body.dataset.utTender === '1' || (window.utTenderPending && window.utTenderPending())) return;
+        input.value = "";
+      }, 0);
     }
   });
 
@@ -781,6 +787,9 @@ window.utCurrency = (function(){
 
       submitBtn.disabled = true;
       setStatus(msg.msgSubmitting, 'info');
+      // ut-docs#6909: the raw fetch is not an htmx xhr; the flag lets the
+      // basket-request gate (utTenderGate) hold scans and taps while it runs.
+      document.body.dataset.utTender = '1';
       try {
         var response = await fetch('/api/pos/tender', {
           method: 'POST',
@@ -865,6 +874,8 @@ window.utCurrency = (function(){
         setStatus(msg.msgNetworkError, 'error');
       } finally {
         submitBtn.disabled = false;
+        delete document.body.dataset.utTender;
+        if (window.utTenderGateRelease) window.utTenderGateRelease();
       }
     }
 
@@ -1569,6 +1580,108 @@ document.addEventListener('htmx:beforeSwap', function (ev) {
   var d = ev.detail;
   if (utIsResync(d) && utResyncGen !== utBasketGen) d.shouldSwap = false;
 });
+
+// ut-docs#6909: while a tender request is pending on this till (an htmx xhr to
+// /api/pos/tender, or the split modal's raw fetch), no other #basket request
+// may start. hx-sync="#basket:replace" would abort the tender's xhr (the sale
+// lands but the receipt never swaps in); a scan would add a line the sale's
+// final Reset wipes. htmx fires htmx:confirm BEFORE its hx-sync step, so
+// cancelling here means the request never reaches the sync slot. The code
+// stays in the scan field; a non-modal notice in #basket says why. Status,
+// lock, exit and the tap remote cancel/progress are not basket requests.
+// Registered on body before till-confirm.js's document listener, so it wins.
+(function () {
+  var xhr = null;         // the pending tender's xhr
+  var rechecking = false; // re-read loop: the till still runs a tender we lost
+  var tries = 0, timer = 0;
+  var MAX_TRIES = 40, RECHECK_MS = 1500;
+  function isTenderPath(p) { return String(p || '').split('?')[0] === '/api/pos/tender'; }
+  function pendingReal() { return !!xhr || document.body.dataset.utTender === '1'; }
+  function pending() { return pendingReal() || rechecking; }
+  window.utTenderPending = pending; // the scan code keep-checks read the gate's own state
+  function notice(show) {
+    var n = document.getElementById('tender-busy-notice');
+    if (n) n.hidden = !show;
+  }
+  function paint() {
+    var b = document.getElementById('basket');
+    if (!b) return;
+    if (pending()) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
+  }
+  function release() {
+    if (!pending()) notice(false);
+    paint();
+  }
+  window.utTenderGateRelease = release;
+  function isBasketRequest(d) {
+    var path = String(d.path || '').split('?')[0];
+    // Only the tap remote cancel/progress pass; /pay/tap/check (Check/Cancel
+    // buttons, hx-sync #basket:replace) would abort the running tender xhr.
+    if (path.indexOf('/pay/tap/remote/') === 0 || path === '/ui/pay/tap/remote') return false;
+    if (d.target && d.target.id === 'basket') return true;
+    var carrier = d.elt && d.elt.closest ? d.elt.closest('[hx-sync]') : null;
+    var v = carrier ? carrier.getAttribute('hx-sync') : '';
+    return !!v && v.indexOf('#basket') !== -1;
+  }
+  function isResync(d) {
+    return !!(d.etc && d.etc.headers && d.etc.headers['X-UT-Resync']);
+  }
+  function lost() {
+    // The tender's response may never arrive; re-read the till's own basket.
+    xhr = null;
+    setTimeout(function () { window.utBasketResync(); }, 0);
+  }
+  function recheck() {
+    timer = 0;
+    if (!rechecking) return;
+    if (++tries > MAX_TRIES) { rechecking = false; tries = 0; release(); return; }
+    window.utBasketResync();
+  }
+  document.body.addEventListener('htmx:confirm', function (ev) {
+    var d = ev.detail || {};
+    if (!pending()) return;
+    if (isResync(d) && !pendingReal()) return; // the post-abort re-read itself
+    if (!isBasketRequest(d)) return;
+    ev.preventDefault(); // never call issueRequest: htmx stops before hx-sync
+    notice(true);
+    paint();
+  });
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    var d = ev.detail || {};
+    if (!isTenderPath(d.pathInfo && d.pathInfo.requestPath)) return;
+    if (!xhr) { xhr = d.xhr; tries = 0; }
+    paint();
+  });
+  function done(ev) {
+    var d = ev.detail || {};
+    if (xhr && d.xhr === xhr) {
+      // htmx 1.9.12 fires afterRequest first on abort/error/timeout, with
+      // detail.error set (never detail.failed) and the xhr at status 0.
+      var aborted = ev.type !== 'htmx:afterRequest' || !!d.error || (d.xhr && d.xhr.status === 0);
+      if (aborted) { lost(); return; }
+      xhr = null;
+      release();
+      return;
+    }
+    // The re-read's answer: keep going while the till still runs the tender.
+    if (utIsResync(d) && d.xhr && ev.type === 'htmx:afterRequest') {
+      var still = d.xhr.getResponseHeader && d.xhr.getResponseHeader('X-UT-Tender-In-Flight') === '1';
+      if (still) {
+        rechecking = true;
+        if (!timer) timer = setTimeout(recheck, RECHECK_MS);
+      } else if (rechecking) {
+        rechecking = false; tries = 0;
+      }
+      release();
+    }
+  }
+  ['htmx:afterRequest', 'htmx:sendAbort', 'htmx:sendError', 'htmx:timeout'].forEach(function (n) {
+    document.body.addEventListener(n, done);
+  });
+  document.body.addEventListener('htmx:afterSettle', paint);
+  // The server refused a second tender (another tab / the picker form).
+  document.body.addEventListener('tender-in-flight', function () { notice(true); });
+})();
 
 // ut-docs#5458: a tapped tile whose request is still pending shows a busy
 // outline (CSS keys on aria-busy) after 300 ms, so a fast tap never flashes.
@@ -4203,6 +4316,7 @@ window.utTabBarFade = function (el) {
   // modal even if that happens, so it can no longer lock the picker shut
   // the way ut-docs#2371's bug report described.
   document.body.addEventListener('htmx:confirm', function (evt) {
+    if (evt.defaultPrevented) return; // ut-docs#6909: the tender gate already refused it
     var path = evt.detail.path || '';
     var isItemAdd = path === '/api/pos/scan' || path === '/api/pos/scan-with-modifiers';
     var isModifierOpen = path.indexOf('/ui/pos/modifiers') === 0;

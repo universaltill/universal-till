@@ -81,6 +81,10 @@ The strip shows nothing at all — not even an empty box — whenever there's no
 
 A plugin can also add "Identify by camera" to the scan row (the camera icon). Tap it, point the camera at the product and tap Capture: the till shows a progress bar while the plugin works out what it is, then lists its matches. Tap a match to add it to the basket exactly as if you had scanned it. The till then keeps your photo as one of that item's reference photos (the newest five per item, also on your linked tills), so the plugin's matches can get better the more you use it. You can close the window at any time and keep selling — the plugin's answer is then simply dropped. Barcode scanning and search always stay available alongside it. The **AI Assistant** plugin (from the Store under Plugins, version 2.0 or later) adds this button; a till with an older version of it shows no camera-identify button until the plugin is updated on the Plugins page.
 
+## While a payment is running
+
+While a payment is being taken (for example a card waiting on the reader), the till does not add scans or accept basket changes: a "Payment in progress" notice appears in the basket and the code you scanned stays in the scan box. Scan it again once the payment finishes. **Clear**, **New sale** and **Hold** wait until the payment finishes too. A second tap on **Pay** at that moment is refused too, so the customer is never charged twice. The menu, lock and exit buttons keep working.
+
 ## Status chips in the side menu
 
 Several small chips near the bottom of the left-hand menu tell you, at a glance, what's going on with the till — none of them block the sale screen:

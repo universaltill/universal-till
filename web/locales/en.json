@@ -4662,5 +4662,9 @@
   "tap.reader.status.ready": "Ready",
   "tap.reader.status.busy": "Busy",
   "tap.reader.status.needs_setup": "Needs setup",
-  "tap.reader.status.unavailable": "Unavailable"
+  "tap.reader.status.unavailable": "Unavailable",
+  "pos.tender.in_flight": "A payment is already in progress on this till. Wait for it to finish.",
+  "pos.tender.busy": "Payment in progress. Scan or change items once it finishes.",
+  "pos.tender.scan_refused": "Payment in progress: this item was not added. Scan it again once the payment finishes.",
+  "tap.resolve.in_progress": "This card payment is already being checked. Try again in a moment."
 }

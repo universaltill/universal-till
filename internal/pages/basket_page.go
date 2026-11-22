@@ -19,6 +19,12 @@ func registerBasket(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "basket.error.server", "basket", err)
 			return
 		}
+		// ut-docs#6909: a client that lost a tender's response re-reads the
+		// basket; this header tells it the tender is still running here, so it
+		// keeps its gate and asks again instead of showing a stale basket.
+		if d.Engine.TenderInFlight() {
+			w.Header().Set("X-UT-Tender-In-Flight", "1")
+		}
 		_ = renderCurrentBasket(d, view, w)
 	})
 }
