@@ -1,12 +1,19 @@
 package pages
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -148,6 +155,150 @@ func TestTaxAutoInstall_RefusesFiscalOrNetworkManifestAfterDownload(t *testing.T
 				if _, statErr := os.Stat(filepath.Join(paths.Plugins(), id)); statErr == nil {
 					t.Fatalf("%s must not be on disk", id)
 				}
+			}
+		})
+	}
+}
+
+// A guest that never returns from the ask (a busy loop) is refused within the
+// ask deadline, not hung: DryAskWasm bounds the call and wazero closes the
+// module on context done. Nothing is persisted; the spec stays pending.
+func TestTaxFirstLoadCheck_HangingGuestIsRefusedWithinDeadline(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	mkt.publishCustomTaxManifest(t, autoTaxListing, autoTaxManifest(), buildFiscalGuest(t, "taxhang_guest"))
+	mkt.setCatalog(autoTaxCatalogEntry())
+	dp.Cfg.Marketplace = mkt.config()
+	plugins.SharedBus(dp.Db).ResetSubscribers()
+
+	spec := basePluginSpec{CanonicalType: "tax", Market: autoTaxCountry}
+	start := time.Now()
+	err := resolveAndInstallBasePlugin(t.Context(), dp, spec)
+	elapsed := time.Since(start)
+
+	if err == nil || !errors.Is(err, errBasePluginRefused) {
+		t.Fatalf("a hanging guest must be refused (errBasePluginRefused), got %v", err)
+	}
+	// 2s ask deadline + compile/download slack; well under the 15s dry-ask cap.
+	// The bound is generous: the 2s ask deadline is wall-clock but the wazero
+	// compile scales with CPU, so a loaded runner needs headroom.
+	if elapsed > 12*time.Second {
+		t.Fatalf("the refusal took %s; the first-load check must be bounded", elapsed)
+	}
+	// ...and it must be a real deadline refusal, not an instant trap or load
+	// error: the guest spun until the 2s ask deadline cut it off.
+	if elapsed < 2*time.Second {
+		t.Fatalf("the refusal took only %s; a hanging guest should run to the 2s ask deadline (was it refused for another reason? %v)", elapsed, err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want a context deadline refusal, got %v", err)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), autoTaxPluginID); active {
+		t.Fatal("a hanging plugin must not be activated")
+	}
+	if _, statErr := os.Stat(filepath.Join(paths.Plugins(), autoTaxPluginID)); statErr == nil {
+		t.Fatal("a hanging plugin must not be on disk")
+	}
+	if err := addPendingBasePlugins(t.Context(), dp, []basePluginSpec{spec}); err != nil {
+		t.Fatalf("queue: %v", err)
+	}
+	pending, _ := loadPendingBasePlugins(t.Context(), dp)
+	if len(pending) != 1 || pending[0] != spec {
+		t.Fatalf("the spec must stay pending, got %+v", pending)
+	}
+}
+
+// R4: the dry ask is not a trust shortcut. A bundle whose manifest signature
+// does not verify is refused by the verifier BEFORE the first-load check
+// runs, even though its module (taxbadrate_guest) would FAIL the dry ask: were the
+// order reversed, the error would be a first-load refusal and this goes red.
+func TestTaxAutoInstall_UnverifiedBundleRefusedBeforeDryAsk(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	// Sign with a key the till does not trust.
+	_, rogue, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkt.privateKey = rogue
+	mkt.publishCustomTaxManifest(t, autoTaxListing, autoTaxManifest(), buildFiscalGuest(t, "taxbadrate_guest"))
+	mkt.setCatalog(autoTaxCatalogEntry())
+	dp.Cfg.Marketplace = mkt.config()
+	plugins.SharedBus(dp.Db).ResetSubscribers()
+
+	err = resolveAndInstallBasePlugin(t.Context(), dp, basePluginSpec{CanonicalType: "tax", Market: autoTaxCountry})
+	if err == nil {
+		t.Fatal("an unverifiable bundle must not install")
+	}
+	if errors.Is(err, errBasePluginRefused) || strings.Contains(err.Error(), "first-load") {
+		t.Fatalf("refusal must come from verification, not the dry ask: %v", err)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), autoTaxPluginID); active {
+		t.Fatal("must not be active")
+	}
+	if _, statErr := os.Stat(filepath.Join(paths.Plugins(), autoTaxPluginID)); statErr == nil {
+		t.Fatal("must not be on disk")
+	}
+}
+
+// R3: the pre-sandbox refusals never touch the sandbox (a call
+// that reached DryAskWasm would fail with a load error, not these messages).
+func TestTaxFirstLoadCheck_RefusesNonWasmAndModuleless(t *testing.T) {
+	tests := []struct {
+		name string
+		m    plugins.Manifest
+		want string
+	}{
+		{"binary runtime", plugins.Manifest{Runtime: "binary", Executable: "x"}, "cannot be sandboxed"},
+		{"empty runtime", plugins.Manifest{Executable: "x"}, "cannot be sandboxed"},
+		{"wasm, no module", plugins.Manifest{Runtime: "wasm"}, "no module named in the manifest"},
+		{"wasm, bare ./ entrypoint", plugins.Manifest{Runtime: "wasm", Entrypoint: "./"}, "no module named in the manifest"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := taxFirstLoadCheck(t.Context(), &common.Deps{}, &tc.m, t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// R2: the answer boundaries. Pinned to what the code does, including the
+// lenient `null` cases (core's reader treats rate <= 0 as no opinion).
+func TestValidTaxAskAnswer(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{"empty is a decline", ``, false},
+		{"whitespace is a decline", " \n\t ", false},
+		{"null", `null`, false},
+		{"empty object", `{}`, false},
+		{"no rate_bp", `{"other":1}`, false},
+		{"rate_bp null", `{"rate_bp":null}`, false},
+		{"rate_bp 0", `{"rate_bp":0}`, false},
+		{"rate_bp 1", `{"rate_bp":1}`, false},
+		{"rate_bp 10000", `{"rate_bp":10000}`, false},
+		{"rate_bp 10001", `{"rate_bp":10001}`, true},
+		{"rate_bp -1", `{"rate_bp":-1}`, true},
+		{"rate_bp float", `{"rate_bp":20.5}`, true},
+		{"rate_bp string", `{"rate_bp":"2000"}`, true},
+		{"rate_bp bool", `{"rate_bp":true}`, true},
+		// Core decodes into a struct, whose keys match case-insensitively.
+		{"RATE_BP upper-case out of range", `{"RATE_BP":99999}`, true},
+		{"duplicate keys differing in case, last wins", `{"rate_bp":5,"RATE_BP":99999}`, true},
+		{"array", `[]`, true},
+		{"string", `"str"`, true},
+		{"number", `5`, true},
+		{"not json", `not json`, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validTaxAskAnswer(json.RawMessage(tc.raw))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validTaxAskAnswer(%q) err=%v, wantErr=%v", tc.raw, err, tc.wantErr)
 			}
 		})
 	}
