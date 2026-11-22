@@ -61,7 +61,12 @@ type fakeBroker struct {
 	seq        []string
 	cancelCode int
 	cancelBody string
+	// onCall, when set, runs for every request before the answer is written
+	// (ut-docs#6908: a test cancels the request context from inside a call).
+	onCall func(path string)
 }
+
+func (b *fakeBroker) setOnCall(f func(path string)) { b.mu.Lock(); b.onCall = f; b.mu.Unlock() }
 
 func (b *fakeBroker) setSeq(s ...string) { b.mu.Lock(); b.seq = s; b.mu.Unlock() }
 func (b *fakeBroker) setCancel(code int, body string) {
@@ -101,7 +106,11 @@ func newFakeBroker(t *testing.T) *fakeBroker {
 			}
 		}
 		cc, cb := b.cancelCode, b.cancelBody
+		hook := b.onCall
 		b.mu.Unlock()
+		if hook != nil {
+			hook(r.URL.Path)
+		}
 		if strings.HasSuffix(r.URL.Path, "/session_cancel") {
 			if cc != 0 {
 				w.WriteHeader(cc)
@@ -202,11 +211,18 @@ func tapRigWith(t *testing.T, withReadersHook bool) *tapEnv {
 
 func (e *tapEnv) do(t *testing.T, u auth.User, method, path string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
+	return e.doCtx(t, context.Background(), u, method, path, form)
+}
+
+// doCtx is do on a caller-owned request context, so a test can cancel it
+// mid-request like a client that disconnects (ut-docs#6908).
+func (e *tapEnv) doCtx(t *testing.T, ctx context.Context, u auth.User, method, path string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
 	}
-	req := httptest.NewRequest(method, path, body)
+	req := httptest.NewRequest(method, path, body).WithContext(ctx)
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
