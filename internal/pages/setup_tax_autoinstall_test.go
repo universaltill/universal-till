@@ -86,6 +86,41 @@ func TestSetupGBJoin_AutoInstallsEligibleTaxPlugin(t *testing.T) {
 	}
 }
 
+// ADR-0172 §2/§8: with two eligible listings the till never picks one; it
+// installs nothing (no download, no chip) and leaves the prompted tile.
+func TestSetupGBJoin_TwoEligibleTaxListingsInstallNothing(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, d, stub, nonce := cloudWizard(t)
+	stub.set(200, gbCloudStoreAnswer)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	publishGBTax(t, mkt)
+	second := gbTaxCatalogEntry()
+	second.ID, second.ListingID, second.Name = "listing-tax-gb-2", "listing-tax-gb-2", "Other UK VAT"
+	mkt.setCatalog(gbTaxCatalogEntry(), second)
+	plugins.SharedBus(d.Db).ResetSubscribers()
+	initTestPaths(t)
+
+	doCloudPair(mux, nonce, nil)
+	d.Cfg.Marketplace = mkt.config()
+	rec := finalCloudPost(mux, nonce, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("join setup: code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+
+	if active, _ := data.NewPluginRepo(d.Db).PluginActive(t.Context(), gbTaxPluginID); active {
+		t.Fatal("two eligible tax listings: the till must not pick one")
+	}
+	if hits := mkt.downloadTokenHits(); hits != 0 {
+		t.Fatalf("no listing may be downloaded when the choice is ambiguous, got %d download-token hits", hits)
+	}
+	if st := loadTaxAutoInstallStatus(t.Context(), d); st != nil {
+		t.Fatalf("no chip when nothing is auto-installed, got %+v", st)
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), d); len(pending) != 0 {
+		t.Fatalf("nothing may stay pending, got %+v", pending)
+	}
+}
+
 // An offline join finishes setup with the spec pending; the retry installs
 // it once the till is online (ADR-0172 §3/§4).
 func TestSetupGBJoin_OfflineFinishesPendingThenRetryInstalls(t *testing.T) {
