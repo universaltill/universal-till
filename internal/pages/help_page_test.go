@@ -419,12 +419,12 @@ func TestHelpSupportPartnerTextNoBannedWords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	banned := regexp.MustCompile(`(?i)(suspend\w*|ended|winding|wind(ing)? down|paused|terminat\w*|reasons?|breach|commission|refund)`)
+	banned := regexp.MustCompile(`(?i)\b(suspend\w*|ended|winding|wind(ing)? down|paused|terminat\w*|reasons?|breach|commission|refund)\b`)
 	if m := banned.FindString(string(raw)); m != "" {
 		t.Errorf("support-partner help uses banned word %q", m)
 	}
 	// No promised contact: the house contact is unset until configured.
-	for _, w := range []string{"@", "http://", "tel:"} {
+	for _, w := range []string{"@", "://", "www.", "tel:"} {
 		if strings.Contains(string(raw), w) {
 			t.Errorf("support-partner help must not carry a contact detail (%q)", w)
 		}

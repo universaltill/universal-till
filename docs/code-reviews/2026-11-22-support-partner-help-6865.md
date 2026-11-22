@@ -29,6 +29,8 @@ Amendment 2026-11-20 sections 3, 5, 10; ADR-0003.
 - Offline-first (ADR-0003): static help text, nothing blocks checkout or sync;
   no new cloud-to-till field.
 
+- Fix round (Tester finding 1-2): the banned-word regex had backspace bytes instead of `\b` and could never fail; restored, and the contact check now rejects `://` and `www.`. Mutant proof in the PR.
+
 ## Tester
 
 (pending)
