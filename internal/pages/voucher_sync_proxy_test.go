@@ -44,6 +44,10 @@ import (
 type primaryCallLog struct {
 	mu    sync.Mutex
 	calls []string // "METHOD /path body"
+	// onCall, when set, runs after the primary has served each request, under
+	// no lock (ut-docs#6805: lets a test cancel the replica's request ctx at a
+	// precise point of the tender).
+	onCall func(*http.Request)
 }
 
 func (l *primaryCallLog) record(r *http.Request) {
@@ -81,6 +85,9 @@ func newRecordingVoucherPrimaryServer(t *testing.T, bearer string) (*httptest.Se
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.record(r)
 		mux.ServeHTTP(w, r)
+		if log.onCall != nil {
+			log.onCall(r)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv, dp, data.NewPOSRepo(dbase.DB), log
@@ -442,6 +449,52 @@ func TestPOSTender_CrossTillVoucherRedemption_LocalSaleFailureReleasesReservatio
 	}
 	if n := primaryRedemptionRows(t, primaryDp, "GS-REL"); n != 0 {
 		t.Fatalf("primary redemption rows after release = %d, want 0", n)
+	}
+}
+
+// ut-docs#6805: the release of a reservation is a compensating action; a
+// client that leaves after the primary reserved must not strand the debit.
+func TestPOSTender_CrossTillVoucher_ClientDisconnectAfterReserveStillReleases(t *testing.T) {
+	mux, dp := newVoucherTenderDeps(t)
+	primary, primaryDp, primaryRepo, calls := newRecordingVoucherPrimaryServer(t, "b-replica")
+	seedPrimaryVoucher(t, primaryRepo, "GS-REL", "", 2000)
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-replica")
+	if _, err := dp.Db.Exec(`ALTER TABLE payments RENAME COLUMN voucher_id TO voucher_id_disabled`); err != nil {
+		t.Fatalf("rename payments.voucher_id: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls.onCall = func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/redeem") {
+			cancel() // the client leaves right after the primary reserved
+		}
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("scan item: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"voucher","amount":300,"voucher_id":"GS-REL"}]}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 0 {
+		t.Fatalf("sales = %d, want 0 (the local sale was made to fail)", n)
+	}
+	var sawRelease bool
+	for _, c := range calls.all() {
+		if strings.HasPrefix(c, "POST /api/sync/vouchers/GS-REL/release ") {
+			sawRelease = true
+		}
+	}
+	if !sawRelease {
+		t.Fatalf("the reservation must be released despite the disconnect\ncalls: %v", calls.all())
+	}
+	pv, err := primaryRepo.GetVoucherBalance(context.Background(), nil, "GS-REL")
+	if err != nil || pv.BalanceMinor != 2000 {
+		t.Fatalf("primary balance = %d (err %v), want 2000 (released)", pv.BalanceMinor, err)
+	}
+	if n := primaryRedemptionRows(t, primaryDp, "GS-REL"); n != 0 {
+		t.Fatalf("primary redemption rows = %d, want 0", n)
 	}
 }
 

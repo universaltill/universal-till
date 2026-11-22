@@ -78,6 +78,11 @@ func seedCardPluginWithAnswerFunc(t *testing.T, dp *common.Deps, refundErr error
 				// answer runs outside mu so a test's answer may block (a
 				// reader waiting on the customer) without stalling refunds.
 				a := answer(n)
+				// ut-docs#6805: like a real WASM guest (WithCloseOnContextDone), a
+				// handler whose ctx is gone fails instead of approving.
+				if cerr := ctx.Err(); cerr != nil {
+					return nil, cerr
+				}
 				// Test markers: a plain decline, or a plugin that exited
 				// non-zero printing decline_code outcome_unknown (#6600).
 				if a == "DECLINE" {
@@ -140,7 +145,14 @@ func subscribeCannotSignSigner(t *testing.T, dp *common.Deps) {
 
 func postTender(t *testing.T, mux *http.ServeMux, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body))
+	return postTenderCtx(t, mux, context.Background(), body)
+}
+
+// postTenderCtx is postTender on a caller-owned request context, so a test can
+// cancel it mid-request like a client that disconnects (ut-docs#6805).
+func postTenderCtx(t *testing.T, mux *http.ServeMux, ctx context.Context, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
