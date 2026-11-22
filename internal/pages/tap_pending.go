@@ -230,6 +230,10 @@ func renderTapBasket(w http.ResponseWriter, r *http.Request, d *common.Deps, pan
 	_ = view.Render(w, b)
 }
 
+// nativeResolveTimeout bounds the wait for the phone shell's answer, which
+// runs on a detached ctx (ut-docs#6908).
+var nativeResolveTimeout = 15 * time.Second
+
 // tapUnlock settles a leg the broker says was not paid: its attempt row is
 // closed, earlier captured legs are returned, and the next try mints a new
 // attempt key. Reports whether it unlocked.
@@ -317,19 +321,25 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "pending", Method: leg.MethodID, Amount: leg.Amount, Reason: leg.TapReason, Still: true}, http.StatusOK)
 			return
 		}
-		f := tapAssess(r.Context(), d, leg)
+		// ut-docs#6908 (rule of #6805/#6784): from the first broker ask on, the
+		// decision and its compensations (cancel, reversal, attempt write, audit,
+		// native release) run detached; a dropped connection must not corrupt the
+		// facts or lose the reversal. Bounded: paybroker.Timeout, the plugin call
+		// timeout, nativeResolveTimeout.
+		ctx := context.WithoutCancel(r.Context())
+		f := tapAssess(ctx, d, leg)
 		repo := data.NewPaymentAttemptRepo(d.Db)
 		if f.Verdict == tapPending && cancel && f.HaveRow && f.BrokerOK && f.Reason == pos.PendingNotConfirmed {
 			// "Cancel this payment": a payment the broker holds in no
 			// confirmable state is cancelled there before the till lets go.
-			if err := pos.TapBrokerCancel(r.Context(), f.Attempt); err == nil {
-				f = tapAssess(r.Context(), d, leg)
+			if err := pos.TapBrokerCancel(ctx, f.Attempt); err == nil {
+				f = tapAssess(ctx, d, leg)
 			}
 		}
-		f = tapCancelThenAssess(r.Context(), d, f)
+		f = tapCancelThenAssess(ctx, d, f)
 		switch f.Verdict {
 		case tapPaid:
-			conf, err := pos.ConfirmTap(r.Context(), repo, leg.RequestID)
+			conf, err := pos.ConfirmTap(ctx, repo, leg.RequestID)
 			var pe *pos.PaymentPendingError
 			switch {
 			case err == nil:
@@ -338,16 +348,16 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 				d.Engine.MarkTapPaid(leg.RequestID, f.Attempt.CardBrand, f.Attempt.Last4)
 			default:
 				f.Verdict, f.Reason = tapPending, pendingReasonOf(err)
-				tapNote(r.Context(), d, f)
+				tapNote(ctx, d, f)
 				renderTapBasket(w, r, d, nil, http.StatusOK)
 				return
 			}
 			renderTapBasket(w, r, d, nil, http.StatusOK)
 		case tapNotPaid:
-			tapUnlock(r.Context(), d, leg, data.AttemptCancelled, "not_paid")
+			tapUnlock(ctx, d, leg, data.AttemptCancelled, "not_paid")
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "not_paid", Method: leg.MethodID, Amount: leg.Amount}, http.StatusOK)
 		default:
-			tapNote(r.Context(), d, f)
+			tapNote(ctx, d, f)
 			p := &pos.TapPanel{State: "pending", Method: leg.MethodID, Amount: leg.Amount, Reason: f.Reason, Still: true}
 			renderTapBasket(w, r, d, p, http.StatusOK)
 		}
@@ -402,7 +412,13 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, httpx.T(locale, "tap.resolve.bad_choice"), http.StatusBadRequest)
 			return
 		}
-		f := tapAssess(r.Context(), d, leg)
+		// ut-docs#6908 (rule of #6805/#6784): from the first broker ask on, the
+		// decision and its compensations (cancel, reversal, attempt write, audit,
+		// native release) run detached; a dropped connection must not corrupt the
+		// facts or lose the reversal. Bounded: paybroker.Timeout, the plugin call
+		// timeout, nativeResolveTimeout.
+		ctx := context.WithoutCancel(r.Context())
+		f := tapAssess(ctx, d, leg)
 		repo := data.NewPaymentAttemptRepo(d.Db)
 		refuse := func(status int, key string) {
 			http.Error(w, httpx.T(locale, key), status)
@@ -429,17 +445,17 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			if f.Status.AmountReceivedMinor != 0 {
 				p["received_minor"] = f.Status.AmountReceivedMinor
 			}
-			settingsAudit(r, data.NewPOSRepo(d.Db), elev, "payment_attempt", leg.RequestID, "tap_resolve", p)
+			settingsAudit(r.WithContext(ctx), data.NewPOSRepo(d.Db), elev, "payment_attempt", leg.RequestID, "tap_resolve", p)
 		}
 		if decision == "not_charged" {
 			// Close the PaymentIntent before letting go; a cancel that finds
 			// it paid turns the verdict to paid and the choice is refused.
-			f = tapCancelThenAssess(r.Context(), d, f)
+			f = tapCancelThenAssess(ctx, d, f)
 		}
 		override := !f.BrokerOK || f.Verdict == tapPending
 		switch {
 		case f.Verdict == tapPaid && decision == "approve":
-			conf, err := pos.ConfirmTap(r.Context(), repo, leg.RequestID)
+			conf, err := pos.ConfirmTap(ctx, repo, leg.RequestID)
 			var pe *pos.PaymentPendingError
 			if err != nil && !(errors.As(err, &pe) && pe.Reason == pos.PendingAlreadySettled) {
 				refuse(http.StatusConflict, "tap.pending.still")
@@ -447,7 +463,7 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			}
 			d.Engine.MarkTapPaid(leg.RequestID, conf.CardBrand, conf.Last4)
 			audit("broker", "approved")
-			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeCharged)
+			tellNativeResolver(ctx, r, f, devicepay.OutcomeCharged)
 		case f.Verdict == tapPaid, f.Verdict == tapMismatch && decision != "override":
 			// A wrong "not charged" double-charges: refused while the broker
 			// says paid. A mismatch can only be accepted by override.
@@ -457,15 +473,15 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			if needReason() {
 				return
 			}
-			settleOverrideApproved(r.Context(), repo, f)
+			settleOverrideApproved(ctx, repo, f)
 			brand, last4 := pos.SafeCardFacts(f.Status.CardBrand, f.Status.Last4)
 			d.Engine.MarkTapPaid(leg.RequestID, brand, last4)
 			audit("manager_override", "approved_mismatch")
-			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeCharged)
+			tellNativeResolver(ctx, r, f, devicepay.OutcomeCharged)
 		case f.Verdict == tapNotPaid && decision == "not_charged":
-			tapUnlock(r.Context(), d, leg, data.AttemptResolvedNotCharged, "manager_resolved")
+			tapUnlock(ctx, d, leg, data.AttemptResolvedNotCharged, "manager_resolved")
 			audit("broker", "not_charged")
-			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeNotCharged)
+			tellNativeResolver(ctx, r, f, devicepay.OutcomeNotCharged)
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "not_paid", Method: leg.MethodID, Amount: leg.Amount}, http.StatusOK)
 			return
 		case f.Verdict == tapNotPaid:
@@ -475,19 +491,19 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			if needReason() {
 				return
 			}
-			tapUnlock(r.Context(), d, leg, data.AttemptResolvedNotCharged, "manager_override")
+			tapUnlock(ctx, d, leg, data.AttemptResolvedNotCharged, "manager_override")
 			audit("manager_override", "not_charged")
-			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeNotCharged)
+			tellNativeResolver(ctx, r, f, devicepay.OutcomeNotCharged)
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "not_paid", Method: leg.MethodID, Amount: leg.Amount}, http.StatusOK)
 			return
 		case override:
 			if needReason() {
 				return
 			}
-			settleOverrideApproved(r.Context(), repo, f)
+			settleOverrideApproved(ctx, repo, f)
 			d.Engine.MarkTapPaid(leg.RequestID, f.Attempt.CardBrand, f.Attempt.Last4)
 			audit("manager_override", "approved_without_broker")
-			tellNativeResolver(r.Context(), r, f, devicepay.OutcomeCharged)
+			tellNativeResolver(ctx, r, f, devicepay.OutcomeCharged)
 		default:
 			refuse(http.StatusConflict, "tap.resolve.bad_choice")
 			return
@@ -536,6 +552,10 @@ func tellNativeResolver(ctx context.Context, r *http.Request, f tapFacts, outcom
 	if u, ok := auth.FromContext(r.Context()); ok {
 		who = u
 	}
+	// The caller's ctx is detached from the request, so the wait for a
+	// wedged shell needs its own bound (ut-docs#6908).
+	ctx, cancel := context.WithTimeout(ctx, nativeResolveTimeout)
+	defer cancel()
 	res := devicepay.Resolve(ctx, who, f.Attempt.Provider, f.Leg.RequestID, outcome)
 	if res.Reason != "" && res.Reason != devicepay.ReasonNotForeground {
 		logging.L().Warnf("tap resolve: native resolver answered %q", res.Reason)
