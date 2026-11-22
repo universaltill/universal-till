@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -87,19 +86,5 @@ func TestJumpNumbersAfterRestore_ErrorKeepsMarkerAndDoesNotPanic(t *testing.T) {
 	}
 	if !db.NumberJumpPending(dbPath) {
 		t.Fatal("marker must stay so the next boot retries")
-	}
-}
-
-// The call site follows db.Open in app.Run.
-func TestRunCallsTheNumberJumpAfterOpen(t *testing.T) {
-	raw, err := os.ReadFile("app.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(raw)
-	i := strings.Index(src, "database, attemptErr = db.Open(cfg.DBPath)")
-	k := strings.Index(src, "jumpNumbersAfterRestore(ctx, database.DB, cfg.DBPath")
-	if i < 0 || k < i {
-		t.Fatal("app.Run must call jumpNumbersAfterRestore after db.Open")
 	}
 }

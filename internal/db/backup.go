@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -566,7 +567,8 @@ func RecoverInterruptedRestore(dbPath string) (bool, error) {
 }
 
 // numberJumpPendingName is the marker file ApplyPendingRestore leaves next to
-// the DB when a backup restore was applied: receipt and Z numbers still owe
+// the DB when a backup restore was applied, or OweNumberJump when a restore was
+// detected at boot (ut-docs#6294): receipt and Z numbers still owe
 // their jump (data.POSRepo.JumpNumbersAfterRestore). The file, not the
 // in-memory restoreApplied flag, is what survives a crash after the swap.
 const numberJumpPendingName = "restore-numbers-pending"
@@ -604,14 +606,16 @@ func NumberJumpToken(dbPath string) string {
 	return "mtime-" + fi.ModTime().UTC().Format(time.RFC3339Nano)
 }
 
-// writeNumberJumpPending records the owed jump with a fresh token, synced to
-// disk like the swap journal so the renames that follow cannot outlive it.
-func writeNumberJumpPending(dbPath string) error {
-	f, err := os.OpenFile(numberJumpPendingPath(dbPath), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+// writeNumberJumpMarker writes token to the marker file, synced to disk like
+// the swap journal so the renames that follow cannot outlive it. flag is
+// os.O_TRUNC (a staged restore: always a fresh token) or os.O_EXCL (keep a
+// marker that is already there).
+func writeNumberJumpMarker(dbPath, token string, flag int) error {
+	f, err := os.OpenFile(numberJumpPendingPath(dbPath), os.O_CREATE|os.O_WRONLY|flag, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(time.Now().UTC().Format(time.RFC3339Nano) + "\n"); err != nil {
+	if _, err := f.WriteString(token + "\n"); err != nil {
 		f.Close()
 		return err
 	}
@@ -620,6 +624,72 @@ func writeNumberJumpPending(dbPath string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// writeNumberJumpPending records the owed jump with a fresh token.
+func writeNumberJumpPending(dbPath string) error {
+	return writeNumberJumpMarker(dbPath, time.Now().UTC().Format(time.RFC3339Nano), os.O_TRUNC)
+}
+
+// OweNumberJump records that this DB owes the receipt/Z number jump under
+// token: a data folder restored onto a new install (ut-docs#6294). A marker
+// already there is kept with its token, since it names the same or an earlier
+// restore that has not jumped yet and one jump covers both. The exception is a
+// spent marker: applied reports whether a token is the one the DB already
+// jumped under (nil: never), and a marker carrying such a token (the original
+// till's clear failed or a snapshot caught the window, and the folder was
+// restored with it) is replaced by token, since keeping it would make the jump
+// a no-op. A failed write removes the partial file: an empty marker would fall
+// back to an unstable mtime token.
+func OweNumberJump(dbPath, token string, applied func(token string) bool) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("owe number jump: empty token")
+	}
+	err := writeNumberJumpMarker(dbPath, token, os.O_EXCL)
+	if errors.Is(err, fs.ErrExist) {
+		if applied != nil && applied(NumberJumpToken(dbPath)) {
+			return replaceNumberJumpMarker(dbPath, token)
+		}
+		return nil
+	}
+	if err != nil {
+		_ = os.Remove(numberJumpPendingPath(dbPath))
+		return err
+	}
+	return nil
+}
+
+// replaceNumberJumpMarker atomically swaps the marker's content: a synced temp
+// file in the same directory, renamed over it, so a crash leaves the old or the
+// new marker whole.
+func replaceNumberJumpMarker(dbPath, token string) error {
+	path := numberJumpPendingPath(dbPath)
+	f, err := os.CreateTemp(filepath.Dir(path), numberJumpPendingName+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	fail := func(err error) error {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := f.WriteString(token + "\n"); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // ClearNumberJumpPending drops the marker once the jump is recorded.

@@ -45,7 +45,7 @@ func TestReplay_OriginalEntriesStampedAheadOfTheCopyKeepTheirRegister(t *testing
 
 	// The reset rewrites enroll's process-wide identity: put it back after.
 	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
-	if !enroll.CheckRestoredInstall(ctx, &config.Config{}, s.till.Settings, repo.NewestLocalJournalEntryAt) {
+	if !enroll.CheckRestoredInstall(ctx, &config.Config{}, s.till.Settings, repo.NewestLocalJournalEntryAt, nil) {
 		t.Fatal("want the restore detected")
 	}
 	// Entries the copy makes after the restore carry the (clock-skewed) copy
