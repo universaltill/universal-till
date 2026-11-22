@@ -8342,6 +8342,7 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 .card-reader-main { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 12rem; }
 .card-reader-name { font-weight: 700; overflow-wrap: anywhere; }
 .card-reader-kind { font-size: .85rem; overflow-wrap: anywhere; }
+.card-reader-offline { font-size: .85rem; overflow-wrap: anywhere; }
 .card-reader-state { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; white-space: nowrap; }
 .card-reader-state[data-state="offline"], .card-reader-state[data-state="needs_setup"] { color: var(--danger); }
 .card-reader-icon { flex: none; }

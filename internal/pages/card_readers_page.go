@@ -37,6 +37,17 @@ type readerPickerRow struct {
 	Selectable   bool   `json:"selectable"`
 	Default      bool   `json:"default"`
 	LastUsed     bool   `json:"last_used"` // a payment was taken on this reader (the "Last used" tag needs it)
+	OfflineKey   string `json:"-"`         // i18n key of the offline note (template only)
+}
+
+// readerOfflineKey is the picker's offline note for a reader kind (ADR-0205
+// §1 "Offline column"). Only external works without internet; every other
+// kind, and any unknown one, needs internet (never claim offline by mistake).
+func readerOfflineKey(kind string) string {
+	if kind == data.CardReaderKindExternal {
+		return "card_reader.offline.external"
+	}
+	return "card_reader.offline.needs_internet"
 }
 
 // readerPickerView is what the picker fragment and its JSON twin carry.
@@ -153,7 +164,7 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 			a = cardreaders.Answer{State: cardreaders.Busy, Reason: "reader_busy"}
 		}
 		row := readerPickerRow{
-			ID: c.ID, Name: c.Name, Method: c.MethodKey, ProviderName: names[c.MethodKey], Kind: c.Kind,
+			ID: c.ID, Name: c.Name, Method: c.MethodKey, ProviderName: names[c.MethodKey], Kind: c.Kind, OfflineKey: readerOfflineKey(c.Kind),
 			State: string(a.State), Reason: reasonKeyFor(a.State, a.Reason), Selectable: a.State.Selectable(),
 			LastUsed: c.LastUsedAt != "",
 		}
@@ -217,9 +228,12 @@ type readerSettingsRow struct {
 	data.CardReader
 	ProviderName string // translator key
 	KindKey      string
-	NeedsUpdate  bool   // plugin lacks the readers hook: listed read-only
-	LegacyKey    string // plugin setting that would be cleared on remove ("" = none)
-	PluginName   string
+	NeedsUpdate  bool // plugin lacks the readers hook: listed read-only
+	// UnattendedAllowed: the kiosk-default checkbox is offered (ticking it
+	// would succeed). A row already ticked still shows it so it can be cleared.
+	UnattendedAllowed bool
+	LegacyKey         string // plugin setting that would be cleared on remove ("" = none)
+	PluginName        string
 }
 
 type readerProviderOption struct{ Key, Name string }
@@ -264,7 +278,7 @@ func buildReaderSettings(ctx context.Context, d *common.Deps) (readerSettingsVie
 	}
 	seenUpdate := map[string]bool{}
 	for _, c := range rows {
-		row := readerSettingsRow{CardReader: c, ProviderName: label[c.MethodKey], KindKey: "card_reader.kind." + c.Kind, PluginName: pluginName[c.MethodKey]}
+		row := readerSettingsRow{CardReader: c, ProviderName: label[c.MethodKey], KindKey: "card_reader.kind." + c.Kind, PluginName: pluginName[c.MethodKey], UnattendedAllowed: data.CardReaderUnattendedAllowed(c.Kind)}
 		if !hook[c.MethodKey] {
 			row.NeedsUpdate = true
 			if !seenUpdate[c.MethodKey] {

@@ -42,7 +42,7 @@
                 hx-post="/settings/card-readers/{{ .ID }}" hx-vals='{{ jsonVals "move" "up" }}' hx-target="#card-reader-settings-body" hx-swap="outerHTML">▲</button>
         <button class="btn secondary" type="button" data-testid="card-reader-down" aria-label="{{ T "card_reader.settings.move_down" }}: {{ .Name }}"
                 hx-post="/settings/card-readers/{{ .ID }}" hx-vals='{{ jsonVals "move" "down" }}' hx-target="#card-reader-settings-body" hx-swap="outerHTML">▼</button>
-        {{ if and (not .NeedsUpdate) (ne .Kind "tap_to_pay") }}
+        {{ if and (not .NeedsUpdate) (or .UnattendedAllowed .UnattendedDefault) }}
         <label>
           <input type="checkbox" data-testid="card-reader-unattended" {{ if .UnattendedDefault }}checked{{ end }}
                  hx-post="/settings/card-readers/{{ .ID }}" hx-vals='{{ if .UnattendedDefault }}{{ jsonVals "unattended" "0" }}{{ else }}{{ jsonVals "unattended" "1" }}{{ end }}' hx-trigger="change"

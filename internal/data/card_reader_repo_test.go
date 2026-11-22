@@ -30,6 +30,10 @@ func newCardReaderTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("read migration 112: %v", err)
 	}
+	tr, err := os.ReadFile("../db/migrations/114_card_readers_transport.sql")
+	if err != nil {
+		t.Fatalf("read migration 114: %v", err)
+	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', installed_sha256 TEXT);`,
@@ -37,6 +41,7 @@ func newCardReaderTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE plugin_settings (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', scope_id TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (plugin_id, key, scope, scope_id));`,
 		string(mig),
 		string(cred),
+		string(tr),
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -214,6 +219,7 @@ func TestCreate_Validation(t *testing.T) {
 		{"leading dot ref", func(c *CardReader) { c.Name = "X"; c.ReaderRef = ".tmr_1" }, ErrCardReaderRef},
 		{"duplicate ref", func(c *CardReader) { c.Name = "X"; c.ReaderRef = "tmr_1" }, ErrCardReaderRef},
 		{"bad kind", func(c *CardReader) { c.Name = "X"; c.ReaderRef = "tmr_3"; c.Kind = "wormhole" }, ErrCardReaderKind},
+		{"retired bluetooth kind", func(c *CardReader) { c.Name = "X"; c.ReaderRef = "tmr_4"; c.Kind = "bluetooth" }, ErrCardReaderKind},
 	}
 	for _, tc := range cases {
 		c := base
@@ -329,5 +335,169 @@ func TestRenameAndMove(t *testing.T) {
 	}
 	if err := repo.Rename(ctx, "nope", "Z"); !errors.Is(err, ErrCardReaderNotFound) {
 		t.Fatalf("rename of unknown id: %v", err)
+	}
+}
+
+// ---- ut-docs#6756 (ADR-0205 §1, §5): kind/transport pairs ----
+
+var (
+	allKinds      = []string{"cloud", "sdk", "tap_to_pay", "phone", "external", "bluetooth", "", "wormhole"}
+	allTransports = []string{"internet", "bluetooth", "usb", "device_own", "none", "serial", ""}
+	allowedPairs  = map[[2]string]bool{
+		{"cloud", "internet"}: true, {"sdk", "bluetooth"}: true, {"sdk", "usb"}: true, {"sdk", "internet"}: true,
+		{"tap_to_pay", "device_own"}: true, {"phone", "internet"}: true, {"external", "none"}: true,
+	}
+)
+
+func TestValidCardReaderPair_Table(t *testing.T) {
+	for _, k := range allKinds {
+		for _, tr := range allTransports {
+			if got, want := ValidCardReaderPair(k, tr), allowedPairs[[2]string{k, tr}]; got != want {
+				t.Errorf("ValidCardReaderPair(%q,%q) = %v, want %v", k, tr, got, want)
+			}
+		}
+	}
+}
+
+func TestCreate_KindTransportPairs(t *testing.T) {
+	ctx := context.Background()
+	db := newCardReaderTestDB(t)
+	repo := NewCardReaderRepo(db)
+	n := 0
+	for _, k := range allKinds {
+		for _, tr := range allTransports {
+			n++
+			kind, want := k, tr
+			if kind == "" {
+				kind = CardReaderKindCloud
+			}
+			if want == "" {
+				want = defaultCardReaderTransport(kind)
+			}
+			ok := ValidCardReaderPair(kind, want)
+			var before int
+			_ = db.QueryRow(`SELECT COUNT(*) FROM card_readers`).Scan(&before)
+			c, err := repo.Create(ctx, CardReader{Name: fmt.Sprintf("R%d", n), MethodKey: "m", PluginID: "p", ReaderRef: fmt.Sprintf("ref%d", n), Kind: k, Transport: tr})
+			var after int
+			_ = db.QueryRow(`SELECT COUNT(*) FROM card_readers`).Scan(&after)
+			if ok {
+				if err != nil || c.Transport != want || c.Kind != kind {
+					t.Errorf("%q/%q: got %+v err %v, want %s/%s", k, tr, c, err, kind, want)
+				}
+				// keep the active-row cap out of the way
+				if c.ID != "" {
+					if _, err := repo.SoftRemove(ctx, c.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				continue
+			}
+			// An unknown kind is ErrCardReaderKind itself; a known kind with the
+			// wrong connection is ErrCardReaderTransport (which is ErrCardReaderKind).
+			if !errors.Is(err, ErrCardReaderKind) || knownCardReaderKind(kind) != errors.Is(err, ErrCardReaderTransport) {
+				t.Errorf("%q/%q: err = %v, want ErrCardReaderTransport only for a known kind (always ErrCardReaderKind)", k, tr, err)
+			}
+			if after != before {
+				t.Errorf("%q/%q: a refused create wrote a row", k, tr)
+			}
+		}
+	}
+	// defaults
+	for kind, want := range map[string]string{"cloud": "internet", "tap_to_pay": "device_own", "phone": "internet", "external": "none"} {
+		if got := defaultCardReaderTransport(kind); got != want {
+			t.Errorf("default transport of %s = %q, want %q", kind, got, want)
+		}
+	}
+	if defaultCardReaderTransport("sdk") != "" || defaultCardReaderTransport("zzz") != "" {
+		t.Errorf("sdk and unknown kinds have no default transport")
+	}
+}
+
+func TestCreate_EmptyKindIsCloudInternet(t *testing.T) {
+	ctx := context.Background()
+	repo := NewCardReaderRepo(newCardReaderTestDB(t))
+	c, err := repo.Create(ctx, CardReader{Name: "A", MethodKey: "m", PluginID: "p", ReaderRef: "r1"})
+	if err != nil || c.Kind != CardReaderKindCloud || c.Transport != CardReaderTransportInternet {
+		t.Fatalf("got %+v %v", c, err)
+	}
+}
+
+func TestCreate_ReviveClearsBindingAndSetsTransport(t *testing.T) {
+	ctx := context.Background()
+	db := newCardReaderTestDB(t)
+	repo := NewCardReaderRepo(db)
+	a, err := repo.Create(ctx, CardReader{Name: "S", MethodKey: "m", PluginID: "p", ReaderRef: "r1", Kind: CardReaderKindSDK, Transport: CardReaderTransportBluetooth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExecCR(t, db, `UPDATE card_readers SET device_serial='SN123', bound_at='2026-11-01 10:00:00' WHERE id=?`, a.ID)
+	if _, err := repo.SoftRemove(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.Create(ctx, CardReader{Name: "S2", MethodKey: "m", PluginID: "p", ReaderRef: "r1", Kind: CardReaderKindSDK, Transport: CardReaderTransportUSB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.ID != a.ID || b.Transport != CardReaderTransportUSB || b.DeviceSerial != "" || b.BoundAt != "" {
+		t.Fatalf("revive must set the transport and clear the binding: %+v", b)
+	}
+}
+
+func TestMigrateLegacyReaderSettings_RowsAreCloudInternet(t *testing.T) {
+	ctx := context.Background()
+	db := newCardReaderTestDB(t)
+	seedReaderPlugin(t, db, "p.stripe", "stripe", "Stripe", "stripe_reader_id", `"tmr_1"`, "register")
+	repo := NewCardReaderRepo(db)
+	if n, err := repo.MigrateLegacyReaderSettings(ctx); err != nil || n != 1 {
+		t.Fatalf("migrate = %d %v", n, err)
+	}
+	rows, _ := repo.ListActive(ctx)
+	if len(rows) != 1 || rows[0].Kind != CardReaderKindCloud || rows[0].Transport != CardReaderTransportInternet {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestUnattendedDefault_RefusesSDKAndExternal(t *testing.T) {
+	ctx := context.Background()
+	db := newCardReaderTestDB(t)
+	repo := NewCardReaderRepo(db)
+	mk := func(name, ref, kind, tr string) CardReader {
+		c, err := repo.Create(ctx, CardReader{Name: name, MethodKey: "m", PluginID: "p", ReaderRef: ref, Kind: kind, Transport: tr})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for _, c := range []CardReader{mk("S", "r1", "sdk", "bluetooth"), mk("E", "r2", "external", "")} {
+		if err := repo.SetUnattendedDefault(ctx, c.ID, true); !errors.Is(err, ErrCardReaderKind) {
+			t.Errorf("%s: err = %v, want ErrCardReaderKind", c.Kind, err)
+		}
+		if g, _ := repo.Get(ctx, c.ID); g.UnattendedDefault {
+			t.Errorf("%s: flag must stay 0", c.Kind)
+		}
+	}
+	for _, c := range []CardReader{mk("C", "r3", "cloud", ""), mk("P", "r4", "phone", "")} {
+		if err := repo.SetUnattendedDefault(ctx, c.ID, true); err != nil {
+			t.Errorf("%s: %v", c.Kind, err)
+		}
+	}
+}
+
+func TestGet_ReadsSerialAndBoundAt(t *testing.T) {
+	ctx := context.Background()
+	db := newCardReaderTestDB(t)
+	repo := NewCardReaderRepo(db)
+	a, _ := repo.Create(ctx, CardReader{Name: "A", MethodKey: "m", PluginID: "p", ReaderRef: "r1"})
+	if a.DeviceSerial != "" || a.BoundAt != "" {
+		t.Fatalf("NULL must read as empty: %+v", a)
+	}
+	mustExecCR(t, db, `UPDATE card_readers SET device_serial='SN9', bound_at='2026-11-01 10:00:00' WHERE id=?`, a.ID)
+	g, err := repo.Get(ctx, a.ID)
+	if err != nil || g.DeviceSerial != "SN9" || g.BoundAt != "2026-11-01 10:00:00" {
+		t.Fatalf("Get = %+v %v", g, err)
+	}
+	l, _ := repo.ListActive(ctx)
+	if len(l) != 1 || l[0].DeviceSerial != "SN9" {
+		t.Fatalf("ListActive = %+v", l)
 	}
 }
