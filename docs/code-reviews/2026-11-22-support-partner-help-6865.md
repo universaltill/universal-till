@@ -33,8 +33,47 @@ Amendment 2026-11-20 sections 3, 5, 10; ADR-0003.
 
 ## Tester
 
-(pending)
+Verdict: PASS WITH FINDINGS (notes-6865/08-tester-pr3.md), on head 33fda17.
+
+- Text equals the Architect's wording; no contact, URL, phone or banned word;
+  nothing says checkout or sync is blocked.
+- Real drive: till built from the PR tree, topic served 200 on a registered and
+  an unregistered till; the section renders between "What changes" and
+  "Selling is not affected", no raw markdown; de, tr, ar, fa render in their own
+  text without the English section (decision 6). Checked at desktop and phone
+  width, and RTL.
+- Guards: help-topics, help-drift, help-breadcrumbs, help-terms,
+  compliance-claims, competitor-naming and mail-addresses all pass.
+- CI green on GitHub runners, including test-heavy for internal/pages. The full
+  package times out in WSL even on clean main, so no local full-package green is
+  claimed.
+- Findings fixed in 8f59fe8: (1) HIGH, the banned-word regex held backspace
+  bytes instead of the word boundary and could never fail; (2) MEDIUM, "https://"
+  was not caught.
+- Mutation results after the fix: suspended, ended, winding down, reason,
+  paused, https://, www., an email and tel: all turn the test red; "extended"
+  stays green; removing the section or renaming its heading turns the section
+  test red.
+- Accepted LOW: invented phone number, "contact is shown" promise and
+  checkout/sync-blocked wording are semantic and stay a human read. The other
+  locales lack the section by owner decision 6.
 
 ## Reviewer
 
-(pending)
+Verdict: APPROVE, no blocking findings (notes-6865/12-reviewer-pr3.md), on head
+8f59fe8.
+
+- Re-verified personally: text identical to the Architect's and consistent with
+  the merged my. copy; 0 control bytes in the touched files; real word boundary
+  on the regex line; WSL runs of the Help, Manual and OwnerExcluded tests and
+  the manual package pass; go vet clean; guards exit 0; mutants rerun clean; CI
+  green on the new head.
+- Independent different-model review (Sonnet 5.5): no blocking findings; the
+  topic is embedded, the regex is valid, the tests are not vacuous.
+- Accepted LOW findings, no fix required: semantic rules not regex-testable;
+  de/tr/ar/fa follow via Weblate (ADR-0160).
+- Optional banned-word extension (stopp, temporar, permanent) was considered and
+  not taken: "stopping" is legitimate wording elsewhere, and the current text
+  has none of these.
+- Outside this PR: Legal sign-off of the wording, due before the #6277 go-live
+  (owner decision 1).
