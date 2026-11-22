@@ -85,10 +85,12 @@ func readLiveNumbers(dbPath, prefix string) (ln liveNumbers, maximaErr, err erro
 	ln.receiptFloorPrefix = floorPrefix
 	ln.hasReceiptFloor = haveF && haveFP
 
-	if m, merr := liveReceiptMax(ld, prefix); merr != nil {
+	// A partial result still counts: each source that could be read is a
+	// real lower bound (6293 review L1).
+	m, merr := liveReceiptMax(ld, prefix)
+	ln.receiptMax = m
+	if merr != nil {
 		maximaErr = merr
-	} else {
-		ln.receiptMax = m
 	}
 	if zm, zerr := liveZMax(ld); zerr != nil {
 		if maximaErr == nil {
@@ -124,9 +126,11 @@ func readFloorRows(q interface {
 // liveReceiptMax mirrors data.maxReceiptSeq plus the stored receipt counter
 // (data.seriesLast) under prefix: the highest receipt counter the till has
 // issued there. TestLiveNumberMaximaMirrorData pins it to the data
-// definition through JumpNumbersAfterRestore.
+// definition through JumpNumbersAfterRestore. A source that cannot be read
+// is skipped and reported in the error; top is the highest of the rest.
 func liveReceiptMax(q *sql.DB, prefix string) (int64, error) {
 	var top int64
+	var errs []error
 	for _, tbl := range []string{"sales", "sales_archive"} {
 		var v sql.NullInt64
 		var err error
@@ -138,7 +142,8 @@ func liveReceiptMax(q *sql.DB, prefix string) (int64, error) {
 				` WHERE receipt_no LIKE ? || '%'`, len(prefix)+1, prefix).Scan(&v)
 		}
 		if err != nil {
-			return 0, fmt.Errorf("max receipt in %s: %w", tbl, err)
+			errs = append(errs, fmt.Errorf("max receipt in %s: %w", tbl, err))
+			continue
 		}
 		if v.Valid && v.Int64 > top {
 			top = v.Int64
@@ -147,12 +152,12 @@ func liveReceiptMax(q *sql.DB, prefix string) (int64, error) {
 	var last int64
 	err := q.QueryRow(`SELECT last FROM number_series WHERE kind = 'receipt' AND series = ?`, prefix).Scan(&last)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("receipt counter: %w", err)
+		errs = append(errs, fmt.Errorf("receipt counter: %w", err))
 	}
 	if err == nil && last > top {
 		top = last
 	}
-	return top, nil
+	return top, errors.Join(errs...)
 }
 
 // liveZMax is the highest numbered Z per report kind.

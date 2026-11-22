@@ -532,3 +532,27 @@ func TestRestoreFloorKeysMirrorData(t *testing.T) {
 		t.Fatal("restore floor key constants drifted from internal/data")
 	}
 }
+
+// A source that cannot be read must not throw away the others (6293 review
+// L1): the stored counter still bounds the receipts when sales is broken.
+func TestLiveReceiptMaxKeepsReadableSources(t *testing.T) {
+	path := testDBPath(t)
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO number_series (kind, series, last) VALUES ('receipt', '', 42000)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`ALTER TABLE sales RENAME TO sales_gone`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := liveReceiptMax(d.DB, "")
+	if err == nil {
+		t.Fatal("want an error naming the unreadable sales table")
+	}
+	if got != 42000 {
+		t.Fatalf("liveReceiptMax = %d, want 42000 from the counter", got)
+	}
+}
