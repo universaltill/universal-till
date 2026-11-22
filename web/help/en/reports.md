@@ -96,7 +96,7 @@ Next to the top row, pick how you want the period worked out:
 The Online channels tab totals the orders from your web shop and marketplaces (the ones on Online orders) for the period you picked: one row per channel and currency. It appears once this till has recorded an online order; only the main till records them.
 
 - These orders are not till sales. They are not in the figures at the top of Reports, the drawer, the day-end (Z) report or the fiscal journal, and no sales figure on another tab changes because of them. They do lower stock, so stock warnings, Forecast and dead stock can change after a web order.
-- Order value is the order totals as the channel reported them, with shipping and any tax the channel added. After refunds is the order value minus refunds.
+- Order value is the order totals as the channel reported them, after discounts, with shipping and any tax the channel added. After refunds is the order value minus refunds.
 - Refunds are what has been refunded so far on orders placed in the period, whatever day the refund was made: a refund given today on last month's order shows in last month.
 - An order cancelled before it was paid is not counted; the tab says how many there were. An order cancelled after it was paid is counted, and its refund takes it back out.
 - Amounts stay in each order's own currency and are never added across currencies. When two or more channels sell in the same currency, a Total row adds them up for that currency.

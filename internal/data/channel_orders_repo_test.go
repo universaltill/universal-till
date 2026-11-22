@@ -660,3 +660,28 @@ func TestChannelOrders_TotalMismatchPersistedAndNegativeNamesTheItem(t *testing.
 		t.Fatalf("negative = %+v", res.NegativeStock)
 	}
 }
+
+// ut-docs#4945: the order page sums what the lines carry so they add up to the total.
+func TestChannelOrder_LineDiscountAndItemsTotals(t *testing.T) {
+	cases := []struct {
+		name            string
+		lines           []ChannelOrderLine
+		wantDisc, items int64
+	}{
+		{"no lines", nil, 0, 0},
+		{"mixed", []ChannelOrderLine{
+			{Qty: 2, UnitPrice: money.FromMinor(2500), Discount: money.FromMinor(500)},
+			{Qty: 1, UnitPrice: money.FromMinor(1000), Discount: money.FromMinor(100)},
+			{Qty: 1, UnitPrice: money.FromMinor(200)},
+		}, 600, 6200},
+	}
+	for _, c := range cases {
+		o := ChannelOrder{Lines: c.lines}
+		if got := o.LineDiscountTotal().Minor(); got != c.wantDisc {
+			t.Errorf("%s: LineDiscountTotal = %d, want %d", c.name, got, c.wantDisc)
+		}
+		if got := o.ItemsSubtotal().Minor(); got != c.items {
+			t.Errorf("%s: ItemsSubtotal = %d, want %d", c.name, got, c.items)
+		}
+	}
+}

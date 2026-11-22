@@ -8,8 +8,13 @@
      The block "channel_order_actions" is the inner HTML of #channel-order-actions
      and is also what the htmx POST routes return. No dialog, no showModal: the
      open <details> is the confirmation, so the status bar stays reachable. The
-     tracking link is shown as escaped text, never an anchor, and never fetched. */}}
+     tracking link is shown as escaped text, never an anchor, and never fetched.
+
+     Line discounts and the Items subtotal are display-only sums of the stored
+     lines; the Line discount column shows only when a line has one.
+     Discount/promotion definitions are not synced (ut-docs#4945). */}}
 {{ $o := .Order }}
+{{ $ld := $o.LineDiscountTotal }}
 <div class="page-head">
   <h1>{{ T "channel_orders.detail.title" }} {{ $o.OrderNumber }} {{ helpLink "channel-orders" }}</h1>
   <a class="btn secondary" href="/channel-orders">{{ T "channel_orders.detail.back" }}</a>
@@ -38,6 +43,7 @@
         <th>{{ T "channel_orders.detail.col.sku" }}</th>
         <th class="channel-orders-num">{{ T "channel_orders.detail.col.qty" }}</th>
         <th class="channel-orders-num">{{ T "channel_orders.detail.col.price" }}</th>
+        {{ if $ld.IsPositive }}<th class="channel-orders-num">{{ T "channel_orders.detail.col.discount" }}</th>{{ end }}
         <th class="channel-orders-num">{{ T "channel_orders.detail.col.refunded" }}</th>
         <th class="channel-orders-num">{{ T "channel_orders.detail.col.restocked" }}</th>
       </tr>
@@ -49,6 +55,7 @@
         <td class="muted">{{ .SKU }}</td>
         <td class="channel-orders-num">{{ qty .Qty }}</td>
         <td class="channel-orders-num">{{ moneyIn .UnitPrice $o.Currency }}</td>
+        {{ if $ld.IsPositive }}<td class="channel-orders-num" data-testid="channel-order-line-discount">{{ if .Discount.IsPositive }}{{ moneyIn .Discount $o.Currency }}{{ end }}</td>{{ end }}
         <td class="channel-orders-num">{{ qty .RefundedQuantity }}</td>
         <td class="channel-orders-num">{{ qty .RestockedQuantity }}</td>
       </tr>
@@ -57,6 +64,8 @@
   </table>
   </div>
   <dl class="channel-order-facts channel-order-totals">
+    {{ if or $ld.IsPositive $o.OrderDiscount.IsPositive }}<dt>{{ T "channel_orders.detail.items_subtotal" }}</dt><dd data-testid="channel-order-items-subtotal">{{ moneyIn $o.ItemsSubtotal $o.Currency }}</dd>{{ end }}
+    {{ if $ld.IsPositive }}<dt>{{ T "channel_orders.detail.line_discounts" }}</dt><dd data-testid="channel-order-line-discounts">{{ moneyIn $ld $o.Currency }}</dd>{{ end }}
     <dt>{{ T "channel_orders.detail.shipping" }}</dt><dd>{{ moneyIn $o.Shipping $o.Currency }}</dd>
     {{ if $o.OrderDiscount.IsPositive }}<dt>{{ T "channel_orders.detail.discount" }}</dt><dd>{{ moneyIn $o.OrderDiscount $o.Currency }}</dd>{{ end }}
     {{ if $o.TaxAdded.IsPositive }}<dt>{{ T "channel_orders.detail.tax_added" }}</dt><dd>{{ moneyIn $o.TaxAdded $o.Currency }}</dd>{{ end }}
