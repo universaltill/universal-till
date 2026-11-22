@@ -9,11 +9,10 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // Copied-host detection (ut-docs#6907). A whole data folder copied to other
-// hardware (folder, disk image, SD card) carries secrets/install-id with it,
+// hardware (folder, SD card, file copy) carries secrets/install-id with it,
 // so the install-id check of ut-docs#5157 sees nothing. The DB also holds the
 // id of the machine it last booted on (as an HMAC tag, never the raw id); a
 // different machine owes the #6294 number jump.
@@ -33,9 +32,18 @@ var restoreHostTagKey = []byte("universal-till restore host id v1")
 // readHostID is the machine's id source; tests swap it to be another machine.
 var readHostID = lantls.ReadHostID
 
-// copiedHostJumpToken is stable across retries of one detection (the install
-// id only changes at remark) and new for every later copy.
-func copiedHostJumpToken(installID string) string { return "copied-host:" + installID }
+// copiedHostJumpToken is "copied-host:<install id>:<16 hex of the new tag>".
+// A retry of one detection computes the same token (same install id, same
+// tag), and a later move (H1 to H2 to H1) a different one, since the tag
+// differs. The install id is never re-marked on this path, so it stays put.
+// installID may be "": the tag part alone still tells moves apart.
+func copiedHostJumpToken(installID, tag string) string {
+	_, h, _ := strings.Cut(tag, ":")
+	if len(h) > 16 {
+		h = h[:16]
+	}
+	return "copied-host:" + installID + ":" + h
+}
 
 // currentHostTag is this boot's tag; off when UT_HOST_ID=off. "" when the
 // host id is unknown.
@@ -92,29 +100,30 @@ func checkHostMove(ctx context.Context, cfg *config.Config, kv Settings, newest 
 		return
 	}
 
-	// Moved.
+	// Moved. The install id only names the token; an unreadable one is a
+	// failed read, not a verdict, so keep the old tag and ask again next boot.
 	dbID, _, err := kv.Get(ctx, keyInstallID)
-	dbID = strings.TrimSpace(dbID)
-	if err != nil || dbID == "" {
-		record()
+	if err != nil {
+		log.Warnf("enrolment: host check: read install id: %v; leaving the numbers alone, will re-check (ut-docs#6907)", err)
 		return
 	}
-	newID := uuid.NewString()
+	dbID = strings.TrimSpace(dbID)
 	replica := isReplica(ctx, kv)
 	if replica {
-		clearClonedIdentity(ctx, kv, true, newID, newest)
+		// Only the prefix hex comes from newID; nothing is re-marked.
+		clearClonedIdentity(ctx, kv, true, uuid.NewString(), newest)
 	} else if owe != nil {
-		if err := owe(copiedHostJumpToken(dbID)); err != nil {
+		if err := owe(copiedHostJumpToken(dbID, cur)); err != nil {
 			log.Errorf("enrolment: host check: record the owed receipt/Z number jump: %v; re-checking on the next boot (ut-docs#6907)", err)
 			return
 		}
 	}
-	// Tag before remark: a remark first would mint a new token next boot
-	// and so a second jump.
+	// The install id and secrets/install-id stay as they are: re-marking
+	// would trip the #5157 restore detector on a half-done write (a second
+	// jump and a wiped cloud identity).
 	if !record() {
 		return
 	}
-	remark(ctx, kv, paths.Data(installMarkerRel...), newID, false)
 	if replica {
 		log.Warnf("enrolment: this till's data folder now runs on different hardware (copied with secrets/); join the main till again (ut-docs#6907)")
 		return

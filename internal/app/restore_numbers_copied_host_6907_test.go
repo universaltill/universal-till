@@ -157,9 +157,17 @@ func TestBoot_CopiedFolderOnNewHostJumpsOnce(t *testing.T) {
 	if !strings.HasPrefix(b.setting("restore.jump_token"), "copied-host:") {
 		t.Fatalf("token = %q", b.setting("restore.jump_token"))
 	}
+	// F2 (#6907): the host move leaves the install id alone, so the next
+	// boot's #5157 check owes nothing and wipes nothing.
+	ma, _ := os.ReadFile(filepath.Join(a.dir, "secrets", "install-id"))
+	mb, _ := os.ReadFile(filepath.Join(b.dir, "secrets", "install-id"))
+	if len(ma) == 0 || string(ma) != string(mb) || a.setting("till_identity.install_id") != b.setting("till_identity.install_id") {
+		t.Fatalf("install id changed by the host move: %q -> %q", ma, mb)
+	}
+	tokenBefore := b.setting("restore.jump_token")
 	b.boot("host-2")
-	if b.audits() != 1 {
-		t.Fatalf("rebooted copy audits = %d", b.audits())
+	if b.audits() != 1 || b.setting("restore.jump_token") != tokenBefore || b.setting("till_identity.restored_at") != "" {
+		t.Fatalf("rebooted copy: audits=%d token %q (was %q) restored_at %q", b.audits(), b.setting("restore.jump_token"), tokenBefore, b.setting("till_identity.restored_at"))
 	}
 	// The original is untouched.
 	a.boot("host-1")
@@ -181,6 +189,7 @@ func TestBoot_CopyWithMissingMarkerJumpsOnce(t *testing.T) {
 	if b.audits() != 1 {
 		t.Fatalf("both detectors fired: audits = %d, want 1", b.audits())
 	}
+	requireHostCheckRan(t, a, b)
 	b.boot("host-2")
 	if b.audits() != 1 {
 		t.Fatalf("second boot audits = %d", b.audits())
@@ -199,5 +208,17 @@ func TestBoot_StagedRestoreAndHostChangeJumpOnce(t *testing.T) {
 	}
 	if got := b.setting("restore.jump_token"); got != "staged-x" {
 		t.Fatalf("token = %q, want the staged one", got)
+	}
+	requireHostCheckRan(t, a, b)
+}
+
+// requireHostCheckRan keeps the stacking tests from passing with the host
+// check dead: the copy re-recorded its own tag, which differs from the
+// original's.
+func requireHostCheckRan(t *testing.T, a, b *hostFolder) {
+	t.Helper()
+	ta, tb := a.setting("till_identity.host_tag"), b.setting("till_identity.host_tag")
+	if !strings.HasPrefix(ta, "pinned:") || !strings.HasPrefix(tb, "pinned:") || ta == tb {
+		t.Fatalf("host tag not re-recorded on the copy: original %q copy %q", ta, tb)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/lantls"
 )
 
 // ut-docs#6907: a data folder (secrets/ included) copied onto other hardware
@@ -50,14 +51,16 @@ func TestHostMove_MainOwesJumpOnce(t *testing.T) {
 	}
 	rec := &oweRecorder{}
 	bootOn(t, kv, nil, "H2", rec)
-	if len(rec.tokens) != 1 || rec.tokens[0] != "copied-host:"+installA {
+	newTag := kv.get(keyHostTag)
+	if newTag == tagH1 || newTag == "" {
+		t.Fatalf("tag not re-recorded: %q", newTag)
+	}
+	_, hashPart, _ := strings.Cut(newTag, ":")
+	if len(rec.tokens) != 1 || rec.tokens[0] != "copied-host:"+installA+":"+hashPart[:16] {
 		t.Fatalf("owe calls = %v", rec.tokens)
 	}
-	if kv.get(keyHostTag) == tagH1 || kv.get(keyHostTag) == "" {
-		t.Fatalf("tag not re-recorded: %q", kv.get(keyHostTag))
-	}
-	if id := readMarker(t); id == installA || kv.get(keyInstallID) != id {
-		t.Fatalf("install id not re-marked: marker %q row %q", id, kv.get(keyInstallID))
+	if readMarker(t) != installA || kv.get(keyInstallID) != installA {
+		t.Fatalf("install id must stay: marker %q row %q", readMarker(t), kv.get(keyInstallID))
 	}
 	rec2 := &oweRecorder{}
 	bootOn(t, kv, nil, "H2", rec2)
@@ -186,13 +189,106 @@ func (f failTagKV) Set(ctx context.Context, key, value string) error {
 	return f.orderedKV.Set(ctx, key, value)
 }
 
-func TestHostMove_TagWriteFailsNoRemark(t *testing.T) {
+func TestHostMove_TagWriteFailsRetriesSameToken(t *testing.T) {
 	kv := settledKV(t)
-	installA := kv.get(keyInstallID)
 	rec := &oweRecorder{}
 	bootOn(t, failTagKV{kv}, nil, "H2", rec)
-	if kv.get(keyInstallID) != installA || readMarker(t) != installA {
-		t.Fatal("re-marked although the tag could not be recorded")
+	rec2 := &oweRecorder{}
+	bootOn(t, kv, nil, "H2", rec2)
+	if len(rec.tokens) != 1 || len(rec2.tokens) != 1 || rec.tokens[0] != rec2.tokens[0] {
+		t.Fatalf("tokens %v then %v", rec.tokens, rec2.tokens)
+	}
+}
+
+// readFailKV fails the install-id read once armed.
+type readFailKV struct {
+	*orderedKV
+	armed bool
+}
+
+func (r *readFailKV) Get(ctx context.Context, key string) (string, bool, error) {
+	if r.armed && key == keyInstallID {
+		return "", false, errors.New("database is locked")
+	}
+	return r.orderedKV.Get(ctx, key)
+}
+
+// F1: an unreadable install id must not record the new tag, or the move is
+// lost for good.
+func TestHostMove_InstallIDReadErrorKeepsOwing(t *testing.T) {
+	kv := settledKV(t)
+	tagH1 := kv.get(keyHostTag)
+	rk := &readFailKV{orderedKV: kv, armed: true}
+	rec := &oweRecorder{}
+	bootOn(t, rk, nil, "H2", rec)
+	if kv.get(keyHostTag) != tagH1 {
+		t.Fatalf("tag recorded despite the read error: %q", kv.get(keyHostTag))
+	}
+	if len(rec.tokens) != 0 {
+		t.Fatalf("owed on a failed read: %v", rec.tokens)
+	}
+	rk.armed = false
+	rec2 := &oweRecorder{}
+	bootOn(t, rk, nil, "H2", rec2)
+	if len(rec2.tokens) != 1 {
+		t.Fatalf("clean boot on H2 owes %v, want exactly one", rec2.tokens)
+	}
+	rec3 := &oweRecorder{}
+	bootOn(t, rk, nil, "H2", rec3)
+	if len(rec3.tokens) != 0 {
+		t.Fatalf("third boot owes %v", rec3.tokens)
+	}
+}
+
+// F1: no install id row at all still owes (the token needs no id).
+func TestHostMove_EmptyInstallIDStillOwes(t *testing.T) {
+	kv := settledKV(t)
+	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "")
+	rec := &oweRecorder{}
+	bootOn(t, kv, nil, "H2", rec)
+	if len(rec.tokens) != 1 {
+		t.Fatalf("owes %v", rec.tokens)
+	}
+}
+
+// F2: the host path never touches the install id, so the #5157 detector
+// stays quiet on the next boot: no second jump, no cloud identity wipe.
+func TestHostMove_NoRemarkNextBootQuiet(t *testing.T) {
+	kv := settledKV(t)
+	installA := kv.get(keyInstallID)
+	keys := []string{keyDeviceID, keyToken, keyStoreID, keyMerchantID, keyPairedAt, keyRestoredAt}
+	before := map[string]string{}
+	for _, k := range keys {
+		before[k] = kv.get(k)
+	}
+	rec := &oweRecorder{}
+	bootOn(t, kv, nil, "H2", rec)
+	if len(rec.tokens) != 1 {
+		t.Fatalf("owes %v", rec.tokens)
+	}
+	if readMarker(t) != installA || kv.get(keyInstallID) != installA {
+		t.Fatal("install id changed by the host move")
+	}
+	rec2 := &oweRecorder{}
+	bootOn(t, kv, nil, "H2", rec2)
+	if len(rec2.tokens) != 0 {
+		t.Fatalf("next boot owes %v", rec2.tokens)
+	}
+	for _, k := range keys {
+		if kv.get(k) != before[k] {
+			t.Errorf("%s changed: %q -> %q", k, before[k], kv.get(k))
+		}
+	}
+}
+
+// D2: the restore tag has its own HMAC key, not lantls' rotation.json key
+// (copied here as a literal so a change to either shows up).
+func TestHostMove_OwnHMACKey(t *testing.T) {
+	lantlsKey := []byte("universal-till lantls host id v1")
+	ours := lantls.HostTag(restoreHostTagKey, "machine-id", "H1")
+	theirs := lantls.HostTag(lantlsKey, "machine-id", "H1")
+	if ours == "" || theirs == "" || ours == theirs {
+		t.Fatalf("restore tag %q must differ from lantls tag %q", ours, theirs)
 	}
 }
 
@@ -244,7 +340,7 @@ func TestHostMove_TagIsHMACOnly(t *testing.T) {
 	logs := captureLog(t)
 	bootOn(t, kv, nil, "SECRET-RAW-ID", &oweRecorder{})
 	for k, v := range kv.fakeKV.m {
-		if strings.Contains(v, "SECRET-RAW-ID") || strings.Contains(v, "H1") && k == keyHostTag {
+		if strings.Contains(v, "SECRET-RAW-ID") {
 			t.Errorf("raw id in %s=%q", k, v)
 		}
 	}

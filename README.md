@@ -411,7 +411,7 @@ UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/instal
 UT_MARKETPLACE_DEVICE_ID=              # Device identifier (defaults to hostname)
 UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
 UT_DEV_MODE=false                      # Enable developer mode features
-UT_HOST_ID=                            # Pin this till's host id (Docker/volatile /etc), or "off"; a copied data folder on new hardware jumps receipt numbers (ut-docs#6907)
+UT_HOST_ID=                            # Own host id (unique per machine, set on the original first), or "off"; a data folder copied to other hardware jumps receipt numbers (ut-docs#6907)
 UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode only)
 
 # Optional
