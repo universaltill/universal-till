@@ -96,3 +96,13 @@ follow-ups deferred → ut-docs#6654 checklist (below).
 - A short-lived-PR / integration-branch rule in the `dev` and `scrum-master` skills, with a skill eval
   (#2532).
 - Re-measure manifest conflicts two weeks after merge, then decide items 2 and 4 of #6654.
+
+## CI round 1 (2026-11-22)
+
+`build` failed on `guard-pipefail-grep-q.sh`: two new pipes into `head`
+under `pipefail` (`docs-shots-manifest-merge_test.sh:35`,
+`guard-docs-shots-cross-check_test.sh:52`) — the same SIGPIPE class as R1,
+which the review fixed elsewhere but missed here. Fixed by capturing the
+output first and filtering with `awk` / `sed -n` over a here-string. Then
+every single-line `bash scripts/ci/...` step in `ci.yml`'s `build` job (172)
+was run locally and passed, plus shellcheck (0 issues).
