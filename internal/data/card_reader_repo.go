@@ -31,10 +31,19 @@ const (
 	// MaxCardReaderNameLen is the display-name bound (characters).
 	MaxCardReaderNameLen = 40
 
-	CardReaderKindCloud     = "cloud"
-	CardReaderKindTapToPay  = "tap_to_pay"
-	CardReaderKindBluetooth = "bluetooth"
-	CardReaderKindPhone     = "phone"
+	CardReaderKindCloud    = "cloud"
+	CardReaderKindSDK      = "sdk" // provider SDK in the native shell (ADR-0205 §3)
+	CardReaderKindTapToPay = "tap_to_pay"
+	CardReaderKindPhone    = "phone"
+	CardReaderKindExternal = "external" // the shop's own unconnected terminal (ADR-0205 §7)
+
+	CardReaderTransportInternet  = "internet"
+	CardReaderTransportBluetooth = "bluetooth"
+	CardReaderTransportUSB       = "usb"
+	CardReaderTransportDeviceOwn = "device_own"
+	CardReaderTransportNone      = "none"
+	// CardReaderTransportSerial is reserved (ADR-0205 §1): named only so it is refused.
+	CardReaderTransportSerial = "serial"
 
 	CardReaderSourceManual   = "manual"
 	CardReaderSourceMigrated = "migrated"
@@ -50,6 +59,9 @@ var (
 	ErrCardReaderRef      = errors.New("card reader id is invalid or already added")
 	ErrCardReaderKind     = errors.New("card reader kind is not allowed here")
 	ErrCardReaderLimit    = errors.New("card reader limit reached")
+	// ErrCardReaderTransport wraps ErrCardReaderKind so the 422 mapping and
+	// every errors.Is(err, ErrCardReaderKind) caller keep working.
+	ErrCardReaderTransport = fmt.Errorf("card reader kind and connection do not match: %w", ErrCardReaderKind)
 )
 
 // cardReaderRefRe is what core accepts as a provider reader id: plugins put
@@ -68,9 +80,53 @@ func ValidCardReaderRef(ref string) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
-func validCardReaderKind(k string) bool {
-	switch k {
-	case CardReaderKindCloud, CardReaderKindTapToPay, CardReaderKindBluetooth, CardReaderKindPhone:
+// ValidCardReaderPair reports whether (kind, transport) is allowed
+// (ADR-0205 §1). The reserved `serial` transport is never allowed.
+func ValidCardReaderPair(kind, transport string) bool {
+	switch kind {
+	case CardReaderKindCloud, CardReaderKindPhone:
+		return transport == CardReaderTransportInternet
+	case CardReaderKindSDK:
+		return transport == CardReaderTransportBluetooth || transport == CardReaderTransportUSB || transport == CardReaderTransportInternet
+	case CardReaderKindTapToPay:
+		return transport == CardReaderTransportDeviceOwn
+	case CardReaderKindExternal:
+		return transport == CardReaderTransportNone
+	}
+	return false
+}
+
+// defaultCardReaderTransport is the transport an empty value means; "" for
+// sdk (it must be explicit) and for unknown kinds.
+func defaultCardReaderTransport(kind string) string {
+	switch kind {
+	case CardReaderKindCloud, CardReaderKindPhone:
+		return CardReaderTransportInternet
+	case CardReaderKindTapToPay:
+		return CardReaderTransportDeviceOwn
+	case CardReaderKindExternal:
+		return CardReaderTransportNone
+	}
+	return ""
+}
+
+// knownCardReaderKind reports whether kind is one of the ADR-0205 §1 kinds.
+func knownCardReaderKind(kind string) bool {
+	switch kind {
+	case CardReaderKindCloud, CardReaderKindSDK, CardReaderKindTapToPay, CardReaderKindPhone, CardReaderKindExternal:
+		return true
+	}
+	return false
+}
+
+// CardReaderUnattendedAllowed reports whether a reader of this kind may be
+// the self-order kiosk's default. tap_to_pay is the staff device's own NFC;
+// sdk and external readers cannot take a kiosk payment yet (ADR-0205 §3,
+// #6755), so SetUnattendedDefault refuses them and the Settings list hides
+// the checkbox for them (it still shows it ticked so it can be cleared).
+func CardReaderUnattendedAllowed(kind string) bool {
+	switch kind {
+	case CardReaderKindCloud, CardReaderKindPhone:
 		return true
 	}
 	return false
@@ -84,6 +140,9 @@ type CardReader struct {
 	PluginID          string
 	ReaderRef         string
 	Kind              string
+	Transport         string // how the reader reaches the device that drives it (ADR-0205 §1)
+	DeviceSerial      string // provider-reported serial after a bind; "" = never bound (ADR-0205 §5)
+	BoundAt           string // UTC time of the bind; "" = never bound
 	Source            string
 	SortOrder         int
 	UnattendedDefault bool
@@ -112,12 +171,12 @@ func (r *CardReaderRepo) OnSettingsChanged(fn func()) *CardReaderRepo {
 	return r
 }
 
-const cardReaderCols = `id, name, method_key, plugin_id, reader_ref, kind, source, sort_order, unattended_default, COALESCE(last_used_at,''), COALESCE(removed_at,'')`
+const cardReaderCols = `id, name, method_key, plugin_id, reader_ref, kind, source, sort_order, unattended_default, COALESCE(last_used_at,''), COALESCE(removed_at,''), transport, COALESCE(device_serial,''), COALESCE(bound_at,'')`
 
 func scanCardReader(s rowScanner) (CardReader, error) {
 	var c CardReader
 	var un int
-	if err := s.Scan(&c.ID, &c.Name, &c.MethodKey, &c.PluginID, &c.ReaderRef, &c.Kind, &c.Source, &c.SortOrder, &un, &c.LastUsedAt, &c.RemovedAt); err != nil {
+	if err := s.Scan(&c.ID, &c.Name, &c.MethodKey, &c.PluginID, &c.ReaderRef, &c.Kind, &c.Source, &c.SortOrder, &un, &c.LastUsedAt, &c.RemovedAt, &c.Transport, &c.DeviceSerial, &c.BoundAt); err != nil {
 		return CardReader{}, err
 	}
 	c.UnattendedDefault = un == 1
@@ -231,8 +290,14 @@ func (r *CardReaderRepo) createTx(ctx context.Context, tx *sql.Tx, in CardReader
 	if in.Kind == "" {
 		in.Kind = CardReaderKindCloud
 	}
-	if !validCardReaderKind(in.Kind) {
+	if in.Transport == "" {
+		in.Transport = defaultCardReaderTransport(in.Kind)
+	}
+	if !knownCardReaderKind(in.Kind) {
 		return "", ErrCardReaderKind
+	}
+	if !ValidCardReaderPair(in.Kind, in.Transport) {
+		return "", ErrCardReaderTransport
 	}
 	if in.Source == "" {
 		in.Source = CardReaderSourceManual
@@ -267,12 +332,12 @@ func (r *CardReaderRepo) createTx(ctx context.Context, tx *sql.Tx, in CardReader
 		sort = int(maxSort.Int64) + 1
 	}
 	if id != "" {
-		_, err = tx.ExecContext(ctx, `UPDATE card_readers SET name=?, plugin_id=?, kind=?, source=?, sort_order=?, unattended_default=0, removed_at=NULL, updated_at=datetime('now') WHERE id=?`,
-			name, in.PluginID, in.Kind, in.Source, sort, id)
+		_, err = tx.ExecContext(ctx, `UPDATE card_readers SET name=?, plugin_id=?, kind=?, transport=?, device_serial=NULL, bound_at=NULL, source=?, sort_order=?, unattended_default=0, removed_at=NULL, updated_at=datetime('now') WHERE id=?`,
+			name, in.PluginID, in.Kind, in.Transport, in.Source, sort, id)
 	} else {
 		id = uuid.NewString()
-		_, err = tx.ExecContext(ctx, `INSERT INTO card_readers(id,name,method_key,plugin_id,reader_ref,kind,source,sort_order) VALUES(?,?,?,?,?,?,?,?)`,
-			id, name, in.MethodKey, in.PluginID, in.ReaderRef, in.Kind, in.Source, sort)
+		_, err = tx.ExecContext(ctx, `INSERT INTO card_readers(id,name,method_key,plugin_id,reader_ref,kind,transport,source,sort_order) VALUES(?,?,?,?,?,?,?,?,?)`,
+			id, name, in.MethodKey, in.PluginID, in.ReaderRef, in.Kind, in.Transport, in.Source, sort)
 	}
 	if err != nil {
 		return "", cardReaderObs.wrap("create", err)
@@ -357,7 +422,8 @@ func (r *CardReaderRepo) Move(ctx context.Context, id string, dir int) error {
 
 // SetUnattendedDefault marks (on=true) the one reader a self-order/kiosk sale
 // uses, moving it off any other row, or clears it. A tap_to_pay reader is
-// never eligible: the self-order kiosk never shows it.
+// never eligible (the self-order kiosk never shows it), nor is an sdk reader
+// (no kiosk row in v1, ADR-0205 §3) or an external one (needs a cashier).
 func (r *CardReaderRepo) SetUnattendedDefault(ctx context.Context, id string, on bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -373,7 +439,7 @@ func (r *CardReaderRepo) SetUnattendedDefault(ctx context.Context, id string, on
 		return cardReaderObs.wrap("unattended", err)
 	}
 	if on {
-		if kind == CardReaderKindTapToPay {
+		if !CardReaderUnattendedAllowed(kind) {
 			return ErrCardReaderKind
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE card_readers SET unattended_default=0 WHERE unattended_default=1`); err != nil {
@@ -623,8 +689,8 @@ func (r *CardReaderRepo) insertMigrated(ctx context.Context, method, pluginID, r
 	if maxSort.Valid {
 		sort = int(maxSort.Int64) + 1
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO card_readers(id,name,method_key,plugin_id,reader_ref,kind,source,sort_order) VALUES(?,?,?,?,?,?,?,?)`,
-		uuid.NewString(), name, method, pluginID, ref, CardReaderKindCloud, CardReaderSourceMigrated, sort); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO card_readers(id,name,method_key,plugin_id,reader_ref,kind,transport,source,sort_order) VALUES(?,?,?,?,?,?,?,?,?)`,
+		uuid.NewString(), name, method, pluginID, ref, CardReaderKindCloud, CardReaderTransportInternet, CardReaderSourceMigrated, sort); err != nil {
 		return 0, cardReaderObs.wrap("migrate_legacy", err)
 	}
 	if err := tx.Commit(); err != nil {

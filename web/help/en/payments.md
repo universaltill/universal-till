@@ -67,6 +67,8 @@ When a till has more than one card reader set up (a manager adds them under **Se
 
 Each reader shows what it is doing, in words and an icon: **Ready**, **Busy** (another payment is running on it), **Offline** (the till cannot reach it), **Needs setup** (ask a manager), or **Unknown** (the check did not answer; you can still try it). A reader that cannot be chosen stays in the list with the reason under its name. If only one reader is ready, the till uses it without asking, and says so. If none is ready, use another payment method or ask a manager.
 
+Under each reader's name the list says whether it can take a payment without internet: today every card reader shows **Needs internet**, so when the till is offline take cash or another method instead.
+
 On a split payment, each card part has its own **Reader** choice, so two parts can go to two different readers.
 
 If a card payment could not be confirmed (see **When a card payment can't be confirmed** below), the retry is limited to the reader it was started on; the panel shows only that reader and says so. A card refund goes back through the provider and the reader the sale was paid on, and still works if that reader has since been removed or is switched off.

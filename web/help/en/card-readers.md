@@ -27,6 +27,8 @@ Only payment plugins that support several readers appear in **Provider**. A read
 
 A till holds at most 32 readers. Readers restored from a backup are kept but must be checked before use, because reader IDs are device specific.
 
+Every card reader needs an internet connection to take a payment; the **Which reader?** list at the till says so under each reader.
+
 ## What can go wrong
 
 - **That reader ID is not valid or is already added** — the ID has a character that is not allowed, is empty, or is already in the list.

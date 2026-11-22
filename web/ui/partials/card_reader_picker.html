@@ -24,6 +24,7 @@
       <span class="card-reader-main">
         <span class="card-reader-name">{{ .Name }}{{ if and .Default .LastUsed }} <span class="card-reader-default-tag muted">{{ T "card_reader.pick.default_tag" }}</span>{{ end }}</span>
         <span class="card-reader-kind muted">{{ T (printf "card_reader.kind.%s" .Kind) }}{{ if .ProviderName }} · {{ T .ProviderName }}{{ end }}<span class="fee-hint" data-fee-for="{{ .Method }}"></span></span>
+        {{ if .OfflineKey }}<span class="card-reader-offline muted" data-testid="card-reader-offline">{{ T .OfflineKey }}</span>{{ end }}
       </span>
       <span class="card-reader-state" data-state="{{ .State }}">
         <svg class="card-reader-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">

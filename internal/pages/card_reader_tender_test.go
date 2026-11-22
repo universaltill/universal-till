@@ -684,3 +684,117 @@ func TestReaderTender_AnotherReaderAfterADeclineIsANewRequestID(t *testing.T) {
 		t.Fatalf("request id must be the digest of the payload sent (reader included): %s", calls[1].ID)
 	}
 }
+
+// ---- ut-docs#6756 (ADR-0205 §1, §3, §8): rows the till must never offer ----
+
+// rawReader inserts a registry row bypassing the repo's pair check (a hand-
+// edited or pre-migration row).
+func rawReader(t *testing.T, dp *common.Deps, rp *readerPlugin, name, ref, kind, transport string) string {
+	t.Helper()
+	id := "raw-" + ref
+	if _, err := dp.Db.Exec(`INSERT INTO card_readers(id,name,method_key,plugin_id,reader_ref,kind,transport,source) VALUES(?,?,?,?,?,?,?,'manual')`,
+		id, name, rp.Method, rp.PluginID, ref, kind, transport); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestReaderEligible_Table(t *testing.T) {
+	cases := []struct {
+		kind, transport string
+		pos, kiosk      bool
+	}{
+		{"cloud", "internet", true, true},
+		{"phone", "internet", true, true},
+		{"sdk", "bluetooth", false, false},
+		{"sdk", "usb", false, false},
+		{"external", "none", false, false},
+		{"weird", "internet", false, false},
+		{"cloud", "bluetooth", false, false},
+		{"cloud", "serial", false, false},
+		{"tap_to_pay", "internet", false, false},
+	}
+	for _, c := range cases {
+		row := data.CardReader{Kind: c.kind, Transport: c.transport}
+		if got := readerEligible(row, readerSourcePOS); got != c.pos {
+			t.Errorf("%s/%s pos = %v, want %v", c.kind, c.transport, got, c.pos)
+		}
+		if got := readerEligible(row, readerSourceKiosk); got != c.kiosk {
+			t.Errorf("%s/%s kiosk = %v, want %v", c.kind, c.transport, got, c.kiosk)
+		}
+	}
+	tap := data.CardReader{Kind: data.CardReaderKindTapToPay, Transport: data.CardReaderTransportDeviceOwn}
+	if readerEligible(tap, readerSourcePOS) {
+		t.Errorf("tap_to_pay without a bridge must stay hidden")
+	}
+	prevTapToPay := cardreaders.TapToPayAvailable
+	cardreaders.TapToPayAvailable = func() bool { return true }
+	defer func() { cardreaders.TapToPayAvailable = prevTapToPay }()
+	if !readerEligible(tap, readerSourcePOS) || readerEligible(tap, readerSourceKiosk) {
+		t.Errorf("tap_to_pay: pos with bridge yes, kiosk never")
+	}
+}
+
+func TestReaderTender_SDKExternalAndInvalidRowsAreRefusedBeforeAnyPlugin(t *testing.T) {
+	mux, dp := readerRig(t)
+	rp := seedReaderPlugin(t, dp, "p.demo", "demopay", true)
+	good := addReader(t, dp, rp, "Good", "tmr_ok")
+	repo := data.NewCardReaderRepo(dp.Db)
+	sdk, err := repo.Create(context.Background(), data.CardReader{Name: "Sdk", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_sdk", Kind: data.CardReaderKindSDK, Transport: data.CardReaderTransportBluetooth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext, err := repo.Create(context.Background(), data.CardReader{Name: "Own", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_ext", Kind: data.CardReaderKindExternal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	weird := rawReader(t, dp, rp, "Weird", "tmr_weird", "weird", "internet")
+	badPair := rawReader(t, dp, rp, "BadPair", "tmr_bp", "cloud", "bluetooth")
+	scan(t, dp)
+	for name, id := range map[string]string{"sdk": sdk.ID, "external": ext.ID, "weird kind": weird, "bad pair": badPair} {
+		rec := postTender(t, mux, tenderBody(leg("demopay", 120, id)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: want 400, got %d: %s", name, rec.Code, rec.Body.String())
+			continue
+		}
+		if code, _ := errCode(t, rec.Body.String()); code != "card_reader.invalid" {
+			t.Errorf("%s: code %q", name, code)
+		}
+	}
+	if n := len(rp.authCalls()); n != 0 {
+		t.Fatalf("a hidden reader must reach no plugin, got %d calls", n)
+	}
+	if rec := postTender(t, mux, tenderBody(leg("demopay", 120, good.ID))); rec.Code != http.StatusOK {
+		t.Fatalf("the cloud row still works: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReaderTender_OnlyIneligibleRowsRefuses(t *testing.T) {
+	_, dp := readerRig(t)
+	rp := seedReaderPlugin(t, dp, "p.demo", "demopay", true)
+	repo := data.NewCardReaderRepo(dp.Db)
+	ctx := context.Background()
+	if _, err := repo.Create(ctx, data.CardReader{Name: "Sdk", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_sdk", Kind: data.CardReaderKindSDK, Transport: data.CardReaderTransportUSB}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Create(ctx, data.CardReader{Name: "Own", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "tmr_ext", Kind: data.CardReaderKindExternal}); err != nil {
+		t.Fatal(err)
+	}
+	for source, want := range map[string]string{"pos": "reader_required", "kiosk": "card_reader.kiosk_none"} {
+		legs := []pos.PaymentInput{{MethodID: "demopay"}}
+		release, err := resolveReaderLegs(ctx, dp, legs, source)
+		if release != nil {
+			release()
+		}
+		var cErr *cardReaderError
+		if !errors.As(err, &cErr) || cErr.Code != want {
+			t.Errorf("%s: err = %v, want code %s", source, err, want)
+		}
+		if legs[0].ReaderRowID != "" {
+			t.Errorf("%s: no row may be chosen, got %q", source, legs[0].ReaderRowID)
+		}
+	}
+	if n := len(rp.authCalls()); n != 0 {
+		t.Fatalf("no plugin call expected, got %d", n)
+	}
+}

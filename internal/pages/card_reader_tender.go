@@ -66,10 +66,19 @@ func managedReaders(ctx context.Context, d *common.Deps, repo *data.CardReaderRe
 	return rows, true, nil
 }
 
-// readerEligible: a tap_to_pay row needs a registered device bridge (flags
-// default OFF give none) and is never offered to the unattended kiosk.
+// readerEligible: a row whose stored kind/transport pair is not allowed is
+// never offered (fail closed, ADR-0205 §8); sdk rows wait for the native
+// bridge (no build reports sdk transports yet, §3); external rows have no
+// card-tender path yet (#6755); a tap_to_pay row needs a registered device
+// bridge and is never offered to the kiosk.
 func readerEligible(c data.CardReader, source string) bool {
-	if c.Kind == data.CardReaderKindTapToPay {
+	if !data.ValidCardReaderPair(c.Kind, c.Transport) {
+		return false
+	}
+	switch c.Kind {
+	case data.CardReaderKindSDK, data.CardReaderKindExternal:
+		return false
+	case data.CardReaderKindTapToPay:
 		return source != readerSourceKiosk && cardreaders.TapToPayAvailable()
 	}
 	return true

@@ -33,8 +33,8 @@ func TestCreatePaired_WritesReaderAndCredentialTogether(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePaired: %v", err)
 	}
-	if c.Kind != CardReaderKindPhone || c.Source != CardReaderSourcePaired {
-		t.Fatalf("row = kind %q source %q, want phone/paired", c.Kind, c.Source)
+	if c.Kind != CardReaderKindPhone || c.Source != CardReaderSourcePaired || c.Transport != CardReaderTransportInternet {
+		t.Fatalf("row = kind %q source %q transport %q, want phone/paired/internet", c.Kind, c.Source, c.Transport)
 	}
 	got, ok, err := creds.ByBearerHashAt(ctx, "h1", time.Now())
 	if err != nil || !ok {

@@ -673,3 +673,117 @@ func TestCardReaderRoutes_RemoveIsRefusedWhileAPaymentNeedsTheReader(t *testing.
 		t.Fatalf("remove of a free reader = %d (active %d)", rec.Code, active())
 	}
 }
+
+// ---- ut-docs#6756: hidden kinds and the offline note ----
+
+func TestReaderPicker_HidesIneligibleKinds(t *testing.T) {
+	mux, dp := pickerRig(t)
+	rp := seedReaderPlugin(t, dp, "p.demo", "demopay", true)
+	rp.state = stateAnswer(nil)
+	repo := data.NewCardReaderRepo(dp.Db)
+	ctx := context.Background()
+	addReader(t, dp, rp, "Cloud", "r_cloud")
+	mk := func(name, ref, kind, tr string) {
+		if _, err := repo.Create(ctx, data.CardReader{Name: name, MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: ref, Kind: kind, Transport: tr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("Phone", "r_phone", data.CardReaderKindPhone, "")
+	mk("Sdk", "r_sdk", data.CardReaderKindSDK, data.CardReaderTransportBluetooth)
+	mk("Own", "r_ext", data.CardReaderKindExternal, "")
+	rawReader(t, dp, rp, "Weird", "r_weird", "weird", "internet")
+	rec, got := getPicker(t, mux, "")
+	if rec.Code != http.StatusOK || len(got.Data.Readers) != 2 {
+		t.Fatalf("only cloud and phone rows: %d %+v", rec.Code, got.Data.Readers)
+	}
+	for _, r := range got.Data.Readers {
+		if r.Kind != "cloud" && r.Kind != "phone" {
+			t.Errorf("unexpected kind %q", r.Kind)
+		}
+	}
+	for _, key := range []string{`"transport"`, `"device_serial"`, `"bound_at"`} {
+		if strings.Contains(rec.Body.String(), key) {
+			t.Errorf("picker JSON must not carry %s", key)
+		}
+	}
+}
+
+func TestReaderPicker_ShowsOfflineNote(t *testing.T) {
+	mux, dp := pickerRig(t)
+	rp := seedReaderPlugin(t, dp, "p.demo", "demopay", true)
+	rp.state = stateAnswer(nil)
+	addReader(t, dp, rp, "Cloud", "r_cloud")
+	if _, err := data.NewCardReaderRepo(dp.Db).Create(context.Background(), data.CardReader{Name: "Phone", MethodKey: rp.Method, PluginID: rp.PluginID, ReaderRef: "r_phone", Kind: data.CardReaderKindPhone}); err != nil {
+		t.Fatal(err)
+	}
+	body := getPickerHTML(t, mux, "?source=pos")
+	if n := strings.Count(body, `data-testid="card-reader-offline"`); n != 2 {
+		t.Fatalf("one offline note per row, got %d", n)
+	}
+	if n := strings.Count(body, ">Needs internet</span>"); n != 2 {
+		t.Fatalf("each row says Needs internet, got %d", n)
+	}
+}
+
+func TestReaderOfflineKey_AllKinds(t *testing.T) {
+	en := map[string]string{}
+	raw, err := os.ReadFile("web/locales/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &en); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"cloud", "sdk", "tap_to_pay", "phone", "weird", ""} {
+		if got := readerOfflineKey(k); got != "card_reader.offline.needs_internet" {
+			t.Errorf("%q -> %q", k, got)
+		}
+	}
+	if got := readerOfflineKey("external"); got != "card_reader.offline.external" {
+		t.Errorf("external -> %q", got)
+	}
+	for _, key := range []string{"card_reader.offline.needs_internet", "card_reader.offline.external", "card_reader.kind.sdk", "card_reader.kind.external"} {
+		if en[key] == "" {
+			t.Errorf("en.json misses %s", key)
+		}
+	}
+	if _, ok := en["card_reader.kind."+"blue"+"tooth"]; ok {
+		t.Errorf("the retired kind's label must be gone")
+	}
+}
+
+// Review of #6756: SetUnattendedDefault refuses sdk/external readers, so the
+// Settings list must not offer the kiosk-default checkbox on them — except on
+// a row already ticked (a migrated bluetooth row), which must stay clearable.
+func TestCardReaderRoutes_UnattendedCheckboxOnlyWhereItCanSucceed(t *testing.T) {
+	mux, dp := authRig(t)
+	rp := seedReaderPlugin(t, dp, "p.demo", "demopay", true)
+	addReader(t, dp, rp, "Front counter", "tmr_C")
+	addReader(t, dp, rp, "Old BT", "tmr_S")
+	addReader(t, dp, rp, "Old BT ticked", "tmr_T")
+	if _, err := dp.Db.Exec(`UPDATE card_readers SET kind='sdk', transport='bluetooth' WHERE reader_ref IN ('tmr_S','tmr_T')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`UPDATE card_readers SET unattended_default=1 WHERE reader_ref='tmr_T'`); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/settings/card-readers", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, asRole(req, "manager"))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager page = %d: %s", rec.Code, body)
+	}
+	if n := strings.Count(body, `data-testid="card-reader-unattended"`); n != 2 {
+		t.Fatalf("kiosk-default checkboxes = %d, want 2 (cloud row + the ticked sdk row)", n)
+	}
+	// The ticked sdk row can be cleared.
+	rec = postReaderForm(t, mux, "/settings/card-readers/"+findReaderID(t, dp, "tmr_T"), "manager", url.Values{"unattended": {"0"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clearing a ticked sdk row = %d: %s", rec.Code, rec.Body.String())
+	}
+	var on int
+	if err := dp.Db.QueryRow(`SELECT unattended_default FROM card_readers WHERE reader_ref='tmr_T'`).Scan(&on); err != nil || on != 0 {
+		t.Fatalf("unattended_default after clear = %d (%v), want 0", on, err)
+	}
+}
