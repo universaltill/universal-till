@@ -191,9 +191,14 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 
 		// Ask the broker first; its answer decides what may be chosen. A
 		// cancel that finds the intent paid turns the verdict to paid.
-		f := tapAssess(r.Context(), d, pos.UnknownLeg{RequestID: a.Key})
+		// ut-docs#6908 (rule of #6805/#6784): from the first broker ask on, the
+		// decision and its compensations (cancel, attempt write, audit, native
+		// release) run detached; a dropped connection must not corrupt the facts
+		// or lose the decision. Bounded: paybroker.Timeout, nativeResolveTimeout.
+		ctx := context.WithoutCancel(r.Context())
+		f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: a.Key})
 		if decision == "not_charged" {
-			f = tapCancelThenAssess(r.Context(), d, f)
+			f = tapCancelThenAssess(ctx, d, f)
 		}
 		override := !f.BrokerOK || f.Verdict == tapPending
 		brand, last4 := pos.SafeCardFacts(f.Status.CardBrand, f.Status.Last4)
@@ -232,7 +237,7 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		// Never touches d.Engine: there is no sale to finish or unlock.
-		if err := repo.Mark(r.Context(), key, newState, upd); err != nil {
+		if err := repo.Mark(ctx, key, newState, upd); err != nil {
 			if err == data.ErrAttemptSettled {
 				fail(http.StatusConflict, "settled", "tap.attention.gone")
 				return
@@ -256,9 +261,9 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 		if f.Status.AmountReceivedMinor != 0 {
 			p["received_minor"] = f.Status.AmountReceivedMinor
 		}
-		settingsAudit(r, data.NewPOSRepo(d.Db), elev, "payment_attempt", key, "tap_resolve", p)
+		settingsAudit(r.WithContext(ctx), data.NewPOSRepo(d.Db), elev, "payment_attempt", key, "tap_resolve", p)
 		f.Attempt, f.HaveRow = a, true
-		tellNativeResolver(r.Context(), r, f, nativeOutcome)
+		tellNativeResolver(ctx, r, f, nativeOutcome)
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 			"key": key, "state": newState, "outcome": outcome, "broker_status": f.brokerWord(),
 		}, "error": nil})
