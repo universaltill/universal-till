@@ -314,3 +314,17 @@ func (r *POSRepo) ClearRestoreMarker(ctx context.Context) error {
 	}
 	return nil
 }
+
+// AppliedRestoreJumpToken returns the token of the last restore whose number
+// jump was applied, "" when none was.
+func (r *POSRepo) AppliedRestoreJumpToken(ctx context.Context) (string, error) {
+	var v string
+	err := r.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, RestoreJumpTokenKey).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("applied restore jump token: %w", err)
+	}
+	return v, nil
+}

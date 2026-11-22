@@ -239,9 +239,6 @@ func Run(ctx context.Context) error {
 	if restoreApplied {
 		rotateStockStreamAfterRestore(ctx, database.DB, log)
 	}
-	// Owed by every applied backup restore (a file, so a crash after the
-	// swap still jumps); a no-op on every other boot (ut-docs#5068).
-	jumpNumbersAfterRestore(ctx, database.DB, cfg.DBPath, time.Now(), log)
 	// ut-docs#6795: card payments the last run left pending need a manager.
 	markOrphanedTapAttempts(ctx, database.DB, time.Now(), log)
 
@@ -282,7 +279,10 @@ func Run(ctx context.Context) error {
 	// is covered too. Never blocks boot. The journal lookup keeps a restored
 	// replica's sync.restored_since after the original's newest entry even if
 	// the original's clock ran ahead (ut-docs#5185).
-	enroll.CheckRestoredInstall(ctx, cfg, settingsStore, data.NewPOSRepo(database.DB).NewestLocalJournalEntryAt)
+	// The number jump (ut-docs#5068) runs right after it, so a jump a detected
+	// restore owes lands on this same boot (ut-docs#6294); nothing between
+	// db.Open and here issues a receipt or Z number.
+	bootRestoreChecks(ctx, cfg, database.DB, settingsStore, time.Now(), log)
 
 	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
 	// main till's pin, every replica → main till request goes over pinned

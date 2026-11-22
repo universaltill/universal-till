@@ -90,10 +90,11 @@ func RestoredState(ctx context.Context, kv Settings) bool {
 // resets the cloud identity when they show a restore. It reports whether it
 // reset. Call once, synchronously, at boot: after the database and settings
 // store are ready, before settings.LoadRuntimeConfig and Init, so both read
-// the post-reset rows. cfg is still the environment-only config then, so
+// the post-reset rows. On a main till it also owes the receipt/Z number jump
+// (ut-docs#6294), recorded before the re-mark. cfg is still the environment-only config then, so
 // its marketplace fields are exactly the operator's pins. Never blocks boot
 // and never wipes when unsure.
-func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, newest NewestJournalEntry) (reset bool) {
+func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, newest NewestJournalEntry, owe OweNumberJump) (reset bool) {
 	log := logging.L()
 	dbID, _, err := kv.Get(ctx, keyInstallID)
 	if err != nil {
@@ -134,7 +135,11 @@ func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, 
 	if cfg != nil && (cfg.Marketplace.DeviceID != "" || cfg.Marketplace.ClientID != "" || cfg.Marketplace.MerchantToken != "") {
 		// The operator pinned the identity in the environment, which wins
 		// over the DB anyway; just re-mark this install.
-		clearClonedIdentity(ctx, kv, isReplica(ctx, kv), newID, newest)
+		replica := isReplica(ctx, kv)
+		clearClonedIdentity(ctx, kv, replica, newID, newest)
+		if !oweJumpIfMain(replica, dbID, owe) {
+			return false
+		}
 		return remark(ctx, kv, path, newID, false)
 	}
 	get := func(key string) string {
@@ -162,7 +167,36 @@ func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, 
 	// next boot, which finds the flag and runs this again.
 	clearClonedIdentity(ctx, kv, replica, newID, newest)
 	log.Warnf("enrolment: this till's data was restored from a backup onto a new install; its cloud identity was reset and it must connect again (ut-docs#5157)")
+	if !oweJumpIfMain(replica, dbID, owe) {
+		return true
+	}
 	return remark(ctx, kv, path, newID, true)
+}
+
+// OweNumberJump durably records that this till owes the receipt/Z number jump
+// of ut-docs#5068 under token (db.OweNumberJump bound to the DB path). The
+// boot code passes it in so enroll keeps no dependency on internal/db. nil
+// records nothing.
+type OweNumberJump func(token string) error
+
+// restoredJumpToken names the jump owed by one detected restore: stable across
+// retries of the same detection (the DB's install id only changes at remark),
+// different for every later restore (each remark mints a new id).
+func restoredJumpToken(dbID string) string { return "restored-install:" + dbID }
+
+// oweJumpIfMain records the number jump a restored main till owes
+// (ut-docs#6294). A replica owes none: clearClonedIdentity gave it its own
+// provisional R<hex>- series. false means it could not be recorded: the caller
+// must not re-mark, so the next boot detects the restore again and retries.
+func oweJumpIfMain(replica bool, dbID string, owe OweNumberJump) bool {
+	if replica || owe == nil {
+		return true
+	}
+	if err := owe(restoredJumpToken(dbID)); err != nil {
+		logging.L().Errorf("enrolment: restore check: record the owed receipt/Z number jump: %v; re-checking on the next boot (ut-docs#6294)", err)
+		return false
+	}
+	return true
 }
 
 // clearClonedIdentity drops the per-till identity a restored copy shares with

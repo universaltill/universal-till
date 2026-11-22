@@ -85,7 +85,7 @@ func totalSets(kv *orderedKV) int {
 func TestRestoreCheck_FirstBootWritesMarker(t *testing.T) {
 	restoreDir(t)
 	kv := newOrderedKV()
-	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("a fresh install is not a restore")
 	}
 	id := readMarker(t)
@@ -100,7 +100,7 @@ func TestRestoreCheck_FirstBootWritesMarker(t *testing.T) {
 func TestRestoreCheck_UpgradeEnrolledNoMarkerKeepsIdentity(t *testing.T) {
 	restoreDir(t)
 	kv := enrolledKV(t) // enrolled before this feature shipped: no row, no marker
-	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("an upgrade must not be treated as a restore")
 	}
 	for k, want := range map[string]string{keyToken: "tok-old-secret-0001", keyDeviceID: "till-old-device", keyStoreID: "store-1"} {
@@ -122,7 +122,7 @@ func TestRestoreCheck_NormalRestartNoop(t *testing.T) {
 	writeMarker(t, "install-A")
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
 	n := totalSets(kv)
-	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("matching marker reported a restore")
 	}
 	if got := totalSets(kv); got != n {
@@ -138,7 +138,7 @@ func TestRestoreCheck_MarkerMissingClearsIdentity_Main(t *testing.T) {
 	logs := captureLog(t)
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A") // marker file absent: restored
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("DB enrolled and marker missing must report a restore")
 	}
 	for _, k := range []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyStoreID, keyMerchantID} {
@@ -174,7 +174,7 @@ func TestRestoreCheck_MarkerMissingClearsIdentity_Main(t *testing.T) {
 	}
 	// And the next restart is quiet.
 	n := totalSets(kv)
-	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) || totalSets(kv) != n {
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) || totalSets(kv) != n {
 		t.Fatal("the boot after a reset must be a no-op")
 	}
 }
@@ -184,7 +184,7 @@ func TestRestoreCheck_Replica_KeepsStore(t *testing.T) {
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keySyncPrimaryURL, "http://192.168.1.5:8080")
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if kv.get(keyStoreID) != "store-1" || kv.get(keyMerchantID) != "merchant-1" {
@@ -200,7 +200,7 @@ func TestRestoreCheck_MismatchedMarker(t *testing.T) {
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
 	writeMarker(t, "install-B") // another install's marker
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("a different marker is a restore")
 	}
 	if kv.get(keyToken) != "" {
@@ -219,7 +219,7 @@ func TestRestoreCheck_UnreadableMarkerNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := totalSets(kv)
-	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("never wipe when unsure")
 	}
 	if totalSets(kv) != n || kv.get(keyToken) == "" {
@@ -237,7 +237,7 @@ func TestRestoreCheck_EnvPinnedNoWipe(t *testing.T) {
 			restoreDir(t)
 			kv := enrolledKV(t)
 			_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-			if CheckRestoredInstall(context.Background(), cfg, kv, nil) {
+			if CheckRestoredInstall(context.Background(), cfg, kv, nil, nil) {
 				t.Fatal("an operator-pinned identity must not be reset")
 			}
 			if kv.get(keyToken) != "tok-old-secret-0001" || kv.get(keyDeviceID) != "till-old-device" {
@@ -258,7 +258,7 @@ func TestRestoreCheck_TouchesOnlyIdentityKeys(t *testing.T) {
 	restoreDir(t)
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	kv.mu.Lock()
@@ -305,7 +305,7 @@ func TestRestoreCheck_CrashBeforeRemarkKeepsRestoredFlag(t *testing.T) {
 	restoreDir(t)
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("first boot must report a restore")
 	}
 	// Simulate the crash: neither the marker nor the row were written.
@@ -313,7 +313,7 @@ func TestRestoreCheck_CrashBeforeRemarkKeepsRestoredFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("the repeated check must reset again")
 	}
 	if !RestoredState(context.Background(), kv) {
@@ -363,7 +363,7 @@ var lanKeptKeys = []string{keySyncPrimaryURL, keySyncTillName, "sync.till_role",
 func TestRestoreCheck_ReplicaClearsLANIdentity(t *testing.T) {
 	restoreDir(t)
 	kv := replicaKV(t)
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	for _, k := range []string{keySyncBearer, keySyncTillID, "sync.primary_cert_pin", "sync.primary_cert_next_pin", keyTillCloudID} {
@@ -398,7 +398,7 @@ func TestRestoreCheck_ReplicaNormalRestartChangesNothing(t *testing.T) {
 		before[k] = v
 	}
 	n := totalSets(kv)
-	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("matching marker reported a restore")
 	}
 	if totalSets(kv) != n {
@@ -416,7 +416,7 @@ func TestRestoreCheck_MainTillClearsCloudIDNoSyncKeys(t *testing.T) {
 	kv := enrolledKV(t) // a promoted main till: no sync.primary_url
 	_ = kv.fakeKV.Set(context.Background(), keyTillCloudID, "promoted-from")
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if v := kv.get(keyTillCloudID); v != "" {
@@ -437,7 +437,7 @@ func TestRestoreCheck_UnregisteredReplicaSetsRestoredFlag(t *testing.T) {
 	for k, v := range map[string]string{keySyncPrimaryURL: lanURL, keySyncBearer: lanBearer, keySyncTillID: lanTillID, keyInstallID: "install-A"} {
 		_ = kv.fakeKV.Set(context.Background(), k, v)
 	}
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if !RestoredState(context.Background(), kv) {
@@ -452,7 +452,7 @@ func TestRestoreCheck_EnvPinnedReplicaStillClearsLAN(t *testing.T) {
 	restoreDir(t)
 	kv := replicaKV(t)
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{MerchantToken: "pinned"}}
-	if CheckRestoredInstall(context.Background(), cfg, kv, nil) {
+	if CheckRestoredInstall(context.Background(), cfg, kv, nil, nil) {
 		t.Fatal("a pinned cloud identity is not reset")
 	}
 	for _, k := range []string{keySyncBearer, keySyncTillID, "sync.primary_cert_pin", "sync.primary_cert_next_pin"} {
@@ -471,7 +471,7 @@ func TestRestoreCheck_EnvPinnedReplicaStillClearsLAN(t *testing.T) {
 func TestRestoreCheck_ReplicaThenRepairKeepsDeviceID(t *testing.T) {
 	restoreDir(t)
 	kv := replicaKV(t)
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	id := kv.get(keyDeviceID)
@@ -499,7 +499,7 @@ func TestRestoreCheck_RepeatedResetKeepsProvisionalPrefix(t *testing.T) {
 	if err := kv.Set(context.Background(), keySyncReceiptPrefix, "Rbeef-"); err != nil {
 		t.Fatal(err)
 	}
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if p := kv.get(keySyncReceiptPrefix); p != "Rbeef-" {
@@ -514,7 +514,7 @@ func TestRestoreCheck_ReplicaRecordsRestoredSince(t *testing.T) {
 	restoreDir(t)
 	kv := replicaKV(t)
 	before := time.Now().UTC().Add(-time.Second)
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	since, err := time.Parse(time.RFC3339, kv.get(keySyncRestoredSince))
@@ -533,7 +533,7 @@ func TestRestoreCheck_RepeatedResetKeepsRestoredSince(t *testing.T) {
 	if err := kv.Set(context.Background(), keySyncRestoredSince, "2026-10-01T08:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if got := kv.get(keySyncRestoredSince); got != "2026-10-01T08:00:00Z" {
@@ -545,7 +545,7 @@ func TestRestoreCheck_MainTillDoesNotRecordRestoredSince(t *testing.T) {
 	restoreDir(t)
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if got := kv.get(keySyncRestoredSince); got != "" {
@@ -577,7 +577,7 @@ func TestRestoreCheck_RestoredSinceAfterFutureNewestEntry(t *testing.T) {
 	kv := replicaKV(t)
 	newest := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	fn, _ := newestEntry(newest.Format(time.RFC3339), nil)
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn, nil) {
 		t.Fatal("want reset")
 	}
 	want := newest.Add(time.Second).Format(time.RFC3339)
@@ -591,7 +591,7 @@ func TestRestoreCheck_RestoredSinceNowWhenNewestEntryIsPast(t *testing.T) {
 	kv := replicaKV(t)
 	before := time.Now().UTC().Add(-time.Second)
 	fn, _ := newestEntry(time.Now().UTC().Add(-time.Hour).Format(time.RFC3339), nil)
-	CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn)
+	CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn, nil)
 	since, err := time.Parse(time.RFC3339, kv.get(keySyncRestoredSince))
 	if err != nil || since.Before(before) || since.After(time.Now().UTC().Add(time.Second)) {
 		t.Fatalf("sync.restored_since = %q (err %v), want about now", kv.get(keySyncRestoredSince), err)
@@ -607,7 +607,7 @@ func TestRestoreCheck_RestoredSinceNowWhenLookupFails(t *testing.T) {
 		func(context.Context) (string, error) { return "garbage", nil },
 	} {
 		kv = replicaKV(t)
-		if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn) {
+		if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn, nil) {
 			t.Fatal("want reset despite the failed lookup")
 		}
 		since, err := time.Parse(time.RFC3339, kv.get(keySyncRestoredSince))
@@ -626,7 +626,7 @@ func TestRestoreCheck_ExistingRestoredSinceKeptDespiteNewestEntry(t *testing.T) 
 	kv := replicaKV(t)
 	_ = kv.Set(context.Background(), keySyncRestoredSince, "2026-10-01T08:00:00Z")
 	fn, calls := newestEntry(time.Now().UTC().Add(time.Hour).Format(time.RFC3339), nil)
-	CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn)
+	CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn, nil)
 	if got := kv.get(keySyncRestoredSince); got != "2026-10-01T08:00:00Z" {
 		t.Fatalf("sync.restored_since = %q, want the earlier instant kept", got)
 	}
@@ -640,7 +640,7 @@ func TestRestoreCheck_MainTillNeverLooksUpNewestEntry(t *testing.T) {
 	kv := enrolledKV(t)
 	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
 	fn, calls := newestEntry(time.Now().UTC().Add(time.Hour).Format(time.RFC3339), nil)
-	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn) {
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv, fn, nil) {
 		t.Fatal("want reset")
 	}
 	if *calls != 0 || kv.get(keySyncRestoredSince) != "" {
@@ -671,7 +671,7 @@ func TestRestoreCheck_ReplicaClearsBearerFile(t *testing.T) {
 	if b, err := os.ReadFile(bearerFile); err != nil || strings.TrimSpace(string(b)) != lanBearer {
 		t.Fatalf("bearer file = %q, %v", b, err)
 	}
-	if !CheckRestoredInstall(ctx, &config.Config{}, repo, nil) {
+	if !CheckRestoredInstall(ctx, &config.Config{}, repo, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if _, err := os.Stat(bearerFile); !os.IsNotExist(err) {
@@ -708,7 +708,7 @@ func TestRestoreCheck_UnregisteredReplicaWithoutBearerFileSetsRestoredFlag(t *te
 	if err := data.KeepSyncBearerOutOfDB(ctx, dbh.DB, paths.Data("secrets", "sync-bearer")); err != nil {
 		t.Fatal(err)
 	}
-	if !CheckRestoredInstall(ctx, &config.Config{}, repo, nil) {
+	if !CheckRestoredInstall(ctx, &config.Config{}, repo, nil, nil) {
 		t.Fatal("want reset")
 	}
 	if !RestoredState(ctx, repo) {
