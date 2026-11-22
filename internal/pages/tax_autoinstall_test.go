@@ -1,10 +1,12 @@
 package pages
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // ADR-0172 §2 (ut-docs#6285): which tax plugin, if any, a till may install
@@ -72,5 +74,69 @@ func TestTaxAutoInstallEligible_Manifest(t *testing.T) {
 	}
 	if err := taxAutoInstallEligible(nil, "XX"); err == nil {
 		t.Fatal("a nil manifest is never eligible")
+	}
+}
+
+func cleanTaxListing() *marketplace.PluginSummary {
+	return &marketplace.PluginSummary{
+		ID:          "listing-xx",
+		Markets:     []string{"XX"},
+		TrustTier:   "official",
+		Permissions: []string{"events:receive", "sales:read", "storage"},
+	}
+}
+
+// ADR-0172 §2.1-§2.3: every listing-level refusal of taxListingEligible.
+func TestTaxListingEligible_Table(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(p *marketplace.PluginSummary)
+		country string // "" = "XX"
+		want    string // substring of the reason; "" = eligible
+	}{
+		{"clean first-party free listing", func(p *marketplace.PluginSummary) {}, "", ""},
+		{"empty markets is never eligible", func(p *marketplace.PluginSummary) { p.Markets = nil }, "", "markets"},
+		{"markets names another country only", func(p *marketplace.PluginSummary) { p.Markets = []string{"YY"} }, "", "markets"},
+		{"country match is case-insensitive", func(p *marketplace.PluginSummary) { p.Markets = []string{"xx"} }, "XX", ""},
+		{"trust verified", func(p *marketplace.PluginSummary) { p.TrustTier = "verified" }, "", "first-party"},
+		{"trust community", func(p *marketplace.PluginSummary) { p.TrustTier = "community" }, "", "first-party"},
+		{"trust empty", func(p *marketplace.PluginSummary) { p.TrustTier = "" }, "", "first-party"},
+		{"trust Official with spaces", func(p *marketplace.PluginSummary) { p.TrustTier = "  Official " }, "", ""},
+		{"paid listing", func(p *marketplace.PluginSummary) { p.PaidListing = true }, "", "paid"},
+		{"architecture is not this host", func(p *marketplace.PluginSummary) { p.Architectures = []string{"plan9/mips"} }, "", "architecture"},
+		{"architecture any", func(p *marketplace.PluginSummary) { p.Architectures = []string{"any"} }, "", ""},
+		{"architecture any, padded and upper-case", func(p *marketplace.PluginSummary) { p.Architectures = []string{" ANY "} }, "", ""},
+		{"architecture GOOS/GOARCH", func(p *marketplace.PluginSummary) {
+			p.Architectures = []string{runtime.GOOS + "/" + runtime.GOARCH}
+		}, "", ""},
+		{"architecture GOARCH only", func(p *marketplace.PluginSummary) { p.Architectures = []string{runtime.GOARCH} }, "", ""},
+		{"net: permission", func(p *marketplace.PluginSummary) {
+			p.Permissions = append(p.Permissions, "net:test-api.service.hmrc.gov.uk")
+		}, "", "allow-list"},
+		{"fiscal_register_de:read scope", func(p *marketplace.PluginSummary) {
+			p.Permissions = append(p.Permissions, "fiscal_register_de:read")
+		}, "", "allow-list"},
+		{"unknown future permission", func(p *marketplace.PluginSummary) {
+			p.Permissions = append(p.Permissions, "customers:write")
+		}, "", "allow-list"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := cleanTaxListing()
+			tc.mutate(p)
+			country := tc.country
+			if country == "" {
+				country = "XX"
+			}
+			got := taxListingEligible(p, country)
+			switch {
+			case tc.want == "" && got != "":
+				t.Fatalf("want eligible, got refusal %q", got)
+			case tc.want != "" && got == "":
+				t.Fatalf("want a refusal mentioning %q, got eligible", tc.want)
+			case tc.want != "" && !strings.Contains(got, tc.want):
+				t.Fatalf("refusal %q does not mention %q", got, tc.want)
+			}
+		})
 	}
 }
