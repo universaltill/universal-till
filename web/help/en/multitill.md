@@ -117,7 +117,7 @@ If the main till died, the shop's owner can replace it on my.universaltill.com (
 
 ## When a joined till was restored onto a new device
 
-If a joined till's data is restored from a phone or iCloud backup (or copied) onto another device, that device stops using the old till's connection to the main till, so two devices never sync as one till. It keeps selling, and the status bar shows **Join the main till again**. On the main till, create a join code; on the restored device, use **Join an existing shop** on the Tills page and give it a new name. Its sales that have not reached the main till are sent first, under their own receipt numbers; after joining it numbers receipts as a new till. Don't revoke the till it was restored from if that till is still in use.
+If a joined till's data is restored from a phone or iCloud backup, comes along in a phone-to-phone transfer that brings the till's data, or is copied onto another device, that device stops using the old till's connection to the main till, so two devices never sync as one till. It keeps selling, and the status bar shows **Join the main till again**. On the main till, create a join code; on the restored device, use **Join an existing shop** on the Tills page and give it a new name. Its sales that have not reached the main till are sent first, under their own receipt numbers; after joining it numbers receipts as a new till. Don't revoke the till it was restored from if that till is still in use.
 
 ## When a joined till can't reach the main till
 

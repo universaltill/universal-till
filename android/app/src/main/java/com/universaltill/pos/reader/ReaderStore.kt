@@ -21,8 +21,9 @@ interface ReaderStore {
 }
 
 /**
- * AES-GCM under a key that lives in the Android Keystore (not exportable, not backed up: allowBackup is false for
- * the app). Only the ciphertext is in the private preferences file. No shop data is ever stored in reader mode.
+ * AES-GCM under a key that lives in the Android Keystore (not exportable, so it never leaves the device). allowBackup is false, which keeps the file out of cloud backup;
+ * on Android 12+ a phone-to-phone transfer may still copy the ciphertext (only secrets/ and tls/ are excluded,
+ * ut-docs#6915), which is useless without the key. Only the ciphertext is in the private preferences file. No shop data is ever stored in reader mode.
  */
 class KeystoreReaderStore(context: Context) : ReaderStore {
     private val prefs = context.applicationContext.getSharedPreferences("reader_mode", Context.MODE_PRIVATE)

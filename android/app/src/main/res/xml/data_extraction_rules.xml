@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ut-docs#6915 (Android 12+, API 31+): keep the device secrets and the
+     local TLS key material out of cloud backup AND device-to-device transfer.
+     The rest of the data dir may move; without secrets/install-id the new
+     phone is detected as a restored install (internal/enroll/restored.go) and
+     asks to connect again. Paths are relative to filesDir. API 24-30 uses
+     backup_rules.xml. scripts/ci/guard-android-backup-rules.sh keeps both. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="secrets" />
+        <exclude domain="file" path="tls" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="secrets" />
+        <exclude domain="file" path="tls" />
+    </device-transfer>
+</data-extraction-rules>
