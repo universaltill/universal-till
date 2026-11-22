@@ -16,6 +16,8 @@ func TestMain(m *testing.M) {
 		panic("TestMain: data temp dir: " + err.Error())
 	}
 	paths.Init(dir)
+	// Never read the real machine id (ut-docs#6907): an unknown host is a no-op.
+	readHostID = func() (string, string) { return "", "" }
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

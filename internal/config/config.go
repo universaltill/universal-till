@@ -240,6 +240,10 @@ type Config struct {
 	// laptop. Parsed by internal/languard in pages.Init; an invalid entry
 	// drops the whole list (stricter, never wider).
 	UIAllowCIDRs string
+	// HostID is UT_HOST_ID: pin or turn off the host check of a copied data
+	// folder (ut-docs#6907). "off" skips the check; any other value is used
+	// as this till's host id instead of the machine's (Docker, volatile /etc).
+	HostID string
 	// NeverRegister is UT_NEVER_REGISTER (ADR-0200, ut-docs#6559): a till that
 	// must never register itself in the cloud or send change events. Every CI,
 	// e2e, docs-shots and device-test harness sets it so throwaway tills do not
@@ -305,6 +309,7 @@ func Init() (*Config, error) {
 		CSPReportOnly:   cspReportOnly,
 		LANDiscovery:    lanDiscovery,
 		UIAllowCIDRs:    os.Getenv("UT_UI_ALLOW_CIDRS"),
+		HostID:          strings.TrimSpace(os.Getenv("UT_HOST_ID")),
 		NeverRegister:   neverRegister,
 		E2EAutoRegister: e2eAuto,
 		Marketplace: MarketplaceConfig{

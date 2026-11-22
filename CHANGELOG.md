@@ -7,6 +7,18 @@ Release notes for the till. Versions come from the release tag
 
 ### Added
 
+- **A till folder copied onto other hardware moves its numbers ahead
+  (ut-docs#6907).** A main till whose whole data folder (secrets included)
+  is copied to other hardware (a folder or SD card copy) now notices the new
+  machine at its first start and moves receipt and Z numbers ahead once, as
+  after a restore; the original keeps counting. A whole-disk clone to another
+  PC keeps the machine id and is not noticed, and the official Docker image
+  has no machine id, so it is not checked. A copied joined till shows
+  **Join the main till again**. Only a hashed machine id is stored. Set
+  `UT_HOST_ID` to your own id, different on every machine and set on the
+  original before copying (a pin copied with the folder hides the copy), or
+  `off` to skip the check.
+
 - **Every till registers itself and reports its changes (ut-docs#6559,
   ADR-0200).** Once setup is finished, the till registers itself with the
   Universal Till cloud in the background (never during a sale, retried with
