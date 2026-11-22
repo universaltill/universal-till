@@ -3,7 +3,7 @@
 # Weekly, non-blocking report of manual screenshots gone stale (ut-docs#4582).
 #
 # guard-docs-shots.sh deliberately leaves web/locales/**/*.json out of the
-# surface hash (every key touches every locale file, so including it would
+# surface record (every key touches every locale file, so including it would
 # force a full regen on almost any string change). The accepted cost: a copy
 # change can go stale in a screenshot — e.g. the ar/fa manual still showing an
 # old UI word — without tripping any guard. This script closes that gap after

@@ -137,7 +137,8 @@ prune-worktrees:
 
 # Regenerates the user manual's screenshots (web/help/img/<locale>/<id>.png,
 # one per routed help topic per shipped locale) against a real till, then
-# rewrites web/help/img/manifest.json — the freshness record
+# rewrites web/help/img/manifest.json (per-topic hashes and a per-file
+# surface record, ut-docs#6654) — the freshness record
 # scripts/ci/guard-docs-shots.sh checks in CI. Run this and commit the result
 # whenever a screen or a routed topic changes.
 #

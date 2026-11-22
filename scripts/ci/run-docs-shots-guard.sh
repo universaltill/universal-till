@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # CI entry point for the manual screenshot freshness guard (ut-docs#2794).
-# surface_sha256 in web/help/img/manifest.json covers nearly the whole app
-# UI surface, so enforcing guard-docs-shots.sh on every pull_request made
+# The single surface_sha256 in web/help/img/manifest.json covered nearly the
+# whole app UI surface, so enforcing guard-docs-shots.sh on every pull_request made
 # any two concurrent UI PRs conflict on that generated file: whichever
 # merged second had to merge main, re-run `make docs-shots`, push and sit
 # through the full CI run again — sometimes for several rounds. On a
@@ -12,6 +12,10 @@
 # guard stays hard-blocking, so real drift still turns main red right after
 # merge and is fixed like any other red-main build. The guard itself is
 # unchanged — see guard-docs-shots.sh for what it checks and why.
+#
+# Since ut-docs#6654 the record is per file (surface_files, one entry per
+# surface file), so concurrent UI PRs touching different files no longer
+# conflict on it; the pull_request warn-only policy is kept as is.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

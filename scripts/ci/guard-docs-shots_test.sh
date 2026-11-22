@@ -63,17 +63,23 @@ expect_pass() {
 # Fails for the RIGHT reason, not just any reason — asserts the surface-
 # staleness message specifically, so this doesn't false-pass on an
 # unrelated guard failure (e.g. a missing manifest).
+# ut-docs#6654: an optional second argument is a fixed string the output must
+# also contain -- the guard now NAMES the changed/added/removed surface file.
 expect_fail() {
-  local label="$1"
+  local label="$1" named="${2:-}"
   if bash "${GUARD}" >/tmp/guard_docs_shots_test_out.$$ 2>&1; then
     echo "❌ FAIL: expected guard to reject ${label}, but it passed (false negative)" >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
-  elif grep -q "the app surface" /tmp/guard_docs_shots_test_out.$$; then
-    echo "✓ guard correctly rejected ${label} (surface-staleness)"
-  else
+  elif ! grep -q "the app surface" /tmp/guard_docs_shots_test_out.$$; then
     echo "❌ FAIL: guard rejected ${label}, but not for surface staleness:" >&2
     cat /tmp/guard_docs_shots_test_out.$$ >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
+  elif [[ -n "${named}" ]] && ! grep -qF -- "${named}" /tmp/guard_docs_shots_test_out.$$; then
+    echo "❌ FAIL: guard rejected ${label} but did not name ${named}:" >&2
+    cat /tmp/guard_docs_shots_test_out.$$ >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  else
+    echo "✓ guard correctly rejected ${label} (surface-staleness${named:+, named})"
   fi
   rm -f /tmp/guard_docs_shots_test_out.$$
 }
@@ -127,7 +133,8 @@ plant "SharedHelperNoRoute" 'package pages
 func zzGuardTestHelper(n int) int {
 	return n * 2
 }'
-expect_fail "a new file with no mux route registration at all (shared-helper class)"
+expect_fail "a new file with no mux route registration at all (shared-helper class)" \
+  "added: ${FIXTURE_DIR}/zz_guard_docs_shots_test_SharedHelperNoRoute.go"
 clear_fixture "SharedHelperNoRoute"
 
 # A brand-new file registering a route that IS a screenshotted topic route
@@ -140,7 +147,8 @@ import "net/http"
 func registerZZGuardTestReports(mux *http.ServeMux) {
 	mux.HandleFunc("GET /reports", func(w http.ResponseWriter, r *http.Request) {})
 }'
-expect_fail "a new file registering a screenshotted route (/reports)"
+expect_fail "a new file registering a screenshotted route (/reports)" \
+  "added: ${FIXTURE_DIR}/zz_guard_docs_shots_test_ScreenshottedRoute.go"
 clear_fixture "ScreenshottedRoute"
 
 # Method-prefix-less registration style (this codebase uses both
@@ -266,6 +274,74 @@ rm -f web/help/img/en/zz-noroute-a.png
 restore_shots
 rm -f web/help/en/zz-noroute.md
 expect_pass "the real tree again after the extra-shot cases"
+
+# Per-file surface record (ut-docs#6654): the guard names what changed, and
+# the manifest must be in the per-file format.
+SURFACE_BAK="$(mktemp -d)"
+cp web/help/img/manifest.json "${SURFACE_BAK}/manifest.json"
+# Capture first, then filter: `| head -1` under pipefail can SIGPIPE the
+# writer and abort the whole test with 141 (seen in review, ut-docs#6654).
+SURFACE_REC="$(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash "${GUARD}")"
+PUBLIC_FILE="$(awk '$2 ~ /^web\/public\// {print $2; exit}' <<<"${SURFACE_REC}")"
+cp "${PUBLIC_FILE}" "${SURFACE_BAK}/public_file"
+restore_surface() {
+  cp "${SURFACE_BAK}/manifest.json" web/help/img/manifest.json
+  cp "${SURFACE_BAK}/public_file" "${PUBLIC_FILE}"
+}
+cleanup_surface() {
+  local status=$?
+  rm -rf "${SURFACE_BAK}"
+  (exit "${status}")
+  cleanup_shots
+}
+trap cleanup_surface EXIT
+
+printf '\n/* zz changed */\n' >>"${PUBLIC_FILE}"
+expect_fail "an edited tracked surface file" "changed: ${PUBLIC_FILE}"
+restore_surface
+
+rm -f "${PUBLIC_FILE}"
+expect_fail "a deleted surface file" "removed: ${PUBLIC_FILE}"
+restore_surface
+
+# Legacy single-hash manifest: refused with a fix hint, never accepted.
+python3 - <<'PYEOF'
+import json
+p = "web/help/img/manifest.json"
+m = json.load(open(p))
+m["surface_sha256"] = "0" * 64
+json.dump(m, open(p, "w"), indent=2)
+PYEOF
+expect_fail_with "a legacy manifest with surface_sha256" "pre-ut-docs#6654"
+restore_surface
+
+python3 - <<'PYEOF'
+import json
+p = "web/help/img/manifest.json"
+m = json.load(open(p))
+del m["surface_files"]
+json.dump(m, open(p, "w"), indent=2)
+PYEOF
+expect_fail_with "a manifest with no surface_files record" "pre-ut-docs#6654"
+restore_surface
+
+# Exclusions stay intact (AC4): test files, testdata/, locales, and the
+# unscreenshotted-route file class are not surface.
+printf 'package pages\n' >"${FIXTURE_DIR}/zz_guard_docs_shots_test_x_test.go"
+mkdir -p "${FIXTURE_DIR}/zz_guard_testdata_dir/testdata"
+printf 'x\n' >"${FIXTURE_DIR}/zz_guard_testdata_dir/testdata/fixture.go"
+mkdir -p web/locales
+printf '{}\n' >web/locales/en.json
+fixtures+=("${FIXTURE_DIR}/zz_guard_docs_shots_test_x_test.go" "${FIXTURE_DIR}/zz_guard_testdata_dir/testdata/fixture.go")
+expect_pass "a _test.go file, a testdata/ file and web/locales/en.json"
+rm -rf "${FIXTURE_DIR}/zz_guard_testdata_dir" web/locales
+if [[ -f "${FIXTURE_DIR}/import_page.go" ]]; then
+  cp "${FIXTURE_DIR}/import_page.go" "${SURFACE_BAK}/import_page.go"
+  printf '\n// zz comment\n' >>"${FIXTURE_DIR}/import_page.go"
+  expect_pass "an edit to import_page.go (unscreenshotted-route file)"
+  cp "${SURFACE_BAK}/import_page.go" "${FIXTURE_DIR}/import_page.go"
+fi
+expect_pass "the real tree again after the per-file record cases"
 
 if [[ ${FAIL_COUNT} -gt 0 ]]; then
   echo "${FAIL_COUNT} failure(s)" >&2
