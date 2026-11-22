@@ -32,7 +32,8 @@ BASE="$(git rev-parse HEAD)"
 git branch -q base "${BASE}"
 
 # The first two ADJACENT entries of the sorted surface under web/public/.
-mapfile -t PUB < <(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash "${GUARD}" | awk '{print $2}' | grep '^web/public/' | head -2)
+SURFACE_LIST="$(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash "${GUARD}")"
+mapfile -t PUB < <(awk '$2 ~ /^web\/public\// && n < 2 { print $2; n++ }' <<<"${SURFACE_LIST}")
 X="${PUB[0]}"
 Y="${PUB[1]}"
 if [[ -z "${X}" || -z "${Y}" ]]; then

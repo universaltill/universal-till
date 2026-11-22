@@ -49,7 +49,8 @@ fi
 echo "❌ FAIL: scripts/ci/guard-docs-shots.sh (Python) and e2e/tests-docs/lib.js (JS)" >&2
 echo "   computed DIFFERENT per-file surface records against the same working tree" >&2
 echo "   (diff: < Python, > JS):" >&2
-diff <(echo "${PY_REC}") <(echo "${JS_REC}") | head -40 >&2 || true
+REC_DIFF="$(diff <(echo "${PY_REC}") <(echo "${JS_REC}") || true)"
+sed -n '1,40p' <<<"${REC_DIFF}" >&2
 echo "   The two implementations have genuinely diverged — reconcile them" >&2
 echo "   (they must stay in lockstep; see the HASH ALGORITHM comment atop" >&2
 echo "   each file) before merging." >&2
