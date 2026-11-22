@@ -102,8 +102,8 @@ func TestChannelOrderDetail_OrderDiscountOnly(t *testing.T) {
 			t.Errorf("body lacks %q", w)
 		}
 	}
-	if strings.Contains(body, "Line discounts") || strings.Contains(body, `data-testid="channel-order-line-discounts"`) {
-		t.Error("Line discounts row shown with none")
+	if strings.Contains(body, "Line discount") || strings.Contains(body, `data-testid="channel-order-line-discount`) {
+		t.Error("Line discount column or row shown with none")
 	}
 }
 
@@ -117,7 +117,7 @@ func TestChannelOrderDetail_NoDiscounts(t *testing.T) {
 			t.Errorf("undiscounted order shows %q", w)
 		}
 	}
-	if strings.Count(body, `data-testid="channel-order-line-discount"></td>`) != 2 {
-		t.Error("every discount cell should be empty")
+	if strings.Contains(body, "Line discount</th>") || strings.Contains(body, `data-testid="channel-order-line-discount"`) {
+		t.Error("Line discount column shown on an order with no line discount")
 	}
 }
