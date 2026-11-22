@@ -27,17 +27,25 @@ var hostIdentity = readHostID
 // never holds the raw id (machine-id(5): hash it with an app-specific key).
 var hostTagKey = []byte("universal-till lantls host id v1")
 
-// hostTag is what rotation.json stores: "<source>:<hex HMAC-SHA256 of the
-// id>"; "" when either part is empty. The id is not stored in clear; a
-// short one (a Pi serial) is not secret either, since the key is public.
-func hostTag(source, raw string) string {
+// ReadHostID is this machine's id and its source; ("", "") when unknown
+// (ut-docs#6907 reuses it for copied-data-folder detection).
+func ReadHostID() (source, raw string) { return hostIdentity() }
+
+// HostTag is "<source>:<hex HMAC-SHA256(key, source\x00raw)>"; "" when either
+// part is empty. Each use passes its own key, so one stored tag never matches
+// another's. The id is not stored in clear; a short one (a Pi serial) is not
+// secret either, since the keys are public.
+func HostTag(key []byte, source, raw string) string {
 	if source == "" || raw == "" {
 		return ""
 	}
-	m := hmac.New(sha256.New, hostTagKey)
+	m := hmac.New(sha256.New, key)
 	m.Write([]byte(source + "\x00" + raw))
 	return source + ":" + hex.EncodeToString(m.Sum(nil))
 }
+
+// hostTag is what rotation.json stores.
+func hostTag(source, raw string) string { return HostTag(hostTagKey, source, raw) }
 
 // cleanHostID trims a raw id as read from a file (devicetree strings end
 // in NUL) and drops values that identify no machine: empty, all zeros,

@@ -95,6 +95,13 @@ func RestoredState(ctx context.Context, kv Settings) bool {
 // its marketplace fields are exactly the operator's pins. Never blocks boot
 // and never wipes when unsure.
 func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, newest NewestJournalEntry, owe OweNumberJump) (reset bool) {
+	reset = checkInstallMarker(ctx, cfg, kv, newest, owe)
+	checkHostMove(ctx, cfg, kv, newest, owe)
+	return reset
+}
+
+// checkInstallMarker is the install-id half of CheckRestoredInstall.
+func checkInstallMarker(ctx context.Context, cfg *config.Config, kv Settings, newest NewestJournalEntry, owe OweNumberJump) (reset bool) {
 	log := logging.L()
 	dbID, _, err := kv.Get(ctx, keyInstallID)
 	if err != nil {
