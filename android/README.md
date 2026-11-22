@@ -449,6 +449,12 @@ mode engages, only whether the app tells the truth about it):
   provisioning (below) is still the only way to get a pin that cannot be
   declined**.
 
+**Backup and phone-to-phone transfer (ut-docs#6915):** `allowBackup` stays
+`false`, and `res/xml/data_extraction_rules.xml` (Android 12+) plus
+`res/xml/backup_rules.xml` (API 24-30) still exclude `secrets/` and `tls/` from
+cloud backup and device transfer, so a transferred install is detected as
+restored (`internal/enroll/restored.go`); `scripts/ci/guard-android-backup-rules.sh` keeps them.
+
 **Scaffolded but NOT active:** `TillDeviceAdminReceiver` +
 `res/xml/device_admin_receiver.xml` + the manifest `<receiver>` exist so
 this app *could* later be provisioned as **Device Owner**, which

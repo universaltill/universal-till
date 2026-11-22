@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ut-docs#6915 (API 24-30 full-backup-content): same exclusions as
+     data_extraction_rules.xml, so a restored install lacks secrets/install-id
+     and is detected as restored (internal/enroll/restored.go). -->
+<full-backup-content>
+    <exclude domain="file" path="secrets" />
+    <exclude domain="file" path="tls" />
+</full-backup-content>

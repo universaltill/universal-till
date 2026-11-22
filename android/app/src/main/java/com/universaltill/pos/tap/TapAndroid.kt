@@ -57,7 +57,8 @@ class GoDevicepayBridge(private val core: DevicepayBridgeCore) : mobile.TapToPay
 /**
  * The only persisted state of the whole feature: whether the operator saw the
  * education text, and the write-before-tap record (ids only: no client
- * secret, no card data). allowBackup is false for the app.
+ * secret, no card data). allowBackup is false, which keeps it out of cloud backup; on Android 12+ a
+ * phone-to-phone transfer may still copy it (only secrets/ and tls/ are excluded, ut-docs#6915).
  */
 class TapPrefs(context: Context) {
     private val p = context.applicationContext.getSharedPreferences("tap_to_pay", Context.MODE_PRIVATE)
