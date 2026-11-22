@@ -240,6 +240,10 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/plugins/{id}/settings/{key}/options":   true,
 	"POST /api/plugins/{id}/uninstall":                true,
 	"POST /api/plugins/{id}/update":                   true,
+
+	// Test connection makes the plugin run and reach out (ut-docs#5961).
+	"POST /api/plugins/{id}/settings/tests/{test}/run": true,
+
 	// Shop type: saving it runs builtinlayouts.Sync, which installs/activates
 	// the built-in layout plugins via plugins.PersistManifest — a plugin
 	// install, so always denied (ADR-0113 §1.5).

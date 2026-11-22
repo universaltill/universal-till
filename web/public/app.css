@@ -8421,3 +8421,15 @@ body.osk-padded .stocktake-bar { inset-block-end: var(--osk-reserved-height, 17r
 #card-readers-list .btn, #reader-requests .btn { min-block-size: 56px; inline-size: auto; justify-content: center; }
 .reader-actions .btn { inline-size: 100%; }
 #card-readers-list input, #reader-requests input { min-block-size: 56px; margin: 0; }
+
+/* Test connection (ADR-0121 S5, ut-docs#5961). The status region is a
+   persistent live region; "Testing…" shows while a request is in flight. */
+.ps-tests { display: flex; flex-direction: column; gap: .5rem; margin-block-start: .75rem; }
+.ps-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.ps-test-row .btn { max-inline-size: 100%; white-space: normal; }
+.ps-test { flex: 1 1 12rem; min-inline-size: 0; overflow-wrap: anywhere; text-align: start; font-size: .95rem; }
+.ps-test .ps-test-running { display: none; }
+.ps-test.htmx-request .ps-test-running { display: inline; }
+.ps-test.htmx-request .ps-test-result { display: none; }
+.ps-test .ps-test-result .btn { margin-block-start: .4rem; }
+#ps-form [data-ps-test-mark] { outline: 2px solid var(--danger); outline-offset: 1px; }

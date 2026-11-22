@@ -41,6 +41,13 @@ func main() {
   options, value 1..64 bytes with no comma, label plain text up to 128 bytes;
   a nil list is an empty list. The till gives it 5 s and drops a malformed
   answer whole.
+- **Test connection** (`settings_tests` in the manifest, ADR-0121 S5): hook
+  `ui.settings.test.ask` (+ `events:receive`). The till saves the form, then
+  asks; decode `plugin.SettingsTestRequest` (`Test` = the entry's id, nothing
+  else: read the saved key with `SettingsGet`) and answer
+  `plugin.SettingsTestAnswer` (`OK`, optional `Message` = a key of your own
+  locale bundle, optional `Field` = a visible top-level setting to mark).
+  10 s; no answer or a malformed one shows "Couldn't run the test".
 
 Reference (every host function, permissions, limits): ut-docs
 `reference/plugin-host-functions.md`.

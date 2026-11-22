@@ -358,6 +358,12 @@
   if (prev && prev.mq) { if (prev.mq.removeEventListener) prev.mq.removeEventListener('change', prev.fn); else if (prev.mq.removeListener) prev.mq.removeListener(prev.fn); }
   window.__utPsTabsMq = { mq: mq, fn: rerender };
   if (mq.addEventListener) mq.addEventListener('change', rerender); else if (mq.addListener) mq.addListener(rerender);
+  // A failed test names a field: open the tab it sits in (no scroll, no focus).
+  document.addEventListener('ps-show-field', function (ev) {
+    var p = ev.target && ev.target.closest && ev.target.closest('[data-ps-tab]');
+    var box = p && p.parentNode;
+    if (box && box.hasAttribute && box.hasAttribute('data-ps-tabs') && !p.hidden) setActive(box, p);
+  });
   init(document);
 })();
 </script>
@@ -391,6 +397,88 @@
   });
 })();
 </script>
+
+<script>
+// ut-docs#5961 (ADR-0121 S5): Test connection. The status region
+// (.ps-test, role=status) keeps its node; only its inner HTML is swapped.
+// Never moves focus to a marked field (that would pop the on-screen
+// keyboard on a till), and never shows a literal of its own: every word comes
+// from the server-rendered markup.
+(function () {
+  function region(el) { return el && el.closest ? el.closest('.ps-test') : null; }
+  function clearMark(reg) {
+    var id = reg.getAttribute('data-ps-test');
+    var form = document.getElementById('ps-form');
+    if (!form) return;
+    Array.prototype.forEach.call(form.querySelectorAll('[data-ps-test-mark="' + id + '"]'), function (f) {
+      f.removeAttribute('aria-invalid');
+      f.removeAttribute('data-ps-test-mark');
+      var d = (f.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (t) { return t && t !== 'ps-test-fe-' + id; });
+      if (d.length) f.setAttribute('aria-describedby', d.join(' ')); else f.removeAttribute('aria-describedby');
+    });
+    var note = document.getElementById('ps-test-fe-' + id);
+    if (note && note.parentNode) note.parentNode.removeChild(note);
+  }
+  function mark(reg) {
+    var id = reg.getAttribute('data-ps-test');
+    clearMark(reg);
+    var res = reg.querySelector('[data-ps-test-field]');
+    var form = document.getElementById('ps-form');
+    if (!res || !form) return;
+    var name = 'setting_' + res.getAttribute('data-ps-test-field');
+    var f = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
+    if (!f) return;
+    f.setAttribute('aria-invalid', 'true');
+    f.setAttribute('data-ps-test-mark', id);
+    var msg = reg.querySelector('.ps-test-msg');
+    var note = document.createElement('p');
+    note.className = 'field-error-msg';
+    note.id = 'ps-test-fe-' + id;
+    note.setAttribute('dir', 'auto');
+    note.textContent = msg ? msg.textContent : '';
+    var box = f.closest('.ps-field') || f.parentNode;
+    box.appendChild(note);
+    f.setAttribute('aria-describedby', ((f.getAttribute('aria-describedby') || '') + ' ' + note.id).trim());
+    f.dispatchEvent(new CustomEvent('ps-show-field', { bubbles: true }));
+  }
+  var hadFocus = false;
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    var reg = region(ev.detail && ev.detail.elt);
+    if (reg) reg.setAttribute('aria-busy', 'true');
+  });
+  document.body.addEventListener('htmx:afterRequest', function (ev) {
+    var reg = region(ev.detail && ev.detail.elt);
+    if (reg) reg.removeAttribute('aria-busy');
+  });
+  document.body.addEventListener('htmx:beforeSwap', function (ev) {
+    var reg = region(ev.detail && ev.detail.target);
+    hadFocus = !!(reg && reg.contains(document.activeElement));
+  });
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var reg = region(ev.detail && ev.detail.target);
+    if (!reg) return;
+    mark(reg);
+    if (hadFocus && (!document.activeElement || document.activeElement === document.body)) {
+      var b = document.getElementById('ps-test-btn-' + reg.getAttribute('data-ps-test'));
+      if (b) b.focus();
+    }
+    hadFocus = false;
+  });
+  // A 401/403/500, a dropped connection or the client timeout is not
+  // swapped by htmx: fall back to the server-rendered "couldn't run" block
+  // so the line never sits on "Testing…".
+  function fallback(ev) {
+    var reg = region(ev.detail && ev.detail.elt);
+    var tpl = reg && reg.parentNode && reg.parentNode.querySelector('template.ps-test-fallback');
+    if (!tpl) return;
+    reg.removeAttribute('aria-busy');
+    clearMark(reg);
+    reg.innerHTML = tpl.innerHTML;
+    if (window.htmx) window.htmx.process(reg);
+  }
+  ['htmx:responseError', 'htmx:sendError', 'htmx:timeout'].forEach(function (n) { document.body.addEventListener(n, fallback); });
+})();
+</script>
 {{ end }}
 
 {{ define "plugin_settings_form" }}
@@ -399,7 +487,7 @@
      checks would silently block Save on a required field hidden by
      show_when, or on an invalid stored value prefilled into a pattern box
      that the server keeps untouched. */}}
-<form id="ps-form" novalidate action="/api/plugins/{{ .PluginID }}/settings" method="post" hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="this" hx-swap="outerHTML">
+<form id="ps-form" novalidate action="/api/plugins/{{ .PluginID }}/settings" method="post" hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="this" hx-swap="outerHTML"{{ if .Tests }} hx-sync="this:drop"{{ end }}>
     {{ if .Tabs }}<div class="ps-tabs" data-ps-tabs>
       {{ range .Tabs }}
       <details class="ps-tab" id="ps-tab-{{ .ID }}" data-ps-tab="{{ .ID }}" open{{ if .Active }} data-ps-active{{ end }}{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .HasStored }} data-show-when-stored="{{ .ShowStored }}"{{ end }}{{ if .Hidden }} hidden{{ end }}{{ end }}>
@@ -412,9 +500,23 @@
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
       <span id="ps-msg" role="status">{{ if .Saved }}<span>✓ {{ T "plugins.settings.saved" }} ({{ .Changed }})</span>{{ else if .Refused }}<span class="field-error-msg">{{ T "plugins.settings.error.summary" }}</span>{{ end }}</span>
-    </div>
+    </div>{{ if .Tests }}
+    <div class="ps-tests">{{ range .Tests }}<div class="ps-test-row"><button class="btn secondary" type="submit" name="ps_test" value="{{ .ID }}" id="ps-test-btn-{{ .ID }}">{{ .Label }}</button>{{ template "plugin_settings_test_line" . }}</div>{{ end }}</div>{{ end }}
 </form>
 {{ end }}
+
+{{/* Test connection (ADR-0121 S5, ut-docs#5961). The role=status span is the
+     live region and is never swapped itself: the run request replaces only
+     its inner HTML. Run = the save just succeeded, so the line asks on load
+     (hx-params=none: it must not post the form, secrets included). The
+     fallback <template> sits beside the region (it survives inner swaps) and
+     is what the page script shows when the run request itself fails. */}}
+{{ define "plugin_settings_test_line" }}<span class="ps-test" id="ps-test-{{ .ID }}" data-ps-test="{{ .ID }}" role="status" aria-live="polite">{{ if .Run }}<span class="ps-test-run" hx-post="/api/plugins/{{ .PluginID }}/settings/tests/{{ .ID }}/run" hx-trigger="load" hx-target="closest .ps-test" hx-swap="innerHTML" hx-params="none" hx-request='{"timeout":15000}'>{{ T "plugins.settings.test.running" }}</span>{{ else if .Refused }}<span class="ps-test-note">{{ T "plugins.settings.test.not_run" }}</span>{{ end }}</span><template class="ps-test-fallback"><span class="ps-test-running">{{ T "plugins.settings.test.running" }}</span><span class="ps-test-result">{{ template "plugin_settings_test_unavailable" . }}</span></template>{{ end }}
+
+{{ define "plugin_settings_test_unavailable" }}<span class="field-error-msg"><span aria-hidden="true">⚠</span> {{ T "plugins.settings.test.unavailable" }}</span> <button class="btn secondary" type="button" id="ps-test-retry-{{ .ID }}" hx-post="/api/plugins/{{ .PluginID }}/settings/tests/{{ .ID }}/run" hx-target="closest .ps-test" hx-swap="innerHTML" hx-params="none" hx-sync="closest .ps-test:drop" hx-indicator="closest .ps-test" hx-request='{"timeout":15000}'>{{ T "plugins.settings.test.retry" }}</button>{{ end }}
+
+{{/* The run endpoint's answer: the region's new inner HTML. */}}
+{{ define "plugin_settings_test_status" }}<span class="ps-test-running">{{ T "plugins.settings.test.running" }}</span><span class="ps-test-result"{{ if .Field }} data-ps-test-field="{{ .Field }}"{{ end }}>{{ if eq .State "ok" }}<span aria-hidden="true">✓</span> <span class="ps-test-msg" dir="auto">{{ if .Message }}{{ .Message }}{{ else }}{{ T "plugins.settings.test.ok" }}{{ end }}</span>{{ else if eq .State "failed" }}<span class="field-error-msg"><span aria-hidden="true">✗</span> <span class="ps-test-msg" dir="auto">{{ if .Message }}{{ .Message }}{{ else }}{{ T "plugins.settings.test.failed" }}{{ end }}</span></span>{{ else }}{{ template "plugin_settings_test_unavailable" . }}{{ end }}</span>{{ end }}
 
 {{ define "plugin_setting_field" }}
     <div class="ps-field" style="margin-block-end:.75rem"{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .HasShowStored }} data-show-when-stored="{{ .ShowStored }}"{{ end }}{{ if .Hidden }} hidden{{ end }}{{ end }}>

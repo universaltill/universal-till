@@ -8,16 +8,52 @@
 //	provider b -> one option
 //	provider c -> 33 options (over the 32 cap: the whole answer is refused)
 //	else       -> no options
+//
+// It also answers ui.settings.test.ask (ut-docs#5961, plugin-settings-test-5961.spec.ts)
+// from the SAVED "mode" setting, read with SettingsGet (the ask carries no value):
+//
+//	ok    -> {ok:true}
+//	okmsg -> {ok:true, message:"e2e.test.ok"} (a key of the plugin's own bundle)
+//	bad   -> {ok:false, message:"e2e.test.bad", field:"provider"}
+//	slow  -> blocks past the till's 10 s bound
+//	else  -> no answer ("couldn't run")
 package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
 func main() {
-	plugin.Run(plugin.Handlers{plugin.SettingsOptionsAskEvent: handle})
+	plugin.Run(plugin.Handlers{plugin.SettingsOptionsAskEvent: handle, plugin.SettingsTestAskEvent: handleTest})
+}
+
+func handleTest(e plugin.Event) (any, error) {
+	var req plugin.SettingsTestRequest
+	if err := e.Decode(&req); err != nil {
+		return nil, err
+	}
+	if req.Test != "conn" {
+		return nil, nil
+	}
+	mode, err := plugin.SettingsGet("mode")
+	if err != nil {
+		return nil, err
+	}
+	switch mode {
+	case "ok":
+		return plugin.SettingsTestAnswer{OK: true}, nil
+	case "okmsg":
+		return plugin.SettingsTestAnswer{OK: true, Message: "e2e.test.ok"}, nil
+	case "bad":
+		return plugin.SettingsTestAnswer{OK: false, Message: "e2e.test.bad", Field: "provider"}, nil
+	case "slow":
+		time.Sleep(11 * time.Second)
+		return plugin.SettingsTestAnswer{OK: true}, nil
+	}
+	return nil, nil
 }
 
 func handle(e plugin.Event) (any, error) {

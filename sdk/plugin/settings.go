@@ -50,3 +50,35 @@ func (a SettingsOptionsAnswer) MarshalJSON() ([]byte, error) {
 		Options []SettingsOption `json:"options"`
 	}{opts})
 }
+
+// Plugin settings test (ADR-0121 S5, ut-docs#5961). A manifest
+// `settings_tests` entry draws a button on the settings page; pressing it
+// saves the form first, then asks the plugin through this event. Declare
+// `{"event": "ui.settings.test.ask", "action": "settings"}` in the hooks (and
+// the events:receive permission), decode the ask into SettingsTestRequest and
+// answer with SettingsTestAnswer. Contract: ut-docs reference/plugin-views.md,
+// "Settings asks".
+
+// SettingsTestAskEvent is the event type of the ask.
+const SettingsTestAskEvent = "ui.settings.test.ask"
+
+// SettingsTestRequest is the ask's payload: only which test was pressed. No
+// setting value is in it, secrets included: read what the check needs (the
+// saved API key, the endpoint) with SettingsGet.
+type SettingsTestRequest struct {
+	Test     string `json:"test"`
+	RecordID string `json:"record_id,omitempty"` // reserved for record-scoped tests (ut-docs#4158); empty today
+}
+
+// SettingsTestAnswer is the answer, at most 4 KiB, decoded strictly (an
+// unknown field, trailing data or a missing "ok" makes the till show "Couldn't
+// run the test"). OK is the verdict. Message must be a key of the plugin's own
+// locale bundle: the till shows its translation next to the button (a key it
+// does not own is dropped, the till shows its generic text). Field names a
+// visible top-level setting the failure is about; the till marks it and opens
+// its tab. The till waits 10 s; returning no answer reads as "couldn't run".
+type SettingsTestAnswer struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+	Field   string `json:"field,omitempty"`
+}

@@ -22,6 +22,15 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 )
 
+// locale is the plugin's own bundle (ut-docs#5961): the test button's label
+// and the two messages its test answers with. Generic text only.
+const locale = `{
+  "e2e.test.label": "Test connection",
+  "e2e.test.ok": "Sample service reachable",
+  "e2e.test.bad": "The sample service rejected this value"
+}
+`
+
 const (
 	pluginID      = "com.example.e2e-settings"
 	pluginName    = "Sample Settings Plugin"
@@ -35,7 +44,10 @@ const manifest = `{
   "runtime": "wasm",
   "entrypoint": "./plugin.wasm",
   "permissions": ["events:receive"],
-  "hooks": [{"event": "ui.settings.options.ask", "action": "settings"}],
+  "hooks": [
+    {"event": "ui.settings.options.ask", "action": "settings"},
+    {"event": "ui.settings.test.ask", "action": "settings"}
+  ],
   "settings": [
     {"key": "provider", "type": "choice", "label": "plugins.settings.title",
      "options": [
@@ -43,8 +55,17 @@ const manifest = `{
        {"value": "b", "label": "plugins.settings.permissions.not_granted"},
        {"value": "c", "label": "plugins.settings.save"},
        {"value": "d", "label": "plugins.settings.none"}]},
-    {"key": "model", "type": "choice", "label": "plugins.settings.title", "options_ask": true, "depends_on": ["provider"]}
-  ]
+    {"key": "model", "type": "choice", "label": "plugins.settings.title", "options_ask": true, "depends_on": ["provider"]},
+    {"key": "note", "type": "text", "label": "plugins.settings.title", "max_len": 8},
+    {"key": "mode", "type": "choice", "label": "plugins.settings.title",
+     "options": [
+       {"value": "ok", "label": "plugins.settings.permissions.granted"},
+       {"value": "okmsg", "label": "plugins.settings.permissions.not_granted"},
+       {"value": "bad", "label": "plugins.settings.save"},
+       {"value": "slow", "label": "plugins.settings.none"},
+       {"value": "none", "label": "plugins.settings.title"}]}
+  ],
+  "settings_tests": [{"id": "conn", "label": "e2e.test.label"}]
 }
 `
 
@@ -69,6 +90,13 @@ func main() {
 	}
 	if err := os.WriteFile(filepath.Join(modDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
 		fatalf("write manifest: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(modDir, "locales"), 0o755); err != nil {
+		fatalf("mkdir locales: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modDir, "locales", "en.json"), []byte(locale), 0o644); err != nil {
+		fatalf("write locale: %v", err)
 	}
 
 	conn, err := db.Open(filepath.Join(dataDir, "unitill-pos.db"))
@@ -97,7 +125,9 @@ func main() {
 		"e2e-settings-events-receive", pluginID, "events:receive")
 	execSQL(`INSERT OR IGNORE INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?,?,?,?,1)`,
 		"e2e-settings-hook-0", pluginID, "ui.settings.options.ask", "settings")
-	for k, v := range map[string]string{"provider": `"a"`, "model": `"retired-model"`} {
+	execSQL(`INSERT OR IGNORE INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES (?,?,?,?,1)`,
+		"e2e-settings-hook-1", pluginID, "ui.settings.test.ask", "settings")
+	for k, v := range map[string]string{"provider": `"a"`, "model": `"retired-model"`, "note": `""`, "mode": `"none"`} {
 		execSQL(`INSERT OR IGNORE INTO plugin_settings (id, plugin_id, key, value_json, scope, updated_at) VALUES (?,?,?,?,'global', datetime('now'))`,
 			"e2e-settings-"+k, pluginID, k, v)
 	}

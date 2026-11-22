@@ -951,10 +951,11 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		tabs := groupSettingTabs(manifest, views, settingsFormState{}, storedControlValues(rows), httpx.RequestLocale(r))
-		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, map[string]any{"Tabs": tabs}))(w, r)
+		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, map[string]any{"Tabs": tabs, "Tests": settingsTestViews(manifest, pluginID, httpx.RequestLocale(r), "")}))(w, r)
 	})
 
 	registerSettingsOptions(mux, d, repo)
+	registerSettingsTest(mux, d, repo)
 
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
@@ -1005,7 +1006,8 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 				return
 			}
-			extra := map[string]any{"Refused": true, "Tabs": groupSettingTabs(manifest, views, st, storedControlValues(rows), locale)}
+			extra := map[string]any{"Refused": true, "Tabs": groupSettingTabs(manifest, views, st, storedControlValues(rows), locale),
+				"Tests": markTestRefused(settingsTestViews(manifest, pluginID, locale, ""), r.Form.Get("ps_test"))}
 			sw := &statusWriter{ResponseWriter: w, code: http.StatusUnprocessableEntity}
 			if htmx {
 				// The form is its own swap target (hx-target="this"); the
@@ -1054,6 +1056,12 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 			return
 		}
-		httpx.RenderBlock("ui/pages/plugin_settings.html", pluginSettingsFormBlock, pageData(r, pluginID, views, true, map[string]any{"Saved": true, "Changed": len(changedKeys), "Tabs": groupSettingTabs(manifest, views, settingsFormState{}, storedControlValues(rows), locale)}))(w, r)
+		// A Test button was pressed and the save succeeded: the line asks on
+		// load (a separate request). An unknown or record id is a plain save.
+		run := ""
+		if t := drawnSettingsTest(manifest, r.Form.Get("ps_test")); t != nil {
+			run = t.ID
+		}
+		httpx.RenderBlock("ui/pages/plugin_settings.html", pluginSettingsFormBlock, pageData(r, pluginID, views, true, map[string]any{"Saved": true, "Changed": len(changedKeys), "Tabs": groupSettingTabs(manifest, views, settingsFormState{}, storedControlValues(rows), locale), "Tests": settingsTestViews(manifest, pluginID, locale, run)}))(w, r)
 	})
 }

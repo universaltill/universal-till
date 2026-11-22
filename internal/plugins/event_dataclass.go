@@ -54,7 +54,9 @@ var eventDataClasses = map[string][]string{
 	"ui.action.ask": {},
 	// the plugin's own non-secret settings (ADR-0121 S5, ut-docs#4160)
 	"ui.settings.options.ask": {},
-	"plugin.button.pressed":   {},
+	// a settings test id the operator pressed (ADR-0121 S5, ut-docs#5961)
+	"ui.settings.test.ask":  {},
+	"plugin.button.pressed": {},
 	// the outcome of the agent's own proposal
 	"agent.action.result": {},
 }

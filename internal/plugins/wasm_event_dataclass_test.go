@@ -241,6 +241,7 @@ func TestEventDataClass_AIAgentEmptySetAndOwnEvents(t *testing.T) {
 		{Type: "ui.view.ask"},
 		{Type: "ui.action.ask"},
 		{Type: "ui.settings.options.ask"},
+		{Type: "ui.settings.test.ask"},
 		{Type: "plugin.button.pressed"},
 		{Type: "agent.action.result"},
 		{Type: evAgentID + ".tick", Scheduled: true},
@@ -407,6 +408,7 @@ func TestEventDataClassRegistry(t *testing.T) {
 		"ui.view.ask":                {},
 		"ui.action.ask":              {},
 		"ui.settings.options.ask":    {},
+		"ui.settings.test.ask":       {},
 		"plugin.button.pressed":      {},
 		"agent.action.result":        {},
 	}
