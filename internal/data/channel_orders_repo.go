@@ -157,6 +157,27 @@ type ChannelOrder struct {
 	RefusedAction  bool
 }
 
+// LineDiscountTotal is the sum of the lines' discount_line_minor (each is for
+// the whole line, all units). Zero when Lines is not loaded (List). Shown on
+// the order page so the lines add up to the total (ut-docs#4945).
+func (o ChannelOrder) LineDiscountTotal() money.Money {
+	var sum money.Money
+	for _, l := range o.Lines {
+		sum = sum.Add(l.Discount)
+	}
+	return sum
+}
+
+// ItemsSubtotal is the lines' quantity x unit price added up, before any
+// discount. Zero when Lines is not loaded (ut-docs#4945).
+func (o ChannelOrder) ItemsSubtotal() money.Money {
+	var sum money.Money
+	for _, l := range o.Lines {
+		sum = sum.Add(l.UnitPrice.Scale(l.Qty))
+	}
+	return sum
+}
+
 // ChannelOrdersRepo owns the channel_orders and channel_order_lines tables.
 type ChannelOrdersRepo struct{ db *sql.DB }
 
