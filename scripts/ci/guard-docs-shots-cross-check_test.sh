@@ -4,7 +4,7 @@
 # e2e/tests-docs/lib.js (JS) are meant to be a byte-identical spec mirror —
 # every comment in both files says so — but nothing actually enforced that
 # claim. On 2026-08-06 the two agreed with each other while a stale recorded
-# `surface_sha256` in web/help/img/manifest.json (most likely produced by an
+# `surface_sha256` (since ut-docs#6654 a per-file `surface_files` record) in web/help/img/manifest.json (most likely produced by an
 # environment with untracked dotfiles like macOS .DS_Store present when
 # `make docs-shots` ran, back when the algorithm did no dotfile filtering —
 # see docs/code-reviews/2026-08-06-docs-shots-surface-hash-mismatch.md and
@@ -25,8 +25,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-PY_HASH="$(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash scripts/ci/guard-docs-shots.sh)"
-JS_HASH="$(node -e "console.log(require('./e2e/tests-docs/lib.js').buildManifest().surface_sha256)")"
+# The per-file surface record (ut-docs#6654) in sha256sum format, one line per
+# surface file, compared in full so a divergence names the file(s).
+PY_REC="$(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash scripts/ci/guard-docs-shots.sh)"
+JS_REC="$(node -e "for (const [p, v] of Object.entries(require('./e2e/tests-docs/lib.js').surfaceRecord())) console.log(v.sha256 + '  ' + p)")"
 
 # The declared extra shots (ut-docs#2615) must agree too: the same en-markdown
 # references, derived independently by the guard and by lib.js.
@@ -39,15 +41,15 @@ if [[ "${PY_SHOTS}" != "${JS_SHOTS}" ]]; then
   exit 1
 fi
 
-if [[ "${PY_HASH}" == "${JS_HASH}" ]]; then
-  echo "✓ guard-docs-shots cross-check: Python and JS agree (${PY_HASH:0:12}…, extra shots: $(echo "${PY_SHOTS}" | grep -c . || true))"
+if [[ -n "${PY_REC}" && "${PY_REC}" == "${JS_REC}" ]]; then
+  echo "✓ guard-docs-shots cross-check: Python and JS agree ($(echo "${PY_REC}" | grep -c . || true) surface files, extra shots: $(echo "${PY_SHOTS}" | grep -c . || true))"
   exit 0
 fi
 
 echo "❌ FAIL: scripts/ci/guard-docs-shots.sh (Python) and e2e/tests-docs/lib.js (JS)" >&2
-echo "   computed DIFFERENT surface_sha256 values against the same working tree:" >&2
-echo "     Python: ${PY_HASH}" >&2
-echo "     JS:     ${JS_HASH}" >&2
+echo "   computed DIFFERENT per-file surface records against the same working tree" >&2
+echo "   (diff: < Python, > JS):" >&2
+diff <(echo "${PY_REC}") <(echo "${JS_REC}") | head -40 >&2 || true
 echo "   The two implementations have genuinely diverged — reconcile them" >&2
 echo "   (they must stay in lockstep; see the HASH ALGORITHM comment atop" >&2
 echo "   each file) before merging." >&2

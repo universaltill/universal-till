@@ -18,7 +18,7 @@
 # exactly the declared set (an entry no markdown references is an orphan, a
 # declared shot not recorded was never captured), and a bad reference fails.
 # A route-less topic may have extras (ut-docs#337); it has no topic hash, so
-# its extras ride on the surface hash, which covers a page only if its route
+# its extras ride on the surface record, which covers a page only if its route
 # is some routed topic's routes[0] (not checked yet: some recipes, e.g.
 # self-order and plugins store, visit other routes). A manifest without a "shots" key (older) counts
 # as none recorded. Their content freshness rides on the topic and surface
@@ -26,9 +26,10 @@
 #
 # HASH ALGORITHM — must stay in lockstep with e2e/tests-docs/lib.js (the
 # generation side), where it is spelled out in full:
-#   surface_sha256 = sha256 of the concatenation of
-#       "<sha256(file)>  <relpath>\n"   (two spaces, sha256sum format)
-#   over the sorted (lexicographic, ASCII paths) repo-relative fileset:
+#   surface_files = { "<relpath>": { "sha256": sha256(file bytes) } }, one
+#   entry per file of the sorted (lexicographic, ASCII paths) repo-relative
+#   fileset, as the LAST key of manifest.json (ut-docs#6654; it replaced the
+#   single surface_sha256 over the whole set). The fileset is:
 #   every regular file under web/ui/ + web/public/ (templates AND the CSS/JS
 #   that actually paints them — a theme/app.css change is exactly as visible
 #   in a screenshot as a template change) + every non-_test.go *.go under
@@ -72,6 +73,24 @@
 #   weekly instead (ut-docs#4582): it regenerates on main and keeps one
 #   issue listing the stale screenshots, without blocking anything.
 #
+# MERGE-SAFE LAYOUT (ut-docs#6654): the old single surface_sha256 depended on
+# every surface file, so any two UI PRs touching different files both
+# rewrote that one line and conflicted by construction (all but one of the
+# manifest conflicts seen in the first weeks of Nov 2026). Now each file owns
+# a 3-line block ("<path>": {  /  "sha256": ...  /  },), so an edit changes
+# only that file's sha line and two entries' sha lines are always separated
+# by unchanged lines; git sees no adjacent hunks. Verified with real
+# `git merge`: edits of adjacent entries, adds in different gaps, and an
+# edit next to a delete merge clean. Residual (rare, resolved by taking
+# either side of manifest.json and re-running the updater): two PRs adding
+# a file in the SAME sorted gap, deleting two ADJACENT files, or an edit
+# of the last two entries against an add/delete at the end (the last
+# entry's closing brace has no comma). Safety
+# property: if a file's merged content differs from both sides, both sides
+# changed it, so its sha line conflicts — a clean merge of the record can
+# never silently record a wrong hash. scripts/ci/docs-shots-manifest-merge_test.sh
+# pins this. A stale record names the changed/added/removed paths.
+#
 # ESCAPE HATCH (ut-docs#2102, fourth narrowing): whole-file hashing means a
 # comment-only edit to a surface file trips this guard for zero pixel
 # change, and the regeneration it demands touches all 104 screenshots —
@@ -91,17 +110,17 @@
 # checked-out commit as parentless, so `HEAD^2` never resolves in real CI
 # and the bypass would silently never fire; (2) even if it had fired, it
 # never updated `manifest.json` itself, so the bypass would need to be
-# re-asserted forever and the recorded `surface_sha256` would stay wrong
+# re-asserted forever and the recorded surface hash would stay wrong
 # for every subsequent unrelated PR to trip over. Both problems disappear
 # by moving the escape hatch OUT of the CI-time check entirely: instead,
 # `scripts/ci/update-docs-shots-surface-hash.sh` is a companion tool an
 # author runs locally after confirming a surface edit changes no rendered
-# pixel. It recomputes `surface_sha256` the same way this guard does and
-# writes ONLY that one field into `manifest.json` — no screenshots
-# captured, no per-topic hash touched — and the author commits the result
+# pixel. It recomputes the surface record the same way this guard does and
+# writes ONLY the changed/added/removed `surface_files` entries into
+# `manifest.json` — no screenshots captured, no per-topic hash touched — and the author commits the result
 # with a `Docs-Shots-Unchanged: true` trailer, which is not read or
 # enforced by this guard; it exists purely so a reviewer can `git log
-# --grep` or read the commit message and see that a `surface_sha256`
+# --grep` or read the commit message and see that a surface-record
 # change without any accompanying `.png` change was a deliberate,
 # confirmed no-op refresh, not an accident or a way to dodge a real
 # regeneration. This guard's own pass/fail logic is UNCHANGED — the
@@ -114,10 +133,11 @@ cd "${ROOT_DIR}"
 
 MANIFEST="web/help/img/manifest.json"
 # GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY (ut-docs#370): when set, the python
-# block below prints just its independently-computed surface_sha256 to
-# stdout and exits, skipping the manifest comparison — used by
-# guard-docs-shots-cross-check_test.sh to get this implementation's hash
-# without duplicating the algorithm in a second copy (which would defeat the
+# block below prints just its independently-computed surface record to
+# stdout ("<sha256>  <relpath>" per line, sorted, sha256sum format) and
+# exits, skipping the manifest comparison — used by
+# guard-docs-shots-cross-check_test.sh and the updater to get this
+# implementation's record without duplicating the algorithm in a second copy (which would defeat the
 # point of a cross-check meant to catch the two implementations drifting).
 # Checked here, before the manifest-existence gate, since print-only mode has
 # no reason to require one either.
@@ -198,7 +218,7 @@ def extra_shots():
         out[tid] = sorted(stems)
     return out, errors
 
-# --- surface hash ----------------------------------------------------------
+# --- surface record ----------------------------------------------------------
 # ServeMux route registrations, e.g. mux.HandleFunc("GET /reports", ...) or
 # the method-prefix-less mux.HandleFunc("/backoffice", ...) form — both are
 # in real use in this package. Must stay in lockstep with
@@ -251,9 +271,9 @@ def surface_files(screenshotted_routes):
                 files.append(p)
     return sorted(files)
 
-def surface_hash(screenshotted_routes):
-    lines = "".join(f"{sha256_file(p)}  {p}\n" for p in surface_files(screenshotted_routes))
-    return hashlib.sha256(lines.encode("utf-8")).hexdigest()
+def surface_record(screenshotted_routes):
+    """{relpath: sha256} for the sorted surface fileset (ut-docs#6654)."""
+    return {p: sha256_file(p) for p in surface_files(screenshotted_routes)}
 
 def topic_hash(locale, tid):
     p = f"web/help/{locale}/{tid}.md"
@@ -276,19 +296,34 @@ if os.environ.get("GUARD_DOCS_SHOTS_PRINT_SHOTS_ONLY"):
             print(f"{tid} {stem}")
     sys.exit(0)
 
-cur_surface = surface_hash(screenshotted_routes)
+cur_surface = surface_record(screenshotted_routes)
 
 # See the GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY comment above the bash
 # manifest-existence gate: print this implementation's independently-computed
-# hash and stop — no manifest.json needed, nothing else in this script runs.
+# record and stop — no manifest.json needed, nothing else in this script runs.
 if os.environ.get("GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY"):
-    print(cur_surface)
+    for p in sorted(cur_surface):
+        print(f"{cur_surface[p]}  {p}")
     sys.exit(0)
 
 manifest = json.load(open("web/help/img/manifest.json", encoding="utf-8"))
 stale, missing_png = [], []
 
-surface_stale = manifest.get("surface_sha256") != cur_surface
+# Format gate (ut-docs#6654): the single-hash manifest must not pass silently.
+RECORD_FIX = ("run scripts/ci/update-docs-shots-surface-hash.sh (pixels "
+              "unchanged) or `make docs-shots`")
+if "surface_sha256" in manifest or not isinstance(manifest.get("surface_files"), dict):
+    print("guard-docs-shots: manifest.json has the pre-ut-docs#6654 surface_sha256 "
+          "format (or no surface_files record) — " + RECORD_FIX)
+    sys.exit(1)
+recorded_surface = {
+    p: (v.get("sha256") if isinstance(v, dict) else None)
+    for p, v in manifest["surface_files"].items()
+}
+surface_changed = sorted(p for p in cur_surface if p in recorded_surface and recorded_surface[p] != cur_surface[p])
+surface_added = sorted(set(cur_surface) - set(recorded_surface))
+surface_removed = sorted(set(recorded_surface) - set(cur_surface))
+surface_stale = bool(surface_changed or surface_added or surface_removed)
 
 recorded = manifest.get("topics", {})
 for tid in topics:
@@ -340,6 +375,13 @@ if surface_stale:
           "rendered pixel (e.g. a comment-only edit), run "
           "scripts/ci/update-docs-shots-surface-hash.sh instead of a full "
           "`make docs-shots` regeneration.")
+    named = ([f"  - changed: {p}" for p in surface_changed] +
+             [f"  - added: {p}" for p in surface_added] +
+             [f"  - removed: {p}" for p in surface_removed])
+    for line in named[:40]:
+        print(line)
+    if len(named) > 40:
+        print(f"  … and {len(named) - 40} more")
 if stale:
     fail = True
     print("guard-docs-shots: topic markdown changed since its screenshot was taken (locale/topic):")
@@ -360,5 +402,5 @@ if fail:
     print("guard-docs-shots: run `make docs-shots` and commit the result")
     sys.exit(1)
 print(f"✓ docs-shots guard: {len(topics)} routed topics × {len(LOCALES)} locales "
-      f"screenshotted and fresh, {len(declared)} extra shots (surface {cur_surface[:12]}…)")
+      f"screenshotted and fresh, {len(declared)} extra shots, {len(cur_surface)} surface files")
 PY
