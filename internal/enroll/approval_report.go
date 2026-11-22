@@ -49,6 +49,25 @@ var approvalReport struct {
 	inflight map[string]bool
 }
 
+// detachedReports tracks report goroutines started with no caller WaitGroup
+// (every register/pair/move path), so tests and shutdown can wait for them.
+var detachedReports sync.WaitGroup
+
+// WaitDetachedReports waits up to timeout for the report goroutines that no
+// caller's WaitGroup tracks, and reports whether they all finished. For tests
+// and shutdown: a goroutine asleep in a retry delay writes nothing, so a
+// timeout must never hang the caller (ut-docs#6644).
+func WaitDetachedReports(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() { detachedReports.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 // approvalConflict: the cloud answered 409, a different key is pinned.
 var approvalConflict atomic.Bool
 
@@ -140,11 +159,15 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 	approvalReport.Unlock()
 	if wg != nil {
 		wg.Add(1)
+	} else {
+		detachedReports.Add(1)
 	}
 	go func() {
 		defer logging.RecoverAndLog("enroll.approvalKeyReport")
 		if wg != nil {
 			defer wg.Done()
+		} else {
+			defer detachedReports.Done()
 		}
 		defer func() {
 			approvalReport.Lock()

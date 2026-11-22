@@ -79,6 +79,15 @@ func newLockedOutTill(t *testing.T, script func(n int, body map[string]any, w ht
 	if _, err := enroll.RegisterNow(t.Context(), d.Cfg, d.Settings); err != nil || !enroll.CurrentStatus().Registered {
 		t.Fatalf("seed registration: %v", err)
 	}
+	// Every register starts an untracked approval-key report that creates
+	// secrets/ under the temp data dir; wait for it before the dir is removed
+	// (LIFO: this runs before srv.Close, paths.Init(orig) and TempDir cleanup;
+	// ut-docs#6644).
+	t.Cleanup(func() {
+		if !enroll.WaitDetachedReports(10 * time.Second) {
+			t.Errorf("approval-key report still running after 10s")
+		}
+	})
 	return mux, d, c
 }
 
