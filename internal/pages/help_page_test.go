@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/web"
 )
 
 func helpMux(t *testing.T) *http.ServeMux {
@@ -382,5 +384,49 @@ func TestHelpSupportPartnerNoLinkWithoutCredential(t *testing.T) {
 	}
 	if strings.Contains(body, "help-partner-link") {
 		t.Error("partner link rendered on a till with no credential of its own")
+	}
+}
+
+// ut-docs#6865: when a shop's partner is not available, my. says so and
+// Universal Till's own support helps. The help topic describes that without
+// promising a contact (house_support is unset until the cloud is configured),
+// shows on any till, registered or not, and never uses internal wording.
+func TestHelpSupportPartnerUnavailableSection(t *testing.T) {
+	regs := map[string]*http.ServeMux{
+		"unregistered": helpMux(t),
+		"registered": helpMuxCfg(t, func(c *config.Config) {
+			c.Marketplace.EndpointURL = "https://cloud.example.test/api"
+			c.Marketplace.StoreID = "store-1"
+			c.Marketplace.MerchantToken = "tok"
+		}),
+	}
+	for name, mux := range regs {
+		rec := get(t, mux, "/help/support-partner")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d", name, rec.Code)
+		}
+		body := rec.Body.String()
+		for _, w := range []string{"If your partner cannot help", "This changes nothing on the till"} {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: missing %q", name, w)
+			}
+		}
+	}
+}
+
+func TestHelpSupportPartnerTextNoBannedWords(t *testing.T) {
+	raw, err := web.HelpFS.ReadFile("help/en/support-partner.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	banned := regexp.MustCompile(`(?i)\b(suspend\w*|ended|winding|wind(ing)? down|paused|terminat\w*|reasons?|breach|commission|refund)\b`)
+	if m := banned.FindString(string(raw)); m != "" {
+		t.Errorf("support-partner help uses banned word %q", m)
+	}
+	// No promised contact: the house contact is unset until configured.
+	for _, w := range []string{"@", "://", "www.", "tel:"} {
+		if strings.Contains(string(raw), w) {
+			t.Errorf("support-partner help must not carry a contact detail (%q)", w)
+		}
 	}
 }
