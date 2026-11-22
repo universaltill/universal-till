@@ -346,27 +346,24 @@ func taxFirstLoadCheck(ctx context.Context, d *common.Deps, m *plugins.Manifest,
 const taxAskMaxRateBP = 10000
 
 // validTaxAskAnswer: empty is a decline; otherwise a JSON object whose
-// rate_bp, when present, is an integer in [0, 100 %]. (Core's own reader treats
-// rate <= 0 as "no opinion"; a negative or absurd rate from a plugin that has
-// never answered a real line is a broken module, not a decline.)
+// rate_bp, when present, is an integer in [0, 100 %]. It decodes into
+// taxRateAskResponse, the very type core's reader uses, so the value checked
+// is the value core reads: encoding/json matches keys case-insensitively and
+// the last duplicate wins, so {"RATE_BP":99999} cannot slip past a check
+// that looked up the exact key. null and a missing/null rate_bp decode to 0
+// ("no opinion"). (Core treats rate <= 0 as "no opinion"; a negative or
+// absurd rate from a plugin that has never answered a real line is a broken
+// module, not a decline.)
 func validTaxAskAnswer(raw json.RawMessage) error {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return fmt.Errorf("answer is not a JSON object: %w", err)
+	var parsed taxRateAskResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return fmt.Errorf("answer is not a JSON object with an integer rate_bp: %w", err)
 	}
-	v, ok := fields["rate_bp"]
-	if !ok {
-		return nil
-	}
-	var bp int
-	if err := json.Unmarshal(v, &bp); err != nil {
-		return fmt.Errorf("rate_bp is not an integer: %w", err)
-	}
-	if bp < 0 || bp > taxAskMaxRateBP {
-		return fmt.Errorf("rate_bp %d is outside 0..%d", bp, taxAskMaxRateBP)
+	if parsed.RateBP < 0 || parsed.RateBP > taxAskMaxRateBP {
+		return fmt.Errorf("rate_bp %d is outside 0..%d", parsed.RateBP, taxAskMaxRateBP)
 	}
 	return nil
 }
