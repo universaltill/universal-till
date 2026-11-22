@@ -281,6 +281,34 @@ func TestTapGate_BindsDispatchAndConfirmsWithBroker(t *testing.T) {
 	}
 }
 
+// ut-docs#6805: a client that leaves while the tap authorize is in flight must
+// not turn a paid tap into a pending one (pos.ConfirmTap returns
+// PendingContextCancelled on a done ctx) -- the tap steps run detached.
+func TestTapGate_ClientDisconnectDuringTapStillCompletesSale(t *testing.T) {
+	e := tapRig(t)
+	e.broker.setStatus(piStatus("succeeded", 120))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	orig := e.plugin.onAuth
+	e.plugin.onAuth = func(c context.Context, ev plugins.Event) {
+		orig(c, ev) // begins the attempt row, as the real tap plugin does
+		cancel()    // the client goes away while the reader waits
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(tenderBody(leg("tapstripe", 120, "")))).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.mux.ServeHTTP(rec, auth.WithUser(req, e.cashier))
+	if e.sales(t) != 1 {
+		t.Fatalf("a paid tap must complete the sale after a disconnect: %d %s", rec.Code, rec.Body.String())
+	}
+	if a := e.attempt(t); a.State != data.AttemptApproved {
+		t.Fatalf("attempt must be settled approved, got %+v", a)
+	}
+	if lock := e.dp.Engine.TenderLock(); lock != "" {
+		t.Fatalf("a completed sale leaves no tender lock, got %q", lock)
+	}
+}
+
 func TestTapGate_PluginApprovedBrokerNotSucceededLocksTender(t *testing.T) {
 	for _, tc := range []struct {
 		name, reply, reason string

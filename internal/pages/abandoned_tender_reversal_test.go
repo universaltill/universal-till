@@ -457,6 +457,36 @@ func TestTender_RetryWithChangedReferenceReversesSupersededCapture(t *testing.T)
 	}
 }
 
+// ut-docs#6805: the superseded earlier capture is reversed even when the
+// client leaves during the retry's last authorize (the stale-capture reversal
+// must not run on the request ctx).
+func TestTender_ClientDisconnectOnRetryStillReversesSupersededCapture(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	refunds, authIDs := seedCardPluginWithAnswerFunc(t, dp, nil, func(n int) string {
+		switch n {
+		case 2:
+			return "UNKNOWN"
+		case 4:
+			cancel() // the retry's last leg: the client leaves mid-authorize
+		}
+		return `{"provider":"demopay","outcome":"approved"}`
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	postTender(t, mux, `{"payments":[{"method":"demopay","amount":60,"reference":"a"},{"method":"demopay","amount":60}]}`)
+	postTenderCtx(t, mux, ctx, `{"payments":[{"method":"demopay","amount":60,"reference":"b"},{"method":"demopay","amount":60}]}`)
+	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales"); n != 1 {
+		t.Fatalf("want 1 sale, got %d", n)
+	}
+	got := refunds()
+	if len(got) != 1 || got[0]["authorize_request_id"] != authIDs()[0] {
+		t.Fatalf("want exactly the superseded leg-0 capture reversed: %+v / %v", got, authIDs())
+	}
+}
+
 // seedOKCApprovingWithoutEvidence installs a fiscal-device ("okc") payment
 // plugin that approves without a fiscal_device receipt.
 func seedOKCApprovingWithoutEvidence(t *testing.T, dp *common.Deps) {

@@ -454,6 +454,14 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if err := pos.DuplicateVoucherPaymentError(saleInput.Payments); err != nil {
 		return "", err
 	}
+	// ut-docs#6805: detached keeps the request's values (session, locale,
+	// paybroker binding) without its cancellation. Authorize dispatch, every
+	// compensating action (reversals, voucher release) and everything after
+	// the sale commits run on it, so a client that disconnects once the
+	// provider may have charged cannot lose the record or the reversal.
+	// Bounded by the plugin's own call timeout (WasmRuntime.timeoutFor:
+	// 30 s for a card leg, 120 s for tap). Pre-authorize gates stay on ctx.
+	detached := context.WithoutCancel(ctx)
 	var deviceEvidence *fiscal.DeviceEvidence
 	// capturedLegs records every leg whose payment.<key>.authorize actually
 	// reached a plugin and approved, with that leg's own idempotency key —
@@ -470,7 +478,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		if ownCaptured && len(capturedLegs) > 0 {
 			// Legs a concurrent reset already handed to the abandon handler
 			// are reversed there; never send one back twice (review M1).
-			reversePaymentLegs(ctx, d, engine.NotHandedOff(capturedLegs), why)
+			reversePaymentLegs(detached, d, engine.NotHandedOff(capturedLegs), why)
 			engine.RotateTenderAttemptIDIf(attemptID)
 		}
 	}()
@@ -534,7 +542,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// ut-docs#6455: a tap entry's dispatch is bound by this gate and its
 		// "approved" confirmed with the broker; tapConf is non-nil only once
 		// core itself confirmed the payment.
-		resp, dispatched, tapConf, err := tapAuthorize(ctx, d, p.MethodID, requestID, amount, payCurrency, payload)
+		resp, dispatched, tapConf, err := tapAuthorize(detached, d, p.MethodID, requestID, amount, payCurrency, payload)
 		var tapStart *tapStartFailedError
 		var tapPending *pos.PaymentPendingError
 		if errors.As(err, &tapStart) {
@@ -567,7 +575,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			isTapPending := errors.As(err, &tapPending)
 			isTapLeg := isTapPending
 			if !isTapLeg {
-				_, isTapLeg = tapEntry(ctx, d, p.MethodID)
+				_, isTapLeg = tapEntry(detached, d, p.MethodID)
 			}
 			if isTapPending {
 				isUnknown = true
@@ -683,7 +691,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 				// it later; set server-side from the registry, never from the
 				// client. It is a device id, not card data or a secret.
 				payments[i].TerminalID = p.ReaderRef
-				touchReaderLastUsed(ctx, d, p.ReaderRowID)
+				touchReaderLastUsed(detached, d, p.ReaderRowID)
 			}
 		}
 		if abandonedUnder() {
@@ -702,9 +710,18 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	{
 		stash := engine.SettleTender()
 		if stale := minusCaptured(stash.Captured, capturedLegs); len(stale) > 0 {
-			reversePaymentLegs(ctx, d, stale, "tender retried (an earlier capture was superseded)")
+			reversePaymentLegs(detached, d, stale, "tender retried (an earlier capture was superseded)")
 		}
 		warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tender retried")
+	}
+
+	// ut-docs#6805 (mirrors refund_page.go recordCtx): once a leg's authorize
+	// really reached a plugin and approved (or a tap the broker confirmed),
+	// the recording runs detached. Cash / hookless legs moved nothing: until
+	// the sale commits, a gone client still records nothing.
+	recordCtx := ctx
+	if len(capturedLegs) > 0 {
+		recordCtx = detached
 	}
 
 	// Tip recipient default (ADR-0061 Decision 3), decided HERE — the one
@@ -745,7 +762,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// (unreachable, timeout, known-offline) never refuses the sale — it
 	// lands on the proceed-and-declare surface below. A "cannot-sign"
 	// answer is the one exception (ADR-0136): see right below.
-	signRes := dispatchFiscalSignAsk(ctx, d, &saleInput)
+	signRes := dispatchFiscalSignAsk(recordCtx, d, &saleInput)
 
 	// ADR-0136 (ut-docs#3309): "cannot-sign" means THIS sale's own data
 	// admits no correct Beleg — not an outage — so it is refused right here,
@@ -824,9 +841,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		if saleInput.Payments[i].VoucherID == "" {
 			continue
 		}
-		preauth, maybeReserved, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
+		preauth, maybeReserved, err := voucherRedeemWriteThrough(recordCtx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
 		if err != nil {
-			releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
+			releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 			why = "tender refused (a voucher could not be reserved)"
 			return "", err
 		}
@@ -845,18 +862,19 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	}
 
 	if abandonedUnder() {
-		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
+		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 		why = "tender refused (the basket was abandoned during authorize)"
 		return "", &tenderAbandonedError{}
 	}
-	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
+	saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 	if err != nil {
-		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
+		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 		// ut-docs#6602: no sale row; the deferred reversal sends the
 		// captured card legs back.
 		return "", err
 	}
 	ownCaptured = false
+	ctx = detached // ut-docs#6805: the sale is committed; nothing after this may be lost to a gone client, cash included
 
 	// What the fiscal device printed for this sale (Turkey's ÖKC), if a
 	// device plugin took the tender: persisted now that the sale row
