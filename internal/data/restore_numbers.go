@@ -94,6 +94,10 @@ func roundUpTo(n, m int64) int64 {
 // commit together, and a call whose token is already stored changes nothing
 // and returns AlreadyApplied, so a crash before the marker file is removed
 // cannot jump twice.
+//
+// The floors it starts from include those carried from the live till when the
+// restore was applied (internal/db mergeRestoreFloors, ut-docs#6293), so a
+// repeat restore never re-issues a number sold since the previous one.
 func (r *POSRepo) JumpNumbersAfterRestore(ctx context.Context, now time.Time, token string) (RestoreJump, error) {
 	var out RestoreJump
 	tx, err := r.db.BeginTx(ctx, nil)

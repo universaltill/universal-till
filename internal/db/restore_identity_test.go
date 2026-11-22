@@ -63,6 +63,11 @@ func deadTillBackup(t *testing.T, dbPath string) string {
 		"marker.sales":                  "from-the-backup",
 		"store.name":                    "Backup shop name",
 		"sales_mirror.epoch":            "epoch-of-the-backup",
+		// ut-docs#6293: floors the backup carries stay as they are when the
+		// live DB cannot contribute any.
+		"restore.receipt_floor":        "4321",
+		"restore.receipt_floor_prefix": "",
+		"restore.z_floor.eod":          "21",
 	} {
 		setSetting(t, d.DB, k, v)
 	}
@@ -202,6 +207,11 @@ func TestApplyPendingRestoreWithoutLiveDBDropsBackupIdentity(t *testing.T) {
 	if got, _ := getSetting(t, restored.DB, "marker.sales"); got != "from-the-backup" {
 		t.Errorf("backup data not restored: %q", got)
 	}
+	for k, want := range map[string]string{"restore.receipt_floor": "4321", "restore.receipt_floor_prefix": "", "restore.z_floor.eod": "21"} {
+		if got, _ := getSetting(t, restored.DB, k); got != want {
+			t.Errorf("%s = %q, want the backup's %q", k, got, want)
+		}
+	}
 }
 
 // A LAN join stages the main till's snapshot through the same pending file
@@ -297,6 +307,11 @@ func TestApplyPendingRestoreOverUnreadableLiveDBKeepsBackupIdentity(t *testing.T
 	}
 	if got, _ := getSetting(t, restored.DB, "marker.sales"); got != "from-the-backup" {
 		t.Errorf("backup data not restored: %q", got)
+	}
+	for k, want := range map[string]string{"restore.receipt_floor": "4321", "restore.receipt_floor_prefix": "", "restore.z_floor.eod": "21"} {
+		if got, _ := getSetting(t, restored.DB, k); got != want {
+			t.Errorf("%s = %q, want the backup's %q", k, got, want)
+		}
 	}
 	if v, ok := getSetting(t, restored.DB, "cloudsync.snapshot_hash"); ok {
 		t.Errorf("push hash %q kept; the restored data must be pushed again", v)
