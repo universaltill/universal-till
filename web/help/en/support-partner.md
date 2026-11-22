@@ -25,6 +25,10 @@ The partner is chosen on **my.universaltill.com**, not on the till: open your sh
 - **When you connect:** the partner sees your shop's name, the names of your locations, each location's plan and subscription status (including a trial end date or a missed payment), and when you connected. It does not see your sales, receipts, customers or staff. Universal Till may pay the partner a share of what you pay; connecting does not change your price. The partner cannot create or search for shops.
 - **When you disconnect:** your shop goes back to Universal Till's own support. You can disconnect at any time.
 
+## If your partner cannot help
+
+If your support partner is not able to help you, the **Support partner** screen in Manage shop on my.universaltill.com says so, and Universal Till's own support helps you instead. You stay connected until the owner disconnects; the owner can then connect another partner. This changes nothing on the till.
+
 ## Selling is not affected
 
 A support partner never changes how the till sells. Checkout works as usual, including offline. Connecting or disconnecting needs an internet connection, but only on my.universaltill.com.
