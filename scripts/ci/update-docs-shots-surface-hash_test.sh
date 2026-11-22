@@ -2,7 +2,8 @@
 #
 # Regression test for scripts/ci/update-docs-shots-surface-hash.sh
 # (ut-docs#2102): the cheap escape hatch that refreshes ONLY
-# web/help/img/manifest.json's surface_sha256 field, without a full
+# web/help/img/manifest.json's surface_files record (surface_sha256 before
+# ut-docs#6654), without a full
 # `make docs-shots` screenshot regeneration, for a surface edit an author
 # has manually confirmed changes no rendered pixel.
 #
@@ -73,8 +74,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The per-file record (ut-docs#6654), as a stable text form to compare.
 surface_field() {
-  python3 -c "import json; print(json.load(open('${MANIFEST}')).get('surface_sha256',''))"
+  python3 -c "import json; print(json.dumps(json.load(open('${MANIFEST}')).get('surface_files', {}), sort_keys=True))"
 }
 
 # --- baseline: real tree, manifest already fresh -> no-op, exit 0 -----
@@ -93,8 +95,12 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 AFTER="$(surface_field)"
+if [[ "${AFTER}" == "{}" ]]; then
+  echo "❌ FAIL: the manifest has no surface_files record" >&2
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 if [[ "${AFTER}" != "${BEFORE}" ]]; then
-  echo "❌ FAIL: no-op case still rewrote surface_sha256" >&2
+  echo "❌ FAIL: no-op case still rewrote surface_files" >&2
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
@@ -121,7 +127,7 @@ fi
 
 cp "${MANIFEST}" "${PRE_UPDATE_BACKUP}"
 if out="$(bash "${UPDATER}" 2>&1)"; then
-  if grep -q "surface_sha256 updated" <<<"${out}"; then
+  if grep -q "surface_files updated" <<<"${out}"; then
     echo "✓ updater reports the hash was updated"
   else
     echo "❌ FAIL: updater exited 0 but did not report an update:" >&2
@@ -134,19 +140,19 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Only surface_sha256 may differ, semantically (key-order-blind)...
+# Only surface_files may differ, semantically (key-order-blind)...
 if python3 - "${PRE_UPDATE_BACKUP}" "${MANIFEST}" <<'PY'
 import json, sys
 a = json.load(open(sys.argv[1]))
 b = json.load(open(sys.argv[2]))
-a_rest = {k: v for k, v in a.items() if k != "surface_sha256"}
-b_rest = {k: v for k, v in b.items() if k != "surface_sha256"}
-sys.exit(0 if a_rest == b_rest and a["surface_sha256"] != b["surface_sha256"] else 1)
+a_rest = {k: v for k, v in a.items() if k != "surface_files"}
+b_rest = {k: v for k, v in b.items() if k != "surface_files"}
+sys.exit(0 if a_rest == b_rest and a["surface_files"] != b["surface_files"] else 1)
 PY
 then
-  echo "✓ only the surface_sha256 field changed semantically -- topics/other fields untouched"
+  echo "✓ only the surface_files record changed semantically -- topics/other fields untouched"
 else
-  echo "❌ FAIL: the updater changed more than just surface_sha256 (or changed nothing)" >&2
+  echo "❌ FAIL: the updater changed more than just surface_files (or changed nothing)" >&2
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
@@ -154,11 +160,12 @@ fi
 # just "no other key's VALUE changed" -- a key-order-blind check alone
 # would miss a reordering pass (e.g. an accidental sort_keys=True) that
 # turns this into a 60-line diff while still passing the check above.
-DIFF_LINES="$(diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" | grep -c '^[+-][^+-]' || true)"
-if [[ "${DIFF_LINES}" -eq 2 ]]; then
-  echo "✓ the manifest diff is exactly one changed line (plus/minus), as documented"
+PLUS_LINES="$(diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" | grep -c '^+[^+]' || true)"
+MINUS_LINES="$(diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" | grep -c '^-[^-]' || true)"
+if [[ "${PLUS_LINES}" -eq 3 && "${MINUS_LINES}" -eq 0 ]]; then
+  echo "✓ a new surface file adds exactly its own 3-line entry (no other line changes)"
 else
-  echo "❌ FAIL: expected a 1-line diff (2 diff-marker lines), got ${DIFF_LINES}:" >&2
+  echo "❌ FAIL: expected +3/-0 diff lines for one new surface file, got +${PLUS_LINES}/-${MINUS_LINES}:" >&2
   diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" >&2 || true
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
@@ -171,6 +178,75 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 rm -f "${FIXTURE}"
+
+# --- removed file: its entry (3 lines) goes, nothing else changes --------
+cp "${MANIFEST}" "${PRE_UPDATE_BACKUP}"
+if out="$(bash "${UPDATER}" 2>&1)" && grep -q "1 removed" <<<"${out}" &&
+  [[ "$(diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" | grep -c '^-[^-]' || true)" -eq 3 ]] &&
+  [[ "$(diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" | grep -c '^+[^+]' || true)" -eq 0 ]]; then
+  echo "✓ a removed surface file drops exactly its own entry"
+else
+  echo "❌ FAIL: removing the planted file did not drop exactly its 3-line entry:" >&2
+  echo "${out:-}" >&2
+  diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" >&2 || true
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+# --- comment-only edit to an EXISTING surface file (AC5) ----------------
+# Capture first, then filter: `| head -1` under pipefail can SIGPIPE (141).
+SURFACE_REC="$(GUARD_DOCS_SHOTS_PRINT_SURFACE_ONLY=1 bash "${GUARD}")"
+EXISTING="$(awk '$2 ~ /^web\/public\// {print $2; exit}' <<<"${SURFACE_REC}")"
+EXISTING_BACKUP="$(mktemp)"
+cp "${EXISTING}" "${EXISTING_BACKUP}"
+printf '\n/* zz update-docs-shots-surface-hash test: comment-only edit */\n' >>"${EXISTING}"
+cp "${MANIFEST}" "${PRE_UPDATE_BACKUP}"
+bash "${UPDATER}" >"${OUT}" 2>&1 || true
+DIFF="$(diff -u "${PRE_UPDATE_BACKUP}" "${MANIFEST}" || true)"
+if [[ "$(grep -c '^[+-][^+-]' <<<"${DIFF}")" -eq 2 ]] &&
+  python3 - "${MANIFEST}" "${EXISTING}" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+# the changed sha line is the one under that file's own key
+import re
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+i = lines.index('    "%s": {' % sys.argv[2])
+sys.exit(0 if '"sha256"' in lines[i + 1] and sys.argv[2] in m["surface_files"] else 1)
+PY
+then
+  echo "✓ a comment-only edit changes exactly one line, under that file's own key"
+else
+  echo "❌ FAIL: a comment-only edit should change exactly one sha line:" >&2
+  echo "${DIFF}" >&2
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+if bash "${GUARD}" >"${OUT}" 2>&1 && out="$(bash "${UPDATER}" 2>&1)" && grep -q "already matches" <<<"${out}"; then
+  echo "✓ guard passes after the refresh and a second updater run is a no-op"
+else
+  echo "❌ FAIL: guard or second-run no-op failed after the comment-only refresh" >&2
+  cat "${OUT}" >&2
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+cp "${EXISTING_BACKUP}" "${EXISTING}"
+rm -f "${EXISTING_BACKUP}"
+cp "${MANIFEST_BACKUP}" "${MANIFEST}"
+
+# --- legacy manifest: the updater migrates surface_sha256 -> surface_files --
+python3 - "${MANIFEST}" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+del m["surface_files"]
+m["surface_sha256"] = "0" * 64
+json.dump(m, open(sys.argv[1], "w"), indent=2, ensure_ascii=False)
+open(sys.argv[1], "a").write("\n")
+PY
+if bash "${UPDATER}" >"${OUT}" 2>&1 && bash "${GUARD}" >"${OUT}" 2>&1 &&
+  ! grep -q surface_sha256 "${MANIFEST}"; then
+  echo "✓ the updater migrates a legacy surface_sha256 manifest"
+else
+  echo "❌ FAIL: legacy manifest not migrated:" >&2
+  cat "${OUT}" >&2
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 
 # --- scope check: a genuinely stale TOPIC (markdown) must still fail --
 # even right after a surface-hash-only refresh -- proves this tool cannot
