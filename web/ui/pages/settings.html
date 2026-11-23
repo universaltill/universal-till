@@ -613,6 +613,12 @@
   </fieldset>
   {{ end }}
   {{ end }}
+  {{ else }}
+  {{ if eq storechannel "play" }}
+  <p class="muted" data-testid="update-managed-by-store">{{ T "settings.update.managed_by_store" }}</p>
+  {{ else }}
+  <p class="muted" data-testid="update-managed-by-store">{{ T "settings.update.managed_by_app_store" }}</p>
+  {{ end }}
   {{ end }}
 </div>
 <!-- ut-docs#3091: Settings → About — the running version, when this till

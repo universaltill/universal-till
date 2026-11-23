@@ -26,7 +26,7 @@ The till checks for new versions and tells you when one is available; on most pl
 
 <!-- /plan-purchase -->
 
-The Google Play and App Store versions of the app are updated by the store, not by the till: the store updates the app, and the till has no update check or install button there. What's new, below, still works.
+The Google Play and App Store versions of the app are updated by the store, not by the till: Settings → Software update shows "Updates for this app come from Google Play" (or "the App Store"), and the till has no update check or install button there. What's new, below, still works.
 
 <!-- plan-purchase -->
 
