@@ -790,7 +790,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "da81282acff0ccc912236062858ec870c01f029f991ae873c7e93d328dd38423"
+      "sha256": "5bf62598df02164d43a01b40673f7914d191c15419a2959cb6d4c2f21f873d7d"
     },
     "web/public/app.js": {
       "sha256": "f51885df7cec771737c1c93b5a0b55f9af184364e5b5cfe563de97fc7bc14ea8"
@@ -1738,7 +1738,7 @@
       "sha256": "f6a77fdd666c6bddaf8a97486cf309178fd48b69aedf398bb725c9d12ce94d8f"
     },
     "web/ui/pages/setup.html": {
-      "sha256": "7fdbc5a6187278e29d251e847a5b01f3b7d3b8e35436b92ea28310c2e4059e42"
+      "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"
     },
     "web/ui/pages/shifts.html": {
       "sha256": "a235f99409566dfb432e53b15c647f696296ebbcd27ffbcd971e0644b96aa91a"

@@ -6,3 +6,4 @@ playwright-report/
 .bin/
 test-results-webkit/
 playwright-report-webkit/
+.auth-data-dir

@@ -278,13 +278,15 @@ test.describe.serial('first-boot setup and PIN login', () => {
       // same initial x-data shape a real one would produce.
       await step(6).locator('input[name=pin]').fill('1234');
       await step(6).locator('input[name=pin_confirm]').fill('9999');
-      // Step 6's "Next" only advances Alpine's `step` to 7 client-side —
-      // the actual POST (and therefore the mismatch validation) fires on
-      // step 7's real form submit button.
-      await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
-      await step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click();
+      // ut-docs#6929: the client now refuses a mismatched PIN at step 6, so
+      // the server round-trip is driven with a programmatic submit() (which
+      // skips every handler) — the server stays the authority.
+      await Promise.all([
+        p.waitForResponse((r) => r.url().includes('/api/setup') && r.request().method() === 'POST'),
+        p.evaluate(() => (document.querySelector('form[action="/api/setup"]') as HTMLFormElement).submit()),
+      ]);
       await p.waitForLoadState('networkidle');
-      await expect(p.locator('.login-error')).toContainText(/PIN/i);
+      await expect(p.locator('.login-error[role="alert"]:visible')).toContainText(/PIN/i);
 
       // The re-rendered page opens on the PIN step (errStep=6); walk back
       // to the country step through the real Back buttons — Alpine state,
@@ -630,6 +632,237 @@ test.describe.serial('first-boot setup and PIN login', () => {
     }
   });
 
+  // ut-docs#6929 (Microsoft Store certification 10.1.2.10): "Start selling" did
+  // nothing. Step 6's PIN inputs carried native pattern/minlength inside a
+  // hidden step, so Chromium blocked the submit and could not show a bubble.
+  // Validation is now JS + server; each case below must give VISIBLE feedback.
+  // Own contexts, none completes setup (the server refuses every POST or the
+  // POST is stubbed), so the shared flow below still sees a first-boot till.
+  const openWizard = async (browser: import('@playwright/test').Browser, at: number, vp = { width: 1280, height: 720 }, touch = false) => {
+    const ctx = await browser.newContext({ viewport: vp, hasTouch: touch });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' });
+    const posts: string[] = [];
+    p.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/api/setup') && !r.url().includes('/api/setup/')) posts.push(r.url()); });
+    await p.goto('/setup');
+    await expect(p).toHaveURL(/\/setup/);
+    // Jump through Alpine (same technique as the 5602 test) and give the
+    // hidden step-4 fields real values, as a walk through the wizard would.
+    await p.evaluate(({ at }) => {
+      const f = document.querySelector('form[action="/api/setup"]') as HTMLFormElement;
+      (f.elements.namedItem('store_name') as HTMLInputElement).value = 'E2E Test Shop';
+      (f.elements.namedItem('till_name') as HTMLInputElement).value = 'Till 1';
+      (document.querySelector('main.setup-card') as any)._x_dataStack[0].step = at;
+    }, { at });
+    return { ctx, p, posts };
+  };
+  const pinAlert = (p: Page, text: string) => p.locator('[data-step="6"] [role=alert]:visible', { hasText: text });
+
+  test('PIN step 6 states the rule "Use 4 to 8 digits, numbers only." and flags both fields required', async ({ browser }) => {
+    const { ctx, p } = await openWizard(browser, 6);
+    try {
+      await expect(p.locator('[data-step="6"] #pin-rule')).toHaveText('Use 4 to 8 digits, numbers only.');
+      await expect(p.locator('input[name=pin]')).toHaveAttribute('aria-required', 'true');
+      await expect(p.locator('input[name=pin_confirm]')).toHaveAttribute('aria-required', 'true');
+      await expect(p.locator('input[name=pin]')).not.toHaveAttribute('pattern', /.*/);
+    } finally { await ctx.close(); }
+  });
+
+  for (const c of [
+    { label: "PIN '123'", pin: '123', confirm: '123', msg: 'PIN must be 4–8 digits', field: 'pin' },
+    { label: "PIN 'abcd'", pin: 'abcd', confirm: 'abcd', msg: 'PIN must be 4–8 digits', field: 'pin' },
+    { label: 'empty PIN', pin: '', confirm: '', msg: 'PIN must be 4–8 digits', field: 'pin' },
+    { label: "PINs '1234' vs '9999'", pin: '1234', confirm: '9999', msg: 'PINs do not match', field: 'pin_confirm' },
+  ]) {
+    test(`${c.label} at step 6: Next refuses, shows "${c.msg}", stays on step 6, sends 0 POSTs`, async ({ browser }) => {
+      const { ctx, p, posts } = await openWizard(browser, 6);
+      try {
+        await p.fill('input[name=pin]', c.pin);
+        await p.fill('input[name=pin_confirm]', c.confirm);
+        await p.locator('[data-step="6"] .setup-nav button', { hasText: 'Next' }).click();
+        await expect(p.locator('[data-step="6"]')).toBeVisible();
+        await expect(pinAlert(p, c.msg)).toBeVisible();
+        await expect(pinAlert(p, c.msg)).toBeInViewport({ ratio: 1 }); // ut-docs#6929: at 1280x720
+        await expect(p.locator(`input[name=${c.field}]`)).toHaveAttribute('aria-invalid', 'true');
+        await expect(p.locator('[data-step="7"]')).toBeHidden();
+        expect(posts).toHaveLength(0);
+        // The error is retired as soon as the operator edits the field.
+        await p.locator('input[name=pin]').fill('482913');
+        await expect(p.locator('[data-step="6"] [role=alert]:visible')).toHaveCount(0);
+      } finally { await ctx.close(); }
+    });
+  }
+
+  test('valid PIN 482913 twice: Next moves to step 7 and no alert is visible anywhere', async ({ browser }) => {
+    const { ctx, p } = await openWizard(browser, 6);
+    try {
+      await p.fill('input[name=pin]', '123'); // trigger an error first, then fix it
+      await p.locator('[data-step="6"] .setup-nav button', { hasText: 'Next' }).click();
+      await expect(pinAlert(p, 'PIN must be 4–8 digits')).toBeVisible();
+      await p.fill('input[name=pin]', '482913');
+      await p.fill('input[name=pin_confirm]', '482913');
+      await p.locator('[data-step="6"] .setup-nav button', { hasText: 'Next' }).click();
+      await expect(p.locator('[data-step="7"]')).toBeVisible();
+      await expect(p.locator('[role=alert]:visible')).toHaveCount(0);
+    } finally { await ctx.close(); }
+  });
+
+  test("final submit with PIN '123' jumps to step 6 with \"PIN must be 4–8 digits\" and sends 0 POSTs", async ({ browser }) => {
+    const { ctx, p, posts } = await openWizard(browser, 7);
+    try {
+      await p.evaluate(() => { (document.querySelector('input[name=pin]') as HTMLInputElement).value = '123'; });
+      await p.locator('[data-step="7"] button[type=submit]').click();
+      await expect(p.locator('[data-step="6"]')).toBeVisible();
+      await expect(pinAlert(p, 'PIN must be 4–8 digits')).toBeVisible();
+      await expect(pinAlert(p, 'PIN must be 4–8 digits')).toBeInViewport({ ratio: 1 }); // ut-docs#6929: at 1280x720
+      expect(posts).toHaveLength(0);
+    } finally { await ctx.close(); }
+  });
+
+  test('final submit with a blank shop name jumps to step 4 with its message', async ({ browser }) => {
+    const { ctx, p, posts } = await openWizard(browser, 7);
+    try {
+      await p.evaluate(() => {
+        const f = document.querySelector('form[action="/api/setup"]') as HTMLFormElement;
+        (f.elements.namedItem('store_name') as HTMLInputElement).value = '   ';
+        (f.elements.namedItem('pin') as HTMLInputElement).value = '482913';
+        (f.elements.namedItem('pin_confirm') as HTMLInputElement).value = '482913';
+      });
+      await p.locator('[data-step="7"] button[type=submit]').click();
+      await expect(p.locator('[data-step="4"] [role=alert]:visible')).toContainText('Enter your shop');
+      await expect(p.locator('[data-step="4"] [role=alert]:visible')).toBeInViewport({ ratio: 1 }); // ut-docs#6929: at 1280x720
+      expect(posts).toHaveLength(0);
+    } finally { await ctx.close(); }
+  });
+
+  test('server banner on step 6 is retired when the operator moves on', async ({ browser }) => {
+    const { ctx, p } = await openWizard(browser, 6);
+    try {
+      // submit() skips handlers, so an empty PIN reaches the server, which re-renders step 6.
+      await Promise.all([
+        p.waitForResponse((r) => r.url().endsWith('/api/setup') && r.request().method() === 'POST'),
+        p.evaluate(() => (document.querySelector('form[action="/api/setup"]') as HTMLFormElement).submit()),
+      ]);
+      await p.waitForLoadState('networkidle');
+      await expect(pinAlert(p, 'PIN must be 4–8 digits')).toBeVisible();
+      await p.fill('input[name=pin]', '482913');
+      await p.fill('input[name=pin_confirm]', '482913');
+      await p.locator('[data-step="6"] .setup-nav button', { hasText: 'Next' }).click();
+      await expect(p.locator('[data-step="7"]')).toBeVisible();
+      await expect(p.locator('.login-error:visible')).toHaveCount(0);
+    } finally { await ctx.close(); }
+  });
+
+  // ut-docs#6929: a failed save must put the banner where the operator is
+  // looking (inside the 1280x720 viewport, focused), not 600px below the fold.
+  test('a failed save shows its banner inside the viewport, focused, and says to re-enter the PIN', async ({ browser }) => {
+    const root = require('path').resolve(__dirname, '..');
+    const fs = require('fs'); const cp = require('child_process');
+    const dirFile = require('path').join(root, '.auth-data-dir');
+    test.skip(!fs.existsSync(dirFile) || !fs.existsSync(fs.readFileSync(dirFile, 'utf8').trim()), 'needs run-till-auth.sh (data dir hand-off)');
+    const dir = fs.readFileSync(dirFile, 'utf8').trim();
+    const dbs = cp.execFileSync('find', [dir, '-name', '*.db']).toString().trim().split('\n').filter(Boolean);
+    const sql = (q: string) => { for (const d of dbs) { try { cp.execFileSync('sqlite3', [d, q], { stdio: 'ignore' }); } catch { /* not the settings db */ } } };
+    sql("CREATE TRIGGER e2e_6929 BEFORE INSERT ON settings WHEN NEW.key = 'store.name' BEGIN SELECT RAISE(ABORT, 'boom'); END");
+    const { ctx, p } = await openWizard(browser, 7);
+    try {
+      await p.evaluate(() => {
+        const f = document.querySelector('form[action="/api/setup"]') as HTMLFormElement;
+        (f.elements.namedItem('pin') as HTMLInputElement).value = '482913';
+        (f.elements.namedItem('pin_confirm') as HTMLInputElement).value = '482913';
+      });
+      await Promise.all([
+        p.waitForResponse((r) => r.url().endsWith('/api/setup') && r.request().method() === 'POST'),
+        p.locator('[data-step="7"] button[type=submit]').click(),
+      ]);
+      await p.waitForLoadState('networkidle');
+      const banner = p.locator('#setup-srv-err-7');
+      await expect(banner).toBeVisible();
+      await expect(banner).toContainText('re-enter your PIN');
+      await expect(banner).toBeInViewport({ ratio: 1 });
+      await expect(banner).toBeFocused();
+      expect(await p.evaluate(() => innerHeight)).toBe(720);
+    } finally { sql('DROP TRIGGER IF EXISTS e2e_6929'); await ctx.close(); }
+  });
+
+  test('Enter in the PIN fields is Next, never a submit: 0 POSTs, step 7 shows the registration notice', async ({ browser }) => {
+    const { ctx, p, posts } = await openWizard(browser, 6);
+    try {
+      await p.fill('input[name=pin]', '482913');
+      await p.press('input[name=pin]', 'Enter'); // confirm still empty: moves focus, no bogus mismatch
+      await expect(p.locator('input[name=pin_confirm]')).toBeFocused();
+      await expect(p.locator('[data-step="6"] [role=alert]:visible')).toHaveCount(0);
+      await p.fill('input[name=pin_confirm]', '482913');
+      await p.press('input[name=pin_confirm]', 'Enter');
+      await expect(p.locator('[data-step="7"]')).toBeVisible();
+      await expect(p.locator('[data-testid="registration-notice"]')).toBeVisible();
+      expect(posts).toHaveLength(0);
+    } finally { await ctx.close(); }
+  });
+
+  test('Enter with a bad PIN explains instead of doing nothing', async ({ browser }) => {
+    const { ctx, p, posts } = await openWizard(browser, 6);
+    try {
+      await p.fill('input[name=pin]', '123');
+      await p.fill('input[name=pin_confirm]', '123');
+      await p.press('input[name=pin_confirm]', 'Enter');
+      await expect(pinAlert(p, 'PIN must be 4–8 digits')).toBeVisible();
+      expect(posts).toHaveLength(0);
+    } finally { await ctx.close(); }
+  });
+
+  test('busy state: Start selling shows "Setting up…" and a second click and Enter send exactly 1 request', async ({ browser }) => {
+    const { ctx, p } = await openWizard(browser, 7);
+    try {
+      await p.evaluate(() => {
+        const f = document.querySelector('form[action="/api/setup"]') as HTMLFormElement;
+        (f.elements.namedItem('pin') as HTMLInputElement).value = '482913';
+        (f.elements.namedItem('pin_confirm') as HTMLInputElement).value = '482913';
+      });
+      let seen = 0;
+      // Stubbed, so the real server never sees it and the till stays first-boot.
+      await p.route('**/api/setup', async (route) => {
+        seen++;
+        await new Promise((r) => setTimeout(r, 4000));
+        await route.fulfill({ status: 200, contentType: 'text/html', body: '<p>stub</p>' });
+      });
+      const btn = p.locator('[data-step="7"] button[type=submit]');
+      await btn.click({ noWaitAfter: true }); // the stubbed POST is a navigation held for 4 s
+      // Locator assertions wait for a pending navigation, so read the DOM directly while it is held.
+      const busy = await p.evaluate(async () => {
+        await new Promise((r) => setTimeout(r, 150)); // let Alpine flush
+        const b = document.querySelector('[data-step="7"] button[type=submit]') as HTMLElement;
+        const st = document.querySelector('[data-step="7"] [role=status]') as HTMLElement;
+        // a second press and an Enter-style implicit submit while busy
+        b.click();
+        (document.querySelector('form[action="/api/setup"]') as HTMLFormElement).requestSubmit();
+        return { aria: b.getAttribute('aria-disabled'), label: b.innerText, hint: st.innerText };
+      });
+      expect(busy.aria).toBe('true');
+      expect(busy.label).toContain('Setting up…');
+      expect(busy.hint).toContain('keep this window open');
+      await expect(p.locator('body')).toContainText('stub', { timeout: 10_000 });
+      expect(seen).toBe(1);
+    } finally { await ctx.close(); }
+  });
+
+  for (const vp of [
+    { name: 'laptop 1280x720 (1920x1080 at 150%)', width: 1280, height: 720 },
+    { name: 'kiosk 1024x600', width: 1024, height: 600 },
+    { name: 'phone 360x740', width: 360, height: 740 },
+  ]) {
+    test(`Next / Start selling stay in the viewport without scrolling on steps 2, 4, 6, 7 at ${vp.name}`, async ({ browser }) => {
+      for (const at of [2, 4, 6, 7]) {
+        const { ctx, p } = await openWizard(browser, at, { width: vp.width, height: vp.height });
+        try {
+          const btn = p.locator(`[data-step="${at}"] .setup-nav .btn.primary`);
+          await expect(btn, `step ${at}`).toBeVisible();
+          await expect(btn, `step ${at}`).toBeInViewport({ ratio: 1 });
+        } finally { await ctx.close(); }
+      }
+    });
+  }
+
   test('completing the wizard creates the admin PIN and logs in', async () => {
     // Scoped to each numbered section (data-step, set on every <section>
     // in setup.html) rather than a flat sequence of `.setup-nav button`
@@ -692,10 +925,16 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // operator's own country/currency kept, not re-detected.
     await step(6).locator('input[name=pin]').fill('1234');
     await step(6).locator('input[name=pin_confirm]').fill('9999');
-    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
-    await step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click();
+    // ut-docs#6929: the client guard refuses the mismatch at step 6 (covered
+    // by its own tests below); this drives the SERVER re-render with a
+    // programmatic submit(), which skips handlers, so the server's own
+    // validation and re-render stay covered.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/setup') && r.request().method() === 'POST'),
+      page.evaluate(() => (document.querySelector('form[action="/api/setup"]') as HTMLFormElement).submit()),
+    ]);
     await page.waitForLoadState('networkidle');
-    await expect(page.locator('.login-error')).toContainText(/PIN/i);
+    await expect(page.locator('.login-error[role="alert"]:visible')).toContainText(/PIN/i);
     await expect(step(6).locator('input[name=pin]')).toBeVisible();
     await expect(page.locator('input[name=currency]')).toHaveValue('GBP');
 

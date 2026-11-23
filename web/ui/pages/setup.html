@@ -65,21 +65,67 @@
                                        cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudShopType: {{ if .cloudShop }}{{ if .cloudShop.ShopType }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
+                                       busy: false, errMsg: '', errStep: 0, errField: '',
+                                       srvErrStep: {{ if .errKey }}{{ .errStep }}{{ else }}0{{ end }},
+                                       srvErrField: '{{ if eq .errKey "auth.error.pin_format" }}pin{{ else if eq .errKey "auth.error.pin_mismatch" }}pin_confirm{{ end }}',
                                        seq: [2, 3, 4, 5, 6, 7],
                                        stepCountries: [{{ range .taxStepCountries }}'{{ . }}',{{ end }}],
                                        tileCountries: [{{ range .installableTaxPlugins }}'{{ .Country }}',{{ end }}],
                                        tseCountry: '{{ .tseCountry }}',
                                        skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && !this.stepCountries.includes(this.country)) || (s === 4 && this.cloud && this.cloudName) || (s === 5 && this.cloud && this.cloudShopType); },
                                        nxt(f) { let i = this.seq.indexOf(f); for (i++; i < this.seq.length; i++) { if (!this.skip(this.seq[i])) return this.seq[i]; } return 7; },
-                                       prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; } }">
+                                       prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; },
+                                       frm() { return document.getElementById('setup-form'); },
+                                       pinProblem() { const e = this.frm().elements, p = e['pin'].value; if (!/^[0-9]{4,8}$/.test(p)) return 'pin_format'; if (p !== e['pin_confirm'].value) return 'pin_mismatch'; return ''; },
+                                       nameProblem() { if (this.skip(4)) return ''; const e = this.frm().elements; if (e['store_name'].value.trim() === '') return 'store_name'; if (e['till_name'].value.trim() === '') return 'till_name'; return ''; },
+                                       clearErr() { this.errMsg = ''; this.errField = ''; this.srvErrStep = 0; this.srvErrField = ''; },
+                                       fail(step, key, toField) {
+                                         this.errMsg = ''; this.errStep = step; this.srvErrStep = 0; this.srvErrField = '';
+                                         this.errField = key === 'pin_format' ? 'pin' : (key === 'pin_mismatch' ? 'pin_confirm' : '');
+                                         this.step = step;
+                                         this.$nextTick(() => {
+                                           this.errMsg = this.frm().getAttribute('data-e-' + key);
+                                           this.$nextTick(() => {
+                                             const e = this.frm().elements;
+                                             if (toField && this.errField) { const el = e[this.errField]; if (key === 'pin_mismatch') el.value = ''; el.focus(); if (el.select) el.select(); return; }
+                                             const a = document.getElementById('setup-err-' + step);
+                                             if (a) { a.focus(); a.scrollIntoView({ block: 'nearest' }); }
+                                           });
+                                         });
+                                       },
+                                       leave6() { const p = this.pinProblem(); if (p) { this.fail(6, p, true); return; } this.clearErr(); this.step = this.nxt(6); },
+                                       enter(ev) {
+                                         if (ev && ev.isComposing) return;
+                                         const e = this.frm().elements;
+                                         if (this.step === 6 && document.activeElement === e['pin'] && e['pin_confirm'].value === '') { e['pin_confirm'].focus(); return; }
+                                         if (this.step === 4) { const n = this.nameProblem(); if (n) { this.fail(4, n, false); return; } }
+                                         const b = document.querySelector('#setup-form [data-step=\'' + this.step + '\'] [data-next]');
+                                         if (b && !b.disabled) b.click();
+                                       },
+                                       submit(ev) {
+                                         if (this.busy) { ev.preventDefault(); return; }
+                                         if (this.step !== 7) { ev.preventDefault(); this.enter(ev); return; }
+                                         const n = this.nameProblem(); if (n) { ev.preventDefault(); this.fail(4, n, false); return; }
+                                         const p = this.pinProblem(); if (p) { ev.preventDefault(); this.fail(6, p, false); return; }
+                                         this.busy = true;
+                                       } }"
+                                     x-init="$watch('step', v => { if (v !== errStep) { errMsg = ''; errField = ''; } if (v !== srvErrStep) { srvErrStep = 0; srvErrField = ''; } }); $nextTick(() => { let n = 0; const go = () => { const a = srvErrStep ? document.querySelector('[data-server-error]') : null; if (!a) return; if (a.offsetParent === null) { if (++n < 30) requestAnimationFrame(go); return; } a.focus(); a.scrollIntoView({ block: 'nearest' }); }; go(); })"
+                                     @pageshow.window="if ($event.persisted) busy = false">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
       </div>
 
-      {{ if .errKey }}<p class="login-error" role="alert">{{ T .errKey }}</p>{{ end }}
+      {{/* Steps 6 and 7 carry their own in-step alert (next to the field /
+           the button, ut-docs#6929); this top banner serves the other server
+           keys (identity, names, cloud). Step-scoped: retired when the
+           operator leaves the step the error belongs to. */}}
+      {{ if and .errKey (ne .errStep 6) (ne .errStep 7) }}<div tabindex="-1" data-server-error x-show="srvErrStep === step"><p class="login-error" role="alert">{{ T .errKey }}</p></div>{{ end }}
 
-      <form method="post" action="/api/setup">
+      <form method="post" action="/api/setup" id="setup-form" @submit="submit($event)" :aria-busy="busy ? 'true' : 'false'"
+            data-e-pin_format="{{ T "auth.error.pin_format" }}" data-e-pin_mismatch="{{ T "auth.error.pin_mismatch" }}"
+            data-e-store_name="{{ T "setup.error.store_name_required" }}" data-e-till_name="{{ T "tills.pairing.error.name_required_field" }}"
+            data-busy-hint="{{ T "setup.busy_hint" }}">
         <input type="hidden" name="setup_nonce" value="{{ .setupNonce }}">
         {{ if .cloudShop }}<input type="hidden" name="cloud_paired" value="1">{{ end }}
         <!-- Step 1 · language (reloads with the chosen locale) -->
@@ -155,9 +201,11 @@
           {{ if .langCatalogUnavailable }}
             <p class="muted" data-lang-catalog-unavailable>{{ T "setup.language.more_when_connected" }}</p>
           {{ end }}
+          <div class="setup-secondary-row">
+            <button type="button" class="btn secondary" @click="step = 99">{{ T "setup.join.title" }}</button>
+          </div>
           <div class="setup-nav">
-            <button type="button" class="btn primary" @click="step = 2">{{ T "setup.next" }}</button>
-            <button type="button" class="btn secondary" @click="step = 99" style="margin-top:.4rem">{{ T "setup.join.title" }}</button>
+            <button type="button" class="btn primary" data-next @click="step = 2">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -214,7 +262,7 @@
           <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = prv(2)">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = nxt(2)">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" data-next @click="step = nxt(2)">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -309,6 +357,7 @@
                  from firing it twice — harmless either way since
                  addPendingBasePlugins already dedupes, but no reason to. -->
             <button type="button" class="btn primary"
+                    data-next
                     {{ if .installableTaxPlugins }}hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none" hx-trigger="click once"{{ end }}
                     @click="step = nxt(3)">{{ T "setup.next" }}</button>
             <!-- Skip clears the fields so a half-typed form can't fail the
@@ -352,13 +401,14 @@
             <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p> <!-- login-error-role:allow confirms the operator's own skip choice (not an error) and is read in order under the step heading -->
           {{ end }}
           <input type="text" name="store_name" maxlength="{{ maxStoreNameRunes }}" placeholder="{{ T "setup.store.placeholder" }}"
-                 value="{{ .storeName }}" x-model="storeName" aria-required="true">
+                 value="{{ .storeName }}" x-model="storeName" aria-required="true" enterkeyhint="next">
           <label>{{ T "setup.till_name.title" }}
-            <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true">
+            <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true" enterkeyhint="next">
           </label>
+          <template x-if="errMsg && errStep === 4"><p class="login-error" role="alert" tabindex="-1" id="setup-err-4" x-text="errMsg"></p></template>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = prv(4)">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" :disabled="storeName.trim() === '' || tillName.trim() === ''" @click="step = nxt(4)">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" :disabled="storeName.trim() === '' || tillName.trim() === ''" data-next @click="step = nxt(4)">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -385,7 +435,7 @@
           </div>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = prv(5)">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = nxt(5)">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" data-next @click="step = nxt(5)">{{ T "setup.next" }}</button>
           </div>
         </section>
         {{ end }}
@@ -394,15 +444,29 @@
         <section x-show="step === 6" x-cloak data-step="6">
           <h1>{{ T "auth.setup.title" }}</h1>
           <p class="muted">{{ T "auth.setup.hint" }}</p>
+          <p class="muted" id="pin-rule">{{ T "auth.setup.pin_rule" }}</p>
+          {{/* ut-docs#6929: no pattern/minlength/required here. A native
+               constraint on a control inside a hidden step silently blocks the
+               final submit (the browser cannot show its bubble on a
+               non-focusable control). The rule is checked by leave6()/submit()
+               in the root x-data and again by the server. */}}
           <label>{{ T "auth.setup.pin" }}
-            <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
+            <input type="password" name="pin" inputmode="numeric" maxlength="8" enterkeyhint="next"
+                   aria-required="true" aria-describedby="pin-rule setup-err-6 setup-srv-err-6"
+                   :aria-invalid="errField === 'pin' && errMsg || srvErrField === 'pin' && srvErrStep === 6 ? 'true' : 'false'"
+                   @input="clearErr()">
           </label>
           <label>{{ T "auth.setup.pin_confirm" }}
-            <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
+            <input type="password" name="pin_confirm" inputmode="numeric" maxlength="8" enterkeyhint="next"
+                   aria-required="true" aria-describedby="pin-rule setup-err-6 setup-srv-err-6"
+                   :aria-invalid="errField === 'pin_confirm' && errMsg || srvErrField === 'pin_confirm' && srvErrStep === 6 ? 'true' : 'false'"
+                   @input="clearErr()">
           </label>
+          {{ if and .errKey (eq .errStep 6) }}<div id="setup-srv-err-6" tabindex="-1" data-server-error x-show="srvErrStep === step"><p class="login-error" role="alert">{{ T .errKey }}</p></div>{{ end }}
+          <template x-if="errMsg && errStep === 6"><p class="login-error" role="alert" tabindex="-1" id="setup-err-6" x-text="errMsg"></p></template>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = prv(6)">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = nxt(6)">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" data-next @click="leave6()">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -435,10 +499,14 @@
                read-only: the wizard is auth-exempt, plugin routes are not,
                so they carry no forms (safe inside this <form>). */}}
           {{ if .pluginSlot }}{{ .pluginSlot }}{{ end }}
+          {{ if and .errKey (eq .errStep 7) }}<div id="setup-srv-err-7" tabindex="-1" data-server-error x-show="srvErrStep === step"><p class="login-error" role="alert">{{ T .errKey }}</p></div>{{ end }}
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = prv(7)">{{ T "setup.back" }}</button>
-            <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
+            <button type="button" class="btn secondary" :disabled="busy" @click="step = prv(7)">{{ T "setup.back" }}</button>
+            {{/* aria-disabled, not disabled: a disabled focused button drops
+                 keyboard focus to <body>; submit() swallows presses while busy. */}}
+            <button type="submit" class="btn primary" :class="{ 'is-busy': busy }" :aria-disabled="busy ? 'true' : 'false'"><span data-idle="{{ T "setup.finish" }}" data-busy="{{ T "setup.finish_busy" }}" x-text="busy ? $el.dataset.busy : $el.dataset.idle">{{ T "setup.finish" }}</span></button>
           </div>
+          <p class="muted setup-busy-hint" role="status" x-text="busy ? $el.closest('form').dataset.busyHint : ''"></p>
         </section>
 
         {{/* Step 8 · "Your shop" (ADR-0166 §1, ut-docs#4610): what the cloud
@@ -461,7 +529,7 @@
           <div class="setup-nav">
             {{ if not .cloudShop.Replaced }}<button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
                     hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>{{ end }}
-            <button type="button" class="btn primary" @click="step = nxt(8)">{{ T "setup.cloud.continue" }}</button>
+            <button type="button" class="btn primary" data-next @click="step = nxt(8)">{{ T "setup.cloud.continue" }}</button>
           </div>
         </section>
         {{ end }}
