@@ -189,7 +189,7 @@
       "tr": "f843876b5ca0c604d8172354629f0929f808a56304a1f9d86d24a7e5fad1c301"
     },
     "sell": {
-      "en": "561fee06de425ebe611cf10a3bd3148a953a572c433300f3ea22edfde6b937dc",
+      "en": "47a188e022f8b70ed9e45c5364c1cbccb12bda47365d165c05e1f7cc0c85d3fb",
       "fa": "53dd70986b76939362353a23341e030225abe6adb52c857f7c34f728b395133e",
       "ar": "1fa5c2aefdb11a47a2c530d9ebaebc48b8ed17ac8ab295b482bea1b149e8b0ee",
       "tr": "b12548cb86a39eb7b2e8cc05d0c1949a3600edb91918f8beb7f3bcc5361e491e"
@@ -744,6 +744,9 @@
     "internal/pages/tax_summary.go": {
       "sha256": "7552fac501e0f01f865a1576ebeced8ed0549e6461497affc2c3f9bf0e6fc3a3"
     },
+    "internal/pages/tender_inflight.go": {
+      "sha256": "dc66a106027d68a72bce5a1f05227d8d1de4655f2367f2803dd99905673cc9ca"
+    },
     "internal/pages/till_name.go": {
       "sha256": "293351a4f5f1355c1d91ddc9f8f404e55331e6a08a95578c0616be2127a7fca1"
     },
@@ -787,7 +790,7 @@
       "sha256": "da81282acff0ccc912236062858ec870c01f029f991ae873c7e93d328dd38423"
     },
     "web/public/app.js": {
-      "sha256": "ccb4f13b560e9b1d57af54dc38677450f419aa5a0800b6117f5176a3526cbe9b"
+      "sha256": "cd9c7f8d4a1f21c593c3cbcd492de58e06dddba962e040eb0b4b233742cd322f"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1777,7 +1780,7 @@
       "sha256": "767e08cd2aa7ad7d29da115da7dde0b9723344e68a54b0a5c9e78ab9eedd1443"
     },
     "web/ui/partials/basket.html": {
-      "sha256": "916f3a64d37e8e40d42a651378c0352f7ec33c236ab95c7133e95cfa7fbda88f"
+      "sha256": "651a4f4fe40d1d25432ea9555f5a8b33e29a797e09bf2cdfcaae221946b31bd5"
     },
     "web/ui/partials/bugreport_chip.html": {
       "sha256": "94f0b8986f6afb094cb3547ef3781c1bc5e80b7aaeb89e3f242b993ea1fd4314"

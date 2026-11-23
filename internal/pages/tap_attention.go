@@ -166,6 +166,17 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusBadRequest, "bad_request", "tap.resolve.bad_choice")
 			return
 		}
+		// ut-docs#6908 (rule of #6805/#6784): the leg guard comes first, so a
+		// second resolve queued behind this one re-reads the settled row. From
+		// the first broker ask on, the decision and its compensations (cancel,
+		// attempt write, audit, native release) run detached; a dropped
+		// connection must not corrupt the facts or lose the decision. Bounded:
+		// paybroker.Timeout, nativeResolveTimeout.
+		if !tapLegInFlight.acquire(key) {
+			fail(http.StatusConflict, "in_progress", "tap.attention.in_progress")
+			return
+		}
+		defer tapLegInFlight.release(key)
 		repo := data.NewPaymentAttemptRepo(d.Db)
 		a, found, err := repo.Get(r.Context(), key)
 		if err != nil {
@@ -191,10 +202,6 @@ func registerTapAttention(mux *http.ServeMux, d *common.Deps) {
 
 		// Ask the broker first; its answer decides what may be chosen. A
 		// cancel that finds the intent paid turns the verdict to paid.
-		// ut-docs#6908 (rule of #6805/#6784): from the first broker ask on, the
-		// decision and its compensations (cancel, attempt write, audit, native
-		// release) run detached; a dropped connection must not corrupt the facts
-		// or lose the decision. Bounded: paybroker.Timeout, nativeResolveTimeout.
 		ctx := context.WithoutCancel(r.Context())
 		f := tapAssess(ctx, d, pos.UnknownLeg{RequestID: a.Key})
 		if decision == "not_charged" {

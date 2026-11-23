@@ -49,6 +49,13 @@ var tapResolveReasons = map[string]bool{
 	"customer_left": true, "card_shown_charged": true, "card_not_charged": true, "mismatch_refund_later": true,
 }
 
+// tapLegInFlight (ut-docs#6909) holds the attempt keys a check or resolve is
+// asking the broker about right now, so a retry after the throttle interval, or
+// a resolve beside a check, never runs concurrently on one leg. It reuses the
+// kiosk's generic acquire/release key set; the key is the authorize request id
+// (the attention resolve's attempt key is the same id).
+var tapLegInFlight = newSelfOrderCheckoutInFlight()
+
 // tapThrottle remembers when each attempt was last checked. Bounded: entries
 // older than ten minutes go first, and past 256 the table is cleared (the
 // worst case is one extra, harmless, broker read).
@@ -317,6 +324,12 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 		// tender names the attempt. The one flag it may carry is "cancel".
 		_ = r.ParseForm()
 		cancel := r.Form.Get("cancel") == "1"
+		// ut-docs#6909: a tender retry is re-authorizing this leg; a check
+		// beside it would ask the broker, unlock or mark paid under it.
+		if d.Engine.TenderInFlight() {
+			renderTapBasket(w, r, d, &pos.TapPanel{State: "pending", Method: leg.MethodID, Amount: leg.Amount, Reason: leg.TapReason, Still: true}, http.StatusOK)
+			return
+		}
 		if !tapCheckAllowed(leg.RequestID) {
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "pending", Method: leg.MethodID, Amount: leg.Amount, Reason: leg.TapReason, Still: true}, http.StatusOK)
 			return
@@ -326,6 +339,11 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 		// native release) run detached; a dropped connection must not corrupt the
 		// facts or lose the reversal. Bounded: paybroker.Timeout, the plugin call
 		// timeout, nativeResolveTimeout.
+		if !tapLegInFlight.acquire(leg.RequestID) {
+			renderTapBasket(w, r, d, &pos.TapPanel{State: "pending", Method: leg.MethodID, Amount: leg.Amount, Reason: leg.TapReason, Still: true}, http.StatusOK)
+			return
+		}
+		defer tapLegInFlight.release(leg.RequestID)
 		ctx := context.WithoutCancel(r.Context())
 		f := tapAssess(ctx, d, leg)
 		repo := data.NewPaymentAttemptRepo(d.Db)
@@ -406,6 +424,10 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, httpx.T(locale, "tap.nothing_pending"), http.StatusConflict)
 			return
 		}
+		if d.Engine.TenderInFlight() { // ut-docs#6909: a tender retry runs on this leg
+			http.Error(w, httpx.T(locale, "tap.resolve.in_progress"), http.StatusConflict)
+			return
+		}
 		decision := r.Form.Get("decision")
 		reason := r.Form.Get("reason")
 		if decision != "approve" && decision != "not_charged" && decision != "override" {
@@ -417,6 +439,11 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 		// native release) run detached; a dropped connection must not corrupt the
 		// facts or lose the reversal. Bounded: paybroker.Timeout, the plugin call
 		// timeout, nativeResolveTimeout.
+		if !tapLegInFlight.acquire(leg.RequestID) {
+			http.Error(w, httpx.T(locale, "tap.resolve.in_progress"), http.StatusConflict)
+			return
+		}
+		defer tapLegInFlight.release(leg.RequestID)
 		ctx := context.WithoutCancel(r.Context())
 		f := tapAssess(ctx, d, leg)
 		repo := data.NewPaymentAttemptRepo(d.Db)

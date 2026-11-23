@@ -1303,7 +1303,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			in.Qty = 1
 		}
 
-		if cid := strings.TrimSpace(in.CustomerID); cid != "" {
+		if cid := strings.TrimSpace(in.CustomerID); cid != "" && !d.Engine.TenderInFlight() {
 			d.Engine.SetCustomerID(cid)
 		}
 
@@ -1312,6 +1312,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		basketView, _ := ui.NewBasketView(funcs)
 		render := func(b *pos.Basket) {
 			_ = basketView.Render(w, b)
+		}
+
+		// ut-docs#6909: a line added while a tender runs is saved by neither
+		// the sale (lines were read before the authorize) nor kept past its
+		// Reset. Refuse it visibly; the basket is unchanged.
+		if d.Engine.TenderInFlight() {
+			b := d.Engine.Basket()
+			b.ToastMessage = httpx.T(locale, "pos.tender.scan_refused")
+			b.ToastLevel = "error"
+			render(&b)
+			return
 		}
 
 		if code == "" {
@@ -2447,6 +2458,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("/api/pos/tender", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#6909: one cashier tender at a time per engine. Before any
+		// body read, authorize, reversal or engine state; the defer also runs
+		// when the handler panics. The kiosk keeps its own per-basket guard.
+		if !d.Engine.TryBeginTender() {
+			writeTenderInFlight(w, r)
+			return
+		}
+		defer d.Engine.EndTender()
 		type In struct {
 			Payments []struct {
 				Amount    int64  `json:"amount"`

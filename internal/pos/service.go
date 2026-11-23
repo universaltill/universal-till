@@ -142,6 +142,11 @@ type Service struct {
 	// may be retried (same authorize request id), so a possibly-charged card
 	// is never followed by another payment. Cleared with tenderAttemptID.
 	tenderLock string
+	// tenderInFlight (ut-docs#6909) is true while a cashier tender request
+	// runs on this engine. Set and cleared ONLY by TryBeginTender/EndTender,
+	// never by Reset*, SettleTender, LockTender, rotation, park or resume: the
+	// completed sale's own Reset runs inside the guarded request. Guarded by mu.
+	tenderInFlight bool
 	// pendingTender (ut-docs#6602) is what the locked tender leaves behind:
 	// the legs already captured (to reverse if the tender is abandoned) and
 	// the legs of unknown outcome (to warn about). Same lifetime as
@@ -1880,6 +1885,32 @@ func (s *Service) PendingTender() PendingTender {
 		Captured: append([]CapturedLeg(nil), s.pendingTender.Captured...),
 		Unknown:  append([]UnknownLeg(nil), s.pendingTender.Unknown...),
 	}
+}
+
+// TryBeginTender claims the engine for one tender (ut-docs#6909): false when
+// another tender already runs on it. The caller defers EndTender.
+func (s *Service) TryBeginTender() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tenderInFlight {
+		return false
+	}
+	s.tenderInFlight = true
+	return true
+}
+
+// EndTender releases the claim TryBeginTender took.
+func (s *Service) EndTender() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tenderInFlight = false
+}
+
+// TenderInFlight reports whether a tender request is running on this engine.
+func (s *Service) TenderInFlight() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tenderInFlight
 }
 
 func (s *Service) TenderLock() string {
