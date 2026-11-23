@@ -472,12 +472,15 @@ func TestLiveNumberMaximaMirrorData(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, no := range []string{"000000120", "9-000000005", "T2-000000007", "T2-abc"} {
+		// The huge rows are corrupt; both sides must ignore them alike (ut-docs#6906).
+		for _, no := range []string{"000000120", "9-000000005", "T2-000000007", "T2-abc", "99999999999999999999"} {
 			insertSaleNo(t, d, no)
 		}
 		insertArchivedSaleNo(t, d, "T2-000000900")
+		insertArchivedSaleNo(t, d, "T2-99999999999999999999")
 		setCounter(t, d, "T2-", counter)
 		insertArchivedZ(t, d, "eod", 7)
+		insertArchivedZ(t, d, "eod", 9223372036854775000)
 		insertArchivedZ(t, d, "x", 3)
 		d.Close()
 
@@ -531,6 +534,38 @@ func TestRestoreFloorKeysMirrorData(t *testing.T) {
 		restoreZFloorKeyPrefix != data.RestoreZFloorKeyPrefix {
 		t.Fatal("restore floor key constants drifted from internal/data")
 	}
+	if restoreNumberMax != data.RestoreNumberMax {
+		t.Fatal("restoreNumberMax drifted from internal/data")
+	}
+}
+
+// ut-docs#6906: a huge live floor, receipt_no or Z is corrupt: the merge
+// carries the sane value, never the huge one.
+func TestRestoreFloorMergeIgnoresHugeLiveNumbers(t *testing.T) {
+	path := testDBPath(t)
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setSetting(t, d.DB, restoreReceiptFloorKey, "9223372036854775000")
+	setSetting(t, d.DB, restoreReceiptFloorPrefixKey, "")
+	setSetting(t, d.DB, restoreZFloorKeyPrefix+"eod", "9223372036854775000")
+	insertSaleNo(t, d, "000000120")
+	insertSaleNo(t, d, "99999999999999999999")
+	insertArchivedZ(t, d, "eod", 7)
+	insertArchivedZ(t, d, "eod", 9223372036854775000)
+	got, err := liveReceiptMax(d.DB, "")
+	if err != nil || got != 120 {
+		t.Fatalf("liveReceiptMax = %d, %v, want 120", got, err)
+	}
+	if zm, err := liveZMax(d.DB); err != nil || zm["eod"] != 7 {
+		t.Fatalf("liveZMax = %v, %v, want eod 7", zm, err)
+	}
+	d.Close()
+	name := emptyBackup(t, path, "huge", map[string]string{restoreReceiptFloorKey: "10", restoreReceiptFloorPrefixKey: "", restoreZFloorKeyPrefix + "eod": "1"})
+	r := applyOnly(t, path, name)
+	wantSetting(t, r, restoreReceiptFloorKey, "120")
+	wantSetting(t, r, restoreZFloorKeyPrefix+"eod", "7")
 }
 
 // A source that cannot be read must not throw away the others (6293 review
@@ -554,5 +589,21 @@ func TestLiveReceiptMaxKeepsReadableSources(t *testing.T) {
 	}
 	if got != 42000 {
 		t.Fatalf("liveReceiptMax = %d, want 42000 from the counter", got)
+	}
+}
+
+// The live counter and the prefixed query ignore huge values too (ut-docs#6906, Tester F3).
+func TestLiveReceiptMaxIgnoresHugeCounterAndPrefixedRow(t *testing.T) {
+	path := testDBPath(t)
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	insertSaleNo(t, d, "T2-000000120")
+	insertSaleNo(t, d, "T2-99999999999999999999")
+	setCounter(t, d, "T2-", 9223372036854775000)
+	if got, err := liveReceiptMax(d.DB, "T2-"); err != nil || got != 120 {
+		t.Fatalf("liveReceiptMax = %d, %v, want 120", got, err)
 	}
 }

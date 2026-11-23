@@ -31,6 +31,11 @@ const (
 	RestoreMarkerKey = "restore.marker"
 )
 
+// RestoreNumberMax bounds a counter the jump believes (ut-docs#6906): a larger
+// receipt or Z number is corrupt, not a counter, and is ignored (never a lower
+// bound), so adding the jump cannot overflow. internal/db mirrors it.
+const RestoreNumberMax = 1_000_000_000_000_000
+
 const (
 	restoreMinJump       = 10000
 	restoreFloorRounding = 1000
@@ -148,7 +153,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 	}
 	if last, _, ok, err := seriesLast(ctx, tx, numberKindReceipt, prefix); err != nil {
 		return out, fmt.Errorf("restore jump: receipt counter: %w", err)
-	} else if ok && last > maxReceipt {
+	} else if ok && last > maxReceipt && last <= RestoreNumberMax {
 		maxReceipt = last
 	}
 	lastReceipt := maxReceipt
@@ -159,7 +164,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 		if err != nil {
 			return out, fmt.Errorf("restore jump: receipt floor: %w", err)
 		}
-		if f, perr := strconv.ParseInt(fv, 10, 64); perr == nil && f > lastReceipt {
+		if f, perr := strconv.ParseInt(fv, 10, 64); perr == nil && f > lastReceipt && f <= RestoreNumberMax {
 			lastReceipt = f
 		}
 	}
@@ -221,7 +226,8 @@ SELECT COALESCE(MAX(n), 0) FROM (
 	for kind := range kinds {
 		var maxZ int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COALESCE(MAX(z_number), 0) FROM report_archive WHERE kind = ?`, kind).Scan(&maxZ); err != nil {
+			`SELECT COALESCE(MAX(z_number), 0) FROM report_archive WHERE kind = ? AND z_number <= ?`,
+			kind, RestoreNumberMax).Scan(&maxZ); err != nil {
 			return out, fmt.Errorf("restore jump: last z (%s): %w", kind, err)
 		}
 		base := maxZ
@@ -229,7 +235,7 @@ SELECT COALESCE(MAX(n), 0) FROM (
 		if err != nil {
 			return out, fmt.Errorf("restore jump: z floor (%s): %w", kind, err)
 		}
-		if f, perr := strconv.ParseInt(fv, 10, 64); perr == nil && f > base {
+		if f, perr := strconv.ParseInt(fv, 10, 64); perr == nil && f > base && f <= RestoreNumberMax {
 			base = f
 		}
 		zFloor := base + days
@@ -239,7 +245,7 @@ SELECT COALESCE(MAX(n), 0) FROM (
 		out.ZFrom[kind] = maxZ
 		out.ZFloor[kind] = zFloor
 		if kind == "eod" {
-			lastEod, nextEod = maxZ, zFloor+1
+			lastEod, nextEod = base, zFloor+1
 		}
 	}
 
