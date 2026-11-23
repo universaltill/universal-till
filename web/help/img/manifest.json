@@ -748,7 +748,7 @@
       "sha256": "2725ff94c7849d932db80656abbb502a5a56d8e6484c6bfedd7617e271d05c14"
     },
     "internal/pages/tap_settings_page.go": {
-      "sha256": "aa4d9ad708af2b4e19b23aba07d2e341813ca80425a65eb032affe92c3b15cce"
+      "sha256": "b014eba2a95b55005ac43f0c86637ef08148e677fb015472b4b96d88773eccc9"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "7e7899a0e9f51d941878d020dbd8b555db24f7ef7bef34af2a9a37520bdd048d"

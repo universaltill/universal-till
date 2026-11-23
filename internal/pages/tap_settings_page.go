@@ -172,7 +172,7 @@ func tapPermissionsGranted(ctx context.Context, d *common.Deps, pluginID string)
 }
 
 // tapProviderPluginID is the one plugin id allowed to receive the grant, per provider.
-var tapProviderPluginID = map[string]string{devicepay.ProviderStripe: "com.universaltill.payment-stripe"}
+var tapProviderPluginID = map[string]string{devicepay.ProviderStripe: "com.universaltill.payment-stripe"} // core-neutral:allow security: only the first-party tap plugin may be granted the broker permissions (ADR-0198 §3.1); a foreign plugin declaring the same provider must never receive them
 
 // tapProviderPlugin is the plugin that owns provider's tap entry ("" when no
 // active plugin declares one).
