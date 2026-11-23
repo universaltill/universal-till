@@ -176,19 +176,31 @@ func TestSyncPullPlugins_FreshRowsWhileInstallFails(t *testing.T) {
 	}
 }
 
+// ut-docs#6930: a fresh install of a plugin the main has off lands off in the
+// persist transaction (never active, never loaded), so the follow has nothing
+// to flip.
 func TestConvergePluginSet_FreshInstallFollowsDisabled(t *testing.T) {
 	dp := newDeps6666(t, "6666-fresh-install.db")
 	orig := pluginSyncInstall
 	t.Cleanup(func() { pluginSyncInstall = orig })
-	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string) (string, error) {
-		seed6666(t, d, listing, "com.test.new", true, nil, false) // install leaves is_active=1
+	var sawInactive bool
+	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool) (string, error) {
+		sawInactive = inactive
+		seed6666(t, d, listing, "com.test.new", !inactive, nil, false) // a real install lands off when inactive
 		return "", nil
 	}
-	if !convergePluginSet(t.Context(), dp, []data.PluginSyncRow{row6666("L1", "com.test.new", boolp6666(false))}) {
+	rows := []data.PluginSyncRow{row6666("L1", "com.test.new", boolp6666(false))}
+	if !convergePluginSet(t.Context(), dp, rows) {
 		t.Fatal("not converged")
+	}
+	if !sawInactive {
+		t.Fatal("the install was not asked to land inactive")
 	}
 	if active6666(t, dp, "com.test.new") {
 		t.Fatal("a fresh install of a plugin the main has off must end off")
+	}
+	if _, changed := followMarketplaceState(t.Context(), dp, rows); changed {
+		t.Fatal("the follow flipped a plugin that already landed off")
 	}
 }
 

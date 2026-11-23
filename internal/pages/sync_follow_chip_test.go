@@ -23,7 +23,7 @@ func stubPluginSyncInstall(t *testing.T, err error) *[]string {
 	orig := pluginSyncInstall
 	t.Cleanup(func() { pluginSyncInstall = orig })
 	var calls []string
-	pluginSyncInstall = func(_ context.Context, _ *common.Deps, listingID, version string) (string, error) {
+	pluginSyncInstall = func(_ context.Context, _ *common.Deps, listingID, version string, _ bool) (string, error) {
 		calls = append(calls, listingID+"@"+version)
 		return "", err
 	}
