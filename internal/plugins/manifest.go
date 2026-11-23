@@ -327,6 +327,13 @@ type ManifestSetting struct {
 	GuideURL    string                   `json:"guide_url,omitempty"`
 	Paste       bool                     `json:"paste,omitempty"`
 	Notice      string                   `json:"notice,omitempty"`
+	// ADR-0214 (ut-docs#6969): how the setting is reported to my. SecretLast4
+	// lets a `type: "secret"` setting's value of 16+ characters report its
+	// last four; Report=false withholds a non-secret value from the report
+	// (nil = true). Both additive and omitempty; ut-cloud's CanonicalSetting
+	// mirrors them. The report never carries a secret value.
+	SecretLast4 bool  `json:"secret_last4,omitempty"`
+	Report      *bool `json:"report,omitempty"`
 }
 
 // ManifestSettingOption is one allowed value of a `type: "choice"` setting:

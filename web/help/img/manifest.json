@@ -358,7 +358,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "35499e36c43604022acb375c67faddc73b69685d4f41cf7faf1d2016d49ffa44"
+      "sha256": "d624d7113bdf83fc5b8fdcc55306ef61470210f87512c2ce9d186c1b2ab58347"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"

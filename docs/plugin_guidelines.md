@@ -840,6 +840,19 @@ install time (ut-docs#3552): a non-empty default must be a valid http(s) URL
 or the manifest is rejected; an absent or empty-string (`""`) default is
 fine — the operator sets it later.
 
+**Settings shown in my. (ADR-0214, ut-docs#6969).** The till reports each
+active plugin's global-scope, manifest-declared settings to the shop's cloud
+so the owner can read them in my. (`plugin_settings` on the check-in; contract
+ut-docs `reference/contracts/till-plugin-settings.md`). A non-secret value goes
+up as text (at most 256 characters; `list` and `map` settings and
+`register`-scope settings are not reported). A secret reports only "set", never
+its value. Two optional, additive setting fields shape this:
+`"secret_last4": true` (a `type: "secret"` value of 16 or more characters also
+reports its last four characters) and `"report": false` (a non-secret setting
+that reports only "set", for a value that may hold personal data). A key whose
+name looks like a credential never reports a value. A manifest using either
+field must set `min_pos_version` to `0.36.4` or later.
+
 ### 5. Data Protection
 
 - Encrypt sensitive data at rest
