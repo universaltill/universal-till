@@ -1381,6 +1381,15 @@ func blockingPaymentEventDispatch(ctx context.Context, d *common.Deps, method, s
 			}
 			return nil, false, nil
 		}
+		// ut-docs#6653 (ADR-0136 Decision 8): an authorize leg is journaled
+		// before the plugin hears of it, and a leg that cannot be recorded is
+		// never asked (fail closed). Here, past the subscriber lookup, so a
+		// cash or hookless leg writes nothing.
+		if suffix == "authorize" {
+			if err := askLegJournal(ctx, method); err != nil {
+				return nil, false, err
+			}
+		}
 		payload["plugin_id"] = e.PluginID
 		if requestID == "" {
 			resp, err := bus.PublishAuthorize(ctx, event, payload)

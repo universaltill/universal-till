@@ -97,6 +97,24 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   `cleared_basket_count` / `cleared_basket_total_minor` per business date and
   till, never as part of net sales (ut-docs#4721)
 
+**`payment_leg_journal`** (migration 115; ut-docs#6653, ADR-0136 Decision 9)
+is core's till-local, **append-only** history of every electronic payment leg,
+keyed by the leg's authorize request id plus an `ask` counter (a retry after
+an unknown outcome or a decline re-uses the id, `ask` + 1; a trigger aborts any
+UPDATE). A leg is in the state of its newest row: `asked` (written before the
+provider is called; a failed write refuses the tender), `captured`, `unknown`,
+`declined`, `settled` (written inside `CompleteSale`'s own transaction with the
+sale id), `reversing`, `reversed`, `reverse_failed`, `warned`, `resolved`.
+`amount_minor` is the exact captured amount including any reader tip;
+`transaction_ref` is the provider's reference in full and `reader_ref` the
+reader (no card number, expiry or CVV is stored). After a restart, boot
+(`pages.ReconcilePaymentLegs`) returns a `captured` non-tap leg that has no
+sale, leaves a captured tap/phone leg to a manager (ADR-0198), and warns
+`asked`/`unknown`/`reversing` legs without refunding or re-sending them. Chains
+whose newest state is `settled|reversed|declined|resolved` are deleted after 90
+days; `warned` and `reverse_failed` never are. Never in sync or the cloud
+roster.
+
 **`payment_attempts`** (migration 111; ut-docs#6455, ut-docs#6795, ADR-0198
 §6.8) is core's till-local record of one card-present (Tap to Pay) attempt,
 keyed by the authorize request id. States: `pending` (written before the

@@ -503,6 +503,8 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// dispatched to a plugin, "" otherwise; the settle event carries it so a
 	// plugin can match its own approval exactly (ut-docs#6438).
 	legRequestIDs := make([]string, len(payments))
+	// ut-docs#6653 (ADR-0136 Decision 8): the durable journal of these legs.
+	journal := newLegJournalTracker(d)
 	for i, p := range payments {
 		amount := p.Amount
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -556,10 +558,27 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// ut-docs#6455: a tap entry's dispatch is bound by this gate and its
 		// "approved" confirmed with the broker; tapConf is non-nil only once
 		// core itself confirmed the payment.
-		resp, dispatched, tapConf, err := tapAuthorize(detached, d, p.MethodID, requestID, amount, payCurrency, payload)
+		legEntry := legBase(requestID, p.MethodID, amount, payCurrency, p.ReaderRef)
+		resp, dispatched, tapConf, err := tapAuthorize(withLegJournal(detached, journal.hook(legEntry)), d, p.MethodID, requestID, amount, payCurrency, payload)
 		var tapStart *tapStartFailedError
 		var tapPending *pos.PaymentPendingError
+		var journalErr *paymentJournalError
+		if errors.As(err, &journalErr) {
+			// ut-docs#6653: the till could not record this leg, so it was never
+			// asked and nothing moved. The earlier legs are returned and the
+			// request id is spent, like a decline; nothing is locked.
+			if abandonedUnder() {
+				why = "tender refused (the basket was abandoned during authorize)"
+				return "", &tenderAbandonedError{}
+			}
+			stash := engine.SettleTender()
+			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
+			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "payment could not be recorded")
+			why = "tender refused (the payment journal is unavailable)"
+			return "", journalErr
+		}
 		if errors.As(err, &tapStart) {
+			journal.note(detached, legEntry, data.LegDeclined)
 			if abandonedUnder() {
 				why = "tender refused (the basket was abandoned during authorize)"
 				return "", &tenderAbandonedError{}
@@ -600,6 +619,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			// nothing about the money, so the lock and request id stay.
 			if !isUnknown && engine.TenderLock() == tenderSig && exitErr == nil {
 				isUnknown = true
+			}
+			if isUnknown {
+				journal.note(detached, legEntry, data.LegUnknown)
+			} else {
+				journal.note(detached, legEntry, data.LegDeclined)
 			}
 			if abandonedUnder() {
 				// The basket was abandoned while this leg was in flight: do
@@ -698,6 +722,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 		if dispatched {
 			legRequestIDs[i] = requestID
+			capturedEntry := legEntry
+			capturedEntry.AmountMinor = captured.Minor()
+			capturedEntry.TipMinor = payments[i].TipAmount.Minor()
+			capturedEntry.TransactionRef = payments[i].TraceID
+			journal.captured(detached, capturedEntry)
 			capturedLegs = append(capturedLegs, pos.CapturedLeg{MethodID: p.MethodID, Currency: legCurrency(payments[i], saleInput.Currency), RequestID: requestID, Amount: captured, TransactionRef: payments[i].TraceID, TipAmount: payments[i].TipAmount, ReaderRef: p.ReaderRef})
 			if p.ReaderRef != "" {
 				// ut-docs#6566: the provider reader id lands on the payment
@@ -890,6 +919,14 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 	}
 	defer endCommit()
+	// ut-docs#6653: the legs' settled rows are written inside the sale's own
+	// transaction (a leg with no journal row is skipped there).
+	saleInput.LegRequestIDs = saleInput.LegRequestIDs[:0:0]
+	for _, id := range legRequestIDs {
+		if id != "" {
+			saleInput.LegRequestIDs = append(saleInput.LegRequestIDs, id)
+		}
+	}
 	saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 	if err != nil {
 		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
@@ -3161,6 +3198,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Reason: reason, Amount: d.Engine.Basket().Total}, http.StatusOK)
 				return
 			}
+			// ut-docs#6653: the till could not record the leg, so it was never
+			// asked: nothing was charged. Own toast, basket kept and unlocked.
+			var journalErr *paymentJournalError
+			if errors.As(err, &journalErr) {
+				log.Printf("tender refused: %v", err)
+				locale := httpx.ResolveLocale(w, r)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.payment_journal_unavailable")
+				b.ToastLevel = "error"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {
 				// ut-docs#921 review finding (F2): the same raw-English leak
@@ -4198,6 +4250,9 @@ func reversalRequestID(authReqID string) string {
 // changes the caller's outcome.
 func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.CapturedLeg, what string) (failed int) {
 	for _, leg := range legs {
+		// ut-docs#6653: reversing is journaled before the send, the outcome
+		// after it. Best effort: the live in-memory reversal always goes ahead.
+		journalReversal(ctx, d, leg, data.LegReversing)
 		amount := leg.Amount
 		payload := map[string]any{
 			"method":               leg.MethodID,
@@ -4227,8 +4282,11 @@ func reversePaymentLegs(ctx context.Context, d *common.Deps, legs []pos.Captured
 		refundCtx := tapRefundContext(ctx, d, leg.MethodID, leg.TransactionRef, amount.Minor(), leg.Currency, "refund:reversal:"+leg.RequestID+":1")
 		if _, err := blockingPaymentEventWithResponseAndID(refundCtx, d, leg.MethodID, "refund", reversalRequestID(leg.RequestID), payload); err != nil {
 			failed++
+			journalReversal(ctx, d, leg, data.LegReverseFailed)
 			logging.L().Warnf("%s, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s, transaction_ref %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309, #6602)", what, leg.MethodID, amount.Minor(), leg.Currency, leg.RequestID, maskTxnRef(leg.TransactionRef), err)
+			continue
 		}
+		journalReversal(ctx, d, leg, data.LegReversed)
 	}
 	return failed
 }

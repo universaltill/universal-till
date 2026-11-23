@@ -240,7 +240,8 @@ func Run(ctx context.Context) error {
 		rotateStockStreamAfterRestore(ctx, database.DB, log)
 	}
 	// ut-docs#6795: card payments the last run left pending need a manager.
-	markOrphanedTapAttempts(ctx, database.DB, time.Now(), log)
+	bootStartedAt := time.Now()
+	markOrphanedTapAttempts(ctx, database.DB, bootStartedAt, log)
 
 	// Public-demo start gate (ADR-0113 §1.2, ut-docs#2687): after the
 	// database is open and migrated, before anything else touches it or
@@ -585,6 +586,11 @@ func Run(ctx context.Context) error {
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
+
+	// ut-docs#6653 (ADR-0136 Decision 9): return card payments the last run
+	// captured but never turned into a sale, in the background, once the
+	// plugin runtime can take a reversal.
+	startPaymentLegReconcile(bgCtx, &wg, deps, bootStartedAt, log)
 
 	// A revocation disables rows in the DB; ReloadPlugins makes the WASM
 	// runtime drop them in the same pass (ut-docs#5653).

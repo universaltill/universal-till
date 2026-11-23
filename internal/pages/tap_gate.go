@@ -118,6 +118,11 @@ func tapAuthorize(ctx context.Context, d *common.Deps, method, requestID string,
 	bound := paybroker.WithBinding(ctx, b)
 	resp, dispatched, err := blockingPaymentEventDispatch(bound, d, method, "authorize", requestID, payload)
 	if err != nil {
+		var journalErr *paymentJournalError
+		if errors.As(err, &journalErr) {
+			// ut-docs#6653: never asked, so there is nothing to verify.
+			return nil, false, nil, err
+		}
 		return tapVerifyFailure(ctx, d, repo, requestID, resp, dispatched, err, method)
 	}
 	if !dispatched {

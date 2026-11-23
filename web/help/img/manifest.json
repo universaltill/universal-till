@@ -525,6 +525,9 @@
     "internal/pages/kitchen_stations_page.go": {
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
+    "internal/pages/leg_reconcile.go": {
+      "sha256": "85ce709203d378564496ee162b5e2e09f9eb95ff815e2a707374d327751d93ee"
+    },
     "internal/pages/link_status.go": {
       "sha256": "c1adc60d002054ca6ca6f17ad8c388911b504d4ce66cc57e3e03bcc9c7fa8d2d"
     },
@@ -575,6 +578,9 @@
     },
     "internal/pages/paybroker_target.go": {
       "sha256": "9c3c1769eb5ea7ce3760cac13a50f5321d51ac6d72757f351fcf6630bf99e404"
+    },
+    "internal/pages/payment_leg_journal.go": {
+      "sha256": "fc565eaa39f39c1b51c38e1fdd77b8765cfd35a66f726d06e8c32a7287e35fcd"
     },
     "internal/pages/permission_groups.go": {
       "sha256": "b0fe8266824da41c116b2eec5334de76e712fca6bcbf3df0e3380f079d08ae07"
@@ -730,7 +736,7 @@
       "sha256": "08d08b364ff7523e6a1d471ef7031aaee60cd1af89ce01275d815d5804563f4d"
     },
     "internal/pages/tap_gate.go": {
-      "sha256": "0a4c96455da7b00c6ef5b07599ca66e5601064b809a73164adb1c9061e0043e3"
+      "sha256": "80b0be3e198364213f7fd4c4269da5bb42be015559ea213edba39f7fba6f03ea"
     },
     "internal/pages/tap_offering.go": {
       "sha256": "234511337811e9d10876db927659905fca7e0ae7ed3c83708a809233ffdef738"

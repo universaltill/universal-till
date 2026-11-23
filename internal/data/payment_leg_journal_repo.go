@@ -1,0 +1,283 @@
+package data
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+)
+
+// ut-docs#6653 (ADR-0136 Decision 9): the durable, append-only journal of
+// every electronic payment leg. One row per state change, keyed by the leg's
+// authorize request id and an ask counter; a leg is in the state of its
+// newest row. Written BEFORE the provider is asked and closed inside the
+// sale's own transaction, so a crash between capture and sale leaves a row
+// boot can act on. Till-local. No card number, expiry or CVV is ever stored;
+// the provider's transaction reference is (a reversal needs it in full, as
+// payment_attempts.pi_id already keeps). All SQL for the table lives here.
+
+// Leg states.
+const (
+	LegAsked         = "asked"
+	LegCaptured      = "captured"
+	LegUnknown       = "unknown"
+	LegDeclined      = "declined"
+	LegSettled       = "settled"
+	LegReversing     = "reversing"
+	LegReversed      = "reversed"
+	LegReverseFailed = "reverse_failed"
+	LegWarned        = "warned"
+	LegResolved      = "resolved"
+
+	// LegReasonRestart is the reason boot writes on a leg it warns about.
+	LegReasonRestart = "till_restarted"
+
+	legJournalScanMax = 1000
+)
+
+// LegJournalRetention is how long a finished (terminal) chain is kept.
+const LegJournalRetention = 90 * 24 * time.Hour
+
+var (
+	// ErrJournalWrite: the journal could not be written. For the asked row
+	// the caller refuses to ask the provider (fail closed, Decision 9.3).
+	ErrJournalWrite = errors.New("payment leg journal write failed")
+	// ErrLegJournalTransition: the move is not allowed from the leg's state.
+	ErrLegJournalTransition = errors.New("payment leg journal: transition not allowed")
+	// ErrLegJournalInvalid: the entry is malformed.
+	ErrLegJournalInvalid = errors.New("payment leg journal: invalid entry")
+)
+
+// legFrom lists, per target state, the states it may follow ("" = no row
+// yet): the allowed moves of Decision 9.2.
+var legFrom = map[string][]string{
+	LegAsked:         {"", LegUnknown, LegDeclined},
+	LegCaptured:      {LegAsked},
+	LegUnknown:       {LegAsked},
+	LegDeclined:      {LegAsked},
+	LegSettled:       {LegCaptured},
+	LegReversing:     {LegCaptured, LegReverseFailed},
+	LegReversed:      {LegReversing},
+	LegReverseFailed: {LegReversing},
+	LegWarned:        {LegUnknown, LegAsked, LegReversing},
+	LegResolved:      {LegWarned, LegReverseFailed},
+}
+
+// legTerminal: chains whose newest state is one of these are swept after
+// LegJournalRetention. warned and reverse_failed are never swept.
+const legTerminalSQL = `'settled','reversed','declined','resolved'`
+
+// LegEntry is one journal row.
+type LegEntry struct {
+	Seq       int64
+	RequestID string
+	Ask       int // 1 for the first ask of the request id, +1 per re-ask
+	State     string
+	MethodID  string
+	// AmountMinor is the exact captured amount including any reader tip
+	// (DB/DTO boundary: convert with money.FromMinor).
+	AmountMinor    int64
+	Currency       string
+	TipMinor       int64
+	ReaderRef      string
+	TransactionRef string // the provider's reference, in full
+	SaleID         string
+	Reason         string
+	At             time.Time
+}
+
+// PaymentLegJournalRepo owns all SQL for payment_leg_journal.
+type PaymentLegJournalRepo struct{ db *sql.DB }
+
+func NewPaymentLegJournalRepo(db *sql.DB) *PaymentLegJournalRepo {
+	return &PaymentLegJournalRepo{db: db}
+}
+
+const legCols = `seq, request_id, ask, state, method_id, amount_minor, currency, tip_minor, reader_ref, transaction_ref, sale_id, reason, at`
+
+// legTS is fixed width, so the stored text also sorts correctly.
+func legTS(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }
+
+func scanLeg(row interface{ Scan(...any) error }) (LegEntry, error) {
+	var e LegEntry
+	var at string
+	if err := row.Scan(&e.Seq, &e.RequestID, &e.Ask, &e.State, &e.MethodID, &e.AmountMinor, &e.Currency, &e.TipMinor, &e.ReaderRef, &e.TransactionRef, &e.SaleID, &e.Reason, &at); err != nil {
+		return LegEntry{}, err
+	}
+	e.At, _ = time.Parse(time.RFC3339Nano, at)
+	return e, nil
+}
+
+// Append records a state change. The move is validated against the leg's
+// newest row in the same transaction (ErrLegJournalTransition). Repeating the
+// state the leg is already in is a no-op, so a retried leg's answer is never
+// recorded twice. An asked row carries ask+1 of the previous one. Any write
+// failure is ErrJournalWrite. An asked row also sweeps finished chains past
+// LegJournalRetention.
+func (r *PaymentLegJournalRepo) Append(ctx context.Context, e LegEntry) error {
+	if e.RequestID == "" || e.MethodID == "" || e.AmountMinor < 0 || e.TipMinor < 0 || len(legFrom[e.State]) == 0 {
+		return ErrLegJournalInvalid
+	}
+	now := e.At
+	if now.IsZero() {
+		now = time.Now()
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%w: begin: %v", ErrJournalWrite, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	cur, err := latestLeg(ctx, tx, e.RequestID)
+	if err != nil {
+		return fmt.Errorf("%w: read: %v", ErrJournalWrite, err)
+	}
+	if cur.State == e.State {
+		return nil
+	}
+	if !slices.Contains(legFrom[e.State], cur.State) {
+		return fmt.Errorf("%w: %q -> %q", ErrLegJournalTransition, cur.State, e.State)
+	}
+	e.Ask = max(cur.Ask, 1)
+	if e.State == LegAsked {
+		e.Ask = cur.Ask + 1
+	}
+	if err := insertLeg(ctx, tx, e, now); err != nil {
+		return err
+	}
+	if e.State == LegAsked {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM payment_leg_journal WHERE request_id IN (
+  SELECT j.request_id FROM payment_leg_journal j
+  WHERE j.seq = (SELECT MAX(seq) FROM payment_leg_journal WHERE request_id = j.request_id)
+    AND j.state IN (`+legTerminalSQL+`) AND j.at < ?)`, legTS(now.Add(-LegJournalRetention))); err != nil {
+			return fmt.Errorf("%w: sweep: %v", ErrJournalWrite, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: commit: %v", ErrJournalWrite, err)
+	}
+	return nil
+}
+
+func insertLeg(ctx context.Context, tx *sql.Tx, e LegEntry, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO payment_leg_journal (request_id, ask, state, method_id, amount_minor, currency, tip_minor, reader_ref, transaction_ref, sale_id, reason, at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.RequestID, max(e.Ask, 1), e.State, e.MethodID, e.AmountMinor, e.Currency, e.TipMinor, e.ReaderRef, e.TransactionRef, e.SaleID, e.Reason, legTS(now)); err != nil {
+		return fmt.Errorf("%w: insert: %v", ErrJournalWrite, err)
+	}
+	return nil
+}
+
+// AskLeg records the leg as asked before the provider is called. A leg that
+// is already asked (an earlier outcome write failed) needs no new row, and a
+// leg already captured (a retry that re-asks an approved leg under its
+// original id) must stay captured; neither gets one, and only a captured leg
+// reports began=false. Unknown and declined legs are asked again, ask+1. Any
+// other state is ErrLegJournalTransition.
+func (r *PaymentLegJournalRepo) AskLeg(ctx context.Context, e LegEntry) (began bool, err error) {
+	cur, ok, err := r.Latest(ctx, e.RequestID)
+	if err != nil {
+		return false, fmt.Errorf("%w: %v", ErrJournalWrite, err)
+	}
+	switch {
+	case ok && cur.State == LegCaptured:
+		return false, nil
+	case ok && cur.State == LegAsked:
+		return true, nil
+	}
+	e.State = LegAsked
+	if err := r.Append(ctx, e); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// SettleLegsTx closes the legs of one sale inside the sale's own transaction:
+// one settled row per request id carrying the sale id, unless the leg already
+// has a settled row for this sale (the receipt-number retry re-runs the whole
+// transaction). Amount, method, currency, reference and reader are copied from
+// the leg's newest row. An id with no row is skipped: nothing was journaled
+// for it.
+func (r *PaymentLegJournalRepo) SettleLegsTx(ctx context.Context, tx *sql.Tx, saleID string, requestIDs []string) error {
+	now := time.Now()
+	for _, id := range requestIDs {
+		if id == "" {
+			continue
+		}
+		cur, err := latestLeg(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("settle payment leg: %w", err)
+		}
+		if cur.State == "" || (cur.State == LegSettled && cur.SaleID == saleID) {
+			continue
+		}
+		cur.State, cur.SaleID, cur.Reason = LegSettled, saleID, ""
+		if err := insertLeg(ctx, tx, cur, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type legQuerier interface {
+	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
+}
+
+// latestLeg returns the newest row for id; State is "" when there is none.
+func latestLeg(ctx context.Context, q legQuerier, id string) (LegEntry, error) {
+	e, err := scanLeg(q.QueryRowContext(ctx, `SELECT `+legCols+` FROM payment_leg_journal WHERE request_id = ? ORDER BY seq DESC LIMIT 1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return LegEntry{}, nil
+	}
+	return e, err
+}
+
+// Latest returns the newest row for the leg; ok is false when there is none.
+func (r *PaymentLegJournalRepo) Latest(ctx context.Context, id string) (LegEntry, bool, error) {
+	e, err := latestLeg(ctx, r.db, id)
+	if err != nil {
+		return LegEntry{}, false, fmt.Errorf("read payment leg journal: %w", err)
+	}
+	return e, e.State != "", nil
+}
+
+// ListBefore returns, per leg, the newest row when its state is one of
+// states and it was written before cutoff, oldest first, at most limit rows
+// (capped at legJournalScanMax). Times are compared parsed, in Go.
+func (r *PaymentLegJournalRepo) ListBefore(ctx context.Context, cutoff time.Time, states []string, limit int) ([]LegEntry, error) {
+	if len(states) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > legJournalScanMax {
+		limit = legJournalScanMax
+	}
+	args := make([]any, 0, len(states)+1)
+	for _, s := range states {
+		args = append(args, s)
+	}
+	args = append(args, legJournalScanMax)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT `+legCols+` FROM payment_leg_journal j
+WHERE j.seq = (SELECT MAX(seq) FROM payment_leg_journal WHERE request_id = j.request_id)
+  AND j.state IN (`+strings.TrimSuffix(strings.Repeat("?,", len(states)), ",")+`)
+ORDER BY j.seq LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list payment leg journal: %w", err)
+	}
+	defer rows.Close()
+	var out []LegEntry
+	for rows.Next() {
+		e, err := scanLeg(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan payment leg journal: %w", err)
+		}
+		if e.At.Before(cutoff) && len(out) < limit {
+			out = append(out, e)
+		}
+	}
+	return out, rows.Err()
+}
