@@ -472,12 +472,15 @@ func TestLiveNumberMaximaMirrorData(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, no := range []string{"000000120", "9-000000005", "T2-000000007", "T2-abc"} {
+		// The huge rows are corrupt; both sides must ignore them alike (ut-docs#6906).
+		for _, no := range []string{"000000120", "9-000000005", "T2-000000007", "T2-abc", "99999999999999999999"} {
 			insertSaleNo(t, d, no)
 		}
 		insertArchivedSaleNo(t, d, "T2-000000900")
+		insertArchivedSaleNo(t, d, "T2-99999999999999999999")
 		setCounter(t, d, "T2-", counter)
 		insertArchivedZ(t, d, "eod", 7)
+		insertArchivedZ(t, d, "eod", 9223372036854775000)
 		insertArchivedZ(t, d, "x", 3)
 		d.Close()
 
