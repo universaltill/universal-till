@@ -265,6 +265,12 @@ type SaleInput struct {
 	// journal replay leave it empty (the log is this till's own record —
 	// it is not carried on the sync journal in this slice).
 	AgeVerifications []AgeCheck
+	// LegRequestIDs (ut-docs#6653, ADR-0136 Decision 8) are the authorize
+	// request ids of this sale's electronic payment legs. CompleteSale marks
+	// each leg settled in the payment-leg journal inside the sale's own
+	// transaction, so a sale exists if and only if its legs are settled. An
+	// id with no journal row is skipped; a failed write rolls the sale back.
+	LegRequestIDs []string
 }
 
 // VoucherIssueInput is one voucher sold in a sale (ut-docs#1008).
@@ -1476,6 +1482,14 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 			}
 
+			// ut-docs#6653: the legs' settled rows, in this same transaction.
+			// Idempotent per sale id, so the receipt-number retry that re-runs
+			// the whole transaction never doubles them.
+			if len(in.LegRequestIDs) > 0 {
+				if err := data.NewPaymentLegJournalRepo(sqlDB).SettleLegsTx(ctx, tx, saleID, in.LegRequestIDs); err != nil {
+					return err
+				}
+			}
 			pluginVersions, err := repo.ListActivePluginVersions(ctx, tx)
 			if err != nil {
 				return err

@@ -697,6 +697,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		saleID, err := completeTender(r.Context(), d, eng, repo, saleInput, saleInput.Payments, "kiosk", kitchenDeltaFilter(lines))
 		if err != nil {
 			var declined *paymentDeclinedError
+			var journalErr *paymentJournalError
 			var unknown *paymentOutcomeUnknownError
 			var abandoned *tenderAbandonedError
 			var noReceipt *fiscalDeviceNoReceiptError
@@ -713,6 +714,11 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				// nothing was charged; generic text, never a reader name.
 				status = http.StatusConflict
 				msgKey = "card_reader.kiosk_none"
+			case errors.As(err, &journalErr):
+				// ut-docs#6653: the till could not record the leg, so it was
+				// never asked: nothing was charged, the basket is kept.
+				status = http.StatusConflict
+				msgKey = "selforder.checkout.payment_journal_unavailable"
 			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
