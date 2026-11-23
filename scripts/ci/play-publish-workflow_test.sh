@@ -134,4 +134,21 @@ job_text sign | grep -qF -- '--expect-version-code "$VERSION_CODE" --expect-cert
 job_text sign | grep -qF 'grep -E '"'"'^[0-9a-f]{64}$'"'"' android/app/apk-signer-sha256.txt | grep -qx "$signer"' && ok "sign: signer compared against the release certs" || bad "sign: release-cert comparison missing"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
 job_text sign | grep -qE '^          if grep -E .*apk-signer-sha256|^          if \[ -n "\$signer" \] && grep' && ok "sign: release-cert comparison is a plain if" || bad "sign: release-cert comparison not a plain if"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
 job_text sign | grep -qF 'Check the pins before any key is touched' && ok "sign: pin pre-check step present" || bad "sign: pin pre-check step missing"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+
+# --- ut-docs#6410: pin pre-check script, exact owner-command fail messages ------
+CP="${CP:-$ROOT/scripts/ci/check-play-pins.sh}"
+job_text sign | grep -qE '^        run: bash scripts/ci/check-play-pins\.sh$' && ok "sign: pre-check is the shared script, no --warn-only" || bad "sign: pre-check not the shared script"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+job_text build | grep -qF 'bash scripts/ci/check-play-pins.sh --warn-only' && ok "build: pin pre-check warns only on a dry run" || bad "build: no warn-only pin pre-check"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+pre_step="$(job_text build | awk '/- name: Pin pre-check/{f=1;next} f&&/^      - /{exit} f')"
+echo "$pre_step" | grep -qE '^          DRY_RUN: \$\{\{ inputs\.dry_run \}\}$' && echo "$pre_step" | tr '\n' ' ' | grep -qE 'if \[ "\$DRY_RUN" = "true" \]; then +bash scripts/ci/check-play-pins\.sh --warn-only +else +bash scripts/ci/check-play-pins\.sh +fi' && ok "build: --warn-only only in the dry_run branch" || bad "build: pre-check not gated on dry_run"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+bpre="$(code | grep -n 'Pin pre-check (warn only on a dry run)' | head -1 | cut -d: -f1)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+bndk="$(code | grep -n 'sdkmanager' | head -1 | cut -d: -f1)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
+[ -n "$bpre" ] && [ -n "$bndk" ] && [ "$bpre" -lt "$bndk" ] && ok "build: pin pre-check runs before the NDK/SDK install" || bad "build: pin pre-check not before the SDK install"
+# the three owner-facing errors name the script (the script holds two, the verify step one)
+grep -q "android/app/play-upload-cert-sha256.txt holds no upload-cert pin. Owner: run 'bash scripts/ci/set-play-upload-pin.sh <upload.keystore>'" "$CP" && ok "script: empty-pin error names set-play-upload-pin.sh" || bad "script: empty-pin message"
+grep -q "::error::the upload-cert pin equals a release signer.*set-play-upload-pin.sh --replace <upload.keystore>" "$CP" && ok "script: release-equal error names set-play-upload-pin.sh --replace" || bad "script: release-equal message"
+grep -q "apk-signer-sha256.txt is missing or empty; it is committed in the repo, restore it" "$CP" && ok "script: missing-list error says restore" || bad "script: missing-list message"
+grep -q "holds no upload-cert pin. Owner: run 'bash scripts/ci/set-play-upload-pin.sh <upload.keystore>'" "$WF" && ok "verify step: empty-pin error names set-play-upload-pin.sh" || bad "verify step: empty-pin message"
+grep -q 'RELEASE cert, not the upload key; load the upload keystore under the play-upload-\* vault secrets' "$WF" && ok "verify step: release-cert error says how to fix" || bad "verify step: release-cert message"
+grep -q 'is missing or empty; it is committed in the repo, restore it' "$WF" && ok "verify step: missing-list error says restore" || bad "verify step: missing-list message"
 [ "$fails" = 0 ]

@@ -131,6 +131,19 @@ jobs:
             echo "source_sha=$source_sha"
           } >>"$GITHUB_OUTPUT"
           echo "### Play bundle $version (versionCode $code) from $source_sha, dry_run=$DRY_RUN" >>"$GITHUB_STEP_SUMMARY"
+      # Catch a missing upload-cert pin before the NDK build and before the owner
+      # approves twice (ut-docs#6410). No secret, no environment. On a dry run an
+      # empty pin only warns; a pin equal to a release cert always fails.
+      - name: Pin pre-check (warn only on a dry run)
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            bash scripts/ci/check-play-pins.sh --warn-only
+          else
+            bash scripts/ci/check-play-pins.sh
+          fi
       # The tree that is built: the verified release commit (data only; this job
       # holds no credential). Scripts that run with credentials (sign, upload)
       # always come from main, never from this checkout.
@@ -230,17 +243,7 @@ jobs:
       # pin must exist and differ from every release cert, and the release-cert
       # list must be present, or the "never the release cert" check is vacuous.
       - name: Check the pins before any key is touched
-        run: |
-          set -euo pipefail
-          pin_file=android/app/play-upload-cert-sha256.txt
-          rel_file=android/app/apk-signer-sha256.txt
-          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::$rel_file is missing or empty; cannot prove the upload key differs from the release key"; exit 1; }
-          pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
-          [ -n "$pin" ] || { echo "::error::$pin_file holds no upload-cert SHA-256 pin; commit it (README, owner action) before the first upload"; exit 1; }
-          if grep -E '^[0-9a-f]{64}$' "$rel_file" | grep -qx "$pin"; then  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
-            echo "::error::the upload-cert pin equals a release signer in apk-signer-sha256.txt; the upload key must be a different key"
-            exit 1
-          fi
+        run: bash scripts/ci/check-play-pins.sh
       - name: Azure login (OIDC; identity unitill-play-upload-signer, upload-key secrets only)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -276,16 +279,16 @@ jobs:
         run: |
           set -euo pipefail
           pin_file=android/app/play-upload-cert-sha256.txt
-          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::apk-signer-sha256.txt missing"; exit 1; }
+          [ -s android/app/apk-signer-sha256.txt ] || { echo "::error::android/app/apk-signer-sha256.txt is missing or empty; it is committed in the repo, restore it (git checkout main -- android/app/apk-signer-sha256.txt)"; exit 1; }
           pin="$(grep -E '^[0-9a-f]{64}$' "$pin_file" | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
-          [ -n "$pin" ] || { echo "::error::no upload-cert pin"; exit 1; }
+          [ -n "$pin" ] || { echo "::error::android/app/play-upload-cert-sha256.txt holds no upload-cert pin. Owner: run 'bash scripts/ci/set-play-upload-pin.sh <upload.keystore>' (runbook step E), merge the PR, then re-dispatch"; exit 1; }
           out="$(bash android/scripts/check-aab.sh "$RUNNER_TEMP/signed.aab" \
             --expect-version-code "$VERSION_CODE" --expect-cert-sha256 "$pin")"
           printf '%s\n' "$out"
           # Belt and braces: whatever signer check-aab printed must not be a release cert.
           signer="$(printf '%s\n' "$out" | grep -oE '[0-9a-f]{64}' | head -1 || true)"  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
           if [ -n "$signer" ] && grep -E '^[0-9a-f]{64}$' android/app/apk-signer-sha256.txt | grep -qx "$signer"; then  # pipefail-reader:allow small bounded text, writer exits before the pipe fills
-            echo "::error::the bundle is signed with a RELEASE cert, not the upload key"
+            echo "::error::the bundle is signed with a RELEASE cert, not the upload key; load the upload keystore under the play-upload-* vault secrets"
             exit 1
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
