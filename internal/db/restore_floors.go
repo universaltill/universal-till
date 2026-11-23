@@ -19,6 +19,10 @@ const (
 	restoreZFloorKeyPrefix       = "restore.z_floor."
 )
 
+// restoreNumberMax mirrors data.RestoreNumberMax (ut-docs#6906): a larger
+// number is corrupt and ignored. TestRestoreFloorKeysMirrorData pins it.
+const restoreNumberMax = 1_000_000_000_000_000
+
 // liveNumbers is what the live (about to be replaced) database knows about
 // the numbers it issued: its restore floors and its real maxima.
 type liveNumbers struct {
@@ -34,7 +38,7 @@ type liveNumbers struct {
 // not a non-negative base-10 integer (such a value counts as absent).
 func parseRestoreFloor(s string) (int64, bool) {
 	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || v < 0 {
+	if err != nil || v < 0 || v > restoreNumberMax {
 		return 0, false
 	}
 	return v, true
@@ -135,11 +139,12 @@ func liveReceiptMax(q *sql.DB, prefix string) (int64, error) {
 		var v sql.NullInt64
 		var err error
 		if prefix == "" {
-			err = q.QueryRow(`SELECT MAX(CAST(receipt_no AS INTEGER)) FROM ` + tbl +
-				` WHERE receipt_no NOT LIKE '%-%'`).Scan(&v)
+			err = q.QueryRow(`SELECT MAX(CAST(receipt_no AS INTEGER)) FROM `+tbl+
+				` WHERE receipt_no NOT LIKE '%-%' AND CAST(receipt_no AS INTEGER) <= ?`, restoreNumberMax).Scan(&v)
 		} else {
 			err = q.QueryRow(`SELECT MAX(CAST(substr(receipt_no, ?) AS INTEGER)) FROM `+tbl+
-				` WHERE receipt_no LIKE ? || '%'`, len(prefix)+1, prefix).Scan(&v)
+				` WHERE receipt_no LIKE ? || '%' AND CAST(substr(receipt_no, ?) AS INTEGER) <= ?`,
+				len(prefix)+1, prefix, len(prefix)+1, restoreNumberMax).Scan(&v)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("max receipt in %s: %w", tbl, err))
@@ -154,7 +159,7 @@ func liveReceiptMax(q *sql.DB, prefix string) (int64, error) {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		errs = append(errs, fmt.Errorf("receipt counter: %w", err))
 	}
-	if err == nil && last > top {
+	if err == nil && last > top && last <= restoreNumberMax {
 		top = last
 	}
 	return top, errors.Join(errs...)
@@ -162,7 +167,7 @@ func liveReceiptMax(q *sql.DB, prefix string) (int64, error) {
 
 // liveZMax is the highest numbered Z per report kind.
 func liveZMax(q *sql.DB) (map[string]int64, error) {
-	rows, err := q.Query(`SELECT kind, MAX(z_number) FROM report_archive WHERE z_number IS NOT NULL GROUP BY kind`)
+	rows, err := q.Query(`SELECT kind, MAX(z_number) FROM report_archive WHERE z_number IS NOT NULL AND z_number <= ? GROUP BY kind`, restoreNumberMax)
 	if err != nil {
 		return nil, fmt.Errorf("max z: %w", err)
 	}

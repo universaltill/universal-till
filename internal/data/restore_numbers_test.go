@@ -289,3 +289,97 @@ func TestJumpNumbersAfterRestore_SameTokenIsIdempotentNewTokenJumpsAgain(t *test
 		t.Fatalf("audit rows = %d, want 2", n)
 	}
 }
+
+// ut-docs#6906: a corrupt huge receipt_no must not saturate the jump into an
+// overflowed (negative) floor; it is ignored like any non-counter.
+func TestJumpNumbersAfterRestore_HugeReceiptNoIgnored(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreSale(t, dbx, "000000010", now.Add(-time.Hour))
+	seedRestoreSale(t, dbx, "99999999999999999999", now.Add(-time.Hour))
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ReceiptFrom != 10 || j.ReceiptFloor != 11000 {
+		t.Fatalf("from=%d floor=%d, want 10, 11000", j.ReceiptFrom, j.ReceiptFloor)
+	}
+}
+
+func TestJumpNumbersAfterRestore_HugeStoredFloorsIgnored(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreSale(t, dbx, "000000010", now.Add(-time.Hour))
+	seedRestoreZ(t, dbx, "eod", 4, now.Add(-time.Hour))
+	setRestoreSetting(t, dbx, RestoreReceiptFloorKey, "9223372036854775000")
+	setRestoreSetting(t, dbx, RestoreReceiptFloorPrefixKey, "")
+	setRestoreSetting(t, dbx, RestoreZFloorKeyPrefix+"eod", "9223372036854775000")
+	if _, err := dbx.d.DB.Exec(`INSERT INTO number_series (kind, series, last) VALUES ('receipt', '', 9223372036854775000)`); err != nil {
+		t.Fatal(err)
+	}
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ReceiptFloor != 11000 || j.ZFloor["eod"] != 6 {
+		t.Fatalf("floor=%d z=%d, want 11000, 6", j.ReceiptFloor, j.ZFloor["eod"])
+	}
+}
+
+func TestJumpNumbersAfterRestore_HugeZIgnored(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreZ(t, dbx, "eod", 4, now.Add(-time.Hour))
+	seedRestoreZ(t, dbx, "eod", 9223372036854775000, now.Add(-time.Hour))
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ZFrom["eod"] != 4 || j.ZFloor["eod"] != 6 {
+		t.Fatalf("zfrom=%d zfloor=%d, want 4, 6", j.ZFrom["eod"], j.ZFloor["eod"])
+	}
+}
+
+// ut-docs#6906: after a repeat restore the file's highest Z (2) is below the
+// carried floor (9); the marker's last Z is the floor the jump used.
+func TestJumpNumbersAfterRestore_MarkerLastZIsCarriedFloor(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreZ(t, dbx, "eod", 2, now.Add(-time.Hour))
+	setRestoreSetting(t, dbx, RestoreZFloorKeyPrefix+"eod", "9")
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Marker.LastZ != 9 || j.Marker.NextZ != 12 || j.ZFrom["eod"] != 2 {
+		t.Fatalf("lastZ=%d nextZ=%d zfrom=%d, want 9, 12, 2", j.Marker.LastZ, j.Marker.NextZ, j.ZFrom["eod"])
+	}
+}
+
+// A stored floor above RestoreNumberMax is corrupt: normal numbering ignores
+// it rather than jumping to it (ut-docs#6906, Tester F1).
+func TestNextReceiptNo_HugeFloorIgnored(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	setRestoreSetting(t, dbx, RestoreReceiptFloorKey, "9223372036854775000")
+	setRestoreSetting(t, dbx, RestoreReceiptFloorPrefixKey, "")
+	seedRestoreSale(t, dbx, "000000010", time.Now())
+	if got := mustNextReceipt(t, dbx); got != "000000011" {
+		t.Fatalf("next = %q, want 000000011", got)
+	}
+}
+
+// The prefixed receipt query ignores a huge number too (Tester F2).
+func TestJumpNumbersAfterRestore_HugePrefixedReceiptNoIgnored(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) // fixed-date:ok no real-clock check reads it
+	setRestoreSetting(t, dbx, "sync.receipt_prefix", "T1-")
+	seedRestoreSale(t, dbx, "T1-000000010", now.Add(-time.Hour))
+	seedRestoreSale(t, dbx, "T1-99999999999999999999", now.Add(-time.Hour))
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ReceiptFrom != 10 || j.ReceiptFloor != 11000 {
+		t.Fatalf("from=%d floor=%d, want 10, 11000", j.ReceiptFrom, j.ReceiptFloor)
+	}
+}
