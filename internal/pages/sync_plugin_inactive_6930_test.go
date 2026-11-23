@@ -33,14 +33,14 @@ func stubPersistingSyncInstall(t *testing.T, manifests map[string]*plugins.Manif
 	orig := pluginSyncInstall
 	t.Cleanup(func() { pluginSyncInstall = orig })
 	var calls []installCall6930
-	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool) (string, error) {
+	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool, adopt []string) (string, error) {
 		src, ok := manifests[listing]
 		if !ok {
 			t.Fatalf("no manifest for listing %s", listing)
 		}
 		m := *src
 		m.Version = version
-		if err := plugins.PersistManifest(ctx, d.Db, &m, plugins.InstallOptions{TrustLevel: "trusted", InstallInactive: inactive, SkipActiveOwnerChecks: inactive}); err != nil {
+		if err := plugins.PersistManifest(ctx, d.Db, &m, plugins.InstallOptions{TrustLevel: "trusted", InstallInactive: inactive, SkipActiveOwnerChecks: inactive, AdoptPaymentKeys: adopt}); err != nil {
 			calls = append(calls, installCall6930{listing: listing, inactive: inactive})
 			return "", err
 		}

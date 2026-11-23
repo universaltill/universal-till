@@ -1133,7 +1133,13 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		// off, ADR-0011 #6666 amendment): install it off, so it never runs here
 		// and an exclusive group it shares with an active plugin cannot refuse it.
 		inactive := row.Enabled != nil && !*row.Enabled
-		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version, inactive); err != nil {
+		// ut-docs#6928: the main's list of tenders it owns by this plugin; nil
+		// (absent or empty) adopts nothing.
+		var adopt []string
+		if row.OwnedPaymentMethodIDs != nil {
+			adopt = *row.OwnedPaymentMethodIDs
+		}
+		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version, inactive, adopt); err != nil {
 			// ADR-0169: a plugin that runs in the cloud (type `channel`) can
 			// never be installed on a till, so there is nothing to follow —
 			// not a failure to retry every tick.
