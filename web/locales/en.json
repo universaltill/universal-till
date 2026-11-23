@@ -3635,7 +3635,7 @@
   "tills.discovery.error": "Could not search this network for primaries.",
   "tills.discovery.find_button": "Find a main till on this network",
   "tills.discovery.help": "Scan this network for a main till already broadcasting itself — no need to type a pairing code by hand.",
-  "tills.discovery.none_found": "No primaries found on this network.",
+  "tills.discovery.none_found": "No main till found. Check that the main till is on and connected to the same Wi-Fi, that Local Network is allowed for Universal Till in this device's Settings, or enter its address or a pairing code instead.",
   "tills.discovery.result_address": "Network address",
   "tills.discovery.result_name": "Till ID",
   "tills.discovery.searching": "Searching…",
