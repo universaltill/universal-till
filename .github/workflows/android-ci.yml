@@ -203,6 +203,7 @@ jobs:
             m="$(find android/app/build/intermediates/merged_manifests -path "*/${v}/*" -name AndroidManifest.xml | sed -n 1p)"
             [ -n "${m}" ] || { echo "no merged manifest for ${v}" >&2; exit 1; }
             bash scripts/ci/guard-android-manifest-features.sh "${m}" shipped
+            bash scripts/ci/check-android-sideload-install-permission.sh "${m}"
           done
       - name: Tap to Pay real adapter compiles and tests pass with the flag on (#3048)
         if: steps.filter.outputs.match == 'true'
