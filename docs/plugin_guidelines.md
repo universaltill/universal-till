@@ -294,6 +294,23 @@ type PaymentPlugin interface {
 - SumUp
 - Regional payment processors
 
+**`decline_code` values the till understands.** When `payment.<method>.authorize`
+refuses (exit 2), print `{"decline_code": "<code>"}` so the cashier sees a
+specific message instead of the generic "Payment declined". The code is only
+compared, never shown, and plugin text never reaches the cashier. Codes are
+provider-neutral; an unknown or absent code gives the generic decline. Every
+decline is definitive: nothing was charged, the basket is kept.
+
+| `decline_code` | Cashier sees (en) |
+|---|---|
+| `no_reader` | No card reader is set up on this till. Nothing was charged. Choose another payment method, or ask a manager to set up a card reader. |
+| `reader_offline` | The card reader is not connected. Nothing was charged. Check that it is on and online, or choose another payment method. |
+| `reader_busy` | The card reader is busy with another payment. Nothing was charged. Wait a moment and try again. |
+| `auth_failed` | The card payment service refused this till's connection. Nothing was charged. Choose another payment method, or ask a manager to check the card payment settings. |
+
+`outcome_unknown` is different: it means the card may have been charged and
+locks the till on that tender until it settles. Never print it for a refusal.
+
 ### 2. Marketplace Plugins
 
 Sync products and orders with online marketplaces.

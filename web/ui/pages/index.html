@@ -557,6 +557,15 @@
           <button type="button" id="tab-split" class="tab" role="tab" :class="tab === 'split' && 'active'" :aria-selected="tab === 'split'" :tabindex="tab === 'split' ? 0 : -1" aria-controls="split-tender-card" @click="tab = 'split'">{{ T "tender.tab.split" }}</button>
         </div>
 
+        <!-- ut-docs#6962: tender failures answer here, inside the overlay (it
+             covers #pos-alert and the basket toast on a phone). data-reusable:
+             dismiss only hides it, so a later decline shows it again. -->
+        <div id="payment-notice" class="pos-notice error" role="alert" hidden data-reusable
+             data-testid="payment-notice" data-msg-server="{{ T "pos.error.server" }}">
+          <span class="notice-text"></span>
+          <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+        </div>
+
         <div class="tab-panel" id="panel-pay" role="tabpanel" aria-labelledby="tab-pay" x-show="tab === 'pay'">
           <input type="hidden" id="offline-flag" name="offline" value="0">
           <!-- ut-docs#2702: the sale screen's standalone quick-pay button is
