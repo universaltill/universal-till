@@ -5,13 +5,13 @@ section: Everyday selling
 order: 22
 public: true
 summary: Get this iPhone ready to take card payments by tapping a card or phone on it, and know what the cashier sees after a tap.
-keywords: [tap to pay, iphone, contactless, card, stripe, apple, terms, allow card taps, declined, pin]
+keywords: [tap to pay, additional till, refund, iphone, contactless, card, stripe, apple, terms, allow card taps, declined, pin]
 routes: [/settings/tap-to-pay, /settings/tap-to-pay/status]
 ---
 
 # Tap to Pay on iPhone
 
-Tap to Pay on iPhone lets this iPhone take a contactless card or phone payment with nothing but the iPhone. Only the shop's main till can take it, and only a manager or admin can set it up.
+Tap to Pay on iPhone lets this iPhone take a contactless card or phone payment with nothing but the iPhone. The shop's main till and its additional tills can take it, each on its own iPhone. Satellites and kiosks can't. Only a manager or admin can set it up.
 
 ## How to use it
 
@@ -36,10 +36,21 @@ After the customer taps, the till shows one of these:
 
 Stripe charges its own fee for each tap.
 
+## On an additional till
+
+An additional till takes card taps on its own iPhone, set up the same four steps as the main till.
+
+- **It needs the internet to take a tap.** With no internet the till keeps selling: take cash or another payment instead. Tap to Pay on iPhone comes back by itself when the connection does.
+- **Refunds are done on the main till.** To refund a card tap, open the sale on the main till and refund it there. An additional till will tell you so and will not send a refund.
+- **Card readers stay on the main till.** Using a spare phone as a card reader is for the main till only (see [Card readers](/help/card-readers)).
+- **Set up an older additional till again if asked.** A till set up a long time ago may say it needs to be set up again before it can take Tap to Pay. Ask the shop owner to set it up again; nothing was charged and other payments still work.
+
 ## What can go wrong
 
 - **This device is an iPad, or the iPhone is too old** — Tap to Pay on iPhone needs an iPhone XS or newer. Pair an iPhone as a card reader instead (see [Card readers](/help/card-readers)).
-- **Only the main till can take Tap to Pay** — this till is joined to another. Set it up on the main till.
+- **This till can't take Tap to Pay** — only the main till and additional tills can. A satellite is joined to another till: use Tap to Pay on the main or an additional till.
+- **Card taps can't be refunded here** — you are on an additional till. Refund the sale on the main till.
+- **This till needs to be set up again** — ask the shop owner to set it up again, then open this page.
 - **Set up didn't finish** — read the reason under it (terms, location, no internet, Apple did not answer in time) and tap **Set up** again.
 - **Can't reach the payment service** — check the internet connection and open the page again. The page never treats this as "not set up".
 

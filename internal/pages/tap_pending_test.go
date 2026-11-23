@@ -65,7 +65,11 @@ type fakeBroker struct {
 	// onCall, when set, runs for every request before the answer is written
 	// (ut-docs#6908: a test cancels the request context from inside a call).
 	onCall func(path string)
+	// roleRefused answers every call 403 device_role_unrecorded.
+	roleRefused bool
 }
+
+func (b *fakeBroker) setRoleRefused(v bool) { b.mu.Lock(); b.roleRefused = v; b.mu.Unlock() }
 
 func (b *fakeBroker) setOnCall(f func(path string)) { b.mu.Lock(); b.onCall = f; b.mu.Unlock() }
 
@@ -108,7 +112,13 @@ func newFakeBroker(t *testing.T) *fakeBroker {
 		}
 		cc, cb := b.cancelCode, b.cancelBody
 		hook := b.onCall
+		refused := b.roleRefused
 		b.mu.Unlock()
+		if refused {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":{"code":"device_role_unrecorded"}}`)
+			return
+		}
 		if hook != nil {
 			hook(r.URL.Path)
 		}

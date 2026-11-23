@@ -4718,7 +4718,7 @@
   "tap.settings.reason.terms": "Apple's terms haven't been accepted yet.",
   "tap.settings.reason.location": "Allow location access for this app in the iPhone's Settings, then press Set up.",
   "tap.settings.reason.not_foreground": "Keep this app open on screen to continue.",
-  "tap.settings.reason.not_main": "Only the main till can take Tap to Pay. This till is joined to another.",
+  "tap.settings.reason.not_main": "This till can't take Tap to Pay. Only the main till and additional tills can.",
   "tap.settings.reason.timeout": "Apple didn't answer in time. Try again.",
   "tap.settings.reason.generic": "Something went wrong. Try again.",
   "tap.settings.reason.permission": "A manager needs to allow card taps.",
@@ -4735,5 +4735,11 @@
   "tap.result.pin_fallback": "This card needs a PIN this iPhone can't take here. Nothing was charged.",
   "tap.result.pin_fallback_hint": "Use another method, or try a different card.",
   "tap.start_failed.not_ready": "Tap to Pay on iPhone isn't set up yet. Nothing was charged.",
-  "tap.start_failed.not_ready_hint": "A manager can finish setup in Settings, Tap to Pay."
+  "tap.start_failed.not_ready_hint": "A manager can finish setup in Settings, Tap to Pay.",
+  "tap.settings.note.additional": "This is an additional till. It takes card taps on this iPhone. Tap to Pay needs the internet; without it, this till keeps selling and takes other payments. Refunds of card taps are done on the main till.",
+  "tap.refund.main_only": "Card taps are refunded on the main till. Open this sale there to refund it. Nothing was refunded.",
+  "tap.reverse.main_only": "This card payment can't be returned from an additional till. The customer may still be charged: refund it on the main till.",
+  "tap.start_failed.setup_again": "This till needs to be set up again before it can take Tap to Pay. Nothing was charged.",
+  "tap.start_failed.setup_again_hint": "Ask the shop owner to set this till up again. Other payments still work.",
+  "tap.settings.source.setup_again": "This till needs to be set up again before it can use Tap to Pay. Ask the shop owner."
 }

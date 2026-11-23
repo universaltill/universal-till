@@ -46,6 +46,9 @@ type tapStartFailedError struct {
 	// NotReady: this till's Tap to Pay is not set up (ut-docs#6458); the
 	// cashier cannot fix it, a manager can in Settings > Tap to Pay.
 	NotReady bool
+	// SetupAgain: the cloud refused this till's credential as role-unrecorded
+	// (set up before roles were recorded); the owner sets the till up again.
+	SetupAgain bool
 }
 
 func (e *tapStartFailedError) Error() string { return "tap payment could not start: " + e.Method }
@@ -163,7 +166,7 @@ func tapVerifyFailure(ctx context.Context, d *common.Deps, repo *data.PaymentAtt
 	startFailed := errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeTapStartFailed
 	original := err
 	if startFailed {
-		original = &tapStartFailedError{Method: method, ReaderBusy: d.ReaderPay != nil && d.ReaderPay.WasBusy(requestID)}
+		original = &tapStartFailedError{Method: method, ReaderBusy: d.ReaderPay != nil && d.ReaderPay.WasBusy(requestID), SetupAgain: paybroker.RoleUnrecordedRecently()}
 	}
 	if errors.As(err, &exitErr) && exitErr.DeclineCode() == declineCodeOutcomeUnknown {
 		// Already unknown: the gate locks it. The request ends here, so its

@@ -1414,7 +1414,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	tillID, _ := discovery.ReportedTillID(ctx, kv) // best-effort: "" on error
 	// A till registering its own device never gets a redeem code (the cloud
 	// only mints one for another device with no credential yet).
-	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID, devicePlatform()); err != nil {
+	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID, devicePlatform(), ""); err != nil {
 		return err
 	}
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
@@ -1439,7 +1439,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 // the one-time code the cloud mints when a device credential vouches for
 // another device that has no credential yet. An empty or undecodable body
 // means no code. The caller validates it; it is never logged here.
-func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID, platform string) (string, error) {
+func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID, platform, role string) (string, error) {
 	storeID, token := m.StoreID, m.MerchantToken
 	if storeID == "" || token == "" {
 		return "", fmt.Errorf("no store identity yet")
@@ -1455,6 +1455,9 @@ func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID,
 	}
 	if platform != "" {
 		body["platform"] = platform
+	}
+	if role != "" {
+		body["role"] = role // a vouched replica's true role (ADR-0198 Amendment 2026-11-23)
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

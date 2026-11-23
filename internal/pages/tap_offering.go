@@ -10,34 +10,51 @@ import (
 
 // ut-docs#6455 G-6 (ADR-0125 section 5, ADR-0198 sections 3.4, 3.9, 6.10): a
 // tap entry (a payment entry declaring tap: true, or a tap_to_pay reader row)
-// is offered ONLY on the shop's main or standalone till, and only while the
-// cashier has not declared the till offline (a tap needs the internet).
-// Self-order kiosks, satellites and additional tills never offer one in v1.
+// is offered ONLY on the shop's main or standalone till or on an additional
+// till whose role is explicitly recorded (ADR-0198 Amendment 2026-11-23), and
+// only while the cashier has not declared the till offline (a tap needs the
+// internet). Self-order kiosks and satellites never offer one, nor does a
+// joined till whose role is not explicitly known (fail closed).
 
 // readerSourceJoined is the effective source of a tender on a joined (additional
 // or satellite) till: a cashier's till like readerSourcePOS, but with no tap row.
 const readerSourceJoined = "joined"
 
+// readerSourceAdditional is the effective source of a tender on a joined till
+// whose role is EXPLICITLY additional: it may take a tap on its own device.
+const readerSourceAdditional = "additional"
+
 // effectiveReaderSource narrows a cashier source to "joined" on a till that is
-// not the main or standalone one (ownTillRole is non-empty only for joined tills).
+// not the main or standalone one (ownTillRole is non-empty only for joined
+// tills), or to "additional" when that till's role is explicitly additional.
+// Satellites and joined tills with an unrecorded role stay "joined".
 func effectiveReaderSource(ctx context.Context, d *common.Deps, source string) string {
 	if source == readerSourcePOS && d.Settings != nil && ownTillRole(ctx, d) != "" {
+		if role, explicit := tapJoinedRole(ctx, d); explicit && role == data.TillRoleAdditional {
+			return readerSourceAdditional
+		}
 		return readerSourceJoined
 	}
 	return source
 }
 
 // tapOfferedOn reports whether this source may be offered a tap entry.
-func tapOfferedOn(source string) bool { return source == readerSourcePOS }
+func tapOfferedOn(source string) bool {
+	return source == readerSourcePOS || source == readerSourceAdditional
+}
 
-// tapEntryCapable reports whether a tap entry can be offered on this (main or
-// standalone) till now (ADR-0198 2, conditions 2 and 4): this device's native
-// Tap to Pay is ready for the entry's provider, or an active paired phone
-// reader is registered for the entry (that path needs no local bridge,
-// ADR-0198 6). A read error is "not capable" (fail closed).
+// tapEntryCapable reports whether a tap entry can be offered on this (main,
+// standalone or additional) till now (ADR-0198 2, conditions 2 and 4): this
+// device's native Tap to Pay is ready for the entry's provider, or, on a main
+// or standalone till only, an active paired phone reader is registered for the
+// entry (that path needs no local bridge, ADR-0198 6; an additional till never
+// uses a phone reader, O-3). A read error is "not capable" (fail closed).
 func tapEntryCapable(ctx context.Context, d *common.Deps, method, provider string) bool {
 	if provider != "" && devicepay.Capabilities()[provider].Ready {
 		return true
+	}
+	if effectiveReaderSource(ctx, d, readerSourcePOS) == readerSourceAdditional {
+		return false
 	}
 	rows, err := data.NewCardReaderRepo(d.Db).ListActive(ctx)
 	if err != nil {
@@ -105,4 +122,15 @@ func tapOfferGate(ctx context.Context, d *common.Deps, source string, offline bo
 		}
 	}
 	return nil
+}
+
+// tapRefundMainOnly reports whether method is a tap entry on an additional
+// till: such a till never sends a refund (the cloud refuses it, ADR-0198
+// Amendment 2026-11-23); the card tap is refunded on the main till.
+func tapRefundMainOnly(ctx context.Context, d *common.Deps, method string) bool {
+	if d.Settings == nil || effectiveReaderSource(ctx, d, readerSourcePOS) != readerSourceAdditional {
+		return false
+	}
+	_, isTap := tapEntry(ctx, d, method)
+	return isTap
 }

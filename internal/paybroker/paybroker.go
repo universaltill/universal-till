@@ -196,8 +196,12 @@ func Call(ctx context.Context, caller Caller, provider, op string, body []byte) 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		he := &HTTPError{Status: resp.StatusCode, Code: errorCode(out)}
 		logging.L().Warnf("paybroker: %s/%s status=%d code=%q in %s", provider, op, resp.StatusCode, he.Code, took)
+		if he.Code == CodeDeviceRoleUnrecorded {
+			noteRoleUnrecorded(true)
+		}
 		return nil, he
 	}
+	noteRoleUnrecorded(false)
 	logging.L().Infof("paybroker: %s/%s status=%d in %s", provider, op, resp.StatusCode, took)
 	if caller == CallerHostFn {
 		return FilterForWASM(out), nil
@@ -228,3 +232,38 @@ func errorCode(body []byte) string {
 	}
 	return c
 }
+
+// CodeDeviceRoleUnrecorded is the cloud's refusal of a credential whose role
+// was never recorded at issuance (ADR-0198 Amendment 2026-11-23, D4).
+const CodeDeviceRoleUnrecorded = "device_role_unrecorded"
+
+// roleUnrecordedTTL is how long a refusal keeps the till saying "set this
+// till up again".
+const roleUnrecordedTTL = 10 * time.Minute
+
+var (
+	roleMu         sync.Mutex
+	roleUnrecorded time.Time
+)
+
+func noteRoleUnrecorded(refused bool) {
+	roleMu.Lock()
+	defer roleMu.Unlock()
+	if refused {
+		roleUnrecorded = time.Now()
+	} else {
+		roleUnrecorded = time.Time{}
+	}
+}
+
+// RoleUnrecordedRecently reports whether the cloud refused this till's
+// credential as role-unrecorded within the last few minutes and no broker call
+// has succeeded since.
+func RoleUnrecordedRecently() bool {
+	roleMu.Lock()
+	defer roleMu.Unlock()
+	return !roleUnrecorded.IsZero() && time.Since(roleUnrecorded) < roleUnrecordedTTL
+}
+
+// ResetRoleUnrecorded clears the remembered refusal (tests).
+func ResetRoleUnrecorded() { noteRoleUnrecorded(false) }

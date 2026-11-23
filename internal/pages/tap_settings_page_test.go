@@ -325,25 +325,86 @@ func TestTapSettings_CloudState(t *testing.T) {
 	}
 }
 
-func TestTapSettings_NotMainTill(t *testing.T) {
-	e := tapSettingsRig(t)
+func (e *tapSettingsEnv) joinAs(t *testing.T, role string) {
+	t.Helper()
 	ctx := context.Background()
 	if err := e.dp.Settings.Set(ctx, "sync.primary_url", "http://main.example"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.dp.Settings.Set(ctx, tillRoleSettingsKey, data.TillRoleAdditional); err != nil {
-		t.Fatal(err)
+	if role != "" {
+		if err := e.dp.Settings.Set(ctx, tillRoleSettingsKey, role); err != nil {
+			t.Fatal(err)
+		}
 	}
+}
+
+// A satellite (and a joined till with no recorded role) is not offered Tap to
+// Pay: the panel says so with the reworded reason (ADR-0198 Amendment 2026-11-23).
+func TestTapSettings_SatelliteTillUnavailable(t *testing.T) {
+	for _, role := range []string{data.TillRoleSatellite, ""} {
+		e := tapSettingsRig(t)
+		e.joinAs(t, role)
+		rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+		want(t, rec, 200, "This till can&#39;t take Tap to Pay. Only the main till and additional tills can.")
+		if strings.Contains(rec.Body.String(), `data-testid="tap-setup"`) || strings.Contains(rec.Body.String(), `data-testid="tap-additional-note"`) {
+			t.Fatalf("role %q: Set up button or additional note on a till that cannot take tap", role)
+		}
+		if rec := e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{}); rec.Code != http.StatusConflict {
+			t.Fatalf("role %q: setup = %d, want 409", role, rec.Code)
+		}
+		if e.bridge.calls() != 0 {
+			t.Fatalf("role %q: native Setup called %d times", role, e.bridge.calls())
+		}
+	}
+}
+
+// An explicit additional till is like a main for the panel (setup allowed, same
+// steps) plus the additional note, shown as visible text.
+func TestTapSettings_AdditionalTill(t *testing.T) {
+	e := tapSettingsRig(t)
+	e.joinAs(t, data.TillRoleAdditional)
 	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
-	want(t, rec, 200, "Only the main till can take Tap to Pay.")
-	if strings.Contains(rec.Body.String(), `data-testid="tap-setup"`) {
-		t.Fatal("Set up button on a joined till")
+	want(t, rec, 200, `data-testid="tap-additional-note"`, enText(t, "tap.settings.note.additional"), `data-testid="tap-setup"`)
+	if strings.Contains(rec.Body.String(), `data-state="unavailable"`) || strings.Contains(rec.Body.String(), "Only the main till") {
+		t.Fatalf("an additional till is not unavailable: %s", rec.Body.String())
 	}
-	if rec := e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{}); rec.Code != http.StatusConflict {
-		t.Fatalf("setup on a joined till = %d, want 409", rec.Code)
+	if rec := e.do("manager", "POST", "/settings/tap-to-pay/setup", url.Values{}); rec.Code != http.StatusOK {
+		t.Fatalf("setup on an additional till = %d, want 200", rec.Code)
 	}
-	if e.bridge.calls() != 0 {
-		t.Fatalf("native Setup called %d times on a joined till", e.bridge.calls())
+	// Allow: manager only, audited, enables the permissions locally like a main.
+	if rec := e.do("cashier", "POST", "/settings/tap-to-pay/grant", url.Values{}); rec.Code == http.StatusOK {
+		t.Fatal("a cashier granted the Tap to Pay permissions")
+	}
+	want(t, e.do("manager", "POST", "/settings/tap-to-pay/grant", url.Values{}), 200)
+	for perm, g := range e.granted(t) {
+		if !g {
+			t.Fatalf("%s not granted on an additional till", perm)
+		}
+	}
+	if n := countRows(t, e.dp, `SELECT COUNT(*) FROM audit_log WHERE action = 'tap_to_pay.permissions_granted'`); n != 1 {
+		t.Fatalf("grant audit rows = %d, want 1", n)
+	}
+}
+
+// The main till never shows the additional note.
+func TestTapSettings_MainTillHasNoAdditionalNote(t *testing.T) {
+	e := tapSettingsRig(t)
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	if strings.Contains(rec.Body.String(), `data-testid="tap-additional-note"`) {
+		t.Fatal("additional note on the main till")
+	}
+}
+
+// UX copy section 4: an old additional till whose credential the cloud refuses
+// as role-unrecorded says "set this till up again", never "can't reach".
+func TestTapSettings_RoleUnrecordedSaysSetUpAgain(t *testing.T) {
+	e := tapSettingsRig(t)
+	e.joinAs(t, data.TillRoleAdditional)
+	e.broker.setRoleRefused(true)
+	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+	want(t, rec, 200, enText(t, "tap.settings.source.setup_again"))
+	if strings.Contains(rec.Body.String(), "Can&#39;t reach the payment service") {
+		t.Fatal("a role refusal was worded as unreachable")
 	}
 }
 
