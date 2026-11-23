@@ -38,6 +38,12 @@ type PluginSyncRow struct {
 	// "off". Bundled rows (ADR-0194 §9) leave it nil: present = on, absent =
 	// off.
 	Enabled *bool `json:"enabled,omitempty"`
+	// OwnedPaymentMethodIDs: the payment_methods ids the primary has owned by
+	// this row's plugin (payment_methods.plugin_id = PluginID, active or not;
+	// ut-docs#6928). A pointer so absent (an older primary or a pre-6928
+	// cached bundle) differs from empty: nil = no adoption. Bundled rows
+	// leave it nil.
+	OwnedPaymentMethodIDs *[]string `json:"owned_payment_method_ids,omitempty"`
 }
 
 // PluginsBundle is the wire payload of GET /api/sync/plugins.
@@ -93,7 +99,45 @@ ORDER BY s.listing_id`)
 	if err := rows.Err(); err != nil {
 		return PluginsBundle{}, fmt.Errorf("dump active plugins: %w", err)
 	}
+	// ut-docs#6928: one query for the primary's tender ownership, attached
+	// per row. This is the primary's own attribution, never the manifest's
+	// declarations.
+	owned, err := r.ownedPaymentMethodIDs(ctx)
+	if err != nil {
+		return PluginsBundle{}, err
+	}
+	for i := range bundle.Plugins {
+		ids := owned[bundle.Plugins[i].PluginID]
+		if ids == nil {
+			ids = []string{}
+		}
+		bundle.Plugins[i].OwnedPaymentMethodIDs = &ids
+	}
 	return bundle, nil
+}
+
+// ownedPaymentMethodIDs maps plugin id -> the payment_methods ids it owns.
+func (r *SyncPluginsRepo) ownedPaymentMethodIDs(ctx context.Context) (map[string][]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT plugin_id, id FROM payment_methods
+WHERE plugin_id IS NOT NULL AND plugin_id != ''
+ORDER BY plugin_id, id`)
+	if err != nil {
+		return nil, fmt.Errorf("dump owned payment methods: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var pid, id string
+		if err := rows.Scan(&pid, &id); err != nil {
+			return nil, fmt.Errorf("scan owned payment method: %w", err)
+		}
+		out[pid] = append(out[pid], id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("dump owned payment methods: %w", err)
+	}
+	return out, nil
 }
 
 // DumpActivePluginsWithSystem is DumpActivePlugins plus the ENABLED bundled

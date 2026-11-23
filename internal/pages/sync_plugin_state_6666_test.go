@@ -184,7 +184,7 @@ func TestConvergePluginSet_FreshInstallFollowsDisabled(t *testing.T) {
 	orig := pluginSyncInstall
 	t.Cleanup(func() { pluginSyncInstall = orig })
 	var sawInactive bool
-	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool) (string, error) {
+	pluginSyncInstall = func(ctx context.Context, d *common.Deps, listing, version string, inactive bool, adopt []string) (string, error) {
 		sawInactive = inactive
 		seed6666(t, d, listing, "com.test.new", !inactive, nil, false) // a real install lands off when inactive
 		return "", nil
