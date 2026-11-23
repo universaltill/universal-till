@@ -331,6 +331,12 @@ type Hooks struct {
 	SaveUser       func(ctx context.Context, u UserDirective) (string, error)
 	SetUserPIN     func(ctx context.Context, u UserDirective) (string, error)
 	DeactivateUser func(ctx context.Context, u UserDirective) (string, error)
+	// SetPluginSecret handles "set_plugin_secret" (ADR-0213 Decision 5,
+	// ut-docs#6960): main-till only. The hook owns everything about the
+	// sealed value (opening it, the allow-list, the write); this package
+	// only decodes the envelope. A failure's text must be a bare reason
+	// code; ErrPluginSecretRetry leaves the directive pending.
+	SetPluginSecret func(ctx context.Context, d PluginSecretDirective) (string, error)
 	// The custom role directives (ADR-0128 §3, ut-docs#3165): main-till
 	// only. SaveRole creates or replaces an origin='cloud' role and its
 	// complete grant set; DeleteRole removes one no user holds. Each runs
@@ -1455,6 +1461,17 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hook(ctx, u)
+	case "set_plugin_secret":
+		if hooks.SetPluginSecret == nil {
+			return "failed", d.Type + " is not supported on this till"
+		}
+		sd, bad := decodePluginSecret(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		if msg, err = hooks.SetPluginSecret(ctx, sd); errors.Is(err, ErrPluginSecretRetry) {
+			return statusRetry, err.Error()
+		}
 	case "save_role", "delete_role":
 		hook := hooks.SaveRole
 		if d.Type == "delete_role" {

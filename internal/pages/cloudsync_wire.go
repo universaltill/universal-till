@@ -1469,6 +1469,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeactivateUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
 			return cloudDeactivateUser(ctx, d, directiveKeys, u)
 		},
+		// set_plugin_secret (ADR-0213): main till only; the apply lives in
+		// internal/pluginsecretapply, never in cloudsync.
+		SetPluginSecret: func(ctx context.Context, in cloudsync.PluginSecretDirective) (string, error) {
+			return cloudSetPluginSecret(ctx, d, directiveKeys, in)
+		},
 		// The custom role directives (ADR-0128 §3): main-till only, one
 		// transaction each, audited, idempotent. See
 		// cloud_role_directives.go.
