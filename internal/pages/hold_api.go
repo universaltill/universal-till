@@ -889,10 +889,10 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	// notice neither comes back on the next basket render nor rides along
 	// when this order is parked and resumed again. Any operator, like the
 	// resume that showed it. No body: the notice removes itself client-side.
-	mux.HandleFunc("POST /api/pos/add-by-hand/dismiss", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/add-by-hand/dismiss", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		d.Engine.DismissAddByHand()
 		w.WriteHeader(http.StatusNoContent)
-	})
+	}))
 
 	// Cancel a held, table or pay-at-counter order (ut-docs#3582) -- from
 	// the sale screen's parked-orders popup (view=parked-orders) or the

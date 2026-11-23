@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
@@ -143,10 +144,17 @@ type Service struct {
 	// is never followed by another payment. Cleared with tenderAttemptID.
 	tenderLock string
 	// tenderInFlight (ut-docs#6909) is true while a cashier tender request
-	// runs on this engine. Set and cleared ONLY by TryBeginTender/EndTender,
+	// runs on this engine; TryBeginTender sets it BEFORE draining admitted
+	// basket edits, and while set BeginBasketEdit refuses (ut-docs#6919).
+	// Set and cleared ONLY by TryBeginTender/EndTender,
 	// never by Reset*, SettleTender, LockTender, rotation, park or resume: the
 	// completed sale's own Reset runs inside the guarded request. Guarded by mu.
 	tenderInFlight bool
+	// basketEdits counts cashier basket mutations admitted by BeginBasketEdit
+	// and not yet ended; editsIdle is closed when it drops to 0 (nil while 0).
+	// Guarded by mu (ut-docs#6919).
+	basketEdits int
+	editsIdle   chan struct{}
 	// pendingTender (ut-docs#6602) is what the locked tender leaves behind:
 	// the legs already captured (to reverse if the tender is abandoned) and
 	// the legs of unknown outcome (to warn about). Same lifetime as
@@ -1887,16 +1895,70 @@ func (s *Service) PendingTender() PendingTender {
 	}
 }
 
-// TryBeginTender claims the engine for one tender (ut-docs#6909): false when
-// another tender already runs on it. The caller defers EndTender.
-func (s *Service) TryBeginTender() bool {
+// tenderDrainTimeout bounds how long TryBeginTender waits for basket edits
+// admitted before it (ut-docs#6919). On timeout the claim is dropped and the
+// tender is refused like a second tender.
+var tenderDrainTimeout = 10 * time.Second
+
+// BeginBasketEdit admits one cashier basket mutation (ut-docs#6919): false
+// while a tender (or a tap check/resolve) holds the engine. The caller defers
+// EndBasketEdit. Edits never exclude each other; nested edits are fine.
+// Never call TryBeginTender while holding an edit: it would wait on itself
+// until tenderDrainTimeout.
+func (s *Service) BeginBasketEdit() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.tenderInFlight {
 		return false
 	}
-	s.tenderInFlight = true
+	if s.basketEdits == 0 {
+		s.editsIdle = make(chan struct{})
+	}
+	s.basketEdits++
 	return true
+}
+
+// EndBasketEdit releases one edit admitted by BeginBasketEdit; an unmatched
+// call is a no-op.
+func (s *Service) EndBasketEdit() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.basketEdits == 0 {
+		return
+	}
+	s.basketEdits--
+	if s.basketEdits == 0 {
+		close(s.editsIdle)
+		s.editsIdle = nil
+	}
+}
+
+// TryBeginTender claims the engine for one tender (ut-docs#6909): false when
+// another tender already runs on it. From the moment the claim is set no new
+// basket edit is admitted; it then waits (bounded) for edits already admitted
+// so the tender reads a settled basket (ut-docs#6919). The caller defers
+// EndTender.
+func (s *Service) TryBeginTender() bool {
+	s.mu.Lock()
+	if s.tenderInFlight {
+		s.mu.Unlock()
+		return false
+	}
+	s.tenderInFlight = true
+	idle := s.editsIdle
+	s.mu.Unlock()
+	if idle == nil {
+		return true
+	}
+	t := time.NewTimer(tenderDrainTimeout)
+	defer t.Stop()
+	select {
+	case <-idle:
+		return true
+	case <-t.C:
+		s.EndTender()
+		return false
+	}
 }
 
 // EndTender releases the claim TryBeginTender took.

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // writeTenderInFlight refuses a second cashier tender while one still runs on
@@ -23,4 +24,20 @@ func writeTenderInFlight(w http.ResponseWriter, r *http.Request) {
 		"data":  nil,
 		"error": map[string]string{"code": "tender_in_flight", "message": msg},
 	})
+}
+
+// basketEdit runs h as one cashier basket mutation (ut-docs#6919): refused
+// with writeTenderInFlight's 409 before h touches the engine or DB while a
+// tender runs, and a tender that starts meanwhile waits for h to finish
+// before it reads the basket. d.Engine is resolved per request (bare test
+// Deps).
+func basketEdit(d *common.Deps, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !d.Engine.BeginBasketEdit() {
+			writeTenderInFlight(w, r)
+			return
+		}
+		defer d.Engine.EndBasketEdit()
+		h(w, r)
+	}
 }

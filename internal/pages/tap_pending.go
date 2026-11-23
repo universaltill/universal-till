@@ -324,10 +324,20 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 		// tender names the attempt. The one flag it may carry is "cancel".
 		_ = r.ParseForm()
 		cancel := r.Form.Get("cancel") == "1"
-		// ut-docs#6909: a tender retry is re-authorizing this leg; a check
-		// beside it would ask the broker, unlock or mark paid under it.
-		if d.Engine.TenderInFlight() {
+		// ut-docs#6909/#6919: a tender retry is re-authorizing this leg; a
+		// check beside it would ask the broker, unlock or mark paid under it.
+		// The check also holds the engine's tender claim for its whole run, so
+		// a locked-tender retry that starts meanwhile is refused (409
+		// tender_in_flight) instead of re-authorizing this leg beside it.
+		if !d.Engine.TryBeginTender() {
 			renderTapBasket(w, r, d, &pos.TapPanel{State: "pending", Method: leg.MethodID, Amount: leg.Amount, Reason: leg.TapReason, Still: true}, http.StatusOK)
+			return
+		}
+		defer d.Engine.EndTender()
+		// The claim can wait for running basket edits: read the leg again
+		// under it rather than act on the copy read before.
+		if leg, ok = tapLockedLeg(d); !ok {
+			http.Error(w, httpx.T(locale, "tap.nothing_pending"), http.StatusConflict)
 			return
 		}
 		if !tapCheckAllowed(leg.RequestID) {
@@ -424,8 +434,16 @@ func registerTapPay(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, httpx.T(locale, "tap.nothing_pending"), http.StatusConflict)
 			return
 		}
-		if d.Engine.TenderInFlight() { // ut-docs#6909: a tender retry runs on this leg
+		// ut-docs#6909/#6919: a tender retry runs on this leg; and the resolve
+		// holds the engine's tender claim for its whole run, so a retry that
+		// starts meanwhile is refused (409 tender_in_flight).
+		if !d.Engine.TryBeginTender() {
 			http.Error(w, httpx.T(locale, "tap.resolve.in_progress"), http.StatusConflict)
+			return
+		}
+		defer d.Engine.EndTender()
+		if leg, ok = tapLockedLeg(d); !ok { // re-read under the claim (#6919)
+			http.Error(w, httpx.T(locale, "tap.nothing_pending"), http.StatusConflict)
 			return
 		}
 		decision := r.Form.Get("decision")

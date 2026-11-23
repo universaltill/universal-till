@@ -566,6 +566,14 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusBadRequest, amountMsg)
 			return
 		}
+		// ut-docs#6919: the basket-changing part is one basket edit. The claim
+		// starts only here, after the permission check and the replica's call
+		// to the main till, so a slow lookup never holds up a tender's drain.
+		if !d.Engine.BeginBasketEdit() {
+			writeTenderInFlight(w, r)
+			return
+		}
+		defer d.Engine.EndBasketEdit()
 		if d.Engine.HasGiftVoucherCode(v.ID) {
 			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.error.in_sale"))
 			return
