@@ -145,6 +145,9 @@ val stripeTerminalVersion = "6.0.0"
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
+    // ut-docs#6935: pinned, AGP's default NDK is not installed in CI. Keep in sync
+    // with the `sdkmanager ndk;` lines in android-ci.yml, release.yml, play-publish.yml.
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.universaltill.pos"
@@ -255,7 +258,12 @@ android {
         // only; Play App Signing re-signs with the app key (#6395).
         create("play") {
             dimension = "abi"
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                // ut-docs#6935: ship the native symbol table in the bundle so Play
+                // can symbolicate native crashes (check-aab.sh asserts it).
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
             versionCode = baseVersionCode * 10 + 5
             buildConfigField("String", "INSTALL_CHANNEL", "\"play\"")
             buildConfigField("String", "UPDATE_APK_URL", "\"\"")

@@ -444,6 +444,10 @@ jobs:
         run: bash scripts/ci/guard-android-manifest-features.sh
       - name: Android manifest implied-feature guard regression test
         run: bash scripts/ci/guard-android-manifest-features_test.sh
+      - name: Android sideload install-permission check regression test (ut-docs#6935)
+        run: bash scripts/ci/check-android-sideload-install-permission_test.sh
+      - name: check-aab.sh native debug symbols regression test (ut-docs#6935)
+        run: bash android/scripts/check-aab_test.sh
       - name: Android backup/transfer exclusion guard (ut-docs#6915)
         run: bash scripts/ci/guard-android-backup-rules.sh
       - name: Android backup/transfer exclusion guard regression test

@@ -11,6 +11,9 @@
 #     and is stamped install_channel=play (a sideload bundle is refused)
 #   - targetSdkVersion >= 36 (TARGET_SDK_MIN) and minSdk 24
 #   - native libs: arm64-v8a present, and no 32-bit ABI without its 64-bit twin
+#   - native debug symbols: every base/lib/<abi>/<lib>.so has a matching
+#     BUNDLE-METADATA/com.android.tools.build.debugsymbols/<abi>/<lib>.so.sym
+#     (or .so.dbg), else Play warns the bundle has no symbols (ut-docs#6935)
 #   - versionCode ends in 5 (base*10+5), or equals --expect-version-code
 #   - the bundle is signed (JAR/v1 scheme: the only scheme an .aab has; v2+ exist
 #     only on the APKs Play derives) unless --allow-unsigned; with
@@ -31,7 +34,7 @@ while [ $# -gt 0 ]; do
     --expect-version-code) want_vc="${2:?}"; shift 2 ;;
     --expect-cert-sha256) want_cert="$(printf '%s' "${2:?}" | tr -d ':' | tr 'A-F' 'a-f')"; shift 2 ;;
     --allow-unsigned) allow_unsigned=1; shift ;;
-    -h|--help) sed -n 2,23p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,25p "$0"; exit 0 ;;
     -*) echo "check-aab: unknown flag $1" >&2; exit 2 ;;
     *) aab="$1"; shift ;;
   esac
@@ -111,6 +114,21 @@ echo "-- native ABIs: $(echo "$abis" | tr '\n' ' ')"
 grep -qx 'arm64-v8a' <<<"$abis" && ok "arm64-v8a (64-bit) present" || fail "no arm64-v8a native libs"
 if grep -qx 'armeabi-v7a' <<<"$abis" && ! grep -qx 'arm64-v8a' <<<"$abis"; then fail "32-bit ABI without its 64-bit twin"; fi
 if grep -qxE 'x86' <<<"$abis" && ! grep -qx 'x86_64' <<<"$abis"; then fail "x86 without x86_64"; fi
+
+# --- native debug symbols (ut-docs#6935) -------------------------------------
+# AGP's ndk.debugSymbolLevel puts one symbols file per library under
+# BUNDLE-METADATA/com.android.tools.build.debugsymbols/<abi>/ so Play can
+# symbolicate native crashes. No .so at all is the ABI check's failure above.
+symdir="BUNDLE-METADATA/com.android.tools.build.debugsymbols"
+while IFS= read -r lib; do
+  [ -n "$lib" ] || continue
+  rel="${lib#base/lib/}"   # <abi>/<name>.so
+  if grep -qxF -e "$symdir/$rel.sym" -e "$symdir/$rel.dbg" <<<"$entries"; then
+    ok "native debug symbols for $rel"
+  else
+    fail "no native debug symbols for $rel (expected $symdir/$rel.sym or .dbg)"
+  fi
+done < <(grep -E '^base/lib/[^/]+/[^/]+\.so$' <<<"$entries" || true)
 
 # --- payload -----------------------------------------------------------------
 if grep -qiE '\.apk$|unitill-pos-update' <<<"$entries"; then fail "bundle contains an .apk / update payload"; else ok "no .apk / update payload"; fi
