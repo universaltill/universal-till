@@ -32,6 +32,12 @@ type PluginSyncRow struct {
 	PluginID   string `json:"plugin_id"`
 	PluginName string `json:"plugin_name"`
 	Version    string `json:"version"`
+	// Enabled is the primary's plugins.is_active (ut-docs#6666). A pointer so
+	// that "absent" (an older primary, or a pre-6666 cached bundle) is
+	// distinguishable from false: nil = leave the replica's state alone, never
+	// "off". Bundled rows (ADR-0194 §9) leave it nil: present = on, absent =
+	// off.
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // PluginsBundle is the wire payload of GET /api/sync/plugins.
@@ -42,12 +48,17 @@ type PluginsBundle struct {
 // Fingerprint identifies the bundle content (same scheme as AdminBundle:
 // rows are ordered by listing_id, so equal state hashes equal).
 func (b PluginsBundle) Fingerprint() string {
+	// The enabled state is deliberately inside the hash (ut-docs#6666): a
+	// switch on the main must make replicas re-pull.
 	raw, _ := json.Marshal(b.Plugins)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:16])
 }
 
-// DumpActivePlugins reads the shop's active marketplace-installed set:
+// DumpActivePlugins reads the shop's active marketplace-installed set (every
+// row also carries the plugin's enabled state, plugins.is_active; a disabled
+// plugin is still listed because the filter is the install state,
+// ut-docs#6666):
 // plugin_install_status rows in the 'active' state (the literal matches
 // plugins.InstallStateActive — a shared constant would invert the
 // data→plugins dependency), joined to plugins so the version reported is
@@ -57,7 +68,7 @@ func (b PluginsBundle) Fingerprint() string {
 // import-from-file writes no plugin_install_status row.
 func (r *SyncPluginsRepo) DumpActivePlugins(ctx context.Context) (PluginsBundle, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT s.listing_id, s.plugin_id, p.name, p.version
+SELECT s.listing_id, s.plugin_id, p.name, p.version, p.is_active
 FROM plugin_install_status s
 JOIN plugins p ON p.id = s.plugin_id
 WHERE s.state = 'active'
@@ -71,9 +82,12 @@ ORDER BY s.listing_id`)
 	bundle := PluginsBundle{Plugins: []PluginSyncRow{}}
 	for rows.Next() {
 		var row PluginSyncRow
-		if err := rows.Scan(&row.ListingID, &row.PluginID, &row.PluginName, &row.Version); err != nil {
+		var enabled int
+		if err := rows.Scan(&row.ListingID, &row.PluginID, &row.PluginName, &row.Version, &enabled); err != nil {
 			return PluginsBundle{}, fmt.Errorf("scan active plugin: %w", err)
 		}
+		on := enabled != 0
+		row.Enabled = &on
 		bundle.Plugins = append(bundle.Plugins, row)
 	}
 	if err := rows.Err(); err != nil {

@@ -173,7 +173,7 @@ Themes and language packs are plugins like any other, so the store, trust badges
 
 ## Several tills
 
-In a shop with several tills (see [Multiple tills](/help/multitill)), install and remove plugins on the **main till** only. Every joined till fetches the same plugin from the store itself and applies the change automatically within about half a minute.
+In a shop with several tills (see [Multiple tills](/help/multitill)), install, remove, enable and disable plugins on the **main till** only. Every joined till fetches the same plugin from the store itself and applies the change automatically within about half a minute. A plugin you switch off on the main till is switched off on every joined till too, and stays installed there with its settings.
 
 - A joined till's own install, uninstall, enable/disable and update actions are refused with a message pointing to the main till.
 - Plugins imported from a file are the exception: importing still works on any till, joined ones included, but the plugin stays only on the till it was imported to and is never copied to the others.

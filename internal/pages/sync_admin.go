@@ -876,6 +876,7 @@ const (
 	pluginSyncBrokenKeyPrefix    = "plugin_sync.broken:"
 	pluginSyncInstallKeyPrefix   = "plugin_sync.install:"
 	pluginSyncUninstallKeyPrefix = "plugin_sync.uninstall:"
+	pluginSyncStateKeyPrefix     = "plugin_sync.state:"
 )
 
 // warnPluginSyncOnce logs a plugin-sync failure as a keyed WARN the first
@@ -924,7 +925,10 @@ func followBundledState(ctx context.Context, d *common.Deps, rows []data.PluginS
 	syncRepo := data.NewSyncPluginsRepo(d.Db)
 	want := make(map[string]bool, len(rows))
 	for _, row := range rows {
-		want[row.PluginID] = true
+		// A marketplace copy the main holds DISABLED does not switch the
+		// bundled plugin on (ut-docs#6666); a row without the field (an
+		// older main, a bundled-state row) keeps ADR-0194 §9's "named = on".
+		want[row.PluginID] = want[row.PluginID] || row.Enabled == nil || *row.Enabled
 	}
 	// A row that arrived with a join snapshot or a restore (rows without
 	// bytes: another version, another trust level, or broken) is put back on
@@ -971,6 +975,82 @@ func followBundledState(ctx context.Context, d *common.Deps, rows []data.PluginS
 		}
 		logging.L().Infof("plugin sync: bundled %s switched %s to follow the main till", id, map[bool]string{true: "on", false: "off"}[want[id]])
 		changed = true
+	}
+	return ok, changed
+}
+
+// followMarketplaceState applies the main's enabled state (plugins.is_active)
+// to every marketplace row installed here (ut-docs#6666, ADR-0011 §7). It is
+// a separate pass over ALL rows, so another listing's failed install can
+// never skip it. Disables run first, so a main that swapped one exclusive
+// provider for another converges in one tick; an enable goes through the same
+// gate as a manual one (pluginEnableRefusal) and fails closed under a keyed
+// plugin_sync.state problem. A row without the field leaves local state alone.
+// ok=false if any row could not be brought to the main's state; changed=true
+// if any flip landed.
+func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow) (ok, changed bool) {
+	repo := data.NewPluginRepo(d.Db)
+	syncRepo := data.NewSyncPluginsRepo(d.Db)
+	ok = true
+	var enables []data.PluginSyncRow
+	flip := func(row data.PluginSyncRow, on bool) bool {
+		if err := repo.SetPluginActive(ctx, nil, row.PluginID, on); err != nil {
+			if on {
+				warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not switch %s (%s) on to follow the main till: %v",
+					row.PluginName, row.ListingID, err)
+			} else {
+				warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: the main till has %s (%s) off, but switching it off here failed, so it may still be on: %v",
+					row.PluginName, row.ListingID, err)
+			}
+			ok = false
+			return false
+		}
+		logging.L().Infof("plugin sync: %s switched %s to follow the main till", row.PluginID, map[bool]string{true: "on", false: "off"}[on])
+		logging.ResolveProblems(pluginSyncStateKeyPrefix + row.ListingID)
+		changed = true
+		return true
+	}
+	for _, row := range rows {
+		if row.Enabled == nil || row.ListingID == "" || row.PluginID == "" {
+			continue
+		}
+		if bundled.Available() && bundled.IsBundled(row.PluginID) {
+			continue // followBundledState owns it
+		}
+		_, _, installed, err := syncRepo.InstalledPluginVersion(ctx, row.PluginID)
+		if err != nil {
+			warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not read the local state of %s (%s) to follow the main till: %v",
+				row.PluginName, row.ListingID, err)
+			ok = false
+			continue
+		}
+		if !installed {
+			continue // the install-failure problem already covers it
+		}
+		cur, err := repo.PluginActive(ctx, row.PluginID)
+		if err != nil {
+			warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not read whether %s (%s) is on, to follow the main till: %v",
+				row.PluginName, row.ListingID, err)
+			ok = false
+			continue
+		}
+		switch {
+		case cur == *row.Enabled:
+			logging.ResolveProblems(pluginSyncStateKeyPrefix + row.ListingID)
+		case !*row.Enabled:
+			flip(row, false) // phase A: a disable is always safe
+		default:
+			enables = append(enables, row)
+		}
+	}
+	for _, row := range enables { // phase B: enables, after every disable
+		if refusal := pluginEnableRefusal(ctx, d, row.PluginID); refusal != nil {
+			warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: cannot switch %s (%s) on to follow the main till: %v",
+				row.PluginName, row.ListingID, refusal)
+			ok = false
+			continue
+		}
+		flip(row, true)
 	}
 	return ok, changed
 }
@@ -1067,6 +1147,21 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		changed = true
 	}
 
+	// The main's enabled state, applied to every listing independent of the
+	// install results above (ut-docs#6666): after the installs, so a fresh
+	// install the main has off is switched off in the same tick, and before
+	// the prune, which never touches a disabled-but-listed plugin.
+	stateOK, stateChanged := followMarketplaceState(ctx, d, rows)
+	if !stateOK {
+		converged = false
+	}
+	if stateChanged {
+		changed = true
+		if err := d.ReloadPlugins(ctx); err != nil {
+			logging.L().Warnf("plugin sync: reload after following the main till's enabled state: %v", err)
+		}
+	}
+
 	// Uninstalls: a listing this till holds as active that the primary no
 	// longer has. Keyed off local plugin_install_status records, so only
 	// marketplace-installed plugins can ever be pruned (scope boundary
@@ -1117,6 +1212,9 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			return !inPrimary[id]
 		}
 		if id, ok := strings.CutPrefix(key, pluginSyncInstallKeyPrefix); ok {
+			return !inPrimary[id]
+		}
+		if id, ok := strings.CutPrefix(key, pluginSyncStateKeyPrefix); ok {
 			return !inPrimary[id]
 		}
 		if id, ok := strings.CutPrefix(key, pluginSyncUninstallKeyPrefix); ok {

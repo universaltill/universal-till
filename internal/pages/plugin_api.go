@@ -399,9 +399,10 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		}
 		ctx := r.Context()
 		// ut-docs#460: plugin state (including is_active) is
-		// primary-authoritative. Nothing in the sync pull reconciles a
-		// locally flipped is_active back, so a replica-local toggle would
-		// be permanent silent drift from the shop's set — reject it.
+		// primary-authoritative: the sync pull applies the main till's
+		// enabled state to every replica (convergePluginSet,
+		// followMarketplaceState, ut-docs#6666), so a replica-local toggle
+		// would only be flipped back at the next tick — reject it.
 		pluginID := r.PathValue("id")
 		if d.SyncPrimaryURL(ctx) != "" {
 			// A bundled plugin's switch is the main till's: it travels to this
@@ -438,144 +439,16 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// must refuse the enable and surface the error — never silently
 		// skip the check and activate a possibly-second answerer.
 		if active {
-			pluginRepo := data.NewPluginRepo(d.Db)
-			// ut-docs#5658: a release the marketplace revoked stays off. Local
-			// read, no network; fail closed on a DB error.
-			if cur, found, getErr := pluginRepo.GetPlugin(ctx, pluginID, ""); getErr != nil {
+			if refusal := pluginEnableRefusal(ctx, d, pluginID); refusal != nil {
+				if refusal.GuardKey != "" {
+					writeReplicaGuard(w, refusal.GuardKey)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
+				w.WriteHeader(refusal.Status)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data":  nil,
-					"error": fmt.Sprintf("cannot enable %s: revoked-release lookup failed: %v", pluginID, getErr),
-				})
-				return
-			} else if found {
-				if revErr := plugins.CheckNotRevoked(ctx, pluginRepo, nil, pluginID, cur.Version); revErr != nil {
-					if errors.Is(revErr, plugins.ErrRevokedRelease) {
-						writeReplicaGuard(w, "plugins.manage.error.revoked")
-						return
-					}
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"data":  nil,
-						"error": fmt.Sprintf("cannot enable %s: %v", pluginID, revErr),
-					})
-					return
-				}
-			}
-			declared := ""
-			for _, ev := range plugins.FiscalSignExclusiveEvents {
-				declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
-				if hookErr != nil {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"data":  nil,
-						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, ev, hookErr),
-					})
-					return
-				}
-				if declares {
-					declared = ev
-					break
-				}
-			}
-			if declared != "" {
-				ownerID, ownerName, heldEvent, found, ownerErr := plugins.FiscalSignExclusiveOwner(ctx, pluginRepo, nil, pluginID)
-				if ownerErr != nil {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"data":  nil,
-						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, declared, ownerErr),
-					})
-					return
-				}
-				if found {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusConflict)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"data": nil,
-						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider (holds %s) — %s is an exclusive extension point, one owner across %s; disable the active provider first",
-							pluginID, ownerName, ownerID, heldEvent, declared, strings.Join(plugins.FiscalSignExclusiveEvents, ", ")),
-					})
-					return
-				}
-			}
-			// A role:"preset" layout plugin is a complete named
-			// arrangement, mutually exclusive with any OTHER active
-			// preset (ADR-0106 Decision C, ut-docs#1905) — a second,
-			// independent exclusivity group from the fiscal-sign one
-			// above, same two enforcement points: the persist-time
-			// check in plugins.PersistManifest covers install/update,
-			// this one covers re-enabling an installed-but-disabled
-			// preset. Ordinary layout plugins (no role) never reach the
-			// owner query. FAIL CLOSED on a DB error, same as above:
-			// "couldn't verify" must never activate a possibly-second
-			// preset.
-			declaresPreset, presetErr := pluginRepo.HasActiveLayoutRole(ctx, pluginID, uislot.PresetRole)
-			if presetErr != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"data":  nil,
-					"error": fmt.Sprintf("cannot enable %s: layout preset exclusivity check failed: %v", pluginID, presetErr),
-				})
-				return
-			}
-			if declaresPreset {
-				ownerID, ownerName, found, ownerErr := plugins.LayoutPresetOwner(ctx, pluginRepo, nil, pluginID)
-				if ownerErr != nil {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"data":  nil,
-						"error": fmt.Sprintf("cannot enable %s: layout preset exclusivity check failed: %v", pluginID, ownerErr),
-					})
-					return
-				}
-				if found {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusConflict)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"data": nil,
-						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active layout preset — only one preset can be active at a time (ADR-0106); disable the active preset first",
-							pluginID, ownerName, ownerID),
-					})
-					return
-				}
-			}
-			// A `fiscal.*` capability in the plugin's persisted provides
-			// is exclusive across INSTALLED plugins (ADR-0129 §2,
-			// ut-docs#3281) — a third group, same two enforcement points:
-			// plugins.PersistManifest/Rollback refuse a second provider at
-			// install/update/rollback, this covers enabling one whose rows
-			// predate or bypassed that. Installed, not active: a disabled
-			// incumbent still owns the §146a register namespace. FAIL
-			// CLOSED on a DB error, same as above.
-			provides, providesErr := pluginRepo.ListPluginProvides(ctx, pluginID)
-			var capability, fiscalOwnerID, fiscalOwnerName string
-			var fiscalFound bool
-			if providesErr == nil {
-				capability, fiscalOwnerID, fiscalOwnerName, fiscalFound, providesErr = plugins.FiscalProvidesConflict(ctx, pluginRepo, nil, pluginID, provides)
-			}
-			if providesErr != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"data":  nil,
-					"error": fmt.Sprintf("cannot enable %s: fiscal capability exclusivity check failed: %v", pluginID, providesErr),
-				})
-				return
-			}
-			if fiscalFound {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"data": nil,
-					"error": fmt.Sprintf("cannot enable %s: %s (%s) already provides %s — only one installed plugin may provide each fiscal.* capability (ADR-0129); uninstall it first",
-						pluginID, fiscalOwnerName, fiscalOwnerID, capability),
+					"error": refusal.Msg,
 				})
 				return
 			}
@@ -606,6 +479,97 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			"error": nil,
 		})
 	}
+}
+
+// enableRefusal is why a plugin may not be switched on: Status is the HTTP
+// status the manual path answers with (409 conflict / 500 lookup failure),
+// GuardKey a localized replica-guard key when set (revoked), else Msg.
+type enableRefusal struct {
+	Status   int
+	GuardKey string
+	Msg      string
+}
+
+func (e *enableRefusal) Error() string {
+	if e.GuardKey != "" {
+		return "the marketplace has withdrawn this plugin version" // log text, English like other plugin_sync problems
+	}
+	return e.Msg
+}
+
+// pluginEnableRefusal is the enable gate shared by the manual enable handler
+// and the replica's follow of the main till's switch (ut-docs#6666): revoked
+// release, the fiscal-sign group, the layout preset and `fiscal.*` provides
+// exclusivity. nil = allowed. Every lookup fails CLOSED. Local reads only.
+func pluginEnableRefusal(ctx context.Context, d *common.Deps, pluginID string) *enableRefusal {
+	pluginRepo := data.NewPluginRepo(d.Db)
+	fail := func(status int, format string, args ...any) *enableRefusal {
+		return &enableRefusal{Status: status, Msg: fmt.Sprintf(format, args...)}
+	}
+	// ut-docs#5658: a release the marketplace revoked stays off. Local
+	// read, no network; fail closed on a DB error.
+	if cur, found, getErr := pluginRepo.GetPlugin(ctx, pluginID, ""); getErr != nil {
+		return fail(http.StatusInternalServerError, "cannot enable %s: revoked-release lookup failed: %v", pluginID, getErr)
+	} else if found {
+		if revErr := plugins.CheckNotRevoked(ctx, pluginRepo, nil, pluginID, cur.Version); revErr != nil {
+			if errors.Is(revErr, plugins.ErrRevokedRelease) {
+				return &enableRefusal{Status: http.StatusConflict, GuardKey: "plugins.manage.error.revoked"}
+			}
+			return fail(http.StatusInternalServerError, "cannot enable %s: %v", pluginID, revErr)
+		}
+	}
+	declared := ""
+	for _, ev := range plugins.FiscalSignExclusiveEvents {
+		declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
+		if hookErr != nil {
+			return fail(http.StatusInternalServerError, "cannot enable %s: exclusivity check for %s failed: %v", pluginID, ev, hookErr)
+		}
+		if declares {
+			declared = ev
+			break
+		}
+	}
+	if declared != "" {
+		ownerID, ownerName, heldEvent, found, ownerErr := plugins.FiscalSignExclusiveOwner(ctx, pluginRepo, nil, pluginID)
+		if ownerErr != nil {
+			return fail(http.StatusInternalServerError, "cannot enable %s: exclusivity check for %s failed: %v", pluginID, declared, ownerErr)
+		}
+		if found {
+			return fail(http.StatusConflict, "cannot enable %s: %s (%s) is already the active fiscal signing provider (holds %s) — %s is an exclusive extension point, one owner across %s; disable the active provider first",
+				pluginID, ownerName, ownerID, heldEvent, declared, strings.Join(plugins.FiscalSignExclusiveEvents, ", "))
+		}
+	}
+	// ADR-0106 Decision C: one active role:"preset" layout plugin.
+	declaresPreset, presetErr := pluginRepo.HasActiveLayoutRole(ctx, pluginID, uislot.PresetRole)
+	if presetErr != nil {
+		return fail(http.StatusInternalServerError, "cannot enable %s: layout preset exclusivity check failed: %v", pluginID, presetErr)
+	}
+	if declaresPreset {
+		ownerID, ownerName, found, ownerErr := plugins.LayoutPresetOwner(ctx, pluginRepo, nil, pluginID)
+		if ownerErr != nil {
+			return fail(http.StatusInternalServerError, "cannot enable %s: layout preset exclusivity check failed: %v", pluginID, ownerErr)
+		}
+		if found {
+			return fail(http.StatusConflict, "cannot enable %s: %s (%s) is already the active layout preset — only one preset can be active at a time (ADR-0106); disable the active preset first",
+				pluginID, ownerName, ownerID)
+		}
+	}
+	// ADR-0129 §2: a `fiscal.*` capability is exclusive across INSTALLED
+	// plugins (active or not).
+	provides, providesErr := pluginRepo.ListPluginProvides(ctx, pluginID)
+	var capability, fiscalOwnerID, fiscalOwnerName string
+	var fiscalFound bool
+	if providesErr == nil {
+		capability, fiscalOwnerID, fiscalOwnerName, fiscalFound, providesErr = plugins.FiscalProvidesConflict(ctx, pluginRepo, nil, pluginID, provides)
+	}
+	if providesErr != nil {
+		return fail(http.StatusInternalServerError, "cannot enable %s: fiscal capability exclusivity check failed: %v", pluginID, providesErr)
+	}
+	if fiscalFound {
+		return fail(http.StatusConflict, "cannot enable %s: %s (%s) already provides %s — only one installed plugin may provide each fiscal.* capability (ADR-0129); uninstall it first",
+			pluginID, fiscalOwnerName, fiscalOwnerID, capability)
+	}
+	return nil
 }
 
 // handleDisablePlugin disables a plugin (is_active=0); its entries drop out of
