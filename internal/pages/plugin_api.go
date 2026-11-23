@@ -492,7 +492,7 @@ type enableRefusal struct {
 
 func (e *enableRefusal) Error() string {
 	if e.GuardKey != "" {
-		return e.GuardKey
+		return "the marketplace has withdrawn this plugin version" // log text, English like other plugin_sync problems
 	}
 	return e.Msg
 }

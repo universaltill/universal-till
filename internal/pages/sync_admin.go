@@ -995,7 +995,13 @@ func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.Plu
 	var enables []data.PluginSyncRow
 	flip := func(row data.PluginSyncRow, on bool) bool {
 		if err := repo.SetPluginActive(ctx, nil, row.PluginID, on); err != nil {
-			logging.L().Errorf("plugin sync: set %s active=%v: %v", row.PluginID, on, err)
+			if on {
+				warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not switch %s (%s) on to follow the main till: %v",
+					row.PluginName, row.ListingID, err)
+			} else {
+				warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: the main till has %s (%s) off, but switching it off here failed, so it may still be on: %v",
+					row.PluginName, row.ListingID, err)
+			}
 			ok = false
 			return false
 		}
@@ -1013,7 +1019,8 @@ func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.Plu
 		}
 		_, _, installed, err := syncRepo.InstalledPluginVersion(ctx, row.PluginID)
 		if err != nil {
-			logging.L().Errorf("plugin sync: read local state for %s: %v", row.PluginID, err)
+			warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not read the local state of %s (%s) to follow the main till: %v",
+				row.PluginName, row.ListingID, err)
 			ok = false
 			continue
 		}
@@ -1022,7 +1029,8 @@ func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.Plu
 		}
 		cur, err := repo.PluginActive(ctx, row.PluginID)
 		if err != nil {
-			logging.L().Errorf("plugin sync: read enabled state of %s: %v", row.PluginID, err)
+			warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not read whether %s (%s) is on, to follow the main till: %v",
+				row.PluginName, row.ListingID, err)
 			ok = false
 			continue
 		}

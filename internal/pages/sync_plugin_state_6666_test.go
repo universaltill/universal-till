@@ -276,3 +276,29 @@ func TestFollowBundledState_MarketplaceRowDisabledIsOff(t *testing.T) {
 		t.Fatal("the main holds a DISABLED marketplace copy; the bundled plugin must follow it off")
 	}
 }
+
+// A failed local switch (the DB refuses the plugins UPDATE; injected with a
+// trigger since SetPluginActive has no seam) raises the keyed problem and
+// clears once the switch lands.
+func TestConvergePluginSet_FailedSwitchRaisesKeyedProblem(t *testing.T) {
+	dp := newDeps6666(t, "6666-failed-switch.db")
+	stubPluginSyncInstall(t, nil)
+	seed6666(t, dp, "LD", "com.test.fail-off", true, nil, false)
+	rows := []data.PluginSyncRow{row6666("LD", "com.test.fail-off", boolp6666(false))}
+	if _, err := dp.Db.ExecContext(t.Context(), `CREATE TRIGGER t6666_block BEFORE UPDATE ON plugins BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if convergePluginSet(t.Context(), dp, rows) {
+		t.Fatal("a failed switch must not report converged")
+	}
+	if !logging.HasOpenProblem("plugin_sync.state:LD") {
+		t.Fatalf("keyed state problem missing: %+v", logging.Recent())
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `DROP TRIGGER t6666_block`); err != nil {
+		t.Fatal(err)
+	}
+	convergePluginSet(t.Context(), dp, rows)
+	if active6666(t, dp, "com.test.fail-off") || logging.HasOpenProblem("plugin_sync.state:LD") {
+		t.Fatal("retry must switch off and clear the problem")
+	}
+}
