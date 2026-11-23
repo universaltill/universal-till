@@ -38,6 +38,7 @@ and `scope=subset`) wrote `sort_order` by code and moved the twin tile to the en
   ./internal/ui/ ./internal/data/`, `go test ./internal/pages/ -run 'Button|Reorder|Designer|Quick'`,
   guard-i18n, guard-i18n-meta, guard-help-topics, compliance, competitor naming, data-access.
 - No browser run: no new surface; the alert path is unchanged existing code.
+- CI round 1: `build` red on `guard-docs-shots_test.sh` (help prose changed, manifest topic hashes stale). Fixed by regenerating `web/help/img/manifest.json` with `node e2e/tests-docs/write-manifest.js` (only the en/sell and en/till-designer hashes moved; no screenshot changes, prose only); `guard-docs-shots.sh` and its test pass locally.
 
 Pre-flight: till user-visible behaviour → `web/help/` topics updated (till-designer, sell),
 docs-shots n/a (no visual change); `reference/` n/a (no reference page covers reorder);
