@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/restorenum"
 )
 
 // POSRepo centralizes DB access for POS handlers.
@@ -3712,7 +3713,9 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, sargs...)
 // after the backup, so JumpNumbersAfterRestore records a per-kind floor
 // (settings restore.z_floor.<kind>) and z_number = max(MAX(z_number),
 // floor)+1, the floor being the last Z plus the days since last activity. prev_z_number stays the real MAX(z_number), so the gap is
-// visible on the report.
+// visible on the report. z_number values outside [0, RestoreNumberMax] and a
+// floor that is not a valid one are ignored (ut-docs#6924), so the close never
+// overflows to REAL and is never blocked.
 //
 // "Gapless" describes allocation: no number is ever skipped or handed out
 // twice while the rows exist, except across a recorded restore jump. Age-based retention still applies on top --
@@ -3772,26 +3775,31 @@ func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, conten
 	query := `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt)
 SELECT ?, ?, ?, ?,
-  MAX(COALESCE(MAX(z_number), 0),
-      COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'restore.z_floor.' || ?), 0)) + 1,
-  MAX(z_number),
+  MAX(COALESCE(MAX(CASE WHEN z_number BETWEEN 0 AND ? THEN z_number END), 0),
+      ?) + 1,
+  MAX(CASE WHEN z_number BETWEEN 0 AND ? THEN z_number END),
   (SELECT created_at FROM report_archive
-     WHERE kind = ? AND z_number IS NOT NULL
+     WHERE kind = ? AND z_number IS NOT NULL AND z_number BETWEEN 0 AND ?
      ORDER BY z_number DESC LIMIT 1),
   ?, ?
 FROM report_archive WHERE kind = ?
 ON CONFLICT (kind, period) DO NOTHING`
-	args := []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt, kind}
+	// The floor is read in Go with the one shared parser (ut-docs#6924); it is
+	// written only by the boot-time jump, so reading it here is race-free.
+	var floorVal string
+	_ = r.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, RestoreZFloorKeyPrefix+kind).Scan(&floorVal)
+	floor, _ := restorenum.ParseFloor(floorVal)
+	args := []any{id, kind, period, string(content), RestoreNumberMax, floor, RestoreNumberMax, kind, RestoreNumberMax, firstReceipt, lastReceipt, kind}
 	if !closedAt.IsZero() {
 		closedAtStr := closedAt.UTC().Format(archiveTimestampFmt)
 		query = `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt, created_at)
 SELECT ?, ?, ?, ?,
-  MAX(COALESCE(MAX(z_number), 0),
-      COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'restore.z_floor.' || ?), 0)) + 1,
-  MAX(z_number),
+  MAX(COALESCE(MAX(CASE WHEN z_number BETWEEN 0 AND ? THEN z_number END), 0),
+      ?) + 1,
+  MAX(CASE WHEN z_number BETWEEN 0 AND ? THEN z_number END),
   (SELECT created_at FROM report_archive
-     WHERE kind = ? AND z_number IS NOT NULL
+     WHERE kind = ? AND z_number IS NOT NULL AND z_number BETWEEN 0 AND ?
      ORDER BY z_number DESC LIMIT 1),
   ?, ?, ?
 FROM report_archive WHERE kind = ?
@@ -3800,8 +3808,8 @@ HAVING (? != 'eod' OR NOT EXISTS (
   WHERE ra2.kind = 'eod'
     AND date(ra2.created_at, '-1 second', 'localtime') = date(?, '-1 second', 'localtime')))
 ON CONFLICT (kind, period) DO NOTHING`
-		args = []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt,
-			closedAtStr, kind, kind, closedAtStr}
+		args = []any{id, kind, period, string(content), RestoreNumberMax, floor, RestoreNumberMax, kind, RestoreNumberMax,
+			firstReceipt, lastReceipt, closedAtStr, kind, kind, closedAtStr}
 	}
 	var lastErr error
 	for range 3 {

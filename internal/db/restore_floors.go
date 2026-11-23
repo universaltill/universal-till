@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/restorenum"
 )
 
 // The restore jump's floor keys. They mirror data.RestoreReceiptFloorKey,
@@ -21,7 +23,7 @@ const (
 
 // restoreNumberMax mirrors data.RestoreNumberMax (ut-docs#6906): a larger
 // number is corrupt and ignored. TestRestoreFloorKeysMirrorData pins it.
-const restoreNumberMax int64 = 1_000_000_000_000_000
+const restoreNumberMax int64 = restorenum.Max
 
 // liveNumbers is what the live (about to be replaced) database knows about
 // the numbers it issued: its restore floors and its real maxima.
@@ -37,11 +39,7 @@ type liveNumbers struct {
 // parseRestoreFloor reads a stored floor; ok is false for anything that is
 // not a non-negative base-10 integer (such a value counts as absent).
 func parseRestoreFloor(s string) (int64, bool) {
-	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || v < 0 || v > restoreNumberMax {
-		return 0, false
-	}
-	return v, true
+	return restorenum.ParseFloor(s)
 }
 
 // readLiveNumbers reads the live DB's restore floors and, best effort, its

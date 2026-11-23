@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/restorenum"
 )
 
 // number_series (migration 108, ut-docs#6663) stores the last number issued
@@ -74,17 +76,24 @@ func nextInSeries(ctx context.Context, exec dbExecutor, kind, series string, flo
 // maxReceiptSeq is the highest receipt counter under prefix over live and
 // archived sales. For the empty prefix only unprefixed numbers count.
 func maxReceiptSeq(ctx context.Context, exec dbExecutor, prefix string) (int64, error) {
+	return maxReceiptSeqUpTo(ctx, exec, prefix, RestoreNumberMax)
+}
+
+// maxReceiptSeqUpTo is maxReceiptSeq counting only numbers <= limit; the
+// restore jump passes restoreInputMax so a corrupt in-bound row cannot push
+// its output past the bound (ut-docs#6924).
+func maxReceiptSeqUpTo(ctx context.Context, exec dbExecutor, prefix string, limit int64) (int64, error) {
 	var top int64
 	for _, tbl := range []string{"sales", "sales_archive"} {
 		var v sql.NullInt64
 		var err error
 		if prefix == "" {
 			err = exec.QueryRowContext(ctx, `SELECT MAX(CAST(receipt_no AS INTEGER)) FROM `+tbl+
-				` WHERE receipt_no NOT LIKE '%-%' AND CAST(receipt_no AS INTEGER) <= ?`, RestoreNumberMax).Scan(&v)
+				` WHERE receipt_no NOT LIKE '%-%' AND CAST(receipt_no AS INTEGER) <= ?`, limit).Scan(&v)
 		} else {
 			err = exec.QueryRowContext(ctx, `SELECT MAX(CAST(substr(receipt_no, ?) AS INTEGER)) FROM `+tbl+
 				` WHERE receipt_no LIKE ? || '%' AND CAST(substr(receipt_no, ?) AS INTEGER) <= ?`,
-				len(prefix)+1, prefix, len(prefix)+1, RestoreNumberMax).Scan(&v)
+				len(prefix)+1, prefix, len(prefix)+1, limit).Scan(&v)
 		}
 		if err != nil {
 			return 0, fmt.Errorf("max receipt in %s: %w", tbl, err)
@@ -132,10 +141,7 @@ func restoreFloor(ctx context.Context, exec dbExecutor, prefix string) int64 {
 		`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorKey).Scan(&floorVal); err != nil {
 		return 0
 	}
-	var f int64
-	if _, err := fmt.Sscan(floorVal, &f); err != nil || f < 0 || f > RestoreNumberMax {
-		return 0
-	}
+	f, _ := restorenum.ParseFloor(floorVal)
 	return f
 }
 

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/restorenum"
 )
 
 // Settings keys for the number jump after a backup restore (ut-docs#5068).
@@ -34,11 +37,17 @@ const (
 // RestoreNumberMax bounds a counter the jump believes (ut-docs#6906): a larger
 // receipt or Z number is corrupt, not a counter, and is ignored (never a lower
 // bound), so adding the jump cannot overflow. internal/db mirrors it.
-const RestoreNumberMax int64 = 1_000_000_000_000_000
+const RestoreNumberMax int64 = restorenum.Max
 
 const (
 	restoreMinJump       = 10000
 	restoreFloorRounding = 1000
+	// restoreJumpMax caps the jump and the days term (ut-docs#6924).
+	restoreJumpMax int64 = 100_000_000_000_000
+	// restoreInputMax is the highest number the jump believes: with the
+	// largest jump and the rounding added, its output still fits
+	// RestoreNumberMax, so every reader accepts what the jump writes.
+	restoreInputMax = RestoreNumberMax - restoreJumpMax - restoreFloorRounding
 )
 
 // RestoreMarker records a restore's number jump. The first day-close report
@@ -69,9 +78,16 @@ type RestoreJump struct {
 }
 
 // restoreJumpSize is max(10000, 2*peak*days): twice the busiest day ever
-// seen, for every day the dead till may have kept trading.
+// seen, for every day the dead till may have kept trading. It never exceeds
+// restoreJumpMax and cannot overflow (ut-docs#6924).
 func restoreJumpSize(peak, days int64) int64 {
+	if peak > 0 && days > restoreJumpMax/(2*peak) {
+		return restoreJumpMax
+	}
 	j := 2 * peak * days
+	if j > restoreJumpMax {
+		j = restoreJumpMax
+	}
 	if j < restoreMinJump {
 		j = restoreMinJump
 	}
@@ -111,6 +127,17 @@ func (r *POSRepo) JumpNumbersAfterRestore(ctx context.Context, now time.Time, to
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// believe reports whether a stored number is a usable counter: in
+	// [0, restoreInputMax]. Anything else is corrupt and ignored, with a
+	// warning so the gap is not silent (ut-docs#6924).
+	believe := func(what string, v int64) bool {
+		if v < 0 || v > restoreInputMax {
+			logging.L().Warnf("restore jump: ignoring %s %d outside 0..%d", what, v, restoreInputMax)
+			return false
+		}
+		return true
+	}
+
 	getSetting := func(key string) (string, error) {
 		var v string
 		err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
@@ -147,13 +174,13 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 	// archived sales and the stored counter (ut-docs#6663). Live sales alone
 	// are far below it on a till that cleared its history, and a floor
 	// under the counter would reserve nothing.
-	maxReceipt, err := maxReceiptSeq(ctx, tx, prefix)
+	maxReceipt, err := maxReceiptSeqUpTo(ctx, tx, prefix, restoreInputMax)
 	if err != nil {
 		return out, fmt.Errorf("restore jump: last receipt: %w", err)
 	}
 	if last, _, ok, err := seriesLast(ctx, tx, numberKindReceipt, prefix); err != nil {
 		return out, fmt.Errorf("restore jump: receipt counter: %w", err)
-	} else if ok && last > maxReceipt && last <= RestoreNumberMax {
+	} else if ok && last > maxReceipt && believe("receipt counter", last) {
 		maxReceipt = last
 	}
 	lastReceipt := maxReceipt
@@ -164,7 +191,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 		if err != nil {
 			return out, fmt.Errorf("restore jump: receipt floor: %w", err)
 		}
-		if f, perr := strconv.ParseInt(fv, 10, 64); perr == nil && f > lastReceipt && f <= RestoreNumberMax {
+		if f, ok := restorenum.ParseFloor(fv); ok && f > lastReceipt && believe("receipt floor", f) {
 			lastReceipt = f
 		}
 	}
@@ -186,6 +213,9 @@ SELECT MAX(t) FROM (
 			lastActivityAt = la.UTC().Format(time.RFC3339)
 			if d := now.Sub(la); d > 0 {
 				days = int64((d+24*time.Hour-1)/(24*time.Hour)) + 1
+			}
+			if days > restoreJumpMax {
+				days = restoreJumpMax
 			}
 		}
 	}
@@ -226,8 +256,8 @@ SELECT COALESCE(MAX(n), 0) FROM (
 	for kind := range kinds {
 		var maxZ int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COALESCE(MAX(z_number), 0) FROM report_archive WHERE kind = ? AND z_number <= ?`,
-			kind, RestoreNumberMax).Scan(&maxZ); err != nil {
+			`SELECT COALESCE(MAX(z_number), 0) FROM report_archive WHERE kind = ? AND z_number BETWEEN 0 AND ?`,
+			kind, restoreInputMax).Scan(&maxZ); err != nil {
 			return out, fmt.Errorf("restore jump: last z (%s): %w", kind, err)
 		}
 		base := maxZ
@@ -235,7 +265,7 @@ SELECT COALESCE(MAX(n), 0) FROM (
 		if err != nil {
 			return out, fmt.Errorf("restore jump: z floor (%s): %w", kind, err)
 		}
-		if f, perr := strconv.ParseInt(fv, 10, 64); perr == nil && f > base && f <= RestoreNumberMax {
+		if f, ok := restorenum.ParseFloor(fv); ok && f > base && believe("z floor ("+kind+")", f) {
 			base = f
 		}
 		zFloor := base + days

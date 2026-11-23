@@ -2,9 +2,12 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/restorenum"
 )
 
 func seedRestoreSale(t *testing.T, dbx *posTestDB, receiptNo string, at time.Time) {
@@ -382,4 +385,119 @@ func TestJumpNumbersAfterRestore_HugePrefixedReceiptNoIgnored(t *testing.T) {
 	if j.ReceiptFrom != 10 || j.ReceiptFloor != 11000 {
 		t.Fatalf("from=%d floor=%d, want 10, 11000", j.ReceiptFrom, j.ReceiptFloor)
 	}
+}
+
+// ut-docs#6924: the jump's own output must stay inside the bound every reader
+// accepts, even with a corrupt but in-bound number next to a real one.
+func TestJumpNumbersAfterRestore_NearBoundReceiptNeverPassesBound(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreSale(t, dbx, "000000010", now.Add(-time.Hour))
+	seedRestoreSale(t, dbx, "999999999999999", now.Add(-time.Hour))
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ReceiptFrom != 10 || j.ReceiptFloor != 11000 {
+		t.Fatalf("from=%d floor=%d, want 10, 11000", j.ReceiptFrom, j.ReceiptFloor)
+	}
+	if got := restoreFloor(context.Background(), dbx.d.DB, ""); got != j.ReceiptFloor || got > RestoreNumberMax {
+		t.Fatalf("restoreFloor=%d, want %d within bound", got, j.ReceiptFloor)
+	}
+}
+
+func TestJumpNumbersAfterRestore_NearBoundZNeverPassesBound(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreZ(t, dbx, "eod", 4, now.Add(-time.Hour))
+	seedRestoreZ(t, dbx, "eod", 999999999999999, now.Add(-time.Hour))
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ZFrom["eod"] != 4 || j.ZFloor["eod"] != 6 {
+		t.Fatalf("zfrom=%d zfloor=%d, want 4, 6", j.ZFrom["eod"], j.ZFloor["eod"])
+	}
+	if got, ok := restorenum.ParseFloor(restoreSettingValue(t, dbx, RestoreZFloorKeyPrefix+"eod")); !ok || got != 6 {
+		t.Fatalf("stored z floor = %d ok=%v, want 6", got, ok)
+	}
+}
+
+func TestRestoreJumpSize_Capped(t *testing.T) {
+	for _, c := range [][2]int64{{1 << 62, 1 << 40}, {1 << 40, 1 << 40}, {1 << 62, 3}, {restoreJumpMax, restoreJumpMax}} {
+		if got := restoreJumpSize(c[0], c[1]); got != restoreJumpMax {
+			t.Fatalf("restoreJumpSize(%d,%d) = %d, want %d", c[0], c[1], got, restoreJumpMax)
+		}
+	}
+}
+
+func TestJumpNumbersAfterRestore_NegativeFloorsAndZIgnored(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	seedRestoreZ(t, dbx, "eod", -3, now.Add(-time.Hour))
+	setRestoreSetting(t, dbx, RestoreReceiptFloorKey, "-50")
+	setRestoreSetting(t, dbx, RestoreReceiptFloorPrefixKey, "")
+	setRestoreSetting(t, dbx, RestoreZFloorKeyPrefix+"eod", "-50")
+	j, err := dbx.repo.JumpNumbersAfterRestore(context.Background(), now, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ZFrom["eod"] != 0 || j.ZFloor["eod"] != j.Days || j.Days != 2 || j.ReceiptFloor != 10000 {
+		t.Fatalf("zfrom=%d zfloor=%d days=%d receipt=%d, want 0, 2, 2, 10000", j.ZFrom["eod"], j.ZFloor["eod"], j.Days, j.ReceiptFloor)
+	}
+}
+
+func archiveTypeOf(t *testing.T, dbx *posTestDB, kind, period string) (typ string, z int64, prevZ sql.NullInt64, prevAt sql.NullString) {
+	t.Helper()
+	if err := dbx.d.DB.QueryRow(`SELECT typeof(z_number), z_number, prev_z_number, prev_closed_at FROM report_archive WHERE kind = ? AND period = ?`,
+		kind, period).Scan(&typ, &z, &prevZ, &prevAt); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func TestArchiveReport_HugeZNumberIgnored(t *testing.T) {
+	for _, withClosedAt := range []bool{false, true} {
+		dbx := newPOSLifecycleTestDB(t)
+		now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+		kind := "x"
+		var closedAt time.Time
+		if withClosedAt {
+			kind, closedAt = "eod", now
+		}
+		seedRestoreZ(t, dbx, kind, 4, now.Add(-72*time.Hour))
+		seedRestoreZ(t, dbx, kind, 9223372036854775807, now.Add(-48*time.Hour))
+		created, err := dbx.repo.ArchiveReport(context.Background(), kind, "new", []byte("{}"), "", "", closedAt)
+		if err != nil || !created {
+			t.Fatalf("closedAt=%v created=%v err=%v", withClosedAt, created, err)
+		}
+		typ, z, prevZ, prevAt := archiveTypeOf(t, dbx, kind, "new")
+		want := now.Add(-72 * time.Hour).UTC().Format(archiveTimestampFmt)
+		if typ != "integer" || z != 5 || !prevZ.Valid || prevZ.Int64 != 4 || prevAt.String != want {
+			t.Fatalf("closedAt=%v typeof=%s z=%d prev=%v prevAt=%v, want integer 5 4 %s", withClosedAt, typ, z, prevZ, prevAt, want)
+		}
+	}
+}
+
+func TestArchiveReport_HugeOrGarbageZFloorIgnored(t *testing.T) {
+	for _, v := range []string{"9223372036854775807", "1000000000000001", "1e18", "12abc", "-5"} {
+		dbx := newPOSLifecycleTestDB(t)
+		setRestoreSetting(t, dbx, RestoreZFloorKeyPrefix+"x", v)
+		if _, err := dbx.repo.ArchiveReport(context.Background(), "x", "p", []byte("{}"), "", "", time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		typ, z, _, _ := archiveTypeOf(t, dbx, "x", "p")
+		if typ != "integer" || z != 1 {
+			t.Fatalf("floor %q: typeof=%s z=%d, want integer 1", v, typ, z)
+		}
+	}
+}
+
+func restoreSettingValue(t *testing.T, dbx *posTestDB, key string) string {
+	t.Helper()
+	var v string
+	if err := dbx.d.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
 }
