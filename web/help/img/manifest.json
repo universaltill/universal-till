@@ -358,7 +358,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "b2c7b022f911130f0a56ba8a6dff5d74aaaf3fd9cc88855069ed54ad45e609aa"
+      "sha256": "fb98eb7943f729030fb867e8a0d5912da9396acaecd275adc192227d5b5fef39"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -733,7 +733,7 @@
       "sha256": "0a4c96455da7b00c6ef5b07599ca66e5601064b809a73164adb1c9061e0043e3"
     },
     "internal/pages/tax_autoinstall.go": {
-      "sha256": "86527aa8077b2a029e72576d7ccf5085ba31d0dd8a363beb63c6859898ac8c42"
+      "sha256": "7e7899a0e9f51d941878d020dbd8b555db24f7ef7bef34af2a9a37520bdd048d"
     },
     "internal/pages/tax_codes_page.go": {
       "sha256": "5d8db3b030a2ffed5493ecc4d078de437aaeb8236cb09e91f4c621a05b87178f"

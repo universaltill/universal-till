@@ -1412,26 +1412,38 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// 0d. fiscal.sign.ask is an `exclusive` extension point (ADR-0041
 	// Decision B): a manifest declaring it while a DIFFERENT active plugin
 	// already holds the point must be rejected here, loudly, on BOTH
-	// install and update — this persist activates the plugin, so letting
-	// it through would mint a second active answerer with no /enable ever
-	// involved (review of ut-docs#675, B2).
-	if err := validateExclusiveHookOwnership(ctx, repo, tx, m.ID, m.Hooks); err != nil {
-		return err
+	// install and update — this persist activates the plugin (unless
+	// opts.InstallInactive), so letting it through would mint a second active
+	// answerer with no /enable ever involved (review of ut-docs#675, B2). An
+	// install that lands inactive cannot mint a second ACTIVE answerer, so it
+	// is not checked here when the replica sync asks to skip it
+	// (SkipActiveOwnerChecks); the enable-time gate (pluginEnableRefusal)
+	// checks it when it is switched on (ut-docs#6930, ADR-0041 B).
+	if !(opts.InstallInactive && opts.SkipActiveOwnerChecks) {
+		if err := validateExclusiveHookOwnership(ctx, repo, tx, m.ID, m.Hooks); err != nil {
+			return err
+		}
 	}
 
 	// 0g. A role:"preset" layout entry is mutually exclusive with any OTHER
 	// active preset (ADR-0106 Decision C): same shape and same reasoning as
-	// 0d — this persist activates the plugin, so letting a second preset
-	// through would mint two active arrangements with no /enable involved.
+	// 0d — this persist activates the plugin (unless opts.InstallInactive), so
+	// letting a second preset through would mint two active arrangements with
+	// no /enable involved. An inactive install cannot (ADR-0106 C: "a second
+	// ACTIVE preset owner"); it is checked when switched on (ut-docs#6930).
 	// Runs before 0f so a DB error here is unambiguously this check's (its
 	// query reads the same plugin_entries table 0f reads).
-	if err := validateLayoutPresetExclusivity(ctx, repo, tx, m.ID, m.Entries); err != nil {
-		return err
+	if !(opts.InstallInactive && opts.SkipActiveOwnerChecks) {
+		if err := validateLayoutPresetExclusivity(ctx, repo, tx, m.ID, m.Entries); err != nil {
+			return err
+		}
 	}
 
 	// 0i. A `fiscal.*` capability in `provides` is exclusive across
 	// installed plugins (ADR-0129 §2): a second §146a register owner or
 	// fiscal-device provider is refused here, before anything is written.
+	// Runs for an inactive install too: `fiscal.*` exclusivity is
+	// installed-based (ADR-0129 §2).
 	if err := validateFiscalProvidesExclusivity(ctx, repo, tx, m.ID, m.Provides); err != nil {
 		return err
 	}
@@ -1655,8 +1667,18 @@ type InstallOptions struct {
 	// InstallInactive lands the plugin disabled, inside the persist
 	// transaction (the default persist activates it). Used by the bundled set:
 	// a first install is off until the shop turns it on, and an app update
-	// keeps a plugin the shop had switched off, off.
+	// keeps a plugin the shop had switched off, off. On its own it does NOT
+	// skip the ACTIVE-owner exclusivity checks (see SkipActiveOwnerChecks); the
+	// installed-based `fiscal.*` provides check always runs. Callers: the
+	// bundled set and the replica plugin sync (ut-docs#6930).
 	InstallInactive bool
+	// SkipActiveOwnerChecks skips the two ACTIVE-owner exclusivity checks
+	// (fiscal-sign hook group, layout preset) for this persist. Only honoured
+	// together with InstallInactive; set only by the replica plugin sync,
+	// which mirrors its main till's state and re-checks at enable time
+	// (ADR-0011 amendment, ut-docs#6930). The bundled installer must not set
+	// it: its later enables are not gated by pluginEnableRefusal.
+	SkipActiveOwnerChecks bool
 }
 
 // The sales-channel manifest block (ADR-0169, ut-docs#4759; validation in

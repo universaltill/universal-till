@@ -1669,15 +1669,24 @@ func cloudInstallPlugin(ctx context.Context, d *common.Deps, listingID string) (
 // (a primary pinned behind latest would otherwise silently fork its
 // replicas). version=="" keeps the unpinned latest-release behavior.
 func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string) (string, error) {
-	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil)
+	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil, false)
+}
+
+// cloudSyncInstallPluginVersion is the replica plugin sync's install
+// (convergePluginSet): cloudInstallPluginVersion, landing the plugin switched
+// off when the main till has it off (ut-docs#6930) — never active, not even
+// for one reload, before the enabled-state follow.
+func cloudSyncInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string, inactive bool) (string, error) {
+	return cloudInstallPluginVersionChecked(ctx, d, listingID, version, nil, inactive)
 }
 
 // cloudInstallPluginVersionChecked is cloudInstallPluginVersion with an
 // optional extra gate on the verified bundle (plugins.PreInstallCheck,
 // ADR-0172 §2.4/§3). It is the SAME install path: same download, same
 // Ed25519 verification, same persist; the gate only adds a refusal before
-// anything is persisted.
-func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck) (string, error) {
+// anything is persisted. inactive lands the plugin switched off in the persist
+// transaction (ut-docs#6930).
+func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listingID, version string, pre plugins.PreInstallCheck, inactive bool) (string, error) {
 	// ADR-0194 (Apple 2.5.2): a cloud directive, a replica convergence or an
 	// auto-install never fetches a code plugin on the App Store build. Before
 	// any status write or network use; the bundled set is the only code there.
@@ -1783,15 +1792,19 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 		return "", err
 	}
 	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
-		ListingID:     listingID,
-		CanonicalType: listingType,
-		TrustTier:     listingCatalogTier(d, listingID),
-		Version:       version,
-		MerchantID:    effCfg.Marketplace.ClientID,
-		StoreID:       effCfg.Marketplace.StoreID,
-		DeviceID:      marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
-		DeviceArch:    fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-		PreInstall:    pre,
+		ListingID:       listingID,
+		CanonicalType:   listingType,
+		TrustTier:       listingCatalogTier(d, listingID),
+		Version:         version,
+		MerchantID:      effCfg.Marketplace.ClientID,
+		StoreID:         effCfg.Marketplace.StoreID,
+		DeviceID:        marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+		DeviceArch:      fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		PreInstall:      pre,
+		InstallInactive: inactive,
+		// Replica plugin sync mirrors the main till's state; the active-owner
+		// checks run at enable time instead (ADR-0011 amendment, #6930).
+		SkipActiveOwnerChecks: inactive,
 		OnStateChange: func(state plugins.InstallLifecycleState) {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{ListingID: listingID, State: state})
 		},
@@ -1899,6 +1912,9 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 		_ = statusStore.Save(ctx, rec)
 		return "", fmt.Errorf("installed version %s does not match requested version %s", result.Version, version)
 	}
+	// InstallStateActive tracks the install lifecycle (installed and
+	// converged), not the plugin's is_active flag: an inactive replica install
+	// is still recorded Active here (ut-docs#6930).
 	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
 		ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
 		CurrentVersion: result.Version, State: plugins.InstallStateActive,
@@ -1907,7 +1923,11 @@ func cloudInstallPluginVersionChecked(ctx context.Context, d *common.Deps, listi
 	// handleInstallFromMarketplace — a directive/sync install (or pinned
 	// upgrade) of the German tax plugin folds the catalog's pinned takeaway
 	// rates into takeaway_rate_overrides, add-only. Best-effort, logged.
-	reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
+	// An inactive install (the main has it off, ut-docs#6930) is not an
+	// activation: no takeaway reconcile (the replica gets it via admin sync).
+	if !inactive {
+		reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
+	}
 	// ReloadPlugins nil-checks d.Pm (this path used to dereference it bare
 	// while cloudRemovePlugin checked — now both are safe) and serializes
 	// the reload + menu rebuild against every other lifecycle call site.

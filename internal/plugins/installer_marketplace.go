@@ -55,6 +55,14 @@ type MarketplaceInstallRequest struct {
 	// check (ADR-0172 §2.4, §3: the auto-installed tax plugin's eligibility
 	// and first-load check).
 	PreInstall PreInstallCheck
+	// InstallInactive lands the plugin switched off inside the persist
+	// transaction (InstallOptions.InstallInactive): the replica plugin sync
+	// installing a listing its main till has off (ut-docs#6930). Same download,
+	// same verification; only the persisted active state differs.
+	InstallInactive bool
+	// SkipActiveOwnerChecks: see InstallOptions.SkipActiveOwnerChecks; only
+	// honoured with InstallInactive (replica plugin sync, ut-docs#6930).
+	SkipActiveOwnerChecks bool
 }
 
 // PreInstallCheck is a caller's extra gate on a verified bundle: manifest is
@@ -231,14 +239,16 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	i.emitState(ctx, req, InstallStateInstalling, "")
 
 	return i.installBundleFile(ctx, bundleInstallSpec{
-		BundlePath: downloadResult.FilePath,
-		ListingID:  req.ListingID,
-		Checksum:   tokenResp.ChecksumSHA256,
-		Signature:  tokenResp.Signature,
-		SourceURL:  tokenResp.BundleURL,
-		TrustTier:  req.TrustTier,
-		DeviceArch: req.DeviceArch,
-		PreInstall: req.PreInstall,
+		BundlePath:            downloadResult.FilePath,
+		ListingID:             req.ListingID,
+		Checksum:              tokenResp.ChecksumSHA256,
+		Signature:             tokenResp.Signature,
+		SourceURL:             tokenResp.BundleURL,
+		TrustTier:             req.TrustTier,
+		DeviceArch:            req.DeviceArch,
+		PreInstall:            req.PreInstall,
+		InstallInactive:       req.InstallInactive,
+		SkipActiveOwnerChecks: req.SkipActiveOwnerChecks,
 	})
 }
 
@@ -252,6 +262,10 @@ type bundleInstallSpec struct {
 	TrustTier  string
 	DeviceArch string
 	PreInstall PreInstallCheck
+	// InstallInactive: see MarketplaceInstallRequest.InstallInactive.
+	InstallInactive bool
+	// SkipActiveOwnerChecks: see MarketplaceInstallRequest.SkipActiveOwnerChecks.
+	SkipActiveOwnerChecks bool
 }
 
 // installBundleFile extracts, verifies (signature, compatibility, executable)
@@ -410,10 +424,12 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	}
 
 	if err := PersistManifest(ctx, i.db, manifest, InstallOptions{
-		InstalledFromURL: spec.SourceURL,
-		SHA256:           spec.Checksum,
-		TrustLevel:       marketplaceTrustTier(spec.TrustTier),
-		Uploader:         "marketplace",
+		InstalledFromURL:      spec.SourceURL,
+		SHA256:                spec.Checksum,
+		TrustLevel:            marketplaceTrustTier(spec.TrustTier),
+		Uploader:              "marketplace",
+		InstallInactive:       spec.InstallInactive,
+		SkipActiveOwnerChecks: spec.SkipActiveOwnerChecks,
 	}); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return nil, fmt.Errorf("persist plugin manifest: %w", err)

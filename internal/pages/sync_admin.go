@@ -857,8 +857,9 @@ const (
 // pluginSyncInstall is convergePluginSet's marketplace install call — a
 // package-level seam so tests can drive the follow path without the network
 // (ut-docs#2984). Restore the original value (e.g. via t.Cleanup) after
-// swapping it.
-var pluginSyncInstall = cloudInstallPluginVersion
+// swapping it. inactive=true installs the plugin switched off (the main has
+// it off, ut-docs#6930).
+var pluginSyncInstall = cloudSyncInstallPluginVersion
 
 // pluginSyncRemove is convergePluginSet's uninstall call — a seam so tests
 // can fail it without a half-installed plugin on disk (ut-docs#2862).
@@ -1128,7 +1129,11 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			warnPluginSyncOnce(pluginSyncBrokenKeyPrefix+row.ListingID, "plugin sync: %s (%s@%s) is broken locally (registered but not loadable) — re-fetching from the marketplace",
 				row.PluginName, row.ListingID, row.Version)
 		}
-		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version); err != nil {
+		// The main has it off (an explicit false — a missing field never means
+		// off, ADR-0011 #6666 amendment): install it off, so it never runs here
+		// and an exclusive group it shares with an active plugin cannot refuse it.
+		inactive := row.Enabled != nil && !*row.Enabled
+		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version, inactive); err != nil {
 			// ADR-0169: a plugin that runs in the cloud (type `channel`) can
 			// never be installed on a till, so there is nothing to follow —
 			// not a failure to retry every tick.
@@ -1148,9 +1153,10 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	}
 
 	// The main's enabled state, applied to every listing independent of the
-	// install results above (ut-docs#6666): after the installs, so a fresh
-	// install the main has off is switched off in the same tick, and before
-	// the prune, which never touches a disabled-but-listed plugin.
+	// install results above (ut-docs#6666): after the installs; an install the
+	// main has off already landed off (ut-docs#6930), so the follow only flips
+	// plugins that were installed before, and before the prune, which never
+	// touches a disabled-but-listed plugin.
 	stateOK, stateChanged := followMarketplaceState(ctx, d, rows)
 	if !stateOK {
 		converged = false

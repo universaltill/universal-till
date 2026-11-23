@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1125,5 +1126,56 @@ func TestRollbackDiscardingCurrent_DoesNotSnapshotTheVersionLeft(t *testing.T) {
 		if !rm.HasVersion(pluginID, v) {
 			t.Fatalf("good snapshot %s was evicted", v)
 		}
+	}
+}
+
+// ut-docs#6930: rolling back an INACTIVE plugin (a replica-synced listing the
+// main till has off) must not trip the active-owner check against the
+// currently active preset, and must leave it inactive.
+func TestRollback_InactivePresetRollsBackAndStaysInactive(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(d.DB, base)
+	repo := data.NewPluginRepo(d.DB)
+
+	x := layoutPresetManifest("com.x.preset", map[string]any{"key": "/tables", "hide": true})
+	if err := PersistManifest(ctx, d.DB, x, InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	y1 := layoutPresetManifest("com.y.preset", map[string]any{"key": "/kitchen-stations", "hide": true})
+	if err := PersistManifest(ctx, d.DB, y1, InstallOptions{InstallInactive: true, SkipActiveOwnerChecks: true}); err != nil {
+		t.Fatal(err)
+	}
+	y2 := layoutPresetManifest("com.y.preset", map[string]any{"key": "/kitchen-stations", "hide": true})
+	y2.Version = "2.0.0"
+	if err := PersistManifest(ctx, d.DB, y2, InstallOptions{InstallInactive: true, SkipActiveOwnerChecks: true}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "com.y.preset", "versions", "1.0.0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(y1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rm.Rollback(ctx, "com.y.preset", "1.0.0", "tester"); err != nil {
+		t.Fatalf("rolling back an inactive preset must succeed, got %v", err)
+	}
+	var ver string
+	if err := d.DB.QueryRow(`SELECT version FROM plugins WHERE id = 'com.y.preset'`).Scan(&ver); err != nil || ver != "1.0.0" {
+		t.Fatalf("version = %q err %v, want 1.0.0", ver, err)
+	}
+	if pluginIsActive(t, repo, "com.y.preset") {
+		t.Fatal("rollback switched the inactive plugin on")
+	}
+	id, _, found, err := repo.ActiveLayoutRoleOwner(ctx, nil, "preset", "")
+	if err != nil || !found || id != "com.x.preset" {
+		t.Fatalf("active preset owner = %q found=%v err=%v, want com.x.preset", id, found, err)
 	}
 }
