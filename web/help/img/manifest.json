@@ -295,10 +295,10 @@
       "sha256": "a0931b7243bc31f483adb06acb473165e55cfd79a9efc803d0f8d0f0ee957bdf"
     },
     "internal/pages/card_reader_tender.go": {
-      "sha256": "1c0c8453c54acd97d482390355bfb7a9c5fd042390a51dd461fc55fe06251699"
+      "sha256": "54c4b62dbaa2eb984922e58e04a682565591eaae1142012bbf3276099e805add"
     },
     "internal/pages/card_readers_page.go": {
-      "sha256": "89b0dfce8914c5821c72d25e0555513dcff71791a37d2ef2a8a122fd94e227cb"
+      "sha256": "1a8ebc18a4baaef69e6bc03be92e50d9f697c10397dfd285d490f5e8882e9173"
     },
     "internal/pages/catalog/handlers.go": {
       "sha256": "716b360b442a5577c5514eb39aff310954f1157e9ed60e99053097dc4f3334a5"
@@ -496,7 +496,7 @@
       "sha256": "d13c44afd30f7548130f13c603e58e9de35a6d17e992226cfa5a801694597092"
     },
     "internal/pages/index_page.go": {
-      "sha256": "b777364664a82650ea0d3df1ddc2810b2ea5744ca26e1c9bbbef926b8d07fd41"
+      "sha256": "07982075014c62777125b11e220d77cebb2a33d82378ba5dc39b58124371171a"
     },
     "internal/pages/init.go": {
       "sha256": "7a5f040e28a18b725605ffe5a0c4b5b0d5137e3117de00da678c9dd57f11dda3"
@@ -731,6 +731,9 @@
     },
     "internal/pages/tap_gate.go": {
       "sha256": "0a4c96455da7b00c6ef5b07599ca66e5601064b809a73164adb1c9061e0043e3"
+    },
+    "internal/pages/tap_offering.go": {
+      "sha256": "234511337811e9d10876db927659905fca7e0ae7ed3c83708a809233ffdef738"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "86527aa8077b2a029e72576d7ccf5085ba31d0dd8a363beb63c6859898ac8c42"
