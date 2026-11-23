@@ -34,7 +34,7 @@ const DirectiveType = "set_plugin_secret"
 
 // Reason codes (the whole result message on a failure).
 const (
-	ReasonNoTillKey        = "no_till_key"
+	ReasonNoKeyPair        = "no_till_key"
 	ReasonKIDMismatch      = "kid_mismatch"
 	ReasonPluginNotInstall = "plugin_not_installed"
 	ReasonSettingNotSecret = "setting_not_secret"
@@ -208,7 +208,7 @@ func (a *Applier) apply(ctx context.Context, d Directive) (string, error) {
 	}
 	kid, haveKey := a.Keys.CurrentKID()
 	if !haveKey {
-		return "", fail(ReasonNoTillKey)
+		return "", fail(ReasonNoKeyPair)
 	}
 	parts := strings.Split(d.SecretSealed, ".")
 	if len(parts) != 4 || parts[0] != "v1" {
