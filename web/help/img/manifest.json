@@ -418,7 +418,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "36b04459c52deabed9f094e3241b5983a1918d9c5a4a5cb509524dcc136f753e"
+      "sha256": "e10e7452f89b3fe0b12e989645820a1ea135244bd973df053a9d1fe4d651ea13"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -706,7 +706,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "4ce247c9133f077c51a0318f77b9ab206432ee1a8465e7f805c4b27ec3cac088"
+      "sha256": "23af9b611cf6ceed2f0fa2164e122e81af9229a90649aeecdafd86c5b1169837"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
@@ -1744,7 +1744,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "2997636a7bb64e55d9d6d3fcc8cec70216cf9f4fa8274cb71396e5b7b7e15598"
+      "sha256": "4d9fe8950fd1fcc2e806c4268edcdff14d32e28185e96f4cc060455b9d31e27d"
     },
     "web/ui/pages/setup.html": {
       "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"
