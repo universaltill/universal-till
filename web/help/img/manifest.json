@@ -57,7 +57,7 @@
       "tr": "992123d36e434056277c803997866daac7304a1bcaeb84a496e354faaa3fcff9"
     },
     "claim": {
-      "en": "629fd02e5f3b26be0cc91b64a8c531249c374b2b74ed266f9819ac32680508ca",
+      "en": "d596fa1020e377741834c5aedfaec0a8659a050914de186782747f0d1c4472df",
       "fa": "1e5f2405e342747468f46399562da85c84e7fbeafa43cf11d4c3c0f6c0bfa041",
       "ar": "65c9357fbc4c6463e0ac73fd7c6446f9a3b2110d00594adf66dcbfdf7361d554",
       "tr": "1c48b1ccc64dc47d5517bfb60c1b220a82b5c0e20b768f3b1a0507792e0bfd98"
@@ -664,7 +664,7 @@
       "sha256": "8fc63aa9acc57b167c81f053448fe13c4a6a8be95f0559d8d8902f973300e07f"
     },
     "internal/pages/settings_page.go": {
-      "sha256": "abb9eeb19738b7a657c39f9995fe2d1654a8d63ee55656e9b81a7ac5dfa9c7f4"
+      "sha256": "b8f8a61ef6115781078ac966aa1d9c9ee241783868c4ba09d41d75e55bf395eb"
     },
     "internal/pages/settings_shopwide_lock.go": {
       "sha256": "256dad5ca64956f0c1db4436bea6b0f2dd7afafd14851dd9b34ddb7ea7d7cc1c"
@@ -742,7 +742,7 @@
       "sha256": "2725ff94c7849d932db80656abbb502a5a56d8e6484c6bfedd7617e271d05c14"
     },
     "internal/pages/tap_settings_page.go": {
-      "sha256": "ce4c488298c74788981bd89baee08101ef0317d566573bfcefc6bd4e275eaa85"
+      "sha256": "aa4d9ad708af2b4e19b23aba07d2e341813ca80425a65eb032affe92c3b15cce"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "7e7899a0e9f51d941878d020dbd8b555db24f7ef7bef34af2a9a37520bdd048d"
@@ -1747,7 +1747,7 @@
       "sha256": "201f47fb9135eb173ce6aee03e1d7e3ca13283cacc471b926c0a24a2a6db3575"
     },
     "web/ui/pages/settings.html": {
-      "sha256": "70b688e76a4fd393d50d9e6ce077628cbcd95538bd353ce8ea7705239163b19c"
+      "sha256": "5277b83042d6d8e4d049b537d0e1fa4a2058e151bb08a182a7d8108885c579f9"
     },
     "web/ui/pages/setup.html": {
       "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"
