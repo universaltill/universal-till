@@ -1,0 +1,103 @@
+name: app-store-submit
+# App Store review submission (ut-docs#6413, epic ut-docs#6380, ADR-0194).
+#
+# Takes a build that ios-testflight.yml already uploaded and processed, and
+# prepares the App Store version for review: reuses the open version (PATCH
+# versionString; a new one only if none is editable, manual release), attaches
+# the build, makes sure a phased release exists (starts INACTIVE: it begins
+# when the owner releases the version), and submits only when dry_run is false.
+# The logic lives in scripts/asc-submit (fixture-tested, no network in tests).
+#
+# Safety:
+#   - workflow_dispatch only. NEVER push / pull_request / pull_request_target:
+#     a fork PR must not reach the App Store Connect key.
+#   - dry_run defaults to true: read-only, prints the plan, writes nothing.
+#   - environment `app-store-review` (owner required reviewer, admin bypass off,
+#     branch main only; ut-infra unitill-infra/github-universal-till): every
+#     run, dry or real, waits for the owner.
+#   - a real submit is also held shut by the store guard switch (ut-docs#2592
+#     pattern, scripts/ci/guard-store-private.sh): scripts/asc-submit refuses
+#     until store-release/apple.opened exists and names the owner's opening
+#     card (ut-docs#6414). This workflow deliberately carries NO
+#     store-release:allow marker yet, and the guard fails if that file ever
+#     appears without one. Review submissions are manual and 7-day phased.
+#   - ubuntu-latest (public repo: never self-hosted); the key is written under
+#     $RUNNER_TEMP with umask 077 / chmod 600, reaches scripts via env only,
+#     and is removed in an always() step. Nothing secret is echoed.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version to submit, e.g. 0.36.2"
+        required: true
+        type: string
+      build:
+        description: "Build number (CFBundleVersion) to attach, e.g. 63.1 (see the ios-testflight run summary)"
+        required: true
+        type: string
+      dry_run:
+        description: "Read-only plan; false = write and submit (needs store-release/apple.opened)"
+        required: true
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: app-store-submit
+  cancel-in-progress: false
+jobs:
+  submit:
+    if: github.repository == 'universaltill/universal-till'
+    environment: app-store-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check the inputs and the ref
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "::error::version must be N, N.N or N.N.N"; exit 1; }
+          [[ "$BUILD" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "::error::build must be numeric, e.g. 63.1"; exit 1; }
+          if [ "$DRY_RUN" != "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::a real submit runs from main only"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Write the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::error::ASC_KEY_ID / ASC_KEY_P8 secrets are not set"
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          printf '%s' "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          chmod 600 "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8"
+      - name: Prepare and submit the App Store version
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          go run ./scripts/asc-submit \
+            -key-path "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8" \
+            -key-id "$ASC_KEY_ID" -issuer-id "$ASC_ISSUER_ID" \
+            -bundle-id com.universaltill.pos \
+            -version "$VERSION" -build "$BUILD" \
+            -dry-run="$DRY_RUN" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Remove the API key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/private_keys"
