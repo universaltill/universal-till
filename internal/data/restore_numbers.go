@@ -34,7 +34,7 @@ const (
 // RestoreNumberMax bounds a counter the jump believes (ut-docs#6906): a larger
 // receipt or Z number is corrupt, not a counter, and is ignored (never a lower
 // bound), so adding the jump cannot overflow. internal/db mirrors it.
-const RestoreNumberMax = 1_000_000_000_000_000
+const RestoreNumberMax int64 = 1_000_000_000_000_000
 
 const (
 	restoreMinJump       = 10000

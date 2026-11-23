@@ -21,7 +21,7 @@ const (
 
 // restoreNumberMax mirrors data.RestoreNumberMax (ut-docs#6906): a larger
 // number is corrupt and ignored. TestRestoreFloorKeysMirrorData pins it.
-const restoreNumberMax = 1_000_000_000_000_000
+const restoreNumberMax int64 = 1_000_000_000_000_000
 
 // liveNumbers is what the live (about to be replaced) database knows about
 // the numbers it issued: its restore floors and its real maxima.
