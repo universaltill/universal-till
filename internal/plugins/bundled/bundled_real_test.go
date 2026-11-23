@@ -87,14 +87,13 @@ func TestRealBundles_InstallVerifyLoadAndRunDemoPaths_AppStore(t *testing.T) {
 	}
 	rt.Sync(ctx, d.DB)
 
-	// SumUp demo path (no reader id): approves, and an amount ending .13 declines.
-	out, err := authorize(t, rt, sumup, "payment.sumup.authorize", 1000)
-	if err != nil || !strings.Contains(out, `"outcome":"approved"`) {
-		t.Fatalf("sumup demo approve = %q, %v", out, err)
-	}
-	_, err = authorize(t, rt, sumup, "payment.sumup.authorize", 1013)
-	if err == nil || !strings.Contains(err.Error(), "exit_code(2)") { // the plugins' declined exit code
-		t.Fatalf("sumup demo .13 = %v, want a decline (exit code 2)", err)
+	// SumUp 1.9.x fails closed: with no API key it declines at once (no
+	// demo approval any more, ut-docs#6565), and uses no network.
+	for _, amt := range []int64{1000, 1013} {
+		_, err = authorize(t, rt, sumup, "payment.sumup.authorize", amt)
+		if err == nil || !strings.Contains(err.Error(), "exit_code(2)") { // the plugins' declined exit code
+			t.Fatalf("sumup with no key (%d) = %v, want a decline (exit code 2)", amt, err)
+		}
 	}
 	// Stripe without a key declines at once, with no network use.
 	_, err = authorize(t, rt, stripe, "payment.stripe.authorize", 1000)
@@ -103,7 +102,7 @@ func TestRealBundles_InstallVerifyLoadAndRunDemoPaths_AppStore(t *testing.T) {
 	}
 
 	// Tamper with the installed wasm: the loader backstop refuses to load it.
-	wasm := filepath.Join(paths.Plugins(), sumup, "1.5.1", "bin", "plugin.wasm")
+	wasm := filepath.Join(paths.Plugins(), sumup, "1.9.2", "bin", "plugin.wasm")
 	raw, _ := os.ReadFile(wasm)
 	if err := os.WriteFile(wasm, append(raw, 0), 0o644); err != nil {
 		t.Fatal(err)
@@ -170,6 +169,24 @@ func TestEmbeddedSetMatchesLock(t *testing.T) {
 		}
 		if _, err := readVerified(fsys, e.ID, "manifest.json", e.ManifestSHA256); err != nil {
 			t.Errorf("%s: %v", e.ID, err)
+		}
+	}
+}
+
+// ut-docs#6565: the Which-reader picker only works when the plugin declares
+// the payment.<key>.readers hook; a stale lock embedded plugins without it.
+func TestRealBundles_PaymentPluginsDeclareTheReadersHook(t *testing.T) {
+	realEmbedPresent(t)
+	for id, event := range map[string]string{
+		"com.universaltill.payment-stripe": "payment.stripe.readers",
+		"com.universaltill.payment-sumup":  "payment.sumup.readers",
+	} {
+		raw, err := os.ReadFile(filepath.Join("embedded", id, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"event": "`+event+`"`) {
+			t.Errorf("%s: embedded manifest does not declare the %s hook", id, event)
 		}
 	}
 }
