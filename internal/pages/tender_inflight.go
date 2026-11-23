@@ -41,3 +41,19 @@ func basketEdit(d *common.Deps, h http.HandlerFunc) http.HandlerFunc {
 		h(w, r)
 	}
 }
+
+// abandonOp runs h as one abandon operation (ut-docs#6923): clear, park or
+// open another order over the basket. Allowed while a tender authorizes (the
+// #6602 escape hatch), refused with writeTenderInFlight's 409 once a tender is
+// committing its sale; a commit that starts meanwhile waits for h to finish,
+// then sees the basket was abandoned. d.Engine is resolved per request.
+func abandonOp(d *common.Deps, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !d.Engine.BeginAbandon() {
+			writeTenderInFlight(w, r)
+			return
+		}
+		defer d.Engine.EndAbandon()
+		h(w, r)
+	}
+}

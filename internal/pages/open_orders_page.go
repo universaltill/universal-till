@@ -166,6 +166,13 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	// (their own prior in-progress sale, if any, now parked and listed here
 	// instead of lost).
 	mux.HandleFunc("POST /open-orders/resume", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#6923: refused once a tender is committing its sale; held
+		// over the whole handler so a commit waits for it.
+		if !d.Engine.BeginAbandon() {
+			http.Redirect(w, r, "/open-orders?err=pos.tender.in_flight", http.StatusSeeOther)
+			return
+		}
+		defer d.Engine.EndAbandon()
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
@@ -220,6 +227,13 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	// later one -- even when this resume fails after the conversion
 	// committed. Same audience as resume: any operator.
 	mux.HandleFunc("POST /open-orders/counter/open", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#6923: refused once a tender is committing its sale; held
+		// over the whole handler so a commit waits for it.
+		if !d.Engine.BeginAbandon() {
+			http.Redirect(w, r, "/open-orders?tab=counter&err=pos.tender.in_flight", http.StatusSeeOther)
+			return
+		}
+		defer d.Engine.EndAbandon()
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()

@@ -238,6 +238,11 @@ func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, 
 	return releaseTableClaimWriteThrough(ctx, d, repo, tableID)
 }
 
+// tenderCommittedHook (tests only, ut-docs#6923) runs inside the commit span,
+// after the sale row is written and before the basket is reset. Nil in
+// production.
+var tenderCommittedHook func(engine *pos.Service)
+
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
 // kiosk alike): payment authorization gate, CompleteSale, basket reset via
@@ -861,11 +866,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 	}
 
-	if abandonedUnder() {
+	if !engine.BeginTenderCommit(attemptID) {
 		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
 		why = "tender refused (the basket was abandoned during authorize)"
 		return "", &tenderAbandonedError{}
 	}
+	// ut-docs#6923: the commit span runs from here to the basket reset below;
+	// no clear/park/open is admitted inside it. Released on every exit path.
+	commitHeld := true
+	endCommit := func() {
+		if commitHeld {
+			commitHeld = false
+			engine.EndTenderCommit()
+		}
+	}
+	defer endCommit()
 	saleID, err := pos.CompleteSale(recordCtx, d.Db, saleInput)
 	if err != nil {
 		releaseReservedVouchers(detached, d, reservedVoucherIDs, saleInput.SaleID)
@@ -874,6 +889,9 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", err
 	}
 	ownCaptured = false
+	if tenderCommittedHook != nil {
+		tenderCommittedHook(engine)
+	}
 	ctx = detached // ut-docs#6805: the sale is committed; nothing after this may be lost to a gone client, cash included
 
 	// What the fiscal device printed for this sale (Turkey's ÖKC), if a
@@ -944,6 +962,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// kiosk engine (no table picker there), so a no-op on that path.
 	tableToRelease := engine.TableID()
 	engine.Reset()
+	endCommit()
 	releaseTableClaim(ctx, d, repo, tableToRelease)
 
 	// Plugin-provided tender methods: publish each entry's trigger_event so
@@ -2349,7 +2368,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// ut-docs#1122: any other basket with lines that New sale clears (no
 	// tender, no re-park) is recorded in cleared_baskets for the Z report,
 	// best-effort (recordClearedBasket).
-	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pos/reset", abandonOp(d, func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
@@ -2458,12 +2477,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			b.ToastLevel = "error"
 		}
 		_ = basketView.Render(w, b)
-	})
+	}))
 
 	mux.HandleFunc("/api/pos/tender", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#6909: one cashier tender at a time per engine. Before any
 		// body read, authorize, reversal or engine state; the defer also runs
-		// when the handler panics. The kiosk keeps its own per-basket guard.
+		// when the handler panics. The kiosk claims its own basket engine the
+		// same way (ut-docs#6923).
 		if !d.Engine.TryBeginTender() {
 			writeTenderInFlight(w, r)
 			return
