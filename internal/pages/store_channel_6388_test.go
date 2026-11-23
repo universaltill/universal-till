@@ -124,6 +124,51 @@ func TestStoreChannel_UpdateRoutesAndCard(t *testing.T) {
 	}
 }
 
+// ut-docs#6936: store builds say who updates the app, in place of the controls.
+func TestStoreChannel_UpdateManagedByStoreBanner(t *testing.T) {
+	const play, appStore = "Updates for this app come from Google Play", "Updates for this app come from the App Store"
+	want := map[buildinfo.InstallChannel]string{
+		buildinfo.ChannelPlay: play, buildinfo.ChannelAppStore: appStore,
+		buildinfo.ChannelDirect: "", buildinfo.ChannelSideload: "",
+	}
+	for _, c := range allChannels {
+		t.Run(string(c), func(t *testing.T) {
+			withChannel(t, c)
+			mux, d := checkNowMux(t)
+			registerUpdateAPI(mux, d)
+			_, body := ppGet(mux, "/settings", mgrUser)
+			const marker = `data-testid="update-managed-by-store"`
+			if want[c] == "" {
+				for _, s := range []string{marker, play, appStore} {
+					if strings.Contains(body, s) {
+						t.Errorf("%s Settings renders %q", c, s)
+					}
+				}
+				if !strings.Contains(body, `/api/update/check`) {
+					t.Errorf("%s Settings lost the update check", c)
+				}
+				return
+			}
+			other := play
+			if want[c] == play {
+				other = appStore
+			}
+			if !strings.Contains(body, marker) || !strings.Contains(body, want[c]) {
+				t.Errorf("%s Settings missing managed-by-store line %q", c, want[c])
+			}
+			if strings.Contains(body, other) {
+				t.Errorf("%s Settings shows the other store's text", c)
+			}
+			if strings.Contains(body, `/api/update/check`) {
+				t.Errorf("%s Settings still renders the update check", c)
+			}
+			if code := postForm(mux, "/api/update/check", url.Values{}, &mgrUser).Code; code != http.StatusNotFound {
+				t.Errorf("%s POST /api/update/check = %d, want 404", c, code)
+			}
+		})
+	}
+}
+
 // ut-docs#6401: on Play / App Store the claim card shows the code as plain
 // text with instructions for another device. No link, no QR, no claim URL in
 // any response of any handler.
