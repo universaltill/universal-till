@@ -2490,6 +2490,7 @@
   "scan.camera.title": "Camera scan",
   "selforder.all_categories": "All",
   "selforder.back": "Back",
+  "selforder.basket_locked_checkout": "Your order is being placed. Wait for it to finish, then add more.",
   "selforder.cart_empty": "Your cart is empty — tap an item to add it.",
   "selforder.checkout": "Checkout",
   "selforder.checkout.outcome_unknown": "We could not confirm your card payment. Please see the cashier at the counter. Do not pay again.",
