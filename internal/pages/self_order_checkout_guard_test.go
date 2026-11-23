@@ -92,6 +92,15 @@ func TestSelfOrderCheckout_ConcurrentSameBasketIsRefused(t *testing.T) {
 		t.Fatal("first checkout never reached the main till")
 	}
 
+	// ut-docs#6923: the claim is the basket engine's own tender guard; the
+	// cashier's engine is untouched.
+	if !h.dp.KioskEngine.TenderInFlight() {
+		t.Fatal("kiosk checkout in flight must hold KioskEngine's tender claim")
+	}
+	if h.dp.Engine.TenderInFlight() {
+		t.Fatal("kiosk checkout must never claim the cashier's engine")
+	}
+
 	second := h.post("/api/self-order/checkout", "")
 	close(primary.release)
 	if second.Code != http.StatusConflict {
@@ -99,6 +108,9 @@ func TestSelfOrderCheckout_ConcurrentSameBasketIsRefused(t *testing.T) {
 	}
 	assertKioskRefusalPaintsNothing(t, second)
 	rec := <-first
+	if h.dp.KioskEngine.TenderInFlight() || h.dp.Engine.TenderInFlight() {
+		t.Fatal("the tender claim must be released when the checkout returns")
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first checkout = %d: %s", rec.Code, rec.Body.String())
 	}

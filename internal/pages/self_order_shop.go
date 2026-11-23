@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -519,12 +518,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// replica) or call a card terminal. checkoutLimiter caps each source at
 	// 20 POSTs a minute -- the same pairRateLimiter+sourceOf shape as the
 	// table-session mint limiter (registerSelfOrder) -- checked before any
-	// work. checkoutInFlight lets only one checkout per basket run at a
-	// time, so a double tap (or a retry racing the first request) gets 409
-	// instead of a second order for the same basket. Both are per mux, like
-	// every other limiter here.
+	// work. The basket engine's own tender claim (TryBeginTender,
+	// ut-docs#6923) lets only one checkout per basket run at a time, so a
+	// double tap (or a retry racing the first request) gets 409 instead of a
+	// second order for the same basket. The limiter is per mux, like every
+	// other limiter here.
 	checkoutLimiter := newPairRateLimiter(time.Minute, 20)
-	checkoutInFlight := newSelfOrderCheckoutInFlight()
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
 		if !checkoutLimiter.allow(sourceOf(r)) {
 			refuseKioskCheckout(w, http.StatusTooManyRequests)
@@ -535,15 +534,13 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		// a table-QR guest session (ADR-0103), which a completed checkout
 		// must remove rather than reset (releaseSelfOrderSession).
 		eng, token := selfOrderSession(d, r)
-		basketKey := selfOrderWalkUpCheckoutKey
-		if token != "" {
-			basketKey = token
-		}
-		if !checkoutInFlight.acquire(basketKey) {
+		// ut-docs#6923: claim the basket's own engine (KioskEngine or this
+		// table session's), never the cashier's (ADR-0020, #449).
+		if !eng.TryBeginTender() {
 			refuseKioskCheckout(w, http.StatusConflict)
 			return
 		}
-		defer checkoutInFlight.release(basketKey)
+		defer eng.EndTender()
 		// ut-docs#582/#815: counter-order checkout is a COMPLETELY separate
 		// path -- checked before any method/ListActiveNonCashPaymentMethods
 		// code runs -- because it creates no sale/payment at all. Kiosk
@@ -790,38 +787,6 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			"CounterMode": false,
 		})(w, r)
 	})
-}
-
-// selfOrderWalkUpCheckoutKey is the in-flight key of the shared walk-up
-// kiosk basket (ut-docs#2714); a table-QR session uses its own token. The
-// NUL byte keeps it from ever equalling a real (random, printable) token.
-const selfOrderWalkUpCheckoutKey = "\x00walk-up"
-
-// selfOrderCheckoutInFlight is the set of baskets with a checkout currently
-// running (ut-docs#2714): acquire reports false when key is already in it.
-type selfOrderCheckoutInFlight struct {
-	mu   sync.Mutex
-	keys map[string]struct{}
-}
-
-func newSelfOrderCheckoutInFlight() *selfOrderCheckoutInFlight {
-	return &selfOrderCheckoutInFlight{keys: map[string]struct{}{}}
-}
-
-func (g *selfOrderCheckoutInFlight) acquire(key string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if _, busy := g.keys[key]; busy {
-		return false
-	}
-	g.keys[key] = struct{}{}
-	return true
-}
-
-func (g *selfOrderCheckoutInFlight) release(key string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.keys, key)
 }
 
 // selfOrderForcesCounterCheckout reports whether THIS basket must check out

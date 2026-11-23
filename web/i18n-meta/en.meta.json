@@ -1329,7 +1329,7 @@
   "tap.reader.status.busy": {"description": "Status of a paired phone card reader that is connected but busy taking a payment.", "review": "standard"},
   "tap.reader.status.needs_setup": {"description": "Status of a paired phone card reader that is connected but must be set up on the phone first.", "review": "standard"},
   "tap.reader.status.unavailable": {"description": "Status of a paired phone card reader that is connected but cannot take payments right now.", "review": "standard"},
-  "pos.tender.in_flight": {"description": "Error (JSON and sale-screen notice) when a second Pay is sent while this till's payment is still running; nothing was charged by the second attempt.", "review": "standard", "max_length": 120},
+  "pos.tender.in_flight": {"description": "Error (JSON, sale-screen notice or open-orders page notice) when a second Pay, or a Clear, Hold or open-order, reaches the till while it is still taking or saving a payment; nothing was changed by the refused request.", "review": "standard", "max_length": 120},
   "pos.tender.busy": {"description": "Non-modal sale-screen notice shown when the cashier scans, taps a tile or edits the basket while a payment is still running; the action was not applied.", "review": "standard", "max_length": 100},
   "pos.tender.scan_refused": {"description": "Sale-screen error notice when a scan reaches the till while a payment is running; the item was not added to the basket.", "review": "standard", "max_length": 120},
   "tap.resolve.in_progress": {"description": "Error when a manager settles a tap payment while another check or settle of the same payment is still running.", "review": "standard", "max_length": 100}

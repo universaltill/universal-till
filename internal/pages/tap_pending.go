@@ -54,7 +54,7 @@ var tapResolveReasons = map[string]bool{
 // a resolve beside a check, never runs concurrently on one leg. It reuses the
 // kiosk's generic acquire/release key set; the key is the authorize request id
 // (the attention resolve's attempt key is the same id).
-var tapLegInFlight = newSelfOrderCheckoutInFlight()
+var tapLegInFlight = newKeyedInFlight()
 
 // tapThrottle remembers when each attempt was last checked. Bounded: entries
 // older than ten minutes go first, and past 256 the table is cleared (the

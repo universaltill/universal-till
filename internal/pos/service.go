@@ -155,6 +155,19 @@ type Service struct {
 	// Guarded by mu (ut-docs#6919).
 	basketEdits int
 	editsIdle   chan struct{}
+	// committing (ut-docs#6923) is true from the moment a tender commits its
+	// sale (BeginTenderCommit) until the basket of that sale is reset
+	// (EndTenderCommit). While set, BeginAbandon refuses. Independent of
+	// tenderInFlight: a tender that is only authorizing never sets it, so
+	// #6602 abandons still work then. Set and cleared ONLY by
+	// BeginTenderCommit/EndTenderCommit, never by Reset*, EndTender, park,
+	// resume or rotation. Guarded by mu.
+	committing bool
+	// abandons counts abandon operations (clear, park, resume, open-orders
+	// open) admitted by BeginAbandon and not yet ended; abandonsIdle is closed
+	// when it drops to 0 (nil while 0). Guarded by mu.
+	abandons     int
+	abandonsIdle chan struct{}
 	// pendingTender (ut-docs#6602) is what the locked tender leaves behind:
 	// the legs already captured (to reverse if the tender is abandoned) and
 	// the legs of unknown outcome (to warn about). Same lifetime as
@@ -1966,6 +1979,79 @@ func (s *Service) EndTender() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tenderInFlight = false
+}
+
+// BeginAbandon admits one abandon operation (ut-docs#6923): false while a
+// tender commits its sale. The caller defers EndAbandon and holds the
+// admission over its WHOLE read -> write -> reset span. Abandons never exclude
+// each other; nested admissions are fine (resume's auto-park). Never call
+// BeginTenderCommit while holding one.
+func (s *Service) BeginAbandon() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.committing {
+		return false
+	}
+	if s.abandons == 0 {
+		s.abandonsIdle = make(chan struct{})
+	}
+	s.abandons++
+	return true
+}
+
+// EndAbandon releases one admission from BeginAbandon; unmatched is a no-op.
+func (s *Service) EndAbandon() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.abandons == 0 {
+		return
+	}
+	s.abandons--
+	if s.abandons == 0 {
+		close(s.abandonsIdle)
+		s.abandonsIdle = nil
+	}
+}
+
+// BeginTenderCommit is the tender's commit point (ut-docs#6923): it stops new
+// abandons, waits (bounded by tenderDrainTimeout) for abandons admitted before
+// it, then succeeds only if attemptID is still the live attempt. On false the
+// flag is already dropped and the tender must refuse as abandoned. On true the
+// caller must call EndTenderCommit (idempotent) once the sale's basket is
+// reset. It does not require tenderInFlight and never waits on edits.
+func (s *Service) BeginTenderCommit(attemptID string) bool {
+	s.mu.Lock()
+	if s.committing {
+		s.mu.Unlock()
+		return false
+	}
+	s.committing = true
+	idle := s.abandonsIdle
+	s.mu.Unlock()
+	if idle != nil {
+		t := time.NewTimer(tenderDrainTimeout)
+		defer t.Stop()
+		select {
+		case <-idle:
+		case <-t.C:
+			s.EndTenderCommit()
+			return false
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if attemptID == "" || s.tenderAttemptID != attemptID {
+		s.committing = false
+		return false
+	}
+	return true
+}
+
+// EndTenderCommit releases the commit point; idempotent.
+func (s *Service) EndTenderCommit() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.committing = false
 }
 
 // TenderInFlight reports whether a tender request is running on this engine.

@@ -810,7 +810,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	// Hold the current sale: snapshot → persist → clear the basket.
-	mux.HandleFunc("POST /api/pos/hold", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/hold", abandonOp(d, func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
 		// ut-docs#3586: HasItems() alone refused to hold a resumed kiosk
@@ -850,10 +850,10 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
-	})
+	}))
 
 	// Resume a held sale into the (empty) basket.
-	mux.HandleFunc("POST /api/pos/resume", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/resume", abandonOp(d, func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
@@ -881,7 +881,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"), "success")
 		}
-	})
+	}))
 
 	// Dismiss the basket's "add by hand" notice (ut-docs#2703, reopened):
 	// the cashier has rung up (or deliberately skipped) the lines of a legacy
