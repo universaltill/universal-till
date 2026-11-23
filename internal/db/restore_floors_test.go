@@ -531,6 +531,38 @@ func TestRestoreFloorKeysMirrorData(t *testing.T) {
 		restoreZFloorKeyPrefix != data.RestoreZFloorKeyPrefix {
 		t.Fatal("restore floor key constants drifted from internal/data")
 	}
+	if restoreNumberMax != data.RestoreNumberMax {
+		t.Fatal("restoreNumberMax drifted from internal/data")
+	}
+}
+
+// ut-docs#6906: a huge live floor, receipt_no or Z is corrupt: the merge
+// carries the sane value, never the huge one.
+func TestRestoreFloorMergeIgnoresHugeLiveNumbers(t *testing.T) {
+	path := testDBPath(t)
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setSetting(t, d.DB, restoreReceiptFloorKey, "9223372036854775000")
+	setSetting(t, d.DB, restoreReceiptFloorPrefixKey, "")
+	setSetting(t, d.DB, restoreZFloorKeyPrefix+"eod", "9223372036854775000")
+	insertSaleNo(t, d, "000000120")
+	insertSaleNo(t, d, "99999999999999999999")
+	insertArchivedZ(t, d, "eod", 7)
+	insertArchivedZ(t, d, "eod", 9223372036854775000)
+	got, err := liveReceiptMax(d.DB, "")
+	if err != nil || got != 120 {
+		t.Fatalf("liveReceiptMax = %d, %v, want 120", got, err)
+	}
+	if zm, err := liveZMax(d.DB); err != nil || zm["eod"] != 7 {
+		t.Fatalf("liveZMax = %v, %v, want eod 7", zm, err)
+	}
+	d.Close()
+	name := emptyBackup(t, path, "huge", map[string]string{restoreReceiptFloorKey: "10", restoreReceiptFloorPrefixKey: "", restoreZFloorKeyPrefix + "eod": "1"})
+	r := applyOnly(t, path, name)
+	wantSetting(t, r, restoreReceiptFloorKey, "120")
+	wantSetting(t, r, restoreZFloorKeyPrefix+"eod", "7")
 }
 
 // A source that cannot be read must not throw away the others (6293 review

@@ -80,10 +80,11 @@ func maxReceiptSeq(ctx context.Context, exec dbExecutor, prefix string) (int64, 
 		var err error
 		if prefix == "" {
 			err = exec.QueryRowContext(ctx, `SELECT MAX(CAST(receipt_no AS INTEGER)) FROM `+tbl+
-				` WHERE receipt_no NOT LIKE '%-%'`).Scan(&v)
+				` WHERE receipt_no NOT LIKE '%-%' AND CAST(receipt_no AS INTEGER) <= ?`, RestoreNumberMax).Scan(&v)
 		} else {
 			err = exec.QueryRowContext(ctx, `SELECT MAX(CAST(substr(receipt_no, ?) AS INTEGER)) FROM `+tbl+
-				` WHERE receipt_no LIKE ? || '%'`, len(prefix)+1, prefix).Scan(&v)
+				` WHERE receipt_no LIKE ? || '%' AND CAST(substr(receipt_no, ?) AS INTEGER) <= ?`,
+				len(prefix)+1, prefix, len(prefix)+1, RestoreNumberMax).Scan(&v)
 		}
 		if err != nil {
 			return 0, fmt.Errorf("max receipt in %s: %w", tbl, err)
@@ -132,7 +133,7 @@ func restoreFloor(ctx context.Context, exec dbExecutor, prefix string) int64 {
 		return 0
 	}
 	var f int64
-	if _, err := fmt.Sscan(floorVal, &f); err != nil || f < 0 {
+	if _, err := fmt.Sscan(floorVal, &f); err != nil || f < 0 || f > RestoreNumberMax {
 		return 0
 	}
 	return f
