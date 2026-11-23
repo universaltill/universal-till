@@ -1338,6 +1338,21 @@ func (s *ButtonStore) updateOrderWith(ctx context.Context, current []Button, cod
 		}
 	}
 
+	// ut-docs#6708: rows are keyed by code, so a code held by two tiles can't
+	// be placed -- writing it would move or misplace its twin. Refuse before
+	// anything is written (same refusal as ApplyReportedLayout).
+	if lastTouchedIndex >= 0 {
+		held := make(map[string]int, len(current))
+		for _, b := range current {
+			held[b.Code]++
+		}
+		for i := 0; i <= lastTouchedIndex; i++ {
+			if held[codes[i]] > 1 {
+				return sharedLayoutCodeError{code: codes[i]}
+			}
+		}
+	}
+
 	existing, err := s.repo.ExistingBarcodes(ctx, codes)
 	if err != nil {
 		return err

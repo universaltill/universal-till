@@ -179,4 +179,14 @@ func (e sharedLayoutCodeError) Error() string {
 	return fmt.Sprintf("barcode %q is used by two sale-screen tiles on this till — give the items distinct SKUs or barcodes first", e.code)
 }
 
+// SharedTileCode returns the code held by two tiles when err is (or wraps) the
+// shared-code refusal of a reorder (ut-docs#6708), so the handler can name it.
+func SharedTileCode(err error) (string, bool) {
+	var e sharedLayoutCodeError
+	if errors.As(err, &e) {
+		return e.code, true
+	}
+	return "", false
+}
+
 func (e sharedLayoutCodeError) Is(target error) bool { return target == ErrSharedTileCode }

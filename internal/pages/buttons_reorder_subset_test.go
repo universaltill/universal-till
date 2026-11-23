@@ -164,3 +164,53 @@ func TestButtonsReorder_ReportsSellVersion(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#6708: a reorder that moves a code shared by two tiles is refused
+// with 409 and an owner-readable message; nothing is persisted.
+func TestButtonsReorder_SharedCode409(t *testing.T) {
+	mux, d := newButtonsMuxRealSession(t)
+	const dup = "4006381333931"
+	// Two items whose tile code is the same: one's SKU is the other's barcode.
+	for _, s := range []string{
+		`INSERT INTO items(id,sku,name,base_price,is_active) VALUES
+			('d1','` + dup + `','Zed One',100,1),('d2','ZOTH','Zed Two',100,1)`,
+		`INSERT INTO item_barcodes(barcode,item_id,barcode_type,is_primary) VALUES ('` + dup + `','d2','EAN13',1)`,
+	} {
+		if _, err := d.Db.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	start := quickOrder(t, d)
+	parts := strings.Split(start, ",")
+	n := 0
+	for _, c := range parts {
+		if c == dup {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("fixture has no shared code: %s", start)
+	}
+	// Move one shared tile to the front.
+	codes := []string{dup}
+	skipped := false
+	for _, c := range parts {
+		if c == dup && !skipped {
+			skipped = true
+			continue
+		}
+		codes = append(codes, c)
+	}
+	mgr := auth.User{ID: "m1", Role: "manager"}
+	rec := postForm(mux, "/api/buttons/reorder", url.Values{"codes": {strings.Join(codes, ",")}}, &mgr)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	wantBody := "Two buttons use the SKU or barcode \u201c" + dup + "\u201d, so the till can't save this order. Give each item its own SKU or barcode, then try again."
+	if got := strings.TrimSpace(rec.Body.String()); got != wantBody {
+		t.Fatalf("body = %q, want %q", got, wantBody)
+	}
+	if got := quickOrder(t, d); got != start {
+		t.Fatalf("order changed: %s != %s", got, start)
+	}
+}

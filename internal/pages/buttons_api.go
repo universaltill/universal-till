@@ -325,6 +325,15 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "codes required", http.StatusBadRequest)
 			return
 		}
+		if errors.Is(err, ui.ErrSharedTileCode) {
+			// ut-docs#6708: two tiles share a code, so the till can't place them.
+			// The message names the code (M1), so format it here: the
+			// localized-error helper takes no arguments.
+			code, _ := ui.SharedTileCode(err)
+			logging.L().Infof("[buttons] %v", err)
+			http.Error(w, fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "designer.error.shared_code"), code), http.StatusConflict)
+			return
+		}
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
