@@ -70,7 +70,8 @@ func managedReaders(ctx context.Context, d *common.Deps, repo *data.CardReaderRe
 // never offered (fail closed, ADR-0205 §8); sdk rows wait for the native
 // bridge (no build reports sdk transports yet, §3); external rows have no
 // card-tender path yet (#6755); a tap_to_pay row needs a registered device
-// bridge and is never offered to the kiosk.
+// bridge and is offered on the main/standalone cashier till only (never the
+// kiosk, a satellite or an additional till).
 func readerEligible(c data.CardReader, source string) bool {
 	if !data.ValidCardReaderPair(c.Kind, c.Transport) {
 		return false
@@ -79,7 +80,7 @@ func readerEligible(c data.CardReader, source string) bool {
 	case data.CardReaderKindSDK, data.CardReaderKindExternal:
 		return false
 	case data.CardReaderKindTapToPay:
-		return source != readerSourceKiosk && cardreaders.TapToPayAvailable()
+		return tapOfferedOn(source) && cardreaders.TapToPayAvailable()
 	}
 	return true
 }
@@ -91,6 +92,7 @@ func readerEligible(c data.CardReader, source string) bool {
 // is ignored). The returned release func frees the in-flight marks; it is
 // non-nil whenever any were taken, even alongside an error.
 func resolveReaderLegs(ctx context.Context, d *common.Deps, payments []pos.PaymentInput, source string) (release func(), err error) {
+	source = effectiveReaderSource(ctx, d, source)
 	repo := data.NewCardReaderRepo(d.Db)
 	inflight := cardreaders.SharedInFlight()
 	var held []string

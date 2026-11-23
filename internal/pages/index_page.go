@@ -110,6 +110,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// button (the cashier picks a reader, not a provider); every other
 		// method keeps its own button unchanged.
 		prefMethod, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
+		if effectiveReaderSource(r.Context(), d, readerSourcePOS) != readerSourcePOS {
+			gridMethods = withoutTapEntries(r.Context(), d, gridMethods) // ut-docs#6455 G-6
+		}
 		gridMethods, cardReaders := cardReaderGrid(r.Context(), d, gridMethods, prefMethod)
 		// Per-provider fee rules (B4 cost-rules): manager-entered percent
 		// (basis points) + fixed (minor units); the tender UI shows a live

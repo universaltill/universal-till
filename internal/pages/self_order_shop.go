@@ -529,6 +529,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load payment methods", http.StatusInternalServerError)
 			return
 		}
+		methods = withoutTapEntries(r.Context(), d, methods) // ut-docs#6455 G-6: a kiosk never offers a tap entry
 		renderKioskPaymentPicker(w, r, eng, methods, "")
 	})
 
@@ -592,6 +593,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load payment methods", http.StatusInternalServerError)
 			return
 		}
+		methods = withoutTapEntries(r.Context(), d, methods) // ut-docs#6455 G-6: a kiosk never offers a tap entry
 		methodValid := false
 		for _, m := range methods {
 			if m.ID == method {

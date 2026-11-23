@@ -889,6 +889,9 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 				(b.Kind == paybroker.BindRefund && strings.HasSuffix(ev.Type, ".refund"))) {
 			hs.binding, hs.bound = b, true
 		}
+		// ut-docs#6455 G-4: only the plugin's own tap:true entry may use
+		// tap_to_pay_request, never another entry of the same plugin.
+		hs.tapEntry = w.isTapGateEvent(pluginID, ev.Type)
 	}
 	if isJob {
 		hs.jobProgress = job.Progress

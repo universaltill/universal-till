@@ -787,3 +787,39 @@ func TestCardReaderRoutes_UnattendedCheckboxOnlyWhereItCanSucceed(t *testing.T) 
 		t.Fatalf("unattended_default after clear = %d (%v), want 0", on, err)
 	}
 }
+
+// ut-docs#6566 (owner order 2026-11-18): with several eligible readers, in any
+// provider mix, the picker preselects THIS till's last-used reader; the form's
+// hidden reader/method inputs carry it, so one tap on Confirm pays on it.
+func TestPicker_PreselectsLastUsedReaderAcrossProviders(t *testing.T) {
+	mux, dp := pickerRig(t)
+	sumup := seedReaderPlugin(t, dp, "p.sumup", "sumup", true)
+	stripe := seedReaderPlugin(t, dp, "p.stripe", "stripe", true)
+	s1 := addReader(t, dp, sumup, "SumUp 1", "su_1")
+	addReader(t, dp, sumup, "SumUp 2", "su_2")
+	addReader(t, dp, sumup, "SumUp 3", "su_3")
+	st := addReader(t, dp, stripe, "Stripe 1", "st_1")
+
+	// never used: the first selectable reader is the default.
+	if _, got := getPicker(t, mux, "?source=pos"); got.Data.Default != s1.ID || got.Data.Selectable != 4 {
+		t.Fatalf("unused till: default=%s selectable=%d, want %s and 4", got.Data.Default, got.Data.Selectable, s1.ID)
+	}
+	// the Stripe reader was used last: it is preselected in the markup.
+	if err := data.NewCardReaderRepo(dp.Db).TouchLastUsed(context.Background(), st.ID); err != nil {
+		t.Fatal(err)
+	}
+	cardreaders.SharedCache().Reset()
+	body := getPickerHTML(t, mux, "?source=pos")
+	if !strings.Contains(body, `name="reader" value="`+st.ID+`"`) || !strings.Contains(body, `name="method" value="stripe"`) {
+		t.Fatalf("hidden inputs must carry the last-used reader %s and method stripe:\n%s", st.ID, body)
+	}
+	if n := strings.Count(body, `aria-checked="true"`); n != 1 {
+		t.Fatalf("exactly one row is preselected, got %d", n)
+	}
+	// that reader goes busy (in flight elsewhere): never preselect a row that cannot be chosen.
+	stripe.state = stateAnswer(map[string]string{"st_1": "busy"})
+	cardreaders.SharedCache().Reset()
+	if _, got := getPicker(t, mux, "?source=pos"); got.Data.Default == st.ID || got.Data.Default == "" {
+		t.Fatalf("a busy last-used reader must not be the default, got %q", got.Data.Default)
+	}
+}
