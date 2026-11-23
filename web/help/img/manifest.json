@@ -519,6 +519,9 @@
     "internal/pages/itemsnav/render.go": {
       "sha256": "5a2c27292a1ce7ddc58bf176d2b586f59191e8ee683740a0b6cfe87ef94213f7"
     },
+    "internal/pages/keyed_inflight.go": {
+      "sha256": "b6965103dceaae5cff2f9bdca57c1c990219c5699d470b36257e3a569b8abde0"
+    },
     "internal/pages/kitchen_stations_page.go": {
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
@@ -553,7 +556,7 @@
       "sha256": "df4d1e06e12d370d6ba2b9e40ac1a1c7a76d2dc47f1f42341d0212a0eb6d115b"
     },
     "internal/pages/open_orders_page.go": {
-      "sha256": "3d04864948dbf56d2fbe42b2133a98d0cbb672960d0717920cd0b3e15c3b8b99"
+      "sha256": "d9146aeb01bc1ccb00362b802ad3f329463033fc2c1383817c7fa1ffa6032be1"
     },
     "internal/pages/operator_checkin.go": {
       "sha256": "cb727d506d536324639f631e35965851d4c472d62c20c550f1ec55c89f9ef536"
@@ -745,7 +748,7 @@
       "sha256": "7552fac501e0f01f865a1576ebeced8ed0549e6461497affc2c3f9bf0e6fc3a3"
     },
     "internal/pages/tender_inflight.go": {
-      "sha256": "57780a95196b1925fce51a9562e953fe739da4e7eaa5e21a949d216f25d223d1"
+      "sha256": "697fe6ba94a0d1832d0a021924edf2cd8840accbb08e6b94ded472615a4a1eca"
     },
     "internal/pages/till_name.go": {
       "sha256": "293351a4f5f1355c1d91ddc9f8f404e55331e6a08a95578c0616be2127a7fca1"
