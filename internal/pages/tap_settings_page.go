@@ -119,10 +119,10 @@ func (c *tapSettingsCtl) readCloud(ctx context.Context, fresh bool) tapCloud {
 	out, err := paybroker.Call(cctx, paybroker.CallerCore, devicepay.ProviderStripe, "onboarding_status", []byte("{}"))
 	var got tapCloud
 	var he *paybroker.HTTPError
-	if errors.As(err, &he) && he.Code == paybroker.CodeDeviceRoleUnrecorded {
+	if errors.As(err, &he) && (he.Code == paybroker.CodeDeviceRoleUnrecorded || he.Code == paybroker.CodeDeviceRoleUnconfirmed) {
 		// The cloud refused this till's credential (set up before roles were
 		// recorded): a known answer, not "unreachable" (UX copy section 4).
-		got = tapCloud{Known: true, Reason: paybroker.CodeDeviceRoleUnrecorded}
+		got = tapCloud{Known: true, Reason: paybroker.CodeDeviceRoleUnrecorded} // unconfirmed reads the same
 	}
 	if err == nil {
 		var a struct {

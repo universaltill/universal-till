@@ -196,7 +196,7 @@ func Call(ctx context.Context, caller Caller, provider, op string, body []byte) 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		he := &HTTPError{Status: resp.StatusCode, Code: errorCode(out)}
 		logging.L().Warnf("paybroker: %s/%s status=%d code=%q in %s", provider, op, resp.StatusCode, he.Code, took)
-		if he.Code == CodeDeviceRoleUnrecorded {
+		if he.Code == CodeDeviceRoleUnrecorded || he.Code == CodeDeviceRoleUnconfirmed {
 			noteRoleUnrecorded(true)
 		}
 		return nil, he
@@ -236,6 +236,10 @@ func errorCode(body []byte) string {
 // CodeDeviceRoleUnrecorded is the cloud's refusal of a credential whose role
 // was never recorded at issuance (ADR-0198 Amendment 2026-11-23, D4).
 const CodeDeviceRoleUnrecorded = "device_role_unrecorded"
+
+// CodeDeviceRoleUnconfirmed is the cloud's refusal of an additional credential
+// whose role the till has not reported yet (it confirms on its next check-in).
+const CodeDeviceRoleUnconfirmed = "device_role_unconfirmed"
 
 // roleUnrecordedTTL is how long a refusal keeps the till saying "set this
 // till up again".

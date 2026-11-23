@@ -398,13 +398,16 @@ func TestTapSettings_MainTillHasNoAdditionalNote(t *testing.T) {
 // UX copy section 4: an old additional till whose credential the cloud refuses
 // as role-unrecorded says "set this till up again", never "can't reach".
 func TestTapSettings_RoleUnrecordedSaysSetUpAgain(t *testing.T) {
-	e := tapSettingsRig(t)
-	e.joinAs(t, data.TillRoleAdditional)
-	e.broker.setRoleRefused(true)
-	rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
-	want(t, rec, 200, enText(t, "tap.settings.source.setup_again"))
-	if strings.Contains(rec.Body.String(), "Can&#39;t reach the payment service") {
-		t.Fatal("a role refusal was worded as unreachable")
+	for _, code := range []string{"device_role_unrecorded", "device_role_unconfirmed"} {
+		e := tapSettingsRig(t)
+		e.joinAs(t, data.TillRoleAdditional)
+		e.broker.setRoleRefused(true)
+		e.broker.setRoleCode(code)
+		rec := e.do("manager", "GET", "/settings/tap-to-pay", nil)
+		want(t, rec, 200, enText(t, "tap.settings.source.setup_again"))
+		if strings.Contains(rec.Body.String(), "Can&#39;t reach the payment service") || strings.Contains(rec.Body.String(), code) {
+			t.Fatalf("%s: worded as unreachable or showed the code", code)
+		}
 	}
 }
 

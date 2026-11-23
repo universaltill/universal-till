@@ -226,7 +226,14 @@ func TestTapOffer_FailedPluginReadRefusesOnAKiosk(t *testing.T) {
 // role-unrecorded says "set this till up again" instead of the generic start
 // failure; nothing was charged.
 func TestTapGate_RoleUnrecordedStartFailureSaysSetUpAgain(t *testing.T) {
+	for _, code := range []string{"device_role_unrecorded", "device_role_unconfirmed"} {
+		t.Run(code, func(t *testing.T) { roleStartFailure(t, code) })
+	}
+}
+
+func roleStartFailure(t *testing.T, code string) {
 	e := tapRig(t)
+	e.broker.setRoleCode(code)
 	paybroker.ResetRoleUnrecorded()
 	t.Cleanup(paybroker.ResetRoleUnrecorded)
 	e.joinTill(t, data.TillRoleAdditional)

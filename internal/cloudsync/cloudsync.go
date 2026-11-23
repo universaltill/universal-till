@@ -1622,6 +1622,16 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	} else if tid = strings.TrimSpace(tid); tid != "" {
 		device["till_id"] = tid
 	}
+	// ADR-0198 Amendment 2026-11-23: a joined till tells the cloud its own
+	// role (additional | satellite | kiosk) so the cloud can confirm or narrow
+	// its credential; the cloud never trusts the issuing path for it. A main
+	// or standalone till, and a till whose role is not recorded, omit it (the
+	// cloud then keeps the credential unconfirmed: fail closed).
+	if isReplica {
+		if tr := joinedTillRole(get("sync.till_role"), get("display.mode")); tr != "" {
+			device["till_role"] = tr
+		}
+	}
 	if hooks.DeviceExtra != nil {
 		for k, v := range hooks.DeviceExtra(ctx) {
 			if _, taken := device[k]; !taken {
@@ -1680,6 +1690,18 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		devices: []map[string]any{device},
 		hasStop: hasStop,
 	}
+}
+
+// joinedTillRole is the role a joined till reports: kiosk for a self-order
+// display, else its recorded sync.till_role when valid, else "".
+func joinedTillRole(role, displayMode string) string {
+	if strings.TrimSpace(displayMode) == "self_order" {
+		return "kiosk"
+	}
+	if role = strings.TrimSpace(role); data.ValidTillRole(role) {
+		return role
+	}
+	return ""
 }
 
 // pushSync sends the device report and returns the store's pending

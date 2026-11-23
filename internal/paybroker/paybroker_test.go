@@ -292,6 +292,22 @@ func TestCall_RoleUnrecordedRefusalIsRemembered(t *testing.T) {
 	ResetRoleUnrecorded()
 	t.Cleanup(ResetRoleUnrecorded)
 	code, status := "device_role_unrecorded", http.StatusForbidden
+	for _, c := range []string{"device_role_unconfirmed"} {
+		code = c
+		ResetRoleUnrecorded()
+		srv0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":{"code":"`+c+`"}}`)
+		}))
+		target(t, srv0.URL)
+		_, _ = Call(context.Background(), CallerCore, "stripe", "session_create", []byte(`{}`))
+		srv0.Close()
+		if !RoleUnrecordedRecently() {
+			t.Fatalf("%s refusal not remembered", c)
+		}
+	}
+	code = "device_role_unrecorded"
+	ResetRoleUnrecorded()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if code == "" {
 			_, _ = io.WriteString(w, `{}`)
