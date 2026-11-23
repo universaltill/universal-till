@@ -824,7 +824,7 @@ func TestSyncJoin_PrimaryUnreachable(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "cannot reach") {
+	if !strings.Contains(rec.Body.String(), "Cannot reach the main till") {
 		t.Fatalf("expected a 'cannot reach the primary' message, got %q", rec.Body.String())
 	}
 	if appdb.PendingRestore(replicaPath) {
@@ -854,7 +854,7 @@ func TestSyncJoin_PrimaryRejectsEnrolment(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 when the primary rejects the token, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "refused the enrolment") {
+	if !strings.Contains(rec.Body.String(), "The main till refused this code") {
 		t.Fatalf("expected an enrolment-refused message, got %q", rec.Body.String())
 	}
 	if appdb.PendingRestore(replicaPath) {
@@ -928,6 +928,7 @@ func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
 		{"request failed", &joinError{kind: joinErrRequestFailed, detail: "boom"}, "tills.join_error.request_failed", "boom"},
 		{"unreachable", &joinError{kind: joinErrUnreachable, detail: "dial tcp: connect refused"}, "tills.join_error.unreachable", "dial tcp: connect refused"},
 		{"not a till", &joinError{kind: joinErrNotATill, detail: "http://10.0.0.5:8080"}, "tills.join_error.not_a_till", "http://10.0.0.5:8080"},
+		{"cloud code", &joinError{kind: joinErrCloudCode}, "tills.join_error.cloud_code", ""},
 		{"refused", &joinError{kind: joinErrRefused}, "tills.join_error.refused", ""},
 		{"snapshot failed", &joinError{kind: joinErrSnapshotFailed, detail: "500 Internal Server Error"}, "tills.join_error.snapshot_failed", "500 Internal Server Error"},
 		{"stage snapshot failed", &joinError{kind: joinErrStageSnapshotFailed, detail: "boom"}, "tills.join_error.stage_snapshot_failed", "boom"},

@@ -215,6 +215,30 @@ func normaliseShortCode(typed string) (code string, ok bool) {
 	return code, true
 }
 
+// cloudShopCodeLen is the length of the code my.universaltill.com shows under
+// "Pair a till" ("226Y R9H8": 8 symbols, a space for reading, ut-docs#6954).
+const cloudShopCodeLen = 8
+
+// isCloudShopCode reports whether typed looks like that cloud shop code: 8
+// ASCII letters/digits, optionally split 4+4 by one space or hyphen. A main
+// till's own short code is shortCodeLen (6), so the two never collide; the
+// join form uses this only to say which code goes where, never to accept it.
+func isCloudShopCode(typed string) bool {
+	t := strings.ToUpper(strings.TrimSpace(typed))
+	if len(t) == cloudShopCodeLen+1 && (t[4] == ' ' || t[4] == '-') {
+		t = t[:4] + t[5:]
+	}
+	if len(t) != cloudShopCodeLen {
+		return false
+	}
+	for _, c := range t {
+		if !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
 func hashBearer(b string) string {
 	sum := sha256.Sum256([]byte(b))
 	return hex.EncodeToString(sum[:])
@@ -1242,6 +1266,9 @@ const (
 	joinErrTLSOnly
 	joinErrSatelliteTLSOnly
 	joinErrSatelliteNoTLS
+	// ut-docs#6954: the 8-character code my.universaltill.com shows under
+	// "Pair a till" typed into the main-till join form.
+	joinErrCloudCode
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1270,6 +1297,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrTLSOnly:                "tills.join_error.tls_only",
 	joinErrSatelliteTLSOnly:       "tills.join_error.satellite_tls_only",
 	joinErrSatelliteNoTLS:         "tills.join_error.main_no_tls",
+	joinErrCloudCode:              "tills.join_error.cloud_code",
 }
 
 // plainRefusalKind maps a main till's plain-HTTP refusal (403 plus a known
@@ -1345,6 +1373,9 @@ func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role stri
 	}
 	short, ok := normaliseShortCode(code)
 	if !ok {
+		if isCloudShopCode(code) {
+			return "", &joinError{kind: joinErrCloudCode}
+		}
 		return "", &joinError{kind: joinErrBadCode}
 	}
 	if strings.TrimSpace(address) == "" {
