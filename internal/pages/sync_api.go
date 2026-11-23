@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/lanaccess"
 	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -522,6 +523,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	posRepo := data.NewPOSRepo(d.Db)
 	pairingRepo := data.NewPairingRepo(d.Db)
 	tokens := &enrolTokens{tokens: map[string]time.Time{}}
+	registerLANAccess(mux, d, repo)
 	// ut-docs#3219: short pairing codes are only 30 bits, so each source
 	// gets 5 tries a minute at /api/sync/enroll (long tokens stay
 	// unlimited, as before). Its own instance: unrelated to pair-request.
@@ -591,6 +593,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		_ = r.ParseForm()
 		tok, short := tokens.issueWithShort()
+		// ut-docs#6955: a desktop main till only lets other devices on the
+		// network in while a code is on screen (or the shop allows it).
+		lanaccess.OpenWindow(enrolTokenTTL)
 		// The replica needs OUR address as it sees us; take the Host the
 		// manager's browser used (LAN address), overridable via the form.
 		primaryURL := strings.TrimSpace(r.Form.Get("url"))
