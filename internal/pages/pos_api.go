@@ -2,6 +2,7 @@ package pages
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -44,6 +45,9 @@ type paymentDeclinedError struct {
 	// (offline_pin_required). The decline code itself is never shown to the
 	// cashier, so it is not kept.
 	Tap, PinRequired bool
+	// MessageKey is the en.json key of the specific message a reader-setup
+	// decline code maps to (ut-docs#6962); empty means the generic decline.
+	MessageKey string
 }
 
 func (e *paymentDeclinedError) Error() string {
@@ -65,6 +69,34 @@ func (e *paymentOutcomeUnknownError) Error() string {
 // declineCodeOutcomeUnknown is the decline_code a card plugin prints (exit 2)
 // when it cannot tell whether the customer was charged.
 const declineCodeOutcomeUnknown = "outcome_unknown"
+
+// Provider-neutral decline_code values a card plugin may print (exit 2) so the
+// cashier sees a specific message (ut-docs#6962; docs/plugin_guidelines.md).
+const (
+	declineCodeNoReader      = "no_reader"
+	declineCodeReaderOffline = "reader_offline"
+	declineCodeReaderBusy    = "reader_busy"
+	declineCodeAuthFailed    = "auth_failed"
+)
+
+// tenderDeclineKey maps a plugin decline to the message key shown to the
+// cashier. The code is compared, never shown; unknown or absent codes (and a
+// nil error) give the generic decline.
+func tenderDeclineKey(exitErr *plugins.HandlerExitError) string {
+	if exitErr != nil {
+		switch exitErr.DeclineCode() {
+		case declineCodeNoReader:
+			return "pos.toast.payment_declined_no_reader"
+		case declineCodeReaderOffline:
+			return "pos.toast.payment_declined_reader_offline"
+		case declineCodeReaderBusy:
+			return "pos.toast.payment_declined_reader_busy"
+		case declineCodeAuthFailed:
+			return "pos.toast.payment_declined_auth_failed"
+		}
+	}
+	return "pos.toast.payment_declined"
+}
 
 // tenderSignature identifies a tender by method and amount per leg.
 func tenderSignature(payments []pos.PaymentInput) string {
@@ -661,6 +693,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			return "", &paymentDeclinedError{
 				Method: p.MethodID, Tap: isTapLeg && exitErr != nil,
 				PinRequired: isTapLeg && exitErr != nil && exitErr.DeclineCode() == declineCodeTapPinRequired,
+				MessageKey:  tenderDeclineKey(exitErr),
 			}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
@@ -3245,7 +3278,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					renderTapBasket(w, r, d, &pos.TapPanel{State: state, Method: declined.Method, Amount: d.Engine.Basket().Total}, http.StatusOK)
 					return
 				}
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), cmp.Or(declined.MessageKey, "pos.toast.payment_declined")), http.StatusPaymentRequired)
 				return
 			}
 			// ut-docs#1779: distinct from a plain decline above — the device

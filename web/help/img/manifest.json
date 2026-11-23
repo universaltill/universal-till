@@ -808,10 +808,10 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "28a15fad0db3da1afdfde29e005a252c81ff3466f8724b52c6ae24d80fde7b20"
+      "sha256": "bac05fffbbad519215807a60b828308cb70c5ff470993092d3fac7ba18e58bea"
     },
     "web/public/app.js": {
-      "sha256": "f51885df7cec771737c1c93b5a0b55f9af184364e5b5cfe563de97fc7bc14ea8"
+      "sha256": "ddf128be5e1b138df23fe50a6b0d4c32b7eed8b70f0515d0d6e2ef976a0e6ee2"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1630,7 +1630,7 @@
       "sha256": "ad9c10f72169207128265e55cd24904251319e134f50480aac64661b3ae88a0a"
     },
     "web/ui/pages/index.html": {
-      "sha256": "4f35f009f0bcfa37d3e0b1b45ed3133df49dcffe3f8dd79bada758f365b6825c"
+      "sha256": "dca76a77f3bb4e699b3f691edbe7e3efe5e11dbaceb9b3fb78faae165d73eac9"
     },
     "web/ui/pages/inventory.html": {
       "sha256": "4b7c2442334e0198a66bc6179992a366f78c4da535bc50661571592245284b50"
