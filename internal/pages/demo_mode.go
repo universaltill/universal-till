@@ -178,6 +178,13 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /settings/card-readers/{id}":        true,
 	"POST /settings/card-readers/{id}/remove": true,
 	"GET /csp-report":                         true,
+	// Tap to Pay settings (ut-docs#6458): Apple's terms, the permission grant
+	// and the education sheet act on a real device and a real payment plugin.
+	"GET /settings/tap-to-pay":            true,
+	"GET /settings/tap-to-pay/status":     true,
+	"POST /settings/tap-to-pay/setup":     true,
+	"POST /settings/tap-to-pay/grant":     true,
+	"POST /settings/tap-to-pay/education": true,
 	// Tap to Pay (ut-docs#6455): settling a card payment against a real
 	// payment provider; a demo till has no provider and takes no card.
 	"POST /pay/tap/check":           true,

@@ -53,6 +53,7 @@ function startPaidCloud(): Promise<http.Server> {
               expires_at: iso(Date.now() + 30 * 864e5),
               refreshed_at: iso(Date.now()),
               cloud_link: 'periodic',
+              claimed: true, // ut-docs#6959: the cloud's own signal
             },
           },
         });
@@ -119,6 +120,26 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
     // The Privacy card's status line rides the same single GET, out of band.
     await expect(refresh).toHaveAttribute('hx-select-oob', '#settings-privacy');
     expect(await refresh.evaluate((el) => !!el.closest('#registration'))).toBe(false);
+    assertClean();
+  });
+
+  // ut-docs#6959: a claimed shop shows the linked state, not the Claim
+  // button, and the Pair form is folded under "Reconnect this till to a shop".
+  test('claimed shop: linked line, no Claim button, Reconnect collapsed (ut-docs#6959)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/settings#registration');
+    const card = page.locator('#registration');
+    await expect(async () => {
+      await page.reload();
+      await expect(card.getByTestId('store-linked')).toHaveCount(1, { timeout: 1000 });
+    }).toPass({ timeout: 20_000 });
+    await expect(card.getByTestId('store-linked')).toContainText('This store is linked to your Universal Till ID.');
+    await expect(card.locator('button[hx-post="/api/enrol/claim-code"]')).toHaveCount(0);
+    const details = card.locator('details#pair-details');
+    await expect(details).not.toHaveAttribute('open', /.*/);
+    await expect(card.locator('#pair-code')).toBeHidden();
+    await details.locator('summary').click();
+    await expect(card.locator('#pair-code')).toBeVisible();
     assertClean();
   });
 });

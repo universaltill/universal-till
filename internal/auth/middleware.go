@@ -391,6 +391,7 @@ var backgroundPollPaths = map[string]bool{
 	"/notices/toast":                  true, // the one important-toast slot, every 15 s
 	"/ui/join-sync":                   true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
 	"/ui/main-till-status":            true,
+	"/settings/tap-to-pay/status":     true, // tap settings: the Set up progress poll (ut-docs#6458)
 	"/ui/net-status":                  true, // status-bar light, fetch every 10 s (ut-docs#3095)
 	"/ui/subscription-chip":           true, // status-bar subscription chip, every 60 s (ut-docs#2569)
 	"/ui/tax-autoinstall-chip":        true, // import.html + Settings: the automatic tax plugin install chip, every 5 s (ADR-0172 §5)

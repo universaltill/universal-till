@@ -2325,6 +2325,54 @@ WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
 	return out, rows.Err()
 }
 
+// builtinPaymentMethodIDs are the seeded built-in tenders: never owned by a
+// plugin, never adoptable (single definition for the SyncPluginPaymentMethods
+// invariant and AdoptOwnerlessPaymentMethods, ut-docs#6928).
+var builtinPaymentMethodIDs = []string{"cash", "card", "gift", "voucher"}
+
+// AdoptOwnerlessPaymentMethods sets payment_methods.plugin_id = pluginID on
+// the rows among keys that have no owner and are not built-ins — the
+// replica-sync half of ADR-0031's 2026-11 amendment (ut-docs#6928). Runs
+// only inside the caller's install tx; a row with ANY owner (the empty
+// string included) is never touched. Returns the ids actually adopted.
+func (r *PluginRepo) AdoptOwnerlessPaymentMethods(ctx context.Context, tx *sql.Tx, pluginID string, keys []string) ([]string, error) {
+	if tx == nil {
+		return nil, errors.New("adopt payment methods: a transaction is required")
+	}
+	if pluginID == "" {
+		return nil, errors.New("adopt payment methods: plugin id is required")
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	keyPH, keyArgs := inPlaceholders(keys)
+	builtinPH, builtinArgs := inPlaceholders(builtinPaymentMethodIDs)
+	args := append([]any{pluginID}, keyArgs...)
+	args = append(args, builtinArgs...)
+	rows, err := tx.QueryContext(ctx, `
+UPDATE payment_methods SET plugin_id = ?
+WHERE id IN (`+keyPH+`) AND plugin_id IS NULL
+  AND id NOT IN (`+builtinPH+`)
+RETURNING id`, args...)
+	if err != nil {
+		return nil, pluginObs.wrap("payment_adopt", err)
+	}
+	defer rows.Close()
+	var adopted []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, pluginObs.wrap("payment_adopt", err)
+		}
+		adopted = append(adopted, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, pluginObs.wrap("payment_adopt", err)
+	}
+	sort.Strings(adopted)
+	return adopted, nil
+}
+
 // SyncPluginPaymentMethods derives payment_methods rows from active plugins'
 // payment entries: upserts a method per entry (id = entry key) and
 // deactivates plugin-backed methods whose plugin is gone or disabled.
@@ -2431,9 +2479,10 @@ func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
 	// place that silently disagreed about what "built-in" means, and a
 	// hijacked+deactivated 'voucher' row is precisely the regression that
 	// takes tracked voucher redemption back out of the cashier UI.
+	builtinPH, builtinArgs := inPlaceholders(builtinPaymentMethodIDs)
 	if _, err := r.db.ExecContext(ctx, `
 UPDATE payment_methods SET plugin_id = NULL, is_active = 1
-WHERE id IN ('cash', 'card', 'gift', 'voucher') AND plugin_id IS NOT NULL`); err != nil {
+WHERE id IN (`+builtinPH+`) AND plugin_id IS NOT NULL`, builtinArgs...); err != nil {
 		return fmt.Errorf("sync plugin payment methods (built-in invariant): %w", err)
 	}
 	if _, err := r.db.ExecContext(ctx, `

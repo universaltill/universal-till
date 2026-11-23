@@ -1561,6 +1561,9 @@ var renderFiles = []string{
 	// ut-docs#6566: the card readers page and its htmx row/add/remove answers
 	// render the same list body (card_reader_settings_body.html).
 	"ui/partials/card_reader_settings_body.html",
+	// ut-docs#6458: the Tap to Pay settings page and its htmx answers (setup,
+	// grant, status poll) render the same body (tap_settings_body.html).
+	"ui/partials/tap_settings_body.html",
 	// ut-docs#1957: modifiers.html's own "content"/"modifiers_list" templates
 	// call {{ template "modifier_group_admin" ... }} — riding along here is
 	// what lets that resolve through the plain httpx.Render("ui/pages/

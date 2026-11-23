@@ -63,6 +63,9 @@ type MarketplaceInstallRequest struct {
 	// SkipActiveOwnerChecks: see InstallOptions.SkipActiveOwnerChecks; only
 	// honoured with InstallInactive (replica plugin sync, ut-docs#6930).
 	SkipActiveOwnerChecks bool
+	// AdoptPaymentKeys: see InstallOptions.AdoptPaymentKeys (replica plugin
+	// sync only, ut-docs#6928).
+	AdoptPaymentKeys []string
 }
 
 // PreInstallCheck is a caller's extra gate on a verified bundle: manifest is
@@ -249,6 +252,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		PreInstall:            req.PreInstall,
 		InstallInactive:       req.InstallInactive,
 		SkipActiveOwnerChecks: req.SkipActiveOwnerChecks,
+		AdoptPaymentKeys:      req.AdoptPaymentKeys,
 	})
 }
 
@@ -266,6 +270,9 @@ type bundleInstallSpec struct {
 	InstallInactive bool
 	// SkipActiveOwnerChecks: see MarketplaceInstallRequest.SkipActiveOwnerChecks.
 	SkipActiveOwnerChecks bool
+	// AdoptPaymentKeys: see InstallOptions.AdoptPaymentKeys (replica plugin
+	// sync only, ut-docs#6928).
+	AdoptPaymentKeys []string
 }
 
 // installBundleFile extracts, verifies (signature, compatibility, executable)
@@ -430,6 +437,7 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		Uploader:              "marketplace",
 		InstallInactive:       spec.InstallInactive,
 		SkipActiveOwnerChecks: spec.SkipActiveOwnerChecks,
+		AdoptPaymentKeys:      spec.AdoptPaymentKeys,
 	}); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return nil, fmt.Errorf("persist plugin manifest: %w", err)
@@ -570,7 +578,8 @@ func minPOSVersion(manifest *Manifest) string {
 // (amends ADR-0006): ai.tools.write:*, ai.tool.provide,
 // ai.tool.provide.write, and ai.send.* on a plugin that does not declare
 // ai.agent (a tool plugin) — the admin grants those on the plugin's
-// settings page. "First declaration" is per permission row: a version that
+// settings page — and device:tap_to_pay / net:payment_broker (ADR-0198 3.1),
+// which a manager grants in Settings > Tap to Pay. "First declaration" is per permission row: a version that
 // drops a permission prunes its row, and a later version that declares it
 // again counts as a first declaration (accepted: the re-declaring manifest
 // passed marketplace review again). An uninstall drops the rows, so a
@@ -586,6 +595,10 @@ func installGrantsPermission(m *Manifest, perm string, previouslyDeclared bool) 
 		return false
 	case strings.HasPrefix(perm, AISendPermissionPrefix):
 		return slices.Contains(m.Permissions, AIAgentPermission)
+	case perm == TapDevicePermission, perm == BrokerNetPermission:
+		// ADR-0198 3.1 (ut-docs#6458): inserted ungranted; a manager grants
+		// them in Settings > Tap to Pay (explicit, audited).
+		return false
 	}
 	return true
 }

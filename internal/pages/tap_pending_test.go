@@ -19,6 +19,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paybroker"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -172,6 +173,10 @@ func tapRigWith(t *testing.T, withReadersHook bool) *tapEnv {
 	mux, dp := authRig(t)
 	registerTapPay(mux, dp)
 	registerTapAttention(mux, dp)
+	// ut-docs#6458: a tap entry is offered only on a ready device (or with a
+	// paired phone reader); these tests are about what happens after the offer.
+	devicepay.SetBridge(&fakeTapBridge{caps: capsReady})
+	t.Cleanup(func() { devicepay.SetBridge(nil) })
 	tapCheckInterval = 0
 	t.Cleanup(func() { tapCheckInterval = 2 * time.Second })
 	e := &tapEnv{mux: mux, dp: dp, broker: newFakeBroker(t)}

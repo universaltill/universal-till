@@ -4,15 +4,17 @@
   "plugins": [
     {
       "id": "com.universaltill.payment-stripe",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "repo": "universaltill/ut-plugin-payment-stripe",
-      "release_tag": "v1.9.0",
-      "bundle_name": "com.universaltill.payment-stripe_1.9.0_universal.tar.gz",
-      "bundle_sha256": "2fc2a6d49d27b22cd82c73a08dc76683ffff3972cb9c696ce901cce1425b20ee",
-      "manifest_sha256": "a88e87f19012b90ffc67938beaf54ea14dbd153d6d4f98b1802a93212f6c94f9",
+      "release_tag": "v1.10.0",
+      "bundle_name": "com.universaltill.payment-stripe_1.10.0_universal.tar.gz",
+      "bundle_sha256": "1d1fd754724febd25ca38bb07606fd02f53d26671f2b61f1bc4823a77e67341a",
+      "manifest_sha256": "3ef18538cccace034d2d9a9a5150525489fc2d59f81e0b06ad069fbe7e74576a",
       "wasm_path": "bin/plugin.wasm",
-      "wasm_sha256": "93d5355ebf721d6fb697e1fc5805328a2c1e7bf9dbc540782ab9fa0436654326",
-      "files": {}
+      "wasm_sha256": "e687881dae6be345906081e65696e08f9aacba106618d6efeaebbc0d649a1bfa",
+      "files": {
+        "locales/en.json": "1c8c3e83ba7bd1621efbb551a2788300ef04a82bf4af1da2d28e687ce9264a26"
+      }
     },
     {
       "id": "com.universaltill.payment-sumup",
