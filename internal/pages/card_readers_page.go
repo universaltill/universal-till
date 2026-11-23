@@ -94,6 +94,7 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 			names[m.ID] = m.Name
 		}
 	}
+	source := effectiveReaderSource(ctx, d, readerSourcePOS)
 	managed := map[string]bool{}
 	var rows []data.CardReader
 	for _, c := range all {
@@ -108,7 +109,7 @@ func buildReaderPicker(ctx context.Context, d *common.Deps, method string) (read
 			}
 			managed[c.MethodKey] = ok
 		}
-		if ok && readerEligible(c, readerSourcePOS) {
+		if ok && readerEligible(c, source) {
 			rows = append(rows, c)
 		}
 	}
@@ -511,6 +512,7 @@ func cardReaderGrid(ctx context.Context, d *common.Deps, grid []data.PaymentMeth
 		return grid, view
 	}
 	plug := data.NewPluginRepo(d.Db)
+	source := effectiveReaderSource(ctx, d, readerSourcePOS)
 	managed := map[string]bool{}
 	checked := map[string]bool{}
 	newest, newestAt := "", ""
@@ -520,7 +522,7 @@ func cardReaderGrid(ctx context.Context, d *common.Deps, grid []data.PaymentMeth
 			ok, err := plug.HasActiveHook(ctx, c.PluginID, readersHook(c.MethodKey))
 			managed[c.MethodKey] = err == nil && ok
 		}
-		if !managed[c.MethodKey] || !readerEligible(c, readerSourcePOS) {
+		if !managed[c.MethodKey] || !readerEligible(c, source) {
 			continue
 		}
 		view.Show = true

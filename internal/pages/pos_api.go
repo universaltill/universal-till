@@ -396,6 +396,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if actorID == "kiosk" {
 		readerSource = readerSourceKiosk
 	}
+	// ut-docs#6455 G-6: no tap entry from a kiosk, satellite, additional till
+	// or a sale declared offline.
+	payMethodIDs := make([]string, 0, len(payments))
+	for _, p := range payments {
+		payMethodIDs = append(payMethodIDs, p.MethodID)
+	}
+	if err := tapOfferGate(ctx, d, readerSource, saleInput.Offline, payMethodIDs); err != nil {
+		return "", err
+	}
 	releaseReaders, err := resolveReaderLegs(ctx, d, payments, readerSource)
 	if err != nil {
 		return "", err

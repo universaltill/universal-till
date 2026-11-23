@@ -65,6 +65,9 @@ type hostState struct {
 	// stalled call cannot eat the time the plugin needs to cancel the reader
 	// (ut-docs#6439).
 	gateDeadline time.Time
+	// tapEntry: the dispatch is the authorize/refund event of a manifest
+	// entry declaring tap: true (tap_to_pay_request is bound to it).
+	tapEntry bool
 	// binding is the payment dispatch core bound for this event, when it is
 	// an authorize/refund gate event with one of the matching kind
 	// (ut-docs#6455); bound says it is set. The payment host fns act only

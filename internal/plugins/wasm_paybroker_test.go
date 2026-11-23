@@ -79,6 +79,14 @@ func newBrokerFixture(t *testing.T, perms ...string) *brokerFixture {
 	return &brokerFixture{w: w, d: d, id: id, hits: &hits, body: &last}
 }
 
+// markTapEntry declares entryKey of the fixture plugin a tap: true entry (what
+// refreshTapEntries derives from the manifest).
+func (f *brokerFixture) markTapEntry(entryKey string) {
+	f.w.mu.Lock()
+	defer f.w.mu.Unlock()
+	f.w.tapEntries = map[string]map[string]bool{f.id: {entryKey: true}}
+}
+
 // run raises one core payment event, bound or not, and returns the guest's
 // recorded calls.
 func (f *brokerFixture) run(t *testing.T, ctx context.Context, eventType string, payload map[string]any) []map[string]any {
@@ -211,6 +219,7 @@ func TestTapRequestNeedsPermissionAndBoundAuthorize(t *testing.T) {
 		t.Fatalf("no permission: %v", c[0])
 	}
 	grantPerm(t, f.d, f.id, TapDevicePermission)
+	f.markTapEntry("stripe_tap")
 	if c := f.run(t, context.Background(), "payment.stripe_tap.authorize", args); code(c[0]) != hostErrDenied {
 		t.Fatalf("no binding: %v", c[0])
 	}
@@ -225,6 +234,7 @@ func TestTapRequestNeedsPermissionAndBoundAuthorize(t *testing.T) {
 
 func TestTapRequestUsesCoreAmountWritesRowBeforeTap(t *testing.T) {
 	f := newBrokerFixture(t, "storage", TapDevicePermission)
+	f.markTapEntry("stripe_tap")
 	br := &tapBridge{reply: `{"status":"approved","card_brand":"visa","last4":"4242"}`}
 	repo := data.NewPaymentAttemptRepo(f.d)
 	br.seenRow = func(key string) bool {
@@ -263,6 +273,7 @@ func TestTapRequestUsesCoreAmountWritesRowBeforeTap(t *testing.T) {
 
 func TestTapRequestDeadlineIsAtMost120s(t *testing.T) {
 	f := newBrokerFixture(t, "storage", TapDevicePermission)
+	f.markTapEntry("stripe_tap")
 	var got int64
 	br := &tapBridge{reply: `{"status":"pending"}`}
 	devicepay.SetBridge(bridgeFunc{tapBridge: br, onCollect: func(req string) {
@@ -286,4 +297,40 @@ type bridgeFunc struct {
 func (b bridgeFunc) Collect(req string) string {
 	b.onCollect(req)
 	return b.tapBridge.Collect(req)
+}
+
+// ut-docs#6455 G-4: tap_to_pay_request is bound to the manifest entry that
+// declares tap: true. A plugin holding device:tap_to_pay but running another
+// entry (a non-tap entry, or an entry key it does not own) gets -2 and the
+// bridge is never called, even with a valid bound authorize dispatch.
+func TestTapRequestBoundToTapTrueEntryOnly(t *testing.T) {
+	f := newBrokerFixture(t, "storage", TapDevicePermission)
+	br := &tapBridge{reply: `{"status":"approved","card_brand":"visa","last4":"4242"}`}
+	devicepay.SetBridge(br)
+	t.Cleanup(func() { devicepay.SetBridge(nil) })
+	f.markTapEntry("stripe_tap")
+	args := map[string]any{"mode": "tap_request", "body": `{}`}
+
+	// The plugin's other entry (stripe_card) did not declare tap.
+	if c := f.run(t, authorizeCtx(), "payment.stripe_card.authorize", args); code(c[0]) != hostErrDenied {
+		t.Fatalf("non-tap entry: code %d, want %d (denied)", code(c[0]), hostErrDenied)
+	}
+	if len(br.collects) != 0 {
+		t.Fatalf("bridge collected %d times for a non-tap entry", len(br.collects))
+	}
+	// A different plugin's tap entry key does not count for this plugin.
+	f.w.mu.Lock()
+	f.w.tapEntries = map[string]map[string]bool{"com.other.plugin": {"stripe_card": true}}
+	f.w.mu.Unlock()
+	if c := f.run(t, authorizeCtx(), "payment.stripe_card.authorize", args); code(c[0]) != hostErrDenied {
+		t.Fatalf("another plugin's tap entry: code %d, want %d", code(c[0]), hostErrDenied)
+	}
+	// The declared tap entry still works.
+	f.markTapEntry("stripe_tap")
+	if c := f.run(t, authorizeCtx(), "payment.stripe_tap.authorize", args); code(c[0]) <= 0 {
+		t.Fatalf("tap entry: %v", c[0])
+	}
+	if len(br.collects) != 1 {
+		t.Fatalf("collects = %d, want 1", len(br.collects))
+	}
 }

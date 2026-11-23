@@ -107,7 +107,7 @@ func hostTapToPayRequest(ctx context.Context, m api.Module, _, _, dstPtr, dstCap
 		return code
 	}
 	b := s.binding
-	if !s.bound || b.Kind != paybroker.BindAuthorize || b.AttemptKey == "" || b.Provider == "" || b.AmountMinor <= 0 {
+	if !s.tapEntry || !s.bound || b.Kind != paybroker.BindAuthorize || b.AttemptKey == "" || b.Provider == "" || b.AmountMinor <= 0 {
 		return hostErrDenied
 	}
 	res, err := CollectTap(ctx, s.db, b)
