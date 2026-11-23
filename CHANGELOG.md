@@ -71,6 +71,17 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **First-run "Start selling" did nothing (ut-docs#6929, Microsoft Store
+  certification 10.1.2.10).** The admin PIN step used browser validation on
+  fields hidden in a later step, so a PIN that was not 4 to 8 digits blocked
+  the final button silently. The PIN step now states the rule, refuses a bad
+  or mismatched PIN with a message next to the field, and "Start selling"
+  always either finishes or jumps back to the step that needs fixing. A failed
+  save shows the wizard's own message (and is logged) instead of a bare "setup
+  failed" page, errors clear when you move on, Enter works as Next, the button
+  shows "Setting up…" while saving, and Next / Start selling stay on screen on
+  small and scaled displays.
+
 - **Lock, status and exit-to-OS stay reachable from the full-screen
   Inventory and catalogue dialogs (ut-docs#6125).** The item editor, Import,
   Tax codes and the stock dialog now sit beside the nav rail and above the

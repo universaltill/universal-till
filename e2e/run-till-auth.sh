@@ -8,7 +8,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_DIR="$(mktemp -d)"
-trap 'rm -rf "$DATA_DIR"' EXIT
+trap 'rm -rf "$DATA_DIR" "$ROOT/e2e/.auth-data-dir"' EXIT
+# ut-docs#6929: the save-failure spec needs the till's data dir to force a persist failure (SQLite trigger).
+echo "$DATA_DIR" > "$ROOT/e2e/.auth-data-dir"
 export UT_DATA_DIR="$DATA_DIR" UT_LISTEN_ADDR=127.0.0.1:8092
 # ut-docs#2704: never open the developer's browser on boot (the server's
 # default); Playwright drives its own headless one. Overridable.

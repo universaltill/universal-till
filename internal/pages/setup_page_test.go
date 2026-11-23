@@ -1292,3 +1292,199 @@ func TestShopNameInputsCarryConfigMaxlength(t *testing.T) {
 		t.Errorf("GET /setup code=%d: body lacks %s", rec.Code, want)
 	}
 }
+
+// wizardFormSection returns the markup of the wizard's own <form
+// action="/api/setup"> so tests can assert on exactly what a browser submits.
+func wizardFormSection(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, `<form method="post" action="/api/setup"`)
+	if start < 0 {
+		t.Fatalf("wizard form not found in body")
+	}
+	end := strings.Index(body[start:], "</form>")
+	if end < 0 {
+		t.Fatalf("wizard form is not closed")
+	}
+	return body[start : start+end]
+}
+
+// ut-docs#6929: native constraint attributes on an <input> inside the wizard
+// form let the browser silently swallow the final submit when the invalid
+// control sits in a hidden (x-show) step: Chromium cannot show a bubble on a
+// non-focusable control, so "Start selling" did nothing at all (MS Store
+// certification 10.1.2.10). Validation is JS + server only.
+func TestSetupWizardPINStepStatesRuleAndNeverUsesNativeValidationOnWizardInputs(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, _, _ := newFullAuthDeps(t)
+	body := getSetup(mux, "", "").Body.String()
+	form := wizardFormSection(t, body)
+
+	if !strings.Contains(form, `id="pin-rule"`) || !strings.Contains(form, "Use 4 to 8 digits, numbers only.") {
+		t.Fatal("step 6 must state the PIN rule ('Use 4 to 8 digits, numbers only.') in an element with id=pin-rule")
+	}
+	for _, name := range []string{"pin", "pin_confirm"} {
+		re := regexp.MustCompile(`<input[^>]*name="` + name + `"[^>]*>`)
+		tag := re.FindString(form)
+		if tag == "" {
+			t.Fatalf("input %s not found", name)
+		}
+		if !strings.Contains(tag, `aria-required="true"`) {
+			t.Errorf("input %s must carry aria-required=\"true\": %s", name, tag)
+		}
+		if !strings.Contains(tag, "pin-rule") {
+			t.Errorf("input %s must be described by #pin-rule: %s", name, tag)
+		}
+	}
+	banned := regexp.MustCompile(`(?i)\s(pattern|minlength|required|min|max|step)(=|\s|>)`)
+	for _, tag := range regexp.MustCompile(`(?s)<input[^>]*>`).FindAllString(form, -1) {
+		if banned.MatchString(tag) {
+			t.Errorf("wizard <input> must not carry a native constraint attribute (silent hidden-step submit block): %s", tag)
+		}
+	}
+}
+
+func TestSetupWizardFormSubmitGuardIsWired(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, _, _ := newFullAuthDeps(t)
+	body := getSetup(mux, "", "").Body.String()
+	if !strings.Contains(body, `@submit="submit($event)"`) {
+		t.Error(`wizard form must carry @submit="submit($event)"`)
+	}
+	if !strings.Contains(body, `aria-disabled`) || !strings.Contains(body, "setup.finish_busy") && !strings.Contains(body, "Setting up") {
+		t.Error("finish button must expose a busy state (aria-disabled + 'Setting up…')")
+	}
+	if !strings.Contains(body, "This can take a few seconds. Please keep this window open.") {
+		t.Error("busy hint text missing")
+	}
+	if strings.Contains(body, "data-server-error x-show") {
+		t.Error("a plain GET /setup must render no server error element")
+	}
+}
+
+func TestSetupWizardPINErrorRerenderLandsOnStep6WithItsBanner(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	cases := []struct {
+		name, pin, confirm, msg string
+	}{
+		{"empty", "", "", "PIN must be 4–8 digits"},
+		{"three digits", "123", "123", "PIN must be 4–8 digits"},
+		{"mismatch", "2468", "8642", "PINs do not match"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := postForm(mux, "/api/setup", url.Values{"pin": {tc.pin}, "pin_confirm": {tc.confirm}}, nil)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK || !strings.Contains(body, tc.msg) {
+				t.Fatalf("code=%d want 200 with %q", rec.Code, tc.msg)
+			}
+			if !strings.Contains(body, "step: 6") || !strings.Contains(body, "srvErrStep: 6") {
+				t.Fatalf("re-render must open on step 6 with srvErrStep: 6")
+			}
+			if !strings.Contains(body, `x-show="srvErrStep === step"`) {
+				t.Fatal("server banner must be step-scoped (x-show=\"srvErrStep === step\")")
+			}
+			if sessionCookie(rec) != "" {
+				t.Fatal("no session cookie on a rejected submit")
+			}
+		})
+	}
+}
+
+// ut-docs#6929: every persist step of POST /api/setup used to answer a bare
+// text/plain "setup failed" 500, which the shell shows as a dead page. Each
+// now re-renders the wizard banner on step 7 (Start selling, retry in place),
+// and a retry after the fault clears must succeed.
+func TestSetupWizardSaveFailureRendersWizardBannerOnStep7ForEveryPersistPath(t *testing.T) {
+	const saveFailed = "Could not save your settings — please try again. If the PIN fields are empty, re-enter your PIN."
+	validForm := func(extra url.Values) url.Values {
+		f := url.Values{
+			"pin": {"482913"}, "pin_confirm": {"482913"},
+			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+			"store_name": {"Corner Shop"}, "till_name": {"Till 1"},
+			"shop_type": {setupShopTypes[0]},
+		}
+		for k, v := range extra {
+			f[k] = v
+		}
+		return f
+	}
+	cases := []struct {
+		name    string
+		form    url.Values
+		trigger string // SQL that makes exactly that persist path fail
+		drop    string
+	}{
+		{"currency confirmed", validForm(url.Values{"currency_touched": {"1"}}),
+			`CREATE TRIGGER f BEFORE INSERT ON settings WHEN NEW.key = 'store.currency_confirmed' BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"store.name", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON settings WHEN NEW.key = 'store.name' BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"till.name", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON settings WHEN NEW.key = 'till.name' BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"shop type", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON settings WHEN NEW.key = 'shop.type' BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"setup.completed", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON settings WHEN NEW.key = 'setup.completed' BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"ensure register", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON registers BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"ensure admin", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON users BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"set pin", validForm(nil),
+			`CREATE TRIGGER f BEFORE UPDATE OF pin_hash ON users BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+		{"create session", validForm(nil),
+			`CREATE TRIGGER f BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'boom'); END`, "f"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, svc, d := newFullAuthDeps(t)
+			if tc.name == "ensure register" {
+				// A migration may seed a register; the path only inserts when none exists.
+				if _, err := d.Db.Exec(`DELETE FROM registers`); err != nil {
+					t.Skipf("no honest seam: cannot empty registers: %v", err)
+				}
+			}
+			if _, err := d.Db.Exec(tc.trigger); err != nil {
+				t.Fatalf("install fault: %v", err)
+			}
+			rec := postForm(mux, "/api/setup", tc.form, nil)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code=%d want 200 wizard banner (not a bare 500); body=%q", rec.Code, body)
+			}
+			if body == "setup failed\n" || strings.TrimSpace(body) == "setup failed" {
+				t.Fatal("bare 'setup failed' text page")
+			}
+			if !strings.Contains(body, `class="login-error"`) || !strings.Contains(body, saveFailed) {
+				t.Fatalf("want wizard banner %q", saveFailed)
+			}
+			if !strings.Contains(body, "step: 7") || !strings.Contains(body, "srvErrStep: 7") {
+				t.Fatal("save failure must re-render on step 7 with srvErrStep: 7")
+			}
+			if sessionCookie(rec) != "" {
+				t.Fatal("no session cookie on a failed save")
+			}
+			// Retry safety: once the fault clears, the same submit completes.
+			if _, err := d.Db.Exec(`DROP TRIGGER ` + tc.drop); err != nil {
+				t.Fatalf("remove fault: %v", err)
+			}
+			if tc.name == "create session" {
+				// The admin PIN is already stored, so the till is set up: a retry
+				// is sent to /login, where that PIN works (nothing is lost).
+				rec = postForm(mux, "/api/setup", tc.form, nil)
+				if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+					t.Fatalf("retry after a session failure: code=%d loc=%q, want 303 /login", rec.Code, rec.Header().Get("Location"))
+				}
+				if _, _, err := svc.Login(t.Context(), "482913"); err != nil {
+					t.Fatalf("the PIN set by the failed attempt must log in: %v", err)
+				}
+				return
+			}
+			if fb, _ := svc.NeedsFirstBoot(t.Context()); !fb {
+				t.Fatal("a failed save must leave the till in first-boot state")
+			}
+			rec = postForm(mux, "/api/setup", tc.form, nil)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" || sessionCookie(rec) == "" {
+				t.Fatalf("retry: code=%d loc=%q cookie=%q body=%q", rec.Code, rec.Header().Get("Location"), sessionCookie(rec), rec.Body.String())
+			}
+		})
+	}
+}
