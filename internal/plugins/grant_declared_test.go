@@ -108,3 +108,34 @@ func TestGrantDeclaredPermissions_NetCallReachesFakeProviderOnlyWhenGranted(t *t
 		t.Fatalf("ungranted: http_code=%v status=%v hits=%d, want denied and no hit", res["http_code"], res["http_status"], n)
 	}
 }
+
+// ADR-0198 3.1 (ut-docs#6458, design D3): a bundled plugin declaring the two
+// Tap to Pay permissions gets the rows ungranted on its first install; its
+// ordinary permissions are granted as before.
+func TestBundledLoader_DoesNotGrantBrokerPermissions(t *testing.T) {
+	d := hostfnTestDB(t)
+	ctx := context.Background()
+	m := &Manifest{ID: "com.universaltill.payment-faketap", Name: "Fake", Version: "1.10.0", Entrypoint: "./bin/plugin.wasm",
+		Runtime: "wasm", CanonicalType: "payment", DeviceArch: "any", MinPOSVersion: "1.0.0",
+		Permissions: []string{"events:receive", "storage", TapDevicePermission, BrokerNetPermission}}
+	if err := PersistManifest(ctx, d, m, InstallOptions{TrustLevel: "system", BundledLockVerified: true}); err != nil {
+		t.Fatal(err)
+	}
+	GrantDeclaredPermissions(ctx, d, m, map[string]bool{}, nil)
+	granted := map[string]bool{}
+	perms, _ := data.NewPluginRepo(d).ListPermissions(ctx, m.ID)
+	for _, p := range perms {
+		granted[p.Permission] = p.Granted
+	}
+	for _, want := range []string{"events:receive", "storage"} {
+		if !granted[want] {
+			t.Errorf("%s not granted: %v", want, granted)
+		}
+	}
+	for _, perm := range []string{TapDevicePermission, BrokerNetPermission} {
+		g, present := granted[perm]
+		if !present || g {
+			t.Errorf("%s: row present=%v granted=%v, want a row with granted=0", perm, present, g)
+		}
+	}
+}

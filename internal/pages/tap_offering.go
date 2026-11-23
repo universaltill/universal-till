@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/devicepay"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -29,6 +30,40 @@ func effectiveReaderSource(ctx context.Context, d *common.Deps, source string) s
 // tapOfferedOn reports whether this source may be offered a tap entry.
 func tapOfferedOn(source string) bool { return source == readerSourcePOS }
 
+// tapEntryCapable reports whether a tap entry can be offered on this (main or
+// standalone) till now (ADR-0198 2, conditions 2 and 4): this device's native
+// Tap to Pay is ready for the entry's provider, or an active paired phone
+// reader is registered for the entry (that path needs no local bridge,
+// ADR-0198 6). A read error is "not capable" (fail closed).
+func tapEntryCapable(ctx context.Context, d *common.Deps, method, provider string) bool {
+	if provider != "" && devicepay.Capabilities()[provider].Ready {
+		return true
+	}
+	rows, err := data.NewCardReaderRepo(d.Db).ListActive(ctx)
+	if err != nil {
+		return false
+	}
+	for _, c := range rows {
+		if c.MethodKey == method && c.Kind == data.CardReaderKindPhone {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutUnreadyTapEntries drops the tap entries this till cannot take now
+// (see tapEntryCapable) from a main-till tender list.
+func withoutUnreadyTapEntries(ctx context.Context, d *common.Deps, methods []data.PaymentMethod) []data.PaymentMethod {
+	out := make([]data.PaymentMethod, 0, len(methods))
+	for _, m := range methods {
+		if provider, isTap := tapEntry(ctx, d, m.ID); isTap && !tapEntryCapable(ctx, d, m.ID, provider) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // withoutTapEntries drops every tap entry from methods (a list of tender
 // methods for a surface that never offers one). A failed plugin-list read keeps
 // the list: the tender gate (tapOfferGate) still refuses a tap leg there.
@@ -48,6 +83,18 @@ func withoutTapEntries(ctx context.Context, d *common.Deps, methods []data.Payme
 // is declared offline. Nothing is started or charged.
 func tapOfferGate(ctx context.Context, d *common.Deps, source string, offline bool, methods []string) error {
 	if tapOfferedOn(effectiveReaderSource(ctx, d, source)) && !offline {
+		// ADR-0198 2 (ut-docs#6458): on the main till a tap entry also needs
+		// a ready device (or a paired phone reader). A crafted request for a
+		// tap entry that is not offered is refused before any authorize.
+		for _, m := range methods {
+			provider, isTap, err := tapEntryErr(ctx, d, m)
+			if err != nil {
+				return &tapStartFailedError{Method: m}
+			}
+			if isTap && !tapEntryCapable(ctx, d, m, provider) {
+				return &tapStartFailedError{Method: m, NotReady: true}
+			}
+		}
 		return nil
 	}
 	for _, m := range methods {

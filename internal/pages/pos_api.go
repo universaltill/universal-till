@@ -39,6 +39,11 @@ import (
 // can map it to its own HTTP status instead of a generic 400.
 type paymentDeclinedError struct {
 	Method string
+	// Tap: a tap payment the plugin itself declined (ut-docs#6458, ux 2.1).
+	// PinRequired: the card needs a PIN this phone cannot take
+	// (offline_pin_required). The decline code itself is never shown to the
+	// cashier, so it is not kept.
+	Tap, PinRequired bool
 }
 
 func (e *paymentDeclinedError) Error() string {
@@ -653,7 +658,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			capturedLegs = unionCaptured(capturedLegs, stash.Captured)
 			warnUnknownLegs(unknownNotAsked(stash.Unknown, asked), "tender declined")
 			why = "tender refused (a later leg was declined)"
-			return "", &paymentDeclinedError{Method: p.MethodID}
+			return "", &paymentDeclinedError{
+				Method: p.MethodID, Tap: isTapLeg && exitErr != nil,
+				PinRequired: isTapLeg && exitErr != nil && exitErr.DeclineCode() == declineCodeTapPinRequired,
+			}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
 		// doc comment claims "fail-closed by construction, no override
@@ -3195,6 +3203,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				if tapStart.NeedsAttention {
 					reason = "needs_attention"
 				}
+				if tapStart.NotReady {
+					reason = "not_ready"
+				}
 				renderTapBasket(w, r, d, &pos.TapPanel{State: "start_failed", Method: tapStart.Method, Reason: reason, Amount: d.Engine.Basket().Total}, http.StatusOK)
 				return
 			}
@@ -3224,6 +3235,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// localized, method-agnostic message, mirroring the
 				// self-order kiosk's own "selforder.checkout.declined" copy.
 				log.Printf("tender rejected: %v", err)
+				if declined.Tap {
+					// ut-docs#6458 (ux 2.1): a tap the card/issuer refused has its
+					// own screen; the bank's code never reaches the cashier.
+					state := "declined"
+					if declined.PinRequired {
+						state = "pin_fallback"
+					}
+					renderTapBasket(w, r, d, &pos.TapPanel{State: state, Method: declined.Method, Amount: d.Engine.Basket().Total}, http.StatusOK)
+					return
+				}
 				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
 				return
 			}

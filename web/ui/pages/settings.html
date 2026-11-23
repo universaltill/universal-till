@@ -975,6 +975,7 @@
   <!-- ut-docs#6566: the per-till card reader list (manager page; the route
        answers a cashier with 403, this link is not the gate). -->
   <p id="settings-card-readers" class="set-row"><a class="btn secondary" data-testid="card-readers-link" href="/settings/card-readers">{{ T "card_reader.settings.title" }}</a></p>
+  {{ if .tapSettingsAvailable }}<p id="settings-tap-to-pay" class="set-row"><a class="btn secondary" data-testid="tap-settings-link" href="/settings/tap-to-pay">{{ T "tap.settings.title" }}</a></p>{{ end }}
   <p class="muted" class="set-gap">{{ T "settings.payments.fees_help" }}</p>
   {{ range .payFees }}
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"
