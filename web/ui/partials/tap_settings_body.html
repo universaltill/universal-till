@@ -1,0 +1,54 @@
+{{/* ut-docs#6458 (ux.md WP5): body of Settings > Payments > Tap to Pay on iPhone.
+     Rendered inside the page and standalone (htmx outerHTML swap) by the
+     setup / grant routes and the 2 s status poll, which runs ONLY while the
+     state is "preparing". No text field anywhere (no OS keyboard); a state
+     is an icon + a word + a tag, never colour alone. The permission names
+     never appear and the form carries none. */}}
+{{ define "tap_settings_body.html" }}
+{{ if not .Available }}
+<section id="tap-settings" class="card tap-settings" data-testid="tap-unavailable">
+  <p>{{ T "tap.settings.unavailable" }}</p>
+</section>
+{{ else }}
+<section id="tap-settings" class="card tap-settings" aria-labelledby="tap-settings-title" data-testid="tap-settings" data-state="{{ .State }}"
+         {{ if eq .State "preparing" }}hx-get="/settings/tap-to-pay/status" hx-trigger="every 2s" hx-swap="outerHTML"{{ end }}>
+  <div id="tap-status" role="status" aria-live="polite" aria-atomic="true" data-testid="tap-status">
+    <h2 id="tap-settings-title" tabindex="-1"><span aria-hidden="true">{{ .Icon }}</span> {{ T (printf "tap.settings.state.%s" .State) }}
+      <span class="tag{{ if eq .State "ready" }} ok{{ else if eq .State "needs_setup" }} warn{{ end }}">{{ T (printf "tap.settings.state.%s" .State) }}</span>
+      {{ if .Test }}<span class="tag warn" data-testid="tap-test-mode">{{ T "tap.settings.mode.test" }}</span>{{ end }}
+    </h2>
+    <p data-testid="tap-reason">{{ T .ReasonKey }}</p>
+    {{ if eq .State "preparing" }}{{ if gt .Progress 0 }}<progress max="100" value="{{ .Progress }}"></progress>{{ else }}<progress></progress>{{ end }}{{ end }}
+    {{ if .AlreadyMsg }}<p data-testid="tap-already">{{ T "tap.settings.setup_already" }}</p>{{ end }}
+    {{ if .DoneNotice }}<p data-testid="tap-setup-done">{{ T "tap.settings.setup_done" }}</p>{{ end }}
+    {{ if .NoticeKey }}<div class="notice-block-warn" data-testid="tap-setup-failed"><p>{{ T .NoticeKey }}</p><p class="muted">{{ T .NoticeWhy }}</p></div>{{ end }}
+  </div>
+  <ol class="tap-steps">
+    {{ range $i, $s := .Steps }}
+    <li data-testid="tap-step-{{ $s.ID }}">
+      <strong>{{ T (printf "tap.settings.step.%s" $s.ID) }}</strong>
+      {{ if $s.Done }}<span class="tag ok">{{ T "tap.settings.step.done" }}</span>
+      {{ else if $s.Unknown }}<span class="tag">{{ T "tap.settings.step.unknown" }}</span>
+      {{ else }}<span class="tag warn">{{ T "tap.settings.step.todo" }}</span>{{ end }}
+      <span class="muted">{{ T $s.LineKey }}</span>
+      {{ if eq $s.ID "allow" }}{{ if $s.Done }}<span class="tag ok" data-testid="tap-permission-granted">{{ T "tap.settings.permission.granted" }}</span>{{ else }}<span class="tag warn" data-testid="tap-permission-missing">{{ T "tap.settings.permission.missing" }}</span>{{ end }}{{ end }}
+      {{ if eq $s.Action "setup" }}
+      <button type="button" id="tap-setup" class="btn primary tap-btn" data-testid="tap-setup"
+              hx-post="/settings/tap-to-pay/setup" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this"
+              {{ if not $s.ActionOK }}disabled aria-busy="true"{{ end }}>{{ T "tap.settings.btn.setup" }}</button>
+      {{ else if eq $s.Action "grant" }}
+      <button type="button" id="tap-grant" class="btn primary tap-btn" data-testid="tap-grant"
+              hx-post="/settings/tap-to-pay/grant" hx-target="#tap-settings" hx-swap="outerHTML" hx-disabled-elt="this"
+              hx-confirm="{{ T "tap.settings.grant_confirm" }}" data-confirm-ok="{{ T "tap.settings.btn.grant" }}"
+              {{ if not $s.ActionOK }}disabled{{ end }}>{{ T "tap.settings.btn.grant" }}</button>
+      {{ end }}
+    </li>
+    {{ end }}
+  </ol>
+  <button type="button" class="btn secondary tap-btn" data-testid="tap-education"
+          hx-post="/settings/tap-to-pay/education" hx-swap="none" hx-disabled-elt="this"
+          {{ if eq .State "unavailable" }}disabled{{ end }}>{{ T "tap.settings.btn.education" }}</button>
+  <p class="muted">{{ if .StoreBuild }}{{ T "tap.settings.fee_store" }}{{ else }}{{ T "tap.settings.fee" }}{{ end }}</p>
+</section>
+{{ end }}
+{{ end }}

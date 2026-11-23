@@ -981,6 +981,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payMethods":            payMethods,
 			"payDefault":            payDefault,
 			"payFees":               feeRows,
+			"tapSettingsAvailable":  tapSettingsAvailable(), // ut-docs#6458: link only with a native bridge
 			"exportEntries":         exportEntries,
 			"autoUpdateFollowsMain": autoUpdateFollowsMain,
 			"autoUpdateFollowLine":  autoUpdateFollowLine,

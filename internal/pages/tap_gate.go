@@ -30,6 +30,10 @@ import (
 // payment never started (no PaymentIntent, no tap): nothing was charged.
 const declineCodeTapStartFailed = "start_failed"
 
+// declineCodeTapPinRequired is the decline_code of a card that needs a PIN
+// the phone cannot take (Stripe 10.03, ux 2.1 pin_fallback).
+const declineCodeTapPinRequired = "offline_pin_required"
+
 // tapStartFailedError: the tap payment could not be started; nothing was
 // charged, the basket is not locked.
 type tapStartFailedError struct {
@@ -39,6 +43,9 @@ type tapStartFailedError struct {
 	// NeedsAttention: an earlier tap payment on this provider needs a
 	// manager (ut-docs#6795); nothing was started.
 	NeedsAttention bool
+	// NotReady: this till's Tap to Pay is not set up (ut-docs#6458); the
+	// cashier cannot fix it, a manager can in Settings > Tap to Pay.
+	NotReady bool
 }
 
 func (e *tapStartFailedError) Error() string { return "tap payment could not start: " + e.Method }

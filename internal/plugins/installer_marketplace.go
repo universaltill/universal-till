@@ -578,7 +578,8 @@ func minPOSVersion(manifest *Manifest) string {
 // (amends ADR-0006): ai.tools.write:*, ai.tool.provide,
 // ai.tool.provide.write, and ai.send.* on a plugin that does not declare
 // ai.agent (a tool plugin) — the admin grants those on the plugin's
-// settings page. "First declaration" is per permission row: a version that
+// settings page — and device:tap_to_pay / net:payment_broker (ADR-0198 3.1),
+// which a manager grants in Settings > Tap to Pay. "First declaration" is per permission row: a version that
 // drops a permission prunes its row, and a later version that declares it
 // again counts as a first declaration (accepted: the re-declaring manifest
 // passed marketplace review again). An uninstall drops the rows, so a
@@ -594,6 +595,10 @@ func installGrantsPermission(m *Manifest, perm string, previouslyDeclared bool) 
 		return false
 	case strings.HasPrefix(perm, AISendPermissionPrefix):
 		return slices.Contains(m.Permissions, AIAgentPermission)
+	case perm == TapDevicePermission, perm == BrokerNetPermission:
+		// ADR-0198 3.1 (ut-docs#6458): inserted ungranted; a manager grants
+		// them in Settings > Tap to Pay (explicit, audited).
+		return false
 	}
 	return true
 }
