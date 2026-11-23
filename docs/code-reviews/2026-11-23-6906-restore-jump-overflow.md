@@ -31,6 +31,7 @@ The reviewer also checked how `NextReceiptNo` behaves now that `maxReceiptSeq` i
 - TDD: the Tester reverted the source files and saw all four data tests and the db merge test fail with the values the dev note claims. With the source restored, they pass. I did the same revert-and-run check for the three gap tests and for the strengthened mirror test.
 - `go build ./...`, `go vet` and `gofmt` are clean.
 - `go test ./internal/data/ ./internal/db/` passes. `-race` on the restore tests also passes (db took 712 s with a 25 m timeout, and no race was reported). `./internal/pages -run 'Restore|Backup'` passes.
+- PR CI `armv7-seccomp` caught a 32-bit build break. The untyped 10^15 const was passed to `QueryRow` as `any`, so it became a 32-bit `int` and overflowed. Fix: both consts are typed `int64`. `GOARCH=arm GOARM=7 go vet` on data and db reported 6 overflow errors before the fix and is clean after it, and `go build ./...` for arm passes.
 - I ran every guard in `ci.yml` locally. All pass except four that cannot run in this container: armv7-seccomp (no qemu), catimport-version (tags not fetched), deadcode (local Go toolchain is older than go.mod) and shellcheck-version (no binary). CI runs those four.
 
 Pre-flight: help topic n/a (internal numbering safety, no screen or step a shop owner sees); reference docs n/a (no reference page describes how the marker's `LastZ` is computed, and the floor semantics are unchanged); README n/a; en.json n/a (no strings); follow-ups deferred → ut-docs#6924.
