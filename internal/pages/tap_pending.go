@@ -51,8 +51,8 @@ var tapResolveReasons = map[string]bool{
 
 // tapLegInFlight (ut-docs#6909) holds the attempt keys a check or resolve is
 // asking the broker about right now, so a retry after the throttle interval, or
-// a resolve beside a check, never runs concurrently on one leg. It reuses the
-// kiosk's generic acquire/release key set; the key is the authorize request id
+// a resolve beside a check, never runs concurrently on one leg. It is a
+// keyedInFlight set (keyed_inflight.go); the key is the authorize request id
 // (the attention resolve's attempt key is the same id).
 var tapLegInFlight = newKeyedInFlight()
 
