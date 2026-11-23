@@ -1,32 +1,32 @@
 {
   "schema": 1,
-  "_comment": "Pinned first-party plugin releases embedded in the App Store build (ADR-0194, Apple 2.5.2). Edits need owner review (CODEOWNERS). Refresh: publish the plugin release, then update version, release_tag, bundle_sha256 and the file hashes from that release's bundle.",
+  "_comment": "Pinned first-party plugin releases embedded in the App Store build (ADR-0194, Apple 2.5.2). Edits need owner review (CODEOWNERS). Refresh: publish the plugin release, then update version, release_tag, bundle_name, bundle_sha256, manifest_sha256, wasm_sha256 and the file hashes from that release's bundle (gh release download into a fresh empty dir, verify the .sha256), raise minLocked in lock_floor_test.go, and run scripts/ci/fetch-bundled-plugins.sh --from-dir DIR. The lock must never lag the latest plugin release (ut-docs#6565).",
   "plugins": [
     {
       "id": "com.universaltill.payment-stripe",
-      "version": "1.5.0",
+      "version": "1.9.0",
       "repo": "universaltill/ut-plugin-payment-stripe",
-      "release_tag": "v1.5.0",
-      "bundle_name": "com.universaltill.payment-stripe_1.5.0_universal.tar.gz",
-      "bundle_sha256": "3cd79495295311a79da19e8dbdcf0d6bc60c65cacc11689e3e31eedfad326a03",
-      "manifest_sha256": "cda855808fcc2390f69ce5a59d9732584d879572f9a6e163a223234fef942b5b",
+      "release_tag": "v1.9.0",
+      "bundle_name": "com.universaltill.payment-stripe_1.9.0_universal.tar.gz",
+      "bundle_sha256": "2fc2a6d49d27b22cd82c73a08dc76683ffff3972cb9c696ce901cce1425b20ee",
+      "manifest_sha256": "a88e87f19012b90ffc67938beaf54ea14dbd153d6d4f98b1802a93212f6c94f9",
       "wasm_path": "bin/plugin.wasm",
-      "wasm_sha256": "397f771226ff0d8b63cb8036c835f36501fe7044eb9f87951d4215505df4fb7a",
+      "wasm_sha256": "93d5355ebf721d6fb697e1fc5805328a2c1e7bf9dbc540782ab9fa0436654326",
       "files": {}
     },
     {
       "id": "com.universaltill.payment-sumup",
-      "version": "1.5.1",
+      "version": "1.9.2",
       "repo": "universaltill/ut-plugin-payment-sumup",
-      "release_tag": "v1.5.1",
-      "bundle_name": "com.universaltill.payment-sumup_1.5.1_universal.tar.gz",
-      "bundle_sha256": "ec637443ff39b1fd71a5835e43d1dfdc798721eb0f55fd8d15934d4fc14c378b",
-      "manifest_sha256": "3675d08ed3cd3f8a587ddea2174a911e2c04369bf4892957d9a43b0536a941f9",
+      "release_tag": "v1.9.2",
+      "bundle_name": "com.universaltill.payment-sumup_1.9.2_universal.tar.gz",
+      "bundle_sha256": "323b6bdfd19a4f79605fa6d67e6edf5199f3d178d42962d9fcd90fd3857d6d60",
+      "manifest_sha256": "198f375246f102d528fb9ddee093e48ca998a53f3a143a7c990bd9abefd59d96",
       "wasm_path": "bin/plugin.wasm",
-      "wasm_sha256": "2617c46bf42929be0765a381cca2906070ba52270ba387e92aa4da49135e2298",
+      "wasm_sha256": "ed00036797e6ebdfbe299cf83f135fd4e93c805e0d7d3257a53c95963cb46295",
       "files": {
         "locales/de.json": "9fdfa5e24fb04f1fe8f8fd4554d7939a9c39a1e0b271e79d36a1ceee0ded8fb7",
-        "locales/en.json": "bd884bb25d90bdb20db49c11ebfcb5f3c30c3e5d8f51c5cd074bcd79da03ee19",
+        "locales/en.json": "498385cf17ed928b025fbbb1b0406f70ede834e47bb6d1420199dd3adf047fe4",
         "locales/tr.json": "88a8cad53ec53495c49e47b7e254b8ee0f72450832762c0a3301ee2d9f0c9c6b"
       }
     },

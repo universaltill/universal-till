@@ -226,12 +226,21 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	}
 
 	// Get current version
-	currentVersion, ok, err := repo.GetActivePluginVersion(ctx, pluginID)
+	// Installed, not "active": a plugin the replica sync keeps switched off
+	// (ut-docs#6930) or an operator disabled must still roll back, else the
+	// cloudsync caller falls back to a full uninstall.
+	currentVersion, ok, err := repo.GetInstalledPluginVersion(ctx, pluginID)
 	if err != nil {
 		return fmt.Errorf("failed to get current version: %w", err)
 	}
 	if !ok {
 		return fmt.Errorf("plugin %s has no active version", pluginID)
+	}
+	// The restore below only moves the version (UpdatePluginVersion never
+	// touches is_active), so a plugin that is off now stays off.
+	wasActive, err := repo.PluginActive(ctx, pluginID)
+	if err != nil {
+		return fmt.Errorf("failed to read active state: %w", err)
 	}
 
 	if currentVersion == targetVersion {
@@ -316,8 +325,13 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	// rollback target may have been a preset while the current version is
 	// not, and another plugin's preset may have become active since; a
 	// fresh install would refuse a second active preset, so must this.
-	if err := validateLayoutPresetExclusivity(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
-		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	// Skipped for a plugin that is inactive: it stays inactive through the
+	// rollback, so it cannot mint a second ACTIVE owner; the enable-time gate
+	// checks it when it is switched on (ut-docs#6930).
+	if wasActive {
+		if err := validateLayoutPresetExclusivity(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
+			return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+		}
 	}
 
 	// Same protection for a `fiscal.*` capability (ADR-0129 §2) — the

@@ -64,7 +64,7 @@ func TestConvergePluginSet_InstallFailureWarnsOnceAndClearsOnSuccess(t *testing.
 	orig := pluginSyncInstall
 	t.Cleanup(func() { pluginSyncInstall = orig })
 	var failWith error = errors.New("marketplace down")
-	pluginSyncInstall = func(context.Context, *common.Deps, string, string) (string, error) { return "", failWith }
+	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool) (string, error) { return "", failWith }
 
 	convergePluginSet(t.Context(), dp, rows)
 	convergePluginSet(t.Context(), dp, rows)

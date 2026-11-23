@@ -425,6 +425,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if errKey == keyCloudExpired {
 			errStep = 1 // the pairing is gone: start over
 		}
+		if errKey == "setup.error.save_failed" {
+			errStep = 7 // ut-docs#6929: retry in place, next to "Start selling"
+		}
 		data["errStep"] = errStep
 		// startStep is the step the wizard actually opens on: an error
 		// re-render lands on errStep, an explicit tax-plugin skip (ut-docs#1506)
@@ -651,6 +654,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
+		// ut-docs#6929: a persist failure re-renders the wizard banner on the
+		// "Start selling" step (retry in place; NeedsFirstBoot stays true until a
+		// PIN is set and ensureFirstBootAdmin reuses an existing admin) instead
+		// of a bare text/plain 500 the desktop shell shows as a dead page. The
+		// log names the step; it never carries the PIN, hash or token.
+		failSetup := func(step string, err error) {
+			logging.L().Errorf("setup wizard: %s: %v", step, err)
+			renderWizard(w, r, "setup.error.save_failed", "")
+		}
+
 		// Locale/currency/tax — same application path as /api/settings/save.
 		st := d.CurrentState()
 		// web/ui/pages/setup.html's currencyTouched only flips true on a
@@ -668,7 +681,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// never blank).
 			if currencyTouched {
 				if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
-					http.Error(w, "setup failed", http.StatusInternalServerError)
+					failSetup("persist currency confirmed", err)
 					return
 				}
 			}
@@ -737,21 +750,21 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		applyEngineConfig(r.Context(), d)
 
 		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("store.name", err)
 			return
 		}
 		if err := d.Settings.Set(r.Context(), "till.name", tillName); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("till.name", err)
 			return
 		}
 		// Shop type (ut-docs#539, ADR-0026). On the cloud path applyCloudShop
 		// already replaced the posted value with the cloud's (ADR-0171 §4).
 		if err := saveSetupShopType(r.Context(), d, r.Form.Get("shop_type")); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("shop type", err)
 			return
 		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("setup.completed", err)
 			return
 		}
 
@@ -760,7 +773,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// picker is driven entirely from real `registers` rows, and without
 		// one Open Shift 500s on a FK constraint failure (ut-docs#429).
 		if _, err := posRepo.EnsureRegister(r.Context()); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("ensure register", err)
 			return
 		}
 
@@ -768,16 +781,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// POST /api/auth/setup (which stays as the bare fallback).
 		adminID, err := ensureFirstBootAdmin(r, svc)
 		if err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("ensure admin", err)
 			return
 		}
 		if err := svc.Repo().SetUserPIN(r.Context(), adminID, hash); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("set pin", err)
 			return
 		}
 		token, err := svc.CreateSession(r.Context(), adminID)
 		if err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			failSetup("create session", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)

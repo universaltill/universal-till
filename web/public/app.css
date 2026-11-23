@@ -5741,7 +5741,13 @@ body.login-screen {
 }
 /* ut-docs#5602: on a short till screen (1024x600 kiosk Pi) the 8dvh dead space
    pushed Back/Next below the fold when an error line showed. */
-@media (max-height: 700px) { .setup-card { margin-block-start: 1rem; } }
+/* ut-docs#6929: 1920x1080 at 150% scaling is 1280x720 CSS px, which the 700px
+   query missed: raised to 800px, and the logo shrinks so Next / Start selling
+   stay in view (Microsoft Store certification laptop). */
+@media (max-height: 800px) {
+  .setup-card { margin-block-start: .75rem; gap: .6rem; }
+  .setup-card .login-logo { block-size: 3rem; height: 3rem; margin-block-end: 0; }
+}
 .setup-card h1 { font-size: 1.3rem; margin: 0; }
 .setup-card input[type="text"], .setup-card input[type="password"], .setup-card select {
   inline-size: 100%; padding: .6rem .7rem; font-size: 1.05rem;
@@ -5805,6 +5811,27 @@ body.login-screen {
 .setup-replace-actions { display: flex; flex-direction: column; gap: .5rem; margin-block-start: .6rem; }
 .setup-replace-actions .btn { inline-size: 100%; min-block-size: 48px; white-space: normal; display: inline-flex; align-items: center; justify-content: center; gap: .4rem; }
 .setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; flex-wrap: wrap; }
+/* ut-docs#6929: the action row stays on screen while a long step (step 7's
+   notice) scrolls under it. The document scrolls (body is not a scroll
+   container), so sticky binds to the viewport. With the on-screen keyboard
+   open (position: fixed, body.osk-padded) the row sits above it. Logical
+   properties only; existing tokens only. */
+.setup-card .setup-nav {
+  position: sticky; inset-block-end: 0; z-index: 1;
+  background: var(--surface); border-block-start: 1px solid var(--border);
+  padding-block: .5rem; margin-block-end: 0;
+}
+body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-height, 0px); }
+.setup-card .setup-nav .btn { min-block-size: 48px; }
+.setup-card input[type="text"], .setup-card input[type="password"] { min-block-size: 48px; box-sizing: border-box; }
+.setup-card .setup-secondary-row { display: flex; justify-content: center; }
+.setup-card .setup-secondary-row .btn { min-block-size: 48px; }
+.setup-card [aria-invalid="true"] { border-width: 2px; border-color: var(--danger); outline: 2px solid var(--danger); outline-offset: 1px; }
+.setup-card .btn.is-busy { opacity: .6; cursor: progress; }
+.setup-card .setup-busy-hint { margin: 0; overflow-wrap: anywhere; }
+.setup-card .login-error { overflow-wrap: anywhere; }
+.setup-card .login-error:focus { outline: 2px solid var(--danger); outline-offset: 2px; }
+@media (max-width: 480px) { .setup-card .setup-nav .btn { flex: 1 1 0; } }
 
 /* Touch-first tile picker (setup wizard country/shop-type, ut-docs#1095) —
    replaces a native <select> with large tappable tiles. Borrows the

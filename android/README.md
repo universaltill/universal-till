@@ -37,8 +37,11 @@ no rewrite, no second plugin host.
 ## Prerequisites
 
 - Android SDK + NDK (`brew install --cask android-commandlinetools`,
-  then `sdkmanager` for a platform, build-tools, and an NDK version —
-  see `ut-docs/adr/0023-android-ios-till-strategy.md` for the exact
+  then `sdkmanager` for a platform, build-tools, and the NDK
+  `app/build.gradle.kts` pins (`ndkVersion`, currently
+  `"ndk;28.2.13676358"` — without it AGP cannot strip libs or extract the
+  play bundle's native symbols, ut-docs#6935) — see
+  `ut-docs/adr/0023-android-ios-till-strategy.md` for the other
   versions this was built/verified against).
 - `gomobile`/`gobind` on `PATH` (`go install
   golang.org/x/mobile/cmd/gomobile@latest` — `golang.org/x/mobile` is
@@ -812,6 +815,11 @@ SDK build-tools, plus the JDK's jarsigner/keytool; uses `BUNDLETOOL_JAR` for
 the manifest when set). The `PlayBuildHasNoSelfUpdateTest` unit test
 (`./gradlew testPlayReleaseUnitTest`) keeps the update code out of the flavor.
 The sideload-only tests live in `src/testSideload`.
+
+The play bundle ships native debug symbols (`ndk.debugSymbolLevel = "SYMBOL_TABLE"`,
+NDK pinned to `28.2.13676358`; `check-aab.sh` fails a bundle without them), and CI
+asserts the sideload merged manifest still declares `REQUEST_INSTALL_PACKAGES`
+(`scripts/ci/check-android-sideload-install-permission.sh`).
 
 ## Tap to Pay (Stripe Terminal, off by default) (ut-docs#3048, ADR-0125)
 

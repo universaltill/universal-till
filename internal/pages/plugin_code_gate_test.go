@@ -212,11 +212,28 @@ func TestBundledPlugin_CashierCannotToggle_ManagerCan(t *testing.T) {
 	}
 }
 
+// lockedBundledVersion is the version the compiled-in lock pins for id, so
+// tests follow the lock instead of a literal that goes stale on every bump.
+func lockedBundledVersion(t *testing.T, id string) string {
+	t.Helper()
+	v, ok := bundled.LockedVersion(id)
+	if !ok {
+		t.Fatalf("%s is not in the bundled lock", id)
+	}
+	return v
+}
+
+// otherBundledVersion is a version that is never the locked one.
+func otherBundledVersion(t *testing.T, id string) string {
+	t.Helper()
+	return lockedBundledVersion(t, id) + "-other"
+}
+
 // seedBundledRow persists a first-party payment plugin the way the bundled
 // loader does (lock-verified, system trust) and leaves it DISABLED.
 func seedBundledRow(t *testing.T, db *sql.DB, id string) {
 	t.Helper()
-	m := &plugins.Manifest{ID: id, Name: "Card", Version: "1.5.0", Entrypoint: "./bin/plugin.wasm",
+	m := &plugins.Manifest{ID: id, Name: "Card", Version: lockedBundledVersion(t, id), Entrypoint: "./bin/plugin.wasm",
 		Runtime: "wasm", CanonicalType: "payment", DeviceArch: "any", MinPOSVersion: "1.0.0"}
 	if err := plugins.PersistManifest(t.Context(), db, m, plugins.InstallOptions{TrustLevel: "system", BundledLockVerified: true}); err != nil {
 		t.Fatalf("persist bundled row: %v", err)
@@ -255,7 +272,7 @@ func TestAppStore_ApplyPluginUpdateRefused_NoNetwork(t *testing.T) {
 	const id = "com.universaltill.payment-stripe"
 	seedBundledRow(t, d.Db, id)
 	if err := plugins.NewInstallStatusStore(d.Db).Save(t.Context(), plugins.InstallStatusRecord{
-		ListingID: "lst-pay", PluginID: id, State: plugins.InstallStateActive, CurrentVersion: "1.5.0",
+		ListingID: "lst-pay", PluginID: id, State: plugins.InstallStateActive, CurrentVersion: lockedBundledVersion(t, id),
 	}); err != nil {
 		t.Fatal(err)
 	}

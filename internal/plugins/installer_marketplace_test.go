@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -126,6 +127,75 @@ func TestMarketplaceInstallerInstallSuccess(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected installed plugin, got count=%d", count)
+	}
+}
+
+// ut-docs#6930: the request flag lands the plugin switched off in the persist tx.
+func TestMarketplaceInstall_InstallInactiveLandsDisabled(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, checksum := signedMarketplaceArtifact(t, privateKey)
+
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":               "tok-1",
+			"bundle_url":          "",
+			"release_id":          "release-1",
+			"version":             manifest.Version,
+			"checksum_sha256":     checksum,
+			"signature":           manifest.Signature,
+			"expires_at":          "2026-03-16T16:00:00Z",
+			"resumable_supported": true,
+		},
+		"error": nil,
+	})
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+
+	cfg := &config.Config{
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL:       server.URL,
+			APIVersion:        "1.0.0",
+			ClientID:          "merchant-1",
+			StoreID:           "store-1",
+			DeviceID:          "device-1",
+			PublicKey:         hex.EncodeToString(publicKey),
+			RequestTimeoutSec: 30,
+		},
+	}
+
+	installer := newTestMarketplaceInstaller(t, cfg, db)
+	result, err := installer.Install(context.Background(), MarketplaceInstallRequest{
+		ListingID:       "listing-1",
+		Version:         manifest.Version,
+		TrustTier:       "verified",
+		MerchantID:      "merchant-1",
+		StoreID:         "store-1",
+		DeviceID:        "device-1",
+		DeviceArch:      "linux/amd64",
+		InstallInactive: true,
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	if result.PluginID != manifest.ID {
+		t.Fatalf("unexpected plugin id %q", result.PluginID)
+	}
+
+	var count int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM plugins WHERE id = ?`, manifest.ID).Scan(&count); err != nil {
+		t.Fatalf("query installed plugin: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected installed plugin, got count=%d", count)
+	}
+	on, err := data.NewPluginRepo(db).PluginActive(context.Background(), manifest.ID)
+	if err != nil || on {
+		t.Fatalf("InstallInactive install: active=%v err=%v, want a disabled row", on, err)
 	}
 }
 

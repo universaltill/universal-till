@@ -285,7 +285,7 @@ func resolveAndInstallTaxForMarket(ctx context.Context, d *common.Deps, spec bas
 	if auto {
 		recordTaxAutoInstallInstalling(ctx, d, spec, best.Name)
 	}
-	if _, err := cloudInstallPluginVersionChecked(ctx, d, listingID, best.Version, pre); err != nil {
+	if _, err := cloudInstallPluginVersionChecked(ctx, d, listingID, best.Version, pre, false); err != nil {
 		return fmt.Errorf("install %s@%s: %w", listingID, best.Version, err)
 	}
 	if auto {

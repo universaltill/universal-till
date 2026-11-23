@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -205,6 +206,38 @@ func TestTakeawayOverride_RealChain_CloudInstallReconciles(t *testing.T) {
 
 	if got := storedTakeawayOverrides(t, primary); got[taxID] != 700 {
 		t.Fatalf("ut-docs#1370: cloud install (cloudsync_wire.go) did not reconcile the catalog's pinned takeaway rate into takeaway_rate_overrides: got %v, want {%q: 700}", got, taxID)
+	}
+}
+
+// ut-docs#6930: a sync install the main has off is not an activation — no
+// takeaway reconcile, and the plugin is neither active nor loaded. Goes through
+// the real MarketplaceInstaller (flag threading + Ed25519 verification).
+func TestTakeawayOverride_RealChain_InactiveSyncInstallDoesNotReconcileOrLoad(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	primary := newSyncPluginsPrimary(t, mkt)
+
+	_ = pinnedCatalogThenPublishTaxDe(t, mkt, primary)
+	var err error
+	withPaths(primary.dataDir, func() {
+		_, err = cloudSyncInstallPluginVersion(t.Context(), primary.dp, "listing-taxov", "1.0.0", true)
+	})
+	if err != nil {
+		t.Fatalf("inactive sync install: %v", err)
+	}
+	if got := storedTakeawayOverrides(t, primary); len(got) != 0 {
+		t.Fatalf("an inactive install reconciled takeaway overrides: %v", got)
+	}
+	if _, found, err := data.NewPluginRepo(primary.dp.Db).GetInstalledPluginVersion(t.Context(), taxDePluginID); err != nil || !found {
+		t.Fatalf("plugin %s row missing after inactive install: found=%v err=%v", taxDePluginID, found, err)
+	}
+	on, err := data.NewPluginRepo(primary.dp.Db).PluginActive(t.Context(), taxDePluginID)
+	if err != nil || on {
+		t.Fatalf("PluginActive = %v, %v; want installed but off", on, err)
+	}
+	if slices.Contains(primary.dp.Pm.InstalledIDs(), taxDePluginID) {
+		t.Fatal("an inactive install was loaded by the post-install reload")
 	}
 }
 

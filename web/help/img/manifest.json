@@ -183,7 +183,7 @@
       "tr": "86848964271c4b93b410f710458692be5a659bb2f709281800f32fb7a1bea21b"
     },
     "self-order": {
-      "en": "ed42d0a6b5b4c163cddb118a312292efc7fcd12fc8acff6cda1f5efb2f2f0073",
+      "en": "30f682dd1e22bbdd10ae56616d97ae030ae2e81cf39a8cd28c68104485b436c9",
       "fa": "0f2d93e7c6fe041856ca69fc768c87d0d0f4b3fb237b61ebf52cffd0cf7ec70c",
       "ar": "71ef07b31cde41520cfd0d30ec68735013d3f00ab302414bad4396e835af6d18",
       "tr": "f843876b5ca0c604d8172354629f0929f808a56304a1f9d86d24a7e5fad1c301"
@@ -358,7 +358,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "b2c7b022f911130f0a56ba8a6dff5d74aaaf3fd9cc88855069ed54ad45e609aa"
+      "sha256": "fb98eb7943f729030fb867e8a0d5912da9396acaecd275adc192227d5b5fef39"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -525,6 +525,9 @@
     "internal/pages/kitchen_stations_page.go": {
       "sha256": "12e63ec04f6ff17c91af6dbbdd056ead3b592499c2b1ddb5989944c1dbd610b4"
     },
+    "internal/pages/leg_reconcile.go": {
+      "sha256": "85ce709203d378564496ee162b5e2e09f9eb95ff815e2a707374d327751d93ee"
+    },
     "internal/pages/link_status.go": {
       "sha256": "c1adc60d002054ca6ca6f17ad8c388911b504d4ce66cc57e3e03bcc9c7fa8d2d"
     },
@@ -575,6 +578,9 @@
     },
     "internal/pages/paybroker_target.go": {
       "sha256": "9c3c1769eb5ea7ce3760cac13a50f5321d51ac6d72757f351fcf6630bf99e404"
+    },
+    "internal/pages/payment_leg_journal.go": {
+      "sha256": "fc565eaa39f39c1b51c38e1fdd77b8765cfd35a66f726d06e8c32a7287e35fcd"
     },
     "internal/pages/permission_groups.go": {
       "sha256": "b0fe8266824da41c116b2eec5334de76e712fca6bcbf3df0e3380f079d08ae07"
@@ -730,10 +736,10 @@
       "sha256": "08d08b364ff7523e6a1d471ef7031aaee60cd1af89ce01275d815d5804563f4d"
     },
     "internal/pages/tap_gate.go": {
-      "sha256": "0a4c96455da7b00c6ef5b07599ca66e5601064b809a73164adb1c9061e0043e3"
+      "sha256": "80b0be3e198364213f7fd4c4269da5bb42be015559ea213edba39f7fba6f03ea"
     },
     "internal/pages/tax_autoinstall.go": {
-      "sha256": "86527aa8077b2a029e72576d7ccf5085ba31d0dd8a363beb63c6859898ac8c42"
+      "sha256": "7e7899a0e9f51d941878d020dbd8b555db24f7ef7bef34af2a9a37520bdd048d"
     },
     "internal/pages/tax_codes_page.go": {
       "sha256": "5d8db3b030a2ffed5493ecc4d078de437aaeb8236cb09e91f4c621a05b87178f"
@@ -790,7 +796,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "da81282acff0ccc912236062858ec870c01f029f991ae873c7e93d328dd38423"
+      "sha256": "5bf62598df02164d43a01b40673f7914d191c15419a2959cb6d4c2f21f873d7d"
     },
     "web/public/app.js": {
       "sha256": "f51885df7cec771737c1c93b5a0b55f9af184364e5b5cfe563de97fc7bc14ea8"
@@ -1738,7 +1744,7 @@
       "sha256": "f6a77fdd666c6bddaf8a97486cf309178fd48b69aedf398bb725c9d12ce94d8f"
     },
     "web/ui/pages/setup.html": {
-      "sha256": "7fdbc5a6187278e29d251e847a5b01f3b7d3b8e35436b92ea28310c2e4059e42"
+      "sha256": "0df890fb6764bf0c3242ac13415f5b2ac0f6cf462bd3a7b8a22c4f23ad2f7c29"
     },
     "web/ui/pages/shifts.html": {
       "sha256": "a235f99409566dfb432e53b15c647f696296ebbcd27ffbcd971e0644b96aa91a"

@@ -91,7 +91,7 @@ func TestConvergePluginSet_PruneNeverUninstallsBundledPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	orig := pluginSyncInstall
-	pluginSyncInstall = func(context.Context, *common.Deps, string, string) (string, error) { return "", nil }
+	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool) (string, error) { return "", nil }
 	t.Cleanup(func() { pluginSyncInstall = orig })
 
 	// The main till no longer has the plugin: absent from its set.
@@ -178,7 +178,7 @@ func TestImportFromFile_TrustLevelCheckIsWhatRefuses(t *testing.T) {
 // dead bundled row.
 func TestConvergePluginSet_FailedEmbeddedReinstallIsNotConverged(t *testing.T) {
 	d := review2BundledEnv(t)
-	other := &plugins.Manifest{ID: bundledStripeID, Name: "Card", Version: "1.9.0", Entrypoint: "./bin/plugin.wasm",
+	other := &plugins.Manifest{ID: bundledStripeID, Name: "Card", Version: otherBundledVersion(t, bundledStripeID), Entrypoint: "./bin/plugin.wasm",
 		Runtime: "wasm", CanonicalType: "payment", DeviceArch: "any", MinPOSVersion: "1.0.0"}
 	if err := plugins.PersistManifest(t.Context(), d.Db, other, plugins.InstallOptions{TrustLevel: "system", BundledLockVerified: true}); err != nil {
 		t.Fatal(err)

@@ -267,6 +267,10 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/self-order/scan", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		eng := selfOrderEngine(d, r)
+		if !kioskBasketEdit(w, r, d, eng) {
+			return
+		}
+		defer eng.EndBasketEdit()
 		code := strings.TrimSpace(r.Form.Get("code"))
 		qty := 1.0
 		if v := r.Form.Get("qty"); v != "" {
@@ -359,6 +363,10 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		code := strings.TrimSpace(r.Form.Get("code"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		eng := selfOrderEngine(d, r)
+		if !kioskBasketEdit(w, r, d, eng) {
+			return
+		}
+		defer eng.EndBasketEdit()
 
 		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, eng, httpx.ResolveLocale(w, r), code, itemID, r.Form)
 		if err != nil {
@@ -389,6 +397,10 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/self-order/line", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		eng := selfOrderEngine(d, r)
+		if !kioskBasketEdit(w, r, d, eng) {
+			return
+		}
+		defer eng.EndBasketEdit()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
@@ -429,6 +441,10 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/self-order/order-type", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		eng := selfOrderEngine(d, r)
+		if !kioskBasketEdit(w, r, d, eng) {
+			return
+		}
+		defer eng.EndBasketEdit()
 		orderType := ""
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
 			orderType = pos.OrderTypeTakeaway
@@ -465,6 +481,10 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/self-order/remove", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		eng := selfOrderEngine(d, r)
+		if !kioskBasketEdit(w, r, d, eng) {
+			return
+		}
+		defer eng.EndBasketEdit()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
@@ -1362,6 +1382,21 @@ func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, lines []pos.Basket
 		total = money.Zero
 	}
 	return saleLines, charges, total, false
+}
+
+// kioskBasketEdit admits one kiosk basket mutation on eng (ut-docs#6926), the
+// kiosk twin of the cashier's basketEdit (ut-docs#6919). While eng's checkout
+// holds its tender claim the edit is refused before it touches the basket: the
+// cart is re-rendered unchanged with a toast and HTTP 409, and false is
+// returned. On true the caller must defer eng.EndBasketEdit(). eng is the
+// per-basket engine (selfOrderEngine), never d.Engine (ADR-0020).
+func kioskBasketEdit(w http.ResponseWriter, r *http.Request, d *common.Deps, eng *pos.Service) bool {
+	if eng.BeginBasketEdit() {
+		return true
+	}
+	w.WriteHeader(http.StatusConflict)
+	renderKioskCartWithMessage(w, r, d, eng, httpx.T(httpx.ResolveLocale(w, r), "selforder.basket_locked_checkout"))
+	return false
 }
 
 // renderKioskCart renders this request's basket (eng: selfOrderEngine's

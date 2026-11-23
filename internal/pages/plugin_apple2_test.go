@@ -154,7 +154,7 @@ func TestConvergePluginSet_BundledStateFollowsMainTill(t *testing.T) {
 	repo := data.NewPluginRepo(db)
 	var installs int
 	orig := pluginSyncInstall
-	pluginSyncInstall = func(context.Context, *common.Deps, string, string) (string, error) { installs++; return "", nil }
+	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool) (string, error) { installs++; return "", nil }
 	t.Cleanup(func() { pluginSyncInstall = orig })
 	on := func() bool { v, _ := repo.PluginActive(t.Context(), bundledStripeID); return v }
 
@@ -162,7 +162,7 @@ func TestConvergePluginSet_BundledStateFollowsMainTill(t *testing.T) {
 	// bundled plugin reported with no listing).
 	for _, row := range []data.PluginSyncRow{
 		{ListingID: "lst-stripe", PluginID: bundledStripeID, PluginName: "Stripe", Version: "1.6.0"},
-		{ListingID: "", PluginID: bundledStripeID, PluginName: "Stripe", Version: "1.5.0"},
+		{ListingID: "", PluginID: bundledStripeID, PluginName: "Stripe", Version: lockedBundledVersion(t, bundledStripeID)},
 	} {
 		if err := repo.SetPluginActive(t.Context(), nil, bundledStripeID, false); err != nil {
 			t.Fatal(err)
@@ -245,12 +245,12 @@ func TestConvergePluginSet_BundledRowAtOtherVersionTriggersEmbeddedInstall(t *te
 	bundledSyncFn = func(context.Context, *sql.DB) (bool, error) { syncs++; return true, nil }
 	t.Cleanup(func() { bundledSyncFn = orig })
 
-	seedBundledRow(t, db, bundledStripeID) // 1.5.0 = the locked version
+	seedBundledRow(t, db, bundledStripeID) // the locked version
 	convergePluginSet(t.Context(), dp, nil)
 	if syncs != 0 {
 		t.Fatalf("a row at the locked version triggered %d embedded installs", syncs)
 	}
-	other := &plugins.Manifest{ID: bundledStripeID, Name: "Card", Version: "1.9.0", Entrypoint: "./bin/plugin.wasm",
+	other := &plugins.Manifest{ID: bundledStripeID, Name: "Card", Version: otherBundledVersion(t, bundledStripeID), Entrypoint: "./bin/plugin.wasm",
 		Runtime: "wasm", CanonicalType: "payment", DeviceArch: "any", MinPOSVersion: "1.0.0"}
 	if err := plugins.PersistManifest(t.Context(), db, other, plugins.InstallOptions{TrustLevel: "system", BundledLockVerified: true}); err != nil {
 		t.Fatal(err)

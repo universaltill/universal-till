@@ -841,6 +841,7 @@ jobs:
             MERGED="$(find android/app/build/intermediates/merged_manifests -path "*/${flavor}Release/*" -name AndroidManifest.xml | sed -n 1p)"
             [ -n "$MERGED" ] || { echo "::error::no merged manifest for ${flavor}Release (#3048)"; exit 1; }
             bash scripts/ci/guard-android-manifest-features.sh "$MERGED" shipped
+            bash scripts/ci/check-android-sideload-install-permission.sh "$MERGED"
             "${BUILD_TOOLS}/apksigner" verify "$APK"
             FINGERPRINT="$("${BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | grep 'SHA-256 digest' | awk '{print $NF}')"
             echo "${flavor}: signed with SHA-256: ${FINGERPRINT}"
