@@ -1952,6 +1952,12 @@ document.addEventListener('click', function(e){
   });
   document.body.addEventListener('htmx:responseError', function(ev){
     if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
+    // ut-docs#6919: a basket edit refused while a payment runs answers 409
+    // with the tender-in-flight trigger, which shows the basket's own
+    // "Payment in progress" notice; no generic server-error banner on top.
+    var rx = ev.detail && ev.detail.xhr;
+    if (rx && rx.status === 409 && rx.getResponseHeader &&
+        (rx.getResponseHeader('HX-Trigger') || '').indexOf('tender-in-flight') !== -1) return;
     showAlert('server');
   });
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry

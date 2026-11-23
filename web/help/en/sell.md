@@ -83,7 +83,7 @@ A plugin can also add "Identify by camera" to the scan row (the camera icon). Ta
 
 ## While a payment is running
 
-While a payment is being taken (for example a card waiting on the reader), the till does not add scans or accept basket changes: a "Payment in progress" notice appears in the basket and the code you scanned stays in the scan box. Scan it again once the payment finishes. **Clear**, **New sale** and **Hold** wait until the payment finishes too. A second tap on **Pay** at that moment is refused too, so the customer is never charged twice. The menu, lock and exit buttons keep working.
+While a payment is being taken (for example a card waiting on the reader), the till does not add scans or accept basket changes: a "Payment in progress" notice appears in the basket and the code you scanned stays in the scan box. Scan it again once the payment finishes. **Clear**, **New sale** and **Hold** wait until the payment finishes too. A second tap on **Pay** at that moment is refused too, so the customer is never charged twice. The same applies while the till is checking a card payment it could not confirm: scans, basket changes and **Pay** are refused until the check is done. The menu, lock and exit buttons keep working.
 
 ## Status chips in the side menu
 

@@ -1303,10 +1303,6 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			in.Qty = 1
 		}
 
-		if cid := strings.TrimSpace(in.CustomerID); cid != "" && !d.Engine.TenderInFlight() {
-			d.Engine.SetCustomerID(cid)
-		}
-
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
@@ -1314,15 +1310,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = basketView.Render(w, b)
 		}
 
-		// ut-docs#6909: a line added while a tender runs is saved by neither
-		// the sale (lines were read before the authorize) nor kept past its
-		// Reset. Refuse it visibly; the basket is unchanged.
-		if d.Engine.TenderInFlight() {
+		// ut-docs#6909/#6919: a line added while a tender runs is saved by
+		// neither the sale (lines were read before the authorize) nor kept
+		// past its Reset. Refuse it visibly; the basket is unchanged. The
+		// admission is atomic (BeginBasketEdit), so a tender that starts
+		// after it waits for this scan to finish.
+		if !d.Engine.BeginBasketEdit() {
 			b := d.Engine.Basket()
 			b.ToastMessage = httpx.T(locale, "pos.tender.scan_refused")
 			b.ToastLevel = "error"
 			render(&b)
 			return
+		}
+		defer d.Engine.EndBasketEdit()
+
+		if cid := strings.TrimSpace(in.CustomerID); cid != "" {
+			d.Engine.SetCustomerID(cid)
 		}
 
 		if code == "" {
@@ -1695,7 +1698,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// this gate entirely and removes exactly as before: there's no loss to
 	// categorize. This is deliberately PRE-tender only -- a completed sale's
 	// return/void is refund_page.go's own G27 flow, untouched here.
-	mux.HandleFunc("/api/pos/remove", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pos/remove", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		code := strings.TrimSpace(r.Form.Get("code"))
@@ -1817,7 +1820,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
-	})
+	}))
 
 	// Age-restricted sales (ut-docs#3340): the cashier records the ID-check
 	// outcome for one restricted basket line (key) — "accepted" or
@@ -1828,7 +1831,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// permission gate: checking ID is every cashier's job. A refusal
 	// re-renders with that line's sheet still open, showing what to do next
 	// (remove the item); an acceptance re-renders with it closed.
-	mux.HandleFunc("POST /api/pos/age-check", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/age-check", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		outcome := strings.TrimSpace(r.Form.Get("outcome"))
@@ -1854,11 +1857,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		basketView, _ := ui.NewBasketView(httpx.FuncsFor(httpx.ResolveLocale(w, r)))
 		w.Header().Set("Content-Type", "text/html")
 		_ = basketView.Render(w, b)
-	})
+	}))
 
 	// Update line qty/discount (htmx-friendly). Same key/code preference as
 	// /api/pos/remove above.
-	mux.HandleFunc("/api/pos/line", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pos/line", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))
 		code := strings.TrimSpace(r.Form.Get("code"))
@@ -2124,10 +2127,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusConflict)
 		}
 		_ = basketView.Render(w, b)
-	})
+	}))
 
 	// Apply sale-level discount (coupon/promotion) in minor units.
-	mux.HandleFunc("/api/pos/discount", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pos/discount", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		discount := int64(0)
 		if v := r.Form.Get("discount"); v != "" {
@@ -2196,13 +2199,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
-	})
+	}))
 
 	// Dine-in/takeaway toggle (§12 UStG: some lines' VAT rate depends on
 	// this — docs/germany-pos-parity-backlog.md). Any value other than
 	// pos.OrderTypeTakeaway is treated as dine-in/standard, including "" —
 	// this endpoint is also how a cashier switches BACK to dine-in.
-	mux.HandleFunc("/api/pos/order-type", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pos/order-type", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		orderType := ""
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
@@ -2232,7 +2235,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, *b)
-	})
+	}))
 
 	// ut-docs#2282/#2309 (product-owner scope change, outcome 1 taken): the
 	// per-line order-type HTTP endpoint that used to live here
@@ -2268,7 +2271,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// silent success. A table-to-table move claims the NEW table before
 	// releasing the OLD one, deliberately: there is never a window where
 	// the old table shows free while the new one is not yet confirmed.
-	mux.HandleFunc("/api/pos/table", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pos/table", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
@@ -2326,7 +2329,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, *b)
-	})
+	}))
 
 	// Reset basket for new customer. The table it had picked is free again
 	// (ut-docs#1390) -- captured before Reset clears it.

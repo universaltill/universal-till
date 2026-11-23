@@ -171,3 +171,56 @@ func TestTapResolve_RefusedWhileTenderInFlight(t *testing.T) {
 		t.Fatal("resolve unlocked the tender beside a running tender")
 	}
 }
+
+// ut-docs#6919 (item 4): the reverse race. While a Check / manager resolve runs
+// on the locked leg it holds the engine's tender claim, so a locked-tender
+// retry that starts meanwhile is refused instead of re-authorizing the leg.
+func wantTenderInFlight409(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "tender_in_flight") {
+		t.Fatalf("tender beside a running check/resolve = %d, want 409 tender_in_flight: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTender_RefusedWhileTapCheckRunning(t *testing.T) {
+	e := tapRig(t)
+	e.pending(t)
+	entered, release := holdBroker(e)
+	t.Cleanup(release)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- e.do(t, e.cashier, http.MethodPost, "/pay/tap/check", url.Values{"leg": {"0"}})
+	}()
+	waitEntered(t, entered)
+	calls := e.bindingCount()
+
+	wantTenderInFlight409(t, e.tender(t))
+	if n := e.bindingCount(); n != calls {
+		t.Fatalf("the refused tender authorized again (%d -> %d calls)", calls, n)
+	}
+	release()
+	<-done
+	if rec := e.tender(t); rec.Code == http.StatusConflict && strings.Contains(rec.Body.String(), "tender_in_flight") {
+		t.Fatalf("tender still refused after the check ended: %s", rec.Body.String())
+	}
+}
+
+func TestTender_RefusedWhileTapResolveRunning(t *testing.T) {
+	e := tapRig(t)
+	e.pending(t)
+	entered, release := holdBroker(e)
+	t.Cleanup(release)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- e.resolve(t, e.manager, url.Values{"decision": {"not_charged"}, "reason": {"card_not_charged"}, "override_pin": {dataAPITestManagerPIN}})
+	}()
+	waitEntered(t, entered)
+	calls := e.bindingCount()
+
+	wantTenderInFlight409(t, e.tender(t))
+	if n := e.bindingCount(); n != calls {
+		t.Fatalf("the refused tender authorized again (%d -> %d calls)", calls, n)
+	}
+	release()
+	<-done
+}

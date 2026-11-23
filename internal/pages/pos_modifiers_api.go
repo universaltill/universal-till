@@ -275,7 +275,7 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 		renderModifierPicker(w, r, itemID, code, base.Name, qty, groups, variants)
 	})
 
-	mux.HandleFunc("POST /api/pos/scan-with-modifiers", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/pos/scan-with-modifiers", basketEdit(d, func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		code := strings.TrimSpace(r.Form.Get("code"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
@@ -310,5 +310,5 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 		d.Engine.AddLineWithModifiers(base, qty, selected)
 		b := d.Engine.Basket()
 		_ = basketView.Render(w, &b)
-	})
+	}))
 }
