@@ -746,6 +746,7 @@
   "designer.error.recategorize_category": "That category isn't available any more. Choose another one.",
   "designer.error.recategorize_item": "That item isn't in the catalog any more.",
   "designer.error.replica_use_primary": "This till follows a main till — manage quick-sale buttons on the main till.",
+  "designer.error.shared_code": "Two buttons use the SKU or barcode \u201c%s\u201d, so the till can't save this order. Give each item its own SKU or barcode, then try again.",
   "designer.error.server": "Something went wrong. Please try again.",
   "designer.hidden.empty": "No items are hidden from the sell screen.",
   "designer.hidden.title": "Hidden from sell screen (%d)",

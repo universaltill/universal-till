@@ -197,3 +197,59 @@ func TestApplyReportedLayout_Refusals(t *testing.T) {
 		t.Errorf("shared: err = %v, want ErrSharedTileCode", err)
 	}
 }
+
+// ut-docs#6708: the till's own reorder (UpdateOrder / UpdateOrderSubset) keys
+// rows by code, so a shared code in the written prefix is refused, like
+// ApplyReportedLayout and UpdateCategoryOrder.
+func TestUpdateOrder_SharedCode6708(t *testing.T) {
+	db := setupFullTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES ('a','A','Apple',100,1),('b','B','Banana',100,1),('c1','DUP','Cherry',100,1),('c2','DUP','Cherry2',100,1)`)
+	store := NewButtonStore(db)
+	ctx := context.Background()
+	snap := func() string {
+		var s string
+		_ = db.QueryRow(`SELECT COALESCE(group_concat(barcode||':'||sort_order,'|'),'') FROM shortcut_buttons`).Scan(&s)
+		return s
+	}
+	cur, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := codesOf(cur); got != "A,B,DUP,DUP" {
+		t.Fatalf("fixture order = %s", got)
+	}
+
+	t.Run("full reorder moving a shared code is refused", func(t *testing.T) {
+		err := store.UpdateOrder(ctx, []string{"DUP", "A", "B", "DUP"})
+		if !errors.Is(err, ErrSharedTileCode) || !strings.Contains(err.Error(), "DUP") {
+			t.Fatalf("err = %v, want ErrSharedTileCode naming DUP", err)
+		}
+		if got := snap(); got != "" {
+			t.Fatalf("wrote rows: %s", got)
+		}
+	})
+	t.Run("subset reorder moving a shared code is refused", func(t *testing.T) {
+		err := store.UpdateOrderSubset(ctx, []string{"DUP", "A"})
+		if !errors.Is(err, ErrSharedTileCode) {
+			t.Fatalf("err = %v, want ErrSharedTileCode", err)
+		}
+		if got := snap(); got != "" {
+			t.Fatalf("wrote rows: %s", got)
+		}
+	})
+	t.Run("shared codes only in the untouched tail still reorder", func(t *testing.T) {
+		if err := store.UpdateOrder(ctx, []string{"B", "A", "DUP", "DUP"}); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		after, _ := store.Load()
+		if got := codesOf(after); got != "B,A,DUP,DUP" {
+			t.Fatalf("order = %s", got)
+		}
+	})
+	t.Run("no-op reorder is fine", func(t *testing.T) {
+		if err := store.UpdateOrder(ctx, []string{"B", "A", "DUP", "DUP"}); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
