@@ -76,4 +76,5 @@ Each line is the message the customer sees, what causes it and what to do.
 - A receipt in the shop's language instead of the customer's: your receipt printer can't print that language's letters.
 - The kiosk resets while someone is still ordering: the idle reset time is too short. Raise it under **Kiosk idle reset**.
 - A double tap or rapid repeats at checkout are refused on purpose, so one order is never placed twice.
+- "Your order is being placed. Wait for it to finish, then add more." The customer tried to change the basket (add or customize an item, change a quantity, switch **Dine in** / **Takeaway** or tap **Remove**) while the order was still being placed or paid. The basket can't change during checkout, so nothing is added to the order unseen or lost. Once checkout finishes or fails, the customer can start a new order or carry on with the basket.
 - No network: the sale still completes. **Pay at counter** needs no network at all; card payment at the kiosk depends on your payment terminal.
