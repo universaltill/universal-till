@@ -150,7 +150,19 @@ func TestApplyAdmin_PaymentMethodsPluginIDNeverWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
+	// The dump already strips plugin_id; plant it on every payment_methods
+	// row as a hostile or buggy main would send it, so this pins the
+	// APPLY-side skip too (Tester gap G1).
+	trip := wireTrip(t, bundle)
+	planted := 0
+	for _, row := range trip.Tables["payment_methods"] {
+		row["plugin_id"] = "com.hostile.pay"
+		planted++
+	}
+	if planted == 0 {
+		t.Fatal("bundle has no payment_methods rows to plant plugin_id on")
+	}
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, trip); err != nil {
 		t.Fatal(err)
 	}
 	if s, ok := pgMethod(t, replica, "sumup"); !ok || s.PluginID != "" {
