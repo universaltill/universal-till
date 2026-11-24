@@ -983,13 +983,20 @@ func followBundledState(ctx context.Context, d *common.Deps, rows []data.PluginS
 // followMarketplaceState applies the main's enabled state (plugins.is_active)
 // to every marketplace row installed here (ut-docs#6666, ADR-0011 §7). It is
 // a separate pass over ALL rows, so another listing's failed install can
-// never skip it. Disables run first, so a main that swapped one exclusive
-// provider for another converges in one tick; an enable goes through the same
-// gate as a manual one (pluginEnableRefusal) and fails closed under a keyed
+// never skip it. convergePluginSet runs it twice (ut-docs#6952): before the
+// installs (beforeInstalls=true), so a main that swapped one exclusive
+// provider for another converges in one tick (disables run first, so X's
+// disable lands before Y's active install is gated), and again after them.
+// The first pass defers an enable whose installed version differs from the
+// main's: the install about to run lands it on at the main's version, and
+// gating it on the old version here (e.g. a revoked release) would refuse it
+// for a tick. The second pass applies it if that install failed, as before.
+// Rows not installed here are skipped; an enable goes through the same gate as
+// a manual one (pluginEnableRefusal) and fails closed under a keyed
 // plugin_sync.state problem. A row without the field leaves local state alone.
 // ok=false if any row could not be brought to the main's state; changed=true
 // if any flip landed.
-func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow) (ok, changed bool) {
+func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow, beforeInstalls bool) (ok, changed bool) {
 	repo := data.NewPluginRepo(d.Db)
 	syncRepo := data.NewSyncPluginsRepo(d.Db)
 	ok = true
@@ -1018,7 +1025,7 @@ func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.Plu
 		if bundled.Available() && bundled.IsBundled(row.PluginID) {
 			continue // followBundledState owns it
 		}
-		_, _, installed, err := syncRepo.InstalledPluginVersion(ctx, row.PluginID)
+		version, _, installed, err := syncRepo.InstalledPluginVersion(ctx, row.PluginID)
 		if err != nil {
 			warnPluginSyncOnce(pluginSyncStateKeyPrefix+row.ListingID, "plugin sync: could not read the local state of %s (%s) to follow the main till: %v",
 				row.PluginName, row.ListingID, err)
@@ -1040,6 +1047,9 @@ func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.Plu
 			logging.ResolveProblems(pluginSyncStateKeyPrefix + row.ListingID)
 		case !*row.Enabled:
 			flip(row, false) // phase A: a disable is always safe
+		case beforeInstalls && version != row.Version:
+			// The upgrade install below lands it on at the main's version;
+			// the after-installs pass covers a failed install.
 		default:
 			enables = append(enables, row)
 		}
@@ -1054,6 +1064,21 @@ func followMarketplaceState(ctx context.Context, d *common.Deps, rows []data.Plu
 		flip(row, true)
 	}
 	return ok, changed
+}
+
+// followStateInto runs followMarketplaceState and folds its result into
+// convergePluginSet's converged/changed, reloading plugins after any flip.
+func followStateInto(ctx context.Context, d *common.Deps, rows []data.PluginSyncRow, beforeInstalls bool, converged, changed *bool) {
+	stateOK, stateChanged := followMarketplaceState(ctx, d, rows, beforeInstalls)
+	if !stateOK {
+		*converged = false
+	}
+	if stateChanged {
+		*changed = true
+		if err := d.ReloadPlugins(ctx); err != nil {
+			logging.L().Warnf("plugin sync: reload after following the main till's enabled state: %v", err)
+		}
+	}
 }
 
 // convergePluginSet makes this till's marketplace-installed plugin set match
@@ -1092,6 +1117,16 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			logging.L().Warnf("plugin sync: reload after following the main till's bundled switch: %v", err)
 		}
 	}
+	// The main's enabled state, applied to every listing independent of the
+	// install results below (ut-docs#6666), first BEFORE the installs
+	// (ut-docs#6952): a main that swapped exclusive owners (layout preset X
+	// off, preset Y on; likewise two fiscal-sign plugins) must have X's
+	// disable land before Y's active install, or PersistManifest's
+	// exclusive-owner refusal fires on Y for one tick. This pass only touches
+	// rows already installed here and defers an enable that an upgrade install
+	// below will make; an install the main has off lands off (ut-docs#6930)
+	// and one it has on lands on.
+	followStateInto(ctx, d, rows, true, &converged, &changed)
 	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
 			continue // a bundled-state row (handled above) or a malformed one
@@ -1158,21 +1193,12 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		changed = true
 	}
 
-	// The main's enabled state, applied to every listing independent of the
-	// install results above (ut-docs#6666): after the installs; an install the
-	// main has off already landed off (ut-docs#6930), so the follow only flips
-	// plugins that were installed before, and before the prune, which never
-	// touches a disabled-but-listed plugin.
-	stateOK, stateChanged := followMarketplaceState(ctx, d, rows)
-	if !stateOK {
-		converged = false
-	}
-	if stateChanged {
-		changed = true
-		if err := d.ReloadPlugins(ctx); err != nil {
-			logging.L().Warnf("plugin sync: reload after following the main till's enabled state: %v", err)
-		}
-	}
+	// Second pass, after the installs and before the prune (which never
+	// touches a disabled-but-listed plugin): applies an enable the first pass
+	// deferred whose upgrade install failed (the old version, as before
+	// ut-docs#6952), and closes a state problem a successful install made moot.
+	// A no-op for every row already at the main's state.
+	followStateInto(ctx, d, rows, false, &converged, &changed)
 
 	// Uninstalls: a listing this till holds as active that the primary no
 	// longer has. Keyed off local plugin_install_status records, so only

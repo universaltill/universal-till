@@ -199,7 +199,7 @@ func TestConvergePluginSet_FreshInstallFollowsDisabled(t *testing.T) {
 	if active6666(t, dp, "com.test.new") {
 		t.Fatal("a fresh install of a plugin the main has off must end off")
 	}
-	if _, changed := followMarketplaceState(t.Context(), dp, rows); changed {
+	if _, changed := followMarketplaceState(t.Context(), dp, rows, false); changed {
 		t.Fatal("the follow flipped a plugin that already landed off")
 	}
 }
