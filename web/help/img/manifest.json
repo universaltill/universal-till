@@ -700,7 +700,7 @@
       "sha256": "c939a2cb9b204d4757067336341c16956cfb7a6c6033518b2cb5666c9a94ce3e"
     },
     "internal/pages/setup_update_check.go": {
-      "sha256": "2f105ed4c46a489cc5cb9445cd135061f34b65c0d7f5320e0672c69c06694647"
+      "sha256": "ce954d36d7a4be3b1c0d247b20bf4d526cf9d773196722a1d8f2ca41497743a0"
     },
     "internal/pages/shift_events.go": {
       "sha256": "434c8787e600cae444d20d50185de7b8e8f46752c43ba40f2664205e42afdf68"
@@ -781,7 +781,7 @@
       "sha256": "f8ff7b166a7f64be4d0bc12a117ba180b79a8072b6240d53a9aedda582e4668c"
     },
     "internal/pages/update_follow.go": {
-      "sha256": "86479dd2761104096aca38794478f013b59d52ba253eb6e050293b5cf0b473bf"
+      "sha256": "b8b6c17d9f66fe05cbfa92512c616ae00be5779900a8d4df9d8f25a85b832540"
     },
     "internal/pages/user_rules.go": {
       "sha256": "826509ca4f1711c9939b270dd649843a24faf18d661ceef15c3c9b585d096224"
