@@ -165,7 +165,7 @@
       "tr": "69c18ab2ea8b58b4bbebdd271210191dc26bdd7f7baeb130a9c802023678080d"
     },
     "plugins": {
-      "en": "c4a513a7ee7ec75bcd91a995d2969735943c8041698207bc45dab5c9800a3e9a",
+      "en": "3b087968489dae64bb741da92ebd37a3fe255866a94befe69bca79b451b88c28",
       "fa": "c4bc272c7fd3b59427fe680da5e51abfb94b2f1af0447674b7ff924d09c3bf88",
       "ar": "f18d5cc4e463edf3004efc95e3029a266b9c6b501add06a32f74f355731079e4",
       "tr": "878581bcf7ebc3cfbab6dd8fd7f03f9e901f87cddf397325a925f69f80d05e1d"
@@ -351,6 +351,9 @@
     "internal/pages/cloud_peripherals_report.go": {
       "sha256": "6680340ead268d7bc31c583c45287bb8d0c1c4b49548fe0c858580454e888c0c"
     },
+    "internal/pages/cloud_plugin_secret.go": {
+      "sha256": "caf0b1a122d2feee75eb0da9f0f4952ed8efe910a15594abd205ef2d5745494d"
+    },
     "internal/pages/cloud_role_directives.go": {
       "sha256": "239cf96fb67119066c953786436660e2beb1ee25672aa615f364f61d838df06d"
     },
@@ -370,7 +373,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "859ae5c3b95fed2883533cd679875f2c61ae3e0644b3ceae8384354249325c56"
+      "sha256": "df9579ce9f7cb29b2705c11dfb7495275ecec72a033936f5d7e63f60bd084247"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -430,7 +433,7 @@
       "sha256": "dc0246f01147f97d3b7098edf0f615e7ac44f4ba42d10065a3058a188b1045c4"
     },
     "internal/pages/demo_mode.go": {
-      "sha256": "b47eff14501c2c3062bba5821ca6128a52e82de6c42293d5349f5e9a718cf02e"
+      "sha256": "aad90d257c64a3a1b826de41af2909c22fd2a44b7785d3979cc78c603709d024"
     },
     "internal/pages/designer_page.go": {
       "sha256": "3275d2a44c5109d9991216de00ecf8f9a28b99482bb6c8ab756183f90e834b2a"
@@ -703,7 +706,7 @@
       "sha256": "c939a2cb9b204d4757067336341c16956cfb7a6c6033518b2cb5666c9a94ce3e"
     },
     "internal/pages/setup_update_check.go": {
-      "sha256": "2f105ed4c46a489cc5cb9445cd135061f34b65c0d7f5320e0672c69c06694647"
+      "sha256": "ce954d36d7a4be3b1c0d247b20bf4d526cf9d773196722a1d8f2ca41497743a0"
     },
     "internal/pages/shift_events.go": {
       "sha256": "434c8787e600cae444d20d50185de7b8e8f46752c43ba40f2664205e42afdf68"
@@ -784,7 +787,7 @@
       "sha256": "f8ff7b166a7f64be4d0bc12a117ba180b79a8072b6240d53a9aedda582e4668c"
     },
     "internal/pages/update_follow.go": {
-      "sha256": "86479dd2761104096aca38794478f013b59d52ba253eb6e050293b5cf0b473bf"
+      "sha256": "b8b6c17d9f66fe05cbfa92512c616ae00be5779900a8d4df9d8f25a85b832540"
     },
     "internal/pages/user_rules.go": {
       "sha256": "826509ca4f1711c9939b270dd649843a24faf18d661ceef15c3c9b585d096224"
@@ -817,7 +820,7 @@
       "sha256": "f33e1df9a6f418883f859fa85f9988804a8fd3e363dea7f8c14f4aab46ece682"
     },
     "web/public/app.js": {
-      "sha256": "ddf128be5e1b138df23fe50a6b0d4c32b7eed8b70f0515d0d6e2ef976a0e6ee2"
+      "sha256": "8a75db2798adebf0dac11b07988e8d02b0eaa8bca55c30ac714135c91f8bfb93"
     },
     "web/public/assets/category-icons/aftershave.svg": {
       "sha256": "3d0fb2f186b2512eddf01566e9a4f8de21a1e35ad507daca86480204232f09d7"
@@ -1720,7 +1723,7 @@
       "sha256": "0491e927e59b5ece7c8cf55c7ee5609f757bb307cf6eed7a82291c0de5b9c06f"
     },
     "web/ui/pages/plugin_settings.html": {
-      "sha256": "6b4881757ea3985f49aca39a96a38845c8d94ede2972abc022b604d22d83f0ed"
+      "sha256": "221e7d1aa2119e9cd3b12b4a1ad7b47d16b786d98219aaecda94178a9f60fd62"
     },
     "web/ui/pages/plugin_view.html": {
       "sha256": "71460754b126e8347ceb9a2ff1542cc9a69da4065d72b54c39994fa6b8ad9b67"

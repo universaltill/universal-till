@@ -132,6 +132,12 @@ func setupUpdateCheckHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc
 		st := setupUpdateCheckNow(r.Context())
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if st.Latest != "" && !st.Available && st.HeldBack {
+			// ut-docs#6958: a release exists but a test build is not offered
+			// it; an empty step would read as "nothing newer".
+			fmt.Fprint(w, updateHeldBackHTML(locale))
+			return
+		}
 		if st.Latest == "" || !st.Available {
 			// st.Latest == "": the check failed or timed out — nothing was
 			// ever confirmed, so say nothing (never an error on this screen).

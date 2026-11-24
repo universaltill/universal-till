@@ -105,6 +105,9 @@ func ImportBackupFile(dbPath string, src io.Reader, maxBytes int64, liveStoreID 
 	if errors.Is(err, ErrDatabasePredatesReset) {
 		return ImportedBackup{}, fmt.Errorf("%w: %v", ErrBackupTooOld, err)
 	}
+	if errors.Is(err, ErrDatabaseNewerThanApp) {
+		return ImportedBackup{}, ErrBackupNewer
+	}
 	if err != nil {
 		return ImportedBackup{}, fmt.Errorf("%w: %v", ErrNotTillBackup, err)
 	}

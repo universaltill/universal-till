@@ -22,7 +22,7 @@
   <p>{{ .Message }}</p>
   <div class="detail">{{ .Detail }}</div>
   <p class="ref">{{ T "recovery.ref_code" }}: {{ .RefCode }}</p>
-  <button id="retry-btn" type="button">{{ T "recovery.retry_button" }}</button>
+  {{ if .ShowRetry }}<button id="retry-btn" type="button">{{ T "recovery.retry_button" }}</button>{{ end }}
   {{ if .SafeModeAvailable }}
   <div class="safe-mode">
     <p>{{ T "recovery.safe_mode_banner" }}</p>
@@ -40,7 +40,8 @@ var T = {
   retry_button: "{{ T "recovery.retry_button" }}",
   taking_longer: "{{ T "recovery.taking_longer" }}"
 };
-document.getElementById("retry-btn").addEventListener("click", function () {
+var retryBtn = document.getElementById("retry-btn");
+if (retryBtn) retryBtn.addEventListener("click", function () {
   var btn = this;
   btn.disabled = true;
   btn.textContent = T.retrying;

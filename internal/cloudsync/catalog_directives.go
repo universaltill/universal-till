@@ -31,6 +31,9 @@ var mainTillOnlyTypes = map[string]bool{
 	// ADR-0168 §5: customers are sealed to the main till's key and applied
 	// there only (ut-docs#4748).
 	"import_customers": true,
+	// ADR-0213 (ut-docs#6960): the sealed plugin key is opened by the main
+	// till's directive key only.
+	"set_plugin_secret": true,
 	// ADR-0169 §9 (ut-docs#4768): channel orders are recorded on the main
 	// till only, the sole stock master.
 	"channel_order":           true,

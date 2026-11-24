@@ -202,6 +202,29 @@ func OpenReadOnly(path string) (*DB, error) {
 // sees.
 var ErrDatabasePredatesReset = errors.New("database predates the schema reset — delete the data directory and start again")
 
+// ErrDatabaseNewerThanApp is returned (wrapped) by Open when the ledger
+// records a migration above the highest one this binary embeds: a newer
+// build already ran on this data and this one is older (ut-docs#6958). The
+// data is intact; the fix is installing that version or a newer one, never
+// deleting anything.
+var ErrDatabaseNewerThanApp = errors.New("this data was written by a newer version of Universal Till than this one — install that version or a newer one; the data is intact")
+
+// checkNotAheadOfBinary returns ErrDatabaseNewerThanApp (wrapped, naming both
+// numbers) when the ledger watermark is above every embedded migration. An
+// empty migration set is never "behind" (nothing to compare).
+func checkNotAheadOfBinary(migs []migration, current int) error {
+	maxEmbedded := 0
+	for _, m := range migs {
+		if m.Version > maxEmbedded {
+			maxEmbedded = m.Version
+		}
+	}
+	if maxEmbedded == 0 || current <= maxEmbedded {
+		return nil
+	}
+	return fmt.Errorf("%w (data at migration %d, this app has up to %d)", ErrDatabaseNewerThanApp, current, maxEmbedded)
+}
+
 // idempotentRerunVersions lists migration versions that may be re-applied
 // in place when their on-disk name/checksum no longer matches what the
 // ledger recorded, instead of hard-failing boot. ADR-0074 Decision 3 leaves
@@ -295,6 +318,12 @@ func (db *DB) migrateUpTo(maxVersion int) error {
 
 	migs, err := loadMigrations()
 	if err != nil {
+		return err
+	}
+
+	// A ledger above every embedded migration is a newer build's data, not a
+	// renumber: say so before verifyAppliedMigrations' ADR-0074 advice.
+	if err := checkNotAheadOfBinary(migs, current); err != nil {
 		return err
 	}
 

@@ -25,6 +25,8 @@ func messageKey(k Kind) string {
 		return "recovery.db_open_failed"
 	case KindDiskFull:
 		return "recovery.disk_full"
+	case KindAppOlderThanData:
+		return "recovery.app_older_than_data"
 	default:
 		return "recovery.unknown_error"
 	}
@@ -48,9 +50,12 @@ func pageHandler(failure Failure, safeModeAvailable bool) http.HandlerFunc {
 			return
 		}
 		data := map[string]any{
-			"Message":           httpx.T(locale, messageKey(failure.Kind)),
-			"Detail":            failure.Detail,
-			"RefCode":           failure.RefCode,
+			"Message": httpx.T(locale, messageKey(failure.Kind)),
+			"Detail":  failure.Detail,
+			"RefCode": failure.RefCode,
+			// Retry re-runs db.Open on the same binary, so it fails the same
+			// way for an app older than its data (ut-docs#6958).
+			"ShowRetry":         failure.Kind != KindAppOlderThanData,
 			"SafeModeAvailable": safeModeAvailable && loopback,
 			"SafeModeElsewhere": safeModeAvailable && !loopback,
 		}
