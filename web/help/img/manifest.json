@@ -715,7 +715,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "23af9b611cf6ceed2f0fa2164e122e81af9229a90649aeecdafd86c5b1169837"
+      "sha256": "879bb826556702200f9b4f77699296a5998eb699d683e98d9e383c7d37785f68"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
