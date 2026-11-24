@@ -13,6 +13,8 @@
   {{ end }}
 </div>
 
+{{ with .SecretCode }}{{ if .Enabled }}{{ template "plugin_secret_code" (dict "Row" . "PluginID" $.PluginID) }}{{ end }}{{ end }}
+
 <div class="card" style="max-width:32rem; margin-top:1rem">
   <h2>{{ T "plugins.settings.permissions.title" }}</h2>
   {{ if .Permissions }}
@@ -484,3 +486,180 @@
 {{/* The answer to one ask: the wrapper's new inner HTML, plus the message
      line swapped out of band. */}}
 {{ define "plugin_settings_ask_fragment" }}{{ template "plugin_settings_choice_inner" . }}<div class="ps-ask-msg" id="ps-opts-msg-{{ .Key }}" role="status" hx-swap-oob="innerHTML">{{ template "plugin_settings_ask_msg" . }}</div>{{ end }}
+
+{{ define "plugin_secret_code" }}
+{{/* ut-docs#6960, ADR-0213 Decision 9: fetch the plugin's key from my. with a
+     one-time code. Not modal (the status bar stays live): a card plus a fixed
+     camera sheet. The code is never stored; only the main till shows buttons. */}}
+<div class="card" style="max-width:32rem; margin-top:1rem" data-secret-code data-plugin-id="{{ .PluginID }}">
+  <h2>{{ T "plugin.secret.get_from_my" }}</h2>
+  {{ if .Row.Satellite }}
+  <p class="muted">{{ T "plugin.secret.satellite" }}</p>
+  {{ else }}
+  <p class="muted" data-secret-key-set{{ if not .Row.KeySet }} hidden{{ end }}>{{ T "plugin.secret.key_set" }}</p>
+  <div class="secret-code-actions" style="display:flex; flex-wrap:wrap; gap:.75rem">
+    <button type="button" class="btn" style="min-block-size:3rem; min-inline-size:8rem" data-secret-scan>{{ T "plugin.secret.scan" }}</button>
+    <button type="button" class="btn secondary" style="min-block-size:3rem; min-inline-size:8rem" data-secret-type>{{ T "plugin.secret.type" }}</button>
+  </div>
+  <form data-secret-form hidden style="margin-block-start:1rem" autocomplete="off">
+    <label for="secret-code-input">{{ T "plugin.secret.code_label" }}</label>
+    <input id="secret-code-input" type="text" name="code" dir="ltr" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40"{{ if ne (oskmode) "off" }} inputmode="none"{{ end }} style="font-family:monospace; min-block-size:3rem; inline-size:100%">
+    <button type="submit" class="btn" style="min-block-size:3rem; margin-block-start:.5rem" data-secret-send disabled>{{ T "plugin.secret.send_code" }}</button>
+  </form>
+  <p data-secret-status role="status" aria-live="polite" class="muted"></p>
+  {{ end }}
+</div>
+{{ if not .Row.Satellite }}
+<div class="ai-identify-overlay" data-secret-overlay hidden>
+  <div class="ai-identify-panel">
+    <h3>{{ T "plugin.secret.scan" }}</h3>
+    <video class="camera-overlay-video" data-secret-video autoplay playsinline muted></video>
+    <div class="ai-identify-status" data-secret-scan-status aria-live="polite">{{ T "plugin.secret.scan_hint" }}</div>
+    <div class="ai-identify-controls">
+      <button type="button" class="btn secondary" style="min-block-size:3.5rem" data-secret-cancel>{{ T "plugin.secret.cancel" }}</button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var root = document.querySelector('[data-secret-code]');
+  if (!root) return;
+  var T = {
+    waiting: "{{ T "plugin.secret.waiting" }}", applied: "{{ T "plugin.secret.applied" }}",
+    accepted: "{{ T "plugin.secret.accepted" }}", badCode: "{{ T "plugin.secret.bad_code" }}",
+    rate: "{{ T "plugin.secret.rate_limited" }}", offline: "{{ T "plugin.secret.offline" }}",
+    noCamera: "{{ T "plugin.secret.no_camera" }}", hint: "{{ T "plugin.secret.scan_hint" }}"
+  };
+  var id = root.getAttribute('data-plugin-id');
+  var form = root.querySelector('[data-secret-form]');
+  var input = form.elements.code;
+  var send = root.querySelector('[data-secret-send]');
+  var status = root.querySelector('[data-secret-status]');
+  var overlay = document.querySelector('[data-secret-overlay]');
+  var video = overlay.querySelector('[data-secret-video]');
+  var scanStatus = overlay.querySelector('[data-secret-scan-status]');
+  var stream = null, raf = null, candidate = null, polls = 0, pollTimer = null;
+  var ALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+  // Case, hyphens and spaces ignored; I/L read as 1, O as 0; U and anything
+  // else is dropped without a message. At most 26 characters, shown in groups.
+  function clean(v) {
+    var out = '';
+    v = String(v).toUpperCase();
+    for (var i = 0; i < v.length && out.length < 26; i++) {
+      var c = v[i];
+      if (c === 'I' || c === 'L') c = '1'; else if (c === 'O') c = '0';
+      if (ALPHA.indexOf(c) >= 0) out += c;
+    }
+    return out;
+  }
+  function group(raw) { return raw.replace(/(.{5})(?=.)/g, '$1-'); }
+  function setStatus(t) { status.textContent = t || ''; }
+
+  input.addEventListener('input', function () {
+    var raw = clean(input.value);
+    input.value = group(raw);
+    send.disabled = raw.length !== 26;
+  });
+
+  function stopCamera() {
+    overlay.hidden = true;
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    video.srcObject = null;
+  }
+  function showTyped(msg) {
+    stopCamera();
+    form.hidden = false;
+    setStatus(msg || '');
+    input.focus();
+  }
+
+  function submit(raw) {
+    send.disabled = true;
+    setStatus('');
+    var body = new URLSearchParams({ code: raw });
+    fetch('/api/plugins/' + encodeURIComponent(id) + '/secret-code/redeem', { method: 'POST', body: body, credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.status === 401) { window.location.href = '/login'; return null; }
+        return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; });
+      })
+      .then(function (res) {
+        if (!res) return;
+        // The code is gone from the field whatever the answer.
+        input.value = '';
+        if (res.ok) {
+          form.hidden = true;
+          setStatus(T.accepted + ' ' + T.waiting);
+          poll();
+          return;
+        }
+        var c = res.j && res.j.error && res.j.error.code;
+        setStatus(c === 'rate_limited' ? T.rate : c === 'offline' ? T.offline : T.badCode);
+      })
+      .catch(function () { input.value = ''; setStatus(T.offline); });
+  }
+
+  function poll() {
+    clearTimeout(pollTimer);
+    if (++polls > 100) return; // ~5 minutes; the owner makes a new code after that
+    pollTimer = setTimeout(function () {
+      fetch('/api/plugins/' + encodeURIComponent(id) + '/secret-code/status', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.data && j.data.state === 'set') {
+            setStatus(T.applied);
+            var k = root.querySelector('[data-secret-key-set]');
+            if (k) k.hidden = false;
+            return;
+          }
+          poll();
+        })
+        .catch(poll);
+    }, 3000);
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var raw = clean(input.value);
+    if (raw.length === 26) submit(raw);
+  });
+  root.querySelector('[data-secret-type]').addEventListener('click', function () { showTyped(''); });
+
+  function scanFrame(det) {
+    if (!stream) return;
+    det.detect(video).then(function (codes) {
+      if (!stream) return;
+      if (codes && codes.length && codes[0].rawValue) {
+        var raw = clean(codes[0].rawValue);
+        // Two identical reads in a row, and only a well-formed code counts.
+        if (raw.length === 26 && raw === candidate) { stopCamera(); submit(raw); return; }
+        candidate = raw.length === 26 ? raw : null;
+      }
+      raf = requestAnimationFrame(function () { scanFrame(det); });
+    }).catch(function () {
+      if (stream) raf = requestAnimationFrame(function () { scanFrame(det); });
+    });
+  }
+
+  root.querySelector('[data-secret-scan]').addEventListener('click', function () {
+    if (!overlay.hidden) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.utGetBarcodeDetector) { showTyped(T.noCamera); return; }
+    overlay.hidden = false;
+    candidate = null;
+    scanStatus.textContent = T.hint;
+    var detReady = window.utGetBarcodeDetector();
+    detReady.catch(function () {});
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function (s) {
+      if (overlay.hidden) { s.getTracks().forEach(function (t) { t.stop(); }); return; }
+      stream = s;
+      video.srcObject = s;
+      detReady.then(function (det) { if (stream === s) scanFrame(det); }, function () { showTyped(T.noCamera); });
+    }).catch(function () { showTyped(T.noCamera); });
+  });
+  overlay.querySelector('[data-secret-cancel]').addEventListener('click', stopCamera);
+  window.addEventListener('pagehide', stopCamera);
+})();
+</script>
+{{ end }}
+{{ end }}

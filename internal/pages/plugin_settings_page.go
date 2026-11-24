@@ -951,10 +951,11 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		tabs := groupSettingTabs(manifest, views, settingsFormState{}, storedControlValues(rows), httpx.RequestLocale(r))
-		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, map[string]any{"Tabs": tabs}))(w, r)
+		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, map[string]any{"Tabs": tabs, "SecretCode": secretCodeRow(r, d, repo, pluginID)}))(w, r)
 	})
 
 	registerSettingsOptions(mux, d, repo)
+	registerPluginSecretCode(mux, d, repo)
 
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {

@@ -2547,6 +2547,10 @@ utSellCamera(function(){
     return detectorPromise;
   }
 
+  // The same lazy decoder, for other camera surfaces (the plugin settings
+  // page's one-time key code scan, ut-docs#6960).
+  window.utGetBarcodeDetector = getDetector;
+
   utSellCamera(function(){
     var openBtn = document.getElementById('barcode-scan-open');
     var overlay = document.getElementById('barcode-scan-overlay');

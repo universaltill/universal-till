@@ -247,6 +247,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/plugins/{id}/enable":                   true,
 	"POST /api/plugins/{id}/rollback":                 true,
 	"POST /api/plugins/{id}/settings":                 true,
+	"POST /api/plugins/{id}/secret-code/redeem":       true, // ADR-0213: a demo till has no cloud key delivery
+	"GET /api/plugins/{id}/secret-code/status":        true,
 	"POST /api/plugins/{id}/settings/{key}/options":   true,
 	"POST /api/plugins/{id}/uninstall":                true,
 	"POST /api/plugins/{id}/update":                   true,
