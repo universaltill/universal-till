@@ -15,7 +15,7 @@ import (
 // _comment). Checking the lock against `gh release list` before every release
 // is part of the release checklist.
 var minLocked = map[string][3]int{
-	"com.universaltill.payment-stripe": {1, 9, 0},
+	"com.universaltill.payment-stripe": {1, 10, 0},
 	"com.universaltill.payment-sumup":  {1, 9, 2},
 	"com.universaltill.tax-uk":         {1, 3, 1},
 }

@@ -112,6 +112,16 @@ Sometimes a card reader can't tell the till whether a payment went through. The 
 
 The message appears once. If you miss it, **Recent problems** is the record. Nothing here needs the internet to start: clearing or parking works offline, but the screen may take a moment to update while the till waits for the card provider to confirm each payment it sends back. If a payment was still being taken when you cleared or parked the sale, the till does not complete that sale and sends the payment back too. Once the till has started saving a paid sale, **Clear**, **Hold** and opening another order are refused for that moment with a "payment in progress" notice, so a sale that was paid is never parked or sent back; try again once the sale is done.
 
+## When a card payment is declined
+
+If the card provider refuses a payment, a red message appears at the top of the payment panel, just under the **Pay** and **Split** tabs. The sale stays open, the basket is kept, and **nothing was charged**. Choose another method or try again; the message clears on the next attempt, or tap **✕** to dismiss it.
+
+- **Payment declined — try again or choose another method:** the card was refused. Try again or use another method.
+- **No card reader is set up on this till:** this till has no card reader of its own (settings copied from the main till do not include its reader). Take the payment another way, or ask a manager to add a reader under **Settings → Payments → Card readers** (see **Choosing a card reader**).
+- **The card reader is not connected:** check it is switched on and online, then try again.
+- **The card reader is busy with another payment:** wait a moment and try again.
+- **The card payment service refused this till's connection:** ask a manager to check the card payment settings for the plugin.
+
 ## When a Tap to Pay payment is not confirmed
 
 A tap on a phone can leave the till unsure whether the customer was charged (a lost connection, or the bank still processing). The till then shows **Payment not confirmed** with the amount, locks every other payment, and keeps the sale on the screen. It never says "declined", because the card may have been charged.

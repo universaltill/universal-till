@@ -1886,6 +1886,60 @@ document.addEventListener('click', function(e){
       try { alertBox.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
     }
   }
+  // ut-docs#6962: #payment-overlay covers the whole viewport at <= 900px, so a
+  // tender failure shown in #pos-alert or the basket toast is hidden under it.
+  // #payment-notice sits inside the overlay; the text is always our own
+  // server's translated string and goes in via textContent only.
+  function paymentOverlayOpen() {
+    var ov = document.getElementById('payment-overlay');
+    return !!(ov && ov.open);
+  }
+  function inPaymentOverlay(el) {
+    return !!(el && el.closest && el.closest('#payment-overlay'));
+  }
+  function isTenderPath(p) {
+    return String(p || '').indexOf('/api/pos/tender') === 0;
+  }
+  function showPaymentNotice(text) {
+    var n = document.getElementById('payment-notice');
+    if (!n || !text || !paymentOverlayOpen()) return false;
+    // Unhide BEFORE writing the text (live region), no focus() call.
+    n.hidden = false;
+    var t = n.querySelector('.notice-text');
+    if (t) t.textContent = text;
+    try { n.scrollIntoView({ block: 'nearest' }); } catch (e) { /* best effort */ }
+    return true;
+  }
+  function clearPaymentNotice() {
+    var n = document.getElementById('payment-notice');
+    if (!n) return;
+    n.hidden = true;
+    var t = n.querySelector('.notice-text');
+    if (t) t.textContent = '';
+  }
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    if (inPaymentOverlay(ev.detail && ev.detail.elt)) clearPaymentNotice();
+  });
+  // <dialog> close does not bubble: capture it on the document.
+  document.addEventListener('close', function (ev) {
+    if (ev.target && ev.target.id === 'payment-overlay') clearPaymentNotice();
+  }, true);
+  // 200 + error toast (journal unavailable, outcome unknown, stock/fiscal
+  // gates) re-renders #basket under the overlay: mirror it into the notice.
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail;
+    if (!d || !d.target || d.target.id !== 'basket' || !paymentOverlayOpen()) return;
+    // Only a tender: a scan or other basket swap while the overlay is open
+    // keeps its own toast (review finding, ut-docs#6962). htmx 1.9's
+    // afterSwap detail carries no triggering element, so the path decides.
+    var sp = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+    if (!isTenderPath(sp)) return;
+    var toast = document.getElementById('toast-message');
+    if (!toast || !toast.classList.contains('error')) return;
+    var tt = toast.querySelector('.notice-text');
+    showPaymentNotice(tt && tt.textContent.trim());
+  });
+
   // htmx never swaps a non-2xx response into its target by default — it
   // fires htmx:responseError instead and discards the body. That's fine
   // when the generic #pos-alert fallback below is the best available
@@ -1958,6 +2012,22 @@ document.addEventListener('click', function(e){
     var rx = ev.detail && ev.detail.xhr;
     if (rx && rx.status === 409 && rx.getResponseHeader &&
         (rx.getResponseHeader('HX-Trigger') || '').indexOf('tender-in-flight') !== -1) return;
+    // ut-docs#6962: a tender refused from inside the payment overlay answers
+    // in the overlay (no second #pos-alert banner).
+    var d = ev.detail || {};
+    var rpath = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+    var notice = document.getElementById('payment-notice');
+    // A card-reader-needed refusal opens the reader picker, which withdraws the
+    // generic #pos-alert itself (card-reader-picker.js); leave it on that path.
+    var rtrig = (rx && rx.getResponseHeader && rx.getResponseHeader('HX-Trigger')) || '';
+    if (notice && isTenderPath(rpath) && inPaymentOverlay(d.elt) && rx &&
+        rtrig.indexOf('card-reader-needed') === -1) {
+      var body = typeof rx.responseText === 'string' ? rx.responseText.trim() : '';
+      var ctype = (rx.getResponseHeader && rx.getResponseHeader('Content-Type')) || '';
+      var text = (rx.status === 402 && ctype.indexOf('text/plain') !== -1 && body && body.length <= 300)
+        ? body : notice.dataset.msgServer;
+      if (showPaymentNotice(text)) return;
+    }
     showAlert('server');
   });
   // A prompt's form (elevation_prompt.html / confirm_prompt.html carry
@@ -2031,6 +2101,11 @@ document.addEventListener('click', function(e){
   });
   document.body.addEventListener('htmx:sendError', function(ev){
     if (utIsResync(ev.detail)) return; // #5458: background re-sync fails quietly
+    var sd = ev.detail || {};
+    var spath = (sd.pathInfo && (sd.pathInfo.finalRequestPath || sd.pathInfo.requestPath)) || '';
+    var abox = document.getElementById('pos-alert');
+    if (isTenderPath(spath) && inPaymentOverlay(sd.elt) && !utIsPromptElt(sd.elt) &&
+        showPaymentNotice(abox && abox.dataset.msgNetwork)) return; // ut-docs#6962
     showAlert(utIsPromptElt(ev.detail && ev.detail.elt) ? 'outcome' : 'network');
   });
   // htmx fires afterRequest (elevation-done closes a prompt; fail chains run)

@@ -865,7 +865,17 @@
     if (!enabled) return;
     // Focus moving somewhere non-OSK-able closes the keyboard; opening is
     // click-only (above).
-    if (wantsOSK(ev.target) || (osk && osk.contains(ev.target))) return;
+    if (wantsOSK(ev.target) || (osk && osk.contains(ev.target))) {
+      // ut-docs#6980: script moved focus to ANOTHER OSK-able field while the
+      // keyboard is open (the Settings grid search hands its query to the
+      // sidebar search). Keys must follow the focus, or they keep typing into
+      // the old, hidden field and every letter replaces the last.
+      if (wantsOSK(ev.target) && ev.target !== current && current &&
+          osk && osk.classList.contains('osk-open')) {
+        show(ev.target);
+      }
+      return;
+    }
     deferHideCheck(0);
   });
   document.addEventListener('focusout', function (ev) {

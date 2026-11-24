@@ -154,7 +154,10 @@ func TestConvergePluginSet_BundledStateFollowsMainTill(t *testing.T) {
 	repo := data.NewPluginRepo(db)
 	var installs int
 	orig := pluginSyncInstall
-	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool) (string, error) { installs++; return "", nil }
+	pluginSyncInstall = func(context.Context, *common.Deps, string, string, bool, []string) (string, error) {
+		installs++
+		return "", nil
+	}
 	t.Cleanup(func() { pluginSyncInstall = orig })
 	on := func() bool { v, _ := repo.PluginActive(t.Context(), bundledStripeID); return v }
 

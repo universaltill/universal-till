@@ -221,7 +221,7 @@ func TestTakeawayOverride_RealChain_InactiveSyncInstallDoesNotReconcileOrLoad(t 
 	_ = pinnedCatalogThenPublishTaxDe(t, mkt, primary)
 	var err error
 	withPaths(primary.dataDir, func() {
-		_, err = cloudSyncInstallPluginVersion(t.Context(), primary.dp, "listing-taxov", "1.0.0", true)
+		_, err = cloudSyncInstallPluginVersion(t.Context(), primary.dp, "listing-taxov", "1.0.0", true, nil)
 	})
 	if err != nil {
 		t.Fatalf("inactive sync install: %v", err)

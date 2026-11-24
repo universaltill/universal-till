@@ -906,3 +906,74 @@ func TestMarketplaceInstallerLeavesNoCatalogRowOnRejectedInstall(t *testing.T) {
 		t.Fatalf("rejected install left an orphan plugin_catalog row behind, count=%d", catalogCount)
 	}
 }
+
+// ut-docs#6975: a cloud directive and a manual install of the same listing
+// run at once. They must serialise on the listing (no shared tmp file
+// deleted under the other), all succeed, and the repeats be no-ops — one
+// download, one ack.
+func TestMarketplaceInstallConcurrentSameListingIsSerialisedAndIdempotent(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, checksum := signedMarketplaceArtifact(t, privateKey)
+	acks := &ackCapture{}
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token": "tok-1", "bundle_url": "", "release_id": "release-1",
+			"version": manifest.Version, "checksum_sha256": checksum,
+			"signature": manifest.Signature, "expires_at": "2026-03-16T16:00:00Z",
+			"resumable_supported": true,
+		},
+		"error": nil,
+	}, acks)
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
+		EndpointURL: server.URL, APIVersion: "1.0.0", ClientID: "merchant-1",
+		StoreID: "store-1", DeviceID: "device-1",
+		PublicKey: hex.EncodeToString(publicKey), RequestTimeoutSec: 30,
+	}}
+	// Two installers sharing dirs, like the directive and the manual handler
+	// (each builds its own MarketplaceInstaller).
+	a := newTestMarketplaceInstaller(t, cfg, db)
+	b := newTestMarketplaceInstaller(t, cfg, db)
+	b.pluginBaseDir, b.downloadTmpDir = a.pluginBaseDir, a.downloadTmpDir
+
+	req := MarketplaceInstallRequest{
+		ListingID: "listing-race", Version: manifest.Version, TrustTier: "verified",
+		MerchantID: "merchant-1", StoreID: "store-1", DeviceID: "device-1", DeviceArch: "linux/amd64",
+	}
+	const n = 6
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for k := 0; k < n; k++ {
+		inst := a
+		if k%2 == 1 {
+			inst = b
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := inst.Install(context.Background(), req)
+			if err == nil && (res == nil || res.PluginID != manifest.ID) {
+				err = context.DeadlineExceeded
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent install failed: %v", err)
+		}
+	}
+	got := acks.waitForCount(t, 1, 5*time.Second)
+	time.Sleep(200 * time.Millisecond)
+	if all := acks.snapshot(); len(all) != 1 {
+		t.Fatalf("downloads = %d (%v), want exactly 1: repeats of an installed version must be no-ops", len(all), got)
+	}
+}

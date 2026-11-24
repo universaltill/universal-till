@@ -37,6 +37,12 @@ func TestInstallGrantsPermission(t *testing.T) {
 		{"ai.tools.write:plugins", agent, "ai.tools.write:plugins", false, false},
 		{"ai.tool.provide", tool, "ai.tool.provide", false, false},
 		{"ai.tool.provide.write", tool, "ai.tool.provide.write", false, false},
+		// ADR-0198 3.1 (ut-docs#6458): the two Tap to Pay permissions are
+		// never granted by an install; a manager grants them in Settings.
+		{"device:tap_to_pay, first declaration", agent, TapDevicePermission, false, false},
+		{"net:payment_broker, first declaration", agent, BrokerNetPermission, false, false},
+		{"device:tap_to_pay, already declared", agent, TapDevicePermission, true, false},
+		{"net:payment_broker, already declared", agent, BrokerNetPermission, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

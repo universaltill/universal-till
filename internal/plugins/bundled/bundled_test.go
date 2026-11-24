@@ -248,7 +248,7 @@ func TestCommittedLock_IsExactlyStripeSumUpAndUKTax(t *testing.T) {
 	for _, e := range l.Plugins {
 		got[e.ID] = e.Version
 	}
-	want := map[string]string{"com.universaltill.payment-stripe": "1.9.0", "com.universaltill.payment-sumup": "1.9.2", "com.universaltill.tax-uk": "1.3.1"}
+	want := map[string]string{"com.universaltill.payment-stripe": "1.10.0", "com.universaltill.payment-sumup": "1.9.2", "com.universaltill.tax-uk": "1.3.1"}
 	if len(got) != len(want) {
 		t.Fatalf("bundled set = %v, want %v", got, want)
 	}

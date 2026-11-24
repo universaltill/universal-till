@@ -19,6 +19,7 @@ Registering connects your till to the Universal Till marketplace; claiming links
 2. The Universal Till Merchant Terms (version merchant-terms-v1.0) are accepted when you claim the store, when you use a paid feature and when you download a plugin (the plugin page shows a box to tick). A till that is already registered shows the box under Till registration with an **Accept terms** button: tick the box ("I accept the Universal Till Merchant Terms (version merchant-terms-v1.0)"; "Read the terms" opens them in a new tab) and press it. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
 3. Click Claim this store to get a short code (valid 15 minutes).
 4. Sign in to your Universal Till account on another device and enter the code there.
+5. Once the store is claimed, the card says "This store is linked to your Universal Till ID." and the Claim button is gone (with a link to My stores). If this till was removed from the shop or must be paired again, open **Reconnect this till to a shop** on the same card and enter a pairing code: it replaces only this till's cloud connection; its sales, products and settings stay. Until the store is claimed (or while the till has not yet heard either way), the Claim button and the open Pair form stay as they were.
 
 <!-- plan-purchase -->
 

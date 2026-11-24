@@ -816,6 +816,8 @@ var PerTillSettingPrefixes = []string{
 	"restore.",
 	// ut-docs#6538: whether THIS main till takes phone card reader pairing.
 	"card_readers.phone_pairing",
+	// ut-docs#6955: whether THIS desktop till lets other devices on its network in.
+	"lan.access",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is

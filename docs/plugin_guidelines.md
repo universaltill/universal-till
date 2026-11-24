@@ -294,6 +294,23 @@ type PaymentPlugin interface {
 - SumUp
 - Regional payment processors
 
+**`decline_code` values the till understands.** When `payment.<method>.authorize`
+refuses (exit 2), print `{"decline_code": "<code>"}` so the cashier sees a
+specific message instead of the generic "Payment declined". The code is only
+compared, never shown, and plugin text never reaches the cashier. Codes are
+provider-neutral; an unknown or absent code gives the generic decline. Every
+decline is definitive: nothing was charged, the basket is kept.
+
+| `decline_code` | Cashier sees (en) |
+|---|---|
+| `no_reader` | No card reader is set up on this till. Nothing was charged. Choose another payment method, or ask a manager to set up a card reader. |
+| `reader_offline` | The card reader is not connected. Nothing was charged. Check that it is on and online, or choose another payment method. |
+| `reader_busy` | The card reader is busy with another payment. Nothing was charged. Wait a moment and try again. |
+| `auth_failed` | The card payment service refused this till's connection. Nothing was charged. Choose another payment method, or ask a manager to check the card payment settings. |
+
+`outcome_unknown` is different: it means the card may have been charged and
+locks the till on that tender until it settles. Never print it for a refusal.
+
 ### 2. Marketplace Plugins
 
 Sync products and orders with online marketplaces.
@@ -839,6 +856,19 @@ A setting declared `"type": "endpoint"` holds an operator-entered
 install time (ut-docs#3552): a non-empty default must be a valid http(s) URL
 or the manifest is rejected; an absent or empty-string (`""`) default is
 fine — the operator sets it later.
+
+**Settings shown in my. (ADR-0214, ut-docs#6969).** The till reports each
+active plugin's global-scope, manifest-declared settings to the shop's cloud
+so the owner can read them in my. (`plugin_settings` on the check-in; contract
+ut-docs `reference/contracts/till-plugin-settings.md`). A non-secret value goes
+up as text (at most 256 characters; `list` and `map` settings and
+`register`-scope settings are not reported). A secret reports only "set", never
+its value. Two optional, additive setting fields shape this:
+`"secret_last4": true` (a `type: "secret"` value of 16 or more characters also
+reports its last four characters) and `"report": false` (a non-secret setting
+that reports only "set", for a value that may hold personal data). A key whose
+name looks like a credential never reports a value. A manifest using either
+field must set `min_pos_version` to `0.36.4` or later.
 
 ### 5. Data Protection
 

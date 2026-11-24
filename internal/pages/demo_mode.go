@@ -156,6 +156,9 @@ func writeDemoRefusal(w http.ResponseWriter, r *http.Request, status int) {
 // demoDeniedRoutes are refused in the demo whatever the allow-list says
 // (ADR-0113 §1.5). Exact mux patterns, grouped by why.
 var demoDeniedRoutes = map[string]bool{
+	// ut-docs#6955: network access of the host machine, not a demo concern.
+	"GET /ui/settings/lan-access":   true,
+	"POST /api/settings/lan-access": true,
 	// Translate mode (ut-docs#4370, ADR-0160 §7): a manager tool that links
 	// every string into Weblate and writes shop overrides. A public demo
 	// visitor gets neither the mode nor its panel (translateModeAllowed
@@ -175,6 +178,13 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /settings/card-readers/{id}":        true,
 	"POST /settings/card-readers/{id}/remove": true,
 	"GET /csp-report":                         true,
+	// Tap to Pay settings (ut-docs#6458): Apple's terms, the permission grant
+	// and the education sheet act on a real device and a real payment plugin.
+	"GET /settings/tap-to-pay":            true,
+	"GET /settings/tap-to-pay/status":     true,
+	"POST /settings/tap-to-pay/setup":     true,
+	"POST /settings/tap-to-pay/grant":     true,
+	"POST /settings/tap-to-pay/education": true,
 	// Tap to Pay (ut-docs#6455): settling a card payment against a real
 	// payment provider; a demo till has no provider and takes no card.
 	"POST /pay/tap/check":           true,

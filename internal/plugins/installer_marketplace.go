@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -63,6 +64,9 @@ type MarketplaceInstallRequest struct {
 	// SkipActiveOwnerChecks: see InstallOptions.SkipActiveOwnerChecks; only
 	// honoured with InstallInactive (replica plugin sync, ut-docs#6930).
 	SkipActiveOwnerChecks bool
+	// AdoptPaymentKeys: see InstallOptions.AdoptPaymentKeys (replica plugin
+	// sync only, ut-docs#6928).
+	AdoptPaymentKeys []string
 }
 
 // PreInstallCheck is a caller's extra gate on a verified bundle: manifest is
@@ -197,6 +201,17 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if strings.TrimSpace(req.DeviceArch) == "" {
 		req.DeviceArch = runtime.GOOS + "/" + runtime.GOARCH
 	}
+	// One install per listing at a time, download through install. A cloud
+	// directive and a manual install of the same listing used to share
+	// tmp/<listing>.part and delete each other's file (ut-docs#6975). Taken
+	// before the first state report; the second caller waits, then (same
+	// version, still installed) returns the first one's result.
+	unlock, lerr := lockListing(ctx, i.downloadTmpDir, req.ListingID)
+	if lerr != nil {
+		return nil, lerr
+	}
+	defer unlock()
+
 	i.emitState(ctx, req, InstallStateDownloading, "")
 
 	tokenResp, err := i.client.IssueDownloadToken(ctx, &marketplace.IssueDownloadTokenRequest{
@@ -219,6 +234,11 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		return nil, err
 	}
 
+	if prev, ok := i.alreadyInstalled(ctx, req, tokenResp.Version); ok {
+		logging.L().Infof("[MarketplaceInstaller] listing %s already installed at %s: nothing to do", req.ListingID, prev.Version)
+		return prev, nil
+	}
+
 	downloadMgr := NewDownloadManager(i.downloadTmpDir)
 	downloadResult, err := downloadMgr.Download(ctx, &DownloadRequest{
 		URL:              bundleURL,
@@ -238,7 +258,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 
 	i.emitState(ctx, req, InstallStateInstalling, "")
 
-	return i.installBundleFile(ctx, bundleInstallSpec{
+	res, err := i.installBundleFile(ctx, bundleInstallSpec{
 		BundlePath:            downloadResult.FilePath,
 		ListingID:             req.ListingID,
 		Checksum:              tokenResp.ChecksumSHA256,
@@ -249,7 +269,82 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		PreInstall:            req.PreInstall,
 		InstallInactive:       req.InstallInactive,
 		SkipActiveOwnerChecks: req.SkipActiveOwnerChecks,
+		AdoptPaymentKeys:      req.AdoptPaymentKeys,
 	})
+	if err != nil {
+		return nil, err
+	}
+	rememberInstalled(i.downloadTmpDir, req.ListingID, res)
+	return res, nil
+}
+
+// installedListings remembers, per tmp dir + listing, the last successful
+// install of this process so a second request for the same version (cloud
+// directive racing a manual install, or a redelivered directive) is a no-op.
+// Verified against the DB before use, so a stale entry can never mask an
+// uninstall. One small entry per listing ever installed: bounded.
+var installedListings sync.Map // string -> MarketplaceInstallResult
+
+// listingLocks serialises Install/DownloadToStore/InstallFromStore per
+// listing (ut-docs#6975). Entries are never removed: one mutex per listing.
+var listingLocks sync.Map // string -> chan struct{} (capacity 1)
+
+func listingKey(tmpDir, listingID string) string {
+	return filepath.Clean(tmpDir) + "\x00" + listingID
+}
+
+// lockListing takes the per-listing lock and returns its unlock. Waiting
+// honours ctx: a cancelled caller stops queueing behind a long download.
+// Not reentrant: never call another function that locks the same listing.
+func lockListing(ctx context.Context, tmpDir, listingID string) (func(), error) {
+	v, _ := listingLocks.LoadOrStore(listingKey(tmpDir, listingID), make(chan struct{}, 1))
+	ch := v.(chan struct{})
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func rememberInstalled(tmpDir, listingID string, res *MarketplaceInstallResult) {
+	if res != nil {
+		installedListings.Store(listingKey(tmpDir, listingID), *res)
+	}
+}
+
+// alreadyInstalled reports a prior successful install of this listing at
+// exactly `version` that is still present (and active, unless this request
+// installs inactive). Requests with a pre-install gate or payment-key
+// adoption always run in full.
+func (i *MarketplaceInstaller) alreadyInstalled(ctx context.Context, req MarketplaceInstallRequest, version string) (*MarketplaceInstallResult, bool) {
+	if version == "" || req.PreInstall != nil || len(req.AdoptPaymentKeys) > 0 {
+		return nil, false
+	}
+	v, ok := installedListings.Load(listingKey(i.downloadTmpDir, req.ListingID))
+	if !ok {
+		return nil, false
+	}
+	prev := v.(MarketplaceInstallResult)
+	if prev.Version != version {
+		return nil, false
+	}
+	repo := data.NewPluginRepo(i.db)
+	cur, found, err := repo.GetInstalledPluginVersion(ctx, prev.PluginID)
+	if err != nil || !found || cur != version {
+		return nil, false
+	}
+	// A release revoked since install must still be refused by the full
+	// path (ut-docs#5658), never waved through as "already installed".
+	if CheckNotRevoked(ctx, repo, nil, prev.PluginID, version) != nil {
+		return nil, false
+	}
+	if !req.InstallInactive {
+		if _, active, err := repo.GetActivePluginVersion(ctx, prev.PluginID); err != nil || !active {
+			return nil, false
+		}
+	}
+	return &prev, true
 }
 
 // bundleInstallSpec describes a verified-download bundle to install.
@@ -266,6 +361,9 @@ type bundleInstallSpec struct {
 	InstallInactive bool
 	// SkipActiveOwnerChecks: see MarketplaceInstallRequest.SkipActiveOwnerChecks.
 	SkipActiveOwnerChecks bool
+	// AdoptPaymentKeys: see InstallOptions.AdoptPaymentKeys (replica plugin
+	// sync only, ut-docs#6928).
+	AdoptPaymentKeys []string
 }
 
 // installBundleFile extracts, verifies (signature, compatibility, executable)
@@ -430,6 +528,7 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		Uploader:              "marketplace",
 		InstallInactive:       spec.InstallInactive,
 		SkipActiveOwnerChecks: spec.SkipActiveOwnerChecks,
+		AdoptPaymentKeys:      spec.AdoptPaymentKeys,
 	}); err != nil {
 		_ = os.RemoveAll(finalDir)
 		return nil, fmt.Errorf("persist plugin manifest: %w", err)
@@ -570,7 +669,8 @@ func minPOSVersion(manifest *Manifest) string {
 // (amends ADR-0006): ai.tools.write:*, ai.tool.provide,
 // ai.tool.provide.write, and ai.send.* on a plugin that does not declare
 // ai.agent (a tool plugin) — the admin grants those on the plugin's
-// settings page. "First declaration" is per permission row: a version that
+// settings page — and device:tap_to_pay / net:payment_broker (ADR-0198 3.1),
+// which a manager grants in Settings > Tap to Pay. "First declaration" is per permission row: a version that
 // drops a permission prunes its row, and a later version that declares it
 // again counts as a first declaration (accepted: the re-declaring manifest
 // passed marketplace review again). An uninstall drops the rows, so a
@@ -586,6 +686,10 @@ func installGrantsPermission(m *Manifest, perm string, previouslyDeclared bool) 
 		return false
 	case strings.HasPrefix(perm, AISendPermissionPrefix):
 		return slices.Contains(m.Permissions, AIAgentPermission)
+	case perm == TapDevicePermission, perm == BrokerNetPermission:
+		// ADR-0198 3.1 (ut-docs#6458): inserted ungranted; a manager grants
+		// them in Settings > Tap to Pay (explicit, audited).
+		return false
 	}
 	return true
 }

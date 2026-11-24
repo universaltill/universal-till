@@ -101,6 +101,10 @@ func seedReaderPlugin(t *testing.T, dp *common.Deps, pluginID, method string, ho
 			if ans != nil {
 				a = ans(n)
 			}
+			if code, ok := strings.CutPrefix(a, "DECLINE:"); ok {
+				// a plugin decline with a chosen decline_code (ut-docs#6458)
+				return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"` + code + `"}`)}
+			}
 			switch a {
 			case "DECLINE":
 				return nil, &plugins.HandlerExitError{Code: 2, Stdout: json.RawMessage(`{"decline_code":"card_declined"}`)}

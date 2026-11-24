@@ -88,6 +88,8 @@
 <span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-select-oob="#settings-privacy" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
+  {{/* ut-docs#6955: who on the network may reach this till (managers only; the fragment 403s otherwise). */}}
+  <div hx-get="/ui/settings/lan-access" hx-trigger="load" hx-swap="innerHTML"></div>
   {{/* ut-docs#2569: cloud sync and browser management pause here when the
        subscription is stale or lapsed — explained in place, nothing hidden.
        A registered till with cloud sync off (ADR-0148) already says so below
@@ -194,6 +196,15 @@
       </div>
     </div>
     {{ end }}
+    {{/* ut-docs#6959: a store the cloud knows as claimed (storeHasOwner)
+         shows the linked state, no button; unclaimed or unknown keeps the
+         Claim block. */}}
+    {{ if .storeClaimed }}
+    <div class="set-divider" data-testid="store-linked">
+      <p role="status">✅ {{ T "settings.enrol.linked" }}</p>
+      {{ if accountlinkoutallowed }}<p class="muted"><a href="https://my.universaltill.com/" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.linked_manage" }}</a></p>{{ end }}
+    </div>
+    {{ else }}
     <!-- ut-docs#867: unconditional — the POST is elevation-wired (checkOrElevate),
          so a denied session gets the in-place PIN dialog, not a hidden form. -->
     <div class="set-divider">
@@ -201,6 +212,7 @@
       <button class="btn btn-touch" hx-post="/api/enrol/claim-code" hx-target="#claim-code-msg" hx-swap="innerHTML">{{ T "settings.enrol.claim_btn" }}</button>
       <div id="claim-code-msg" aria-live="polite" class="set-gap-s"></div>
     </div>
+    {{ end }}
   {{ else if enrolledviamain }}
     {{/* ut-docs#2753: a replica its main till registered. No fleet, claim or
          an explicit operator registration here — those need the store token only the main till
@@ -222,8 +234,14 @@
   <!-- ADR-0116 D5/D6 (ut-docs#3523): "Pair with a shop". Unconditional: it is
        the way back for an unpaired, revoked or retired till whatever its
        registration state, and the POST is elevation-wired (ut-docs#867). -->
-  <div class="set-divider">
+  {{/* ut-docs#6959: collapsed under "Reconnect" once the store is linked;
+       open, as before, otherwise. */}}
+  {{ if .storeClaimed }}<details class="set-divider" id="pair-details">{{ else }}<div class="set-divider" id="pair-details">{{ end }}
+    {{ if .storeClaimed }}
+    <summary style="cursor:pointer;min-block-size:44px;padding-block:.6rem;font-weight:600">{{ T "settings.enrol.reconnect_title" }}</summary>
+    {{ else }}
     <h3 style="margin:0 0 .3rem">{{ T "settings.enrol.pair_title" }}</h3>
+    {{ end }}
     <p class="muted">{{ T "settings.enrol.pair_help_2" }}</p>
     <!-- Pair is destructive and not idempotent: it clears this till's cloud
          identity before the (single-use) code reaches the cloud, so a second
@@ -242,7 +260,7 @@
       <span id="pair-busy" class="htmx-indicator muted" role="status">{{ T "settings.enrol.pair_busy" }}</span>
     </form>
     <div id="pair-msg" aria-live="polite" class="set-gap-s"></div>
-  </div>
+  {{ if .storeClaimed }}</details>{{ else }}</div>{{ end }}
 </div>
 {{/* ADR-0200 (ut-docs#6559): Settings > Privacy. The registration notice
      (checkin-notice-v2, owner-approved) tells a shop to "switch off
@@ -975,6 +993,7 @@
   <!-- ut-docs#6566: the per-till card reader list (manager page; the route
        answers a cashier with 403, this link is not the gate). -->
   <p id="settings-card-readers" class="set-row"><a class="btn secondary" data-testid="card-readers-link" href="/settings/card-readers">{{ T "card_reader.settings.title" }}</a></p>
+  {{ if .tapSettingsAvailable }}<p id="settings-tap-to-pay" class="set-row"><a class="btn secondary" data-testid="tap-settings-link" href="/settings/tap-to-pay">{{ T "tap.settings.title" }}</a></p>{{ end }}
   <p class="muted" class="set-gap">{{ T "settings.payments.fees_help" }}</p>
   {{ range .payFees }}
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"
