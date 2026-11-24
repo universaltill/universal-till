@@ -284,3 +284,52 @@ func TestCall_RequestCap(t *testing.T) {
 		t.Fatalf("a 1 KiB body: err = %v, want nil", err)
 	}
 }
+
+// ADR-0198 Amendment 2026-11-23 (D4): a refusal "device_role_unrecorded" is
+// remembered for a short while so the till can say "set this till up again"
+// instead of a generic start failure; any successful broker call clears it.
+func TestCall_RoleUnrecordedRefusalIsRemembered(t *testing.T) {
+	noteRoleUnrecorded(false)
+	t.Cleanup(func() { noteRoleUnrecorded(false) })
+	code, status := "device_role_unrecorded", http.StatusForbidden
+	for _, c := range []string{"device_role_unconfirmed"} {
+		code = c
+		noteRoleUnrecorded(false)
+		srv0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":{"code":"`+c+`"}}`)
+		}))
+		target(t, srv0.URL)
+		_, _ = Call(context.Background(), CallerCore, "stripe", "session_create", []byte(`{}`))
+		srv0.Close()
+		if !RoleUnrecordedRecently() {
+			t.Fatalf("%s refusal not remembered", c)
+		}
+	}
+	code = "device_role_unrecorded"
+	noteRoleUnrecorded(false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if code == "" {
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, `{"error":{"code":"`+code+`"}}`)
+	}))
+	defer srv.Close()
+	target(t, srv.URL)
+	if RoleUnrecordedRecently() {
+		t.Fatal("flag set before any call")
+	}
+	_, _ = Call(context.Background(), CallerCore, "stripe", "session_create", []byte(`{}`))
+	if !RoleUnrecordedRecently() {
+		t.Fatal("device_role_unrecorded refusal not remembered")
+	}
+	code = ""
+	if _, err := Call(context.Background(), CallerCore, "stripe", "onboarding_status", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if RoleUnrecordedRecently() {
+		t.Fatal("a successful call must clear the flag")
+	}
+}

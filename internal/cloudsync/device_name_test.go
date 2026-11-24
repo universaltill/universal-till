@@ -133,3 +133,40 @@ func TestBuildSyncRequestReportsKeptCloudID(t *testing.T) {
 		t.Fatalf("heartbeat minted a LAN till id %q despite a kept cloud id", v)
 	}
 }
+
+// ADR-0198 Amendment 2026-11-23 go-live precondition (ut-cloud till_role):
+// a joined till reports its own role in its devices[] entry; a main or
+// standalone till (and an invalid value) omits it.
+func TestBuildSyncRequestReportsTheJoinedTillRole(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings map[string]string
+		want     string // "" = key absent
+	}{
+		{"additional", map[string]string{"sync.primary_url": "http://main.example", "sync.till_role": "additional"}, "additional"},
+		{"satellite", map[string]string{"sync.primary_url": "http://main.example", "sync.till_role": "satellite"}, "satellite"},
+		{"kiosk display on a joined till", map[string]string{"sync.primary_url": "http://main.example", "sync.till_role": "additional", "display.mode": "self_order"}, "kiosk"},
+		{"main till", map[string]string{}, ""},
+		{"stale role on a main till", map[string]string{"sync.till_role": "satellite"}, ""},
+		{"invalid role", map[string]string{"sync.primary_url": "http://main.example", "sync.till_role": "admin"}, ""},
+		{"joined, role unknown", map[string]string{"sync.primary_url": "http://main.example"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			settings := data.NewSettingsRepo(db)
+			for k, v := range tc.settings {
+				if err := settings.Set(context.Background(), k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := buildSyncRequest(context.Background(), testCfg(""), settings, Hooks{})
+			got, has := req.devices[0]["till_role"]
+			if tc.want == "" && has {
+				t.Fatalf("till_role = %v, want absent", got)
+			}
+			if tc.want != "" && got != tc.want {
+				t.Fatalf("till_role = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -55,7 +55,7 @@ test('Find a main till on this network runs a real scan through to a result', as
   const noneFound = await msg.textContent();
   const resultItems = await results.locator('li').count();
   expect(
-    noneFound === 'No primaries found on this network.' || resultItems > 0,
+    noneFound.startsWith('No main till found.') || resultItems > 0,
     `expected either the "none found" message or at least one rendered result; got msg="${noneFound}", ${resultItems} result item(s)`,
   ).toBe(true);
   if (resultItems > 0) {

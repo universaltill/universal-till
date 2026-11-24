@@ -48,7 +48,8 @@ func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB,
 		return
 	}
 	*fetchDeferred = false
-	status, msg := apply(ctx, d, hooks)
+	var reason reasonSink
+	status, msg := apply(context.WithValue(ctx, reasonSinkKey{}, &reason), d, hooks)
 	if *fetchDeferred && status == "failed" {
 		logging.L().Warnf("cloudsync: directive %s (%s) left pending: %s", d.ID, d.Type, msg)
 		return
@@ -66,7 +67,7 @@ func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB,
 	// A failed apply is stored too (the cloud shows it failed and the owner
 	// saves again under a new directive id), except one a hook reports as
 	// retryable (statusRetry above), which stays pending.
-	stored = data.DirectiveResult{DirectiveID: d.ID, DirectiveType: d.Type, Status: status, Message: msg}
+	stored = data.DirectiveResult{DirectiveID: d.ID, DirectiveType: d.Type, Status: status, Message: msg, MessageKey: reason.key}
 	if err := repo.Save(ctx, stored); err != nil {
 		// Same as guest orders: still report it; only the dedupe of a
 		// re-delivery is lost.
@@ -78,7 +79,7 @@ func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB,
 // postStoredDirectiveResult posts a stored result under its directive id and
 // marks it posted once the cloud acknowledged it.
 func postStoredDirectiveResult(ctx context.Context, cfg *config.Config, repo *data.DirectiveResultsRepo, r data.DirectiveResult) {
-	err := postResult(ctx, cfg, r.DirectiveID, r.Status, r.Message, nil)
+	err := postResult(ctx, cfg, r.DirectiveID, r.Status, r.Message, resultKeyData(r.MessageKey))
 	var se *statusError
 	switch {
 	case err == nil:
@@ -101,4 +102,39 @@ func postStoredDirectiveResult(ctx context.Context, cfg *config.Config, repo *da
 	if merr := repo.MarkPosted(ctx, r.DirectiveID); merr != nil {
 		logging.L().Warnf("cloudsync: directive %s result delivered but not marked (it will be re-sent): %v", r.DirectiveID, merr)
 	}
+}
+
+// ReasonError is an error a hook returns for a directive that failed for a
+// reason my. can translate (ut-docs#6975): Key is the en.json message key,
+// Message the safe plain-English text (Error() returns only this, so a raw
+// path or URL in Cause never reaches the cloud). Cause stays for errors.Is/As.
+type ReasonError struct {
+	Key     string
+	Message string
+	Cause   error
+}
+
+func (e *ReasonError) Error() string { return e.Message }
+func (e *ReasonError) Unwrap() error { return e.Cause }
+
+// reasonSink collects the key of the ReasonError a directive's apply hit;
+// it rides the apply context because apply returns only (status, msg).
+type reasonSink struct{ key string }
+
+type reasonSinkKey struct{}
+
+func noteReason(ctx context.Context, err error) {
+	var re *ReasonError
+	if s, ok := ctx.Value(reasonSinkKey{}).(*reasonSink); ok && errors.As(err, &re) {
+		s.key = re.Key
+	}
+}
+
+// resultKeyData is the result post's data block for a reason key: nil (no
+// data field) when there is none.
+func resultKeyData(key string) map[string]any {
+	if key == "" {
+		return nil
+	}
+	return map[string]any{"message_key": key}
 }

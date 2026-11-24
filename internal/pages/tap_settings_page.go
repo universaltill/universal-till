@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -57,8 +58,9 @@ type tapStep struct {
 }
 
 type tapSettingsView struct {
-	Available  bool // a native bridge is registered
-	NotMain    bool
+	Available  bool   // a native bridge is registered
+	NotMain    bool   // this till cannot take Tap to Pay (a satellite or a till with no recorded role)
+	Additional bool   // an explicitly additional till: the panel adds its note
 	State      string // ready | preparing | needs_setup | unavailable
 	Icon       string
 	ReasonKey  string
@@ -116,6 +118,12 @@ func (c *tapSettingsCtl) readCloud(ctx context.Context, fresh bool) tapCloud {
 	defer cancel()
 	out, err := paybroker.Call(cctx, paybroker.CallerCore, devicepay.ProviderStripe, "onboarding_status", []byte("{}"))
 	var got tapCloud
+	var he *paybroker.HTTPError
+	if errors.As(err, &he) && (he.Code == paybroker.CodeDeviceRoleUnrecorded || he.Code == paybroker.CodeDeviceRoleUnconfirmed) {
+		// The cloud refused this till's credential (set up before roles were
+		// recorded): a known answer, not "unreachable" (UX copy section 4).
+		got = tapCloud{Known: true, Reason: paybroker.CodeDeviceRoleUnrecorded} // unconfirmed reads the same
+	}
 	if err == nil {
 		var a struct {
 			Ready    bool   `json:"ready"`
@@ -143,6 +151,8 @@ func tapStripeLine(c tapCloud, storeBuild bool) (key string, done, unknown bool)
 		return "tap.settings.source.connect", true, false
 	}
 	switch c.Reason {
+	case paybroker.CodeDeviceRoleUnrecorded:
+		return "tap.settings.source.setup_again", false, false
 	case "needs_attention":
 		return "tap.settings.source.needs_attention", false, false
 	case "address_incomplete":
@@ -205,7 +215,9 @@ func (c *tapSettingsCtl) build(ctx context.Context, fresh bool) tapSettingsView 
 	}
 	d := c.d
 	v.StoreBuild = !buildinfo.CurrentChannel().AccountLinkOutAllowed()
-	v.NotMain = effectiveReaderSource(ctx, d, readerSourcePOS) != readerSourcePOS
+	source := effectiveReaderSource(ctx, d, readerSourcePOS)
+	v.NotMain = !tapOfferedOn(source)
+	v.Additional = source == readerSourceAdditional
 	caps := devicepay.Capabilities()[devicepay.ProviderStripe]
 	c.mu.Lock()
 	run := c.setup
@@ -362,8 +374,9 @@ func registerTapSettings(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		if effectiveReaderSource(r.Context(), d, readerSourcePOS) != readerSourcePOS {
-			// Only the main till takes Tap to Pay (ADR-0198 2): refused, no native call.
+		if !tapOfferedOn(effectiveReaderSource(r.Context(), d, readerSourcePOS)) {
+			// Only the main, standalone and additional tills take Tap to Pay
+			// (ADR-0198 2, Amendment 2026-11-23): refused, no native call.
 			c.renderBody(w, r, http.StatusConflict, c.build(r.Context(), false))
 			return
 		}

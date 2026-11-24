@@ -110,7 +110,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// button (the cashier picks a reader, not a provider); every other
 		// method keeps its own button unchanged.
 		prefMethod, _, _ := d.Settings.Get(r.Context(), "payments.default_method")
-		if effectiveReaderSource(r.Context(), d, readerSourcePOS) != readerSourcePOS {
+		if !tapOfferedOn(effectiveReaderSource(r.Context(), d, readerSourcePOS)) {
 			gridMethods = withoutTapEntries(r.Context(), d, gridMethods) // ut-docs#6455 G-6
 		} else {
 			gridMethods = withoutUnreadyTapEntries(r.Context(), d, gridMethods) // ut-docs#6458: ADR-0198 2 capability
