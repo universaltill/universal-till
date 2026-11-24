@@ -39,6 +39,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/pluginsettingsreport"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
 )
@@ -1572,6 +1573,14 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// when the latest check-in says self_order.
 				"self_order":   inSelfOrderMode(ctx, d),
 				"kiosk_pinned": kiosk.KioskPinned(),
+			}
+			// ADR-0214 (ut-docs#6969): the manifest-declared global plugin
+			// settings, never a secret value. Omitted on an error (the cloud
+			// keeps its last report). See pluginsettingsreport.
+			if rep, err := pluginsettingsreport.Collect(ctx, d.Db); err != nil {
+				logging.L().Warnf("cloudsync: plugin_settings report: %v", err)
+			} else {
+				extra["plugin_settings"] = rep
 			}
 			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
 			// menu configuration — categories with their modifier-group and

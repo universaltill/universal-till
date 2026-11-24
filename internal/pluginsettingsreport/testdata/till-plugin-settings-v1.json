@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "input": [
+    {
+      "id": "com.example.fixture",
+      "version": "1.2.0",
+      "settings": [
+        {"key": "merchant_code", "type": "text"},
+        {"key": "mode", "type": "choice", "options": [{"value": "live", "label": "l"}, {"value": "test", "label": "t"}]},
+        {"key": "access_token_ref", "type": "secret", "secret_last4": true},
+        {"key": "private_note", "type": "text", "report": false},
+        {"key": "per_till_reader", "type": "text", "scope": "register"}
+      ],
+      "rows": {
+        "merchant_code": {"value_json": "\"MC-42\"", "updated_at": "2031-01-02T03:04:05Z"},
+        "mode": {"value_json": "\"test\"", "updated_at": "2031-01-02T03:04:05Z"},
+        "access_token_ref": {"value_json": "\"CANARY-0123456789abcd4821\"", "updated_at": "2031-01-03T00:00:00Z"},
+        "private_note": {"value_json": "\"for my eyes\"", "updated_at": "2031-01-02T03:04:05Z"},
+        "per_till_reader": {"value_json": "\"r-1\"", "updated_at": "2031-01-02T03:04:05Z"}
+      }
+    }
+  ],
+  "wire": [
+    {
+      "id": "com.example.fixture",
+      "version": "1.2.0",
+      "settings": [
+        {"key": "merchant_code", "ver": 1, "origin": "till", "at": "2031-01-02T03:04:05Z", "value": "MC-42"},
+        {"key": "mode", "ver": 1, "origin": "till", "at": "2031-01-02T03:04:05Z", "value": "test"},
+        {"key": "access_token_ref", "ver": 1, "origin": "till", "at": "2031-01-03T00:00:00Z", "set": true, "last4": "4821"},
+        {"key": "private_note", "ver": 1, "origin": "till", "at": "2031-01-02T03:04:05Z", "set": true}
+      ]
+    }
+  ]
+}
