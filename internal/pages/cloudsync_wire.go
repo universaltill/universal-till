@@ -1689,7 +1689,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 // cloudSyncInstallPluginVersion is the replica plugin sync's install
 // (convergePluginSet): cloudInstallPluginVersion, landing the plugin switched
 // off when the main till has it off (ut-docs#6930) — never active, not even
-// for one reload, before the enabled-state follow. adoptPaymentKeys is the
+// for one reload, on a replica whose main has it off. adoptPaymentKeys is the
 // main's list of tender ids it has owned by this plugin
 // (PluginSyncRow.OwnedPaymentMethodIDs, ut-docs#6928).
 func cloudSyncInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, version string, inactive bool, adoptPaymentKeys []string) (string, error) {

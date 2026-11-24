@@ -146,6 +146,11 @@ type ReplicaRequest struct {
 	DeviceID   string
 	DeviceName string
 	Version    string
+	// Role is the replica's role as the main till's roster records it
+	// (additional, satellite or kiosk). It is sent to the cloud as "role" so
+	// the credential is recorded with the TRUE role (ADR-0198 Amendment
+	// 2026-11-23, go-live precondition). Empty or unknown: not sent.
+	Role string
 }
 
 // VouchSource is the replica's call to its main till. Swappable in tests.
@@ -492,7 +497,7 @@ func VouchForReplica(ctx context.Context, cfg *config.Config, kv Settings, req R
 		req.Version = req.Version[:64]
 	}
 	m.StoreID, m.MerchantToken = storeID, token
-	code, err := registerDeviceID(ctx, m, req.DeviceID, req.DeviceName, req.Version, req.TillID, "")
+	code, err := registerDeviceID(ctx, m, req.DeviceID, req.DeviceName, req.Version, req.TillID, "", vouchRole(req.Role))
 	if err != nil {
 		return Vouch{}, err
 	}
@@ -510,4 +515,14 @@ func VouchForReplica(ctx context.Context, cfg *config.Config, kv Settings, req R
 		logging.L().Warnf("enrolment: the cloud's redeem code for replica device %s is malformed (length %d); not relayed (ADR-0116 D3)", req.DeviceID, len(code))
 	}
 	return v, nil
+}
+
+// vouchRole returns role when the cloud knows it, else "" (not sent): the
+// till never guesses a role for the cloud.
+func vouchRole(role string) string {
+	switch role = strings.TrimSpace(role); role {
+	case "additional", "satellite", "kiosk":
+		return role
+	}
+	return ""
 }

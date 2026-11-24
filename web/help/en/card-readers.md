@@ -25,7 +25,7 @@ A till that already had a reader ID saved in its payment plugin's settings gets 
 
 Only payment plugins that support several readers appear in **Provider**. A reader of an older plugin is listed with a note that the plugin needs an update; it keeps working as before until you update it.
 
-A till holds at most 32 readers. Readers restored from a backup are kept but must be checked before use, because reader IDs are device specific.
+Using a phone as a card reader is available on the main till only. A till holds at most 32 readers. Readers restored from a backup are kept but must be checked before use, because reader IDs are device specific.
 
 Every card reader needs an internet connection to take a payment; the **Which reader?** list at the till says so under each reader.
 

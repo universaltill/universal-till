@@ -182,6 +182,10 @@ func cloudPairErrorKey(err error) string {
 				return "setup.cloud.error.replace_needs_owner"
 			case "replace_code_main_till_only":
 				return "setup.cloud.error.replace_main_till_only"
+			case "device_exists":
+				return "setup.cloud.error.device_exists"
+			case "device_revoked":
+				return "setup.cloud.error.device_removed"
 			}
 		}
 		return "setup.cloud.error.failed"
@@ -291,6 +295,13 @@ func registerSetupCloudPair(mux *http.ServeMux, d *common.Deps, cs *setupCloudSt
 				cloudPairMessage(w, httpx.T(locale, "setup.cloud.error.failed"))
 				return
 			}
+		}
+		// ut-docs#6954: a main till's own 6-character code belongs to the
+		// Additional till / Satellite choice; say so instead of spending a
+		// cloud call on "isn't right".
+		if _, isTillCode := normaliseShortCode(r.PostFormValue("code")); isTillCode {
+			cloudPairMessage(w, httpx.T(locale, "setup.cloud.error.main_till_code"))
+			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), cloudPairTimeout)
 		defer cancel()

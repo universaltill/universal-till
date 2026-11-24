@@ -33,10 +33,10 @@
       "tr": "2f6fbc07f6741833179091fbfb5933d9720760612edd5e0b723fde0d96fa5f86"
     },
     "card-readers": {
-      "en": "3fce9fb2dcc9e2935f970f858f6defe2876fbeba5b7af7e00473efb5c07fb42c",
-      "fa": "3fce9fb2dcc9e2935f970f858f6defe2876fbeba5b7af7e00473efb5c07fb42c",
-      "ar": "3fce9fb2dcc9e2935f970f858f6defe2876fbeba5b7af7e00473efb5c07fb42c",
-      "tr": "3fce9fb2dcc9e2935f970f858f6defe2876fbeba5b7af7e00473efb5c07fb42c"
+      "en": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd",
+      "fa": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd",
+      "ar": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd",
+      "tr": "1b11807f3c9f315e4b259dea779223b2b7087c4cb1d6e5efc4ea3207639b61bd"
     },
     "catalog": {
       "en": "658965007f6585cb187a3a56a535cadbdad187c876a952a294310ddb4861b73c",
@@ -201,10 +201,10 @@
       "tr": "8dd661c279bf244e1a74a6355684668c9393a3e825c80bf0eb388d640615e3f3"
     },
     "tap-to-pay": {
-      "en": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677",
-      "fa": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677",
-      "ar": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677",
-      "tr": "92cd51f239ce61d9cc7211512b98b60968c7d8ff48465e241a4bd366b8ddf677"
+      "en": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6",
+      "fa": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6",
+      "ar": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6",
+      "tr": "7e420fa44b3b9cc26f96223d19dffc56d4d35fd3d82bb5418da829dc75e3a2d6"
     },
     "tax-codes": {
       "en": "a9aea0cf38a7176e7bfc8ce99928988247a9bbe4a02695501d27d73da6c0b321",
@@ -268,7 +268,7 @@
   },
   "surface_files": {
     "internal/pages/abandoned_tender.go": {
-      "sha256": "e2ff49d6e406e35a12ab0879b131267535584880939f291bbe4e1ead4e0b2630"
+      "sha256": "f480dd376e68f01a78ef37ac8e8bb8f126d7d8e52321bdd0aff6c8e1ec3ee6be"
     },
     "internal/pages/about_page.go": {
       "sha256": "61196d176a2d7815603aaa892f6731247cd2e8caca7a2d4ec40ad7493266cbd7"
@@ -301,7 +301,7 @@
       "sha256": "a0931b7243bc31f483adb06acb473165e55cfd79a9efc803d0f8d0f0ee957bdf"
     },
     "internal/pages/card_reader_tender.go": {
-      "sha256": "54c4b62dbaa2eb984922e58e04a682565591eaae1142012bbf3276099e805add"
+      "sha256": "23f844f3f11026666ded10abe3f3460f7183a42da0c167d12339e70510792416"
     },
     "internal/pages/card_readers_page.go": {
       "sha256": "5def973af69fad9589808fe15192dd6a6aedca39d522555f0bcf9d85af8e4099"
@@ -370,7 +370,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "56244e299c4514c7fc50c6bfed60e94f42ee5e8c1afc77d6e178d64458c735aa"
+      "sha256": "df9579ce9f7cb29b2705c11dfb7495275ecec72a033936f5d7e63f60bd084247"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -508,7 +508,7 @@
       "sha256": "d13c44afd30f7548130f13c603e58e9de35a6d17e992226cfa5a801694597092"
     },
     "internal/pages/index_page.go": {
-      "sha256": "6245f59a1381369dbc4cc36683be3ce946ae64fc5c6a5aea1c242d2bc0d05b70"
+      "sha256": "3bf89b328b8d6b2a4429605b0c59c4718a2ea6bc05e206a7f853ec856780519c"
     },
     "internal/pages/init.go": {
       "sha256": "7a5f040e28a18b725605ffe5a0c4b5b0d5137e3117de00da678c9dd57f11dda3"
@@ -718,7 +718,7 @@
       "sha256": "c51814cd20d1762d1ee20defff533c80ddf4f45bae418a53c79344d3f03845b1"
     },
     "internal/pages/sync_api.go": {
-      "sha256": "23af9b611cf6ceed2f0fa2164e122e81af9229a90649aeecdafd86c5b1169837"
+      "sha256": "879bb826556702200f9b4f77699296a5998eb699d683e98d9e383c7d37785f68"
     },
     "internal/pages/sync_assets_prune.go": {
       "sha256": "49f7de83ca376d15ff1a59cb8d9d2b166de7e7c3cac5e93f3879021c7dee7b28"
@@ -748,13 +748,13 @@
       "sha256": "08d08b364ff7523e6a1d471ef7031aaee60cd1af89ce01275d815d5804563f4d"
     },
     "internal/pages/tap_gate.go": {
-      "sha256": "faab6a8392a00393e38ab274a4e85aef623428218233ae92c2d807430c92d19e"
+      "sha256": "0e33aee588d0ee2386e9558e04ec71b180bfbce5e9ce8d22499a2903567c012f"
     },
     "internal/pages/tap_offering.go": {
-      "sha256": "2725ff94c7849d932db80656abbb502a5a56d8e6484c6bfedd7617e271d05c14"
+      "sha256": "d9503d212b4647918ca738e637b373110de2bb3fb183178102f151b35ce03350"
     },
     "internal/pages/tap_settings_page.go": {
-      "sha256": "b014eba2a95b55005ac43f0c86637ef08148e677fb015472b4b96d88773eccc9"
+      "sha256": "68853ddedc2313659da905caf9f1bd0b9584c8cd98b05b99b23be5e2cb44932e"
     },
     "internal/pages/tax_autoinstall.go": {
       "sha256": "cca7cd0dd303c0a4c4e770c25f571ee6b6aae3e3cf3c85c3649cf872238404dc"
@@ -1810,7 +1810,7 @@
       "sha256": "767e08cd2aa7ad7d29da115da7dde0b9723344e68a54b0a5c9e78ab9eedd1443"
     },
     "web/ui/partials/basket.html": {
-      "sha256": "c5774775ae38286f8e31f94900536a048596a9db60870cc6a075f55227fcf62c"
+      "sha256": "416284618f5151cd6a0c6bc0395ff56fc962e17046f30da6c38dfc9147e5e3b0"
     },
     "web/ui/partials/bugreport_chip.html": {
       "sha256": "94f0b8986f6afb094cb3547ef3781c1bc5e80b7aaeb89e3f242b993ea1fd4314"
@@ -2128,7 +2128,7 @@
       "sha256": "15f8e4325ca8fc7230a5efd125466fd28c8cb6bb88c5773fc4f673c91ac7933b"
     },
     "web/ui/partials/tap_settings_body.html": {
-      "sha256": "8b9e2ee11ecbc3e8b1cfc23d06144d97cbdbb276218f528f5d03fcd750ff0cc4"
+      "sha256": "1e1c3586ff0f47b9d094ffbf669656568a80fd657e75b2aa5b67cf957e4eb842"
     },
     "web/ui/partials/tax_autoinstall_chip.html": {
       "sha256": "b2c2308b503c2ad8f6bd98577f77a3babdc231867507162b99bbea3a30604a2d"

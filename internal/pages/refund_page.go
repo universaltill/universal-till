@@ -1063,6 +1063,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// refunded would kill the guest, return "declined" and leave money out
 		// with no record. It stays bounded by the plugin's own call timeout
 		// (wasm_runtime.go: timeout, paymentGateTimeout floor for refunds).
+		if tapRefundMainOnly(r.Context(), d, method) {
+			// ADR-0198 Amendment 2026-11-23: an additional till never sends a
+			// card-tap refund; nothing is sent, nothing was refunded.
+			common.LogAndLocalizedError(w, r, http.StatusConflict, "tap.refund.main_only", "refund", errors.New("tap refund refused on an additional till"))
+			return
+		}
 		refundCtx := context.WithoutCancel(r.Context())
 		if len(originalPayments) == 1 && requestID != "" {
 			pi, _ := originalPayments[0]["transaction_ref"].(string)

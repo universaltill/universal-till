@@ -166,6 +166,35 @@ func TestSyncCloudDevice_RegistersReplicaWithoutHandingOverToken(t *testing.T) {
 	}
 }
 
+// ADR-0198 Amendment 2026-11-23 go-live precondition: the vouch carries the
+// replica's true role from the main till's roster, never one the replica claims.
+func TestSyncCloudDevice_VouchCarriesTheRostersRole(t *testing.T) {
+	for _, role := range []string{data.TillRoleAdditional, data.TillRoleSatellite} {
+		dp := newMigratedSyncDeps(t, "primary.db")
+		repo := data.NewTillsRepo(dp.Db)
+		tillID, err := repo.InsertTill(t.Context(), "Back office", hashBearer("token-abc"))
+		if err != nil {
+			t.Fatalf("enrol till: %v", err)
+		}
+		if _, _, err := repo.SetRole(t.Context(), tillID, role); err != nil {
+			t.Fatalf("set role: %v", err)
+		}
+		cloud, capture := fakeCloud(t)
+		dp.Cfg = enrolMainTill(t, cloud.URL)
+		mux := http.NewServeMux()
+		registerSyncCloudDevice(mux, dp)
+		if rec := postCloudDevice(t, mux, "token-abc", "till-replica"); rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		capture.mu.Lock()
+		got := capture.req["role"]
+		capture.mu.Unlock()
+		if got != role {
+			t.Fatalf("cloud register role = %v, want %q", got, role)
+		}
+	}
+}
+
 func TestSyncCloudDevice_Refusals(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
