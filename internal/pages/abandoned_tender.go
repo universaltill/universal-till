@@ -36,10 +36,10 @@ func abandonedTenderHandler(d *common.Deps) pos.AbandonedTenderHandler {
 	return func(reason pos.AbandonReason, t pos.PendingTender) pos.AbandonResult {
 		ctx := context.Background()
 		what := "tender abandoned (" + string(reason) + ")"
-		failed := reversePaymentLegs(ctx, d, t.Captured, what)
+		failed, mainOnly := reversePaymentLegsDetail(ctx, d, t.Captured, what)
 		warnUnknownLegs(t.Unknown, what)
 		log.Printf("%s: %d captured leg(s) reversed, %d failed, %d of unknown outcome (ut-docs#6602, #6601)", what, len(t.Captured)-failed, failed, len(t.Unknown))
-		return pos.AbandonResult{Reversed: len(t.Captured) - failed, Failed: failed, Unknown: len(t.Unknown)}
+		return pos.AbandonResult{Reversed: len(t.Captured) - failed, Failed: failed, Unknown: len(t.Unknown), MainOnly: mainOnly}
 	}
 }
 
@@ -102,8 +102,17 @@ func abandonToastKey(engine *pos.Service) (key string, ok bool) {
 	if !ok {
 		return "", false
 	}
-	if r.Failed > 0 || r.Reversed == 0 {
-		return "pos.toast.tender_abandoned_check_provider", true
+	return abandonToastKeyFor(r), true
+}
+
+// abandonToastKeyFor is the toast key for one abandon result. A failure
+// because an additional till cannot return a card tap names the main till.
+func abandonToastKeyFor(r pos.AbandonResult) string {
+	switch {
+	case r.MainOnly > 0:
+		return "tap.reverse.main_only"
+	case r.Failed > 0 || r.Reversed == 0:
+		return "pos.toast.tender_abandoned_check_provider"
 	}
-	return "pos.toast.tender_abandoned_returned_unknown", true
+	return "pos.toast.tender_abandoned_returned_unknown"
 }

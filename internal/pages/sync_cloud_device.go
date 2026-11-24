@@ -83,7 +83,7 @@ func registerSyncCloudDevice(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		vouch, err := enroll.VouchForReplica(r.Context(), d.Cfg, d.Settings, enroll.ReplicaRequest{
-			TillID: till.ID, DeviceID: in.DeviceID, DeviceName: till.Name, Version: in.Version,
+			TillID: till.ID, DeviceID: in.DeviceID, DeviceName: till.Name, Version: in.Version, Role: till.Role,
 		})
 		switch {
 		case err == nil:
