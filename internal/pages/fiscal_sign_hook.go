@@ -380,6 +380,10 @@ type fiscalSignResult struct {
 	// only on fiscalSignApproved and only when it carried something and
 	// passed validate; nil means no QR and no signer lines for this sale.
 	Receipt *fiscalReceiptEvidence
+	// Asked is true iff askFiscalSign ran, meaning a signer may have signed.
+	// The caller must then record the sale detached from the client
+	// (ut-docs#6910, ADR-0044 D1).
+	Asked bool
 }
 
 // defaultedSaleType mirrors pos.CompleteSale's own empty-SaleType fallback
@@ -787,6 +791,10 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 	if !bus.HasSubscribers(fiscalSignAskEvent) {
 		return fiscalSignResult{Outcome: fiscalSignNoSigner}
 	}
+	// ut-docs#6910: the caller's pre-check is the last cancellable point; from
+	// here on nothing (pre-ask reads included) may degrade on a gone client,
+	// or the signed payload would lack started_tx_* / order_id.
+	ctx = context.WithoutCancel(ctx)
 	if in.SaleID == "" {
 		in.SaleID = uuid.NewString()
 	}
@@ -831,7 +839,15 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 		}
 	}
 	payload.OrderID = fiscalOrderIDFor(ctx, bus, data.NewPOSRepo(d.Db), in.HeldOriginID)
-	return askFiscalSign(ctx, bus, payload)
+	// ut-docs#6910: the ask itself runs detached from the client. Once it is
+	// sent a signer may have signed, and a signed transaction with no sale row
+	// is the irreversible error ADR-0044 D1 exists to prevent (contract 1.4.0
+	// forbids a belated re-sign). WithoutCancel keeps the ctx values (session,
+	// locale); askFiscalSign still applies fiscalSignAskBudget, so checkout
+	// stays bounded (ADR-0003).
+	res := askFiscalSign(ctx, bus, payload)
+	res.Asked = true
+	return res
 }
 
 // askFiscalSign performs one budget-bound Ask and classifies the answer.
