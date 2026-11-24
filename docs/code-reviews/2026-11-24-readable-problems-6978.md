@@ -28,6 +28,7 @@ model from the author), one fix round (Sonnet), scoped Tester re-check of the fi
 | T3 | test gap (Tester) | 3 mutants survived (support block repeated row content; cloudsync prefix untested) | fixed by Tester in tests; 16/16 mutants now fail a test |
 | T4 | low (Tester re-check) | Closed disclosure chevron did not mirror in RTL (▸ pointed away from the text); "Show technical details:" squeezed next to the snippet at 360px | fixed [no-subagent: two-line CSS fix]: `html[dir="rtl"]` closed state uses ◂; summaries `flex-wrap: wrap`; computed `::before` content checked in Chromium for ltr/rtl; docs-shots regenerated |
 | T5 | test gap (Tester re-check) | The hidden case of the startup line (no `settings` permission, or demo) has no test | fixed: TestBackofficePage_StartupLineOnlyOutsideDemo (removing the demo gate fails it, re-verified) |
+| C1 | CI (`locale-render-audit`) | New area title "Other" equals existing de-translated keys' text, so the PR carve-out for new keys does not apply and `/backoffice?lang=de` failed; "Plugins", "Payments", "Cloud sync", "Failed", "Till" collide the same way | fixed: unique, more precise wording (Other problems; Plugins and updates; Payments and card readers; Sync with Universal Till Cloud; Not working; Till details), each checked to share no value in en.json; help + docs-shots updated |
 | N | nit | unused fields/CSS, `unicode-bidi: plaintext` on the support pre, help keywords | fixed |
 
 Confirmed OK by the reviewer: html/template escaping of raw lines; problem lines are redacted in

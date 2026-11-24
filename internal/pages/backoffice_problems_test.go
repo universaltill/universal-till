@@ -112,7 +112,7 @@ func TestBuildProblemsView_SupportText(t *testing.T) {
 		"Raw log lines",
 		"problem report",
 		"The till could not sync with the cloud",
-		"Failed",
+		"Not working",
 		at.Format(time.RFC3339) + " ERROR " + long,
 	} {
 		if !strings.Contains(v.SupportText, want) {
@@ -169,7 +169,7 @@ func TestBackofficePage_RendersReadableProblems(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="problem-group-cloud_sync"`,
 		`data-testid="problem-group-plugins"`,
-		"Needs attention", "Failed",
+		"Needs attention", "Not working",
 		"open Tills in my. and choose Replace this till",
 		"backoffice-support-text",
 		"odd line 0", "odd line 6",

@@ -24,8 +24,8 @@ The till watches your business and warns you early: items about to run out, days
 
 The **Recent problems** card on the Back office screen lists what the till has logged that still needs a look, in plain words instead of log lines.
 
-- Problems are grouped by area: Cloud sync, Plugins, Payments, Database and storage, Network, and Other. Each one says what happened and **What to do**. The same problem logged several times shows once, with how often it happened and when it was last seen.
-- The tag next to the heading shows the worst state: **OK** (nothing open), **Needs attention** (a warning) or **Failed** (an error). Each problem carries its own tag too. Selling keeps working while problems are listed.
+- Problems are grouped by area: Sync with Universal Till Cloud, Plugins and updates, Payments and card readers, Database and storage, Network, and Other problems. Each one says what happened and **What to do**. The same problem logged several times shows once, with how often it happened and when it was last seen.
+- The tag next to the heading shows the worst state: **OK** (nothing open), **Needs attention** (a warning) or **Not working** (an error). Each problem carries its own tag too. Selling keeps working while problems are listed.
 - Open **Show technical details** under a problem to see the full original log lines, newest first.
 - Press **Copy for support** and paste the text into your message to support. It holds the till's version summary, the problems in plain words, and every original log line with its time. It copies without an internet connection.
 - A problem the till knows how to detect disappears once it reports it fixed. Other warning lines disappear after 24 hours, or when newer problems push them out of the till's short list.
