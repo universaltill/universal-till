@@ -156,50 +156,73 @@ var (
 // ctx's error if the request goes away first. Within refreshKickFloor of
 // the last kick it does not kick again and answers from the cache.
 func refreshEntitlementNow(ctx context.Context, d *common.Deps) (refreshOutcome, error) {
-	before, _, err := d.Settings.Get(ctx, entitlement.KeyLastConfirmedAt)
+	res, err := operatorCheckinAndWait(ctx, d, entitlement.KeyLastConfirmedAt, refreshEntitlementWait)
 	if err != nil {
 		return refreshTimedOut, err
 	}
-	if !claimRefreshKick() {
-		// Under the floor: answer from the cache the last kick refreshed.
-		if entitlement.SyncAllowed(ctx, d.Settings) {
-			return refreshActive, nil
-		}
-		return refreshNotActive, nil
+	if res == checkinTimedOut {
+		return refreshTimedOut, nil
 	}
-	// last_confirmed_at has one-second resolution: a check-in our kick
-	// starts in the same wall second as before would write the same string
-	// and read as no answer. Kick from the next second instead (at most a
-	// second's wait; tester-found, ut-docs#4285).
+	// answered, or throttled (answer from the cache the last kick refreshed)
+	if entitlement.SyncAllowed(ctx, d.Settings) {
+		return refreshActive, nil
+	}
+	return refreshNotActive, nil
+}
+
+// checkinResult is what operatorCheckinAndWait learned.
+type checkinResult int
+
+const (
+	checkinTimedOut  checkinResult = iota // kicked; key unchanged within wait (offline/slow)
+	checkinAnswered                       // kicked; key changed (the cloud answered)
+	checkinThrottled                      // under refreshKickFloor: no kick, no wait
+)
+
+// operatorCheckinAndWait reads key, claims the shared 5 s kick floor, kicks
+// an operator check-in (ADR-0148 §2) and polls key every
+// refreshEntitlementPoll until it changes or wait passes. Holds no DB
+// transaction: one settings read per poll. Error: the first read failed
+// (checkinTimedOut, err) or ctx ended (checkinTimedOut, ctx.Err()).
+// ut-docs#6977 shares it between "Check now" and the cloud-sync chip.
+func operatorCheckinAndWait(ctx context.Context, d *common.Deps, key string, wait time.Duration) (checkinResult, error) {
+	before, _, err := d.Settings.Get(ctx, key)
+	if err != nil {
+		return checkinTimedOut, err
+	}
+	if !claimRefreshKick() {
+		return checkinThrottled, nil
+	}
+	// The stamp has one-second resolution: a check-in our kick starts in
+	// the same wall second as before would write the same string and read
+	// as no answer. Kick from the next second instead (at most a second's
+	// wait; tester-found, ut-docs#4285).
 	if prev, perr := time.Parse(time.RFC3339, strings.TrimSpace(before)); perr == nil {
-		if wait := time.Until(prev.Truncate(time.Second).Add(time.Second)); wait > 0 && wait <= time.Second {
+		if w := time.Until(prev.Truncate(time.Second).Add(time.Second)); w > 0 && w <= time.Second {
 			select {
 			case <-ctx.Done():
-				return refreshTimedOut, ctx.Err()
-			case <-time.After(wait):
+				return checkinTimedOut, ctx.Err()
+			case <-time.After(w):
 			}
 		}
 	}
 	requestOperatorCheckin(d, operatorCheckinWindow)
-	deadline := time.NewTimer(refreshEntitlementWait)
+	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	poll := time.NewTicker(refreshEntitlementPoll)
 	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return refreshTimedOut, ctx.Err()
+			return checkinTimedOut, ctx.Err()
 		case <-deadline.C:
-			return refreshTimedOut, nil
+			return checkinTimedOut, nil
 		case <-poll.C:
-			now, _, err := d.Settings.Get(ctx, entitlement.KeyLastConfirmedAt)
+			now, _, err := d.Settings.Get(ctx, key)
 			if err != nil || now == before {
 				continue
 			}
-			if entitlement.SyncAllowed(ctx, d.Settings) {
-				return refreshActive, nil
-			}
-			return refreshNotActive, nil
+			return checkinAnswered, nil
 		}
 	}
 }

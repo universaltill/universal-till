@@ -403,6 +403,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/shop-name-notice":            true, // "Name your shop" banner, every 60 s (ut-docs#3114)
 	"/ui/theme-sync":                  true,
 	"/ui/cloud-auth-chip":             true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
+	"/ui/cloud-sync-chip":             true, // last cloud sync chip, every 30 s (ut-docs#6977)
 	"/ui/move-pending-chip":           true, // status-bar chip, every 60 s (ut-docs#5287)
 	"/ui/report-archive-chip":         true, // refused report upload (ADR-0147, ut-docs#574)
 	"/ui/disk-space-chip":             true, // low-disk chip, every 60 s (ut-docs#3121)
@@ -536,6 +537,7 @@ var shellGetPaths = map[string]bool{
 	"/notices/strip":           true,
 	"/notices/toast":           true,
 	"/ui/cloud-auth-chip":      true,
+	"/ui/cloud-sync-chip":      true,
 	"/ui/move-pending-chip":    true,
 	"/ui/report-archive-chip":  true,
 	"/ui/disk-space-chip":      true,

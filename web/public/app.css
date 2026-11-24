@@ -6168,6 +6168,33 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
 }
 .statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
 #sb-cloud-auth-mount:empty { display: none; }
+/* ut-docs#6977: last cloud sync (cloud_sync_chip.html). Plain status text
+   while fresh (like the network light); the amber pill of sb-cloud-auth when
+   stale. Words carry the state. The text may wrap; the button never does. */
+.statusbar .sb-cloud-sync { white-space: normal; flex-wrap: wrap; gap: .35rem; margin-inline-start: .5rem; }
+.statusbar .sb-cloud-sync.is-stale {
+  color: #451a03; background: var(--warning, #d97706);
+  padding-block: 0; padding-inline: .5rem; border-radius: 999px; font-weight: 700;
+}
+.statusbar .sb-cloud-sync-result { font-style: italic; }
+/* Sync now: an outlined pill. Visible height 1.25rem (border included) so the status bar keeps
+   its height on every staff page (a 2.25rem pill grew it by 19px at 1024x600);
+   ::after widens the hit area to 44px block-size without taking layout room.
+   The phone drawer makes the button itself 44px tall (below). */
+.statusbar .sb-cloud-sync-now {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box; min-block-size: 1.25rem; min-inline-size: 44px; line-height: 1.1; padding-block: 0; padding-inline: .75rem;
+  border: 1px solid currentColor; border-radius: 999px;
+  background: transparent; color: inherit; font: inherit; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+}
+.statusbar .sb-cloud-sync-now::after { content: ""; position: absolute; inset-inline: 0; inset-block: calc((100% - 44px) / 2); }
+.statusbar .sb-cloud-sync-now:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.statusbar .sb-cloud-sync-now:disabled { cursor: progress; opacity: .8; }
+.statusbar .sb-cloud-sync-now-busy { display: none; }
+.statusbar .sb-cloud-sync-now.htmx-request .sb-cloud-sync-now-idle { display: none; }
+.statusbar .sb-cloud-sync-now.htmx-request .sb-cloud-sync-now-busy { display: inline; }
+#sb-cloud-sync-mount:empty { display: none; }
 /* ut-docs#5145: Settings > Till registration, the device ID and key
    fingerprint support asks for. Selectable with one tap, wrapping at group
    (space) boundaries, logical properties only. */
@@ -7469,7 +7496,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     border-block-start: 1px solid rgba(255, 255, 255, .15);
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
-  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-move-pending, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
+  body.nav-drawer-open .statusbar .sb-cloud-sync-now { min-block-size: 44px; }
+  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-cloud-sync, .sb-move-pending, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky
      .statusbar), so the drawer reserves the row's measured open height

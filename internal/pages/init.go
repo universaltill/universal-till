@@ -599,6 +599,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncBearerRotate(mux, dp)   // a replica swaps its LAN sync bearer, main-till side (ut-docs#5198)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
+	registerCloudSyncChip(mux, dp)      // last cloud sync chip + Sync now (ut-docs#6977)
 	registerTaxAutoInstallChip(mux, dp) // automatic tax plugin install status (ADR-0172 §5, ut-docs#6287)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
 	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)

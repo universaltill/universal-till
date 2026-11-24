@@ -1048,6 +1048,15 @@
            otherwise. Same hx-preserve + default innerHTML swap as
            #sb-main-till-mount above. -->
       <span id="sb-cloud-auth-mount" hx-preserve hx-get="/ui/cloud-auth-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#6977: when this till last synced with the cloud — "Synced
+           just now" / "Synced 5 min ago" / "Synced at 14:05" / "Not synced
+           yet" (web/ui/partials/cloud_sync_chip.html), plus "Sync now" for a
+           viewer who may open Settings. Main till, own credential, paid plan
+           only; empty beside #sb-cloud-auth-mount's chip. Filled by GET
+           /ui/cloud-sync-chip on load and every 30 s (relative minutes), and
+           on ut-cloud-synced. Same hx-preserve + default innerHTML swap as
+           #sb-cloud-auth-mount. Never a modal, never a sale gate. -->
+      <span id="sb-cloud-sync-mount" hx-preserve hx-get="/ui/cloud-sync-chip" hx-trigger="load, every 30s, ut-cloud-synced from:body"></span>
       <!-- ut-docs#5287: a move of this till into another shop waits for a
            manager — "Till move waiting for a manager"
            (web/ui/partials/move_pending_chip.html). Read-only and anonymous,
