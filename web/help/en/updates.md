@@ -20,9 +20,11 @@ The till checks for new versions and tells you when one is available; on most pl
 
 ## Update from the till
 
-1. Settings → Software update → Check now shows whether you are up to date.
+1. Settings → Software update → Check for updates shows whether you are up to date.
 2. When an update is offered, click Update now — the app restarts on the new version. On a Linux computer, the desktop app also restarts itself within about a minute when a system upgrade (apt) installs a new version, and if the till's page stops showing in its window, the app reloads it by itself until the till answers again. If the update can't be installed, the button says so and a message at the top of the screen says why; try again later.
 3. The status bar's update chip mirrors this. Where the till can't install an update itself — a portable Windows zip, or an Intel Mac — it links to the download page instead. On a kiosk without in-app update it's just plain text with nothing to tap. On a Linux till that updates automatically but can't write to its own install folder, the chip says the till can't install the update by itself and links to this page: reinstall the latest .deb package — that makes the folder writable again (for any other kind of install, give the till's user write access to its folder) — and the next night's update runs as usual.
+
+4. A till that runs a test build (a pre-release or nightly build) isn't offered releases from here, because a release can be older than the data the test build has already written, and installing it could stop the till opening its data. **Check for updates** says "This till runs a test build, so new releases aren't installed from here", the update chip stays hidden, and nightly automatic updates skip it. The till keeps working as it is. To move it to a release, install a newer build by hand.
 
 <!-- /plan-purchase -->
 

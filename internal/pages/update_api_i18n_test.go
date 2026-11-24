@@ -182,3 +182,18 @@ func TestUpdateApplyErrorStatus(t *testing.T) {
 		t.Errorf("other: status %d, want 502", got)
 	}
 }
+
+// ut-docs#6958: a refused-because-pre-release install is a 409 refusal with
+// its own message, never the generic "could not be installed".
+func TestUpdateApplyErrorKey_NewerData(t *testing.T) {
+	err := fmt.Errorf("v0.36.3: %w (running build v0.0.0-6955 is a pre-release)", updates.ErrNewerData)
+	if got := updateApplyErrorKey(err); got != "settings.update.error.newer_data" {
+		t.Errorf("key = %q", got)
+	}
+	if got := updateApplyErrorStatus(err); got != http.StatusConflict {
+		t.Errorf("status = %d, want 409", got)
+	}
+	if got := followErrorCode(err); got != "newer_data" {
+		t.Errorf("followErrorCode = %q", got)
+	}
+}

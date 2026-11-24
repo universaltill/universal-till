@@ -31,6 +31,9 @@ const (
 	KindMigration Kind = "migration"
 	KindDBOpen    Kind = "db_open"
 	KindDiskFull  Kind = "disk_full"
+	// KindAppOlderThanData: the database was written by a newer app than the
+	// one running (ut-docs#6958). The data is intact; Retry cannot help.
+	KindAppOlderThanData Kind = "app_older_than_data"
 )
 
 // Failure is what the recovery page renders and a support call references.
@@ -80,6 +83,8 @@ func Classify(err error) (Failure, bool) {
 	msg := err.Error()
 	kind := KindDBOpen
 	switch {
+	case errors.Is(err, db.ErrDatabaseNewerThanApp):
+		kind = KindAppOlderThanData
 	case strings.Contains(msg, "no space left on device"), strings.Contains(msg, "disk full"):
 		kind = KindDiskFull
 	case strings.Contains(msg, "run migrations:"), strings.Contains(msg, "exec migration"):

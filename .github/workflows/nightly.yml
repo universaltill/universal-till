@@ -103,6 +103,9 @@ jobs:
           # component through the patch number identical to a real older
           # release, so Newer() correctly ranks it below any stable
           # (including the one it's based on) and above the previous one.
+          # (Ranking only: since ut-docs#6958 a nightly till is not offered
+          # stable releases in-app at all, until releases publish their
+          # schema version.)
           # scripts/ci/latest-stable-tag.sh (ut-docs#1807) is the one home for
           # "latest stable": plain vX.Y.Z only, so no -beta./-rc/-nightly. tag
           # can be mistaken for it; no stable tag prints nothing -> 0.0.0.

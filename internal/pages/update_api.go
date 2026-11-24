@@ -56,6 +56,8 @@ var (
 	// this seam or the guard built on it -- an explicit user action stays
 	// available even on a dev build; only the unattended scheduler defers.
 	autoUpdateBuildVersion = func() string { return buildinfo.Version }
+	// updateApplyCheckNow is POST /api/update/apply's freshness re-check.
+	updateApplyCheckNow = updates.CheckNow
 	// updateCheckNow backs Settings' POST /api/update/check.
 	updateCheckNow = updates.CheckNow
 	// autoUpdateGOOS is runtime.GOOS for the stuck decision (ut-docs#2733).
@@ -540,15 +542,18 @@ func updateApplyErrorKey(err error) string {
 		return "settings.update.check_failed"
 	case "checksum", "signature":
 		return "settings.update.error.verify_failed"
+	case "newer_data":
+		return "settings.update.error.newer_data"
 	}
 	return "settings.update.error.failed"
 }
 
 // updateApplyErrorStatus is the HTTP status for a failed apply: 409 when
 // another update is already being applied (a double press, logged at Info),
-// otherwise 502 — the release source or the install failed.
+// or the release was refused as possibly older than the till's data
+// (ut-docs#6958), otherwise 502 — the release source or the install failed.
 func updateApplyErrorStatus(err error) int {
-	if followErrorCode(err) == "busy" {
+	if c := followErrorCode(err); c == "busy" || c == "newer_data" {
 		return http.StatusConflict
 	}
 	return http.StatusBadGateway
@@ -573,6 +578,15 @@ func respondUpdateApplyError(w http.ResponseWriter, r *http.Request, status int,
 	}
 	locale := httpx.ResolveLocale(w, r) // before WriteHeader: may set a cookie
 	respondUpdateApply(w, status, false, httpx.T(locale, key))
+}
+
+// updateHeldBackHTML is the check result for a till on a test build whose
+// data may be newer than the latest release (ut-docs#6958). Text carries the
+// meaning; the glyph is decoration.
+func updateHeldBackHTML(locale string) string {
+	return fmt.Sprintf(`<span>ℹ %s (v%s)</span>`,
+		html.EscapeString(httpx.T(locale, "settings.update.held_back")),
+		html.EscapeString(buildinfo.Version))
 }
 
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
@@ -602,7 +616,11 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		// this would silently re-download+reinstall the same build instead
 		// of failing loudly, at best a wasted download, at worst whatever
 		// state applyMacApp's helper hits redoing a swap it just did.
-		st := updates.CheckNow(r.Context())
+		st := updateApplyCheckNow(r.Context())
+		if !st.Available && st.HeldBack { // ut-docs#6958: refusal, not "up to date"
+			respondUpdateApplyError(w, r, http.StatusConflict, "settings.update.error.newer_data", "update_apply", nil)
+			return
+		}
 		if !st.Available {
 			respondUpdateApplyCurrent(w, locale)
 			return
@@ -696,7 +714,10 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			respondUpdateApplyError(w, r, http.StatusConflict, "settings.update.android.busy", "update_android_install", nil)
 			return
 		}
-		if st := androidInstallCheckNow(r.Context()); !st.Available {
+		if st := androidInstallCheckNow(r.Context()); !st.Available && st.HeldBack {
+			respondUpdateApplyError(w, r, http.StatusConflict, "settings.update.error.newer_data", "update_android_install", nil)
+			return
+		} else if !st.Available {
 			respondUpdateApplyCurrent(w, httpx.ResolveLocale(w, r))
 			return
 		}
@@ -816,6 +837,8 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		switch {
 		case st.Latest == "":
 			fmt.Fprintf(w, `<span>✗ %s</span>`, html.EscapeString(httpx.T(locale, "settings.update.check_failed")))
+		case st.HeldBack: // ut-docs#6958: a release exists but is not offered
+			fmt.Fprint(w, updateHeldBackHTML(locale))
 		case !st.Available:
 			fmt.Fprintf(w, `<span>✓ %s (v%s)</span>`,
 				html.EscapeString(httpx.T(locale, "settings.update.up_to_date")),

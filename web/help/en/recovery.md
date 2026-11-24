@@ -27,13 +27,25 @@ below); it never writes anything.
   code** — read this out if you call support.
 - **Retry** — tries to start again. This is usually all that's needed if
   the problem was temporary (e.g. it happened mid-update).
-- When the failure happened during a database update specifically, a
+- When the failure happened during a database update specifically, or the app is older than the data, a
   **safe mode** section appears with a link to see (and export) **today's
   sales**, read-only, while the underlying problem is being fixed — so you
   can still tell a customer their total or print today's figures even
   while the till itself won't fully start. The safe-mode link only appears on
   the till itself; if you open this screen from another computer, it says so
   instead.
+
+## If it says the app is older than your data
+
+This happens when a newer version of Universal Till has already used this
+till's data (for example after installing an older or test build over it),
+so this copy can't open it. **Your data is safe and nothing has been lost.**
+Install the latest version of Universal Till on this device, the same way you
+installed it before. The till starts normally once it's installed. There is
+no Retry button on this message, because trying again with the same older
+copy can't change the result. Safe mode (below) still lets you see today's
+sales on the till itself in the meantime. Never delete the data folder to fix
+this.
 
 ## If Retry doesn't work
 

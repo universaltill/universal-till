@@ -7,6 +7,7 @@ package updates
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -72,6 +73,10 @@ type Status struct {
 	// "" when the release has none or it is not on an allowed host
 	// (notesURLAllowed).
 	NotesURL string
+	// HeldBack: a newer release exists but SchemaSafe refused to offer it
+	// (the running build is a pre-release whose data may be newer than that
+	// release; ut-docs#6958). Available is false then.
+	HeldBack bool
 }
 
 var state atomic.Value // Status
@@ -220,12 +225,45 @@ func checkOnce(ctx context.Context) {
 			break
 		}
 	}
+	newer := Newer(latest, buildinfo.Version)
+	safe := SchemaSafe(latest, buildinfo.Version)
 	state.Store(Status{
-		Available: Newer(latest, buildinfo.Version),
+		Available: newer && safe,
+		HeldBack:  newer && !safe,
 		Latest:    latest,
 		URL:       rel.HTMLURL,
 		NotesURL:  notesURL,
 	})
+}
+
+// ErrNewerData: the target release cannot be shown to carry every migration
+// the running build may already have applied to this till's data, so
+// installing it could leave the till unable to open its data (ut-docs#6958).
+var ErrNewerData = errors.New("this version may be older than this till's data")
+
+// SchemaSafe reports whether installing release target over the running build
+// cannot move the database below its applied schema, judged from the version
+// strings alone until releases publish their schema (follow-up to
+// ut-docs#6958):
+//   - running "" or "dev": true (ADR-0178 section 8 keeps a dev build's
+//     behaviour);
+//   - target carries a pre-release suffix: false;
+//   - running is a plain release: true (append-only migrations, ADR-0100,
+//     make a newer release a superset);
+//   - running has any pre-release suffix (nightly, rc, beta, "0.0.0-6955"):
+//     false, since such code can be ahead of any stable release (ADR-0180
+//     cuts releases from older green commits and release branches).
+func SchemaSafe(target, running string) bool {
+	running = strings.TrimPrefix(strings.TrimSpace(running), "v")
+	if running == "" || running == "dev" {
+		return true
+	}
+	target = strings.TrimPrefix(strings.TrimSpace(target), "v")
+	if _, pre, _ := strings.Cut(stripBuild(target), "-"); pre != "" {
+		return false
+	}
+	_, pre, _ := strings.Cut(stripBuild(running), "-")
+	return pre == ""
 }
 
 // Newer reports whether version a is newer than b, compared as dotted numeric

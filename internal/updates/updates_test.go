@@ -251,3 +251,50 @@ func TestCheckNow_NoRequestOnStoreChannels(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#6958: version-only judgement of "installing target over running
+// cannot move the DB below its applied schema".
+func TestSchemaSafe(t *testing.T) {
+	cases := []struct {
+		target, running string
+		want            bool
+	}{
+		{"0.36.3", "0.0.0-6955", false},
+		{"0.36.3", "0.36.3-nightly.20261120.abc", false},
+		{"0.36.4", "0.36.3-nightly.20261120.abc", false},
+		{"0.37.0", "0.37.0-rc1", false},
+		{"0.36.3", "0.36.2", true},
+		{"v0.36.3", "v0.36.2", true},
+		{"0.36.3", "dev", true},
+		{"0.36.3", "", true},
+		{"0.36.3", "0.36.2+build.5", true},
+		{"0.37.0-rc1", "0.36.2", false},
+	}
+	for _, tc := range cases {
+		if got := SchemaSafe(tc.target, tc.running); got != tc.want {
+			t.Errorf("SchemaSafe(%q, %q) = %v, want %v", tc.target, tc.running, got, tc.want)
+		}
+	}
+}
+
+func TestCheckNowHeldBackForPreReleaseBuild(t *testing.T) {
+	resetState(t)
+	withCheckServer(t, "0.0.0-6955", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"v0.36.3","html_url":"u"}`))
+	})
+	got := CheckNow(context.Background())
+	if got.Available || !got.HeldBack || got.Latest != "0.36.3" {
+		t.Fatalf("CheckNow = %+v, want Available=false HeldBack=true Latest=0.36.3", got)
+	}
+}
+
+func TestCheckNowPlainReleaseNotHeldBack(t *testing.T) {
+	resetState(t)
+	withCheckServer(t, "0.36.2", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"v0.36.3","html_url":"u"}`))
+	})
+	got := CheckNow(context.Background())
+	if !got.Available || got.HeldBack {
+		t.Fatalf("CheckNow = %+v, want Available=true HeldBack=false", got)
+	}
+}
