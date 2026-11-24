@@ -289,12 +289,12 @@ func TestCall_RequestCap(t *testing.T) {
 // remembered for a short while so the till can say "set this till up again"
 // instead of a generic start failure; any successful broker call clears it.
 func TestCall_RoleUnrecordedRefusalIsRemembered(t *testing.T) {
-	ResetRoleUnrecorded()
-	t.Cleanup(ResetRoleUnrecorded)
+	noteRoleUnrecorded(false)
+	t.Cleanup(func() { noteRoleUnrecorded(false) })
 	code, status := "device_role_unrecorded", http.StatusForbidden
 	for _, c := range []string{"device_role_unconfirmed"} {
 		code = c
-		ResetRoleUnrecorded()
+		noteRoleUnrecorded(false)
 		srv0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(w, `{"error":{"code":"`+c+`"}}`)
@@ -307,7 +307,7 @@ func TestCall_RoleUnrecordedRefusalIsRemembered(t *testing.T) {
 		}
 	}
 	code = "device_role_unrecorded"
-	ResetRoleUnrecorded()
+	noteRoleUnrecorded(false)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if code == "" {
 			_, _ = io.WriteString(w, `{}`)

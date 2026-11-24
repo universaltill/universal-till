@@ -268,6 +268,3 @@ func RoleUnrecordedRecently() bool {
 	defer roleMu.Unlock()
 	return !roleUnrecorded.IsZero() && time.Since(roleUnrecorded) < roleUnrecordedTTL
 }
-
-// ResetRoleUnrecorded clears the remembered refusal (tests).
-func ResetRoleUnrecorded() { noteRoleUnrecorded(false) }

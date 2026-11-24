@@ -231,11 +231,19 @@ func TestTapGate_RoleUnrecordedStartFailureSaysSetUpAgain(t *testing.T) {
 	}
 }
 
+// clearRoleRefusal forgets a remembered role-unrecorded refusal the way
+// production does: one successful broker call clears it (no test-only reset
+// hook in non-test code, which the deadcode baseline would refuse).
+func clearRoleRefusal(e *tapEnv) {
+	e.broker.setRoleRefused(false)
+	_, _ = paybroker.Call(context.Background(), paybroker.CallerCore, "stripe", "session_create", []byte(`{}`))
+}
+
 func roleStartFailure(t *testing.T, code string) {
 	e := tapRig(t)
 	e.broker.setRoleCode(code)
-	paybroker.ResetRoleUnrecorded()
-	t.Cleanup(paybroker.ResetRoleUnrecorded)
+	clearRoleRefusal(e)
+	t.Cleanup(func() { clearRoleRefusal(e) })
 	e.joinTill(t, data.TillRoleAdditional)
 	e.noRow = true
 	e.plugin.answer = func(int) string { return "START_FAILED" }
