@@ -131,7 +131,12 @@ func main() {
 	// Prefer :8080 (so the operator can also open the till in a normal browser
 	// at a known address), falling back to any free port if it's taken.
 	port := freePort("8080")
+	// ut-docs#6955: bind every interface so tills on the shop network can pair
+	// with this main till, but the server only lets this machine in until the
+	// shop allows others (UT_LAN_GATE, internal/lanaccess). The window below
+	// still talks to loopback.
 	addr := "127.0.0.1:" + port
+	listenAddr := ":" + port
 
 	// The POS binary ships next to this executable; fall back to PATH in dev.
 	dir := "."
@@ -185,7 +190,7 @@ func main() {
 	// the bind just failed, the child must inherit neither, not a value
 	// pointing at some other process's now-unrelated listener.
 	env := filterEnv(os.Environ(), envDesktopControlAddr, envDesktopControlToken)
-	env = append(env, "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+addr)
+	env = append(env, "UT_OPEN_BROWSER=0", "UT_LISTEN_ADDR="+listenAddr, "UT_LAN_GATE=1")
 	if ctl != nil {
 		env = append(env, envDesktopControlAddr+"="+ctl.Addr(), envDesktopControlToken+"="+ctl.Token())
 	}

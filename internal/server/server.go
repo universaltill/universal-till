@@ -25,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
 	"github.com/universaltill/universal-till/internal/httpserver"
+	"github.com/universaltill/universal-till/internal/lanaccess"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/offsitebackup"
@@ -260,6 +261,13 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// A fallback bind may have moved the port; plugin egress must refuse
 	// the one really serving (ut-docs#2891).
 	plugins.SetTillListenAddr(actualAddr)
+	// ut-docs#6955: the desktop shell binds every interface so other tills can
+	// pair with a Mac/Windows main till, but lets only this machine in unless
+	// the shop allows other tills (internal/lanaccess). Gate first, so a
+	// refused peer never reaches the TLS handshake.
+	if os.Getenv("UT_LAN_GATE") == "1" {
+		ln = lanaccess.Wrap(ln)
+	}
 	// Same port, TLS as well as plain HTTP (ADR-0114 §7, ut-docs#2736).
 	ln = withLANTLS(srv, ln, paths.Data("tls"), cfg.Demo)
 
