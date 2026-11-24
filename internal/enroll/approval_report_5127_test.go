@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -177,14 +178,39 @@ func TestKickReportsOncePerIdentityAndRetriesSlowly(t *testing.T) {
 
 func TestKickRetryAfterFailureIsSlowAndBounded(t *testing.T) {
 	identify(t)
-	old := approvalRetryDelays
-	approvalRetryDelays = []time.Duration{10 * time.Millisecond, 10 * time.Millisecond}
-	t.Cleanup(func() { approvalRetryDelays = old })
+	setApprovalRetryDelays(t, []time.Duration{10 * time.Millisecond, 10 * time.Millisecond})
 	c := newReportCloud(t, http.StatusInternalServerError)
 	var wg sync.WaitGroup
 	kickApprovalKeyReport(context.Background(), marketplace(c), &wg)
 	wg.Wait()
 	if c.hits.Load() != 3 { // first try + the two delays, then it stops
 		t.Fatalf("hits = %d, want 3 (bounded retries)", c.hits.Load())
+	}
+}
+
+// ut-docs#7009: register() kicks the report with a nil WaitGroup, so its
+// goroutine can outlive the test that started it. A later test that swaps
+// the retry waits must not race with it: the goroutine uses the waits copied
+// when it was kicked. Run with -race; the race detector is the assertion.
+func TestKickedReportDoesNotReadRetryDelaysWhileTheyAreSwapped(t *testing.T) {
+	identify(t)
+	setApprovalRetryDelays(t, []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond})
+	c := newReportCloud(t, http.StatusInternalServerError)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	kickApprovalKeyReport(ctx, marketplace(c), &wg)
+	// Swap while the goroutine retries, as a later test would, until it has
+	// made its first attempt and waited at least once.
+	deadline := time.Now().Add(5 * time.Second)
+	for c.hits.Load() < 2 && time.Now().Before(deadline) {
+		approvalReport.Lock() // the helper's write, without one Cleanup per swap
+		approvalRetryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+		approvalReport.Unlock()
+		runtime.Gosched()
+	}
+	cancel()
+	wg.Wait()
+	if c.hits.Load() < 2 {
+		t.Fatalf("hits = %d: the kicked report never retried", c.hits.Load())
 	}
 }

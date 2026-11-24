@@ -32,6 +32,9 @@ import (
 
 // approvalRetryDelays are the waits between attempts after a failure
 // (network down, 5xx): slow, and then it gives up until the next start/pair.
+// Guarded by approvalReport's mutex: kickApprovalKeyReport copies it under the
+// lock before its goroutine starts, so a report still running in the
+// background never reads it while a test swaps it (ut-docs#7009).
 var approvalRetryDelays = []time.Duration{15 * time.Minute, time.Hour, 6 * time.Hour}
 
 type reportOutcome int
@@ -137,6 +140,7 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 		approvalReport.inflight = map[string]bool{}
 	}
 	approvalReport.inflight[key] = true
+	delays := approvalRetryDelays // the slice is never mutated in place, only replaced
 	approvalReport.Unlock()
 	if wg != nil {
 		wg.Add(1)
@@ -164,13 +168,13 @@ func kickApprovalKeyReport(ctx context.Context, m config.MarketplaceConfig, wg *
 				}
 				return
 			}
-			if attempt >= len(approvalRetryDelays) {
+			if attempt >= len(delays) {
 				return
 			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(approvalRetryDelays[attempt]):
+			case <-time.After(delays[attempt]):
 			}
 		}
 	}()
