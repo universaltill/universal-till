@@ -1,11 +1,13 @@
 package pages
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
@@ -112,4 +114,148 @@ func TestConvergePluginSet_EnableWithUpgradeNotGatedOnOldVersion(t *testing.T) {
 		t.Fatalf("version=%s active=%v, want 2.0.0 on", v, active6666(t, dp, "com.t.x"))
 	}
 	assertNoOpenSyncProblems6930(t, "LX")
+}
+
+// stubDBOnlyRemove7006 swaps pluginSyncRemove for a DB-only uninstall (no
+// RemoveAll under the real paths.Plugins()) that logs "remove:<id>".
+func stubDBOnlyRemove7006(t *testing.T, log *[]string) {
+	t.Helper()
+	orig := pluginSyncRemove
+	t.Cleanup(func() { pluginSyncRemove = orig })
+	pluginSyncRemove = func(ctx context.Context, d *common.Deps, id string) (string, error) {
+		*log = append(*log, "remove:"+id)
+		if err := plugins.UninstallPlugin(ctx, d.Db, id); err != nil {
+			return "", err
+		}
+		if err := plugins.NewInstallStatusStore(d.Db).ClearForPlugin(ctx, id); err != nil {
+			return "", err
+		}
+		return "uninstalled " + id, d.ReloadPlugins(ctx)
+	}
+}
+
+// ut-docs#7006: a main that swapped exclusive owners by UNINSTALLING X (no LX
+// row at all) and installing Y converges in one tick: X is pruned before Y's
+// active install, so PersistManifest's refusal never fires.
+func runSwapByUninstall7006(t *testing.T, name string, mans map[string]*plugins.Manifest) {
+	dp := newDeps6666(t, "7006-"+name+".db")
+	calls := stubPersistingSyncInstall(t, mans)
+	var removes []string
+	stubDBOnlyRemove7006(t, &removes)
+	if !convergePluginSet(t.Context(), dp, []data.PluginSyncRow{row6930("LX", "com.t.x", boolp6666(true))}) || !active6666(t, dp, "com.t.x") {
+		t.Fatalf("setup: X not installed active: %+v", logging.Recent())
+	}
+	setupInstalls := len(*calls)
+	rows := []data.PluginSyncRow{row6930("LY", "com.t.y", boolp6666(true))}
+	if !convergePluginSet(t.Context(), dp, rows) {
+		t.Fatalf("swap by uninstall did not converge in one tick: %+v", logging.Recent())
+	}
+	if len(removes) != 1 || removes[0] != "remove:com.t.x" {
+		t.Fatalf("removes = %v, want [remove:com.t.x]", removes)
+	}
+	if _, ok := installStatusState(t, dp, "LX"); ok {
+		t.Fatal("LX install record still present")
+	}
+	if !active6666(t, dp, "com.t.y") {
+		t.Fatal("Y not active")
+	}
+	if st, ok := installStatusState(t, dp, "LY"); !ok || st != string(plugins.InstallStateActive) {
+		t.Fatalf("Y install state = %q,%v", st, ok)
+	}
+	swap := (*calls)[setupInstalls:]
+	if len(swap) != 1 || swap[0].listing != "LY" || !swap[0].activeAfterPersist {
+		t.Fatalf("swap installs = %+v, want one active LY install", swap)
+	}
+	if logging.HasOpenProblem(pluginSyncInstallKeyPrefix+"LY") || logging.HasOpenProblem(pluginSyncUninstallKeyPrefix+"LX") {
+		t.Fatalf("problem left open: %+v", logging.Recent())
+	}
+	assertNoOpenSyncProblems6930(t, "LX", "LY")
+	n, r := len(*calls), len(removes)
+	if !convergePluginSet(t.Context(), dp, rows) || len(*calls) != n || len(removes) != r {
+		t.Fatalf("second tick not a no-op: installs %d->%d removes %d->%d", n, len(*calls), r, len(removes))
+	}
+}
+
+func TestConvergePluginSet_SwapPresetOwnersByUninstallInOneTick(t *testing.T) {
+	runSwapByUninstall7006(t, "preset", map[string]*plugins.Manifest{
+		"LX": presetManifest6930("com.t.x", "/tables"),
+		"LY": presetManifest6930("com.t.y", "/kitchen-stations"),
+	})
+}
+
+func TestConvergePluginSet_SwapFiscalSignOwnersByUninstallInOneTick(t *testing.T) {
+	runSwapByUninstall7006(t, "fiscal", map[string]*plugins.Manifest{
+		"LX": signerManifest6930("com.t.x"),
+		"LY": signerManifest6930("com.t.y"),
+	})
+}
+
+// ut-docs#7006 review: the main had X on and Y installed but off (a replica
+// installs Y off, ut-docs#6930); it then uninstalls X and switches Y on. The
+// prune must run before the state-follow pass, or the first pass tries Y on
+// while X is still active, raises a plugin_sync.state problem and needs a
+// second tick.
+func runSwapByUninstallYInstalledOff7006(t *testing.T, name string, mans map[string]*plugins.Manifest) {
+	dp := newDeps6666(t, "7006-off-"+name+".db")
+	calls := stubPersistingSyncInstall(t, mans)
+	var removes []string
+	stubDBOnlyRemove7006(t, &removes)
+	setup := []data.PluginSyncRow{row6930("LX", "com.t.x", boolp6666(true)), row6930("LY", "com.t.y", boolp6666(false))}
+	if !convergePluginSet(t.Context(), dp, setup) || !active6666(t, dp, "com.t.x") || active6666(t, dp, "com.t.y") {
+		t.Fatalf("setup: want X active, Y installed off: %+v", logging.Recent())
+	}
+	if _, ok := installStatusState(t, dp, "LY"); !ok {
+		t.Fatal("setup: Y not installed")
+	}
+	rows := []data.PluginSyncRow{row6930("LY", "com.t.y", boolp6666(true))}
+	if !convergePluginSet(t.Context(), dp, rows) {
+		t.Fatalf("swap did not converge in one tick: %+v", logging.Recent())
+	}
+	if len(removes) != 1 || removes[0] != "remove:com.t.x" {
+		t.Fatalf("removes = %v, want [remove:com.t.x]", removes)
+	}
+	if _, ok := installStatusState(t, dp, "LX"); ok {
+		t.Fatal("LX install record still present")
+	}
+	if !active6666(t, dp, "com.t.y") {
+		t.Fatal("Y not active")
+	}
+	assertNoOpenSyncProblems6930(t, "LX", "LY")
+	if logging.HasOpenProblem(pluginSyncStateKeyPrefix+"LY") || logging.HasOpenProblem(pluginSyncInstallKeyPrefix+"LY") || logging.HasOpenProblem(pluginSyncUninstallKeyPrefix+"LX") {
+		t.Fatalf("problem left open: %+v", logging.Recent())
+	}
+	n, r := len(*calls), len(removes)
+	if !convergePluginSet(t.Context(), dp, rows) || len(*calls) != n || len(removes) != r {
+		t.Fatalf("second tick not a no-op: installs %d->%d removes %d->%d", n, len(*calls), r, len(removes))
+	}
+}
+
+func TestConvergePluginSet_SwapPresetByUninstallYInstalledOffInOneTick(t *testing.T) {
+	runSwapByUninstallYInstalledOff7006(t, "preset", map[string]*plugins.Manifest{
+		"LX": presetManifest6930("com.t.x", "/tables"),
+		"LY": presetManifest6930("com.t.y", "/kitchen-stations"),
+	})
+}
+
+func TestConvergePluginSet_SwapFiscalSignByUninstallYInstalledOffInOneTick(t *testing.T) {
+	runSwapByUninstallYInstalledOff7006(t, "fiscal", map[string]*plugins.Manifest{
+		"LX": signerManifest6930("com.t.x"),
+		"LY": signerManifest6930("com.t.y"),
+	})
+}
+
+// ut-docs#7006: a malformed row (ListingID set, PluginID empty) is not
+// in-primary, so the record for that listing is still pruned.
+func TestConvergePluginSet_MalformedRowStillNotInPrimary(t *testing.T) {
+	dp := newDeps6666(t, "7006-malformed.db")
+	stubPersistingSyncInstall(t, map[string]*plugins.Manifest{"LM": presetManifest6930("com.t.m", "/tables")})
+	var removes []string
+	stubDBOnlyRemove7006(t, &removes)
+	if !convergePluginSet(t.Context(), dp, []data.PluginSyncRow{row6930("LM", "com.t.m", boolp6666(true))}) {
+		t.Fatalf("setup: %+v", logging.Recent())
+	}
+	convergePluginSet(t.Context(), dp, []data.PluginSyncRow{{ListingID: "LM"}})
+	if len(removes) != 1 || removes[0] != "remove:com.t.m" {
+		t.Fatalf("removes = %v, want LM pruned", removes)
+	}
 }

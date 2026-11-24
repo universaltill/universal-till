@@ -1095,16 +1095,6 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	converged := true
 	changed := false // any install/uninstall landed: recompute the chip count
 
-	// Installs/updates: listing active on the primary, missing, at a
-	// different version locally, or locally BROKEN (right version, files
-	// missing/unloadable — ut-docs#368) → re-fetch from the marketplace
-	// (verified), pinned to the PRIMARY's version — not the marketplace's
-	// latest — so a primary deliberately held behind latest doesn't fork
-	// its replicas. The broken case rides the exact same Ed25519-verified
-	// cloudInstallPluginVersion path as a version mismatch: zero new
-	// transfer mechanism, the install simply re-lands the files and flips
-	// the row back to 'installed'.
-	inPrimary := make(map[string]bool, len(rows))
 	// The bundled first-party plugins follow the main's switch and are never
 	// fetched; their rows are not marketplace installs.
 	bundledOK, bundledChanged := followBundledState(ctx, d, rows)
@@ -1117,9 +1107,60 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			logging.L().Warnf("plugin sync: reload after following the main till's bundled switch: %v", err)
 		}
 	}
+	// The listings the primary has (bundled rows included; a bundled-state or
+	// malformed row with no PluginID is not one), built first because the
+	// prune below and the problem resolution at the end both read it.
+	inPrimary := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if row.ListingID == "" || row.PluginID == "" {
+			continue
+		}
+		inPrimary[row.ListingID] = true
+	}
+	// Uninstalls: a listing this till holds as active that the primary no
+	// longer has. Runs BEFORE the installs (ut-docs#7006): a main that swapped
+	// exclusive owners by uninstalling X (no row for it any more) and installing
+	// Y must have X gone before Y's active install, or PersistManifest's
+	// exclusive-owner refusal fires on Y for one tick. Keyed off local
+	// plugin_install_status records, so only marketplace-installed plugins can
+	// ever be pruned (scope boundary above). NOTE: a record stays State=Active while its plugin is merely
+	// BROKEN (installed but unloadable, plugins.install_state='broken') —
+	// the install lifecycle and load health are separate facts, and
+	// wasm Sync's markBroken must never demote the record to Failed, or this
+	// loop skips the plugin forever and it can never be uninstalled from a
+	// replica (round-2 review BLOCKER; replicas reject manual uninstall).
+	records, err := statusStore.List(ctx)
+	recordsOK := err == nil
+	if err != nil {
+		logging.L().Errorf("plugin sync: list local install records: %v", err)
+		converged = false
+		records = nil
+	}
+	pendingUninstall := make(map[string]bool)
+	for listingID, rec := range records {
+		if inPrimary[listingID] || rec.State != plugins.InstallStateActive || rec.PluginID == "" {
+			continue
+		}
+		pendingUninstall[listingID] = true
+		if _, err := pluginSyncRemove(ctx, d, rec.PluginID); err != nil {
+			warnPluginSyncOnce(pluginSyncUninstallKeyPrefix+listingID, "plugin sync: uninstall %s (removed on the primary) failed (will retry): %v",
+				rec.PluginID, err)
+			converged = false
+			continue
+		}
+		// A plugin pruned while in the broken-re-fetch backoff would
+		// otherwise leave its stale attempt counter behind forever — the
+		// healthy-reconvergence path is the only other place that clears it.
+		clearBrokenRefetch(d, listingID)
+		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
+		if logging.ResolveProblems(pluginSyncUninstallKeyPrefix+listingID) > 0 {
+			logging.L().Infof("plugin sync: uninstall of %s succeeded — earlier problem resolved", rec.PluginID)
+		}
+		changed = true
+	}
 	// The main's enabled state, applied to every listing independent of the
-	// install results below (ut-docs#6666), first BEFORE the installs
-	// (ut-docs#6952): a main that swapped exclusive owners (layout preset X
+	// install results below (ut-docs#6666), first, after the prune and BEFORE
+	// the installs (ut-docs#6952): a main that swapped exclusive owners (layout preset X
 	// off, preset Y on; likewise two fiscal-sign plugins) must have X's
 	// disable land before Y's active install, or PersistManifest's
 	// exclusive-owner refusal fires on Y for one tick. This pass only touches
@@ -1127,18 +1168,28 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	// below will make; an install the main has off lands off (ut-docs#6930)
 	// and one it has on lands on.
 	followStateInto(ctx, d, rows, true, &converged, &changed)
+
+	// Installs/updates: listing active on the primary, missing, at a
+	// different version locally, or locally BROKEN (right version, files
+	// missing/unloadable — ut-docs#368) → re-fetch from the marketplace
+	// (verified), pinned to the PRIMARY's version — not the marketplace's
+	// latest — so a primary deliberately held behind latest doesn't fork
+	// its replicas. The broken case rides the exact same Ed25519-verified
+	// cloudInstallPluginVersion path as a version mismatch: zero new
+	// transfer mechanism, the install simply re-lands the files and flips
+	// the row back to 'installed'.
+	// The bundled first-party plugins are never fetched; their rows are not
+	// marketplace installs.
 	for _, row := range rows {
 		if row.ListingID == "" || row.PluginID == "" {
 			continue // a bundled-state row (handled above) or a malformed one
 		}
 		if bundled.Available() && bundled.IsBundled(row.PluginID) {
 			// Never installed from the marketplace on this build; the listing
-			// is not an install record here, so the prune loop below must not
+			// is not an install record here, so the prune loop above must not
 			// see it as one either (it has none).
-			inPrimary[row.ListingID] = true
 			continue
 		}
-		inPrimary[row.ListingID] = true
 		version, installState, installed, err := repo.InstalledPluginVersion(ctx, row.PluginID)
 		if err != nil {
 			logging.L().Errorf("plugin sync: read local state for %s: %v", row.PluginID, err)
@@ -1193,51 +1244,13 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		changed = true
 	}
 
-	// Second pass, after the installs and before the prune (which never
-	// touches a disabled-but-listed plugin): applies an enable the first pass
-	// deferred whose upgrade install failed (the old version, as before
+	// Second pass, after the installs (the prune already ran, before them,
+	// ut-docs#7006; it never touches a disabled-but-listed plugin): applies an
+	// enable the first pass deferred whose upgrade install failed (the old version, as before
 	// ut-docs#6952), and closes a state problem a successful install made moot.
 	// A no-op for every row already at the main's state.
 	followStateInto(ctx, d, rows, false, &converged, &changed)
 
-	// Uninstalls: a listing this till holds as active that the primary no
-	// longer has. Keyed off local plugin_install_status records, so only
-	// marketplace-installed plugins can ever be pruned (scope boundary
-	// above). NOTE: a record stays State=Active while its plugin is merely
-	// BROKEN (installed but unloadable, plugins.install_state='broken') —
-	// the install lifecycle and load health are separate facts, and
-	// wasm Sync's markBroken must never demote the record to Failed, or this
-	// loop skips the plugin forever and it can never be uninstalled from a
-	// replica (round-2 review BLOCKER; replicas reject manual uninstall).
-	records, err := statusStore.List(ctx)
-	recordsOK := err == nil
-	if err != nil {
-		logging.L().Errorf("plugin sync: list local install records: %v", err)
-		converged = false
-		records = nil
-	}
-	pendingUninstall := make(map[string]bool)
-	for listingID, rec := range records {
-		if inPrimary[listingID] || rec.State != plugins.InstallStateActive || rec.PluginID == "" {
-			continue
-		}
-		pendingUninstall[listingID] = true
-		if _, err := pluginSyncRemove(ctx, d, rec.PluginID); err != nil {
-			warnPluginSyncOnce(pluginSyncUninstallKeyPrefix+listingID, "plugin sync: uninstall %s (removed on the primary) failed (will retry): %v",
-				rec.PluginID, err)
-			converged = false
-			continue
-		}
-		// A plugin pruned while in the broken-re-fetch backoff would
-		// otherwise leave its stale attempt counter behind forever — the
-		// healthy-reconvergence path is the only other place that clears it.
-		clearBrokenRefetch(d, listingID)
-		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
-		if logging.ResolveProblems(pluginSyncUninstallKeyPrefix+listingID) > 0 {
-			logging.L().Infof("plugin sync: uninstall of %s succeeded — earlier problem resolved", rec.PluginID)
-		}
-		changed = true
-	}
 	// A listing the primary dropped can never recover on its install/broken
 	// branch (it is no longer visited), and one that is no longer a pending
 	// uninstall — the primary re-added it, or its record went away or left
