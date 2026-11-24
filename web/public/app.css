@@ -6554,6 +6554,8 @@ body.osk-padded .setup-card .setup-nav { inset-block-end: var(--osk-reserved-hei
    "Light: no animations, flat look (fastest)") must never outgrow its card
    at 360px — it shrinks and the native control truncates the label. */
 .set-row select { max-inline-size: 100%; min-inline-size: 0; }
+/* ut-docs#7015: a long path in a settings row has no break point; let it wrap inside the card. */
+.set-row code { max-inline-size: 100%; min-inline-size: 0; overflow-wrap: anywhere; }
 /* Stacked checkbox row (was an inline style on four stock/receipt labels). */
 .set-block { display: block; margin-block: .35rem; }
 /* ut-docs#5738: a label-wrapped checkbox in Settings is a >=44px touch row

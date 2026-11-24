@@ -79,7 +79,6 @@
 /shifts	till	#shifts-page > summary	872x21
 /tables	phone	#floorplan > g.table-free.table-node[role=button]	77x33
 /tables	till	#floorplan > g.table-free.table-node[role=button]	69x30
-/tills	phone	#pairing-join-role > input[type=radio][name=role] (label)	361x39
 /tills	phone	#tills-roster > a.help-hint[data-testid=help-hint]	27x27
 /tills	phone	#tills-sales-mirror > a.help-hint[data-testid=help-hint]	27x27
 /tills	till	#pairing-join-role > input[type=radio][name=role] (label)	868x39
