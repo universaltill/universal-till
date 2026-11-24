@@ -446,6 +446,12 @@ func TestTapReasonKey(t *testing.T) {
 		{"canceled_by_user", "", "tap.settings.reason.cancelled"},
 		{"other", "stripe 2900", "tap.settings.reason.apple_failed"},
 		{"other", "", "tap.settings.reason.generic"},
+		// review M1: a cloud code carried as detail keeps its own meaning,
+		// never "Apple or Stripe reported a problem".
+		{"other", "http_503", "tap.settings.reason.service_unavailable"},
+		{"other", "failed", "tap.settings.reason.generic"},
+		{"other", "unauthorized", "tap.settings.source.setup_again"},
+		{"other", "NSURLErrorDomain -1009", "tap.settings.reason.apple_failed"},
 		{"provider_unavailable", "", "tap.settings.reason.service_unavailable"},
 		{"http_502", "", "tap.settings.reason.service_unavailable"},
 		{"http_418", "", "tap.settings.reason.generic"},

@@ -126,8 +126,8 @@ func tapNativeReason(r string) string {
 
 // tapReasonKey is the i18n key of a setup / capability reason or of a broker
 // error code (ut-docs#6981). code is passed through tapNativeReason by the
-// caller; detail is the native error code of an "other" failure: with one,
-// "other" is Apple's or Stripe's own failure.
+// caller; detail is the raw code of an "other" failure: a native one (with
+// a space) is Apple's or Stripe's own failure, a cloud one maps as itself.
 func tapReasonKey(code, detail string) string {
 	switch code {
 	case "ipad", "unsupported_device", "ios_too_old", "not_foreground", "not_main", "timeout", "terms", "location", "not_onboarded", "offline":
@@ -141,8 +141,14 @@ func tapReasonKey(code, detail string) string {
 	case "canceled_by_user":
 		return "tap.settings.reason.cancelled"
 	case "other":
-		if detail != "" {
+		// A native Apple/Stripe code carries a space ("stripe 2900",
+		// "NSURLErrorDomain -1009"); anything else is one of our own cloud
+		// codes and keeps that code's meaning (review M1).
+		if strings.Contains(detail, " ") {
 			return "tap.settings.reason.apple_failed"
+		}
+		if detail != "" && detail != "other" {
+			return tapReasonKey(tapNativeReason(detail), "")
 		}
 	case "auth_unavailable", "provider_unavailable", "response_too_large":
 		return "tap.settings.reason.service_unavailable"
