@@ -43,7 +43,7 @@ so this copy can't open it. **Your data is safe and nothing has been lost.**
 Install the latest version of Universal Till on this device, the same way you
 installed it before. The till starts normally once it's installed. There is
 no Retry button on this message, because trying again with the same older
-copy can't change the result. Safe mode (below) still lets you see today's
+copy can't change the result. Safe mode (above) still lets you see today's
 sales on the till itself in the meantime. Never delete the data folder to fix
 this.
 
