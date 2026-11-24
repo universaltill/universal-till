@@ -373,7 +373,7 @@
       "sha256": "d97e4e725168098fe17cb2796197c4b59fe023a0d61c7b6af366326a101b283e"
     },
     "internal/pages/cloudsync_wire.go": {
-      "sha256": "df9579ce9f7cb29b2705c11dfb7495275ecec72a033936f5d7e63f60bd084247"
+      "sha256": "58b49ef59c6123658c5a89da3c9d6277c5fd0a9be17e76155239b250517361ac"
     },
     "internal/pages/common/android_native_window_controller.go": {
       "sha256": "d13878cafa18acd2dd20fe474986238e55e734eaee849242e193d7e6d567d8d2"
@@ -817,7 +817,7 @@
       "sha256": "7e1408016415485e7eec35810d9144eb10bc988ea0094000f8dfbb1ca5a0d002"
     },
     "web/public/app.css": {
-      "sha256": "cb7400fc6adcb6c16e9b41a6470165156191017cf75c0ca114872c724fde3dad"
+      "sha256": "4e577fe669699d7c5e6bfe087bdde8ae798b334046df61e3f6c6993e5ddeacb8"
     },
     "web/public/app.js": {
       "sha256": "8a75db2798adebf0dac11b07988e8d02b0eaa8bca55c30ac714135c91f8bfb93"
